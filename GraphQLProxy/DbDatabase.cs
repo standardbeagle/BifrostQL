@@ -24,18 +24,18 @@ namespace GraphQLProxy
             foreach (var table in tables)
             {
                 if (table.TableName.StartsWith("_")) continue;
+                var safeTableName = table.TableName.Replace(" ", "__");
 
-                var filterArgs = table.Columns
-                    .Select(column => new QueryArgument(new DbFilterType(column.DataType)) { Name = column.ColumnName })
-                    .ToList();
-                filterArgs.Add(new QueryArgument<IntGraphType>() { Name = "_limit" });
-                filterArgs.Add(new QueryArgument<IntGraphType>() { Name = "_offset" });
-                filterArgs.Add(new QueryArgument<ListGraphType<StringGraphType>>() { Name = "_order" });
+                var filterArgs = new List<QueryArgument>();
+                filterArgs.Add(new QueryArgument(new DbColumnFilterType(safeTableName, table.Columns)) { Name = "filter" });
+                filterArgs.Add(new QueryArgument<IntGraphType>() { Name = "limit" });
+                filterArgs.Add(new QueryArgument<IntGraphType>() { Name = "offset" });
+                filterArgs.Add(new QueryArgument<ListGraphType<StringGraphType>>() { Name = "sort" });
 
                 var rowType = new DbRow(table);
                 AddField(new FieldType
                 {
-                    Name = table.TableName.Replace(" ", "__"),
+                    Name = safeTableName,
                     Arguments = new QueryArguments(filterArgs),
                     ResolvedType = new ListGraphType(rowType)
                     {
@@ -117,26 +117,21 @@ namespace GraphQLProxy
             using var conn = _dbConnFactory.GetConnection();
             await conn.OpenAsync();
 
-            var activeColumnArgs = (context.Arguments!).Where(arg => context.HasArgument(arg.Key) && !arg.Key.StartsWith("_")).ToArray();
             var orderby = " ORDER BY (SELECT NULL)";
-            if (context.HasArgument("_order"))
+            if (context.HasArgument("sort"))
             {
-                var order = context.GetArgument<string[]>("_order");
+                var order = context.GetArgument<string[]>("sort");
                 orderby = " ORDER BY " + String.Join(", ", order);
             }
-            var limit = context.HasArgument("_limit") ? $" FETCH NEXT {context.GetArgument<int>("_limit")} ROWS ONLY" : "";
-            var offset = context.HasArgument("_offset") ? $" OFFSET {context.GetArgument<int>("_offset")} ROWS" : " OFFSET 0 ROWS";
+            var limit = context.HasArgument("limit") ? $" FETCH NEXT {context.GetArgument<int>("limit")} ROWS ONLY" : "";
+            var offset = context.HasArgument("offset") ? $" OFFSET {context.GetArgument<int>("offset")} ROWS" : " OFFSET 0 ROWS";
 
             var cmdText = $"SELECT {columns} FROM [{context.FieldDefinition.Name}]";
-            if (activeColumnArgs.Length > 0)
+            if (context.HasArgument("filter"))
             {
                 cmdText += " WHERE";
-                var sep = "";
-                foreach(var arg in activeColumnArgs)
-                {
-                    cmdText += $"{sep} {DbFilterType.GetSingleFilter(arg)}";
-                    sep = " AND";
-                }
+                var colFilter = context.GetArgument<Dictionary<string, object?>>("filter");
+                cmdText += $"{DbFilterType.GetSingleFilter(colFilter.First())}";
             }
             cmdText += orderby + offset + limit;
             var command = new SqlCommand(cmdText, conn);
@@ -234,6 +229,22 @@ namespace GraphQLProxy
         }
     }
 
+    public class DbColumnFilterType : InputObjectGraphType
+    {
+        public DbColumnFilterType(string table, IEnumerable<ColumnDto> columns)
+        {
+            Name = $"{table}ColumnFilterType";
+            foreach(ColumnDto column in columns)
+            {
+                AddField(new FieldType
+                {
+                    Name = column.ColumnName,
+                    ResolvedType = new DbFilterType(column.DataType),
+                });
+            }
+        }
+    }
+
     public class DbFilterType : InputObjectGraphType
     {
         public DbFilterType(string dataType)
@@ -301,11 +312,12 @@ namespace GraphQLProxy
             }
         }
 
-        public static string GetSingleFilter(KeyValuePair<string, ArgumentValue> arg)
+        public static string GetSingleFilter(KeyValuePair<string, object?> arg)
         {
-            var obj = (Dictionary<string, object?>)arg.Value.Value!;
-            var op = obj.First().Key;
-            var value = obj.First().Value;
+            var obj = (Dictionary<string, object?>)arg.Value!;
+            var filterObj = obj.First();
+            var op = filterObj.Key;
+            var value = filterObj.Value;
             var field = arg.Key;
             var rel = op switch
             {

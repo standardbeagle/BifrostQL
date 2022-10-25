@@ -1,9 +1,11 @@
 ﻿using GraphQL;
+using GraphQL.Execution;
 using GraphQL.MicrosoftDI;
 using GraphQL.Resolvers;
 using GraphQL.Types;
 using GraphQLProxy.Model;
 using System.Collections;
+using System.Data.Common;
 using System.Data.SqlClient;
 using System.Linq;
 using System.Numerics;
@@ -24,14 +26,7 @@ namespace GraphQLProxy
                 if (table.TableName.StartsWith("_")) continue;
 
                 var filterArgs = table.Columns
-                    .Select(column => new QueryArgument(
-                        new DbFilterType(new[] { 
-                            ("_eq", GraphTypeFromSql(column.DataType)),
-                            ("_gt", GraphTypeFromSql(column.DataType)),
-                            ("_gte", GraphTypeFromSql(column.DataType)),
-                            ("_lt", GraphTypeFromSql(column.DataType)),
-                            ("_lte", GraphTypeFromSql(column.DataType)),
-                        })) { Name = column.ColumnName })
+                    .Select(column => new QueryArgument(new DbFilterType(column.DataType)) { Name = column.ColumnName })
                     .ToList();
                 filterArgs.Add(new QueryArgument<IntGraphType>() { Name = "_limit" });
                 filterArgs.Add(new QueryArgument<IntGraphType>() { Name = "_offset" });
@@ -48,42 +43,6 @@ namespace GraphQLProxy
                     },
                     Resolver = new DbTableResolver(_dbConnFactory),
                 });
-            }
-        }
-
-        public IGraphType GraphTypeFromSql(string sqlType)
-        {
-            switch(sqlType)
-            {
-                case "float":
-                case "real":
-                    return new FloatGraphType();
-                case "datetimeOffset":
-                    return new DateTimeOffsetGraphType();
-                case "datetime":
-                case "datetime2":
-                    return new DateTimeGraphType();
-                case "bit":
-                    return new BooleanGraphType();
-                case "int":
-                case "smallint":
-                case "tinyint":
-                case "money":
-                case "decimal":
-                    return new IntGraphType();
-                case "image":
-                    return new StringGraphType();
-                case "varchar":
-                case "nvarchar":
-                case "char":
-                case "nchar":
-                case "binary":
-                case "varbinary":
-                case "ntext":
-                case "text":
-                    return new StringGraphType();
-                default:
-                    return new ObjectGraphType();
             }
         }
     }
@@ -175,19 +134,7 @@ namespace GraphQLProxy
                 var sep = "";
                 foreach(var arg in activeColumnArgs)
                 {
-                    var obj =(Dictionary<string, object?>)arg.Value.Value!;
-                    var op = obj.First().Key;
-                    var value = obj.First().Value;
-                    var rel =  op switch {
-                        "_eq" => "=",
-                        "_neq" => "!=",
-                        "_lt" => "<",
-                        "_lte" => "<=",
-                        "_gt" => ">",
-                        "_gte" => ">=",
-                        _ => "="
-                    };
-                    cmdText += $"{sep} [{arg.Key}] {rel} '{ value }'";
+                    cmdText += $"{sep} {DbFilterType.GetSingleFilter(arg)}";
                     sep = " AND";
                 }
             }
@@ -289,9 +236,27 @@ namespace GraphQLProxy
 
     public class DbFilterType : InputObjectGraphType
     {
-        public DbFilterType(IEnumerable<(string fieldName, IGraphType type)> filters)
+        public DbFilterType(string dataType)
         {
-            foreach(var (fieldName, type) in filters)
+            var filters = new (string fieldName, IGraphType type)[] {
+                            ("_eq", GraphTypeFromSql(dataType)),
+                            ("_neq", GraphTypeFromSql(dataType)),
+                            ("_gt", GraphTypeFromSql(dataType)),
+                            ("_gte", GraphTypeFromSql(dataType)),
+                            ("_lt", GraphTypeFromSql(dataType)),
+                            ("_lte", GraphTypeFromSql(dataType)),
+                            ("_contains", GraphTypeFromSql(dataType)),
+                            ("_ncontains", GraphTypeFromSql(dataType)),
+                            ("_starts_with", GraphTypeFromSql(dataType)),
+                            ("_nstarts_with", GraphTypeFromSql(dataType)),
+                            ("_ends_with", GraphTypeFromSql(dataType)),
+                            ("_nends_with", GraphTypeFromSql(dataType)),
+                            ("_in", new ListGraphType(GraphTypeFromSql(dataType))),
+                            ("_nin", new ListGraphType(GraphTypeFromSql(dataType))),
+                            ("_between", new ListGraphType(GraphTypeFromSql(dataType))),
+                            ("_nbetween", new ListGraphType(GraphTypeFromSql(dataType))),
+                        };
+            foreach (var (fieldName, type) in filters)
             {
                 AddField(new FieldType
                 {
@@ -299,6 +264,86 @@ namespace GraphQLProxy
                     ResolvedType = type,
                 });
             }
+        }
+        public IGraphType GraphTypeFromSql(string sqlType)
+        {
+            switch (sqlType)
+            {
+                case "float":
+                case "real":
+                    return new FloatGraphType();
+                case "datetimeOffset":
+                    return new DateTimeOffsetGraphType();
+                case "datetime":
+                case "datetime2":
+                    return new DateTimeGraphType();
+                case "bit":
+                    return new BooleanGraphType();
+                case "int":
+                case "smallint":
+                case "tinyint":
+                case "money":
+                case "decimal":
+                    return new IntGraphType();
+                case "image":
+                    return new StringGraphType();
+                case "varchar":
+                case "nvarchar":
+                case "char":
+                case "nchar":
+                case "binary":
+                case "varbinary":
+                case "ntext":
+                case "text":
+                    return new StringGraphType();
+                default:
+                    return new ObjectGraphType();
+            }
+        }
+
+        public static string GetSingleFilter(KeyValuePair<string, ArgumentValue> arg)
+        {
+            var obj = (Dictionary<string, object?>)arg.Value.Value!;
+            var op = obj.First().Key;
+            var value = obj.First().Value;
+            var field = arg.Key;
+            var rel = op switch
+            {
+                "_eq" => "=",
+                "_neq" => "!=",
+                "_lt" => "<",
+                "_lte" => "<=",
+                "_gt" => ">",
+                "_gte" => ">=",
+                "_contains" or "_starts_with" or "_ends_with" => "like",
+                "_ncontains" or "_nstarts_with" or "_nends_with"=> "not like",
+                "_in" => "in",
+                "_nin" => "not in",
+                "_between" => "between",
+                "_nbetween" => "not between",
+                _ => "="
+            };
+            var val = op switch
+            {
+                "_starts_with" or "_nstarts_with" => $"'{value}%'",
+                "_ends_with" or "_nends_with" => $"'%{value}'",
+                "_contains" or "_ncontains" => $"'%{value}%'",
+                "_in" or "_nin" => $"('{string.Join("','", (object[])(value ?? Array.Empty<object>()))}')",
+                "_between" or "_nbetween" => $"'{string.Join("' AND '", (object[])(value ?? Array.Empty<object>()))}'",
+                _ => $"'{value}'"
+            };
+            if (op == "_eq" && val == null)
+            {
+                rel = "IS NULL";
+                val = "";
+            }
+            if (op == "_neq" && val == null)
+            {
+                rel = "IS NOT NULL";
+                val = "";
+            }
+            string filter = $"[{field}] {rel} {val}";
+            return filter;
         }
     }
 }

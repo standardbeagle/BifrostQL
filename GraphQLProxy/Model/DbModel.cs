@@ -15,18 +15,22 @@ namespace GraphQLProxy.Model
     public sealed class TableDto
     {
         public string TableName { get; set; } = null!;
+        public string GraphQLName { get; set; } = null!;
         public string TableSchema { get; set; } = null!;
         public string TableType { get; set; } = null!;
-        public IReadOnlyCollection<ColumnDto> Columns { get; set; } = null!;
+        public IEnumerable<ColumnDto> Columns => Column.Values;
+
+        public IDictionary<string, ColumnDto> Column { get; set; } = null!;
 
         public static TableDto FromReader(IDataReader reader, IReadOnlyCollection<ColumnDto>? columns = null)
         {
             return new TableDto
             {
                 TableName = (string)reader["TABLE_NAME"],
+                GraphQLName = ((string)reader["TABLE_NAME"]).Replace(" ", "__"),
                 TableSchema = (string)reader["TABLE_SCHEMA"],
                 TableType = (string)reader["TABLE_TYPE"],
-                Columns = columns ?? Array.Empty<ColumnDto>()
+                Column = (columns ?? Array.Empty<ColumnDto>()).ToDictionary(c => c.ColumnName),
             };
         }
     }

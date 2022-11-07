@@ -55,7 +55,9 @@ SELECT [TABLE_CATALOG]
             return
                 new DbModel()
                 {
-                    Tables = GetDtos<TableDto>(reader, r => TableDto.FromReader(r, columns[$"{reader["TABLE_SCHEMA"]}.{reader["TABLE_NAME"]}"])).ToList()
+                    Tables = GetDtos<TableDto>(reader, r => TableDto.FromReader(r, columns[$"{reader["TABLE_SCHEMA"]}.{reader["TABLE_NAME"]}"]))
+                    .Where(t => t.TableName.StartsWith("_") == false)
+                    .ToList()
                 };
 
         }

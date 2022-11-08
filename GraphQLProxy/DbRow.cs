@@ -63,8 +63,9 @@ namespace GraphQLProxy
                 Name = $"_join_{table.GraphQLName}",
                 Arguments = new QueryArguments(
                     new QueryArgument<ListGraphType<StringGraphType>>() { Name = "on" },
-                    new QueryArgument<StringGraphType>() { Name = "join", DefaultValue = "inner" },
-                    new QueryArgument<StringGraphType>() { Name = "fk" }),
+                    //new QueryArgument<StringGraphType>() { Name = "fk" },
+                    new QueryArgument(new GraphQLTypeReference($"{table.GraphQLName}ColumnFilterType")) { Name = "filter" },
+                    new QueryArgument<ListGraphType<StringGraphType>>() { Name = "sort" }),
                 ResolvedType = new ListGraphType(type),
                 Resolver = DbFieldResolver.Instance
             });

@@ -22,7 +22,7 @@ namespace GraphQLProxy
             var found = _table.index.TryGetValue(column, out int index);
             if (!found)
             {
-                var fullName = $"{context.FieldAst.Alias?.Name}+{context.FieldAst.Name}";
+                var fullName = $"{context.FieldAst.Alias?.Name ?? context.FieldAst.Name}+{context.FieldAst.Name}";
                 var keyFound = _table.index.TryGetValue("key_" + fullName, out int keyIndex);
                 if (!keyFound)
                     throw new Exception("join column not found.");

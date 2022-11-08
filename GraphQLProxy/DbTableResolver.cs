@@ -102,6 +102,10 @@ namespace GraphQLProxy
                 var joinColumnSql = string.Join(",", joinColumnList.Select(c => $"b.[{c}]"));
                 var wrap = $"SELECT a.[{onFields[0]}] [src_id], {joinColumnSql} FROM ({main}) a";
                 var joinText = $" INNER JOIN [{name.Replace("_join_", "")}] b ON a.[{onFields[0]}] = b.[{onFields[1]}]";
+                //if (join.Value.Field.Arguments!.Any(arg => arg.Name == "filter")) {
+                //    var filter = join.Value.Field.Arguments?.First(arg => arg.Name == "filter");
+                //    var filterValue = filter.GetPropertyValue(typeof(IDictionary<string, object?>));
+                //}
                 joins.Add(wrap + joinText);
             }
 

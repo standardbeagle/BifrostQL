@@ -29,7 +29,7 @@ namespace GraphQLProxy
                 AddField(new FieldType
                 {
                     Name = fieldName,
-                    ResolvedType = type,
+                    ResolvedType = type
                 });
             }
         }

@@ -69,13 +69,8 @@ namespace GraphQLProxy
             }
         }
 
-        public static string GetSingleFilter(KeyValuePair<string, object?> arg)
+        public static string GetSingleFilter(string? table, string field, string op, object? value)
         {
-            var obj = (Dictionary<string, object?>)arg.Value!;
-            var filterObj = obj.First();
-            var op = filterObj.Key;
-            var value = filterObj.Value;
-            var field = arg.Key;
             var rel = op switch
             {
                 "_eq" => "=",
@@ -111,8 +106,12 @@ namespace GraphQLProxy
                 rel = "IS NOT NULL";
                 val = "";
             }
-            string filter = $"[{field}] {rel} {val}";
-            return filter;
+            if (table == null)
+            {
+                string filter = $"[{field}] {rel} {val}";
+                return filter;
+            }
+            return $"[{table}].[{field}] {rel} {val}";
         }
     }
 }

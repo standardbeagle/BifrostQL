@@ -4,6 +4,7 @@ using GraphQLParser.AST;
 using GraphQLProxy.Model;
 using System.Data.SqlClient;
 using GraphQL.Types;
+using GraphQL.Validation.Complexity;
 
 namespace GraphQLProxy
 {
@@ -81,7 +82,9 @@ namespace GraphQLProxy
             {
                 filterText += " WHERE";
                 var colFilter = context.GetArgument<Dictionary<string, object?>>("filter");
-                filterText += $"{DbFilterType.GetSingleFilter(colFilter.First())}";
+                var columnName = colFilter.First().Key!;
+                var relation = ((Dictionary<string, object?>)colFilter.First().Value!).First();
+                filterText += $"{DbFilterType.GetSingleFilter(null, columnName, relation.Key, relation.Value)}";
             }
 
             var joinNames = new List<string>() { "base" };
@@ -102,11 +105,26 @@ namespace GraphQLProxy
                 var joinColumnSql = string.Join(",", joinColumnList.Select(c => $"b.[{c}]"));
                 var wrap = $"SELECT a.[{onFields[0]}] [src_id], {joinColumnSql} FROM ({main}) a";
                 var joinText = $" INNER JOIN [{name.Replace("_join_", "")}] b ON a.[{onFields[0]}] = b.[{onFields[1]}]";
-                //if (join.Value.Field.Arguments!.Any(arg => arg.Name == "filter")) {
-                //    var filter = join.Value.Field.Arguments?.First(arg => arg.Name == "filter");
-                //    var filterValue = filter.GetPropertyValue(typeof(IDictionary<string, object?>));
-                //}
-                joins.Add(wrap + joinText);
+                var joinFilterText = "";
+                if (join.Value.Field.Arguments!.Any(arg => arg.Name == "filter"))
+                {
+                    var filter = join.Value.Field.Arguments?.First(arg => arg.Name == "filter");
+                    var filterValue = filter!.Value as GraphQLObjectValue;
+                    var field = filterValue!.Fields!.First() as GraphQLObjectField;
+                    var relation = (field.Value as GraphQLObjectValue)?.Fields?.First();
+
+                    var filterType = join.Value.FieldType.Arguments?.First(arg => arg.Name == "filter").ResolvedType as InputObjectGraphType;
+                    var columnField = filterType!.GetField(field.Name);
+                    var filterFieldType = columnField!.ResolvedType as DbFilterType;
+                    var relationFieldType = filterFieldType!.GetField(relation!.Name);
+                    var relationType = relationFieldType!.ResolvedType as ScalarGraphType;
+                    var relationValue = relationType!.ParseLiteral(relation.Value);
+                    if (relation != null)
+                    {
+                        joinFilterText = " WHERE " + DbFilterType.GetSingleFilter("b", columnField.Name, relationFieldType.Name, relationValue);
+                    }
+                }
+                joins.Add(wrap + joinText + joinFilterText);
             }
 
             var columnSql = String.Join(",", fullColumnList.Select(n => $"[{n.name}] [{n.alias}]"));

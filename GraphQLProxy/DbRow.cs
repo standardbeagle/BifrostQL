@@ -17,29 +17,29 @@ namespace GraphQLProxy
                     case "int":
                     case "smallint":
                     case "tinyint":
-                        Field<int>(column.ColumnName).Resolve(DbFieldResolver.Instance);
+                        Field<int>(column.ColumnName).Resolve(DbJoinFieldResolver.Instance);
                         break;
                     case "decimal":
-                        Field<decimal>(column.ColumnName).Resolve(DbFieldResolver.Instance);
+                        Field<decimal>(column.ColumnName).Resolve(DbJoinFieldResolver.Instance);
                         break;
                     case "bigint":
-                        Field<BigInteger>(column.ColumnName).Resolve(DbFieldResolver.Instance);
+                        Field<BigInteger>(column.ColumnName).Resolve(DbJoinFieldResolver.Instance);
                         break;
                     case "float":
                     case "real":
-                        Field<double>(column.ColumnName).Resolve(DbFieldResolver.Instance);
+                        Field<double>(column.ColumnName).Resolve(DbJoinFieldResolver.Instance);
                         break;
                     case "datetime":
-                        Field<DateTime>(column.ColumnName).Resolve(DbFieldResolver.Instance);
+                        Field<DateTime>(column.ColumnName).Resolve(DbJoinFieldResolver.Instance);
                         break;
                     case "datetime2":
-                        Field<DateTime>(column.ColumnName).Resolve(DbFieldResolver.Instance);
+                        Field<DateTime>(column.ColumnName).Resolve(DbJoinFieldResolver.Instance);
                         break;
                     case "datetimeoffset":
-                        Field<DateTimeOffset>(column.ColumnName).Resolve(DbFieldResolver.Instance);
+                        Field<DateTimeOffset>(column.ColumnName).Resolve(DbJoinFieldResolver.Instance);
                         break;
                     case "bit":
-                        Field<bool>(column.ColumnName).Resolve(DbFieldResolver.Instance);
+                        Field<bool>(column.ColumnName).Resolve(DbJoinFieldResolver.Instance);
                         break;
                     case "varchar":
                     case "nvarchar":
@@ -50,7 +50,7 @@ namespace GraphQLProxy
                     case "text":
                     case "ntext":
                     default:
-                        Field<string>(column.ColumnName).Resolve(DbFieldResolver.Instance);
+                        Field<string>(column.ColumnName).Resolve(DbJoinFieldResolver.Instance);
                         break;
                 }
             }
@@ -67,9 +67,15 @@ namespace GraphQLProxy
                     new QueryArgument(new GraphQLTypeReference($"{table.GraphQLName}ColumnFilterType")) { Name = "filter" },
                     new QueryArgument<ListGraphType<StringGraphType>>() { Name = "sort" }),
                 ResolvedType = new ListGraphType(type),
-                Resolver = DbFieldResolver.Instance
+                Resolver = DbJoinFieldResolver.Instance
             });
-
+            //AddField(new FieldType
+            //{
+            //    Name = $"_single_{table.GraphQLName}",
+            //    Arguments = new QueryArguments(new QueryArgument<ListGraphType<StringGraphType>>() { Name = "on" }),
+            //    ResolvedType = type,
+            //    Resolver = DbJoinFieldResolver.Instance
+            //});
         }
     }
 

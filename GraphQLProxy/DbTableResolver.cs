@@ -5,6 +5,8 @@ using GraphQLProxy.Model;
 using System.Data.SqlClient;
 using GraphQL.Types;
 using GraphQL.Validation.Complexity;
+using static GraphQLProxy.DbTableResolver;
+using System.Drawing;
 
 namespace GraphQLProxy
 {
@@ -21,19 +23,14 @@ namespace GraphQLProxy
         {
             if (context.SubFields == null)
                 throw new ArgumentNullException(nameof(context) + ".SubFields");
-            Dictionary<string, (GraphQLField Field, FieldType FieldType)> subFields = context.SubFields;
-            List<string> columnList = GetColumnList(context.FieldAst.SelectionSet!);
 
-            var joinList = subFields
-                .Where(f => f.Value.FieldType.Name.StartsWith("_join"))
-                .ToList();
-
-            var (cmdText, resultNames) = GetSqlText(context, columnList, joinList);
+            var tableSqlData = TableSqlData.From(context);
+            var resultNames = tableSqlData.FullJoinNames.ToArray();
 
             using var conn = _dbConnFactory.GetConnection();
             await conn.OpenAsync();
 
-            var command = new SqlCommand(cmdText, conn);
+            var command = new SqlCommand(tableSqlData.ToSql(), conn);
             using var reader = await command.ExecuteReaderAsync();
             var results = new List<(Dictionary<string, int> index, List<object?[]> data, string name)>();
             var resultIndex = 0;
@@ -56,84 +53,216 @@ namespace GraphQLProxy
             return new ReaderEnum(results);
         }
 
-        private static List<string> GetColumnList(GraphQLSelectionSet selection)
+        public sealed class TableFilter
         {
-            return selection.Selections.Cast<GraphQLField>()
-                .Where(s => s.Name.StringValue.StartsWith("__") == false)
-                .Where(f => f.Name.StringValue.StartsWith("_join") == false)
-                .Select(f => f.Name.StringValue)
-                .Distinct()
-                .ToList();
+            public string? TableName { get; set; }
+            public string ColumnName { get; set; }
+            public string RelationName { get; set; }
+            public object? Value { get; set; }
+
+            public string ToSql(string? alias = null)
+            {
+                return DbFilterType.GetSingleFilter(alias ?? TableName, ColumnName, RelationName, Value);
+            }
         }
 
-        private static (string sql, string[] resultNames) GetSqlText(IResolveFieldContext context, List<string> columnList, List<KeyValuePair<string, (GraphQLField Field, FieldType FieldType)>> joinList)
+        public sealed class TableJoin
         {
-            var orderby = " ORDER BY (SELECT NULL)";
-            if (context.HasArgument("sort"))
-            {
-                var order = context.GetArgument<string[]>("sort");
-                orderby = " ORDER BY " + String.Join(", ", order);
-            }
-            var limit = context.HasArgument("limit") ? $" FETCH NEXT {context.GetArgument<int>("limit")} ROWS ONLY" : "";
-            var offset = context.HasArgument("offset") ? $" OFFSET {context.GetArgument<int>("offset")} ROWS" : " OFFSET 0 ROWS";
+            public string Name { get; set; } = null!;
+            public string? Alias { get; set; } = null!;
+            public string JoinName => $"{Alias ?? Name}+{Name}";
+            public string ParentColumn { get; set; } = null!;
+            public string ChildColumn { get; set; } = null!;
+            public JoinType JoinType { get; set; }
+            public TableSqlData ParentTable { get; set; } = null!;
+            public TableSqlData ChildTable { get; set; } = null!;
 
-            var filterText = "";
-            if (context.HasArgument("filter"))
+            public string GetParentSql()
             {
-                filterText += " WHERE";
-                var colFilter = context.GetArgument<Dictionary<string, object?>>("filter");
-                var columnName = colFilter.First().Key!;
-                var relation = ((Dictionary<string, object?>)colFilter.First().Value!).First();
-                filterText += $"{DbFilterType.GetSingleFilter(null, columnName, relation.Key, relation.Value)}";
+                if (ParentTable.ParentJoin == null)
+                    return $"SELECT DISTINCT [{ParentColumn}] AS JoinId FROM [{ParentTable.TableName}]" + ParentTable.GetFilterSql();
+                var baseSql = ParentTable.ParentJoin.GetParentSql();
+                return $"SELECT DISTINCT a.[{ParentColumn}] AS JoinId FROM [{ParentTable.TableName}] a INNER JOIN ({baseSql}) b ON b.JoinId=a.[{ParentTable.ParentJoin.ChildColumn}]" + ParentTable.GetFilterSql("a");
             }
 
-            var joinNames = new List<string>() { "base" };
-            var joins = new List<string>();
-            var fullColumnList = new List<(string name, string alias)>();
-            fullColumnList.AddRange(columnList.Select(n => (n, n)));
-            foreach (var join in joinList)
+            public string GetSql()
             {
-                string name = join.Value.FieldType.Name;
-                var joinName = $"{join.Key}+{name}";
-                joinNames.Add(joinName);
-                var on = (join.Value.Field.Arguments!).FirstOrDefault(arg => arg.Name == "on");
+                var main = GetParentSql();
+                var joinColumnSql = string.Join(",", ChildTable.FullColumnNames.Select(c => $"b.[{c.name}] AS [{c.alias}]"));
+
+                var wrap = $"SELECT a.[JoinId] [src_id], {joinColumnSql} FROM ({main}) a";
+                wrap += $" INNER JOIN [{ChildTable.TableName}] b ON a.[JoinId] = b.[{ChildColumn}]";
+
+                var baseSql = wrap + ChildTable.GetFilterSql();
+                if (ChildTable.Joins.Any() == false)
+                    return baseSql;
+                return baseSql + ";" + String.Join(";", ChildTable.Joins.Select(j => j.GetSql()));
+            }
+        }
+
+        public enum JoinType
+        {
+            Join = 0,
+            Single = 1,
+        }
+
+        public sealed class TableSqlData
+        {
+            public TableSqlData? Parent => ParentJoin?.ParentTable;
+            public TableJoin? ParentJoin { get; set; }
+            public string TableName { get; set; } = "";
+            public List<string> ColumnNames { get; set; } = new List<string>();
+            public List<string> Sort { get; set; } = new List<string>();
+            public TableFilter? Filter { get; set; }
+            public int? Limit { get; set; }
+            public int? Offset { get; set; }
+
+            public List<TableJoin> Joins { get; set; } = new List<TableJoin>();
+
+            public IEnumerable<string> FullJoinNames => new[] { "base" }.Concat(Joins.SelectMany(j => j.ChildTable.FullJoinNames.Select(n => $"{j.JoinName}+{n}")));
+
+            public IEnumerable<(string name, string alias)> FullColumnNames => ColumnNames.Select(c => (c, c))
+                .Concat(Joins.Select(j => (j.ParentColumn, "key_" + j.JoinName)));
+
+            public string GetFilterSql(string? alias = null)
+            {
+                if (Filter == null) return "";
+                return " WHERE " + Filter.ToSql(alias);
+            }
+
+            public string ToSql()
+            {
+                var columnSql = String.Join(",", FullColumnNames.Select(n => $"[{n.name}] [{n.alias}]"));
+                var cmdText = $"SELECT {columnSql} FROM [{TableName}]";
+
+                var orderby = " ORDER BY (SELECT NULL)";
+                if (Sort.Any())
+                {
+                    orderby = " ORDER BY " + String.Join(", ", Sort);
+                }
+                var limit = Limit != null ? $" FETCH NEXT {Limit} ROWS ONLY" : "";
+                var offset = Offset != null ? $" OFFSET {Offset} ROWS" : " OFFSET 0 ROWS";
+
+                var baseSql = cmdText + GetFilterSql() + orderby + offset + limit + ";";
+
+                var joinSql = Joins.Select(tableJoin => tableJoin.GetSql());
+
+                return baseSql + string.Join(";", joinSql);
+            }
+            public static TableSqlData From(IResolveFieldContext context)
+            {
+                var tableSqlData = GetBaseTable(context);
+
+                var joinList = GetJoinList(context.FieldAst, context.FieldDefinition)
+                    .Select(join => GetTableJoin(join, tableSqlData));
+                tableSqlData.Joins.AddRange(joinList);
+                return tableSqlData;
+            }
+
+            private static TableJoin GetTableJoin((GraphQLField Field, FieldType FieldType) join, TableSqlData tableSqlData)
+            {
+                var on = (join.Field.Arguments!).FirstOrDefault(arg => arg.Name == "on");
                 var onFields = ((GraphQLListValue)on!.Value).Values!.Select(v => ((GraphQLStringValue)v).Value.ToString()).ToArray();
 
-                fullColumnList.Add((onFields[0], "key_" + joinName));
-                var main = $"SELECT [{onFields[0]}] FROM [{context.FieldDefinition.Name}]" + filterText;
-                var joinColumnList = GetColumnList(join.Value.Field.SelectionSet!);
-                var joinColumnSql = string.Join(",", joinColumnList.Select(c => $"b.[{c}]"));
-                var wrap = $"SELECT a.[{onFields[0]}] [src_id], {joinColumnSql} FROM ({main}) a";
-                var joinText = $" INNER JOIN [{name.Replace("_join_", "")}] b ON a.[{onFields[0]}] = b.[{onFields[1]}]";
-                var joinFilterText = "";
-                if (join.Value.Field.Arguments!.Any(arg => arg.Name == "filter"))
+                var tableJoin = new TableJoin
                 {
-                    var filter = join.Value.Field.Arguments?.First(arg => arg.Name == "filter");
-                    var filterValue = filter!.Value as GraphQLObjectValue;
-                    var field = filterValue!.Fields!.First() as GraphQLObjectField;
-                    var relation = (field.Value as GraphQLObjectValue)?.Fields?.First();
-
-                    var filterType = join.Value.FieldType.Arguments?.First(arg => arg.Name == "filter").ResolvedType as InputObjectGraphType;
-                    var columnField = filterType!.GetField(field.Name);
-                    var filterFieldType = columnField!.ResolvedType as DbFilterType;
-                    var relationFieldType = filterFieldType!.GetField(relation!.Name);
-                    var relationType = relationFieldType!.ResolvedType as ScalarGraphType;
-                    var relationValue = relationType!.ParseLiteral(relation.Value);
-                    if (relation != null)
+                    Name = join.Field.Name.StringValue,
+                    Alias = join.Field.Alias?.Name.StringValue,
+                    ParentColumn = onFields[0],
+                    ChildColumn = onFields[1],
+                    ParentTable = tableSqlData,
+                    JoinType = join.Field.Name.StringValue.StartsWith("_join_") ? JoinType.Join : JoinType.Single,
+                    ChildTable = new TableSqlData
                     {
-                        joinFilterText = " WHERE " + DbFilterType.GetSingleFilter("b", columnField.Name, relationFieldType.Name, relationValue);
+                        TableName = join.Field.Name.StringValue.Replace("_join_", "").Replace("_single_", ""),
+                        ColumnNames = GetColumnList(join.Field.SelectionSet!),
+                        Filter = GetTableFilter(join, "b"),
                     }
-                }
-                joins.Add(wrap + joinText + joinFilterText);
+                };
+                tableJoin.ChildTable.ParentJoin = tableJoin;
+
+                var joins = GetJoinList(join.Field, join.FieldType).Select(j => GetTableJoin(j, tableJoin.ChildTable));
+                tableJoin.ChildTable.Joins.AddRange(joins);
+
+                return tableJoin;
             }
 
-            var columnSql = String.Join(",", fullColumnList.Select(n => $"[{n.name}] [{n.alias}]"));
-            var cmdText = $"SELECT {columnSql} FROM [{context.FieldDefinition.Name}]";
+            private static IEnumerable<(GraphQLField Field, FieldType FieldType)> GetJoinList(GraphQLField field, FieldType fieldType)
+            {
+                var resolvedType = fieldType.ResolvedType;
+                if (resolvedType is ListGraphType listType) resolvedType = listType.ResolvedType;
+                if (resolvedType == null || resolvedType is not ObjectGraphType) throw new ArgumentOutOfRangeException(nameof(fieldType));
+                var objectType = (ObjectGraphType)resolvedType;
+                return GetJoinList(field.SelectionSet!).Select(j => (j, objectType.GetField(j.Name)!)).ToArray();
+            }
 
-            var result = cmdText + filterText + orderby + offset + limit + ";" + String.Join(";", joins);
+            private static TableSqlData GetBaseTable(IResolveFieldContext context)
+            {
+                string[] order = Array.Empty<string>();
+                if (context.HasArgument("sort"))
+                {
+                    order = context.GetArgument<string[]>("sort");
+                }
 
-            return (result, joinNames.ToArray());
+                List<string> columnList = GetColumnList(context.FieldAst.SelectionSet!);
+                var tableSqlData = new TableSqlData
+                {
+                    TableName = context.FieldDefinition.Name,
+                    ColumnNames = columnList,
+                    Sort = order.ToList(),
+                    Filter = GetTableFilter((Field: context.FieldAst, FieldType: context.FieldDefinition), null),
+                    Limit = context.HasArgument("limit") ? context.GetArgument<int>("limit") : null,
+                    Offset = context.HasArgument("offset") ? context.GetArgument<int>("offset") : null,
+                };
+                return tableSqlData;
+            }
+
+            private static List<string> GetColumnList(GraphQLSelectionSet selection)
+            {
+                return selection.Selections.Cast<GraphQLField>()
+                    .Where(s => s.Name.StringValue.StartsWith("__") == false)
+                    .Where(f => f.Name.StringValue.StartsWith("_join") == false)
+                    .Where(f => f.Name.StringValue.StartsWith("_single") == false)
+                    .Select(f => f.Name.StringValue)
+                    .Distinct()
+                    .ToList();
+            }
+            private static List<GraphQLField> GetJoinList(GraphQLSelectionSet selection)
+            {
+                return selection.Selections.Cast<GraphQLField>()
+                    .Where(f => f.Name.StringValue.StartsWith("_join") == true || f.Name.StringValue.StartsWith("_single") == true)
+                    .ToList();
+            }
+
+            private static TableFilter? GetTableFilter((GraphQLField Field, FieldType FieldType) join, string? tableName)
+            {
+                if ((join.Field.Arguments?.Any(arg => arg.Name == "filter") ?? false) == false)
+                    return null;
+
+                var filter = join.Field.Arguments?.First(arg => arg.Name == "filter");
+                var filterValue = filter!.Value as GraphQLObjectValue;
+                var field = filterValue!.Fields!.First() as GraphQLObjectField;
+                var relation = (field.Value as GraphQLObjectValue)?.Fields?.First();
+
+                var filterType = join.FieldType.Arguments?.First(arg => arg.Name == "filter").ResolvedType as InputObjectGraphType;
+                var columnField = filterType!.GetField(field.Name);
+                var filterFieldType = columnField!.ResolvedType as DbFilterType;
+                var relationFieldType = filterFieldType!.GetField(relation!.Name);
+                var relationType = relationFieldType!.ResolvedType as ScalarGraphType;
+                var relationValue = relationType!.ParseLiteral(relation.Value);
+                if (relation != null)
+                {
+                    return new TableFilter
+                    {
+                        TableName = tableName,
+                        ColumnName = columnField.Name,
+                        RelationName = relationFieldType.Name,
+                        Value = relationValue,
+                    };
+                }
+
+                return null;
+            }
         }
     }
-
 }

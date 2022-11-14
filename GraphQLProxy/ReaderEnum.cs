@@ -31,10 +31,24 @@ namespace GraphQLProxy
                 if (key == null)
                     throw new Exception("key value is null");
 
-                var tableData = _tableIndex[fullName];
-                return ValueTask.FromResult<object?>(new SubTableEnumerable(key, column, tableData));
+                var tableData = _tableIndex[fullName + "+base"];
+                if (context.FieldAst.Name.StringValue.StartsWith("_join_"))
+                {
+                    return ValueTask.FromResult<object?>(new SubTableEnumerable(this, key, fullName, column, tableData));
+                }
+                else
+                {
+                    var srcIdIndex = tableData.index["src_id"];
+                    var data = tableData.data.First(r => Object.Equals(r[srcIdIndex], key));
+                    return ValueTask.FromResult<object?>((tableData.index, data: data));
+                }
             }
             return ValueTask.FromResult<object?>(_table.data[row][index]);
+        }
+
+        public (Dictionary<string, int> index, List<object?[]> data) GetTableData(string name)
+        {
+            return _tableIndex[name];
         }
 
         public IEnumerator<object?> GetEnumerator()
@@ -96,9 +110,13 @@ namespace GraphQLProxy
         private readonly (Dictionary<string, int> index, List<object?[]> data) _table;
         private readonly List<object?[]> _data;
         private readonly int _keyIndex;
-        public SubTableEnumerable(object key, string column, (Dictionary<string, int> index, List<object?[]> data) @table)
+        private readonly string _tableName;
+        private readonly ReaderEnum _root;
+        public SubTableEnumerable(ReaderEnum root, object key, string tableName, string column, (Dictionary<string, int> index, List<object?[]> data) @table)
         {
+            _root = root;
             _table = table;
+            _tableName = tableName;
             _keyIndex = table.index["src_id"];
             _data = table.data.Where(r => Object.Equals(r[_keyIndex], key)).ToList();
         }
@@ -116,6 +134,22 @@ namespace GraphQLProxy
         {
             var column = context.FieldDefinition.Name;
             var found = _table.index.TryGetValue(column, out int index);
+            if (!found)
+            {
+                var fieldName = $"{context.FieldAst.Alias?.Name ?? context.FieldAst.Name}+{context.FieldAst.Name}";
+                var keyFound = _table.index.TryGetValue("key_" + fieldName, out int keyIndex);
+                if (!keyFound)
+                    throw new Exception("join column not found.");
+
+                var key = _table.data[row][keyIndex];
+                if (key == null)
+                    throw new Exception("key value is null");
+
+                var fullTableName = _tableName + "+" + fieldName;
+                var tableData = _root.GetTableData(fullTableName + "+base");
+                return ValueTask.FromResult<object?>(new SubTableEnumerable(_root, key, fullTableName, column, tableData));
+            }
+
             return ValueTask.FromResult<object?>(_data[row][index]);
         }
 
@@ -123,7 +157,7 @@ namespace GraphQLProxy
         {
             private readonly SubTableEnumerable _enum;
             private int _index = -1;
-            public SubTableEnumerator(SubTableEnumerable @enum) 
+            public SubTableEnumerator(SubTableEnumerable @enum)
             {
                 _enum = @enum;
                 _index = -1;

@@ -4,12 +4,12 @@ using static GraphQLProxy.ReaderEnum;
 
 namespace GraphQLProxy
 {
-    public class DbFieldResolver : IFieldResolver
+    public sealed class DbJoinFieldResolver : IFieldResolver
     {
-        private static DbFieldResolver _instance = null!;
-        public static DbFieldResolver Instance => _instance ??= new DbFieldResolver();
+        private static DbJoinFieldResolver _instance = null!;
+        public static DbJoinFieldResolver Instance => _instance ??= new DbJoinFieldResolver();
 
-        private DbFieldResolver()
+        private DbJoinFieldResolver()
         {
 
         }

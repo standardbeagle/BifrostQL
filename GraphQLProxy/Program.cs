@@ -1,4 +1,6 @@
 using GraphQL;
+using GraphQL.DataLoader;
+using GraphQL.Types;
 using GraphQLProxy;
 using GraphQLProxy.Model;
 
@@ -6,14 +8,18 @@ var builder = WebApplication.CreateBuilder(args);
 var loader = new DbModelLoader(builder.Configuration);
 var model = await loader.LoadAsync();
 var connFactory = new DbConnFactory(builder.Configuration.GetConnectionString("ConnStr"));
-var dbSchema = new DbSchema(model, connFactory);
+//var dbSchema = new DbSchema(model, connFactory);
 
-//builder.Services.AddSingleton<IDbModel>(model);
-//builder.Services.AddScoped<IDbConnFactory, DbConnFactory>();
+builder.Services.AddSingleton<IDbModel>(model);
+builder.Services.AddSingleton<IDbConnFactory>(connFactory);
+builder.Services.AddSingleton<DbDatabaseQuery>();
+builder.Services.AddSingleton<DbDatabaseMutation>();
+builder.Services.AddSingleton<ISchema, DbSchema>();
 
 builder.Services.AddGraphQL(b => b
-    .AddSchema(dbSchema)
-    .AddSystemTextJson());
+    .AddSchema<DbSchema>()
+    .AddSystemTextJson()
+    .AddDataLoader());
 
 var app = builder.Build();
 

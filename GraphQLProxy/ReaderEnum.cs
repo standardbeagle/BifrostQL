@@ -1,37 +1,77 @@
 ﻿using GraphQL;
+using GraphQL.Reflection;
+using GraphQLProxy.Model;
+using Microsoft.AspNetCore.Http;
 using System.Collections;
+using System.Data.SqlClient;
+using System.Runtime.CompilerServices;
+using static GraphQLProxy.DbTableResolver;
 
 namespace GraphQLProxy
 {
     public class ReaderEnum : IEnumerable<object?>
     {
-        private readonly List<(Dictionary<string, int> index, List<object?[]> data, string name)> _tables;
-        private (Dictionary<string, int> index, List<object?[]> data, string name) _table;
-        private readonly Dictionary<string, (Dictionary<string, int> index, List<object?[]> data)> _tableIndex;
+        private readonly Dictionary<string, (Dictionary<string, int> index, List<object?[]> data)> _tables;
+        private readonly TableSqlData _tableSql;
 
-        public ReaderEnum(List<(Dictionary<string, int> index, List<object?[]> data, string name)> tables)
+        public ReaderEnum(TableSqlData tableSqlData, IDbConnFactory connFactory)
         {
-            _tables = tables;
-            _tableIndex = tables.ToDictionary(t => t.name, t => (t.index, t.data), StringComparer.OrdinalIgnoreCase);
-            _table = _tables.First(t => t.name == "base");
+            _tableSql = tableSqlData;
+            _tables = LoadData(connFactory);
+        }
+
+        private Dictionary<string, (Dictionary<string, int> index, List<object?[]> data)> LoadData(IDbConnFactory connFactory)
+        {
+            var sqlList = _tableSql.ToSql();
+            var resultNames = sqlList.Keys.ToArray();
+            string sql = string.Join(";", sqlList.Values);
+
+            using var conn = connFactory.GetConnection();
+            conn.Open();
+            var command = new SqlCommand(sql, conn);
+            using var reader = command.ExecuteReader();
+            var results = new Dictionary<string, (Dictionary<string, int> index, List<object?[]> data)>();
+            var resultIndex = 0;
+            do
+            {
+                var resultName = resultNames[resultIndex++];
+                var index = Enumerable.Range(0, reader.FieldCount).Select(i => (i, reader.GetName(i))).ToDictionary(x => x.Item2, x => x.i, StringComparer.OrdinalIgnoreCase);
+                var result = new List<object?[]>();
+                while (reader.Read())
+                {
+                    var row = new object?[reader.FieldCount];
+                    reader.GetValues(row);
+                    result.Add(row);
+                }
+                if (result.Count == 0)
+                    results.Add(resultName, (index, new List<object?[]>()));
+                else
+                    results.Add(resultName, (index, result));
+            } while (reader.NextResult());
+            return results;
         }
 
         public ValueTask<object?> Get(int row, IResolveFieldContext context)
         {
+            var tables = _tables;
+            var table = tables["base"];
             var column = context.FieldDefinition.Name;
-            var found = _table.index.TryGetValue(column, out int index);
+            var found = table.index.TryGetValue(column, out int index);
             if (!found)
             {
-                var fullName = $"{context.FieldAst.Alias?.Name ?? context.FieldAst.Name}+{context.FieldAst.Name}";
-                var keyFound = _table.index.TryGetValue("key_" + fullName, out int keyIndex);
+                var join = _tableSql.GetJoin(context.FieldAst.Alias?.Name?.StringValue, context.FieldAst.Name.StringValue);
+                if (join == null)
+                    throw new Exception("join not found");
+                var keyFound = table.index.TryGetValue(join.ParentColumn, out int keyIndex);
                 if (!keyFound)
                     throw new Exception("join column not found.");
 
-                var key = _table.data[row][keyIndex];
+                var key = table.data[row][keyIndex];
                 if (key == null)
                     throw new Exception("key value is null");
 
-                var tableData = _tableIndex[fullName + "+base"];
+                var fullName = $"{context.FieldAst.Alias?.Name ?? context.FieldAst.Name}+{context.FieldAst.Name}";
+                var tableData = tables[fullName];
                 if (context.FieldAst.Name.StringValue.StartsWith("_join_"))
                 {
                     return ValueTask.FromResult<object?>(new SubTableEnumerable(this, key, fullName, column, tableData));
@@ -43,12 +83,12 @@ namespace GraphQLProxy
                     return ValueTask.FromResult<object?>((tableData.index, data: data));
                 }
             }
-            return ValueTask.FromResult<object?>(_table.data[row][index]);
+            return ValueTask.FromResult<object?>(table.data[row][index]);
         }
 
         public (Dictionary<string, int> index, List<object?[]> data) GetTableData(string name)
         {
-            return _tableIndex[name];
+            return _tables[name];
         }
 
         public IEnumerator<object?> GetEnumerator()
@@ -65,10 +105,12 @@ namespace GraphQLProxy
         {
             private int _index = -1;
             private ReaderEnum _enum;
+            private readonly int _count;
 
             public ReaderEnumerator(ReaderEnum @enum)
             {
                 _enum = @enum;
+                _count = @enum._tables["base"].data.Count;
             }
 
             public object? Current => new ReaderCurrent(_index, (i, context) => _enum.Get(i, context));
@@ -79,7 +121,7 @@ namespace GraphQLProxy
 
             public bool MoveNext()
             {
-                return ++_index < _enum._table.data.Count;
+                return ++_index < _count;
             }
 
             public void Reset()

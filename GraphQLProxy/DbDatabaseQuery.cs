@@ -1,4 +1,5 @@
 ﻿using GraphQL;
+using GraphQL.DataLoader;
 using GraphQL.Execution;
 using GraphQL.MicrosoftDI;
 using GraphQL.Resolvers;
@@ -15,13 +16,16 @@ using static GraphQLProxy.ReaderEnum;
 
 namespace GraphQLProxy
 {
-    public class DbDatabase : ObjectGraphType
+    public class DbDatabaseQuery : ObjectGraphType
     {
         private readonly IDbConnFactory _dbConnFactory;
-        public DbDatabase(IReadOnlyCollection<TableDto> tables, IDbConnFactory connFactory)
+        public DbDatabaseQuery(IDbModel model, IDbConnFactory connFactory, IDataLoaderContextAccessor dlContext)
         {
             Name = "database";
             _dbConnFactory = connFactory;
+            var tables = model.Tables;
+
+            var context = dlContext.Context;
 
             var rowTypes = tables
                 .Select(t => (t.TableName, new DbRow(t)))
@@ -49,7 +53,7 @@ namespace GraphQLProxy
                     Name = table.GraphQLName,
                     Arguments = new QueryArguments(filterArgs),
                     ResolvedType = new ListGraphType(rowTypes[table.TableName]),
-                    Resolver = new DbTableResolver(_dbConnFactory, table),
+                    Resolver = new DbTableResolver(_dbConnFactory),
                 });
             }
         }

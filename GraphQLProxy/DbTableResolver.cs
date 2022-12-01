@@ -7,57 +7,39 @@ using GraphQL.Types;
 using GraphQL.Validation.Complexity;
 using static GraphQLProxy.DbTableResolver;
 using System.Drawing;
+using GraphQL.DataLoader;
 
 namespace GraphQLProxy
 {
     public class DbTableResolver : IFieldResolver
     {
         private readonly IDbConnFactory _dbConnFactory;
-        private readonly TableDto _table;
-        public DbTableResolver(IDbConnFactory connFactory, TableDto table)
+        public DbTableResolver(IDbConnFactory connFactory)
         {
             _dbConnFactory = connFactory;
-            _table = table;
         }
-        public async ValueTask<object?> ResolveAsync(IResolveFieldContext context)
+        public ValueTask<object?> ResolveAsync(IResolveFieldContext context)
         {
             if (context.SubFields == null)
                 throw new ArgumentNullException(nameof(context) + ".SubFields");
 
-            var tableSqlData = TableSqlData.From(context);
-            var resultNames = tableSqlData.FullJoinNames.ToArray();
+            var visitor = new SqlVisitor();
+            var sqlContext = new SqlContext() { Variables = context.Variables};
+            visitor.VisitAsync(context.Document, sqlContext).AsTask().Wait();
 
-            using var conn = _dbConnFactory.GetConnection();
-            await conn.OpenAsync();
+            var testData = sqlContext.GetFinalTables();
 
-            var command = new SqlCommand(tableSqlData.ToSql(), conn);
-            using var reader = await command.ExecuteReaderAsync();
-            var results = new List<(Dictionary<string, int> index, List<object?[]> data, string name)>();
-            var resultIndex = 0;
-            do
-            {
-                var resultName = resultNames[resultIndex++];
-                var index = Enumerable.Range(0, reader.FieldCount).Select(i => (i, reader.GetName(i))).ToDictionary(x => x.Item2, x => x.i, StringComparer.OrdinalIgnoreCase);
-                var result = new List<object?[]>();
-                while (await reader.ReadAsync())
-                {
-                    var row = new object?[reader.FieldCount];
-                    reader.GetValues(row);
-                    result.Add(row);
-                }
-                if (result.Count == 0)
-                    results.Add((index, new List<object?[]>(), resultName));
-                else
-                    results.Add((index, result, resultName));
-            } while (await reader.NextResultAsync());
-            return new ReaderEnum(results);
+            //var tableSqlData = TableSqlData.From(context);
+            var tableSqlData = testData[0];
+            var resultNames = tableSqlData.AllJoinNames.ToArray();
+            return ValueTask.FromResult<object?>(new ReaderEnum(tableSqlData, _dbConnFactory));
         }
 
         public sealed class TableFilter
         {
             public string? TableName { get; set; }
-            public string ColumnName { get; set; }
-            public string RelationName { get; set; }
+            public string ColumnName { get; set; } = null!;
+            public string RelationName { get; set; } = null!;
             public object? Value { get; set; }
 
             public string ToSql(string? alias = null)
@@ -98,12 +80,24 @@ namespace GraphQLProxy
                     return baseSql;
                 return baseSql + ";" + String.Join(";", ChildTable.Joins.Select(j => j.GetSql()));
             }
+
+            public override string ToString()
+            {
+                return $"{JoinName}";
+            }
         }
 
         public enum JoinType
         {
             Join = 0,
             Single = 1,
+        }
+
+        public sealed class FragmentSpread
+        {
+            public string FragmentName { get; init; } = null!;
+            public TableSqlData? Table { get; set; }
+
         }
 
         public sealed class TableSqlData
@@ -113,16 +107,22 @@ namespace GraphQLProxy
             public string TableName { get; set; } = "";
             public List<string> ColumnNames { get; set; } = new List<string>();
             public List<string> Sort { get; set; } = new List<string>();
+            public List<FragmentSpread> FragmentSpreads { get; set; } = new List<FragmentSpread>();
             public TableFilter? Filter { get; set; }
             public int? Limit { get; set; }
             public int? Offset { get; set; }
+            public bool IsFragment { get; set; }
 
             public List<TableJoin> Joins { get; set; } = new List<TableJoin>();
+            private IEnumerable<TableJoin> RecuseJoins => Joins.Concat(Joins.SelectMany(j => j.ChildTable.RecuseJoins));
 
-            public IEnumerable<string> FullJoinNames => new[] { "base" }.Concat(Joins.SelectMany(j => j.ChildTable.FullJoinNames.Select(n => $"{j.JoinName}+{n}")));
+            public IEnumerable<string> AllJoinNames => new[] { "base" }
+            .Concat(Joins.SelectMany(j => j.ChildTable.AllJoinNames.Select(n => $"{j.JoinName}+{n}")));
 
-            public IEnumerable<(string name, string alias)> FullColumnNames => ColumnNames.Select(c => (c, c))
-                .Concat(Joins.Select(j => (j.ParentColumn, "key_" + j.JoinName)));
+            public IEnumerable<(string name, string alias)> FullColumnNames => 
+                ColumnNames.Select(c => (c, c))
+                .Concat(Joins.Select(j => (j.ParentColumn, j.ParentColumn)))
+                .Distinct();
 
             public string GetFilterSql(string? alias = null)
             {
@@ -130,7 +130,12 @@ namespace GraphQLProxy
                 return " WHERE " + Filter.ToSql(alias);
             }
 
-            public string ToSql()
+            public TableJoin GetJoin(string? alias, string name)
+            {
+                return RecuseJoins.First(j => j.Alias == alias && j.Name == name);
+            }
+
+            public Dictionary<string, string> ToSql()
             {
                 var columnSql = String.Join(",", FullColumnNames.Select(n => $"[{n.name}] [{n.alias}]"));
                 var cmdText = $"SELECT {columnSql} FROM [{TableName}]";
@@ -144,124 +149,60 @@ namespace GraphQLProxy
                 var offset = Offset != null ? $" OFFSET {Offset} ROWS" : " OFFSET 0 ROWS";
 
                 var baseSql = cmdText + GetFilterSql() + orderby + offset + limit + ";";
-
-                var joinSql = Joins.Select(tableJoin => tableJoin.GetSql());
-
-                return baseSql + string.Join(";", joinSql);
-            }
-            public static TableSqlData From(IResolveFieldContext context)
-            {
-                var tableSqlData = GetBaseTable(context);
-
-                var joinList = GetJoinList(context.FieldAst, context.FieldDefinition)
-                    .Select(join => GetTableJoin(join, tableSqlData));
-                tableSqlData.Joins.AddRange(joinList);
-                return tableSqlData;
-            }
-
-            private static TableJoin GetTableJoin((GraphQLField Field, FieldType FieldType) join, TableSqlData tableSqlData)
-            {
-                var on = (join.Field.Arguments!).FirstOrDefault(arg => arg.Name == "on");
-                var onFields = ((GraphQLListValue)on!.Value).Values!.Select(v => ((GraphQLStringValue)v).Value.ToString()).ToArray();
-
-                var tableJoin = new TableJoin
+                var result = new Dictionary<string, string>();
+                result.Add("base", baseSql);
+                foreach(var join in Joins)
                 {
-                    Name = join.Field.Name.StringValue,
-                    Alias = join.Field.Alias?.Name.StringValue,
-                    ParentColumn = onFields[0],
-                    ChildColumn = onFields[1],
-                    ParentTable = tableSqlData,
-                    JoinType = join.Field.Name.StringValue.StartsWith("_join_") ? JoinType.Join : JoinType.Single,
-                    ChildTable = new TableSqlData
-                    {
-                        TableName = join.Field.Name.StringValue.Replace("_join_", "").Replace("_single_", ""),
-                        ColumnNames = GetColumnList(join.Field.SelectionSet!),
-                        Filter = GetTableFilter(join, "b"),
-                    }
-                };
-                tableJoin.ChildTable.ParentJoin = tableJoin;
-
-                var joins = GetJoinList(join.Field, join.FieldType).Select(j => GetTableJoin(j, tableJoin.ChildTable));
-                tableJoin.ChildTable.Joins.AddRange(joins);
-
-                return tableJoin;
+                    result.Add(join.JoinName, join.GetSql());
+                }
+                return result;
             }
 
-            private static IEnumerable<(GraphQLField Field, FieldType FieldType)> GetJoinList(GraphQLField field, FieldType fieldType)
+            public override string ToString()
             {
-                var resolvedType = fieldType.ResolvedType;
-                if (resolvedType is ListGraphType listType) resolvedType = listType.ResolvedType;
-                if (resolvedType == null || resolvedType is not ObjectGraphType) throw new ArgumentOutOfRangeException(nameof(fieldType));
-                var objectType = (ObjectGraphType)resolvedType;
-                return GetJoinList(field.SelectionSet!).Select(j => (j, objectType.GetField(j.Name)!)).ToArray();
+                return $"{TableName}";
             }
 
-            private static TableSqlData GetBaseTable(IResolveFieldContext context)
+            public Action<object?>? GetArgumentSetter(string argumentName)
             {
-                string[] order = Array.Empty<string>();
-                if (context.HasArgument("sort"))
+                switch (argumentName)
                 {
-                    order = context.GetArgument<string[]>("sort");
+                    case "filter":
+                        return value =>
+                        {
+                            var columnRow = (value as Dictionary<string, object?>)?.FirstOrDefault();
+                            if (columnRow == null) return;
+                            var operationRow = (columnRow?.Value as Dictionary<string, object?>)?.FirstOrDefault();
+                            if (operationRow == null) return;
+                            Filter = new TableFilter
+                            {
+                                ColumnName = columnRow?.Key!,
+                                RelationName = operationRow?.Key!,
+                                Value = operationRow?.Value
+                            };
+
+                        };
+                    case "sort":
+                        return value => Sort.AddRange((value as List<object?>)?.Cast<string>() ?? Array.Empty<string>());
+                    case "limit":
+                        return value => Limit = value as int?;
+                    case "offset":
+                        return value => Offset = value as int?;
+                    case "on":
+                        return value =>
+                        {
+                            var columns = (value as List<object?>)?.Cast<string>()?.ToArray() ?? Array.Empty<string>();
+                            if (columns.Length != 2)
+                                throw new ArgumentException("on joins only support two columns");
+                            if (ParentJoin == null)
+                                throw new ArgumentException("Parent Join cannot be null for 'on' argument");
+                            ParentJoin.ParentColumn = columns[0];
+                            ParentJoin.ChildColumn = columns[1];
+                        };
+                    default:
+                        return value => { };
                 }
 
-                List<string> columnList = GetColumnList(context.FieldAst.SelectionSet!);
-                var tableSqlData = new TableSqlData
-                {
-                    TableName = context.FieldDefinition.Name,
-                    ColumnNames = columnList,
-                    Sort = order.ToList(),
-                    Filter = GetTableFilter((Field: context.FieldAst, FieldType: context.FieldDefinition), null),
-                    Limit = context.HasArgument("limit") ? context.GetArgument<int>("limit") : null,
-                    Offset = context.HasArgument("offset") ? context.GetArgument<int>("offset") : null,
-                };
-                return tableSqlData;
-            }
-
-            private static List<string> GetColumnList(GraphQLSelectionSet selection)
-            {
-                return selection.Selections.Cast<GraphQLField>()
-                    .Where(s => s.Name.StringValue.StartsWith("__") == false)
-                    .Where(f => f.Name.StringValue.StartsWith("_join") == false)
-                    .Where(f => f.Name.StringValue.StartsWith("_single") == false)
-                    .Select(f => f.Name.StringValue)
-                    .Distinct()
-                    .ToList();
-            }
-            private static List<GraphQLField> GetJoinList(GraphQLSelectionSet selection)
-            {
-                return selection.Selections.Cast<GraphQLField>()
-                    .Where(f => f.Name.StringValue.StartsWith("_join") == true || f.Name.StringValue.StartsWith("_single") == true)
-                    .ToList();
-            }
-
-            private static TableFilter? GetTableFilter((GraphQLField Field, FieldType FieldType) join, string? tableName)
-            {
-                if ((join.Field.Arguments?.Any(arg => arg.Name == "filter") ?? false) == false)
-                    return null;
-
-                var filter = join.Field.Arguments?.First(arg => arg.Name == "filter");
-                var filterValue = filter!.Value as GraphQLObjectValue;
-                var field = filterValue!.Fields!.First() as GraphQLObjectField;
-                var relation = (field.Value as GraphQLObjectValue)?.Fields?.First();
-
-                var filterType = join.FieldType.Arguments?.First(arg => arg.Name == "filter").ResolvedType as InputObjectGraphType;
-                var columnField = filterType!.GetField(field.Name);
-                var filterFieldType = columnField!.ResolvedType as DbFilterType;
-                var relationFieldType = filterFieldType!.GetField(relation!.Name);
-                var relationType = relationFieldType!.ResolvedType as ScalarGraphType;
-                var relationValue = relationType!.ParseLiteral(relation.Value);
-                if (relation != null)
-                {
-                    return new TableFilter
-                    {
-                        TableName = tableName,
-                        ColumnName = columnField.Name,
-                        RelationName = relationFieldType.Name,
-                        Value = relationValue,
-                    };
-                }
-
-                return null;
             }
         }
     }

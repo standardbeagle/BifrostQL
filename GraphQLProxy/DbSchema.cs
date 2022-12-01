@@ -14,10 +14,11 @@ namespace GraphQLProxy
 {
     public class DbSchema : Schema
     {
-        //private readonly DbModel _model;
-        public DbSchema(IDbModel model, IDbConnFactory conFactory)
+        public DbSchema(IServiceProvider provider) 
+            : base(provider)
         {
-            Query = new DbDatabase(model.Tables, conFactory);
+            Query = provider.GetRequiredService<DbDatabaseQuery>();
+            Mutation = provider.GetRequiredService<DbDatabaseMutation>();
         }
     }
 }

@@ -57,33 +57,55 @@ namespace GraphQLProxy
             return AddSetter(table?.GetArgumentSetter(argumentName));
         }
 
-        private void MatchFragments()
+        private void ReduceFragments(TableSqlData table)
         {
-            foreach(var table in TableSqlData)
-            {
-                foreach(var spread in table.FragmentSpreads)
-                {
-                    var fragment = FragmentData.First(x => x.TableName == spread.FragmentName);
-                    spread.Table = fragment;
-                    table.ColumnNames.AddRange(fragment.ColumnNames);
-                    table.Joins.AddRange(fragment.Joins.Select(tj => new TableJoin
+            foreach (var spread in table.FragmentSpreads) {
+                var fragment = FragmentData.First(x => x.TableName == spread.FragmentName);
+                spread.Table = fragment;
+                table.ColumnNames.AddRange(fragment.ColumnNames);
+                table.Joins.AddRange(fragment.Joins.Select(tj => {
+                    var result = new TableJoin
                     {
                         Name = tj.Name,
                         ParentTable = table,
                         Alias = tj.Alias,
                         ParentColumn = tj.ParentColumn,
-                        ChildTable = tj.ChildTable,
+                        ChildTable = new TableSqlData
+                        {
+                            TableName = tj.ChildTable.TableName,
+                            ColumnNames = tj.ChildTable.ColumnNames,
+                            FragmentSpreads = tj.ChildTable.FragmentSpreads,
+                            IsFragment = false,
+                            Filter = tj.ChildTable.Filter,
+                            Limit = tj.ChildTable.Limit,
+                            Offset = tj.ChildTable.Offset,
+                            Sort = tj.ChildTable.Sort,
+                        },
                         ChildColumn = tj.ChildColumn,
                         JoinType = tj.JoinType,
-                    }));
-                }
+                    };
+                    result.ChildTable.Joins = tj.ChildTable.Joins.Select(j => new TableJoin
+                    {
+                        Name = j.Name,
+                        Alias = j.Alias,
+                        ChildColumn = j.ChildColumn,
+                        ChildTable = j.ChildTable,
+                        ParentTable = result.ChildTable,
+                        ParentColumn = j.ParentColumn,
+                        JoinType = j.JoinType,
+                    }).ToList();
+                    ReduceFragments(result.ChildTable);
+                    return result;
+                }));
             }
-
         }
 
         public List<TableSqlData> GetFinalTables()
         {
-            MatchFragments();
+            foreach (var table in TableSqlData)
+            {
+                ReduceFragments(table);
+            }
             return TableSqlData;
         }
     }

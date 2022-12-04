@@ -76,9 +76,7 @@ namespace GraphQLProxy
                 wrap += $" INNER JOIN [{ChildTable.TableName}] b ON a.[JoinId] = b.[{ChildColumn}]";
 
                 var baseSql = wrap + ChildTable.GetFilterSql();
-                if (ChildTable.Joins.Any() == false)
-                    return baseSql;
-                return baseSql + ";" + String.Join(";", ChildTable.Joins.Select(j => j.GetSql()));
+                return baseSql;
             }
 
             public override string ToString()
@@ -114,7 +112,7 @@ namespace GraphQLProxy
             public bool IsFragment { get; set; }
 
             public List<TableJoin> Joins { get; set; } = new List<TableJoin>();
-            private IEnumerable<TableJoin> RecuseJoins => Joins.Concat(Joins.SelectMany(j => j.ChildTable.RecuseJoins));
+            private IEnumerable<TableJoin> RecurseJoins => Joins.Concat(Joins.SelectMany(j => j.ChildTable.RecurseJoins));
 
             public IEnumerable<string> AllJoinNames => new[] { "base" }
             .Concat(Joins.SelectMany(j => j.ChildTable.AllJoinNames.Select(n => $"{j.JoinName}+{n}")));
@@ -132,7 +130,7 @@ namespace GraphQLProxy
 
             public TableJoin GetJoin(string? alias, string name)
             {
-                return RecuseJoins.First(j => j.Alias == alias && j.Name == name);
+                return RecurseJoins.First(j => j.Alias == alias && j.Name == name);
             }
 
             public Dictionary<string, string> ToSql()
@@ -151,7 +149,7 @@ namespace GraphQLProxy
                 var baseSql = cmdText + GetFilterSql() + orderby + offset + limit + ";";
                 var result = new Dictionary<string, string>();
                 result.Add("base", baseSql);
-                foreach(var join in Joins)
+                foreach(var join in RecurseJoins)
                 {
                     result.Add(join.JoinName, join.GetSql());
                 }

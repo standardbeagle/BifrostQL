@@ -86,6 +86,8 @@ namespace GraphQLProxy
             return ValueTask.FromResult<object?>(table.data[row][index]);
         }
 
+        public TableSqlData TableSqlData => _tableSql;
+
         public (Dictionary<string, int> index, List<object?[]> data) GetTableData(string name)
         {
             return _tables[name];
@@ -178,8 +180,10 @@ namespace GraphQLProxy
             var found = _table.index.TryGetValue(column, out int index);
             if (!found)
             {
-                var fieldName = $"{context.FieldAst.Alias?.Name ?? context.FieldAst.Name}+{context.FieldAst.Name}";
-                var keyFound = _table.index.TryGetValue("key_" + fieldName, out int keyIndex);
+                var join = _root.TableSqlData.GetJoin(context.FieldAst.Alias?.Name?.StringValue, context.FieldAst.Name.StringValue);
+                if (join == null)
+                    throw new Exception("join not found");
+                var keyFound = _table.index.TryGetValue(join.ParentColumn, out int keyIndex);
                 if (!keyFound)
                     throw new Exception("join column not found.");
 
@@ -187,9 +191,9 @@ namespace GraphQLProxy
                 if (key == null)
                     throw new Exception("key value is null");
 
-                var fullTableName = _tableName + "+" + fieldName;
-                var tableData = _root.GetTableData(fullTableName + "+base");
-                return ValueTask.FromResult<object?>(new SubTableEnumerable(_root, key, fullTableName, column, tableData));
+                var fullName = $"{context.FieldAst.Alias?.Name ?? context.FieldAst.Name}+{context.FieldAst.Name}";
+                var tableData = _root.GetTableData(fullName);
+                    return ValueTask.FromResult<object?>(new SubTableEnumerable(_root, key, fullName, column, tableData));
             }
 
             return ValueTask.FromResult<object?>(_data[row][index]);

@@ -24,6 +24,7 @@ namespace GraphQLProxy
         public void PopSetter();
 
         public Cleanup StartTableArgument(string argumentName);
+        void ReduceFragments();
     }
 
     public class SqlContext : ISqlContext
@@ -55,6 +56,14 @@ namespace GraphQLProxy
         {
             var table = CurrentTables.FirstOrDefault();
             return AddSetter(table?.GetArgumentSetter(argumentName));
+        }
+
+        public void ReduceFragments()
+        {
+            foreach (var table in TableSqlData)
+            {
+                ReduceFragments(table);
+            }
         }
 
         private void ReduceFragments(TableSqlData table)
@@ -102,10 +111,6 @@ namespace GraphQLProxy
 
         public List<TableSqlData> GetFinalTables()
         {
-            foreach (var table in TableSqlData)
-            {
-                ReduceFragments(table);
-            }
             return TableSqlData;
         }
     }
@@ -133,6 +138,7 @@ namespace GraphQLProxy
                 table = new TableSqlData()
                 {
                     TableName = field.Name.StringValue,
+                    Alias = field.Alias?.Name.StringValue ?? "",
                     IsFragment = false
                 };
                 
@@ -266,5 +272,10 @@ namespace GraphQLProxy
             context.Setters.FirstOrDefault()?.Invoke(result);
         }
 
+        protected async override ValueTask VisitDocumentAsync(GraphQLDocument document, ISqlContext context)
+        {
+            await base.VisitDocumentAsync(document, context);
+            context.ReduceFragments();
+        }
     }
 }

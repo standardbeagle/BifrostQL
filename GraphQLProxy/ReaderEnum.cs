@@ -54,7 +54,7 @@ namespace GraphQLProxy
         public ValueTask<object?> Get(int row, IResolveFieldContext context)
         {
             var tables = _tables;
-            var table = tables["base"];
+            var table = tables[_tableSql.KeyName];
             var column = context.FieldDefinition.Name;
             var found = table.index.TryGetValue(column, out int index);
             if (!found)
@@ -74,7 +74,7 @@ namespace GraphQLProxy
                 var tableData = tables[fullName];
                 if (context.FieldAst.Name.StringValue.StartsWith("_join_"))
                 {
-                    return ValueTask.FromResult<object?>(new SubTableEnumerable(this, key, fullName, column, tableData));
+                    return ValueTask.FromResult<object?>(new SubTableEnumerable(this, key, column, tableData));
                 }
                 else
                 {
@@ -112,7 +112,7 @@ namespace GraphQLProxy
             public ReaderEnumerator(ReaderEnum @enum)
             {
                 _enum = @enum;
-                _count = @enum._tables["base"].data.Count;
+                _count = @enum._tables[@enum._tableSql.KeyName].data.Count;
             }
 
             public object? Current => new ReaderCurrent(_index, (i, context) => _enum.Get(i, context));
@@ -154,13 +154,11 @@ namespace GraphQLProxy
         private readonly (Dictionary<string, int> index, List<object?[]> data) _table;
         private readonly List<object?[]> _data;
         private readonly int _keyIndex;
-        private readonly string _tableName;
         private readonly ReaderEnum _root;
-        public SubTableEnumerable(ReaderEnum root, object key, string tableName, string column, (Dictionary<string, int> index, List<object?[]> data) @table)
+        public SubTableEnumerable(ReaderEnum root, object key, string column, (Dictionary<string, int> index, List<object?[]> data) @table)
         {
             _root = root;
             _table = table;
-            _tableName = tableName;
             _keyIndex = table.index["src_id"];
             _data = table.data.Where(r => Object.Equals(r[_keyIndex], key)).ToList();
         }
@@ -193,7 +191,7 @@ namespace GraphQLProxy
 
                 var fullName = $"{context.FieldAst.Alias?.Name ?? context.FieldAst.Name}+{context.FieldAst.Name}";
                 var tableData = _root.GetTableData(fullName);
-                    return ValueTask.FromResult<object?>(new SubTableEnumerable(_root, key, fullName, column, tableData));
+                    return ValueTask.FromResult<object?>(new SubTableEnumerable(_root, key, column, tableData));
             }
 
             return ValueTask.FromResult<object?>(_data[row][index]);

@@ -6,6 +6,7 @@ using GraphQL.Resolvers;
 using GraphQL.Types;
 using GraphQLParser.AST;
 using GraphQLProxy.Model;
+using Microsoft.Extensions.DependencyInjection;
 using System.Collections;
 using System.Data.Common;
 using System.Data.SqlClient;
@@ -18,14 +19,13 @@ namespace GraphQLProxy
 {
     public class DbDatabaseQuery : ObjectGraphType
     {
-        private readonly IDbConnFactory _dbConnFactory;
-        public DbDatabaseQuery(IDbModel model, IDbConnFactory connFactory, IDataLoaderContextAccessor dlContext)
+        private readonly IServiceProvider _serviceProvider;
+        public DbDatabaseQuery(IServiceProvider provider)
         {
+            _serviceProvider = provider;
             Name = "database";
-            _dbConnFactory = connFactory;
+            var model = provider.GetRequiredService<IDbModel>();
             var tables = model.Tables;
-
-            var context = dlContext.Context;
 
             var rowTypes = tables
                 .Select(t => (t.TableName, new DbRow(t)))
@@ -53,7 +53,7 @@ namespace GraphQLProxy
                     Name = table.GraphQLName,
                     Arguments = new QueryArguments(filterArgs),
                     ResolvedType = new ListGraphType(rowTypes[table.TableName]),
-                    Resolver = new DbTableResolver(_dbConnFactory),
+                    Resolver = new DbTableResolver(),
                 });
             }
         }

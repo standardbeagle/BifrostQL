@@ -10,6 +10,7 @@ var model = await loader.LoadAsync();
 var connFactory = new DbConnFactory(builder.Configuration.GetConnectionString("ConnStr"));
 //var dbSchema = new DbSchema(model, connFactory);
 
+builder.Services.AddScoped<ITableReaderFactory, TableReaderFactory>();
 builder.Services.AddSingleton<IDbModel>(model);
 builder.Services.AddSingleton<IDbConnFactory>(connFactory);
 builder.Services.AddSingleton<DbDatabaseQuery>();

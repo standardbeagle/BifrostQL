@@ -8,31 +8,24 @@ using GraphQL.Validation.Complexity;
 using static GraphQLProxy.DbTableResolver;
 using System.Drawing;
 using GraphQL.DataLoader;
+using System.Collections.Concurrent;
 
 namespace GraphQLProxy
 {
-    public class DbTableResolver : IFieldResolver
+    public interface IDbTableResolver : IFieldResolver
     {
-        private readonly IDbConnFactory _dbConnFactory;
-        public DbTableResolver(IDbConnFactory connFactory)
+
+    }
+
+    public class DbTableResolver : IDbTableResolver
+    {
+        public DbTableResolver()
         {
-            _dbConnFactory = connFactory;
         }
         public ValueTask<object?> ResolveAsync(IResolveFieldContext context)
         {
-            if (context.SubFields == null)
-                throw new ArgumentNullException(nameof(context) + ".SubFields");
-
-            var visitor = new SqlVisitor();
-            var sqlContext = new SqlContext() { Variables = context.Variables};
-            visitor.VisitAsync(context.Document, sqlContext).AsTask().Wait();
-
-            var testData = sqlContext.GetFinalTables();
-
-            //var tableSqlData = TableSqlData.From(context);
-            var tableSqlData = testData[0];
-            var resultNames = tableSqlData.AllJoinNames.ToArray();
-            return ValueTask.FromResult<object?>(new ReaderEnum(tableSqlData, _dbConnFactory));
+            var factory = context.RequestServices!.GetRequiredService<ITableReaderFactory>();
+            return factory.ResolveAsync(context);
         }
 
         public sealed class TableFilter
@@ -103,6 +96,8 @@ namespace GraphQLProxy
             public TableSqlData? Parent => ParentJoin?.ParentTable;
             public TableJoin? ParentJoin { get; set; }
             public string TableName { get; set; } = "";
+            public string Alias { get; set; } = "";
+            public string KeyName => $"{Alias}:{TableName}";
             public List<string> ColumnNames { get; set; } = new List<string>();
             public List<string> Sort { get; set; } = new List<string>();
             public List<FragmentSpread> FragmentSpreads { get; set; } = new List<FragmentSpread>();
@@ -114,7 +109,7 @@ namespace GraphQLProxy
             public List<TableJoin> Joins { get; set; } = new List<TableJoin>();
             private IEnumerable<TableJoin> RecurseJoins => Joins.Concat(Joins.SelectMany(j => j.ChildTable.RecurseJoins));
 
-            public IEnumerable<string> AllJoinNames => new[] { "base" }
+            public IEnumerable<string> AllJoinNames => new[] { TableName }
             .Concat(Joins.SelectMany(j => j.ChildTable.AllJoinNames.Select(n => $"{j.JoinName}+{n}")));
 
             public IEnumerable<(string name, string alias)> FullColumnNames => 
@@ -140,7 +135,7 @@ namespace GraphQLProxy
 
                 var baseSql = cmdText + GetFilterSql() + GetSortAndPaging();
                 var result = new Dictionary<string, string>();
-                result.Add("base", baseSql);
+                result.Add(KeyName, baseSql);
                 foreach (var join in RecurseJoins)
                 {
                     result.Add(join.JoinName, join.GetSql());
@@ -206,6 +201,39 @@ namespace GraphQLProxy
                 }
 
             }
+        }
+    }
+
+
+    public interface ITableReaderFactory
+    {
+        public ValueTask<object?> ResolveAsync(IResolveFieldContext context);
+    }
+    public sealed class TableReaderFactory : ITableReaderFactory
+    {
+        private List<TableSqlData>? _tables = null;
+        public async ValueTask<object?> ResolveAsync(IResolveFieldContext context)
+        {
+            if (context.SubFields == null)
+                throw new ArgumentNullException(nameof(context) + ".SubFields");
+
+            _tables ??= await GetTables(context);
+
+            return new ReaderEnum(
+                _tables.First(t => t.Alias == (context.FieldAst.Alias?.Name.StringValue ?? "") && t.TableName == context.FieldAst.Name.StringValue),
+                context.RequestServices!.GetRequiredService<IDbConnFactory>()
+                );
+
+        }
+
+        private static async Task<List<TableSqlData>> GetTables(IResolveFieldContext context)
+        {
+            var visitor = new SqlVisitor();
+            var sqlContext = new SqlContext() { Variables = context.Variables };
+            await visitor.VisitAsync(context.Document, sqlContext);
+
+            var newTables = sqlContext.GetFinalTables();
+            return newTables;
         }
     }
 }

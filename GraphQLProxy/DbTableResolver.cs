@@ -75,7 +75,7 @@ namespace GraphQLProxy
                 var wrap = $"SELECT a.[JoinId] [src_id], {joinColumnSql} FROM ({main}) a";
                 wrap += $" INNER JOIN [{ChildTable.TableName}] b ON a.[JoinId] = b.[{ChildColumn}]";
 
-                var baseSql = wrap + ChildTable.GetFilterSql();
+                var baseSql = wrap + ChildTable.GetFilterSql() + ChildTable.GetSortAndPaging();
                 return baseSql;
             }
 
@@ -138,22 +138,26 @@ namespace GraphQLProxy
                 var columnSql = String.Join(",", FullColumnNames.Select(n => $"[{n.name}] [{n.alias}]"));
                 var cmdText = $"SELECT {columnSql} FROM [{TableName}]";
 
+                var baseSql = cmdText + GetFilterSql() + GetSortAndPaging();
+                var result = new Dictionary<string, string>();
+                result.Add("base", baseSql);
+                foreach (var join in RecurseJoins)
+                {
+                    result.Add(join.JoinName, join.GetSql());
+                }
+                return result;
+            }
+
+            public string GetSortAndPaging()
+            {
                 var orderby = " ORDER BY (SELECT NULL)";
                 if (Sort.Any())
                 {
                     orderby = " ORDER BY " + String.Join(", ", Sort);
                 }
-                var limit = Limit != null ? $" FETCH NEXT {Limit} ROWS ONLY" : "";
-                var offset = Offset != null ? $" OFFSET {Offset} ROWS" : " OFFSET 0 ROWS";
-
-                var baseSql = cmdText + GetFilterSql() + orderby + offset + limit + ";";
-                var result = new Dictionary<string, string>();
-                result.Add("base", baseSql);
-                foreach(var join in RecurseJoins)
-                {
-                    result.Add(join.JoinName, join.GetSql());
-                }
-                return result;
+                orderby += Offset != null ? $" OFFSET {Offset} ROWS" : " OFFSET 0 ROWS";
+                orderby += Limit != null ? $" FETCH NEXT {Limit} ROWS ONLY" : "";
+                return orderby;
             }
 
             public override string ToString()

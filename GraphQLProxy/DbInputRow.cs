@@ -5,41 +5,56 @@ using System.Xml.Linq;
 
 namespace GraphQLProxy
 {
+    public enum IdentityType
+    {
+        None,
+        Optional,
+        Required
+    }
     public class DbInputRow : InputObjectGraphType
     {
-        public DbInputRow(TableDto table)
+        public DbInputRow(string action, TableDto table, IdentityType identityType)
         {
-            Name = "Input" + table.TableName.Replace(" ", "__");
+            Name = action + "_" + table.TableName.Replace(" ", "__");
             foreach (var column in table.Columns)
             {
+                if (identityType == IdentityType.None && column.IsIdentity)
+                    continue;
+
+                var isNullable = column.IsNullable;
+                if (identityType == IdentityType.Optional && column.IsIdentity)
+                    isNullable = true;
+                if (identityType == IdentityType.Required && column.IsIdentity)
+                    isNullable = false;
+
                 switch (column.DataType)
                 {
                     case "int":
                     case "smallint":
                     case "tinyint":
-                        Field<int>(column.ColumnName);
+                        base.Field<int>(column.ColumnName, nullable: isNullable);
                         break;
                     case "decimal":
-                        Field<decimal>(column.ColumnName);
+                        base.Field<decimal>(column.ColumnName, nullable: isNullable);
                         break;
                     case "bigint":
-                        Field<BigInteger>(column.ColumnName);
+                        base.Field<BigInteger>(column.ColumnName, nullable: isNullable);
                         break;
                     case "float":
                     case "real":
-                        Field<double>(column.ColumnName);
+                        base.Field<double>(column.ColumnName, nullable: isNullable);
                         break;
                     case "datetime":
-                        Field<DateTime>(column.ColumnName);
+                        base.Field<DateTime>(column.ColumnName, nullable: isNullable);
                         break;
                     case "datetime2":
-                        Field<DateTime>(column.ColumnName);
+                        base.Field<DateTime>(column.ColumnName, nullable: isNullable);
                         break;
                     case "datetimeoffset":
-                        Field<DateTimeOffset>(column.ColumnName);
+                        base.Field<DateTimeOffset>(column.ColumnName, nullable: isNullable);
                         break;
                     case "bit":
-                        Field<bool>(column.ColumnName);
+                        base.Field<bool>(column.ColumnName, nullable: isNullable);
                         break;
                     case "varchar":
                     case "nvarchar":
@@ -50,7 +65,7 @@ namespace GraphQLProxy
                     case "text":
                     case "ntext":
                     default:
-                        Field<string>(column.ColumnName);
+                        base.Field<string>(column.ColumnName, nullable: isNullable);
                         break;
                 }
             }

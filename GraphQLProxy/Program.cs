@@ -8,7 +8,6 @@ var builder = WebApplication.CreateBuilder(args);
 var loader = new DbModelLoader(builder.Configuration);
 var model = await loader.LoadAsync();
 var connFactory = new DbConnFactory(builder.Configuration.GetConnectionString("ConnStr"));
-//var dbSchema = new DbSchema(model, connFactory);
 
 builder.Services.AddScoped<ITableReaderFactory, TableReaderFactory>();
 builder.Services.AddSingleton<IDbModel>(model);

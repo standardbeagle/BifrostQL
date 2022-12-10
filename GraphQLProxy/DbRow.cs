@@ -17,29 +17,29 @@ namespace GraphQLProxy
                     case "int":
                     case "smallint":
                     case "tinyint":
-                        Field<int>(column.ColumnName).Resolve(DbJoinFieldResolver.Instance);
+                        Field<int>(column.ColumnName, nullable: column.IsNullable).Resolve(DbJoinFieldResolver.Instance);
                         break;
                     case "decimal":
-                        Field<decimal>(column.ColumnName).Resolve(DbJoinFieldResolver.Instance);
+                        Field<decimal>(column.ColumnName, nullable: column.IsNullable).Resolve(DbJoinFieldResolver.Instance);
                         break;
                     case "bigint":
-                        Field<BigInteger>(column.ColumnName).Resolve(DbJoinFieldResolver.Instance);
+                        Field<BigInteger>(column.ColumnName, nullable: column.IsNullable).Resolve(DbJoinFieldResolver.Instance);
                         break;
                     case "float":
                     case "real":
-                        Field<double>(column.ColumnName).Resolve(DbJoinFieldResolver.Instance);
+                        Field<double>(column.ColumnName, nullable: column.IsNullable).Resolve(DbJoinFieldResolver.Instance);
                         break;
                     case "datetime":
-                        Field<DateTime>(column.ColumnName).Resolve(DbJoinFieldResolver.Instance);
+                        Field<DateTime>(column.ColumnName, nullable: column.IsNullable).Resolve(DbJoinFieldResolver.Instance);
                         break;
                     case "datetime2":
-                        Field<DateTime>(column.ColumnName).Resolve(DbJoinFieldResolver.Instance);
+                        Field<DateTime>(column.ColumnName, nullable: column.IsNullable).Resolve(DbJoinFieldResolver.Instance);
                         break;
                     case "datetimeoffset":
-                        Field<DateTimeOffset>(column.ColumnName).Resolve(DbJoinFieldResolver.Instance);
+                        Field<DateTimeOffset>(column.ColumnName, nullable: column.IsNullable).Resolve(DbJoinFieldResolver.Instance);
                         break;
                     case "bit":
-                        Field<bool>(column.ColumnName).Resolve(DbJoinFieldResolver.Instance);
+                        Field<bool>(column.ColumnName, nullable: column.IsNullable).Resolve(DbJoinFieldResolver.Instance);
                         break;
                     case "varchar":
                     case "nvarchar":
@@ -50,7 +50,7 @@ namespace GraphQLProxy
                     case "text":
                     case "ntext":
                     default:
-                        Field<string>(column.ColumnName).Resolve(DbJoinFieldResolver.Instance);
+                        Field<string>(column.ColumnName, nullable: column.IsNullable).Resolve(DbJoinFieldResolver.Instance);
                         break;
                 }
             }

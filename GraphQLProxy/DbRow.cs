@@ -1,6 +1,7 @@
 ﻿using GraphQL.Types;
 using GraphQLProxy.Model;
 using System.Numerics;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 
 namespace GraphQLProxy
@@ -9,7 +10,7 @@ namespace GraphQLProxy
     {
         public DbRow(TableDto table)
         {
-            Name = table.TableName.Replace(" ", "__");
+            Name = table.GraphQLName;
             foreach (var column in table.Columns)
             {
                 switch (column.DataType)

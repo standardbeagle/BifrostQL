@@ -15,6 +15,7 @@ builder.Services.AddSingleton<IDbConnFactory>(connFactory);
 builder.Services.AddSingleton<DbDatabaseQuery>();
 builder.Services.AddSingleton<DbDatabaseMutation>();
 builder.Services.AddSingleton<ISchema, DbSchema>();
+builder.Services.AddCors();
 
 builder.Services.AddGraphQL(b => b
     .AddSchema<DbSchema>()
@@ -24,6 +25,10 @@ builder.Services.AddGraphQL(b => b
 var app = builder.Build();
 
 app.UseDeveloperExceptionPage();
+app.UseCors(x => x
+    .AllowAnyMethod()
+    .AllowAnyHeader()
+    .AllowAnyOrigin());
 app.UseWebSockets();
 app.UseGraphQL("/graphql");
 app.UseGraphQLPlayground("/",

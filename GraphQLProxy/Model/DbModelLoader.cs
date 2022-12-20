@@ -6,6 +6,8 @@ namespace GraphQLProxy.Model
     public sealed class DbModelLoader
     {
         private readonly string _connStr;
+        private readonly TableMatcher _ignoreTables;
+        private readonly TableMatcher _includeTables;
 
         private const string SCHEMA_SQL = @"
 SELECT CCU.[TABLE_CATALOG]
@@ -55,6 +57,8 @@ SELECT [TABLE_CATALOG]
         public DbModelLoader(IConfiguration configuration)
         {
             _connStr = configuration.GetConnectionString("ConnStr");
+            _ignoreTables = new TableMatcher(GetTableMatch(configuration.GetSection("IgnoreTables")), false);
+            _includeTables = new TableMatcher(GetTableMatch(configuration.GetSection("IncludeTables")), true);
         }
 
         public async Task<DbModel> LoadAsync()
@@ -77,7 +81,8 @@ SELECT [TABLE_CATALOG]
                     Tables = GetDtos<TableDto>(reader, r => TableDto.FromReader(
                         r, 
                         columns[new TableRef((string)reader["TABLE_CATALOG"], (string)reader["TABLE_SCHEMA"], (string)reader["TABLE_NAME"])]))
-                    .Where(t => t.TableName.StartsWith("_") == false)
+                    .Where(t => _includeTables.Match(t) == true)
+                    .Where(t => _ignoreTables.Match(t) == false)
                     .ToList()
                 };
         }
@@ -87,6 +92,12 @@ SELECT [TABLE_CATALOG]
             {
                 yield return getDto(reader);
             }
+        }
+        private static (string schema, string[] tables)[] GetTableMatch(IConfigurationSection section)
+        {
+            if (section == null)
+                return Array.Empty<(string schema, string[] tables)>();
+            return section.GetChildren().Select(c => (c.Key, c.GetChildren().Select(cc => cc.Value).ToArray())).ToArray();
         }
     }
 }

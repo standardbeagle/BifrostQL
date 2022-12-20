@@ -26,7 +26,7 @@ namespace GraphQLProxy.Model
         public string GraphQLName { get; init; } = null!;
         public string TableSchema { get; init; } = null!;
         public string TableType { get; init; } = null!;
-        public string FullName => $"{ (TableSchema == "dbo" ? "" : $"{TableSchema}_") }{TableName}";
+        public string FullName => $"{ (TableSchema == "dbo" ? "" : $"{TableSchema}_") }{GraphQLName}";
         public bool MatchName(string fullName) => string.Equals(FullName, fullName, StringComparison.OrdinalIgnoreCase);
         public IEnumerable<ColumnDto> Columns => ColumnLookup.Values;
         public IDictionary<string, ColumnDto> ColumnLookup { get; init; } = null!;
@@ -39,10 +39,13 @@ namespace GraphQLProxy.Model
 
         public static TableDto FromReader(IDataReader reader, IReadOnlyCollection<ColumnDto>? columns = null)
         {
+            var name = (string)reader["TABLE_NAME"];
+            var graphQlName = name.Replace(" ", "_").Replace("-", "_");
+            if (graphQlName.StartsWith("_")) graphQlName = $"tbl{graphQlName}";
             return new TableDto
             {
-                TableName = (string)reader["TABLE_NAME"],
-                GraphQLName = ((string)reader["TABLE_NAME"]).Replace(" ", "__"),
+                TableName = name,
+                GraphQLName = graphQlName,
                 TableSchema = (string)reader["TABLE_SCHEMA"],
                 TableType = (string)reader["TABLE_TYPE"],
                 ColumnLookup = (columns ?? Array.Empty<ColumnDto>()).ToDictionary(c => c.ColumnName, StringComparer.OrdinalIgnoreCase),

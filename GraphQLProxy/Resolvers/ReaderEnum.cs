@@ -1,13 +1,10 @@
 ﻿using GraphQL;
-using GraphQL.Reflection;
-using GraphQLProxy.Model;
-using Microsoft.AspNetCore.Http;
+using GraphQLProxy.QueryModel;
 using System.Collections;
 using System.Data.SqlClient;
 using System.Runtime.CompilerServices;
-using static GraphQLProxy.DbTableResolver;
 
-namespace GraphQLProxy
+namespace GraphQLProxy.Resolvers
 {
     public class ReaderEnum : IEnumerable<object?>
     {
@@ -48,11 +45,11 @@ namespace GraphQLProxy
                 else
                 {
                     var srcIdIndex = tableData.index["src_id"];
-                    var data = tableData.data.First(r => Object.Equals(r[srcIdIndex], key));
-                    return ValueTask.FromResult<object?>((tableData.index, data: data));
+                    var data = tableData.data.First(r => Equals(r[srcIdIndex], key));
+                    return ValueTask.FromResult<object?>((tableData.index, data));
                 }
             }
-            return ValueTask.FromResult<object?>(table.data[row][index]);
+            return ValueTask.FromResult(table.data[row][index]);
         }
 
         public TableSqlData TableSqlData => _tableSql;
@@ -129,7 +126,7 @@ namespace GraphQLProxy
             _root = root;
             _table = table;
             _keyIndex = table.index["src_id"];
-            _data = table.data.Where(r => Object.Equals(r[_keyIndex], key)).ToList();
+            _data = table.data.Where(r => Equals(r[_keyIndex], key)).ToList();
         }
 
         public IEnumerator<object?> GetEnumerator()
@@ -160,10 +157,10 @@ namespace GraphQLProxy
 
                 var fullName = $"{context.FieldAst.Alias?.Name ?? context.FieldAst.Name}+{context.FieldAst.Name}";
                 var tableData = _root.GetTableData(fullName);
-                    return ValueTask.FromResult<object?>(new SubTableEnumerable(_root, key, column, tableData));
+                return ValueTask.FromResult<object?>(new SubTableEnumerable(_root, key, column, tableData));
             }
 
-            return ValueTask.FromResult<object?>(_data[row][index]);
+            return ValueTask.FromResult(_data[row][index]);
         }
 
         public sealed class SubTableEnumerator : IEnumerator<object?>, IEnumerator

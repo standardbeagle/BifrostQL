@@ -2,7 +2,7 @@
 using GraphQLProxy.Model;
 using System.Xml.Linq;
 
-namespace GraphQLProxy
+namespace GraphQLProxy.Schema
 {
     public class DbColumnFilterType : InputObjectGraphType
     {

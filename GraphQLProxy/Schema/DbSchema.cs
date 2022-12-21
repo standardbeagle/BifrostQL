@@ -10,11 +10,11 @@ using GraphQL.Utilities;
 using GraphQLParser;
 using GraphQLProxy.Model;
 
-namespace GraphQLProxy
+namespace GraphQLProxy.Schema
 {
-    public class DbSchema : Schema
+    public class DbSchema : GraphQL.Types.Schema
     {
-        public DbSchema(IServiceProvider provider) 
+        public DbSchema(IServiceProvider provider)
             : base(provider)
         {
             Query = provider.GetRequiredService<DbDatabaseQuery>();

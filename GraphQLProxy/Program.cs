@@ -3,6 +3,7 @@ using GraphQL.DataLoader;
 using GraphQL.Types;
 using GraphQLProxy;
 using GraphQLProxy.Model;
+using GraphQLProxy.Schema;
 
 var builder = WebApplication.CreateBuilder(args);
 var loader = new DbModelLoader(builder.Configuration);

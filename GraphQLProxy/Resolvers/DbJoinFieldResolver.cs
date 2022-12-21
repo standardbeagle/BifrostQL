@@ -1,6 +1,7 @@
 ﻿using GraphQL.Resolvers;
 using GraphQL;
-using static GraphQLProxy.ReaderEnum;
+using static GraphQLProxy.Resolvers.ReaderEnum;
+using GraphQLProxy.Resolvers;
 
 namespace GraphQLProxy
 {

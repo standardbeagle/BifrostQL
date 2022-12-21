@@ -3,7 +3,7 @@ using GraphQLProxy.Model;
 using System.Numerics;
 using System.Xml.Linq;
 
-namespace GraphQLProxy
+namespace GraphQLProxy.Schema
 {
     public enum IdentityType
     {

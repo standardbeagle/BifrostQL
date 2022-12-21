@@ -13,9 +13,8 @@ using System.Data.SqlClient;
 using System.Linq;
 using System.Numerics;
 using System.Threading.Tasks;
-using static GraphQLProxy.ReaderEnum;
 
-namespace GraphQLProxy
+namespace GraphQLProxy.Schema
 {
     public class DbDatabaseQuery : ObjectGraphType
     {
@@ -31,7 +30,7 @@ namespace GraphQLProxy
 
             foreach (var table in tables)
             {
-                foreach(var row in rowTypes.Values)
+                foreach (var row in rowTypes.Values)
                 {
                     row.AddTableJoin(table, rowTypes[table.TableName]);
                 }

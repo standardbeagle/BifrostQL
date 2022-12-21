@@ -1,6 +1,6 @@
 ﻿using GraphQL.Types;
 
-namespace GraphQLProxy
+namespace GraphQLProxy.Schema
 {
     public class DbFilterType : InputObjectGraphType
     {

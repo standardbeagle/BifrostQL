@@ -1,9 +1,10 @@
 ﻿using GraphQL.Types;
 using GraphQLParser.AST;
 using GraphQLProxy.Model;
+using GraphQLProxy.Resolvers;
 using System.Xml.Linq;
 
-namespace GraphQLProxy
+namespace GraphQLProxy.Schema
 {
     public sealed class DbDatabaseMutation : ObjectGraphType
     {
@@ -24,7 +25,7 @@ namespace GraphQLProxy
                         new QueryArgument(new DbInputRow("upsert", table, IdentityType.Optional)) { Name = "upsert" },
                         new QueryArgument<IdGraphType>() { Name = "delete" }
                         ),
-                    ResolvedType = new IdGraphType() { Name = "id"},
+                    ResolvedType = new IdGraphType() { Name = "id" },
                     Resolver = new DbTableMutateResolver(),
                 });
             }

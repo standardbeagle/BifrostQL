@@ -5,9 +5,9 @@ using GraphQLParser.Visitors;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using static GraphQLProxy.DbTableResolver;
-using static GraphQLProxy.SqlContext;
+using static GraphQLProxy.QueryModel.SqlContext;
 
-namespace GraphQLProxy
+namespace GraphQLProxy.QueryModel
 {
 
     public interface ISqlContext : IASTVisitorContext
@@ -68,11 +68,13 @@ namespace GraphQLProxy
 
         private void ReduceFragments(TableSqlData table)
         {
-            foreach (var spread in table.FragmentSpreads) {
+            foreach (var spread in table.FragmentSpreads)
+            {
                 var fragment = FragmentData.First(x => x.TableName == spread.FragmentName);
                 spread.Table = fragment;
                 table.ColumnNames.AddRange(fragment.ColumnNames);
-                table.Joins.AddRange(fragment.Joins.Select(tj => {
+                table.Joins.AddRange(fragment.Joins.Select(tj =>
+                {
                     var result = new TableJoin
                     {
                         Name = tj.Name,
@@ -144,10 +146,11 @@ namespace GraphQLProxy
                     IsFragment = false,
                     IncludeResult = true,
                 };
-                
+
                 context.TableSqlData.Add(table);
                 context.CurrentTables.Push(table);
-            } else 
+            }
+            else
             {
                 var parent = context.CurrentTables.First();
                 if (field.Name.StringValue.StartsWith("_join"))
@@ -169,7 +172,8 @@ namespace GraphQLProxy
                     parent.Joins.Add(join);
                     context.CurrentTables.Push(childTable);
                     context.CurrentJoins.Push(join);
-                } else
+                }
+                else
                 {
                     if (parent.IncludeResult && !parent.ProcessingResultData)
                     {
@@ -178,7 +182,8 @@ namespace GraphQLProxy
                             processingResultData = true;
                             parent.ProcessingResultData = true;
                         }
-                    } else
+                    }
+                    else
                     {
                         parent.ColumnNames.Add(field.Name.StringValue);
                     }

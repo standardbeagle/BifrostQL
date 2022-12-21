@@ -1,7 +1,7 @@
 ﻿using GraphQL;
 using GraphQL.Resolvers;
 
-namespace GraphQLProxy
+namespace GraphQLProxy.Resolvers
 {
     public sealed class DbSingleFieldResolver : IFieldResolver
     {

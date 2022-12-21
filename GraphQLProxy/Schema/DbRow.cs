@@ -4,7 +4,7 @@ using System.Numerics;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 
-namespace GraphQLProxy
+namespace GraphQLProxy.Schema
 {
     public class DbRow : ObjectGraphType
     {

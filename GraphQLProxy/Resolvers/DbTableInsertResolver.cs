@@ -3,7 +3,7 @@ using GraphQL.Resolvers;
 using GraphQLProxy.Model;
 using System.Data.SqlClient;
 
-namespace GraphQLProxy
+namespace GraphQLProxy.Resolvers
 {
     public sealed class DbTableMutateResolver : IFieldResolver
     {
@@ -16,14 +16,10 @@ namespace GraphQLProxy
             if (context.HasArgument("insert"))
             {
                 var data = context.GetArgument<Dictionary<string, object?>>("insert");
-                var sql = $@"INSERT INTO [{table.TableSchema}].[{table.TableName}]([{
-                        string.Join("],[", data.Keys)
-                    }]) VALUES({
-                        string.Join(",", data.Keys.Select(k => $"@{k}"))
-                    });SELECT SCOPE_IDENTITY() ID;";
+                var sql = $@"INSERT INTO [{table.TableSchema}].[{table.TableName}]([{string.Join("],[", data.Keys)}]) VALUES({string.Join(",", data.Keys.Select(k => $"@{k}"))});SELECT SCOPE_IDENTITY() ID;";
                 var cmd = new SqlCommand(sql);
                 cmd.Parameters.AddRange(data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value)).ToArray());
-                return HandleDecimals( await ExecuteScalar(conFactory, cmd));
+                return HandleDecimals(await ExecuteScalar(conFactory, cmd));
             }
             if (context.HasArgument("update"))
             {
@@ -89,7 +85,7 @@ namespace GraphQLProxy
                 return obj;
             return obj switch
             {
-                Decimal d => Convert.ToInt64(d),
+                decimal d => Convert.ToInt64(d),
                 _ => obj,
             };
         }

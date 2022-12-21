@@ -14,41 +14,10 @@ namespace GraphQLProxy
         private readonly Dictionary<string, (Dictionary<string, int> index, List<object?[]> data)> _tables;
         private readonly TableSqlData _tableSql;
 
-        public ReaderEnum(TableSqlData tableSqlData, IDbConnFactory connFactory)
+        public ReaderEnum(TableSqlData tableSqlData, Dictionary<string, (Dictionary<string, int> index, List<object?[]> data)> tableData)
         {
             _tableSql = tableSqlData;
-            _tables = LoadData(connFactory);
-        }
-
-        private Dictionary<string, (Dictionary<string, int> index, List<object?[]> data)> LoadData(IDbConnFactory connFactory)
-        {
-            var sqlList = _tableSql.ToSql();
-            var resultNames = sqlList.Keys.ToArray();
-            string sql = string.Join(";", sqlList.Values);
-
-            using var conn = connFactory.GetConnection();
-            conn.Open();
-            var command = new SqlCommand(sql, conn);
-            using var reader = command.ExecuteReader();
-            var results = new Dictionary<string, (Dictionary<string, int> index, List<object?[]> data)>();
-            var resultIndex = 0;
-            do
-            {
-                var resultName = resultNames[resultIndex++];
-                var index = Enumerable.Range(0, reader.FieldCount).Select(i => (i, reader.GetName(i))).ToDictionary(x => x.Item2, x => x.i, StringComparer.OrdinalIgnoreCase);
-                var result = new List<object?[]>();
-                while (reader.Read())
-                {
-                    var row = new object?[reader.FieldCount];
-                    reader.GetValues(row);
-                    result.Add(row);
-                }
-                if (result.Count == 0)
-                    results.Add(resultName, (index, new List<object?[]>()));
-                else
-                    results.Add(resultName, (index, result));
-            } while (reader.NextResult());
-            return results;
+            _tables = tableData;
         }
 
         public ValueTask<object?> Get(int row, IResolveFieldContext context)

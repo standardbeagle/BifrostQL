@@ -6,6 +6,7 @@ namespace GraphQLProxy
     {
         public DbFilterType(string dataType)
         {
+            Name = $"FilterType{GraphTypeFromSql(dataType).GetType().Name}";
             var filters = new (string fieldName, IGraphType type)[] {
                             ("_eq", GraphTypeFromSql(dataType)),
                             ("_neq", GraphTypeFromSql(dataType)),

@@ -89,6 +89,7 @@ namespace GraphQLProxy
                             Limit = tj.ChildTable.Limit,
                             Offset = tj.ChildTable.Offset,
                             Sort = tj.ChildTable.Sort,
+                            IncludeResult = false,
                         },
                         ChildColumn = tj.ChildColumn,
                         JoinType = tj.JoinType,
@@ -133,13 +134,15 @@ namespace GraphQLProxy
             TableSqlData? table = null;
             TableJoin? join = null;
             TableSqlData? childTable = null;
+            bool processingResultData = false;
             if (!context.CurrentTables.Any())
             {
                 table = new TableSqlData()
                 {
                     TableName = field.Name.StringValue,
                     Alias = field.Alias?.Name.StringValue ?? "",
-                    IsFragment = false
+                    IsFragment = false,
+                    IncludeResult = true,
                 };
                 
                 context.TableSqlData.Add(table);
@@ -153,6 +156,7 @@ namespace GraphQLProxy
                     {
                         TableName = field.Name.StringValue.Replace("_join_", ""),
                         IsFragment = false,
+                        IncludeResult = false
                     };
                     join = new TableJoin
                     {
@@ -167,7 +171,17 @@ namespace GraphQLProxy
                     context.CurrentJoins.Push(join);
                 } else
                 {
-                    parent.ColumnNames.Add(field.Name.StringValue);
+                    if (parent.IncludeResult && !parent.ProcessingResultData)
+                    {
+                        if (field.Name.StringValue == "data")
+                        {
+                            processingResultData = true;
+                            parent.ProcessingResultData = true;
+                        }
+                    } else
+                    {
+                        parent.ColumnNames.Add(field.Name.StringValue);
+                    }
                 }
             }
 
@@ -178,6 +192,8 @@ namespace GraphQLProxy
                 context.CurrentJoins.Pop();
             if (childTable != null)
                 context.CurrentTables.Pop();
+            if (processingResultData)
+                context.CurrentTables.First().ProcessingResultData = false;
         }
         protected async override ValueTask VisitArgumentAsync(GraphQLArgument argument, ISqlContext context)
         {
@@ -224,6 +240,7 @@ namespace GraphQLProxy
             {
                 TableName = fragmentDefinition.FragmentName.Name.StringValue,
                 IsFragment = true,
+                IncludeResult = true,
             };
 
             context.FragmentData.Add(table);

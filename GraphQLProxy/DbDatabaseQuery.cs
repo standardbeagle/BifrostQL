@@ -19,10 +19,8 @@ namespace GraphQLProxy
 {
     public class DbDatabaseQuery : ObjectGraphType
     {
-        private readonly IServiceProvider _serviceProvider;
         public DbDatabaseQuery(IServiceProvider provider)
         {
-            _serviceProvider = provider;
             Name = "database";
             var model = provider.GetRequiredService<IDbModel>();
             var tables = model.Tables;
@@ -52,10 +50,22 @@ namespace GraphQLProxy
                 {
                     Name = table.GraphQLName,
                     Arguments = new QueryArguments(filterArgs),
-                    ResolvedType = new ListGraphType(rowTypes[table.TableName]),
+                    ResolvedType = new TableQueryGraphType(table.GraphQLName, new ListGraphType(rowTypes[table.TableName])),
                     Resolver = new DbTableResolver(),
                 });
             }
+        }
+    }
+
+    class TableQueryGraphType : ObjectGraphType
+    {
+        public TableQueryGraphType(string baseName, GraphType gt)
+        {
+            Name = $"{baseName}Result";
+            Field("data", gt);
+            Field<int>("total");
+            Field<int>("offset", true);
+            Field<int>("limit", true);
         }
     }
 }

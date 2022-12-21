@@ -95,7 +95,12 @@ namespace GraphQLProxy
         {
             public TableSqlData? Parent => ParentJoin?.ParentTable;
             public TableJoin? ParentJoin { get; set; }
+            public string SchemaName { get; set; } = "";
             public string TableName { get; set; } = "";
+            public string FullTableText => string.IsNullOrWhiteSpace(SchemaName) switch {
+                true => $"[{TableName}]",
+                false => $"[{SchemaName}].[{TableName}]",
+            };
             public string Alias { get; set; } = "";
             public string KeyName => $"{Alias}:{TableName}";
             public List<string> ColumnNames { get; set; } = new List<string>();
@@ -105,6 +110,9 @@ namespace GraphQLProxy
             public int? Limit { get; set; }
             public int? Offset { get; set; }
             public bool IsFragment { get; set; }
+            public bool IncludeResult { get; set; }
+            public bool ProcessingResultData { get; set; } = false;
+
 
             public List<TableJoin> Joins { get; set; } = new List<TableJoin>();
             private IEnumerable<TableJoin> RecurseJoins => Joins.Concat(Joins.SelectMany(j => j.ChildTable.RecurseJoins));
@@ -131,11 +139,12 @@ namespace GraphQLProxy
             public Dictionary<string, string> ToSql()
             {
                 var columnSql = String.Join(",", FullColumnNames.Select(n => $"[{n.name}] [{n.alias}]"));
-                var cmdText = $"SELECT {columnSql} FROM [{TableName}]";
+                var cmdText = $"SELECT {columnSql} FROM {FullTableText}";
 
                 var baseSql = cmdText + GetFilterSql() + GetSortAndPaging();
                 var result = new Dictionary<string, string>();
                 result.Add(KeyName, baseSql);
+                result.Add($"{KeyName}_count", $"SELECT COUNT(*) FROM {FullTableText}{GetFilterSql()}");
                 foreach (var join in RecurseJoins)
                 {
                     result.Add(join.JoinName, join.GetSql());
@@ -204,6 +213,14 @@ namespace GraphQLProxy
         }
     }
 
+    class TableResult
+    {
+        public int? Total { get; set; }
+        public int? Offset { get; set; }
+        public int? Limit { get; set; }
+        public object? Data { get; set; }
+    }
+
 
     public interface ITableReaderFactory
     {
@@ -218,11 +235,17 @@ namespace GraphQLProxy
                 throw new ArgumentNullException(nameof(context) + ".SubFields");
 
             _tables ??= await GetTables(context);
+            var table = _tables.First(t => t.Alias == (context.FieldAst.Alias?.Name.StringValue ?? "") && t.TableName == context.FieldAst.Name.StringValue);
+            var data = LoadData(table, context.RequestServices!.GetRequiredService<IDbConnFactory>());
+            var count = data.First(kv => kv.Key.EndsWith("count")).Value.data[0][0] as int?;
 
-            return new ReaderEnum(
-                _tables.First(t => t.Alias == (context.FieldAst.Alias?.Name.StringValue ?? "") && t.TableName == context.FieldAst.Name.StringValue),
-                context.RequestServices!.GetRequiredService<IDbConnFactory>()
-                );
+            return new TableResult
+            {
+                Total = count ?? 0,
+                Offset = table.Offset,
+                Limit = table.Limit,
+                Data = new ReaderEnum(table, data)
+            };
 
         }
 
@@ -235,5 +258,37 @@ namespace GraphQLProxy
             var newTables = sqlContext.GetFinalTables();
             return newTables;
         }
+
+        private Dictionary<string, (Dictionary<string, int> index, List<object?[]> data)> LoadData(TableSqlData table, IDbConnFactory connFactory)
+        {
+            var sqlList = table.ToSql();
+            var resultNames = sqlList.Keys.ToArray();
+            string sql = string.Join(";\r\n", sqlList.Values);
+
+            using var conn = connFactory.GetConnection();
+            conn.Open();
+            var command = new SqlCommand(sql, conn);
+            using var reader = command.ExecuteReader();
+            var results = new Dictionary<string, (Dictionary<string, int> index, List<object?[]> data)>();
+            var resultIndex = 0;
+            do
+            {
+                var resultName = resultNames[resultIndex++];
+                var index = Enumerable.Range(0, reader.FieldCount).Select(i => (i, reader.GetName(i))).ToDictionary(x => x.Item2, x => x.i, StringComparer.OrdinalIgnoreCase);
+                var result = new List<object?[]>();
+                while (reader.Read())
+                {
+                    var row = new object?[reader.FieldCount];
+                    reader.GetValues(row);
+                    result.Add(row);
+                }
+                if (result.Count == 0)
+                    results.Add(resultName, (index, new List<object?[]>()));
+                else
+                    results.Add(resultName, (index, result));
+            } while (reader.NextResult());
+            return results;
+        }
+
     }
 }

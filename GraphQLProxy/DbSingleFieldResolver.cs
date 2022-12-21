@@ -12,10 +12,6 @@ namespace GraphQLProxy
         {
             var row = (ReaderCurrent)context.Source!;
             return row.Get(context);
-
-            //var row = ((Dictionary<string, int> index, object?[]? data))context.Source!;
-            //var index = row.index[context.FieldAst.Name.StringValue];
-            //return ValueTask.FromResult<object?>(null);
         }
     }
 }

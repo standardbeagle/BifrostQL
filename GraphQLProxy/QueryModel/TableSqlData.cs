@@ -108,7 +108,7 @@ namespace GraphQLProxy.QueryModel
 
                     };
                 case "sort":
-                    return value => Sort.AddRange((value as IEnumerable<object?>)?.Cast<string>() ?? Array.Empty<string>());
+                    return value => Sort.AddRange((value as IEnumerable<object?>)?.Cast<string>() ?? throw new ArgumentException("sort", "Unable to convert list"));
                 case "limit":
                     return value => Limit = value as int?;
                 case "offset":
@@ -116,7 +116,7 @@ namespace GraphQLProxy.QueryModel
                 case "on":
                     return value =>
                     {
-                        var columns = (value as IEnumerable<object?>)?.Cast<string>()?.ToArray() ?? Array.Empty<string>();
+                        var columns = (value as IEnumerable<object?>)?.Cast<string>()?.ToArray() ?? throw new ArgumentException("on", "Unable to convert list");
                         if (columns.Length != 2)
                             throw new ArgumentException("on joins only support two columns");
                         if (ParentJoin == null)

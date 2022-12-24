@@ -49,7 +49,7 @@ namespace GraphQLProxy.Resolvers
                     return ValueTask.FromResult<object?>((tableData.index, data));
                 }
             }
-            return ValueTask.FromResult(table.data[row][index]);
+            return ValueTask.FromResult(DbConvert(table.data[row][index]));
         }
 
         public TableSqlData TableSqlData => _tableSql;
@@ -67,6 +67,14 @@ namespace GraphQLProxy.Resolvers
         IEnumerator IEnumerable.GetEnumerator()
         {
             return new ReaderEnumerator(this);
+        }
+        private static object? DbConvert(object? val)
+        {
+            return val switch
+            {
+                DBNull => null,
+                _ => val,
+            };
         }
 
         public class ReaderEnumerator : IEnumerator<object?>, IEnumerator
@@ -91,7 +99,6 @@ namespace GraphQLProxy.Resolvers
             {
                 return ++_index < _count;
             }
-
             public void Reset()
             {
                 _index = -1;

@@ -39,7 +39,8 @@ namespace GraphQLProxy.QueryModel
         .Concat(Joins.SelectMany(j => j.ChildTable.AllJoinNames.Select(n => $"{j.JoinName}+{n}")));
 
         public IEnumerable<(string name, string alias)> FullColumnNames =>
-            ColumnNames.Select(c => (c, c))
+            ColumnNames.Where(c => c.StartsWith("__") == false)
+            .Select(c => (c, c))
             .Concat(Joins.Select(j => (j.ParentColumn, j.ParentColumn)))
             .Distinct();
 
@@ -107,7 +108,7 @@ namespace GraphQLProxy.QueryModel
 
                     };
                 case "sort":
-                    return value => Sort.AddRange((value as List<object?>)?.Cast<string>() ?? Array.Empty<string>());
+                    return value => Sort.AddRange((value as IEnumerable<object?>)?.Cast<string>() ?? Array.Empty<string>());
                 case "limit":
                     return value => Limit = value as int?;
                 case "offset":
@@ -115,7 +116,7 @@ namespace GraphQLProxy.QueryModel
                 case "on":
                     return value =>
                     {
-                        var columns = (value as List<object?>)?.Cast<string>()?.ToArray() ?? Array.Empty<string>();
+                        var columns = (value as IEnumerable<object?>)?.Cast<string>()?.ToArray() ?? Array.Empty<string>();
                         if (columns.Length != 2)
                             throw new ArgumentException("on joins only support two columns");
                         if (ParentJoin == null)

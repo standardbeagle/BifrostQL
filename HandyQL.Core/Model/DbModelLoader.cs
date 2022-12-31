@@ -1,4 +1,5 @@
-﻿using System.Data;
+﻿using Microsoft.Extensions.Configuration;
+using System.Data;
 using System.Data.SqlClient;
 
 namespace GraphQLProxy.Model
@@ -61,7 +62,7 @@ SELECT [TABLE_CATALOG]
             _includeTables = new TableMatcher(GetTableMatch(configuration.GetSection("IncludeTables")), true);
         }
 
-        public async Task<DbModel> LoadAsync()
+        public async Task<IDbModel> LoadAsync()
         {
             using var conn = new SqlConnection(_connStr);
             await conn.OpenAsync();

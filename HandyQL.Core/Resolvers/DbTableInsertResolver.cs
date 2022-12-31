@@ -1,6 +1,7 @@
 ﻿using GraphQL;
 using GraphQL.Resolvers;
 using GraphQLProxy.Model;
+using Microsoft.Extensions.DependencyInjection;
 using System.Data.SqlClient;
 
 namespace GraphQLProxy.Resolvers

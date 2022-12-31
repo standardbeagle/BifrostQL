@@ -9,6 +9,7 @@ using GraphQL.Types;
 using GraphQL.Utilities;
 using GraphQLParser;
 using GraphQLProxy.Model;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace GraphQLProxy.Schema
 {

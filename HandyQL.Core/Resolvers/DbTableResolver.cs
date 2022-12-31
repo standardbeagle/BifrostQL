@@ -10,6 +10,7 @@ using System.Drawing;
 using GraphQL.DataLoader;
 using System.Collections.Concurrent;
 using GraphQLProxy.Resolvers;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace GraphQLProxy
 {

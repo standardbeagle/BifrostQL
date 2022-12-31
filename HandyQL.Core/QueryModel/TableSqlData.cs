@@ -110,9 +110,9 @@ namespace GraphQLProxy.QueryModel
                 case "sort":
                     return value => Sort.AddRange((value as IEnumerable<object?>)?.Cast<string>() ?? throw new ArgumentException("sort", "Unable to convert list"));
                 case "limit":
-                    return value => Limit = value as int?;
+                    return value => Limit = Convert.ToInt32(value);
                 case "offset":
-                    return value => Offset = value as int?;
+                    return value => Offset = Convert.ToInt32(value);
                 case "on":
                     return value =>
                     {

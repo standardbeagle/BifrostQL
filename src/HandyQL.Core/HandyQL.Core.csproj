@@ -5,14 +5,13 @@
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 		<PackageId>HandyQL.Core</PackageId>
-		<Version>0.2.0</Version>
-		<PackageVersion>0.2.0</PackageVersion>
+		<Version>0.2.1</Version>
+		<PackageVersion>0.2.1</PackageVersion>
 		<Authors>Andy Brummer</Authors>
 		<Company>StandardBeagle</Company>
 		<Description>The fastest way to publish your SQL database as a GraphQL API.</Description>
 		<EnablePackageValidation>true</EnablePackageValidation>
 		<PackageProjectUrl>https://github.com/standardbeagle/HandyQL</PackageProjectUrl>
-		<PackageReadmeFile>https://github.com/standardbeagle/HandyQL/blob/main/README.md</PackageReadmeFile>
 		<RepositoryUrl>https://github.com/standardbeagle/HandyQL</RepositoryUrl>
 		<RepositoryType>git</RepositoryType>
 		<PackageTags>GraphQL SQLServer json api</PackageTags>

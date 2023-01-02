@@ -8,8 +8,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\HandyQL.Core\HandyQL.Core.csproj" />
-    <ProjectReference Include="..\HandyQL.Ngsql\HandyQL.Ngsql.csproj" />
-    <ProjectReference Include="..\HandyQL.SqlServer\HandyQL.SqlServer.csproj" />
+    <ProjectReference Include="..\data\HandyQL.Ngsql\HandyQL.Ngsql.csproj" />
+    <ProjectReference Include="..\data\HandyQL.SqlServer\HandyQL.SqlServer.csproj" />
   </ItemGroup>
 
 </Project>

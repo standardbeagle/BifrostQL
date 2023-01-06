@@ -12,7 +12,8 @@ export function Header() {
                         .find((t:any) => t.name === tableName)?.columns
                         ?.map((c:any) => ({key: c.name, value: `${c.name},${c.paramType}`, label: c.name })), [tableData, schema]);
     const [column, setColumn] = useState(options?.at(0)?.value ?? "");
-    useEffect(() => { console.log('arg'); setColumn(options?.at(0)?.value ?? ""); }, [tableData])
+    //The control needs to reset state when a new table is selected, ie the filter is cleared
+    useEffect(() => { setColumn(options?.at(0)?.value ?? ""); }, [tableData])
     const filter = () => {
         if (!searchVal) return;
         const [columnName, type] = column.split(",");

@@ -1,0 +1,32 @@
+.editdb-frame-layout {
+    display: grid;
+    grid-template-columns: minmax(150px, min-content) 1fr;
+}
+
+.editdb-frame-layout-header {
+    grid-column: 1 / -1;
+}
+
+.editdb-frame-layout-nav {
+    border-right: thin solid black;
+}
+
+.editdb-frame-layout-body {
+    display: grid;
+    justify-items: center;
+    align-items: stretch;
+}
+
+.plain-link {
+    text-decoration: none;
+    color: black;
+}
+
+.editdb-header {
+    display: flex;
+    flex-flow: row wrap;
+}
+
+.editdb-header > * {
+    margin: 10px;
+}

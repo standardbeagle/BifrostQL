@@ -105,8 +105,8 @@ SELECT [TABLE_CATALOG]
                             .ToArray();
             foreach (var idMatch in idMatches)
             {
-                idMatch.table.SingleLinks.Add(new Link { Name = idMatch.single, ChildId = idMatch.column, ParentId = idMatch.parent.KeyColumns.First() });
-                idMatch.parent.MultiLinks.Add(new Link { Name = pluralizer.Pluralize(idMatch.table.TableName), ChildId = idMatch.column, ParentId = idMatch.parent.KeyColumns.First() });
+                idMatch.table.SingleLinks.Add(new Link { Name = idMatch.single, ChildId = idMatch.column, ParentId = idMatch.parent.KeyColumns.First(), ChildTable = idMatch.table, ParentTable = idMatch.parent });
+                idMatch.parent.MultiLinks.Add(new Link { Name = pluralizer.Pluralize(idMatch.table.TableName), ChildId = idMatch.column, ParentId = idMatch.parent.KeyColumns.First(), ChildTable = idMatch.table, ParentTable = idMatch.parent });
             }
             return model;
         }

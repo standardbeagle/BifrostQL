@@ -27,6 +27,7 @@ namespace GraphQLProxy.Model
         public string TableSchema { get; init; } = null!;
         public string TableType { get; init; } = null!;
         public string FullName => $"{(TableSchema == "dbo" ? "" : $"{TableSchema}_")}{GraphQLName}";
+        public string UniqueName => $"{TableSchema}.{TableName}";
         public bool MatchName(string fullName) => string.Equals(FullName, fullName, StringComparison.OrdinalIgnoreCase);
         public IEnumerable<ColumnDto> Columns => ColumnLookup.Values;
         public IDictionary<string, ColumnDto> ColumnLookup { get; init; } = null!;
@@ -58,6 +59,8 @@ namespace GraphQLProxy.Model
     public class Link
     {
         public string Name { get; init; } = null!;
+        public TableDto ChildTable { get; init; } = null!;
+        public TableDto ParentTable { get; init; } = null!;
         public ColumnDto ChildId { get; init; } = null!;
         public ColumnDto ParentId { get; init; } = null!;
         public override string ToString() => $"{Name}-[{ChildId.TableName}.{ChildId.ColumnName}={ParentId.TableName}.{ParentId.ColumnName}]";

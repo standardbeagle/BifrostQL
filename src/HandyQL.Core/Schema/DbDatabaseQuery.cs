@@ -25,8 +25,8 @@ namespace GraphQLProxy.Schema
             var tables = model.Tables;
 
             var rowTypes = tables
-                .Select(t => (t.TableName, new DbRow(t)))
-                .ToDictionary(r => r.TableName, r => r.Item2);
+                .Select(t => (t.UniqueName, new DbRow(t)))
+                .ToDictionary(r => r.UniqueName, r => r.Item2);
 
             foreach (var row in rowTypes.Values)
             {
@@ -37,7 +37,7 @@ namespace GraphQLProxy.Schema
             {
                 foreach (var row in rowTypes.Values)
                 {
-                    row.AddTableJoin(table, rowTypes[table.TableName]);
+                    row.AddTableJoin(table, rowTypes[table.UniqueName]);
                 }
             }
 
@@ -54,7 +54,7 @@ namespace GraphQLProxy.Schema
                 {
                     Name = table.GraphQLName,
                     Arguments = new QueryArguments(filterArgs),
-                    ResolvedType = new TableQueryGraphType(table.GraphQLName, new ListGraphType(rowTypes[table.TableName])),
+                    ResolvedType = new TableQueryGraphType(table.GraphQLName, new ListGraphType(rowTypes[table.UniqueName])),
                     Resolver = new DbTableResolver(),
                 });
             }

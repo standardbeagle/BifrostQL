@@ -67,9 +67,9 @@ namespace GraphQLProxy.Schema
                 {
                     Name = $"{multi.Name.Replace(" ", "__")}",
                     Arguments = new QueryArguments(
-                        new QueryArgument(new GraphQLTypeReference($"{_table.GraphQLName}ColumnFilterType")) { Name = "filter" },
+                        new QueryArgument(new GraphQLTypeReference($"{multi.ChildTable.GraphQLName}ColumnFilterType")) { Name = "filter" },
                         new QueryArgument<ListGraphType<StringGraphType>>() { Name = "sort" }),
-                    ResolvedType = new ListGraphType(rows[multi.ChildId.TableName]),
+                    ResolvedType = new ListGraphType(rows[multi.ChildTable.UniqueName]),
                     Resolver = DbJoinFieldResolver.Instance
                 });
             }
@@ -78,7 +78,7 @@ namespace GraphQLProxy.Schema
                 AddField(new FieldType
                 {
                     Name = $"{single.Name.Replace(" ", "__")}",
-                    ResolvedType = rows[single.ParentId.TableName],
+                    ResolvedType = rows[single.ParentTable.UniqueName],
                     Resolver = DbJoinFieldResolver.Instance
                 });
             }

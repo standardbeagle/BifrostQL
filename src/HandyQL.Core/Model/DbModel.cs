@@ -30,6 +30,8 @@ namespace GraphQLProxy.Model
         public bool MatchName(string fullName) => string.Equals(FullName, fullName, StringComparison.OrdinalIgnoreCase);
         public IEnumerable<ColumnDto> Columns => ColumnLookup.Values;
         public IDictionary<string, ColumnDto> ColumnLookup { get; init; } = null!;
+        public List<Link> SingleLinks { get; init; } = new List<Link>();
+        public List<Link> MultiLinks { get; init; } = new List<Link>();
         public IEnumerable<ColumnDto> KeyColumns => Columns.Where(c => c.IsPrimaryKey);
         public IEnumerable<ColumnDto> StandardColumns => Columns.Where(c => c.IsPrimaryKey == false);
         public override string ToString()
@@ -51,6 +53,14 @@ namespace GraphQLProxy.Model
                 ColumnLookup = (columns ?? Array.Empty<ColumnDto>()).ToDictionary(c => c.ColumnName, StringComparer.OrdinalIgnoreCase),
             };
         }
+    }
+
+    public class Link
+    {
+        public string Name { get; init; } = null!;
+        public ColumnDto ChildId { get; init; } = null!;
+        public ColumnDto ParentId { get; init; } = null!;
+        public override string ToString() => $"{Name}-[{ChildId.TableName}.{ChildId.ColumnName}={ParentId.TableName}.{ParentId.ColumnName}]";
     }
 
     public record SchemaRef(string Catalog, string Schema);
@@ -84,6 +94,9 @@ namespace GraphQLProxy.Model
             string table = (string)reader["TABLE_NAME"];
             string column = (string)reader["COLUMN_NAME"];
             var columnRef = new ColumnRef(catalog, schema, table, column);
+            var isPrimary = constraints.TryGetValue(columnRef, out var con)
+                    ? con.Any(c => c.ConstraintType == "PRIMARY KEY")
+                    : false;
             return new ColumnDto
             {
                 TableCatalog = catalog,
@@ -95,9 +108,7 @@ namespace GraphQLProxy.Model
                 IsNullable = ((string)reader["IS_NULLABLE"]) == "YES",
                 OrdinalPosition = (int)reader["ORDINAL_POSITION"],
                 IsIdentity = (int)reader["IS_IDENTITY"] == 1,
-                IsPrimaryKey = constraints.TryGetValue(columnRef, out var con) 
-                    ? con.Any(c => c.ConstraintType == "PRIMARY KEY") 
-                    : false,
+                IsPrimaryKey = isPrimary,
             };
         }
     }

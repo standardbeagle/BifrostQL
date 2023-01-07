@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Configuration;
+using Pluralize.NET.Core;
 using System.Data;
 using System.Data.SqlClient;
 
@@ -19,8 +20,8 @@ SELECT CCU.[TABLE_CATALOG]
       ,CCU.[CONSTRAINT_SCHEMA]
       ,CCU.[CONSTRAINT_NAME]
 	  ,TC.[CONSTRAINT_TYPE]
-  FROM [portal].[INFORMATION_SCHEMA].[CONSTRAINT_COLUMN_USAGE] CCU
-  INNER JOIN [portal].[INFORMATION_SCHEMA].[TABLE_CONSTRAINTS] TC ON 
+  FROM [INFORMATION_SCHEMA].[CONSTRAINT_COLUMN_USAGE] CCU
+  INNER JOIN [INFORMATION_SCHEMA].[TABLE_CONSTRAINTS] TC ON 
 	TC.CONSTRAINT_CATALOG = CCU.CONSTRAINT_CATALOG AND
 	TC.CONSTRAINT_SCHEMA = CCU.CONSTRAINT_SCHEMA AND
 	TC.CONSTRAINT_NAME = CCU.CONSTRAINT_NAME;
@@ -76,7 +77,7 @@ SELECT [TABLE_CATALOG]
                 .GroupBy(c => new TableRef(c.TableCatalog, c.TableSchema, c.TableName))
                 .ToDictionary(g => g.Key, g => g.ToArray());
             await reader.NextResultAsync();
-            return
+            var model = 
                 new DbModel()
                 {
                     Tables = GetDtos<TableDto>(reader, r => TableDto.FromReader(
@@ -86,6 +87,26 @@ SELECT [TABLE_CATALOG]
                     .Where(t => _ignoreTables.Match(t) == false)
                     .ToList()
                 };
+            var pluralizer = new Pluralizer();
+            var singleTables = model.Tables
+                                .Where(t => t.KeyColumns.Count() == 1)
+                                .Select(t => (pluralizer.Singularize(t.TableName), t)).ToDictionary(t => t.Item1, t=> t.Item2);
+            var idMatches = model.Tables
+                            .SelectMany(table => table.Columns.Select(column => (table, column)))
+                            .Where(c => string.Equals(c.column.ColumnName, "id", StringComparison.InvariantCultureIgnoreCase) == false)
+                            .Where(c => c.column.ColumnName.EndsWith("id", StringComparison.InvariantCultureIgnoreCase))
+                            .Select(c => (stripped: c.column.ColumnName.Remove(c.column.ColumnName.Length-2).Replace("_", ""), c.column, c.table))
+                            .Select(c => (single: pluralizer.Singularize(c.stripped), c.column, c.table))
+                            .Where(c => singleTables.ContainsKey(c.single))
+                            .Select(c => (c.single, c.column, c.table, parent: singleTables[c.single]))
+                            .Where(c => c.column.DataType == c.parent.KeyColumns.First().DataType)
+                            .ToArray();
+            foreach(var idMatch in idMatches)
+            {
+                idMatch.table.SingleLinks.Add(new Link { Name = idMatch.single, ChildId = idMatch.column, ParentId = idMatch.parent.KeyColumns.First() });
+                idMatch.parent.MultiLinks.Add(new Link { Name = pluralizer.Pluralize(idMatch.table.TableName), ChildId = idMatch.column, ParentId = idMatch.parent.KeyColumns.First() });
+            }
+            return model;
         }
         IEnumerable<T> GetDtos<T>(IDataReader reader, Func<IDataReader, T> getDto)
         {

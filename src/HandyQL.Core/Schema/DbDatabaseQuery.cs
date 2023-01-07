@@ -28,6 +28,11 @@ namespace GraphQLProxy.Schema
                 .Select(t => (t.TableName, new DbRow(t)))
                 .ToDictionary(r => r.TableName, r => r.Item2);
 
+            foreach (var row in rowTypes.Values)
+            {
+                row.AddLinks(rowTypes);
+            }
+
             foreach (var table in tables)
             {
                 foreach (var row in rowTypes.Values)

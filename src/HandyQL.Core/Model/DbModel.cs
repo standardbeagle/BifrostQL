@@ -26,7 +26,7 @@ namespace GraphQLProxy.Model
         public string GraphQLName { get; init; } = null!;
         public string TableSchema { get; init; } = null!;
         public string TableType { get; init; } = null!;
-        public string FullName => $"{ (TableSchema == "dbo" ? "" : $"{TableSchema}_") }{GraphQLName}";
+        public string FullName => $"{(TableSchema == "dbo" ? "" : $"{TableSchema}_")}{GraphQLName}";
         public bool MatchName(string fullName) => string.Equals(FullName, fullName, StringComparison.OrdinalIgnoreCase);
         public IEnumerable<ColumnDto> Columns => ColumnLookup.Values;
         public IDictionary<string, ColumnDto> ColumnLookup { get; init; } = null!;
@@ -64,10 +64,10 @@ namespace GraphQLProxy.Model
     }
 
     public record SchemaRef(string Catalog, string Schema);
-    public record TableRef(string Catalog, string Schema, string Table) 
+    public record TableRef(string Catalog, string Schema, string Table)
         : SchemaRef(Catalog, Schema);
-    public record ColumnRef(string Catalog, string Schema, string Table, string Column) 
-        : TableRef(Catalog, Schema, Table); 
+    public record ColumnRef(string Catalog, string Schema, string Table, string Column)
+        : TableRef(Catalog, Schema, Table);
 
     public sealed class ColumnDto
     {
@@ -122,7 +122,7 @@ namespace GraphQLProxy.Model
         public string TableSchema { get; init; } = null!;
         public string TableName { get; init; } = null!;
         public string ColumnName { get; init; } = null!;
-        public string ConstraintType { get; init; } = null!; 
+        public string ConstraintType { get; init; } = null!;
 
         public static ColumnConstraintDto FromReader(IDataReader reader)
         {

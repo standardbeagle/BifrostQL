@@ -8,9 +8,11 @@ namespace GraphQLProxy.Schema
 {
     public class DbRow : ObjectGraphType
     {
+        private readonly TableDto _table;
         public DbRow(TableDto table)
         {
             Name = table.GraphQLName;
+            _table = table;
             foreach (var column in table.Columns)
             {
                 switch (column.DataType)
@@ -57,6 +59,30 @@ namespace GraphQLProxy.Schema
             }
         }
 
+        public void AddLinks(IDictionary<string, DbRow> rows)
+        {
+            foreach (var multi in _table.MultiLinks)
+            {
+                AddField(new FieldType
+                {
+                    Name = $"{multi.Name.Replace(" ", "__")}",
+                    Arguments = new QueryArguments(
+                        new QueryArgument(new GraphQLTypeReference($"{_table.GraphQLName}ColumnFilterType")) { Name = "filter" },
+                        new QueryArgument<ListGraphType<StringGraphType>>() { Name = "sort" }),
+                    ResolvedType = new ListGraphType(rows[multi.ChildId.TableName]),
+                    Resolver = DbJoinFieldResolver.Instance
+                });
+            }
+            foreach (var single in _table.SingleLinks)
+            {
+                AddField(new FieldType
+                {
+                    Name = $"{single.Name.Replace(" ", "__")}",
+                    ResolvedType = rows[single.ParentId.TableName],
+                    Resolver = DbJoinFieldResolver.Instance
+                });
+            }
+        }
         public void AddTableJoin(TableDto table, DbRow type)
         {
             AddField(new FieldType

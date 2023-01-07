@@ -11,6 +11,7 @@ using GraphQL.DataLoader;
 using System.Collections.Concurrent;
 using GraphQLProxy.Resolvers;
 using Microsoft.Extensions.DependencyInjection;
+using GraphQLProxy.Core.QueryModel;
 
 namespace GraphQLProxy
 {

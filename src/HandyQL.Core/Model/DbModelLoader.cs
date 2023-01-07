@@ -90,18 +90,20 @@ SELECT [TABLE_CATALOG]
             var pluralizer = new Pluralizer();
             var singleTables = model.Tables
                                 .Where(t => t.KeyColumns.Count() == 1)
-                                .Select(t => (pluralizer.Singularize(t.TableName), t)).ToDictionary(t => t.Item1, t=> t.Item2);
+                                .Select(t => (pluralizer.Singularize(t.TableName), t)).ToDictionary(t => t.Item1, t => t.Item2);
             var idMatches = model.Tables
                             .SelectMany(table => table.Columns.Select(column => (table, column)))
                             .Where(c => string.Equals(c.column.ColumnName, "id", StringComparison.InvariantCultureIgnoreCase) == false)
                             .Where(c => c.column.ColumnName.EndsWith("id", StringComparison.InvariantCultureIgnoreCase))
-                            .Select(c => (stripped: c.column.ColumnName.Remove(c.column.ColumnName.Length-2).Replace("_", ""), c.column, c.table))
+                            .Select(c => (stripped: c.column.ColumnName.Remove(c.column.ColumnName.Length - 2).Replace("_", ""), c.column, c.table))
+                            .Where(c => string.Equals(c.stripped, c.table.TableName, StringComparison.InvariantCultureIgnoreCase) == false)
                             .Select(c => (single: pluralizer.Singularize(c.stripped), c.column, c.table))
+                            .Where(c => string.Equals(c.single, pluralizer.Singularize(c.table.TableName), StringComparison.InvariantCultureIgnoreCase) == false)
                             .Where(c => singleTables.ContainsKey(c.single))
                             .Select(c => (c.single, c.column, c.table, parent: singleTables[c.single]))
                             .Where(c => c.column.DataType == c.parent.KeyColumns.First().DataType)
                             .ToArray();
-            foreach(var idMatch in idMatches)
+            foreach (var idMatch in idMatches)
             {
                 idMatch.table.SingleLinks.Add(new Link { Name = idMatch.single, ChildId = idMatch.column, ParentId = idMatch.parent.KeyColumns.First() });
                 idMatch.parent.MultiLinks.Add(new Link { Name = pluralizer.Pluralize(idMatch.table.TableName), ChildId = idMatch.column, ParentId = idMatch.parent.KeyColumns.First() });

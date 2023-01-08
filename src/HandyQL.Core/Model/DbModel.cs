@@ -31,8 +31,8 @@ namespace GraphQLProxy.Model
         public bool MatchName(string fullName) => string.Equals(FullName, fullName, StringComparison.OrdinalIgnoreCase);
         public IEnumerable<ColumnDto> Columns => ColumnLookup.Values;
         public IDictionary<string, ColumnDto> ColumnLookup { get; init; } = null!;
-        public List<Link> SingleLinks { get; init; } = new List<Link>();
-        public List<Link> MultiLinks { get; init; } = new List<Link>();
+        public List<TableLinkDto> SingleLinks { get; init; } = new List<TableLinkDto>();
+        public List<TableLinkDto> MultiLinks { get; init; } = new List<TableLinkDto>();
         public IEnumerable<ColumnDto> KeyColumns => Columns.Where(c => c.IsPrimaryKey);
         public IEnumerable<ColumnDto> StandardColumns => Columns.Where(c => c.IsPrimaryKey == false);
         public override string ToString()
@@ -56,7 +56,7 @@ namespace GraphQLProxy.Model
         }
     }
 
-    public class Link
+    public class TableLinkDto
     {
         public string Name { get; init; } = null!;
         public TableDto ChildTable { get; init; } = null!;

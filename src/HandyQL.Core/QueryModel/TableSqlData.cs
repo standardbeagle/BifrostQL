@@ -22,6 +22,7 @@ namespace GraphQLProxy.QueryModel
         public string Alias { get; set; } = "";
         public string KeyName => $"{Alias}:{TableName}";
         public List<string> ColumnNames { get; set; } = new List<string>();
+        public List<TableSqlData> Links { get; set; } = new List<TableSqlData>();
         public List<string> Sort { get; set; } = new List<string>();
         public List<FragmentSpread> FragmentSpreads { get; set; } = new List<FragmentSpread>();
         public TableFilter? Filter { get; set; }
@@ -88,25 +89,13 @@ namespace GraphQLProxy.QueryModel
             return $"{TableName}";
         }
 
+
         public Action<object?>? GetArgumentSetter(string argumentName)
         {
             switch (argumentName)
             {
                 case "filter":
-                    return value =>
-                    {
-                        var columnRow = (value as Dictionary<string, object?>)?.FirstOrDefault();
-                        if (columnRow == null) return;
-                        var operationRow = (columnRow?.Value as Dictionary<string, object?>)?.FirstOrDefault();
-                        if (operationRow == null) return;
-                        Filter = new TableFilter
-                        {
-                            ColumnName = columnRow?.Key!,
-                            RelationName = operationRow?.Key!,
-                            Value = operationRow?.Value
-                        };
-
-                    };
+                    return value => TableFilter.FromObject(value);
                 case "sort":
                     return value => Sort.AddRange((value as IEnumerable<object?>)?.Cast<string>() ?? throw new ArgumentException("sort", "Unable to convert list"));
                 case "limit":

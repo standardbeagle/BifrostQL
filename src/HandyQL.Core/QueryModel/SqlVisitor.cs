@@ -89,7 +89,9 @@ namespace GraphQLProxy.Core.QueryModel
         protected async override ValueTask VisitArgumentAsync(GraphQLArgument argument, ISqlContext context)
         {
             using var cleanup = context.StartTableArgument(argument.Name.StringValue);
+            context.PushArgument(argument.Name.StringValue);
             await base.VisitArgumentAsync(argument, context);
+            context.PopArgument();
         }
 
         protected override async ValueTask VisitObjectValueAsync(GraphQLObjectValue objectValue, ISqlContext context)
@@ -99,6 +101,7 @@ namespace GraphQLProxy.Core.QueryModel
             await base.VisitObjectValueAsync(objectValue, context);
             context.FieldSetters.Pop();
             context.Setters.FirstOrDefault()?.Invoke(result);
+            context.AddValue(result);
         }
 
         protected override async ValueTask VisitObjectFieldAsync(GraphQLObjectField objectField, ISqlContext context)
@@ -114,6 +117,7 @@ namespace GraphQLProxy.Core.QueryModel
             if (foundVariable == null)
                 throw new ArgumentException($"no data provided for variable: {variable.Name.StringValue}");
             context.Setters.FirstOrDefault()?.Invoke(foundVariable?.Value);
+            context.AddValue(foundVariable?.Value);
             await base.VisitVariableAsync(variable, context);
         }
 
@@ -122,6 +126,7 @@ namespace GraphQLProxy.Core.QueryModel
             var table = context.CurrentTables.FirstOrDefault();
             if (table != null)
                 table.FragmentSpreads.Add(new FragmentSpread { FragmentName = spread.FragmentName.Name.StringValue });
+            context.AddFragmentSpread(spread.FragmentName.Name.StringValue);
             await base.VisitFragmentSpreadAsync(spread, context);
         }
 
@@ -136,8 +141,10 @@ namespace GraphQLProxy.Core.QueryModel
 
             context.FragmentData.Add(table);
             context.CurrentTables.Push(table);
+            context.PushFragment(fragmentDefinition.FragmentName.Name.StringValue, fragmentDefinition.FragmentName.Name.StringValue);
             await base.VisitFragmentDefinitionAsync(fragmentDefinition, context);
             context.CurrentTables.Pop();
+            context.PopFragment();
         }
 
         protected override ValueTask VisitIntValueAsync(GraphQLIntValue value, ISqlContext context)
@@ -191,6 +198,7 @@ namespace GraphQLProxy.Core.QueryModel
         {
             await base.VisitDocumentAsync(document, context);
             context.ReduceFragments();
+            context.SyncFragments();
         }
     }
 }

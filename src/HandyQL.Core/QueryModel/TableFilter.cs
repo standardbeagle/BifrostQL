@@ -13,5 +13,20 @@ namespace GraphQLProxy.QueryModel
         {
             return DbFilterType.GetSingleFilter(alias ?? TableName, ColumnName, RelationName, Value);
         }
+
+        public static TableFilter? FromObject(object? value)
+        {
+            if (value == null) return null;
+            var columnRow = (value as Dictionary<string, object?>)?.FirstOrDefault();
+            if (columnRow == null) return null;
+            var operationRow = (columnRow?.Value as Dictionary<string, object?>)?.FirstOrDefault();
+            if (operationRow == null) return null;
+            return new TableFilter
+            {
+                ColumnName = columnRow?.Key!,
+                RelationName = operationRow?.Key!,
+                Value = operationRow?.Value
+            };
+        }
     }
 }

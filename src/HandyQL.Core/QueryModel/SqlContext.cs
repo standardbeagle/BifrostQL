@@ -30,6 +30,7 @@ namespace GraphQLProxy.QueryModel
         public void PopFragment();
         public void PushArgument(string name);
         public void PopArgument();
+        public void SyncFragments();
     }
 
     public class SqlContext : ISqlContext
@@ -124,7 +125,7 @@ namespace GraphQLProxy.QueryModel
 
         public List<TableSqlData> GetFinalTables()
         {
-            return TableSqlData;
+            return Fields.Select(f => f.ToSqlData()).ToList();
         }
 
         public void PushField(string name, string alias)
@@ -148,6 +149,8 @@ namespace GraphQLProxy.QueryModel
                 CurrentArgument.Value = value;
                 return;
             }
+            if (FieldsStack.Any() == false)
+                return;
             FieldsStack.First().Value = value;
         }
         public void AddFragmentSpread(string name) { FieldsStack.First().Fragments.Add(name); }
@@ -172,6 +175,40 @@ namespace GraphQLProxy.QueryModel
             CurrentArgument = arg;
         }
         public void PopArgument() { CurrentArgument = null; }
+
+        public void SyncFragments()
+        {
+            var fragmentLookup = Fragments.ToDictionary(f => f.Name);
+            foreach (var field in Fields)
+            {
+                SyncFieldFragments(field, fragmentLookup);
+            }
+        }
+
+        public void SyncFieldFragments(Field field, IDictionary<string, Field> fragmentList)
+        {
+            foreach (var fragmentField in field.Fragments.Select(f => fragmentList[f]).SelectMany(f => f.Fields))
+            {
+                field.Fields.Add(CopyField(fragmentField));
+            }
+            foreach (var subField in field.Fields)
+            {
+                SyncFieldFragments(subField, fragmentList);
+            }
+        }
+
+        public Field CopyField(Field field)
+        {
+            return new Field()
+            {
+                Name = field.Name,
+                Alias = field.Alias,
+                Value = field.Value,
+                Arguments = field.Arguments,
+                Fields = field.Fields.Select(CopyField).ToList(),
+                Fragments = field.Fragments,
+            };
+        }
     }
     public class Cleanup : IDisposable
     {
@@ -192,6 +229,57 @@ namespace GraphQLProxy.QueryModel
         public List<Argument> Arguments { get; init; } = new List<Argument>();
         public List<string> Fragments { get; init; } = new List<string>();
         public override string ToString() => $"{Alias}:{Name}={Value}({Arguments.Count})/{Fields.Count}/{Fragments.Count}";
+
+        public TableSqlData ToSqlData()
+        {
+            //TODO: Replace this with a global map between SQL names and graphql names
+            var name = Name.Replace("_join_", "").Replace("__", " ");
+            var rawSort = (List<object?>?) Arguments.FirstOrDefault(a => a.Name == "sort")?.Value;
+            var sort = rawSort?.Cast<string>()?.ToList() ?? new List<string>();
+            var result =  new TableSqlData
+            {
+                Alias = Alias,
+                TableName = name,
+                IsFragment = false,
+                IncludeResult = true,
+                ColumnNames = Fields.Where(f => f.Fields.Any() == false).Select(f => f.Name).ToList(),
+                Sort = sort,
+                Limit = (int?)Arguments.FirstOrDefault(a => a.Name == "limit")?.Value,
+                Offset = (int?)Arguments.FirstOrDefault(a => a.Name == "offset")?.Value,
+                Filter = TableFilter.FromObject(Arguments.FirstOrDefault(a => a.Name == "filter")?.Value),
+                Links = Fields
+                            .Where((f) => f.Fields.Any() && f.Name.StartsWith("_join_") == false)
+                            .Select(f => f.ToSqlData())
+                            .ToList(),
+            };
+            result.Joins.AddRange(
+                Fields
+                    .Where((f) => f.Fields.Any() && f.Name.StartsWith("_join_") == true)
+                    .Select(f => f.ToJoin(result))
+                );
+            return result;
+        }
+
+        public TableJoin ToJoin(TableSqlData parent)
+        {
+            var onArg = Arguments.FirstOrDefault(a => a.Name == "on");
+
+            if (onArg == null)
+                throw new ArgumentException("joins require columns specified with the on argument");
+
+            var columns = (onArg.Value as IEnumerable<object?>)?.Cast<string>()?.ToArray() ?? throw new ArgumentException("on", "Unable to convert list");
+            if (columns.Length != 2)
+                throw new ArgumentException("on joins only support two columns");
+            return new TableJoin
+            {
+                Name = Name,
+                Alias = Alias,
+                ParentTable = parent,
+                ChildTable = ToSqlData(),
+                ParentColumn = columns[0],
+                ChildColumn= columns[1],
+            };
+        }
     }
 
     public sealed class Argument

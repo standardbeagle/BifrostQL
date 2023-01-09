@@ -1,4 +1,5 @@
-﻿using static GraphQLProxy.DbTableResolver;
+﻿using GraphQLProxy.Model;
+using static GraphQLProxy.DbTableResolver;
 
 namespace GraphQLProxy.QueryModel
 {
@@ -14,6 +15,7 @@ namespace GraphQLProxy.QueryModel
         public TableJoin? ParentJoin { get; set; }
         public string SchemaName { get; set; } = "";
         public string TableName { get; set; } = "";
+        public string GraphQlName { get; set; } = "";
         public string FullTableText => string.IsNullOrWhiteSpace(SchemaName) switch
         {
             true => $"[{TableName}]",
@@ -31,8 +33,6 @@ namespace GraphQLProxy.QueryModel
         public bool IsFragment { get; set; }
         public bool IncludeResult { get; set; }
         public bool ProcessingResultData { get; set; } = false;
-
-
         public List<TableJoin> Joins { get; set; } = new List<TableJoin>();
         private IEnumerable<TableJoin> RecurseJoins => Joins.Concat(Joins.SelectMany(j => j.ChildTable.RecurseJoins));
 
@@ -45,18 +45,7 @@ namespace GraphQLProxy.QueryModel
             .Concat(Joins.Select(j => (j.ParentColumn, j.ParentColumn)))
             .Distinct();
 
-        public string GetFilterSql(string? alias = null)
-        {
-            if (Filter == null) return "";
-            return " WHERE " + Filter.ToSql(alias);
-        }
-
-        public TableJoin GetJoin(string? alias, string name)
-        {
-            return RecurseJoins.First(j => j.Alias == alias && j.Name == name);
-        }
-
-        public Dictionary<string, string> ToSql()
+        public Dictionary<string, string> ToSql(IDbModel dbModel)
         {
             var columnSql = string.Join(",", FullColumnNames.Select(n => $"[{n.name}] [{n.alias}]"));
             var cmdText = $"SELECT {columnSql} FROM {FullTableText}";
@@ -69,7 +58,40 @@ namespace GraphQLProxy.QueryModel
             {
                 result.Add(join.JoinName, join.GetSql());
             }
+            foreach (var link in Links)
+            {
+                var thisDto = dbModel.GetTable(GraphQlName);
+                var linkedTableName = link.TableName;
+                var multiLink = thisDto.MultiLinks.FirstOrDefault(l => string.Equals(l.ChildTable.GraphQLName, link.GraphQlName, StringComparison.InvariantCultureIgnoreCase));
+                if (multiLink != null)
+                {
+                    var join = new TableJoin
+                    {
+                        Alias = link.Alias,
+                        Name = link.TableName,
+                        ChildTable = link,
+                        ChildColumn = multiLink.ChildId.ColumnName,
+                        ParentTable = this,
+                        ParentColumn = multiLink.ParentId.ColumnName,
+                        JoinType = JoinType.Join,
+                    };
+                    Joins.Add(join);
+                    result.Add(join.JoinName, join.GetSql());
+                    continue;
+                }
+            }
             return result;
+        }
+
+        public string GetFilterSql(string? alias = null)
+        {
+            if (Filter == null) return "";
+            return " WHERE " + Filter.ToSql(alias);
+        }
+
+        public TableJoin? GetJoin(string? alias, string name)
+        {
+            return RecurseJoins.FirstOrDefault(j => (alias != null && j.Alias == alias) || j.Name == name);
         }
 
         public string GetSortAndPaging()

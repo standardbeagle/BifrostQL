@@ -48,13 +48,20 @@ namespace GraphQLProxy
     public sealed class TableReaderFactory : ITableReaderFactory
     {
         private List<TableSqlData>? _tables = null;
+        private readonly IDbModel _dbModel;
+
+        public TableReaderFactory(IDbModel dbModel) {
+            _dbModel = dbModel;
+        }
         public async ValueTask<object?> ResolveAsync(IResolveFieldContext context)
         {
             if (context.SubFields == null)
                 throw new ArgumentNullException(nameof(context) + ".SubFields");
 
             _tables ??= await GetTables(context);
-            var table = _tables.First(t => t.Alias == (context.FieldAst.Alias?.Name.StringValue ?? "") && t.TableName == context.FieldAst.Name.StringValue);
+            var alias = context.FieldAst.Alias?.Name.StringValue;
+            var graphqlName = context.FieldAst.Name.StringValue;
+            var table = _tables.First(t => (alias != null && t.Alias == alias) || t.GraphQlName == graphqlName);
             var data = LoadData(table, context.RequestServices!.GetRequiredService<IDbConnFactory>());
             var count = data.First(kv => kv.Key.EndsWith("count")).Value.data[0][0] as int?;
 
@@ -83,7 +90,7 @@ namespace GraphQLProxy
 
         private Dictionary<string, (Dictionary<string, int> index, List<object?[]> data)> LoadData(TableSqlData table, IDbConnFactory connFactory)
         {
-            var sqlList = table.ToSql();
+            var sqlList = table.ToSql(_dbModel);
             var resultNames = sqlList.Keys.ToArray();
             string sql = string.Join(";\r\n", sqlList.Values);
 

@@ -18,10 +18,8 @@ namespace GraphQLProxy.QueryModel
         public Cleanup AddSetter(Action<object?>? setter);
         public void Set(object? value);
         public void PopSetter();
-
         public Cleanup StartTableArgument(string argumentName);
         void ReduceFragments();
-
         public void PushField(string name, string alias);
         public void PopField();
         public void AddValue(object? value);
@@ -133,6 +131,7 @@ namespace GraphQLProxy.QueryModel
             var field = new Field { Name = name, Alias = alias };
             if (FieldsStack.Any() == false)
             {
+                field.IncludeResult = true;
                 Fields.Add(field);
             }
             else
@@ -225,6 +224,7 @@ namespace GraphQLProxy.QueryModel
         public string Alias { get; init; } = string.Empty;
         public string Name { get; init; } = null!;
         public object? Value { get; set; }
+        public bool IncludeResult { get; set; }
         public List<Field> Fields { get; init; } = new List<Field>();
         public List<Argument> Arguments { get; init; } = new List<Argument>();
         public List<string> Fragments { get; init; } = new List<string>();
@@ -236,24 +236,27 @@ namespace GraphQLProxy.QueryModel
             var name = Name.Replace("_join_", "").Replace("__", " ");
             var rawSort = (List<object?>?) Arguments.FirstOrDefault(a => a.Name == "sort")?.Value;
             var sort = rawSort?.Cast<string>()?.ToList() ?? new List<string>();
+            var dataFields = Fields.FirstOrDefault(f => f.Name == "data")?.Fields ?? new List<Field>();
+            var fields = IncludeResult ? dataFields : Fields;
             var result =  new TableSqlData
             {
                 Alias = Alias,
                 TableName = name,
+                GraphQlName = Name,
                 IsFragment = false,
-                IncludeResult = true,
-                ColumnNames = Fields.Where(f => f.Fields.Any() == false).Select(f => f.Name).ToList(),
+                IncludeResult = IncludeResult,
+                ColumnNames = fields.Where(f => f.Fields.Any() == false).Select(f => f.Name).ToList(),
                 Sort = sort,
                 Limit = (int?)Arguments.FirstOrDefault(a => a.Name == "limit")?.Value,
                 Offset = (int?)Arguments.FirstOrDefault(a => a.Name == "offset")?.Value,
                 Filter = TableFilter.FromObject(Arguments.FirstOrDefault(a => a.Name == "filter")?.Value),
-                Links = Fields
+                Links = fields
                             .Where((f) => f.Fields.Any() && f.Name.StartsWith("_join_") == false)
                             .Select(f => f.ToSqlData())
                             .ToList(),
             };
             result.Joins.AddRange(
-                Fields
+                fields
                     .Where((f) => f.Fields.Any() && f.Name.StartsWith("_join_") == true)
                     .Select(f => f.ToJoin(result))
                 );

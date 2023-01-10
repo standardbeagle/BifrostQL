@@ -15,23 +15,23 @@ Mutations are generated for inserts, updates, upserts, and deletes. HandyQL read
  - [x] Support dynamic table joins using single column
  - [x] Support single object mutations
  - [x] Configuration to filter exported tables using regex syntax on schema and table names
- - [ ] Support dynamic parent/single object joins
+ - [x] Support dynamic parent/single object joins
+ - [x] Use column names to infer simple joins between tables
+ - [ ] Add Single join ref to filters
+ - [ ] Add support for integrating oauth2 authentication services
+ - [ ] Add configuration to automatically fill audit type columns
+ - [ ] Add configuration to automatically generate filters based on userid/column mappings 
  - [ ] Add multi column filter options
  - [ ] Add multi colmun joins using relations
  - [ ] Add simplified many-to-many join syntax
  - [ ] Use foreign keys to infer simple joins between tables
- - [x] Use column names to infer simple joins between tables
- - [ ] Add Single join ref to filters
- - [ ] Switch to direct graphQL schema generation
- - [ ] Add support for integrating oauth2 authentication services
- - [ ] Add configuration to automatically fill audit type columns
- - [ ] Add configuration to automatically generate filters based on userid/column mappings 
  - [ ] Add support for soft deletes
  - [ ] Add support to use database auth
  - [ ] PostreSQL
  - [ ] MySQL
  - [ ] SqlLite
  - [ ] Add Enum designation to lookup tables
+ - [ ] Switch to direct graphQL schema generation
 
  ### Why HandyQL
  At StandardBeagle we've built many prototypes, and like using GraphQL. Over time we've started to use applications like [hasura](https://hasura.io/) to roll out apis for prototypes quickly. We wanted to try and build something similar, but that put more power in the hands of the front end developer. 

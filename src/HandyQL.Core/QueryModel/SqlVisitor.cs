@@ -37,7 +37,7 @@ namespace GraphQLProxy.Core.QueryModel
             else
             {
                 var parent = context.CurrentTables.First();
-                if (field.Name.StringValue.StartsWith("_join"))
+                if (Field.IsSpecialColumn(field.Name.StringValue))
                 {
                     childTable = new TableSqlData
                     {

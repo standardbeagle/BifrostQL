@@ -85,6 +85,23 @@ namespace HandyQL.Core.QueryModel
                     { "sessions_count", "SELECT COUNT(*) FROM [sessions]"},
                     { "sessions->workshop", "SELECT a.[JoinId] [src_id], b.[id] AS [id],b.[number] AS [number] FROM (SELECT DISTINCT [workshopid] AS JoinId FROM [sessions]) a INNER JOIN [workshops] b ON a.[JoinId] = b.[id]" },
                 });
+        }
+        [Fact]
+        public async Task SimpleDynamicSingleLinkQuerySuccess()
+        {
+            var ctx = new SqlContext();
+            var visitor = new SqlVisitor();
+            List<TableDto> tables = GetFakeTables();
+
+            var ast = Parser.Parse("query { sessions { data { id workshop: _single_Workshops(on: [\"workshopid\", \"id\"]) { id number } } } }");
+            await visitor.VisitAsync(ast, ctx);
+            var sqls = ctx.GetFinalTables().Select(t => t.ToSql(new DbModel { Tables = tables })).ToArray();
+            sqls.Should().ContainSingle()
+                .Which.Should().Equal(new Dictionary<string, string> {
+                    { "sessions", "SELECT [id] [id],[workshopid] [workshopid] FROM [sessions] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
+                    { "sessions_count", "SELECT COUNT(*) FROM [sessions]"},
+                    { "sessions->workshop", "SELECT a.[JoinId] [src_id], b.[id] AS [id],b.[number] AS [number] FROM (SELECT DISTINCT [workshopid] AS JoinId FROM [sessions]) a INNER JOIN [Workshops] b ON a.[JoinId] = b.[id]" },
+                });
 
         }
 

@@ -230,11 +230,17 @@ namespace GraphQLProxy.QueryModel
         public List<string> Fragments { get; init; } = new List<string>();
         public override string ToString() => $"{Alias}:{Name}={Value}({Arguments.Count})/{Fields.Count}/{Fragments.Count}";
 
+        public static bool IsSpecialColumn(string name)
+        {
+            if (name.StartsWith("_join_")) return true;
+            if (name.StartsWith("_single_")) return true; 
+            return false;
+        }
         public TableSqlData ToSqlData(Field? parent = null, string basePath = "")
         {
             var path = basePath + "/" + Alias ?? Name;
             //TODO: Replace this with a global map between SQL names and graphql names
-            var name = Name.Replace("_join_", "").Replace("__", " ");
+            var name = Name.Replace("_join_", "").Replace("_single_", "").Replace("__", " ");
             var rawSort = (List<object?>?) Arguments.FirstOrDefault(a => a.Name == "sort")?.Value;
             var sort = rawSort?.Cast<string>()?.ToList() ?? new List<string>();
             var dataFields = Fields.FirstOrDefault(f => f.Name == "data")?.Fields ?? new List<Field>();
@@ -253,13 +259,13 @@ namespace GraphQLProxy.QueryModel
                 Offset = (int?)Arguments.FirstOrDefault(a => a.Name == "offset")?.Value,
                 Filter = TableFilter.FromObject(Arguments.FirstOrDefault(a => a.Name == "filter")?.Value),
                 Links = fields
-                            .Where((f) => f.Fields.Any() && f.Name.StartsWith("_join_") == false)
+                            .Where((f) => f.Fields.Any() && IsSpecialColumn(f.Name) == false)
                             .Select(f => f.ToSqlData(this, path))
                             .ToList(),
             };
             result.Joins.AddRange(
                 fields
-                    .Where((f) => f.Fields.Any() && f.Name.StartsWith("_join_") == true)
+                    .Where((f) => f.Fields.Any() && IsSpecialColumn(f.Name) == true)
                     .Select(f => f.ToJoin(result))
                 );
             return result;
@@ -283,6 +289,7 @@ namespace GraphQLProxy.QueryModel
                 ConnectedTable = ToSqlData(),
                 FromColumn = columns[0],
                 ConnectedColumn= columns[1],
+                JoinType = Name.StartsWith("_join_") ? JoinType.Join: JoinType.Single,
             };
         }
     }

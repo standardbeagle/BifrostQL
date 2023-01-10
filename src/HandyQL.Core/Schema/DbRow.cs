@@ -98,13 +98,13 @@ namespace GraphQLProxy.Schema
                 ResolvedType = new ListGraphType(type),
                 Resolver = DbJoinFieldResolver.Instance
             });
-            //AddField(new FieldType
-            //{
-            //    Name = $"_single_{table.GraphQLName}",
-            //    Arguments = new QueryArguments(new QueryArgument<ListGraphType<StringGraphType>>() { Name = "on" }),
-            //    ResolvedType = type,
-            //    Resolver = DbJoinFieldResolver.Instance
-            //});
+            AddField(new FieldType
+            {
+                Name = $"_single_{table.GraphQLName}",
+                Arguments = new QueryArguments(new QueryArgument<ListGraphType<StringGraphType>>() { Name = "on" }),
+                ResolvedType = type,
+                Resolver = DbJoinFieldResolver.Instance
+            });
         }
     }
 

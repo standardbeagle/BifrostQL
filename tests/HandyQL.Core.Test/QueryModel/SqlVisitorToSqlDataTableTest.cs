@@ -109,7 +109,7 @@ namespace HandyQL.Core.QueryModel
                     new
                     {
                         TableName = "workshops",
-                        Filter = new { ColumnName = "id", RelationName = "_eq", Value = 10 },
+                        Filter = new { ColumnNames = new[] { "id" }, RelationName = "_eq", Value = 10 },
                         Limit = (int?)null,
                         Offset = (int?)null,
                         Sort = new string[] { },
@@ -134,7 +134,7 @@ namespace HandyQL.Core.QueryModel
                     new
                     {
                         TableName = "sessions",
-                        Filter = new { ColumnName = "workshop.number", RelationName = "_eq", Value = "10-AA" },
+                        Filter = new { ColumnNames = new[] { "workshop", "number" }, RelationName = "_eq", Value = "10-AA" },
                         Limit = (int?)null,
                         Offset = (int?)null,
                         Sort = new string[] { },

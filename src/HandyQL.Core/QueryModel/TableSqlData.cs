@@ -135,36 +135,6 @@ namespace GraphQLProxy.QueryModel
         {
             return $"{TableName}";
         }
-
-
-        public Action<object?>? GetArgumentSetter(string argumentName)
-        {
-            switch (argumentName)
-            {
-                case "filter":
-                    return value => TableFilter.FromObject(value);
-                case "sort":
-                    return value => Sort.AddRange((value as IEnumerable<object?>)?.Cast<string>() ?? throw new ArgumentException("sort", "Unable to convert list"));
-                case "limit":
-                    return value => Limit = Convert.ToInt32(value);
-                case "offset":
-                    return value => Offset = Convert.ToInt32(value);
-                case "on":
-                    return value =>
-                    {
-                        var columns = (value as IEnumerable<object?>)?.Cast<string>()?.ToArray() ?? throw new ArgumentException("on", "Unable to convert list");
-                        if (columns.Length != 2)
-                            throw new ArgumentException("on joins only support two columns");
-                        if (JoinFrom == null)
-                            throw new ArgumentException("Parent Join cannot be null for 'on' argument");
-                        JoinFrom.FromColumn = columns[0];
-                        JoinFrom.ConnectedColumn = columns[1];
-                    };
-                default:
-                    return value => { };
-            }
-
-        }
     }
 
     internal class SqlNameComparer : IEqualityComparer<string>

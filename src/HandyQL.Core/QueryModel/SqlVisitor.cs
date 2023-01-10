@@ -15,80 +15,12 @@ namespace GraphQLProxy.Core.QueryModel
         {
             if (field == null)
                 return;
-            TableSqlData? table = null;
-            TableJoin? join = null;
-            TableSqlData? childTable = null;
-            bool processingResultData = false;
-            context.PushField(field.Name.StringValue, field.Alias?.Name?.StringValue ?? field.Name.StringValue);
-
-            if (!context.CurrentTables.Any())
-            {
-                table = new TableSqlData()
-                {
-                    TableName = field.Name.StringValue,
-                    Alias = field.Alias?.Name.StringValue ?? "",
-                    IsFragment = false,
-                    IncludeResult = true,
-                };
-
-                context.TableSqlData.Add(table);
-                context.CurrentTables.Push(table);
-            }
-            else
-            {
-                var parent = context.CurrentTables.First();
-                if (Field.IsSpecialColumn(field.Name.StringValue))
-                {
-                    childTable = new TableSqlData
-                    {
-                        TableName = field.Name.StringValue.Replace("_join_", ""),
-                        IsFragment = false,
-                        IncludeResult = false
-                    };
-                    join = new TableJoin
-                    {
-                        Name = field.Name.StringValue,
-                        FromTable = parent,
-                        Alias = field.Alias?.Name?.StringValue,
-                        ConnectedTable = childTable,
-                    };
-                    childTable.JoinFrom = join;
-                    parent.Joins.Add(join);
-                    context.CurrentTables.Push(childTable);
-                    context.CurrentJoins.Push(join);
-                }
-                else
-                {
-                    if (parent.IncludeResult && !parent.ProcessingResultData)
-                    {
-                        if (field.Name.StringValue == "data")
-                        {
-                            processingResultData = true;
-                            parent.ProcessingResultData = true;
-                        }
-                    }
-                    else
-                    {
-                        parent.ColumnNames.Add(field.Name.StringValue);
-                    }
-                }
-            }
-
+            context.PushField(field.Name.StringValue, field.Alias?.Name?.StringValue);
             await base.VisitFieldAsync(field, context);
             context.PopField();
-
-            if (table != null)
-                context.CurrentTables.Pop();
-            if (join != null)
-                context.CurrentJoins.Pop();
-            if (childTable != null)
-                context.CurrentTables.Pop();
-            if (processingResultData)
-                context.CurrentTables.First().ProcessingResultData = false;
         }
         protected async override ValueTask VisitArgumentAsync(GraphQLArgument argument, ISqlContext context)
         {
-            using var cleanup = context.StartTableArgument(argument.Name.StringValue);
             context.PushArgument(argument.Name.StringValue);
             await base.VisitArgumentAsync(argument, context);
             context.PopArgument();
@@ -123,27 +55,14 @@ namespace GraphQLProxy.Core.QueryModel
 
         protected async override ValueTask VisitFragmentSpreadAsync(GraphQLFragmentSpread spread, ISqlContext context)
         {
-            var table = context.CurrentTables.FirstOrDefault();
-            if (table != null)
-                table.FragmentSpreads.Add(new FragmentSpread { FragmentName = spread.FragmentName.Name.StringValue });
             context.AddFragmentSpread(spread.FragmentName.Name.StringValue);
             await base.VisitFragmentSpreadAsync(spread, context);
         }
 
         protected async override ValueTask VisitFragmentDefinitionAsync(GraphQLFragmentDefinition fragmentDefinition, ISqlContext context)
         {
-            var table = new TableSqlData()
-            {
-                TableName = fragmentDefinition.FragmentName.Name.StringValue,
-                IsFragment = true,
-                IncludeResult = true,
-            };
-
-            context.FragmentData.Add(table);
-            context.CurrentTables.Push(table);
             context.PushFragment(fragmentDefinition.FragmentName.Name.StringValue, fragmentDefinition.FragmentName.Name.StringValue);
             await base.VisitFragmentDefinitionAsync(fragmentDefinition, context);
-            context.CurrentTables.Pop();
             context.PopFragment();
         }
 
@@ -197,7 +116,6 @@ namespace GraphQLProxy.Core.QueryModel
         protected async override ValueTask VisitDocumentAsync(GraphQLDocument document, ISqlContext context)
         {
             await base.VisitDocumentAsync(document, context);
-            context.ReduceFragments();
             context.SyncFragments();
         }
     }

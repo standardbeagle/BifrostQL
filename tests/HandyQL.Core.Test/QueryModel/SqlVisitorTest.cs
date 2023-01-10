@@ -24,7 +24,24 @@ namespace HandyQL.Core.QueryModel
                 .Which.Should().BeEquivalentTo(new
                 {
                     Name = "workshops",
-                    Alias = "workshops",
+                    Alias = (string?)null,
+                    Fields = new[] { new { Name = "id" } }
+                });
+        }
+
+        [Fact]
+        public async Task SimpleAliasFieldSuccess()
+        {
+            var ctx = new SqlContext();
+            var sut = new SqlVisitor();
+
+            var ast = Parser.Parse("query { george: workshops { id } }");
+            await sut.VisitAsync(ast, ctx);
+            ctx.Fields.Should().ContainSingle()
+                .Which.Should().BeEquivalentTo(new
+                {
+                    Name = "workshops",
+                    Alias = "george",
                     Fields = new[] { new { Name = "id" } }
                 });
         }
@@ -41,7 +58,7 @@ namespace HandyQL.Core.QueryModel
                 .Which.Should().BeEquivalentTo(new
                 {
                     Name = "workshops",
-                    Alias = "workshops",
+                    Alias = (string?)null,
                     Fields = new[] { new { Name = "data", Fields = new[] { new { Name = "id"  } } } },
                     Arguments = new object[] { 
                         new { Name = "sort", Value = new string[] { "id asc"} },
@@ -88,7 +105,7 @@ namespace HandyQL.Core.QueryModel
             var ast = Parser.Parse(graphQL);
             await sut.VisitAsync(ast, ctx);
             ctx.Fields.Should().ContainSingle()
-                .Which.Should().BeEquivalentTo(new { Name = "workshops", Alias = "workshops" })
+                .Which.Should().BeEquivalentTo(new { Name = "workshops", Alias = (string?)null })
                 .And.BeOfType<Field>()
                 .Which.Fragments.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo("wr");
@@ -99,21 +116,21 @@ namespace HandyQL.Core.QueryModel
                     .Which.Should().BeEquivalentTo(new { Name = "wr" })
                     .And.BeOfType<Field>()
                     .Which.Fields.Should().ContainSingle()
-                    .Which.Should().BeEquivalentTo(new { Name = "data", Alias = "data" })
+                    .Which.Should().BeEquivalentTo(new { Name = "data", Alias = (string?)null })
                     .And.BeOfType<Field>()
                     .Which.Fields.Should().HaveCount(2)
-                    .And.ContainEquivalentOf(new { Name = "id", Alias = "id" })
-                    .And.ContainEquivalentOf(new { Name = "number", Alias = "number" });
+                    .And.ContainEquivalentOf(new { Name = "id", Alias = (string?)null })
+                    .And.ContainEquivalentOf(new { Name = "number", Alias = (string?)null });
             }
 
             ctx.Fields.Should().ContainSingle()
                 .Which.Should().BeOfType<Field>()
                 .Which.Fields.Should().ContainSingle()
-                .Which.Should().BeEquivalentTo(new { Name = "data", Alias = "data" })
+                .Which.Should().BeEquivalentTo(new { Name = "data", Alias = (string?)null })
                 .And.BeOfType<Field>()
                 .Which.Fields.Should().HaveCount(2)
-                .And.ContainEquivalentOf(new { Name = "id", Alias = "id" })
-                .And.ContainEquivalentOf(new { Name = "number", Alias = "number" });
+                .And.ContainEquivalentOf(new { Name = "id", Alias = (string?)null })
+                .And.ContainEquivalentOf(new { Name = "number", Alias = (string?)null });
         }
         [Theory]
         [InlineData(0)]

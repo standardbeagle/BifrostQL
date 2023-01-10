@@ -11,16 +11,10 @@ namespace GraphQLProxy.QueryModel
         public Variables Variables { get; }
         public Stack<Action<string, object?>> FieldSetters { get; }
         public Stack<Action<object?>> Setters { get; }
-        public List<TableSqlData> TableSqlData { get; }
-        public List<TableSqlData> FragmentData { get; }
-        public Stack<TableSqlData> CurrentTables { get; }
-        public Stack<TableJoin> CurrentJoins { get; }
         public Cleanup AddSetter(Action<object?>? setter);
         public void Set(object? value);
         public void PopSetter();
-        public Cleanup StartTableArgument(string argumentName);
-        void ReduceFragments();
-        public void PushField(string name, string alias);
+        public void PushField(string name, string? alias);
         public void PopField();
         public void AddValue(object? value);
         public void AddFragmentSpread(string name);
@@ -37,10 +31,6 @@ namespace GraphQLProxy.QueryModel
         public CancellationToken CancellationToken { get; init; }
         public Stack<Action<string, object?>> FieldSetters { get; init; } = new Stack<Action<string, object?>>();
         public Stack<Action<object?>> Setters { get; init; } = new Stack<Action<object?>>();
-        public List<TableSqlData> TableSqlData { get; init; } = new List<TableSqlData>();
-        public List<TableSqlData> FragmentData { get; init; } = new List<TableSqlData>();
-        public Stack<TableSqlData> CurrentTables { get; init; } = new Stack<TableSqlData>();
-        public Stack<TableJoin> CurrentJoins { get; init; } = new Stack<TableJoin>();
         public List<Field> Fields { get; init; } = new List<Field>();
         public List<Field> Fragments { get; init; } = new List<Field>();
         public Stack<Field> FieldsStack { get; init; } = new Stack<Field>();
@@ -61,72 +51,12 @@ namespace GraphQLProxy.QueryModel
             Setters.Pop();
         }
 
-        public Cleanup StartTableArgument(string argumentName)
-        {
-            var table = CurrentTables.FirstOrDefault();
-            return AddSetter(table?.GetArgumentSetter(argumentName));
-        }
-
-        public void ReduceFragments()
-        {
-            foreach (var table in TableSqlData)
-            {
-                ReduceFragments(table);
-            }
-        }
-
-        private void ReduceFragments(TableSqlData table)
-        {
-            foreach (var spread in table.FragmentSpreads)
-            {
-                var fragment = FragmentData.First(x => x.TableName == spread.FragmentName);
-                spread.Table = fragment;
-                table.ColumnNames.AddRange(fragment.ColumnNames);
-                table.Joins.AddRange(fragment.Joins.Select(tj =>
-                {
-                    var result = new TableJoin
-                    {
-                        Name = tj.Name,
-                        FromTable = table,
-                        Alias = tj.Alias,
-                        FromColumn = tj.FromColumn,
-                        ConnectedTable = new TableSqlData
-                        {
-                            TableName = tj.ConnectedTable.TableName,
-                            ColumnNames = tj.ConnectedTable.ColumnNames,
-                            FragmentSpreads = tj.ConnectedTable.FragmentSpreads,
-                            IsFragment = false,
-                            Filter = tj.ConnectedTable.Filter,
-                            Limit = tj.ConnectedTable.Limit,
-                            Offset = tj.ConnectedTable.Offset,
-                            Sort = tj.ConnectedTable.Sort,
-                            IncludeResult = false,
-                        },
-                        ConnectedColumn = tj.ConnectedColumn,
-                        JoinType = tj.JoinType,
-                    };
-                    result.ConnectedTable.Joins = tj.ConnectedTable.Joins.Select(j => new TableJoin
-                    {
-                        Name = j.Name,
-                        Alias = j.Alias,
-                        ConnectedColumn = j.ConnectedColumn,
-                        ConnectedTable = j.ConnectedTable,
-                        FromTable = result.ConnectedTable,
-                        FromColumn = j.FromColumn,
-                        JoinType = j.JoinType,
-                    }).ToList();
-                    ReduceFragments(result.ConnectedTable);
-                    return result;
-                }));
-            }
-        }
-
         public List<TableSqlData> GetFinalTables()
         {
             return Fields.Select(f => f.ToSqlData()).ToList();
         }
 
-        public void PushField(string name, string alias)
+        public void PushField(string name, string? alias)
         {
             var field = new Field { Name = name, Alias = alias };
             if (FieldsStack.Any() == false)

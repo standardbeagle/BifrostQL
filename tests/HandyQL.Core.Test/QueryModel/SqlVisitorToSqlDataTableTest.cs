@@ -120,6 +120,31 @@ namespace HandyQL.Core.QueryModel
         }
 
         [Fact]
+        public async Task FilterJoinTestSuccess()
+        {
+            var ctx = new SqlContext();
+            var sut = new SqlVisitor();
+
+            var ast = Parser.Parse("query { sessions(filter: { workshop: { number: {_eq: \"10-AA\"} } }) { data { id number } } }");
+            await sut.VisitAsync(ast, ctx);
+            var tables = ctx.GetFinalTables();
+
+            tables.Should().ContainSingle()
+                .Which.Should().BeEquivalentTo(
+                    new
+                    {
+                        TableName = "sessions",
+                        Filter = new { ColumnName = "workshop.number", RelationName = "_eq", Value = "10-AA" },
+                        Limit = (int?)null,
+                        Offset = (int?)null,
+                        Sort = new string[] { },
+                        Joins = new object[] { },
+                        Links = new object[] { },
+                        ColumnNames = new string[] { "id", "number" }
+                    });
+        }
+
+        [Fact]
         public async Task JoinTestSuccess()
         {
             var ctx = new SqlContext();

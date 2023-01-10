@@ -44,7 +44,7 @@ namespace GraphQLProxy.Schema
             foreach (var table in tables)
             {
                 var filterArgs = new List<QueryArgument>();
-                filterArgs.Add(new QueryArgument(new DbColumnFilterType(table.GraphQLName, table.Columns)) { Name = "filter" });
+                filterArgs.Add(new QueryArgument(new DbColumnFilterType(table)) { Name = "filter" });
                 filterArgs.Add(new QueryArgument<IntGraphType>() { Name = "limit" });
                 filterArgs.Add(new QueryArgument<IntGraphType>() { Name = "offset" });
                 filterArgs.Add(new QueryArgument<ListGraphType<StringGraphType>>() { Name = "sort" });

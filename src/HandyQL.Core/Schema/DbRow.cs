@@ -61,11 +61,13 @@ namespace GraphQLProxy.Schema
 
         public void AddLinks(IDictionary<string, DbRow> rows)
         {
-            foreach (var multi in _table.MultiLinks)
+            foreach (var multiKv in _table.MultiLinks)
             {
+                var multi = multiKv.Value;
+                var key = multiKv.Key;
                 AddField(new FieldType
                 {
-                    Name = $"{multi.Name.Replace(" ", "__")}",
+                    Name = key,
                     Arguments = new QueryArguments(
                         new QueryArgument(new GraphQLTypeReference($"{multi.ChildTable.GraphQLName}ColumnFilterType")) { Name = "filter" },
                         new QueryArgument<ListGraphType<StringGraphType>>() { Name = "sort" }),
@@ -77,8 +79,8 @@ namespace GraphQLProxy.Schema
             {
                 AddField(new FieldType
                 {
-                    Name = $"{single.Name.Replace(" ", "__")}",
-                    ResolvedType = rows[single.ParentTable.UniqueName],
+                    Name = single.Key,
+                    ResolvedType = rows[single.Value.ParentTable.UniqueName],
                     Resolver = DbJoinFieldResolver.Instance
                 });
             }

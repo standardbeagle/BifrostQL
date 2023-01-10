@@ -87,35 +87,35 @@ namespace GraphQLProxy.QueryModel
                     var result = new TableJoin
                     {
                         Name = tj.Name,
-                        ParentTable = table,
+                        FromTable = table,
                         Alias = tj.Alias,
-                        ParentColumn = tj.ParentColumn,
-                        ChildTable = new TableSqlData
+                        FromColumn = tj.FromColumn,
+                        ConnectedTable = new TableSqlData
                         {
-                            TableName = tj.ChildTable.TableName,
-                            ColumnNames = tj.ChildTable.ColumnNames,
-                            FragmentSpreads = tj.ChildTable.FragmentSpreads,
+                            TableName = tj.ConnectedTable.TableName,
+                            ColumnNames = tj.ConnectedTable.ColumnNames,
+                            FragmentSpreads = tj.ConnectedTable.FragmentSpreads,
                             IsFragment = false,
-                            Filter = tj.ChildTable.Filter,
-                            Limit = tj.ChildTable.Limit,
-                            Offset = tj.ChildTable.Offset,
-                            Sort = tj.ChildTable.Sort,
+                            Filter = tj.ConnectedTable.Filter,
+                            Limit = tj.ConnectedTable.Limit,
+                            Offset = tj.ConnectedTable.Offset,
+                            Sort = tj.ConnectedTable.Sort,
                             IncludeResult = false,
                         },
-                        ChildColumn = tj.ChildColumn,
+                        ConnectedColumn = tj.ConnectedColumn,
                         JoinType = tj.JoinType,
                     };
-                    result.ChildTable.Joins = tj.ChildTable.Joins.Select(j => new TableJoin
+                    result.ConnectedTable.Joins = tj.ConnectedTable.Joins.Select(j => new TableJoin
                     {
                         Name = j.Name,
                         Alias = j.Alias,
-                        ChildColumn = j.ChildColumn,
-                        ChildTable = j.ChildTable,
-                        ParentTable = result.ChildTable,
-                        ParentColumn = j.ParentColumn,
+                        ConnectedColumn = j.ConnectedColumn,
+                        ConnectedTable = j.ConnectedTable,
+                        FromTable = result.ConnectedTable,
+                        FromColumn = j.FromColumn,
                         JoinType = j.JoinType,
                     }).ToList();
-                    ReduceFragments(result.ChildTable);
+                    ReduceFragments(result.ConnectedTable);
                     return result;
                 }));
             }
@@ -221,7 +221,7 @@ namespace GraphQLProxy.QueryModel
 
     public sealed class Field
     {
-        public string Alias { get; init; } = string.Empty;
+        public string? Alias { get; init; }
         public string Name { get; init; } = null!;
         public object? Value { get; set; }
         public bool IncludeResult { get; set; }
@@ -230,8 +230,9 @@ namespace GraphQLProxy.QueryModel
         public List<string> Fragments { get; init; } = new List<string>();
         public override string ToString() => $"{Alias}:{Name}={Value}({Arguments.Count})/{Fields.Count}/{Fragments.Count}";
 
-        public TableSqlData ToSqlData()
+        public TableSqlData ToSqlData(Field? parent = null, string basePath = "")
         {
+            var path = basePath + "/" + Alias ?? Name;
             //TODO: Replace this with a global map between SQL names and graphql names
             var name = Name.Replace("_join_", "").Replace("__", " ");
             var rawSort = (List<object?>?) Arguments.FirstOrDefault(a => a.Name == "sort")?.Value;
@@ -243,6 +244,7 @@ namespace GraphQLProxy.QueryModel
                 Alias = Alias,
                 TableName = name,
                 GraphQlName = Name,
+                Path = path,
                 IsFragment = false,
                 IncludeResult = IncludeResult,
                 ColumnNames = fields.Where(f => f.Fields.Any() == false).Select(f => f.Name).ToList(),
@@ -252,7 +254,7 @@ namespace GraphQLProxy.QueryModel
                 Filter = TableFilter.FromObject(Arguments.FirstOrDefault(a => a.Name == "filter")?.Value),
                 Links = fields
                             .Where((f) => f.Fields.Any() && f.Name.StartsWith("_join_") == false)
-                            .Select(f => f.ToSqlData())
+                            .Select(f => f.ToSqlData(this, path))
                             .ToList(),
             };
             result.Joins.AddRange(
@@ -277,10 +279,10 @@ namespace GraphQLProxy.QueryModel
             {
                 Name = Name,
                 Alias = Alias,
-                ParentTable = parent,
-                ChildTable = ToSqlData(),
-                ParentColumn = columns[0],
-                ChildColumn= columns[1],
+                FromTable = parent,
+                ConnectedTable = ToSqlData(),
+                FromColumn = columns[0],
+                ConnectedColumn= columns[1],
             };
         }
     }

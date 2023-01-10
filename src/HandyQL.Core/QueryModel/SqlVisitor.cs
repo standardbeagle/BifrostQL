@@ -48,11 +48,11 @@ namespace GraphQLProxy.Core.QueryModel
                     join = new TableJoin
                     {
                         Name = field.Name.StringValue,
-                        ParentTable = parent,
+                        FromTable = parent,
                         Alias = field.Alias?.Name?.StringValue,
-                        ChildTable = childTable,
+                        ConnectedTable = childTable,
                     };
-                    childTable.ParentJoin = join;
+                    childTable.JoinFrom = join;
                     parent.Joins.Add(join);
                     context.CurrentTables.Push(childTable);
                     context.CurrentJoins.Push(join);

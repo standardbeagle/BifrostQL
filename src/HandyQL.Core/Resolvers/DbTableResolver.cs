@@ -88,7 +88,7 @@ namespace GraphQLProxy
             return newTables;
         }
 
-        private Dictionary<string, (Dictionary<string, int> index, List<object?[]> data)> LoadData(TableSqlData table, IDbConnFactory connFactory)
+        private IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> LoadData(TableSqlData table, IDbConnFactory connFactory)
         {
             var sqlList = table.ToSql(_dbModel);
             var resultNames = sqlList.Keys.ToArray();
@@ -98,7 +98,7 @@ namespace GraphQLProxy
             conn.Open();
             var command = new SqlCommand(sql, conn);
             using var reader = command.ExecuteReader();
-            var results = new Dictionary<string, (Dictionary<string, int> index, List<object?[]> data)>();
+            var results = new Dictionary<string, (IDictionary<string, int> index, IList<object?[]> data)>();
             var resultIndex = 0;
             do
             {

@@ -16,8 +16,12 @@ namespace GraphQLProxy
         }
         public ValueTask<object?> ResolveAsync(IResolveFieldContext context)
         {
-            var row = (ReaderCurrent)context.Source!;
-            return row.Get(context);
+            return context.Source switch
+            {
+                ReaderCurrent row => row.Get(context),
+                SingleRowLookup lookup => lookup.Get(context),
+                _ => throw new NotSupportedException()
+            } ;
         }
     }
 

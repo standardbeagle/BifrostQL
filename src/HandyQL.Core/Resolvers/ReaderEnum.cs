@@ -1,17 +1,19 @@
 ﻿using GraphQL;
 using GraphQLProxy.QueryModel;
+using System;
 using System.Collections;
 using System.Data.SqlClient;
 using System.Runtime.CompilerServices;
+using System.Xml.Linq;
 
 namespace GraphQLProxy.Resolvers
 {
     public class ReaderEnum : IEnumerable<object?>
     {
-        private readonly Dictionary<string, (Dictionary<string, int> index, List<object?[]> data)> _tables;
+        private readonly IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> _tables;
         private readonly TableSqlData _tableSql;
 
-        public ReaderEnum(TableSqlData tableSqlData, Dictionary<string, (Dictionary<string, int> index, List<object?[]> data)> tableData)
+        public ReaderEnum(TableSqlData tableSqlData, IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> tableData)
         {
             _tableSql = tableSqlData;
             _tables = tableData;
@@ -19,41 +21,47 @@ namespace GraphQLProxy.Resolvers
 
         public ValueTask<object?> Get(int row, IResolveFieldContext context)
         {
-            var tables = _tables;
-            var table = tables[_tableSql.KeyName];
+            var table = _tables[_tableSql.KeyName];
             var column = context.FieldDefinition.Name;
             var found = table.index.TryGetValue(column, out int index);
             if (!found)
             {
-                string name = context.FieldAst.Name.StringValue;
-                string? alias = context.FieldAst.Alias?.Name?.StringValue;
-                var join = _tableSql.GetJoin(alias, name);
-                if (join == null)
-                    throw new Exception("join not found");
-                var keyFound = table.index.TryGetValue(join.ParentColumn, out int keyIndex);
-                if (!keyFound)
-                    throw new Exception("join column not found.");
-
-                var key = table.data[row][keyIndex];
-                if (key == null)
-                    throw new Exception("key value is null");
-
-                var fullName = $"{alias ?? name}+{name}";
-                var tableData = tables[fullName];
-                return ValueTask.FromResult<object?>(new SubTableEnumerable(this, key, tableData));
-                //else
-                //{
-                //    //var srcIdIndex = tableData.index["src_id"];
-                //    //var data = tableData.data.First(r => Equals(r[srcIdIndex], key));
-                //    //return ValueTask.FromResult<object?>((tableData.index, data));
-                //}
+                return GetDataForMissingColumn(context, table, row);
             }
             return ValueTask.FromResult(DbConvert(table.data[row][index]));
+        }
+        public ValueTask<object?> GetDataForMissingColumn(IResolveFieldContext context, (IDictionary<string, int> index, IList<object?[]> data) table , int row)
+        {
+            string name = context.FieldAst.Name.StringValue;
+            string? alias = context.FieldAst.Alias?.Name?.StringValue;
+
+            var join = _tableSql.GetJoin(alias, name);
+            if (join == null)
+                throw new Exception("join not found");
+            var keyFound = table.index.TryGetValue(join.FromColumn, out int keyIndex);
+            if (!keyFound)
+                throw new Exception("join column not found.");
+
+            var key = table.data[row][keyIndex];
+            if (key == null)
+                throw new Exception("key value is null");
+
+            //var fullName = $"{_tableSql.KeyName}->{alias ?? name}";
+            var tableData = _tables[join.JoinName];
+            if (join.JoinType == JoinType.Join)
+                return ValueTask.FromResult<object?>(new SubTableEnumerable(this, key, tableData));
+            if (join.JoinType == JoinType.Single)
+            {
+                var srcIdIndex = tableData.index["src_id"];
+                var data = tableData.data.FirstOrDefault(r => Equals(r[srcIdIndex], key));
+                return ValueTask.FromResult<object?>(data == null ? null : new SingleRowLookup(data, tableData.index, this));
+            }
+            throw new ArgumentOutOfRangeException("unexpected Join type:" + join.JoinName);
         }
 
         public TableSqlData TableSqlData => _tableSql;
 
-        public (Dictionary<string, int> index, List<object?[]> data) GetTableData(string name)
+        public (IDictionary<string, int> index, IList<object?[]> data) GetTableData(string name)
         {
             return _tables[name];
         }
@@ -123,11 +131,11 @@ namespace GraphQLProxy.Resolvers
 
     public sealed class SubTableEnumerable : IEnumerable<object?>
     {
-        private readonly (Dictionary<string, int> index, List<object?[]> data) _table;
+        private readonly (IDictionary<string, int> index, IList<object?[]> data) _table;
         private readonly List<object?[]> _data;
         private readonly int _keyIndex;
         private readonly ReaderEnum _root;
-        public SubTableEnumerable(ReaderEnum root, object key, (Dictionary<string, int> index, List<object?[]> data) @table)
+        public SubTableEnumerable(ReaderEnum root, object key, (IDictionary<string, int> index, IList<object?[]> data) @table)
         {
             _root = root;
             _table = table;
@@ -150,24 +158,12 @@ namespace GraphQLProxy.Resolvers
             var found = _table.index.TryGetValue(column, out int index);
             if (!found)
             {
-                var join = _root.TableSqlData.GetJoin(context.FieldAst.Alias?.Name?.StringValue, context.FieldAst.Name.StringValue);
-                if (join == null)
-                    throw new Exception("join not found");
-                var keyFound = _table.index.TryGetValue(join.ParentColumn, out int keyIndex);
-                if (!keyFound)
-                    throw new Exception("join column not found.");
-
-                var key = _table.data[row][keyIndex];
-                if (key == null)
-                    throw new Exception("key value is null");
-
-                var fullName = $"{context.FieldAst.Alias?.Name ?? context.FieldAst.Name}+{context.FieldAst.Name}";
-                var tableData = _root.GetTableData(fullName);
-                return ValueTask.FromResult<object?>(new SubTableEnumerable(_root, key, tableData));
+                return _root.GetDataForMissingColumn(context, _table, row);
             }
 
             return ValueTask.FromResult(_data[row][index]);
         }
+
 
         public sealed class SubTableEnumerator : IEnumerator<object?>, IEnumerator
         {
@@ -197,4 +193,29 @@ namespace GraphQLProxy.Resolvers
         }
     }
 
+    public sealed class SingleRowLookup
+    {
+        private readonly object?[] _row;
+        private readonly IDictionary<string, int> _index;
+        private readonly ReaderEnum _root;
+        private List<object?[]>? _data;
+
+        public SingleRowLookup(object?[] row, IDictionary<string, int> index, ReaderEnum root)
+        {
+            _row = row;
+            _index = index;
+            _root = root;
+        }
+
+        public ValueTask<object?> Get(IResolveFieldContext context)
+        {
+            var name = context.FieldAst.Name.StringValue;
+            if (_index.TryGetValue(name, out var index))
+                return ValueTask.FromResult(_row[index]);
+
+            _data ??= new List<object?[]> { _row };
+
+            return _root.GetDataForMissingColumn(context, (_index, _data), 0);
+        }
+    }
 }

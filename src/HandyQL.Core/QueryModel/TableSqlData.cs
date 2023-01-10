@@ -1,4 +1,5 @@
 ﻿using GraphQLProxy.Model;
+using System.Diagnostics.CodeAnalysis;
 using static GraphQLProxy.DbTableResolver;
 
 namespace GraphQLProxy.QueryModel
@@ -11,8 +12,8 @@ namespace GraphQLProxy.QueryModel
 
     public sealed class TableSqlData
     {
-        public TableSqlData? Parent => ParentJoin?.ParentTable;
-        public TableJoin? ParentJoin { get; set; }
+        public TableSqlData? Parent => JoinFrom?.FromTable;
+        public TableJoin? JoinFrom { get; set; }
         public string SchemaName { get; set; } = "";
         public string TableName { get; set; } = "";
         public string GraphQlName { get; set; } = "";
@@ -21,8 +22,9 @@ namespace GraphQLProxy.QueryModel
             true => $"[{TableName}]",
             false => $"[{SchemaName}].[{TableName}]",
         };
-        public string Alias { get; set; } = "";
-        public string KeyName => $"{Alias}:{TableName}";
+        public string? Alias { get; set; }
+        public string Path { get; set; } = "";
+        public string KeyName => $"{Alias ?? TableName}";
         public List<string> ColumnNames { get; set; } = new List<string>();
         public List<TableSqlData> Links { get; set; } = new List<TableSqlData>();
         public List<string> Sort { get; set; } = new List<string>();
@@ -34,19 +36,20 @@ namespace GraphQLProxy.QueryModel
         public bool IncludeResult { get; set; }
         public bool ProcessingResultData { get; set; } = false;
         public List<TableJoin> Joins { get; set; } = new List<TableJoin>();
-        private IEnumerable<TableJoin> RecurseJoins => Joins.Concat(Joins.SelectMany(j => j.ChildTable.RecurseJoins));
+        private IEnumerable<TableJoin> RecurseJoins => Joins.Concat(Joins.SelectMany(j => j.ConnectedTable.RecurseJoins));
 
         public IEnumerable<string> AllJoinNames => new[] { TableName }
-        .Concat(Joins.SelectMany(j => j.ChildTable.AllJoinNames.Select(n => $"{j.JoinName}+{n}")));
+        .Concat(Joins.SelectMany(j => j.ConnectedTable.AllJoinNames.Select(n => $"{j.JoinName}+{n}")));
 
         public IEnumerable<(string name, string alias)> FullColumnNames =>
             ColumnNames.Where(c => c.StartsWith("__") == false)
-            .Select(c => (c, c))
-            .Concat(Joins.Select(j => (j.ParentColumn, j.ParentColumn)))
-            .Distinct();
+            .Select(c => (c.ToLowerInvariant(), c.ToLowerInvariant()))
+            .Concat(Joins.Select(j => (j.FromColumn.ToLowerInvariant(), j.FromColumn.ToLowerInvariant())))
+            .DistinctBy(c => c.Item2, SqlNameComparer.Instance);
 
         public Dictionary<string, string> ToSql(IDbModel dbModel)
         {
+            ConnectLinks(dbModel);
             var columnSql = string.Join(",", FullColumnNames.Select(n => $"[{n.name}] [{n.alias}]"));
             var cmdText = $"SELECT {columnSql} FROM {FullTableText}";
 
@@ -58,29 +61,51 @@ namespace GraphQLProxy.QueryModel
             {
                 result.Add(join.JoinName, join.GetSql());
             }
+            return result;
+        }
+
+        public void ConnectLinks(IDbModel dbModel, string basePath = "")
+        {
             foreach (var link in Links)
             {
-                var thisDto = dbModel.GetTable(GraphQlName);
-                var linkedTableName = link.TableName;
-                var multiLink = thisDto.MultiLinks.FirstOrDefault(l => string.Equals(l.ChildTable.GraphQLName, link.GraphQlName, StringComparison.InvariantCultureIgnoreCase));
-                if (multiLink != null)
+                var thisDto = dbModel.GetTableFromTableName(TableName);
+                if (thisDto.MultiLinks.TryGetValue(link.GraphQlName, out var multiLink))
                 {
+                    link.TableName = multiLink.ChildTable.TableName;
                     var join = new TableJoin
                     {
                         Alias = link.Alias,
-                        Name = link.TableName,
-                        ChildTable = link,
-                        ChildColumn = multiLink.ChildId.ColumnName,
-                        ParentTable = this,
-                        ParentColumn = multiLink.ParentId.ColumnName,
+                        Name = link.GraphQlName,
+                        ConnectedTable = link,
+                        ConnectedColumn = multiLink.ChildId.ColumnName,
+                        FromTable = this,
+                        FromColumn = multiLink.ParentId.ColumnName,
                         JoinType = JoinType.Join,
                     };
                     Joins.Add(join);
-                    result.Add(join.JoinName, join.GetSql());
+                    continue;
+                }
+                if (thisDto.SingleLinks.TryGetValue(link.GraphQlName, out var singleLink))
+                {
+                    link.TableName = singleLink.ParentTable.TableName;
+                    var join = new TableJoin
+                    {
+                        Alias = link.Alias,
+                        Name = link.GraphQlName,
+                        ConnectedTable = link,
+                        ConnectedColumn = singleLink.ParentId.ColumnName,
+                        FromTable = this,
+                        FromColumn = singleLink.ChildId.ColumnName,
+                        JoinType = JoinType.Single,
+                    };
+                    Joins.Add(join);
                     continue;
                 }
             }
-            return result;
+            foreach (var join in RecurseJoins)
+            {
+                join.ConnectedTable.ConnectLinks(dbModel);
+            }
         }
 
         public string GetFilterSql(string? alias = null)
@@ -130,15 +155,31 @@ namespace GraphQLProxy.QueryModel
                         var columns = (value as IEnumerable<object?>)?.Cast<string>()?.ToArray() ?? throw new ArgumentException("on", "Unable to convert list");
                         if (columns.Length != 2)
                             throw new ArgumentException("on joins only support two columns");
-                        if (ParentJoin == null)
+                        if (JoinFrom == null)
                             throw new ArgumentException("Parent Join cannot be null for 'on' argument");
-                        ParentJoin.ParentColumn = columns[0];
-                        ParentJoin.ChildColumn = columns[1];
+                        JoinFrom.FromColumn = columns[0];
+                        JoinFrom.ConnectedColumn = columns[1];
                     };
                 default:
                     return value => { };
             }
 
+        }
+    }
+
+    internal class SqlNameComparer : IEqualityComparer<string>
+    {
+        public static readonly SqlNameComparer Instance = new SqlNameComparer();
+
+        private SqlNameComparer() { }
+        public bool Equals(string? x, string? y)
+        {
+            return string.Equals(x, y, StringComparison.InvariantCultureIgnoreCase);
+        }
+
+        public int GetHashCode([DisallowNull] string obj)
+        {
+            return string.GetHashCode(obj);
         }
     }
 }

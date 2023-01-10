@@ -18,7 +18,7 @@ namespace HandyQL.Core.QueryModel
             var ctx = new SqlContext();
             var sut = new SqlVisitor();
 
-            var ast = Parser.Parse("query { workshops { id number } }");
+            var ast = Parser.Parse("query { workshops { data { id number } } }");
             await sut.VisitAsync(ast, ctx);
             var tables = ctx.GetFinalTables();
 
@@ -42,7 +42,7 @@ namespace HandyQL.Core.QueryModel
             var ctx = new SqlContext();
             var sut = new SqlVisitor();
 
-            var ast = Parser.Parse("query { workshops { id number } sessions { sessionid status } }");
+            var ast = Parser.Parse("query { workshops { data { id number } } sessions { data { sessionid status } } }");
             await sut.VisitAsync(ast, ctx);
             var tables = ctx.GetFinalTables();
 
@@ -75,7 +75,7 @@ namespace HandyQL.Core.QueryModel
             var ctx = new SqlContext();
             var sut = new SqlVisitor();
 
-            var ast = Parser.Parse("query { workshops(sort: [\"id desc\", \"number\"], limit: 10, offset: 12 ) { id number } }");
+            var ast = Parser.Parse("query { workshops(sort: [\"id desc\", \"number\"], limit: 10, offset: 12 ) { data { id number } } }");
             await sut.VisitAsync(ast, ctx);
             var tables = ctx.GetFinalTables();
 
@@ -100,7 +100,7 @@ namespace HandyQL.Core.QueryModel
             var ctx = new SqlContext();
             var sut = new SqlVisitor();
 
-            var ast = Parser.Parse("query { workshops(filter: {id: {_eq: 10} } ) { id number } }");
+            var ast = Parser.Parse("query { workshops(filter: {id: {_eq: 10} } ) { data { id number } } }");
             await sut.VisitAsync(ast, ctx);
             var tables = ctx.GetFinalTables();
 
@@ -125,7 +125,7 @@ namespace HandyQL.Core.QueryModel
             var ctx = new SqlContext();
             var sut = new SqlVisitor();
 
-            var ast = Parser.Parse("query { workshops { id _join_test__sessions(on: [\"idd\", \"workshopid\"]) { id } number } }");
+            var ast = Parser.Parse("query { workshops { data { id _join_test__sessions(on: [\"idd\", \"workshopid\"]) { id } number } } }");
             await sut.VisitAsync(ast, ctx);
             var tables = ctx.GetFinalTables();
 
@@ -138,13 +138,13 @@ namespace HandyQL.Core.QueryModel
                         Limit = (int?)null,
                         Offset = (int?)null,
                         Sort = new string[] { },
-                        Joins = new object[] {
-                            new{
+                        Joins = new [] {
+                            new {
                                 Name = "_join_test__sessions",
-                                ParentTable = new { TableName = "workshops"},
-                                ChildTable = new { TableName = "test sessions", ColumnNames = new string[] { "id"}},
-                                ParentColumn = "idd",
-                                ChildColumn = "workshopid",
+                                FromTable = new { TableName = "workshops"},
+                                ConnectedTable = new { TableName = "test sessions", ColumnNames = new string[] { "id"}},
+                                FromColumn = "idd",
+                                ConnectedColumn = "workshopid",
                             }
                         },
                         Links = new object[] { },
@@ -158,7 +158,7 @@ namespace HandyQL.Core.QueryModel
             var ctx = new SqlContext();
             var sut = new SqlVisitor();
 
-            var ast = Parser.Parse("query { workshops { id sessions { id status } number participants { firstname lastname } } }");
+            var ast = Parser.Parse("query { workshops { data { id sessions { id status } number participants { firstname lastname } } } }");
             await sut.VisitAsync(ast, ctx);
             var tables = ctx.GetFinalTables();
 

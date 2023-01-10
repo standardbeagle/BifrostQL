@@ -27,11 +27,15 @@ Mutations are generated for inserts, updates, upserts, and deletes. HandyQL read
  - [ ] Use foreign keys to infer simple joins between tables
  - [ ] Add support for soft deletes
  - [ ] Add support to use database auth
+ - [ ] Add aggregation operators
+ - [ ] Stored procedures
+ - [ ] Raw SQL queries, maybe add raw filter arguments as well
  - [ ] PostreSQL
  - [ ] MySQL
  - [ ] SqlLite
  - [ ] Add Enum designation to lookup tables
  - [ ] Switch to direct graphQL schema generation
+ - [ ] Try out pivot tables for kicks
 
  ### Why HandyQL
  At StandardBeagle we've built many prototypes, and like using GraphQL. Over time we've started to use applications like [hasura](https://hasura.io/) to roll out apis for prototypes quickly. We wanted to try and build something similar, but that put more power in the hands of the front end developer. 

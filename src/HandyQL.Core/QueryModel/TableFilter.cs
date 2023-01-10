@@ -1,20 +1,51 @@
-﻿using GraphQLProxy.Schema;
+﻿using GraphQLProxy.Model;
+using GraphQLProxy.Schema;
 
 namespace GraphQLProxy.QueryModel
 {
     public sealed class TableFilter
     {
-        public string? TableName { get; set; }
+        private TableFilter() { }
+        public string TableName { get; init; } = null!;
         public List<string> ColumnNames { get; set; } = null!;
         public string RelationName { get; set; } = null!;
         public object? Value { get; set; }
 
-        public string ToSql(string? alias = null)
+        public (string join, string comparison) ToSql(IDbModel model, string? alias = null)
         {
-            return DbFilterType.GetSingleFilter(alias ?? TableName, ColumnNames[0], RelationName, Value);
+            if (ColumnNames.Count == 1)
+            {
+                return ("", DbFilterType.GetSingleFilter(alias ?? TableName, ColumnNames[0], RelationName, Value));
+            }
+            var join = "";
+            var table = model.GetTableFromTableName(TableName);
+            var links = new List<TableLinkDto>();
+            var linkTable = table;
+            foreach(var column in ColumnNames.SkipLast(1))
+            {
+                var link = linkTable.SingleLinks[column];
+                links.Add(link);
+                linkTable = link.ParentTable;
+            }
+            for(int i = links.Count-1; i >= 0; i--)
+            {
+                var link = links[i];
+                if (join == "")
+                {
+                    var where = DbFilterType.GetSingleFilter(link.ParentTable.TableName, ColumnNames[i + 1], RelationName, Value);
+                    join = $"SELECT DISTINCT [{link.ParentId.ColumnName}] AS joinid FROM [{link.ParentTable.TableName}] WHERE {where}";
+                } else
+                {
+                    var parentTable = link.ParentTable.TableName;
+                    var previousLink = links[i+1];
+                    join = $"SELECT DISTINCT [{link.ParentId.ColumnName}] AS joinid FROM [{parentTable}] INNER JOIN ({join}) j ON j.joinid = [{parentTable}].[{previousLink.ChildId.ColumnName}]";
+                }
+            }
+            join = $" INNER JOIN ({join}) j ON j.joinid = [{alias ?? table.TableName}].[{links[0].ChildId.ColumnName}]";
+            return (join, "");
         }
 
-        public static TableFilter? FromObject(object? value)
+        public static TableFilter? FromObject(object? value, string tableName)
         {
             if (value == null) return null;
             var dictValue = value as Dictionary<string, object?>;
@@ -26,6 +57,7 @@ namespace GraphQLProxy.QueryModel
 
             return new TableFilter
             {
+                TableName= tableName,
                 ColumnNames = unwound.keys.SkipLast(1).ToList(),
                 RelationName = relation,
                 Value = unwound.value

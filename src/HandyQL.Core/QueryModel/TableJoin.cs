@@ -1,4 +1,5 @@
-﻿using static GraphQLProxy.DbTableResolver;
+﻿using GraphQLProxy.Model;
+using static GraphQLProxy.DbTableResolver;
 
 namespace GraphQLProxy.QueryModel
 {
@@ -14,23 +15,31 @@ namespace GraphQLProxy.QueryModel
         public TableSqlData FromTable { get; set; } = null!;
         public TableSqlData ConnectedTable { get; set; } = null!;
 
-        public string GetParentSql()
+        public string GetParentSql(IDbModel dbModel)
         {
             if (FromTable.JoinFrom == null)
-                return $"SELECT DISTINCT [{FromColumn}] AS JoinId FROM [{FromTable.TableName}]" + FromTable.GetFilterSql();
-            var baseSql = FromTable.JoinFrom.GetParentSql();
-            return $"SELECT DISTINCT a.[{FromColumn}] AS JoinId FROM [{FromTable.TableName}] a INNER JOIN ({baseSql}) b ON b.JoinId=a.[{FromTable.JoinFrom.ConnectedColumn}]" + FromTable.GetFilterSql("a");
+            {
+                var filter = FromTable.GetFilterSql(dbModel);
+                return $"SELECT DISTINCT [{FromColumn}] AS JoinId FROM [{FromTable.TableName}]" + filter;
+            }
+            else
+            {
+                var baseSql = FromTable.JoinFrom.GetParentSql(dbModel);
+                var filter = FromTable.GetFilterSql(dbModel, "a");
+                return $"SELECT DISTINCT a.[{FromColumn}] AS JoinId FROM [{FromTable.TableName}] a INNER JOIN ({baseSql}) b ON b.JoinId=a.[{FromTable.JoinFrom.ConnectedColumn}]" + filter;
+            }
         }
 
-        public string GetSql()
+        public string GetSql(IDbModel dbModel)
         {
-            var main = GetParentSql();
+            var main = GetParentSql(dbModel);
             var joinColumnSql = string.Join(",", ConnectedTable.FullColumnNames.Select(c => $"b.[{c.name}] AS [{c.alias}]"));
 
             var wrap = $"SELECT a.[JoinId] [src_id], {joinColumnSql} FROM ({main}) a";
             wrap += $" INNER JOIN [{ConnectedTable.TableName}] b ON a.[JoinId] = b.[{ConnectedColumn}]";
 
-            return JoinType == JoinType.Single ? wrap : wrap + ConnectedTable.GetFilterSql() + ConnectedTable.GetSortAndPaging();
+            var filter = ConnectedTable.GetFilterSql(dbModel);
+            return JoinType == JoinType.Single ? wrap : wrap + filter + ConnectedTable.GetSortAndPaging();
         }
 
         public override string ToString()

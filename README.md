@@ -17,7 +17,7 @@ Mutations are generated for inserts, updates, upserts, and deletes. HandyQL read
  - [x] Configuration to filter exported tables using regex syntax on schema and table names
  - [x] Support dynamic parent/single object joins
  - [x] Use column names to infer simple joins between tables
- - [ ] Add Single join ref to filters
+ - [x] Add Single join ref to filters
  - [ ] Add support for integrating oauth2 authentication services
  - [ ] Add configuration to automatically fill audit type columns
  - [ ] Add configuration to automatically generate filters based on userid/column mappings 

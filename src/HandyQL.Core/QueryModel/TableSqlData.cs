@@ -43,8 +43,8 @@ namespace GraphQLProxy.QueryModel
 
         public IEnumerable<(string name, string alias)> FullColumnNames =>
             ColumnNames.Where(c => c.StartsWith("__") == false)
-            .Select(c => (c.ToLowerInvariant(), c.ToLowerInvariant()))
-            .Concat(Joins.Select(j => (j.FromColumn.ToLowerInvariant(), j.FromColumn.ToLowerInvariant())))
+            .Select(c => (c, c))
+            .Concat(Joins.Select(j => (j.FromColumn, j.FromColumn)))
             .DistinctBy(c => c.Item2, SqlNameComparer.Instance);
 
         public Dictionary<string, string> ToSql(IDbModel dbModel)
@@ -53,13 +53,14 @@ namespace GraphQLProxy.QueryModel
             var columnSql = string.Join(",", FullColumnNames.Select(n => $"[{n.name}] [{n.alias}]"));
             var cmdText = $"SELECT {columnSql} FROM {FullTableText}";
 
-            var baseSql = cmdText + GetFilterSql() + GetSortAndPaging();
+            var filter = GetFilterSql(dbModel);
+            var baseSql = cmdText + filter + GetSortAndPaging();
             var result = new Dictionary<string, string>();
             result.Add(KeyName, baseSql);
-            result.Add($"{KeyName}_count", $"SELECT COUNT(*) FROM {FullTableText}{GetFilterSql()}");
+            result.Add($"{KeyName}_count", $"SELECT COUNT(*) FROM {FullTableText}{filter}");
             foreach (var join in RecurseJoins)
             {
-                result.Add(join.JoinName, join.GetSql());
+                result.Add(join.JoinName, join.GetSql(dbModel));
             }
             return result;
         }
@@ -108,10 +109,12 @@ namespace GraphQLProxy.QueryModel
             }
         }
 
-        public string GetFilterSql(string? alias = null)
+        public string GetFilterSql(IDbModel model, string? alias = null)
         {
             if (Filter == null) return "";
-            return " WHERE " + Filter.ToSql(alias);
+            var (join, filter) = Filter.ToSql(model, alias);
+            if (string.IsNullOrEmpty(filter)) return join;
+            return " WHERE " + filter;
         }
 
         public TableJoin? GetJoin(string? alias, string name)

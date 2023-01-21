@@ -1,14 +1,14 @@
-# HandyQL
-The easist way to publish your SQL database as a GraphQL API
+# BifrostQL
+Is a magical bridge connecting your front end code to your SQL datasources. 
 
 ### Overview
-HandyQL is built to be the easiest way to publish a SQL database. The simplest setup will get you up and running with a single connection string. Unlike other approaches HandyQL builds its schema directly from the database schema itself. When you add a table or a column, HandyQL automatically adds the corresponsing field in the right place with the right type and validation requirements.
+BifrostQL is built to be the easiest way to publish a SQL database as a GraphQL api. The simplest setup will get you up and running with a single connection string. Unlike other approaches BifrostQL builds its schema directly from the database schema itself. When you add a table or a column, BifrostQL automatically adds the corresponsing field in the right place with the right type and validation requirements.
 
 Joins between tables can be specified dynamically in your graphQL queries using __join fields added automatically to every table. Filters and paging fields are added automatically as well using directus syntax.
 
-HandyQL generates optimized SQL batch queries to provide lightning fast responses, and because the SQL is generated from the query only the tables and fields you need are queried.
+BifrostQL generates optimized SQL batch queries to provide lightning fast responses, and because the SQL is generated from the query only the tables and fields you need are queried.
 
-Mutations are generated for inserts, updates, upserts, and deletes. HandyQL reads the primary key data for every table and makes the appropriate choice matching your javascript fields appropriately based on names.
+Mutations are generated for inserts, updates, upserts, and deletes. BifrostQL reads the primary key data for every table and makes the appropriate choice matching your javascript fields appropriately based on names.
 
 ### Features
  - [x] Dynamically read schema from SQL Server databases
@@ -28,6 +28,7 @@ Mutations are generated for inserts, updates, upserts, and deletes. HandyQL read
  - [ ] Add support for soft deletes
  - [ ] Add support to use database auth
  - [ ] Add aggregation operators
+ - [ ] Support multiple schemas as fields, and joins between schemas
  - [ ] Stored procedures
  - [ ] Raw SQL queries, maybe add raw filter arguments as well
  - [ ] PostreSQL
@@ -35,9 +36,10 @@ Mutations are generated for inserts, updates, upserts, and deletes. HandyQL read
  - [ ] SqlLite
  - [ ] Add Enum designation to lookup tables
  - [ ] Switch to direct graphQL schema generation
+ - [ ] Support for collation
  - [ ] Try out pivot tables for kicks
 
- ### Why HandyQL
+ ### Why BifrostQL
  At StandardBeagle we've built many prototypes, and like using GraphQL. Over time we've started to use applications like [hasura](https://hasura.io/) to roll out apis for prototypes quickly. We wanted to try and build something similar, but that put more power in the hands of the front end developer. 
 
  If we could we wanted to see if we could shape and filter our data directly from the queries without having to configure anything through a UI. Ideally something we could spin up directly in docker with nothing but a configuration file. 

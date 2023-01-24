@@ -4,18 +4,19 @@ namespace BifrostQL.Server
 {
     public static class UIAuthMiddleware
     {
-        public static IApplicationBuilder UseUiAuth(this IApplicationBuilder app, string? response)
+        public static IApplicationBuilder UseUiAuth(this IApplicationBuilder app)
         {
             app.Use(async (context, next) =>
             {
-                if (response != null)
+                if ((context.User?.Identity?.IsAuthenticated ?? false) == false)
                 {
                     await context.ChallengeAsync("oauth2", new AuthenticationProperties() { 
-                        RedirectUri = response
+                        RedirectUri = "/"
                     });
-                    return;
+                } else
+                {
+                    await next.Invoke(context);
                 }
-                await next.Invoke(context);
             });
             return app;
         } 

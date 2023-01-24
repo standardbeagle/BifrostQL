@@ -12,6 +12,11 @@ if (jwtConfig.Exists())
         options => builder.Configuration.Bind("JwtSettings", options));
 }
 
+builder.WebHost.ConfigureKestrel(serverOptions =>
+{
+    serverOptions.Limits.MaxRequestHeadersTotalSize = 131072;
+});
+
 builder.AddBifrostQL();
 builder.Services.AddCors();
 var app = builder.Build();
@@ -25,7 +30,6 @@ app.UseCors(x => x
 if (jwtConfig.Exists())
     app.UseAuthentication();
 
-app.UseUiAuth("https://localhost:7077/callback");
 app.UseBifrostQL();
 
 

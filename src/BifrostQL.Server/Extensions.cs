@@ -10,6 +10,10 @@ using GraphQL;
 using GraphQL.Server;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
+using BifrostQL.Server;
+using Microsoft.AspNetCore.Authentication;
+using System.Security.Claims;
+using System.IdentityModel.Tokens.Jwt;
 
 namespace BifrostQL.Core
 {
@@ -30,25 +34,7 @@ namespace BifrostQL.Core
             builder.Services.AddSingleton<DbDatabaseMutation>();
             builder.Services.AddSingleton<ISchema, DbSchema>();
 
-
-            //var serverConfig = builder.Configuration.GetSection("BifrostQL.Server");
-            //if (serverConfig != null)
-            //{
-            //    var authConfig = serverConfig.GetSection("Authentication");
-            //    if (authConfig != null)
-            //    {
-            //        var jwtConfig = authConfig.GetSection("JwtBearer");
-            //        var authority = jwtConfig["Authorization"];
-            //        var audience = jwtConfig["Audience"];
-
-            //        builder.Services.AddAuthentication(options =>
-            //        {
-            //            options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-            //        });
-
-
-            //    }
-            //}
+            JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 
             _jwtConfig = builder.Configuration.GetSection("JwtSettings");
             var grapQLBuilder = builder.Services.AddGraphQL(b => b
@@ -59,6 +45,11 @@ namespace BifrostQL.Core
 
             if (_jwtConfig.Exists() )
             {
+                var scopes = new HashSet<string>() { "openid" };
+                foreach(var scope in (_jwtConfig["Scopes"] ?? "").Split(" ") ) 
+                {
+                    scopes.Add(scope);
+                }
                 builder.Services
                     .AddAuthentication(options =>
                         {
@@ -74,9 +65,19 @@ namespace BifrostQL.Core
                         options.ClientSecret = _jwtConfig["ClientSecret"];
                         options.ResponseType = OpenIdConnectResponseType.Code;
                         options.Scope.Clear();
-                        options.Scope.Add("openid");
-                        options.CallbackPath = new PathString(_jwtConfig["Callback"]);
-                        options.ClaimsIssuer = _jwtConfig["ClaimsIssuer"];
+                        foreach(var scope in scopes)
+                        {
+                            options.Scope.Add(scope);
+                        }
+                        if (!string.IsNullOrWhiteSpace(_jwtConfig["Callback"]))
+                            options.CallbackPath = new PathString(_jwtConfig["Callback"]);
+                        if (!string.IsNullOrWhiteSpace(_jwtConfig["ClaimsIssuer"]))
+                            options.ClaimsIssuer = _jwtConfig["ClaimsIssuer"];
+                        options.GetClaimsFromUserInfoEndpoint = true;
+                        options.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
+                        {
+                            NameClaimType = ClaimTypes.NameIdentifier,
+                        };
                     });
             }
 ;
@@ -87,8 +88,8 @@ namespace BifrostQL.Core
         public static IApplicationBuilder UseBifrostQL(this IApplicationBuilder app, string endpointPath = "/graphql", string playgroundPath = "/")
         {
             app.IfFluent(_jwtConfig!.Exists(), a => a.UseAuthentication().UseCookiePolicy());
+            app.IfFluent(_jwtConfig!.Exists(), a => a.UseUiAuth());
             app.UseGraphQL(endpointPath);
-            //app.UseStaticFiles();
             app.UseGraphQLPlayground(playgroundPath,
                 new GraphQL.Server.Ui.Playground.PlaygroundOptions
                 {
@@ -96,7 +97,6 @@ namespace BifrostQL.Core
                     SubscriptionsEndPoint = endpointPath,
                     RequestCredentials = GraphQL.Server.Ui.Playground.RequestCredentials.SameOrigin,
                 });
-            //app.MapFallbackToFile("index.html");
             return app;
         }
         public static FluentT IfFluent<FluentT, ResultT>(this FluentT fluent, bool check, Func<FluentT, ResultT> doConfig) 

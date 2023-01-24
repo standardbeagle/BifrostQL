@@ -8,13 +8,17 @@ namespace BifrostQL.Model
 
     public interface IDbModel
     {
-        IReadOnlyCollection<TableDto> Tables { get; set; }
+        IReadOnlyCollection<TableDto> Tables { get; }
+        string UserAuditKey { get; }
+        string AuditTableName { get; }
         TableDto GetTable(string fullName);
         TableDto GetTableFromTableName(string tableName);
     }
     public sealed class DbModel : IDbModel
     {
         public IReadOnlyCollection<TableDto> Tables { get; set; } = null!;
+        public string UserAuditKey { get; init; } = null!;
+        public string AuditTableName { get; init; } = null!;
         public TableDto GetTable(string fullName)
         {
             return Tables.First(t => t.MatchName(fullName));
@@ -89,6 +93,11 @@ namespace BifrostQL.Model
         public int OrdinalPosition { get; init; }
         public bool IsIdentity { get; init; } = false;
         public bool IsPrimaryKey { get; init; } = false;
+        public bool IsCreatedOnColumn { get; set; } = false;
+        public bool IsUpdatedOnColumn { get; set; } = false;
+        public bool IsCreatedByColumn { get; set; } = false;
+        public bool IsUpdatedByColumn { get; set; } = false;
+        public Dictionary<string, bool> Flags { get; init; } = new Dictionary<string, bool>();
 
         public override string ToString()
         {

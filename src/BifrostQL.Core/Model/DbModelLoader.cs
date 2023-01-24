@@ -1,15 +1,22 @@
-﻿using Microsoft.Extensions.Configuration;
+﻿using BifrostQL.Core.Model;
+using Microsoft.Extensions.Configuration;
 using Pluralize.NET.Core;
 using System.Data;
 using System.Data.SqlClient;
 
-namespace BifrostQL.Model
+namespace BifrostQL.Model 
 {
     public sealed class DbModelLoader
     {
         private readonly string _connStr;
-        private readonly TableMatcher _ignoreTables;
-        private readonly TableMatcher _includeTables;
+        private readonly TableMatcher _ignoreTables = new TableMatcher(false);
+        private readonly TableMatcher _includeTables = new TableMatcher(true);
+        private readonly ColumnMatcher _createDateMatcher = new ColumnMatcher(false);
+        private readonly ColumnMatcher _updateDateMatcher = new ColumnMatcher(false);
+        private readonly ColumnMatcher _updateByMatcher = new ColumnMatcher(false);
+        private readonly ColumnMatcher _createByMatcher = new ColumnMatcher(false);
+        private readonly string? _userAuditKey;
+        private readonly string? _auditTableName;
 
         private const string SCHEMA_SQL = @"
 SELECT CCU.[TABLE_CATALOG]
@@ -59,8 +66,22 @@ SELECT [TABLE_CATALOG]
         public DbModelLoader(IConfiguration configuration)
         {
             _connStr = configuration.GetConnectionString("ConnStr");
-            _ignoreTables = new TableMatcher(GetTableMatch(configuration.GetSection("IgnoreTables")), false);
-            _includeTables = new TableMatcher(GetTableMatch(configuration.GetSection("IncludeTables")), true);
+            var bifrostSection = configuration.GetSection("BifrostQL");
+            if (bifrostSection.Exists())
+            {
+                _ignoreTables = TableMatcher.FromSection(bifrostSection.GetSection("IgnoreTables"), false);
+                _includeTables = TableMatcher.FromSection(bifrostSection.GetSection("IncludeTables"), true);
+                var audit = bifrostSection.GetSection("Audit");
+                if (audit.Exists())
+                {
+                    _userAuditKey = audit.GetValue<string>("UserKey");
+                    _auditTableName = audit.GetValue<string>("AuditTable");
+                    _createDateMatcher = ColumnMatcher.FromSection(audit.GetSection("CreatedOn"), false);
+                    _updateDateMatcher = ColumnMatcher.FromSection(audit.GetSection("UpdatedOn"), false);
+                    _createByMatcher = ColumnMatcher.FromSection(audit.GetSection("CreatedBy"), false);
+                    _updateByMatcher = ColumnMatcher.FromSection(audit.GetSection("UpdatedBy"), false);
+                }
+            }
         }
 
         public async Task<IDbModel> LoadAsync()
@@ -73,13 +94,24 @@ SELECT [TABLE_CATALOG]
                 .GroupBy(k => new ColumnRef(k.TableCatalog, k.TableSchema, k.TableName, k.ColumnName))
                 .ToDictionary(g => g.Key, g => g.ToList());
             await reader.NextResultAsync();
-            var columns = GetDtos<ColumnDto>(reader, r => ColumnDto.FromReader(r, columnConstraints))
+
+            var rawColumns = GetDtos<ColumnDto>(reader, r => ColumnDto.FromReader(r, columnConstraints)).ToArray();
+            foreach(var column in rawColumns)
+            {
+                column.IsCreatedOnColumn = _createDateMatcher.Match(column);
+                column.IsUpdatedOnColumn = _updateDateMatcher.Match(column);
+                column.IsCreatedByColumn = _createByMatcher.Match(column);
+                column.IsUpdatedByColumn = _updateByMatcher.Match(column);
+            }
+            var columns = rawColumns
                 .GroupBy(c => new TableRef(c.TableCatalog, c.TableSchema, c.TableName))
                 .ToDictionary(g => g.Key, g => g.ToArray());
             await reader.NextResultAsync();
             var model = 
                 new DbModel()
                 {
+                    AuditTableName = _auditTableName ?? "",
+                    UserAuditKey = _userAuditKey ?? "",
                     Tables = GetDtos<TableDto>(reader, r => TableDto.FromReader(
                         r, 
                         columns[new TableRef((string)reader["TABLE_CATALOG"], (string)reader["TABLE_SCHEMA"], (string)reader["TABLE_NAME"])]))
@@ -117,12 +149,6 @@ SELECT [TABLE_CATALOG]
             {
                 yield return getDto(reader);
             }
-        }
-        private static (string schema, string[] tables)[] GetTableMatch(IConfigurationSection section)
-        {
-            if (section == null)
-                return Array.Empty<(string schema, string[] tables)>();
-            return section.GetChildren().Select(c => (c.Key, c.GetChildren().Select(cc => cc.Value).ToArray())).ToArray();
         }
     }
 }

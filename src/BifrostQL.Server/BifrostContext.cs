@@ -10,7 +10,16 @@ namespace BifrostQL.Core
         public BifrostContext(HttpContext context)
         {
             User = context.User;
-            Add("id", User?.Identity?.Name);
+            if (User == null) return;
+
+            var id = context.User.FindFirstValue(ClaimTypes.NameIdentifier);
+            id ??= context.User.FindFirstValue("sub");
+            Add("id", id ?? context.User?.Identity?.Name ?? string.Empty);
+            Add("user", context.User);
+            foreach(var g in context.User!.Claims.GroupBy(c => c.Type)) 
+            {
+                Add(g.Key, g.Select(c => c.Value).ToArray());
+            }
         }
     }
 }

@@ -3,11 +3,9 @@ import { DataDataTable } from './data-data-table';
 import { useParams } from './hooks/usePath';
 import { useSchema } from './hooks/useData';
 
-function getColumns(data: any[], tableName:string) {
+function getTable(data: any[], tableName:string) {
     const table = data.find((x: { name: string | undefined; }) => x.name == tableName);
-    const columns = table.columns
-        .map((x: { name: any; }) => ({name: x.name, selector: (row: { [x: string]: any; }) => row[x.name]}));
-    return columns;
+    return table;
 }
 
 export function DataPanel() {
@@ -18,6 +16,5 @@ export function DataPanel() {
     if (error) return <div>Error: {error.message}</div>;
     if (!table) return <div>Table missing</div>;
 
-    const columns = getColumns(data, table);
-    return <DataDataTable columns={columns} table={table}/>;
+    return <DataDataTable table={getTable(data, table)}/>;
 }

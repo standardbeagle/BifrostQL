@@ -8,11 +8,9 @@ namespace BifrostQL.Schema
 {
     public sealed class DbDatabaseMutation : ObjectGraphType
     {
-        private readonly IDbConnFactory _dbConnFactory;
-        public DbDatabaseMutation(IDbModel model, IDbConnFactory connFactory)
+        public DbDatabaseMutation(IDbModel model)
         {
             Name = "mutation";
-            _dbConnFactory = connFactory;
 
             foreach (var table in model.Tables)
             {

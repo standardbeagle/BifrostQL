@@ -14,6 +14,7 @@ using BifrostQL.Server;
 using Microsoft.AspNetCore.Authentication;
 using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
+using BifrostQL.Core.Modules;
 
 namespace BifrostQL.Core
 {
@@ -21,7 +22,7 @@ namespace BifrostQL.Core
     {
         private static IConfigurationSection? _jwtConfig;
 
-        public static WebApplicationBuilder AddBifrostQL(this WebApplicationBuilder builder)
+        public static WebApplicationBuilder AddBifrostQL(this WebApplicationBuilder builder, Func<IServiceProvider, IReadOnlyCollection<IMutationModule>> getModules = null)
         {
             var loader = new DbModelLoader(builder.Configuration);
             var model = loader.LoadAsync().Result;
@@ -33,6 +34,8 @@ namespace BifrostQL.Core
             builder.Services.AddSingleton<DbDatabaseQuery>();
             builder.Services.AddSingleton<DbDatabaseMutation>();
             builder.Services.AddSingleton<ISchema, DbSchema>();
+            if (getModules != null)
+                builder.Services.AddSingleton<IMutationModules>(sp => new ModulesWrap { Modules = getModules(sp) });
 
             JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 
@@ -43,10 +46,10 @@ namespace BifrostQL.Core
             .IfFluent(_jwtConfig.Exists(), b => b.AddUserContextBuilder(context => new BifrostContext(context)))
             );
 
-            if (_jwtConfig.Exists() )
+            if (_jwtConfig.Exists())
             {
                 var scopes = new HashSet<string>() { "openid" };
-                foreach(var scope in (_jwtConfig["Scopes"] ?? "").Split(" ") ) 
+                foreach (var scope in (_jwtConfig["Scopes"] ?? "").Split(" "))
                 {
                     scopes.Add(scope);
                 }
@@ -61,11 +64,11 @@ namespace BifrostQL.Core
                     .AddOpenIdConnect("oauth2", options =>
                     {
                         options.Authority = _jwtConfig["Authority"];
-                        options.ClientId= _jwtConfig["ClientId"];
+                        options.ClientId = _jwtConfig["ClientId"];
                         options.ClientSecret = _jwtConfig["ClientSecret"];
                         options.ResponseType = OpenIdConnectResponseType.Code;
                         options.Scope.Clear();
-                        foreach(var scope in scopes)
+                        foreach (var scope in scopes)
                         {
                             options.Scope.Add(scope);
                         }
@@ -99,7 +102,7 @@ namespace BifrostQL.Core
                 });
             return app;
         }
-        public static FluentT IfFluent<FluentT, ResultT>(this FluentT fluent, bool check, Func<FluentT, ResultT> doConfig) 
+        public static FluentT IfFluent<FluentT, ResultT>(this FluentT fluent, bool check, Func<FluentT, ResultT> doConfig)
             where ResultT : FluentT
         {
             if (!check) return fluent;

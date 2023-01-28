@@ -1,4 +1,5 @@
 using BifrostQL.Core;
+using BifrostQL.Core.Modules;
 using BifrostQL.Server;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 
@@ -17,7 +18,14 @@ builder.WebHost.ConfigureKestrel(serverOptions =>
     serverOptions.Limits.MaxRequestHeadersTotalSize = 131072;
 });
 
-builder.AddBifrostQL();
+builder.Services.AddSingleton<BasicAuditModule>();
+builder.AddBifrostQL(sp =>
+{
+    return new[] {
+        sp.GetRequiredService<BasicAuditModule>(),
+    };
+});
+
 builder.Services.AddCors();
 var app = builder.Build();
 

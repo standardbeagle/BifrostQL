@@ -171,7 +171,7 @@ namespace BifrostQL.QueryModel
             var path = basePath + "/" + Alias ?? Name;
             //TODO: Replace this with a global map between SQL names and graphql names
             var name = Name.Replace("_join_", "").Replace("_single_", "").Replace("__", " ");
-            var rawSort = (List<object?>?) Arguments.FirstOrDefault(a => a.Name == "sort")?.Value;
+            var rawSort = (IEnumerable<object?>?) Arguments.FirstOrDefault(a => a.Name == "sort")?.Value;
             var sort = rawSort?.Cast<string>()?.ToList() ?? new List<string>();
             var dataFields = Fields.FirstOrDefault(f => f.Name == "data")?.Fields ?? new List<Field>();
             var fields = IncludeResult ? dataFields : Fields;

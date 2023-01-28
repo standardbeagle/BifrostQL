@@ -22,6 +22,8 @@ namespace BifrostQL.Schema
                     continue;
 
                 var isNullable = column.IsNullable;
+                if (column.IsCreatedOnColumn || column.IsCreatedByColumn || column.IsUpdatedByColumn || column.IsUpdatedOnColumn)
+                    isNullable = true;
                 if (identityType == IdentityType.Optional && column.IsIdentity)
                     isNullable = true;
                 if (identityType == IdentityType.Required && column.IsIdentity)

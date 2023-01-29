@@ -21,7 +21,7 @@ namespace BifrostQL.Resolvers
             {
                 var data = context.GetArgument<Dictionary<string, object?>>("insert");
                 var moduleSql = modules.Insert(data, table, context.UserContext);
-                var sql = $@"INSERT INTO [{table.TableSchema}].[{table.TableName}]([{string.Join("],[", data.Keys)}]) VALUES({string.Join(",", data.Keys.Select(k => $"@{k}"))});SELECT SCOPE_IDENTITY() ID;";
+                var sql = $@"INSERT INTO [{table.TableSchema}].[{table.DbName}]([{string.Join("],[", data.Keys)}]) VALUES({string.Join(",", data.Keys.Select(k => $"@{k}"))});SELECT SCOPE_IDENTITY() ID;";
                 var cmd = new SqlCommand(Join(sql, moduleSql));
                 cmd.Parameters.AddRange(data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value)).ToArray());
                 return HandleDecimals(await ExecuteScalar(conFactory, cmd));
@@ -38,7 +38,7 @@ namespace BifrostQL.Resolvers
 
 
                 var moduleSql = modules.Insert(data, table, context.UserContext);
-                var sql = $@"UPDATE [{table.TableSchema}].[{table.TableName}] 
+                var sql = $@"UPDATE [{table.TableSchema}].[{table.DbName}] 
                     SET {string.Join(",", standardData.Select(kv => $"[{kv.Key}]=@{kv.Key}"))}
                     WHERE {string.Join(" AND ", keyData.Select(kv => $"[{kv.Key}]=@{kv.Key}"))};";
                 var cmd = new SqlCommand(Join(sql, moduleSql));
@@ -52,7 +52,7 @@ namespace BifrostQL.Resolvers
                 if (!data.Any())
                     return 0;
                 var moduleSql = modules.Insert(data, table, context.UserContext);
-                var sql = $"DELETE FROM [{table.TableSchema}].[{table.TableName}] WHERE {string.Join(" AND ", data.Select(kv => $"[{kv.Key}]=@{kv.Key}"))};";
+                var sql = $"DELETE FROM [{table.TableSchema}].[{table.DbName}] WHERE {string.Join(" AND ", data.Select(kv => $"[{kv.Key}]=@{kv.Key}"))};";
                 var cmd = new SqlCommand(Join(sql, moduleSql));
                 cmd.Parameters.AddRange(data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value)).ToArray());
                 return await ExecuteNonQuery(conFactory, cmd);

@@ -15,7 +15,7 @@ namespace BifrostQL.Schema
     {
         public DbInputRow(string action, TableDto table, IdentityType identityType)
         {
-            Name = action + "_" + table.TableName.Replace(" ", "__");
+            Name = action + "_" + table.DbName.Replace(" ", "__");
             foreach (var column in table.Columns)
             {
                 if (identityType == IdentityType.None && column.IsIdentity)

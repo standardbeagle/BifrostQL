@@ -52,9 +52,9 @@ namespace BifrostQL.Schema
                 var rowType = new DbRow(table);
                 AddField(new FieldType
                 {
-                    Name = table.GraphQLName,
+                    Name = table.GraphQlName,
                     Arguments = new QueryArguments(filterArgs),
-                    ResolvedType = new TableQueryGraphType(table.GraphQLName, new ListGraphType(rowTypes[table.UniqueName])),
+                    ResolvedType = new TableQueryGraphType(table.GraphQlName, new ListGraphType(rowTypes[table.UniqueName])),
                     Resolver = new DbTableResolver(),
                 });
             }

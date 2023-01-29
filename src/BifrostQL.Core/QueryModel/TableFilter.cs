@@ -32,16 +32,16 @@ namespace BifrostQL.QueryModel
                 var link = links[i];
                 if (join == "")
                 {
-                    var where = DbFilterType.GetSingleFilter(link.ParentTable.TableName, ColumnNames[i + 1], RelationName, Value);
-                    join = $"SELECT DISTINCT [{link.ParentId.ColumnName}] AS joinid FROM [{link.ParentTable.TableName}] WHERE {where}";
+                    var where = DbFilterType.GetSingleFilter(link.ParentTable.DbName, ColumnNames[i + 1], RelationName, Value);
+                    join = $"SELECT DISTINCT [{link.ParentId.ColumnName}] AS joinid FROM [{link.ParentTable.DbName}] WHERE {where}";
                 } else
                 {
-                    var parentTable = link.ParentTable.TableName;
+                    var parentTable = link.ParentTable.DbName;
                     var previousLink = links[i+1];
                     join = $"SELECT DISTINCT [{link.ParentId.ColumnName}] AS joinid FROM [{parentTable}] INNER JOIN ({join}) j ON j.joinid = [{parentTable}].[{previousLink.ChildId.ColumnName}]";
                 }
             }
-            join = $" INNER JOIN ({join}) j ON j.joinid = [{alias ?? table.TableName}].[{links[0].ChildId.ColumnName}]";
+            join = $" INNER JOIN ({join}) j ON j.joinid = [{alias ?? table.DbName}].[{links[0].ChildId.ColumnName}]";
             return (join, "");
         }
 

@@ -24,7 +24,7 @@ namespace BifrostQL.Model
         {
             if (_matchers.Length == 0)
                 return _default;
-            return _matchers.Any(m => m.schema.IsMatch(table.TableSchema) && m.tables.Any(t => t.IsMatch(table.TableName)));
+            return _matchers.Any(m => m.schema.IsMatch(table.TableSchema) && m.tables.Any(t => t.IsMatch(table.DbName)));
         }
         public static TableMatcher FromSection(IConfigurationSection section, bool defaultResult)
         {

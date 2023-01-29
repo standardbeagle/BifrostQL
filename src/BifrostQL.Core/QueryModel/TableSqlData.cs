@@ -73,7 +73,7 @@ namespace BifrostQL.QueryModel
                 var thisDto = dbModel.GetTableFromTableName(TableName);
                 if (thisDto.MultiLinks.TryGetValue(link.GraphQlName, out var multiLink))
                 {
-                    link.TableName = multiLink.ChildTable.TableName;
+                    link.TableName = multiLink.ChildTable.DbName;
                     var join = new TableJoin
                     {
                         Alias = link.Alias,
@@ -89,7 +89,7 @@ namespace BifrostQL.QueryModel
                 }
                 if (thisDto.SingleLinks.TryGetValue(link.GraphQlName, out var singleLink))
                 {
-                    link.TableName = singleLink.ParentTable.TableName;
+                    link.TableName = singleLink.ParentTable.DbName;
                     var join = new TableJoin
                     {
                         Alias = link.Alias,

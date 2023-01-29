@@ -122,24 +122,18 @@ SELECT [TABLE_CATALOG]
             var pluralizer = new Pluralizer();
             var singleTables = model.Tables
                                 .Where(t => t.KeyColumns.Count() == 1)
-                                .Select(t => (pluralizer.Singularize(t.TableName), t)).ToDictionary(t => t.Item1, t => t.Item2);
+                                .ToDictionary(t => t.NormalizedName, StringComparer.InvariantCultureIgnoreCase);
             var idMatches = model.Tables
                             .SelectMany(table => table.Columns.Select(column => (table, column)))
-                            .Where(c => string.Equals(c.column.ColumnName, "id", StringComparison.InvariantCultureIgnoreCase) == false)
-                            .Where(c => c.column.ColumnName.EndsWith("id", StringComparison.InvariantCultureIgnoreCase))
-                            .Select(c => (stripped: c.column.ColumnName.Remove(c.column.ColumnName.Length - 2).Replace("_", ""), c.column, c.table))
-                            .Where(c => string.Equals(c.stripped, c.table.TableName, StringComparison.InvariantCultureIgnoreCase) == false)
-                            .Select(c => (single: pluralizer.Singularize(c.stripped), c.column, c.table))
-                            .Where(c => string.Equals(c.single, pluralizer.Singularize(c.table.TableName), StringComparison.InvariantCultureIgnoreCase) == false)
-                            .Where(c => singleTables.ContainsKey(c.single))
-                            .Select(c => (c.single, c.column, c.table, parent: singleTables[c.single]))
+                            .Where(c => singleTables.ContainsKey(c.column.NormalizedName))
+                            .Where(c => string.Equals(c.column.NormalizedName, c.table.NormalizedName, StringComparison.InvariantCultureIgnoreCase) == false)
+                            .Select(c => (c.column, c.table, parent: singleTables[c.column.NormalizedName]))
                             .Where(c => c.column.DataType == c.parent.KeyColumns.First().DataType)
                             .ToArray();
             foreach (var idMatch in idMatches)
             {
-                var plural = pluralizer.Pluralize(idMatch.table.TableName);
-                idMatch.table.SingleLinks.Add(idMatch.single.Replace(" ", "__"), new TableLinkDto { Name = idMatch.single, ChildId = idMatch.column, ParentId = idMatch.parent.KeyColumns.First(), ChildTable = idMatch.table, ParentTable = idMatch.parent });
-                idMatch.parent.MultiLinks.Add(plural.Replace(" ", "__"), new TableLinkDto { Name = plural, ChildId = idMatch.column, ParentId = idMatch.parent.KeyColumns.First(), ChildTable = idMatch.table, ParentTable = idMatch.parent });
+                idMatch.table.SingleLinks.Add(idMatch.parent.GraphQlName, new TableLinkDto { Name = idMatch.parent.GraphQlName, ChildId = idMatch.column, ParentId = idMatch.parent.KeyColumns.First(), ChildTable = idMatch.table, ParentTable = idMatch.parent });
+                idMatch.parent.MultiLinks.Add(idMatch.table.GraphQlName, new TableLinkDto { Name = idMatch.table.DbName, ChildId = idMatch.column, ParentId = idMatch.parent.KeyColumns.First(), ChildTable = idMatch.table, ParentTable = idMatch.parent });
             }
             return model;
         }

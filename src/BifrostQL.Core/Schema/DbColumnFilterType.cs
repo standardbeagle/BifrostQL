@@ -8,7 +8,7 @@ namespace BifrostQL.Schema
     {
         public DbColumnFilterType(TableDto table)
         {
-            Name = $"{table.GraphQLName}ColumnFilterType";
+            Name = $"{table.GraphQlName}ColumnFilterType";
             foreach (ColumnDto column in table.Columns)
             {
                 AddField(new FieldType
@@ -22,7 +22,7 @@ namespace BifrostQL.Schema
                 AddField(new FieldType
                 {
                     Name = link.Key,
-                    ResolvedType = new GraphQLTypeReference($"{link.Value.ParentTable.GraphQLName}ColumnFilterType"),
+                    ResolvedType = new GraphQLTypeReference($"{link.Value.ParentTable.GraphQlName}ColumnFilterType"),
                 });
             }
         }

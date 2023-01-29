@@ -1,7 +1,9 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿using Pluralize.NET.Core;
+using System.ComponentModel.DataAnnotations;
 using System.Data;
 using System.Linq;
 using System.Security.Principal;
+using System.Xml.Linq;
 
 namespace BifrostQL.Model
 {
@@ -14,8 +16,16 @@ namespace BifrostQL.Model
         TableDto GetTable(string fullName);
         TableDto GetTableFromTableName(string tableName);
     }
+
+    public interface ISchemaNames
+    {
+        string DbName { get; }
+        string GraphQlName { get; }
+        string NormalizedName { get; }
+    }
     public sealed class DbModel : IDbModel
     {
+        internal static readonly Pluralizer _pluralizer = new Pluralizer();
         public IReadOnlyCollection<TableDto> Tables { get; set; } = null!;
         public string UserAuditKey { get; init; } = null!;
         public string AuditTableName { get; init; } = null!;
@@ -25,18 +35,19 @@ namespace BifrostQL.Model
         }
         public TableDto GetTableFromTableName(string tableName)
         {
-            return Tables.First(t => string.Equals(t.TableName, tableName, StringComparison.InvariantCultureIgnoreCase));
+            return Tables.First(t => string.Equals(t.DbName, tableName, StringComparison.InvariantCultureIgnoreCase));
         }
     }
 
-    public sealed class TableDto
+    public sealed class TableDto : ISchemaNames
     {
-        public string TableName { get; init; } = null!;
-        public string GraphQLName { get; init; } = null!;
+        public string DbName { get; init; } = null!; //The name directly in the database
+        public string GraphQlName { get; init; } = null!; //The name translated so that it can be used as a graphql identifier
+        public string NormalizedName { get; init; } = null!; //The tablename translated so that it can be used to predict matches from other tables and columns
         public string TableSchema { get; init; } = null!;
         public string TableType { get; init; } = null!;
-        public string FullName => $"{(TableSchema == "dbo" ? "" : $"{TableSchema}_")}{GraphQLName}";
-        public string UniqueName => $"{TableSchema}.{TableName}";
+        public string FullName => $"{(TableSchema == "dbo" ? "" : $"{TableSchema}_")}{GraphQlName}";
+        public string UniqueName => $"{TableSchema}.{DbName}";
         public bool MatchName(string fullName) => string.Equals(FullName, fullName, StringComparison.InvariantCultureIgnoreCase);
         public IEnumerable<ColumnDto> Columns => ColumnLookup.Values;
         public IDictionary<string, ColumnDto> ColumnLookup { get; init; } = null!;
@@ -46,7 +57,7 @@ namespace BifrostQL.Model
         public IEnumerable<ColumnDto> StandardColumns => Columns.Where(c => c.IsPrimaryKey == false);
         public override string ToString()
         {
-            return $"[{TableSchema}].[{TableName}]";
+            return $"[{TableSchema}].[{DbName}]";
         }
 
         public static TableDto FromReader(IDataReader reader, IReadOnlyCollection<ColumnDto>? columns = null)
@@ -56,8 +67,9 @@ namespace BifrostQL.Model
             if (graphQlName.StartsWith("_")) graphQlName = $"tbl{graphQlName}";
             return new TableDto
             {
-                TableName = name,
-                GraphQLName = graphQlName,
+                DbName = name,
+                GraphQlName = graphQlName,
+                NormalizedName = DbModel._pluralizer.Singularize(name),
                 TableSchema = (string)reader["TABLE_SCHEMA"],
                 TableType = (string)reader["TABLE_TYPE"],
                 ColumnLookup = (columns ?? Array.Empty<ColumnDto>()).ToDictionary(c => c.ColumnName, StringComparer.OrdinalIgnoreCase),
@@ -81,12 +93,15 @@ namespace BifrostQL.Model
     public record ColumnRef(string Catalog, string Schema, string Table, string Column)
         : TableRef(Catalog, Schema, Table);
 
-    public sealed class ColumnDto
+    public sealed class ColumnDto : ISchemaNames
     {
         public string TableCatalog { get; init; } = null!;
         public string TableSchema { get; init; } = null!;
         public string TableName { get; init; } = null!;
         public string ColumnName { get; init; } = null!;
+        public string DbName => ColumnName;
+        public string GraphQlName { get; init; } = null!;
+        public string NormalizedName { get; init; } = null!;
         public ColumnRef ColumnRef { get; init; } = null!;
         public string DataType { get; init; } = null!;
         public bool IsNullable { get; init; }
@@ -114,12 +129,16 @@ namespace BifrostQL.Model
             var isPrimary = constraints.TryGetValue(columnRef, out var con)
                     ? con.Any(c => c.ConstraintType == "PRIMARY KEY")
                     : false;
+            var graphQlName = column.Replace(" ", "_").Replace("-", "_");
+            if (graphQlName.StartsWith("_")) graphQlName = $"col{graphQlName}";
             return new ColumnDto
             {
                 TableCatalog = catalog,
                 TableSchema = schema,
                 TableName = table,
                 ColumnName = column,
+                GraphQlName = graphQlName,
+                NormalizedName = NormalizeColumn(column),
                 ColumnRef = columnRef,
                 DataType = (string)reader["DATA_TYPE"],
                 IsNullable = ((string)reader["IS_NULLABLE"]) == "YES",
@@ -127,6 +146,18 @@ namespace BifrostQL.Model
                 IsIdentity = (int)reader["IS_IDENTITY"] == 1,
                 IsPrimaryKey = isPrimary,
             };
+        }
+
+        private static string NormalizeColumn(string column)
+        {
+            if (string.Equals("id", column, StringComparison.InvariantCultureIgnoreCase))
+                return "id";
+            if (column.EndsWith("id", StringComparison.InvariantCultureIgnoreCase))
+            {
+                var tableName = column.Substring(0, column.Length - 2);
+                return DbModel._pluralizer.Singularize(tableName);
+            }
+            return column;
         }
     }
 

@@ -11,7 +11,7 @@ namespace BifrostQL.Schema
         private readonly TableDto _table;
         public DbRow(TableDto table)
         {
-            Name = table.GraphQLName;
+            Name = table.GraphQlName;
             _table = table;
             foreach (var column in table.Columns)
             {
@@ -69,7 +69,7 @@ namespace BifrostQL.Schema
                 {
                     Name = key,
                     Arguments = new QueryArguments(
-                        new QueryArgument(new GraphQLTypeReference($"{multi.ChildTable.GraphQLName}ColumnFilterType")) { Name = "filter" },
+                        new QueryArgument(new GraphQLTypeReference($"{multi.ChildTable.GraphQlName}ColumnFilterType")) { Name = "filter" },
                         new QueryArgument<ListGraphType<StringGraphType>>() { Name = "sort" }),
                     ResolvedType = new ListGraphType(rows[multi.ChildTable.UniqueName]),
                     Resolver = DbJoinFieldResolver.Instance
@@ -89,18 +89,18 @@ namespace BifrostQL.Schema
         {
             AddField(new FieldType
             {
-                Name = $"_join_{table.GraphQLName}",
+                Name = $"_join_{table.GraphQlName}",
                 Arguments = new QueryArguments(
                     new QueryArgument<ListGraphType<StringGraphType>>() { Name = "on" },
                     //new QueryArgument<StringGraphType>() { Name = "fk" },
-                    new QueryArgument(new GraphQLTypeReference($"{table.GraphQLName}ColumnFilterType")) { Name = "filter" },
+                    new QueryArgument(new GraphQLTypeReference($"{table.GraphQlName}ColumnFilterType")) { Name = "filter" },
                     new QueryArgument<ListGraphType<StringGraphType>>() { Name = "sort" }),
                 ResolvedType = new ListGraphType(type),
                 Resolver = DbJoinFieldResolver.Instance
             });
             AddField(new FieldType
             {
-                Name = $"_single_{table.GraphQLName}",
+                Name = $"_single_{table.GraphQlName}",
                 Arguments = new QueryArguments(new QueryArgument<ListGraphType<StringGraphType>>() { Name = "on" }),
                 ResolvedType = type,
                 Resolver = DbJoinFieldResolver.Instance

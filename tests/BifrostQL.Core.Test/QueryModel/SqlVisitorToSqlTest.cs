@@ -110,8 +110,8 @@ namespace BifrostQL.Core.QueryModel
             var workshops = new TableDto
             {
                 TableSchema = "dbo",
-                TableName = "workshops",
-                GraphQLName = "workshops",
+                DbName = "workshops",
+                GraphQlName = "workshops",
                 ColumnLookup = new Dictionary<string, ColumnDto> {
                         { "id", new ColumnDto { TableName = "workshops", ColumnName= "id", IsPrimaryKey= true } },
                         { "number", new ColumnDto { TableName = "workshops", ColumnName= "number", IsPrimaryKey= true } },
@@ -120,8 +120,8 @@ namespace BifrostQL.Core.QueryModel
             var sessions = new TableDto
             {
                 TableSchema = "dbo",
-                TableName = "sessions",
-                GraphQLName = "sessions",
+                DbName = "sessions",
+                GraphQlName = "sessions",
                 ColumnLookup = new Dictionary<string, ColumnDto> {
                         { "id", new ColumnDto { TableName = "sessions", ColumnName= "sid", IsPrimaryKey= true } },
                         { "status", new ColumnDto { TableName = "sessions", ColumnName= "status", IsPrimaryKey= true } },

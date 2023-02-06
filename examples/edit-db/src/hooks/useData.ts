@@ -11,10 +11,10 @@ export function useSchema() {
         .map((f: any) => ({
             ...f,
             columns: f?.type?.fields
-                            ?.find((d: any) => d.name === "data")
-                            ?.type?.ofType.fields
-                            ?.filter((c:any) => c.name.startsWith('_') == false)
-                            ?.map((c:any) => ({...c, paramType: c?.type?.ofType?.name ?? "String"}))
+                ?.find((d: any) => d.name === "data")
+                ?.type?.ofType.fields
+                ?.filter((c: any) => c.name.startsWith('_') == false)
+                ?.map((c: any) => ({ ...c, paramType: c?.type?.ofType?.name ?? "String" }))
         }
         ))
     return { loading, error, data: columns };

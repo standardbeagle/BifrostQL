@@ -13,6 +13,7 @@ if (jwtConfig.Exists())
         options => builder.Configuration.Bind("JwtSettings", options));
 }
 
+//Required for microsoft ad b2c tokens
 builder.WebHost.ConfigureKestrel(serverOptions =>
 {
     serverOptions.Limits.MaxRequestHeadersTotalSize = 131072;

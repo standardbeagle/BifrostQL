@@ -31,5 +31,5 @@ jobs:
     - name: add source
       run: dotnet nuget add source --username standardbeagle --password ${{secrets.REPO_NUGET}} --store-password-in-clear-text --name github "https://nuget.pkg.github.com/standardbeagle/index.json"
     - name: publish to repo
-      run: dotnet nuget push "src/HandyQL.Core/bin/Release/*.nupkg" --source "github" -k ${{secrets.REPO_NUGET}} --skip-duplicate
+      run: dotnet nuget push "src/BifrostQL.Core/bin/Release/*.nupkg" --source "github" -k ${{secrets.REPO_NUGET}} --skip-duplicate
       

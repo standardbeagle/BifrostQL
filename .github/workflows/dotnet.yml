@@ -24,8 +24,8 @@ jobs:
       run: dotnet restore
     - name: Build
       run: dotnet build --no-restore --configuration Release
-   - name: Test
-     run: dotnet test --no-build --verbosity normal --configuration Release
+    - name: Test
+      run: dotnet test --no-build --verbosity normal --configuration Release
     - name: Pack
       run: dotnet pack --configuration Release --no-build
     - name: add source

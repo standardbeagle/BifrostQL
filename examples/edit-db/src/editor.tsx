@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { ApolloClient, InMemoryCache, ApolloProvider } from '@apollo/client'
 import { MainFrame } from './main-frame';
-import { PathContext, PathProvider } from './hooks/usePath';
+import { PathProvider } from './hooks/usePath';
 
 interface EditorProps {
     uri?: string;

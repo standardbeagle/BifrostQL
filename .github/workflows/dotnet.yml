@@ -34,6 +34,9 @@ jobs:
       run: dotnet nuget push "src/BifrostQL.Core/bin/Release/*.nupkg" --source "github" -k ${{secrets.REPO_NUGET}} --skip-duplicate
     - name: publish Server to repo
       run: dotnet nuget push "src/BifrostQL.Server/bin/Release/*.nupkg" --source "github" -k ${{secrets.REPO_NUGET}} --skip-duplicate
+    - name: install editor
+      working-directory: ./examples/edit-db
+      run: npm ci 
     - name: build editor
       working-directory: ./examples/edit-db
       run: npm run build

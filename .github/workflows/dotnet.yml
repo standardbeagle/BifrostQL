@@ -30,6 +30,8 @@ jobs:
       run: dotnet pack --configuration Release --no-build
     - name: add source
       run: dotnet nuget add source --username standardbeagle --password ${{secrets.REPO_NUGET}} --store-password-in-clear-text --name github "https://nuget.pkg.github.com/standardbeagle/index.json"
-    - name: publish to repo
+    - name: publish Core to repo
       run: dotnet nuget push "src/BifrostQL.Core/bin/Release/*.nupkg" --source "github" -k ${{secrets.REPO_NUGET}} --skip-duplicate
+    - name: publish Server to repo
+      run: dotnet nuget push "src/BifrostQL.Server/bin/Release/*.nupkg" --source "github" -k ${{secrets.REPO_NUGET}} --skip-duplicate
       

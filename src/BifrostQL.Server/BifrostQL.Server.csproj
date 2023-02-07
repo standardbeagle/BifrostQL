@@ -6,9 +6,15 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <OutputType>Library</OutputType>
     <Company>Standard Beagle Studio</Company>
+		<PackageId>BifrostQL.Server</PackageId>
+    <IsPackable>true</IsPackable>
     <PackageProjectUrl>https://github.com/standardbeagle/BifrostQL</PackageProjectUrl>
     <RepositoryUrl>https://github.com/standardbeagle/BifrostQL</RepositoryUrl>
     <PackageTags>GraphQL SqlServer </PackageTags>
+		<PackageVersion>0.2.2</PackageVersion>
+		<Authors>Andy Brummer</Authors>
+		<Description>The fastest way to publish your SQL database as a GraphQL API.</Description>
+		<EnablePackageValidation>true</EnablePackageValidation>
   </PropertyGroup>
 
   <ItemGroup>

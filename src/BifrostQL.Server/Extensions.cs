@@ -22,7 +22,7 @@ namespace BifrostQL.Core
     {
         private static IConfigurationSection? _jwtConfig;
 
-        public static WebApplicationBuilder AddBifrostQL(this WebApplicationBuilder builder, Func<IServiceProvider, IReadOnlyCollection<IMutationModule>> getModules = null)
+        public static WebApplicationBuilder AddBifrostQL(this WebApplicationBuilder builder, Func<IServiceProvider, IReadOnlyCollection<IMutationModule>>? getModules = null)
         {
             var loader = new DbModelLoader(builder.Configuration);
             var model = loader.LoadAsync().Result;

@@ -24,6 +24,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		README.md = README.md
 	EndProjectSection
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BifrostQL.Host", "src\BifrostQL.Host\BifrostQL.Host.csproj", "{85C49467-12CD-424F-84A3-DCAF0562BEA9}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -50,6 +52,10 @@ Global
 		{AC42C6B1-0F80-434A-A471-10097F4202BD}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{AC42C6B1-0F80-434A-A471-10097F4202BD}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{AC42C6B1-0F80-434A-A471-10097F4202BD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{85C49467-12CD-424F-84A3-DCAF0562BEA9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{85C49467-12CD-424F-84A3-DCAF0562BEA9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{85C49467-12CD-424F-84A3-DCAF0562BEA9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{85C49467-12CD-424F-84A3-DCAF0562BEA9}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -61,6 +67,7 @@ Global
 		{C5218A3B-851F-4C35-9E42-65CEB1D9D2B4} = {DC25D669-B0C8-45E7-B11F-527512EF3CF0}
 		{8A9AAC1E-3E2C-4913-9324-9442289F83E5} = {FFF10B1F-6285-4E03-82DD-22D5BFB6069A}
 		{AC42C6B1-0F80-434A-A471-10097F4202BD} = {C12B9C43-D8A0-403B-84F3-CB5345807318}
+		{85C49467-12CD-424F-84A3-DCAF0562BEA9} = {FFF10B1F-6285-4E03-82DD-22D5BFB6069A}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {61918073-F25C-4BEB-A70C-BAD96E2D429F}

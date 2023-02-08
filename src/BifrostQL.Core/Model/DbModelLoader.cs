@@ -63,10 +63,9 @@ SELECT [TABLE_CATALOG]
       ,[TABLE_TYPE]
   FROM [INFORMATION_SCHEMA].[TABLES];
 ";
-        public DbModelLoader(IConfiguration configuration)
+        public DbModelLoader(IConfigurationSection bifrostSection, string connectionString)
         {
-            _connStr = configuration.GetConnectionString("ConnStr");
-            var bifrostSection = configuration.GetSection("BifrostQL");
+            _connStr = connectionString;
             if (bifrostSection.Exists())
             {
                 _ignoreTables = TableMatcher.FromSection(bifrostSection.GetSection("IgnoreTables"), false);

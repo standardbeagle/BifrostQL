@@ -19,11 +19,13 @@ builder.WebHost.ConfigureKestrel(serverOptions =>
 });
 
 builder.Services.AddSingleton<BasicAuditModule>();
-builder.Services.AddBifrostQL(builder.Configuration, sp =>
+builder.Services.AddBifrostQL(options =>
 {
-    return new[] {
-        sp.GetRequiredService<BasicAuditModule>(),
-    };
+    options
+        .BindStandardConfig(builder.Configuration)
+        .AddModules(sp => new[] {
+            sp.GetRequiredService<BasicAuditModule>(),
+        });
 });
 
 builder.Services.AddCors();

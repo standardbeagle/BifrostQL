@@ -50,4 +50,4 @@ jobs:
       working-directory: ./examples/edit-db
       env:
         REPO_NUGET: ${{secrets.REPO_NUGET}}
-      run: npm package
+      run: npm publish

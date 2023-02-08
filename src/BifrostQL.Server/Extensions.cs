@@ -22,29 +22,28 @@ namespace BifrostQL.Server
     {
         private static IConfigurationSection? _jwtConfig;
 
-        public static WebApplicationBuilder AddBifrostQL(this WebApplicationBuilder builder, Func<IServiceProvider, IReadOnlyCollection<IMutationModule>>? getModules = null)
+        public static IServiceCollection AddBifrostQL(this IServiceCollection services, IConfiguration configuration, Func<IServiceProvider, IReadOnlyCollection<IMutationModule>>? getModules = null)
         {
-            var loader = new DbModelLoader(builder.Configuration);
+            var loader = new DbModelLoader(configuration);
             var model = loader.LoadAsync().Result;
-            var connFactory = new DbConnFactory(builder.Configuration.GetConnectionString("ConnStr"));
+            var connFactory = new DbConnFactory(configuration.GetConnectionString("ConnStr"));
 
-            builder.Services.AddScoped<ITableReaderFactory, TableReaderFactory>();
-            builder.Services.AddSingleton(model);
-            builder.Services.AddSingleton<IDbConnFactory>(connFactory);
-            builder.Services.AddSingleton<DbDatabaseQuery>();
-            builder.Services.AddSingleton<DbDatabaseMutation>();
-            builder.Services.AddSingleton<ISchema, DbSchema>();
+            services.AddScoped<ITableReaderFactory, TableReaderFactory>();
+            services.AddSingleton(model);
+            services.AddSingleton((IDbConnFactory)connFactory);
+            services.AddSingleton<DbDatabaseQuery>();
+            services.AddSingleton<DbDatabaseMutation>();
+            services.AddSingleton<ISchema, DbSchema>();
             if (getModules != null)
-                builder.Services.AddSingleton<IMutationModules>(sp => new ModulesWrap { Modules = getModules(sp) });
+                services.AddSingleton((Func<IServiceProvider, IMutationModules>)(sp => new ModulesWrap { Modules = getModules(sp) }));
 
             JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 
-            _jwtConfig = builder.Configuration.GetSection("JwtSettings");
-            var grapQLBuilder = builder.Services.AddGraphQL(b => b
+            _jwtConfig = configuration.GetSection("JwtSettings");
+            var grapQLBuilder = services.AddGraphQL(b => b
             .AddSchema<DbSchema>()
             .AddSystemTextJson()
-            .IfFluent(_jwtConfig.Exists(), b => b.AddUserContextBuilder(context => new BifrostContext(context)))
-            );
+            .IfFluent(_jwtConfig.Exists(), b => b.AddUserContextBuilder(context => new BifrostContext(context))));
 
             if (_jwtConfig.Exists())
             {
@@ -53,7 +52,7 @@ namespace BifrostQL.Server
                 {
                     scopes.Add(scope);
                 }
-                builder.Services
+                services
                     .AddAuthentication(options =>
                         {
                             options.DefaultAuthenticateScheme = CookieAuthenticationDefaults.AuthenticationScheme;
@@ -85,7 +84,7 @@ namespace BifrostQL.Server
             }
 ;
 
-            return builder;
+            return services;
         }
 
         public static IApplicationBuilder UseBifrostQL(this IApplicationBuilder app, string endpointPath = "/graphql", string playgroundPath = "/")

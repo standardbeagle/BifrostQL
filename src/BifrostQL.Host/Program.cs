@@ -19,7 +19,7 @@ builder.WebHost.ConfigureKestrel(serverOptions =>
 });
 
 builder.Services.AddSingleton<BasicAuditModule>();
-builder.AddBifrostQL(sp =>
+builder.Services.AddBifrostQL(builder.Configuration, sp =>
 {
     return new[] {
         sp.GetRequiredService<BasicAuditModule>(),

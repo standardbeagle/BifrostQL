@@ -5,8 +5,7 @@
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 		<PackageId>BifrostQL.Core</PackageId>
-		<Version>0.2.3</Version>
-		<PackageVersion>0.2.3</PackageVersion>
+		<PackageVersion>0.2.4</PackageVersion>
 		<Authors>Andy Brummer</Authors>
 		<Company>StandardBeagle</Company>
 		<Description>The fastest way to publish your SQL database as a GraphQL API.</Description>

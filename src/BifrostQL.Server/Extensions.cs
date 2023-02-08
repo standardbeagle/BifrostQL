@@ -16,7 +16,7 @@ using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
 using BifrostQL.Core.Modules;
 
-namespace BifrostQL.Core
+namespace BifrostQL.Server
 {
     public static class Extensions
     {

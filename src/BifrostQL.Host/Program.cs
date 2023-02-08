@@ -1,4 +1,3 @@
-using BifrostQL.Core;
 using BifrostQL.Core.Modules;
 using BifrostQL.Server;
 using Microsoft.AspNetCore.Authentication.JwtBearer;

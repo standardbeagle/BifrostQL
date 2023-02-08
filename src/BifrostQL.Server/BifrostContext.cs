@@ -1,7 +1,7 @@
 ﻿using Microsoft.AspNetCore.Http;
 using System.Security.Claims;
 
-namespace BifrostQL.Core
+namespace BifrostQL.Server
 {
     internal class BifrostContext : Dictionary<string, object?>
     {

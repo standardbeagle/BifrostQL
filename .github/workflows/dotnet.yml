@@ -46,11 +46,8 @@ jobs:
     - name: build editor
       working-directory: ./examples/edit-db
       run: npm run build
-    - name: login to package repo
+    - name: publish npm package
       working-directory: ./examples/edit-db
       env:
         REPO_NUGET: ${{secrets.REPO_NUGET}}
-      run: npm login --scope=@standardbeagle --auth-type=legacy --registry=https://npm.pkg.github.com
-    - name: publish npm package
-      working-directory: ./examples/edit-db
       run: npm package

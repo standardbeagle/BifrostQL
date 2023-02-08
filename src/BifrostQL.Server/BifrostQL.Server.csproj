@@ -24,8 +24,6 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\BifrostQL.Core\BifrostQL.Core.csproj" />
-		<ProjectReference Include="..\data\BifrostQL.Ngsql\BifrostQL.Ngsql.csproj" />
-		<ProjectReference Include="..\data\BifrostQL.SqlServer\BifrostQL.SqlServer.csproj" />
 	</ItemGroup>
 
 </Project>

@@ -32,7 +32,7 @@ namespace BifrostQL.Server
         {
             app.IfFluent(useAuth, a => a.UseAuthentication().UseCookiePolicy());
             app.IfFluent(useAuth, a => a.UseUiAuth());
-            app.UseGraphQL(endpointPath);
+            app.UseGraphQL<DbSchema>(endpointPath);
             app.UseGraphQLPlayground(playgroundPath,
                 new GraphQL.Server.Ui.Playground.PlaygroundOptions
                 {

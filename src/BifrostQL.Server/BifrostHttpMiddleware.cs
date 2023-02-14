@@ -4,24 +4,6 @@ using GraphQL.Types;
 
 namespace BifrostQL.Server
 {
-    public class BifrostHttpMiddleware<T> : GraphQLHttpMiddleware<T> where T : ISchema
-    {
-        public BifrostHttpMiddleware(
-            RequestDelegate next, 
-            IGraphQLTextSerializer serializer, 
-            IDocumentExecuter<T> documentExecuter, 
-            IServiceScopeFactory serviceScopeFactory, 
-            IHostApplicationLifetime hostApplicationLifetime) : 
-            base(next, 
-                serializer, 
-                new BifrostDocumentExecuter<T>(documentExecuter), 
-                serviceScopeFactory, 
-                new GraphQLHttpMiddlewareOptions(), 
-                hostApplicationLifetime)
-        {
-        }
-    }
-
     public class BifrostHttpMiddleware : GraphQLHttpMiddleware
     {
         public BifrostHttpMiddleware(
@@ -39,39 +21,30 @@ namespace BifrostQL.Server
         {
         }
     }
-    public class BifrostDocumentExecuter<TSchema> : IDocumentExecuter<TSchema> where TSchema : ISchema
-    {
-        private readonly IDocumentExecuter _documentExecuter;
-        public BifrostDocumentExecuter(IDocumentExecuter documentExecuter)
-        {
-            _documentExecuter = documentExecuter ?? throw new ArgumentNullException(nameof(documentExecuter));
-        }
-
-        public Task<ExecutionResult> ExecuteAsync(ExecutionOptions options)
-        {
-            if (options.Schema != null)
-                throw new InvalidOperationException("ExecutionOptions.Schema must be null when calling this typed IDocumentExecuter<> implementation; it will be pulled from the dependency injection provider.");
-
-            //options.Schema = options.RequestServices!.GetRequiredService<TSchema>();
-            var result = _documentExecuter.ExecuteAsync(options);
-            return result;
-        }
-    }
-
     public class BifrostDocumentExecuter : IDocumentExecuter
     {
         private readonly IDocumentExecuter _documentExecuter;
+        private static readonly Dictionary<string, ISchema> _schemas = new Dictionary<string, ISchema>();
         public BifrostDocumentExecuter(IDocumentExecuter documentExecuter)
         {
             _documentExecuter = documentExecuter ?? throw new ArgumentNullException(nameof(documentExecuter));
         }
 
+        public static void AddSchema(string path, ISchema schema)
+        {
+            _schemas.Add(path, schema);
+        }
+
         public Task<ExecutionResult> ExecuteAsync(ExecutionOptions options)
         {
-            if (options.Schema != null)
-                throw new InvalidOperationException("ExecutionOptions.Schema must be null when calling this typed IDocumentExecuter<> implementation; it will be pulled from the dependency injection provider.");
+            var contextAccessor = options.RequestServices!.GetRequiredService<IHttpContextAccessor>();
+            var context = contextAccessor.HttpContext;
 
-            //options.Schema = options.RequestServices!.GetRequiredService<TSchema>();
+            if (_schemas.TryGetValue(context?.Request?.Path ?? "", out var schema))
+            {
+                options.Schema = schema;
+            }
+
             var result = _documentExecuter.ExecuteAsync(options);
             return result;
         }

@@ -111,6 +111,7 @@ namespace BifrostQL.Server
             services.AddScoped<ITableReaderFactory, TableReaderFactory>();
             services.AddSingleton(model);
             services.AddSingleton((IDbConnFactory)connFactory);
+            services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
             if (_modules != null)
                 services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = _modules });
             if (_moduleLoader != null)
@@ -119,9 +120,10 @@ namespace BifrostQL.Server
             JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 
             var schema = DbSchema.SchemaFromModel(model);
+            var path = _bifrostConfig.GetValue<string>("Path", "/graphql");
+            BifrostDocumentExecuter.AddSchema(path, schema);
 
             var grapQLBuilder = services.AddGraphQL(b => b
-            .AddSchema(schema)
             .AddSystemTextJson()
             .IfFluent(_jwtConfig.Exists(), b => b.AddUserContextBuilder(context => new BifrostContext(context))));
 

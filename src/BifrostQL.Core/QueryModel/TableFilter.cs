@@ -15,7 +15,7 @@ namespace BifrostQL.QueryModel
         {
             if (ColumnNames.Count == 1)
             {
-                return ("", DbFilterType.GetSingleFilter(alias ?? TableName, ColumnNames[0], RelationName, Value));
+                return ("", GetSingleFilter(alias ?? TableName, ColumnNames[0], RelationName, Value));
             }
             var join = "";
             var table = model.GetTableFromTableName(TableName);
@@ -32,7 +32,7 @@ namespace BifrostQL.QueryModel
                 var link = links[i];
                 if (join == "")
                 {
-                    var where = DbFilterType.GetSingleFilter(link.ParentTable.DbName, ColumnNames[i + 1], RelationName, Value);
+                    var where = GetSingleFilter(link.ParentTable.DbName, ColumnNames[i + 1], RelationName, Value);
                     join = $"SELECT DISTINCT [{link.ParentId.ColumnName}] AS joinid FROM [{link.ParentTable.DbName}] WHERE {where}";
                 } else
                 {
@@ -77,5 +77,51 @@ namespace BifrostQL.QueryModel
             }
             return (new List<string>() { kv.Value.Key }, kv.Value.Value);
         }
+
+        public static string GetSingleFilter(string? table, string field, string op, object? value)
+        {
+            var rel = op switch
+            {
+                "_eq" => "=",
+                "_neq" => "!=",
+                "_lt" => "<",
+                "_lte" => "<=",
+                "_gt" => ">",
+                "_gte" => ">=",
+                "_contains" or "_starts_with" or "_ends_with" => "like",
+                "_ncontains" or "_nstarts_with" or "_nends_with" => "not like",
+                "_in" => "in",
+                "_nin" => "not in",
+                "_between" => "between",
+                "_nbetween" => "not between",
+                _ => "="
+            };
+            var val = op switch
+            {
+                "_starts_with" or "_nstarts_with" => $"'{value}%'",
+                "_ends_with" or "_nends_with" => $"'%{value}'",
+                "_contains" or "_ncontains" => $"'%{value}%'",
+                "_in" or "_nin" => $"('{string.Join("','", (object[])(value ?? Array.Empty<object>()))}')",
+                "_between" or "_nbetween" => $"'{string.Join("' AND '", (object[])(value ?? Array.Empty<object>()))}'",
+                _ => $"'{value}'"
+            };
+            if (op == "_eq" && val == null)
+            {
+                rel = "IS NULL";
+                val = "";
+            }
+            if (op == "_neq" && val == null)
+            {
+                rel = "IS NOT NULL";
+                val = "";
+            }
+            if (table == null)
+            {
+                string filter = $"[{field}] {rel} {val}";
+                return filter;
+            }
+            return $"[{table}].[{field}] {rel} {val}";
+        }
+
     }
 }

@@ -15,14 +15,15 @@ using Microsoft.AspNetCore.Authentication;
 using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
 using BifrostQL.Core.Modules;
+using BifrostQL.Resolvers;
 
 namespace BifrostQL.Server
 {
     public static class Extensions
     {
-        public static IServiceCollection AddBifrostQL(this IServiceCollection services, Action<BifrostOptions> optionSetter)
+        public static IServiceCollection AddBifrostQL(this IServiceCollection services, Action<BifrostSetupOptions> optionSetter)
         {
-            var options = new BifrostOptions();
+            var options = new BifrostSetupOptions();
             optionSetter(options);
             options.ConfigureServices(services);
             return services;
@@ -32,7 +33,7 @@ namespace BifrostQL.Server
         {
             app.IfFluent(useAuth, a => a.UseAuthentication().UseCookiePolicy());
             app.IfFluent(useAuth, a => a.UseUiAuth());
-            app.UseGraphQL<DbSchema>(endpointPath);
+            app.UseGraphQL<BifrostHttpMiddleware>(endpointPath);
             app.UseGraphQLPlayground(playgroundPath,
                 new GraphQL.Server.Ui.Playground.PlaygroundOptions
                 {
@@ -50,43 +51,48 @@ namespace BifrostQL.Server
         }
     }
 
-    public class BifrostOptions
+    public class BifrostUseOptions
+    {
+
+    }
+
+    public class BifrostSetupOptions
     {
         private IConfigurationSection? _bifrostConfig;
         private IConfigurationSection? _jwtConfig;
         private string? _connectionString;
         private IReadOnlyCollection<IMutationModule> _modules = Array.Empty<IMutationModule>();
         private Func<IServiceProvider, IReadOnlyCollection<IMutationModule>>? _moduleLoader = null;
-        public BifrostOptions BindStandardConfig(IConfiguration config)
+        public BifrostSetupOptions BindStandardConfig(IConfiguration config)
         {
             return BindConfiguration(config.GetRequiredSection("BifrostQL"))
                     .BindJwtSettings(config.GetSection("JwtSettings"))
                     .BindConnectionString(config.GetConnectionString("bifrost"));
         }
 
-        public BifrostOptions BindConnectionString(string connectionString)
+        public BifrostSetupOptions BindConnectionString(string connectionString)
         {
             _connectionString = connectionString;
             return this;
         }
 
-        public BifrostOptions BindConfiguration(IConfigurationSection section)
+        public BifrostSetupOptions BindConfiguration(IConfigurationSection section)
         {
             _bifrostConfig = section;
             return this;
         }
 
-        public BifrostOptions BindJwtSettings(IConfigurationSection section)
+        public BifrostSetupOptions BindJwtSettings(IConfigurationSection section)
         {
             _jwtConfig = section;
             return this;
         }
-        public BifrostOptions AddModules(IReadOnlyCollection<IMutationModule> modules)
+        public BifrostSetupOptions AddModules(IReadOnlyCollection<IMutationModule> modules)
         {
             _modules = modules;
             return this;
         }
-        public BifrostOptions AddModules(Func<IServiceProvider, IReadOnlyCollection<IMutationModule>> moduleLoader)
+        public BifrostSetupOptions AddModules(Func<IServiceProvider, IReadOnlyCollection<IMutationModule>> moduleLoader)
         {
             _moduleLoader = moduleLoader;
             return this;
@@ -101,12 +107,10 @@ namespace BifrostQL.Server
             var model = loader.LoadAsync().Result;
             var connFactory = new DbConnFactory(_connectionString);
 
+
             services.AddScoped<ITableReaderFactory, TableReaderFactory>();
             services.AddSingleton(model);
             services.AddSingleton((IDbConnFactory)connFactory);
-            services.AddSingleton<DbDatabaseQuery>();
-            services.AddSingleton<DbDatabaseMutation>();
-            services.AddSingleton<DbSchema>();
             if (_modules != null)
                 services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = _modules });
             if (_moduleLoader != null)
@@ -114,8 +118,10 @@ namespace BifrostQL.Server
 
             JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 
+            var schema = DbSchema.SchemaFromModel(model);
+
             var grapQLBuilder = services.AddGraphQL(b => b
-            .AddSchema<DbSchema>()
+            .AddSchema(schema)
             .AddSystemTextJson()
             .IfFluent(_jwtConfig.Exists(), b => b.AddUserContextBuilder(context => new BifrostContext(context))));
 

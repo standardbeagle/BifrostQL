@@ -35,7 +35,7 @@ namespace BifrostQL.Schema
                 builder.AppendLine($"type {table.GraphQlName} {{");
                 foreach (var column in table.Columns)
                 {
-                    builder.AppendLine($"\t{column.GraphQlName} : {GetGraphQlTypeName(column.DataType)}");
+                    builder.AppendLine($"\t{column.GraphQlName} : {GetGraphQlTypeName(column.DataType, column.IsNullable)}");
                 }
                 foreach (var link in table.SingleLinks)
                 {

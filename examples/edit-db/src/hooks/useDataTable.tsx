@@ -85,7 +85,8 @@ export function useDataTable(table: any, id?: string, filterTable?: string) {
         queryResult.refetch({ sort: search.sort, limit: limit, offset: offset, ...routeObj })
     }
     const handlePage = (page: number) => {
-        const search = { offset: +(page * limit), sort: sort };
+        console.log('page', page);
+        const search = { offset: +((page-1) * limit), sort: sort };
         queryResult.refetch({ sort: sort, limit: limit, offset: search.offset, ...routeObj });
     }
     const handlePageSize = (size: number) => {

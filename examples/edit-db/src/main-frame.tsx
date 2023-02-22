@@ -1,15 +1,16 @@
 import React, { useEffect } from 'react'
 import { TableList } from './tableList';
 import { DataPanel } from './data-panel';
-import './index.css';
 import { Route, Routes, usePath } from './hooks/usePath';
 import { Header } from './header';
 import { DataEdit } from './data-edit';
+import './main-frame.scss';
 
 const PickATable = () => <p className="editdb-message">Select a Table</p>;
 const Layout = () => <div className='editdb-frame-layout'>
     <div className="editdb-frame-layout-header">
         <Routes>
+            <Route path='/:table/*' element={<Header />} />
             <Route path='/:table' element={<Header />} />
             <Route path='/' element={<Header />} />
         </Routes>

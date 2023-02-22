@@ -12,7 +12,6 @@ interface DataDataTableParams {
 export function DataDataTable({ table, id, filterTable }: DataDataTableParams): JSX.Element {
     const {
         limit,
-        offset,
         tableColumns,
         handleSort,
         handlePage,
@@ -23,6 +22,7 @@ export function DataDataTable({ table, id, filterTable }: DataDataTableParams): 
 
     const [resetPage, setResetpage] = useState(false);
     if (error) return <div>Error: {error.message}</div>;
+    //This is required to make paging reset when loading a new dataset, it probably doesn't support all the edge cases yet.
     useEffect(() => { data && data[table.name].offset === 0 && setResetpage(!resetPage);}, [data]);
 
     return <DataTable

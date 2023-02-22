@@ -42,3 +42,9 @@ export const uriParameter = Template.bind({});
 uriParameter.args = {
     url: 'https://localhost:7077/graphql',
 }
+
+export const editParticipant = Template.bind({});
+editParticipant.args = {
+    url: 'https://localhost:7077/graphql',
+    uiPath: '/participants/edit/5326'
+}

@@ -1,0 +1,41 @@
+:root{
+    --btn-bg: orchid;
+    --btn-bg-hover: purple;
+}
+.btn {
+    padding: 0.5rem;
+    background-color: var(--btn-bg);
+    border: thin solid black;
+    color: black;
+    text-decoration: none;
+    &:hover {
+        background-color: purple;
+        color: white;
+    }
+}
+
+.editdb-dialog-edit {
+    padding: 1rem;
+    text-align: right;
+
+    &__heading {
+        margin-top: 0;
+        text-align: left;
+    }
+    &__input-list {
+        padding: 0;
+        margin: 0;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.5rem;
+        text-align: left;
+    }
+    &__input-item {
+        list-style: none;
+        display: contents;
+    }
+    &__submit, &__cancel {
+        @extend .btn;
+        margin: 1rem 0.5rem;
+    }
+}

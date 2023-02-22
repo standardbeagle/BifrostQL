@@ -4,6 +4,7 @@ using BifrostQL.Model;
 using Microsoft.Extensions.DependencyInjection;
 using System.Data.SqlClient;
 using BifrostQL.Core.Modules;
+using System;
 
 namespace BifrostQL.Resolvers
 {
@@ -23,26 +24,29 @@ namespace BifrostQL.Resolvers
                 var moduleSql = modules.Insert(data, table, context.UserContext);
                 var sql = $@"INSERT INTO [{table.TableSchema}].[{table.DbName}]([{string.Join("],[", data.Keys)}]) VALUES({string.Join(",", data.Keys.Select(k => $"@{k}"))});SELECT SCOPE_IDENTITY() ID;";
                 var cmd = new SqlCommand(Join(sql, moduleSql));
-                cmd.Parameters.AddRange(data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value)).ToArray());
+                cmd.Parameters.AddRange(data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value ?? DBNull.Value) { IsNullable = table.ColumnLookup[kv.Key].IsNullable }).ToArray());
                 return HandleDecimals(await ExecuteScalar(conFactory, cmd));
             }
             if (context.HasArgument("update"))
             {
-                var data = context.GetArgument<Dictionary<string, object?>>("update");
+                var baseData = context.GetArgument<Dictionary<string, object?>>("update") ?? new Dictionary<string, object?>();
+                var data = new Dictionary<string, object>(baseData!, StringComparer.OrdinalIgnoreCase)!;
                 if (!data.Any())
                     return 0;
                 var keyData = data.Where(d => table.ColumnLookup[d.Key].IsPrimaryKey).ToArray();
                 if (keyData.Length == 0)
                     return 0;
-                var standardData = data.Where(d => table.ColumnLookup[d.Key].IsPrimaryKey == false).ToArray();
+                var standardData = data
+                    .Where(d => table.ColumnLookup[d.Key].IsPrimaryKey == false)
+                    .ToArray();
 
 
-                var moduleSql = modules.Insert(data, table, context.UserContext);
+                var moduleSql = modules.Update(data, table, context.UserContext);
                 var sql = $@"UPDATE [{table.TableSchema}].[{table.DbName}] 
                     SET {string.Join(",", standardData.Select(kv => $"[{kv.Key}]=@{kv.Key}"))}
                     WHERE {string.Join(" AND ", keyData.Select(kv => $"[{kv.Key}]=@{kv.Key}"))};";
                 var cmd = new SqlCommand(Join(sql, moduleSql));
-                cmd.Parameters.AddRange(data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value)).ToArray());
+                cmd.Parameters.AddRange(data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value ?? DBNull.Value) { IsNullable = table.ColumnLookup[kv.Key].IsNullable }).ToArray());
                 return await ExecuteNonQuery(conFactory, cmd);
 
             }
@@ -51,10 +55,10 @@ namespace BifrostQL.Resolvers
                 var data = context.GetArgument<Dictionary<string, object?>>("delete");
                 if (!data.Any())
                     return 0;
-                var moduleSql = modules.Insert(data, table, context.UserContext);
+                var moduleSql = modules.Delete(data, table, context.UserContext);
                 var sql = $"DELETE FROM [{table.TableSchema}].[{table.DbName}] WHERE {string.Join(" AND ", data.Select(kv => $"[{kv.Key}]=@{kv.Key}"))};";
                 var cmd = new SqlCommand(Join(sql, moduleSql));
-                cmd.Parameters.AddRange(data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value)).ToArray());
+                cmd.Parameters.AddRange(data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value ?? DBNull.Value)).ToArray());
                 return await ExecuteNonQuery(conFactory, cmd);
             }
             return null;

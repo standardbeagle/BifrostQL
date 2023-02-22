@@ -63,7 +63,7 @@ namespace BifrostQL.Model
         public static TableDto FromReader(IDataReader reader, IReadOnlyCollection<ColumnDto>? columns = null)
         {
             var name = (string)reader["TABLE_NAME"];
-            var graphQlName = name.Replace(" ", "_").Replace("-", "_");
+            var graphQlName = name.Replace(" ", "_").Replace("-", "_").ToLowerFirstChar();
             if (graphQlName.StartsWith("_")) graphQlName = $"tbl{graphQlName}";
             return new TableDto
             {
@@ -129,7 +129,7 @@ namespace BifrostQL.Model
             var isPrimary = constraints.TryGetValue(columnRef, out var con)
                     ? con.Any(c => c.ConstraintType == "PRIMARY KEY")
                     : false;
-            var graphQlName = column.Replace(" ", "_").Replace("-", "_");
+            var graphQlName = column.Replace(" ", "_").Replace("-", "_").ToLowerFirstChar();
             if (graphQlName.StartsWith("_")) graphQlName = $"col{graphQlName}";
             return new ColumnDto
             {
@@ -189,4 +189,14 @@ namespace BifrostQL.Model
 
     }
 
+    public static class ModelExtensions
+    {
+        public static string ToLowerFirstChar(this string input)
+        {
+            if (string.IsNullOrEmpty(input))
+                return input;
+
+            return char.ToLower(input[0]) + input.Substring(1);
+        }
+    }
 }

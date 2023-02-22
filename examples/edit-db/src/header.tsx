@@ -10,7 +10,7 @@ export function Header() {
     const { back, hasBack } = useNavigation();
     const tableName = tableData?.table;
     const options = useMemo(() => tableData?.table && schema
-        .find((t: any) => t.name === tableName)?.columns
+        ?.find((t: any) => t.name === tableName)?.columns
         ?.map((c: any) => ({ key: c.name, value: `${c.name},${c.paramType}`, label: c.name })), [tableData, schema]);
     const [column, setColumn] = useState(options?.at(0)?.value ?? "");
     //The control needs to reset state when a new table is selected, ie the filter is cleared

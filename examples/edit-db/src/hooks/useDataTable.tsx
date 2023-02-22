@@ -11,6 +11,14 @@ const getFilterObj = (filterString: string): any => {
     }
 }
 
+const toLocaleDate = (d:string):String => { 
+    if (!d) return "";
+    var dd = new Date(d);
+    if (dd.toString() === "invalid date") return "";
+    if (dd < new Date('1973-01-01')) return "";
+    return dd.toLocaleString();
+};
+
 const getTableColumns = (table:any): any[] => {
     const columns = table.columns
     .map((c: any) => {
@@ -29,6 +37,12 @@ const getTableColumns = (table:any): any[] => {
         if (c?.type?.kind === "LIST") {
             return {
                 selector: (row: { [x: string]: any; }) => (<Link to={"/" + c.name + "/from/" + table.name + "/" + row["id"]}>{c.name}</Link>),
+                ...result
+            }
+        }
+        if (c?.paramType === "DateTime") {
+            return {
+                selector: (row: { [x: string]: any; }) => ((!!c?.name && toLocaleDate(row?.[c?.name])) ?? ""),
                 ...result
             }
         }
@@ -79,6 +93,10 @@ export function useDataTable(table: any, id?: string, filterTable?: string) {
     const limit = 10;
     const query = getFilteredQuery(table, search, id, filterTable);
     const queryResult = useQuery(query, { variables: { sort: sort, limit: limit, offset: offset, ...routeObj, ...variables } });
+    const handleUpdate = (value: any) : Promise<any> => {
+        console.log(value);
+        return Promise.resolve(value);
+    }
     
     const handleSort = (column: any, sortDirection: any) => {
         const search = { offset: offset, sort: [`${column.sortField} ${sortDirection}`] };
@@ -93,6 +111,6 @@ export function useDataTable(table: any, id?: string, filterTable?: string) {
         queryResult.refetch({ sort: sort, limit: size, offset: offset, ...routeObj });
     }
 
-    return { tableColumns, offset, limit, handleSort, handlePage, handlePageSize, ...queryResult };
+    return { tableColumns, offset, limit, handleSort, handlePage, handlePageSize, handleUpdate, ...queryResult };
 }
 

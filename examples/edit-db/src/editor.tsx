@@ -5,6 +5,7 @@ import { PathProvider } from './hooks/usePath';
 
 interface EditorProps {
     uri?: string;
+    uiPath?: string;
     client?: ApolloClient<any>;
     onLocate?: (location: string) => void;
 }
@@ -14,6 +15,7 @@ let clients: { [name: string]: ApolloClient<any> } = {};
 export function Editor({
     uri,
     client,
+    uiPath,
     onLocate,
 }: EditorProps) {
     let [uriClient, setUriClient] = useState<ApolloClient<any> | null>(null);
@@ -38,7 +40,7 @@ export function Editor({
 
     return (
         <ApolloProvider client={client || uriClient!}>
-            <PathProvider path="/">
+            <PathProvider path={uiPath || "/"}>
                 <div><MainFrame onLocate={onLocate} /></div>
             </PathProvider>
         </ApolloProvider>

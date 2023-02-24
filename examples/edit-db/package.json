@@ -1,7 +1,7 @@
 {
   "name": "@standardbeagle/edit-db",
   "private": false,
-  "version": "0.2.11",
+  "version": "0.2.12",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -48,13 +48,13 @@
   "files": [
     "dist"
   ],
-  "main": "./dist/editor.umd.js",
+  "main": "./dist/editor.umd.cjs",
   "module": "./dist/editor.es.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "import": "./dist/editor.es.js",
-      "require": "./dist/editor.umd.js"
+      "require": "./dist/editor.umd.cjs"
     }
   }
 }

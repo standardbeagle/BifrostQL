@@ -27,7 +27,7 @@ namespace BifrostQL
         }
         public ValueTask<object?> ResolveAsync(IResolveFieldContext context)
         {
-            var factory = context.RequestServices!.GetRequiredService<ITableReaderFactory>();
+            var factory = (ITableReaderFactory)(context.InputExtensions["tableReaderFactory"] ?? throw new InvalidDataException("tableReaderFactory not configured"));
             return factory.ResolveAsync(context);
         }
     }
@@ -62,7 +62,9 @@ namespace BifrostQL
             var alias = context.FieldAst.Alias?.Name.StringValue;
             var graphqlName = context.FieldAst.Name.StringValue;
             var table = _tables.First(t => (alias != null && t.Alias == alias) || t.GraphQlName == graphqlName);
-            var data = LoadData(table, context.RequestServices!.GetRequiredService<IDbConnFactory>());
+            var conFactory = (IDbConnFactory)(context.InputExtensions["connFactory"] ?? throw new InvalidDataException("connection factory is not configured"));
+
+            var data = LoadData(table, conFactory);
             var count = data.First(kv => kv.Key.EndsWith("count")).Value.data[0][0] as int?;
 
             if (table.IncludeResult)

@@ -16,6 +16,7 @@ using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
 using BifrostQL.Core.Modules;
 using BifrostQL.Resolvers;
+using BifrostQL.Core.Schema;
 
 namespace BifrostQL.Server
 {
@@ -103,14 +104,26 @@ namespace BifrostQL.Server
             if (_bifrostConfig == null) throw new ArgumentNullException("bifrostConfig");
             if (_connectionString == null) throw new ArgumentNullException("connectionString");
 
-            var loader = new DbModelLoader(_bifrostConfig, _connectionString);
-            var model = loader.LoadAsync().Result;
-            var connFactory = new DbConnFactory(_connectionString);
+            var path = _bifrostConfig.GetValue<string>("Path", "/graphql");
+
+            var extensionsLoader = new PathCache<Inputs>();
+            extensionsLoader.AddLoader(path, () =>
+            {
+                var loader = new DbModelLoader(_bifrostConfig, _connectionString);
+                var model = loader.LoadAsync().Result;
+                var connFactory = new DbConnFactory(_connectionString);
+                var schema = DbSchema.SchemaFromModel(model);
+                return new Inputs(new Dictionary<string, object?>
+                {
+                    { "model", model}, 
+                    { "connFactory", connFactory },
+                    { "dbSchema", schema },
+                    { "tableReaderFactory", new TableReaderFactory(model) },
+                });
+            });
 
 
-            services.AddScoped<ITableReaderFactory, TableReaderFactory>();
-            services.AddSingleton(model);
-            services.AddSingleton((IDbConnFactory)connFactory);
+            services.AddSingleton(extensionsLoader);
             services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
             if (_modules != null)
                 services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = _modules });
@@ -118,10 +131,6 @@ namespace BifrostQL.Server
                 services.AddSingleton<IMutationModules>((sp => new ModulesWrap { Modules = _moduleLoader(sp) }));
 
             JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
-
-            var schema = DbSchema.SchemaFromModel(model);
-            var path = _bifrostConfig.GetValue<string>("Path", "/graphql");
-            BifrostDocumentExecuter.AddSchema(path, schema);
 
             var grapQLBuilder = services.AddGraphQL(b => b
             .AddSystemTextJson()

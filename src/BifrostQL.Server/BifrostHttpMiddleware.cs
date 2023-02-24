@@ -1,4 +1,5 @@
-﻿using GraphQL;
+﻿using BifrostQL.Core.Schema;
+using GraphQL;
 using GraphQL.Server.Transports.AspNetCore;
 using GraphQL.Types;
 
@@ -39,11 +40,11 @@ namespace BifrostQL.Server
         {
             var contextAccessor = options.RequestServices!.GetRequiredService<IHttpContextAccessor>();
             var context = contextAccessor.HttpContext;
+            var extensionsLoader = options.RequestServices!.GetRequiredService<PathCache<Inputs>>();
 
-            if (_schemas.TryGetValue(context?.Request?.Path ?? "", out var schema))
-            {
-                options.Schema = schema;
-            }
+            PathString path = context?.Request?.Path ?? throw new ArgumentNullException("path", "HttpConext.Request has a null path or Request is null");
+            options.Extensions = extensionsLoader.GetValue(path);
+            options.Schema = (ISchema)(options.Extensions["dbSchema"] ?? throw new InvalidDataException("dbSchema not configured"));
 
             var result = _documentExecuter.ExecuteAsync(options);
             return result;

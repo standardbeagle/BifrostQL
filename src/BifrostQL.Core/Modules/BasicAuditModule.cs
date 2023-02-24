@@ -11,42 +11,39 @@ namespace BifrostQL.Core.Modules
 {
     public class BasicAuditModule : IMutationModule
     {
-        private readonly IDbModel _model;
-        public BasicAuditModule(IDbModel model)
+        public BasicAuditModule()
         {
-            if (model == null) throw new ArgumentNullException(nameof(model));
-            _model = model;
         }
 
         public void OnSave(IResolveFieldContext context)
         {
         }
 
-        public string[] Insert(Dictionary<string, object?> data, TableDto table, IDictionary<string, object?> userContext)
+        public string[] Insert(Dictionary<string, object?> data, TableDto table, IDictionary<string, object?> userContext, IDbModel model)
         {
             var dateTime = DateTime.UtcNow;
             foreach (var column in table.Columns)
             {
                 if (column.IsCreatedOnColumn) data[column.ColumnName] = dateTime;
                 if (column.IsUpdatedOnColumn) data[column.ColumnName] = dateTime;
-                if (column.IsCreatedByColumn && userContext.Keys.Contains(_model.UserAuditKey)) data[column.ColumnName] = userContext[_model.UserAuditKey];
-                if (column.IsUpdatedByColumn && userContext.Keys.Contains(_model.UserAuditKey)) data[column.ColumnName] = userContext[_model.UserAuditKey];
+                if (column.IsCreatedByColumn && userContext.Keys.Contains(model.UserAuditKey)) data[column.ColumnName] = userContext[model.UserAuditKey];
+                if (column.IsUpdatedByColumn && userContext.Keys.Contains(model.UserAuditKey)) data[column.ColumnName] = userContext[model.UserAuditKey];
             }
             return Array.Empty<string>();
         }
 
-        public string[] Update(Dictionary<string, object?> data, TableDto table, IDictionary<string, object?> userContext)
+        public string[] Update(Dictionary<string, object?> data, TableDto table, IDictionary<string, object?> userContext, IDbModel model)
         {
             var dateTime = DateTime.UtcNow;
             foreach (var column in table.Columns)
             {
                 if (column.IsUpdatedOnColumn) data[column.ColumnName] = dateTime;
-                if (column.IsUpdatedByColumn && userContext.Keys.Contains(_model.UserAuditKey)) data[column.ColumnName] = userContext[_model.UserAuditKey];
+                if (column.IsUpdatedByColumn && userContext.Keys.Contains(model.UserAuditKey)) data[column.ColumnName] = userContext[model.UserAuditKey];
             }
             return Array.Empty<string>();
         }
 
-        public string[] Delete(Dictionary<string, object?> data, TableDto table, IDictionary<string, object?> userContext)
+        public string[] Delete(Dictionary<string, object?> data, TableDto table, IDictionary<string, object?> userContext, IDbModel model)
         {
             return Array.Empty<string>();
         }

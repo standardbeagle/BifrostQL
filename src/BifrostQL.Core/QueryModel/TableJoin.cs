@@ -38,7 +38,7 @@ namespace BifrostQL.QueryModel
             var wrap = $"SELECT a.[JoinId] [src_id], {joinColumnSql} FROM ({main}) a";
             wrap += $" INNER JOIN [{ConnectedTable.TableName}] b ON a.[JoinId] = b.[{ConnectedColumn}]";
 
-            var filter = ConnectedTable.GetFilterSql(dbModel);
+            var filter = ConnectedTable.GetFilterSql(dbModel, "b");
             return JoinType == JoinType.Single ? wrap : wrap + filter + ConnectedTable.GetSortAndPaging();
         }
 

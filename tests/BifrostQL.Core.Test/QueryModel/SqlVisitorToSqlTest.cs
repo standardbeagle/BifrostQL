@@ -68,6 +68,24 @@ namespace BifrostQL.Core.QueryModel
                 });
 
         }
+        [Fact]
+        public async Task SimpleLinkQueryFilterSuccess()
+        {
+            var ctx = new SqlContext();
+            var visitor = new SqlVisitor();
+            List<TableDto> tables = GetFakeTables();
+
+            var ast = Parser.Parse("query { workshops { data { id sess:sessions(filter: { status: {_eq : 0} }) { sid status } } } }");
+            await visitor.VisitAsync(ast, ctx);
+            var sqls = ctx.GetFinalTables().Select(t => t.ToSql(new DbModel { Tables = tables })).ToArray();
+            sqls.Should().ContainSingle()
+                .Which.Should().Equal(new Dictionary<string, string> {
+                    { "workshops", "SELECT [id] [id] FROM [workshops] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
+                    { "workshops_count", "SELECT COUNT(*) FROM [workshops]"},
+                    { "workshops->sess", "SELECT a.[JoinId] [src_id], b.[sid] AS [sid],b.[status] AS [status] FROM (SELECT DISTINCT [id] AS JoinId FROM [workshops]) a INNER JOIN [sessions] b ON a.[JoinId] = b.[workshopid] WHERE [b].[status] = '0' ORDER BY (SELECT NULL) OFFSET 0 ROWS" },
+                });
+
+        }
 
         [Fact]
         public async Task SimpleSingleLinkQuerySuccess()

@@ -1,15 +1,21 @@
 ﻿using BifrostQL.Model;
 using BifrostQL.Schema;
+using System.Collections.Generic;
 
 namespace BifrostQL.QueryModel
 {
     public sealed class TableFilter
     {
         private TableFilter() { }
-        public string TableName { get; init; } = null!;
+        public string? TableName { get; init; }
+        //Handles multiple table references
         public List<string> ColumnNames { get; set; } = null!;
+        public string ColumnName { get; init; } = null!;
         public string RelationName { get; set; } = null!;
         public object? Value { get; set; }
+        public TableFilter? Next { get; set; }
+        public List<TableFilter> And { get; init; } = new List<TableFilter>();
+        public List<TableFilter> Or { get; init; } = new List<TableFilter>();
 
         public (string join, string comparison) ToSql(IDbModel model, string? alias = null)
         {
@@ -18,26 +24,28 @@ namespace BifrostQL.QueryModel
                 return ("", GetSingleFilter(alias ?? TableName, ColumnNames[0], RelationName, Value));
             }
             var join = "";
-            var table = model.GetTableFromTableName(TableName);
+            var table = model.GetTableFromTableName(TableName ?? throw new InvalidDataException("TableFilter with undefined TableName"));
             var links = new List<TableLinkDto>();
             var linkTable = table;
-            foreach(var column in ColumnNames.SkipLast(1))
+            foreach (var column in ColumnNames.SkipLast(1))
             {
                 var link = linkTable.SingleLinks[column];
                 links.Add(link);
                 linkTable = link.ParentTable;
             }
-            for(int i = links.Count-1; i >= 0; i--)
+
+            for (int i = links.Count - 1; i >= 0; i--)
             {
                 var link = links[i];
                 if (join == "")
                 {
                     var where = GetSingleFilter(link.ParentTable.DbName, ColumnNames[i + 1], RelationName, Value);
                     join = $"SELECT DISTINCT [{link.ParentId.ColumnName}] AS joinid FROM [{link.ParentTable.DbName}] WHERE {where}";
-                } else
+                }
+                else
                 {
                     var parentTable = link.ParentTable.DbName;
-                    var previousLink = links[i+1];
+                    var previousLink = links[i + 1];
                     join = $"SELECT DISTINCT [{link.ParentId.ColumnName}] AS joinid FROM [{parentTable}] INNER JOIN ({join}) j ON j.joinid = [{parentTable}].[{previousLink.ChildId.ColumnName}]";
                 }
             }
@@ -45,22 +53,50 @@ namespace BifrostQL.QueryModel
             return (join, "");
         }
 
-        public static TableFilter? FromObject(object? value, string tableName)
+        public static TableFilter FromObject(object? value, string tableName)
         {
-            if (value == null) return null;
-            var dictValue = value as Dictionary<string, object?>;
-            if (dictValue == null) return null;
-            var unwound = UnwindFilter(dictValue);
-            if (unwound.keys.Count < 2) return null;
+            var dictValue = value as Dictionary<string, object?> ?? throw new ArgumentNullException(nameof(value));
 
-            var relation = unwound.keys.LastOrDefault() ?? "";
+            //var filter = StackFilters(dictValue, tableName);
+
+            var unwound = UnwindFilter(dictValue);
+            if (unwound.keys.Count < 2) throw new ArgumentOutOfRangeException(nameof(value), $"object must have two values");
+
+            var relation = unwound.keys.LastOrDefault() ?? throw new ArgumentOutOfRangeException(nameof(value), "relation must be specified");
 
             return new TableFilter
             {
-                TableName= tableName,
+                TableName = tableName,
                 ColumnNames = unwound.keys.SkipLast(1).ToList(),
                 RelationName = relation,
                 Value = unwound.value
+            };
+        }
+
+        private static TableFilter StackFilters(IDictionary<string, object?> filter, string? tableName)
+        {
+            var kv = filter?.FirstOrDefault() ?? throw new ArgumentNullException();
+            return kv switch
+            {
+                { Key: "and" } => new TableFilter
+                {
+                    And = ((IEnumerable<IDictionary<string, object?>>)kv.Value!).Select(v => StackFilters(v, tableName)).ToList(),
+                },
+                { Key: "or" } => new TableFilter
+                {
+                    Or = ((IEnumerable<IDictionary<string, object?>>)kv.Value!).Select(v => StackFilters(v, tableName)).ToList(),
+                },
+                _ when kv.Value is IDictionary<string, object?> val => new TableFilter
+                {
+                    ColumnName = kv.Key,
+                    Next = StackFilters(val, null),
+                    TableName = tableName,
+                },
+                _ => new TableFilter
+                {
+                    RelationName = kv.Key,
+                    Value = kv.Value,
+                },
             };
         }
 
@@ -88,8 +124,8 @@ namespace BifrostQL.QueryModel
                 "_lte" => "<=",
                 "_gt" => ">",
                 "_gte" => ">=",
-                "_contains" or "_starts_with" or "_ends_with" => "like",
-                "_ncontains" or "_nstarts_with" or "_nends_with" => "not like",
+                "_contains" or "_starts_with" or "_ends_with" or "_like" => "like",
+                "_ncontains" or "_nstarts_with" or "_nends_with" or "_nlike" => "not like",
                 "_in" => "in",
                 "_nin" => "not in",
                 "_between" => "between",

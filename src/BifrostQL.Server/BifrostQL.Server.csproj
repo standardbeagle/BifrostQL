@@ -11,7 +11,7 @@
 		<PackageProjectUrl>https://github.com/standardbeagle/BifrostQL</PackageProjectUrl>
 		<RepositoryUrl>https://github.com/standardbeagle/BifrostQL</RepositoryUrl>
 		<PackageTags>GraphQL SqlServer </PackageTags>
-		<PackageVersion>0.2.12</PackageVersion>
+		<PackageVersion>0.2.13</PackageVersion>
 		<Authors>Andy Brummer</Authors>
 		<Description>The fastest way to publish your SQL database as a GraphQL API.</Description>
 		<EnablePackageValidation>true</EnablePackageValidation>

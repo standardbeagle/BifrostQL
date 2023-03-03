@@ -94,6 +94,28 @@ namespace BifrostQL.Core.QueryModel
 
         }
 
+        [Fact(Skip = "New Feature")]
+        public async Task FilterAndTestSuccess()
+        {
+            var ctx = new SqlContext();
+            var sut = new SqlVisitor();
+
+            var ast = Parser.Parse("query { workshops(filter: { and: [ {startDate: { _gt: \"1-1-2022\"}}, {endDate: { _lt: \"1-1-2023\"}} ]} ) { data { id number } } }");
+            await sut.VisitAsync(ast, ctx);
+            var tables = ctx.GetFinalTables();
+
+            tables.Should().ContainSingle()
+                .Which.Should().BeEquivalentTo(
+                    new
+                    {
+                        TableName = "workshops",
+                        Joins = new object[] { },
+                        Links = new object[] { },
+                        ColumnNames = new string[] { "id", "number" }
+                    });
+
+        }
+
         [Fact]
         public async Task FilterTestSuccess()
         {

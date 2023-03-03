@@ -187,7 +187,7 @@ namespace BifrostQL.QueryModel
                 Sort = sort,
                 Limit = (int?)Arguments.FirstOrDefault(a => a.Name == "limit")?.Value,
                 Offset = (int?)Arguments.FirstOrDefault(a => a.Name == "offset")?.Value,
-                Filter = TableFilter.FromObject(Arguments.FirstOrDefault(a => a.Name == "filter")?.Value, name),
+                Filter = Arguments.Where(a => a.Name == "filter").Select(arg => TableFilter.FromObject(arg.Value, name)).FirstOrDefault(),
                 Links = fields
                             .Where((f) => f.Fields.Any() && IsSpecialColumn(f.Name) == false)
                             .Select(f => f.ToSqlData(this, path))

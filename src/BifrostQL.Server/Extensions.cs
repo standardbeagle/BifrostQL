@@ -118,7 +118,6 @@ namespace BifrostQL.Server
                     { "model", model}, 
                     { "connFactory", connFactory },
                     { "dbSchema", schema },
-                    { "tableReaderFactory", new TableReaderFactory(model) },
                 });
             });
 

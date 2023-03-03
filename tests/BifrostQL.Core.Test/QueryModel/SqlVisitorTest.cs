@@ -59,8 +59,8 @@ namespace BifrostQL.Core.QueryModel
                 {
                     Name = "workshops",
                     Alias = (string?)null,
-                    Fields = new[] { new { Name = "data", Fields = new[] { new { Name = "id"  } } } },
-                    Arguments = new object[] { 
+                    Fields = new[] { new { Name = "data", Fields = new[] { new { Name = "id" } } } },
+                    Arguments = new object[] {
                         new { Name = "sort", Value = new string[] { "id asc"} },
                         new { Name = "limit", Value = 10 },
                     }
@@ -159,6 +159,30 @@ namespace BifrostQL.Core.QueryModel
             limitVar.Value.Should().Be(limit);
 
             workshops.Fields.Should().Contain(f => f.Name == "data");
+        }
+
+        [Fact]
+        public async Task AndFilterSuccess()
+        {
+            var ctx = new SqlContext();
+            var sut = new SqlVisitor();
+
+            var ast = Parser.Parse("query { workshops(filter: { and: [ {startDate: { _gt: \"1-1-2022\"}}, {endDate: { _lt: \"1-1-2023\"}} ]} ) { id } }");
+            await sut.VisitAsync(ast, ctx);
+            ctx.Fields.Should().ContainSingle()
+                .Which.Should().BeEquivalentTo(new
+                {
+                    Name = "workshops",
+                    Alias = (string?)null,
+                    Fields = new[] { new { Name = "id" } },
+                    Arguments = new[] { new { Name = "filter", Value = new [] {
+                        new { Key = "and", Value = new object[]
+                        {
+                            new [] { new { Key = "startDate", Value= new [] { new { Key = "_gt", Value="1-1-2022" } } } },
+                            new [] { new { Key = "endDate", Value= new [] { new { Key = "_lt", Value="1-1-2023" } } } },
+                        }}}
+                    }}
+                });
         }
     }
 }

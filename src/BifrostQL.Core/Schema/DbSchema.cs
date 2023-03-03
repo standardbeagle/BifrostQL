@@ -52,7 +52,6 @@ namespace BifrostQL.Schema
                 }
                 builder.AppendLine("}");
             }
-
             foreach (var table in model.Tables)
             {
                 builder.AppendLine($"type {table.GraphQlName}Paged {{");
@@ -85,12 +84,24 @@ namespace BifrostQL.Schema
                 {
                     builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : TableFilter{link.Value.ParentTable.GraphQlName}Input");
                 }
+                builder.AppendLine($"and: [TableFilter{table.GraphQlName}Input]");
+                builder.AppendLine($"or: [TableFilter{table.GraphQlName}Input]");
                 builder.AppendLine("}");
             }
 
             foreach (var dataType in model.Tables.SelectMany(t => t.Columns).Select(c => c.DataType).Distinct())
             {
                 builder.AppendLine(GetFilterType(dataType));
+            }
+
+            foreach (var table in model.Tables)
+            {
+                builder.AppendLine($"enum {table.GraphQlName}Enum {{");
+                foreach (var column in table.Columns)
+                {
+                    builder.AppendLine(column.GraphQlName);
+                }
+                builder.AppendLine("}");
             }
 
             return builder.ToString();
@@ -205,6 +216,8 @@ namespace BifrostQL.Schema
                             ("_nstarts_with", gqlType),
                             ("_ends_with", gqlType),
                             ("_nends_with", gqlType),
+                            ("_like", gqlType),
+                            ("_nlike", gqlType),
                         };
 
             result.AppendLine($"input {name} {{");

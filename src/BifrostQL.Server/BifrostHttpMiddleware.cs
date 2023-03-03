@@ -1,7 +1,9 @@
 ﻿using BifrostQL.Core.Schema;
+using BifrostQL.Model;
 using GraphQL;
 using GraphQL.Server.Transports.AspNetCore;
 using GraphQL.Types;
+using System.Collections.Generic;
 
 namespace BifrostQL.Server
 {
@@ -43,11 +45,30 @@ namespace BifrostQL.Server
             var extensionsLoader = options.RequestServices!.GetRequiredService<PathCache<Inputs>>();
 
             PathString path = context?.Request?.Path ?? throw new ArgumentNullException("path", "HttpConext.Request has a null path or Request is null");
-            options.Extensions = extensionsLoader.GetValue(path);
-            options.Schema = (ISchema)(options.Extensions["dbSchema"] ?? throw new InvalidDataException("dbSchema not configured"));
+            var sharedExtensions = extensionsLoader.GetValue(path);
+            var model = (IDbModel)(sharedExtensions["model"] ?? throw new InvalidDataException("dbSchema not configured"));
+            options.Schema = (ISchema)(sharedExtensions["dbSchema"] ?? throw new InvalidDataException("dbSchema not configured"));
 
+            options.Extensions = Combine(
+                sharedExtensions, 
+                new Dictionary<string, object?> { { "tableReaderFactory", new TableReaderFactory(model) } }
+            );
             var result = _documentExecuter.ExecuteAsync(options);
             return result;
+        }
+
+        public Inputs Combine(IReadOnlyDictionary<string, object?> input1, IReadOnlyDictionary<string, object?> input2)
+        {
+            var dict = new Dictionary<string, object?>();
+            foreach(var kv in input1)
+            {
+                dict.Add(kv.Key, kv.Value);
+            }
+            foreach (var kv in input2)
+            {
+                dict.Add(kv.Key, kv.Value);
+            }
+            return new Inputs(dict);
         }
     }
 }

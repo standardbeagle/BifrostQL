@@ -1,12 +1,8 @@
-﻿using GraphQL;
-using BifrostQL.QueryModel;
-using System;
-using System.Collections;
-using System.Data.SqlClient;
-using System.Runtime.CompilerServices;
-using System.Xml.Linq;
+﻿using System.Collections;
+using BifrostQL.Core.QueryModel;
+using GraphQL;
 
-namespace BifrostQL.Resolvers
+namespace BifrostQL.Core.Resolvers
 {
     public class ReaderEnum : IEnumerable<object?>
     {

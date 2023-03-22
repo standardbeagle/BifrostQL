@@ -1,11 +1,7 @@
-﻿using Pluralize.NET.Core;
-using System.ComponentModel.DataAnnotations;
-using System.Data;
-using System.Linq;
-using System.Security.Principal;
-using System.Xml.Linq;
+﻿using System.Data;
+using Pluralize.NET.Core;
 
-namespace BifrostQL.Model
+namespace BifrostQL.Core.Model
 {
 
     public interface IDbModel

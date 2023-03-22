@@ -1,6 +1,5 @@
 ﻿using GraphQL.Types;
 using BifrostQL.Model;
-using BifrostQL.Schema;
 using BifrostQL;
 using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.Builder;
@@ -14,8 +13,8 @@ using BifrostQL.Server;
 using Microsoft.AspNetCore.Authentication;
 using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
+using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
-using BifrostQL.Resolvers;
 using BifrostQL.Core.Schema;
 
 namespace BifrostQL.Server
@@ -124,8 +123,7 @@ namespace BifrostQL.Server
 
             services.AddSingleton(extensionsLoader);
             services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
-            if (_modules != null)
-                services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = _modules });
+            services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = _modules });
             if (_moduleLoader != null)
                 services.AddSingleton<IMutationModules>((sp => new ModulesWrap { Modules = _moduleLoader(sp) }));
 

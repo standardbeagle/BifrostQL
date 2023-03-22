@@ -1,9 +1,10 @@
-﻿using BifrostQL.Core.Schema;
+﻿using BifrostQL.Core.Model;
+using BifrostQL.Core.Resolvers;
+using BifrostQL.Core.Schema;
 using BifrostQL.Model;
 using GraphQL;
 using GraphQL.Server.Transports.AspNetCore;
 using GraphQL.Types;
-using System.Collections.Generic;
 
 namespace BifrostQL.Server
 {
@@ -12,30 +13,24 @@ namespace BifrostQL.Server
         public BifrostHttpMiddleware(
             RequestDelegate next,
             IGraphQLTextSerializer serializer,
-            IDocumentExecuter documentExecuter,
+            IDocumentExecuter documentExecutor,
             IServiceScopeFactory serviceScopeFactory,
             IHostApplicationLifetime hostApplicationLifetime) :
             base(next,
                 serializer,
-                new BifrostDocumentExecuter(documentExecuter),
+                new BifrostDocumentExecutor(documentExecutor),
                 serviceScopeFactory,
                 new GraphQLHttpMiddlewareOptions(),
                 hostApplicationLifetime)
         {
         }
     }
-    public class BifrostDocumentExecuter : IDocumentExecuter
+    public class BifrostDocumentExecutor : IDocumentExecuter
     {
-        private readonly IDocumentExecuter _documentExecuter;
-        private static readonly Dictionary<string, ISchema> _schemas = new Dictionary<string, ISchema>();
-        public BifrostDocumentExecuter(IDocumentExecuter documentExecuter)
+        private readonly IDocumentExecuter _documentExecutor;
+        public BifrostDocumentExecutor(IDocumentExecuter documentExecutor)
         {
-            _documentExecuter = documentExecuter ?? throw new ArgumentNullException(nameof(documentExecuter));
-        }
-
-        public static void AddSchema(string path, ISchema schema)
-        {
-            _schemas.Add(path, schema);
+            _documentExecutor = documentExecutor ?? throw new ArgumentNullException(nameof(documentExecutor));
         }
 
         public Task<ExecutionResult> ExecuteAsync(ExecutionOptions options)
@@ -53,7 +48,7 @@ namespace BifrostQL.Server
                 sharedExtensions, 
                 new Dictionary<string, object?> { { "tableReaderFactory", new TableReaderFactory(model) } }
             );
-            var result = _documentExecuter.ExecuteAsync(options);
+            var result = _documentExecutor.ExecuteAsync(options);
             return result;
         }
 

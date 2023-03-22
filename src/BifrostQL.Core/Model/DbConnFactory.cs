@@ -1,6 +1,6 @@
 ﻿using System.Data.SqlClient;
 
-namespace BifrostQL.Model
+namespace BifrostQL.Core.Model
 {
     public interface IDbConnFactory
     {

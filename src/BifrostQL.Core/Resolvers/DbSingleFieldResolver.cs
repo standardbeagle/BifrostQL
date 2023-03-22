@@ -1,7 +1,7 @@
 ﻿using GraphQL;
 using GraphQL.Resolvers;
 
-namespace BifrostQL.Resolvers
+namespace BifrostQL.Core.Resolvers
 {
     public sealed class DbSingleFieldResolver : IFieldResolver
     {

@@ -1,117 +1,153 @@
-﻿using BifrostQL.Model;
-using BifrostQL.Schema;
-using System.Collections.Generic;
+﻿using BifrostQL.Core.Model;
 
-namespace BifrostQL.QueryModel
+namespace BifrostQL.Core.QueryModel
 {
+    public enum FilterType
+    {
+        And,
+        Or,
+        Relation,
+        Join
+    }
     public sealed class TableFilter
     {
         private TableFilter() { }
         public string? TableName { get; init; }
-        //Handles multiple table references
-        public List<string> ColumnNames { get; set; } = null!;
         public string ColumnName { get; init; } = null!;
         public string RelationName { get; set; } = null!;
         public object? Value { get; set; }
+        public FilterType FilterType { get; init; }
         public TableFilter? Next { get; set; }
         public List<TableFilter> And { get; init; } = new List<TableFilter>();
         public List<TableFilter> Or { get; init; } = new List<TableFilter>();
 
-        public (string join, string comparison) ToSql(IDbModel model, string? alias = null)
+        public (string join, string comparison) ToSql(IDbModel model, string? alias = null, string joinName = "j", bool includeValue = false)
         {
-            if (ColumnNames.Count == 1)
+            if (Next == null)
             {
-                return ("", GetSingleFilter(alias ?? TableName, ColumnNames[0], RelationName, Value));
+                if (And.Count > 0)
+                {
+                    var test = And.Select((j, i) => j.ToSql(model, alias, $"j{i}", true)).ToArray();
+                    var joins = test.Where(t => !string.IsNullOrWhiteSpace(t.join)).Select(t => t.join);
+                    var filters = test.Where(t => !string.IsNullOrWhiteSpace(t.comparison)).Select(t => t.comparison).ToArray();
+                    return (
+                        string.Join("", joins),
+                        filters.Length == 1 ? filters[0] : $"(({ string.Join(") AND (", filters) }))");
+                }
+                if (Or.Count > 0)
+                {
+                    var test = Or.Select((j, i) => j.ToSql(model, alias, $"j{i}", true)).ToArray();
+                    var joins = test.Where(t => !string.IsNullOrWhiteSpace(t.join)).Select(t => t.join);
+                    var filters = test.Where(t => !string.IsNullOrWhiteSpace(t.comparison)).Select(t => t.comparison).ToArray();
+                    return (
+                        string.Join("", joins),
+                        filters.Length == 1 ? filters[0] : $"(({string.Join(") OR (", filters)}))");
+                }
+                throw new ArgumentOutOfRangeException("value", "object must have two values");
             }
-            var join = "";
+            if (Next.Next == null)
+            {
+                return ("", GetSingleFilter(alias ?? TableName, ColumnName, Next.RelationName, Next.Value));
+            }
             var table = model.GetTableFromTableName(TableName ?? throw new InvalidDataException("TableFilter with undefined TableName"));
-            var links = new List<TableLinkDto>();
-            var linkTable = table;
-            foreach (var column in ColumnNames.SkipLast(1))
-            {
-                var link = linkTable.SingleLinks[column];
-                links.Add(link);
-                linkTable = link.ParentTable;
-            }
+            var link = table.SingleLinks[ColumnName];
+            var join = BuildSql(this.Next, link, includeValue);
+            var filterText = GetFilter(this.Next, link, joinName, includeValue);
 
-            for (int i = links.Count - 1; i >= 0; i--)
-            {
-                var link = links[i];
-                if (join == "")
-                {
-                    var where = GetSingleFilter(link.ParentTable.DbName, ColumnNames[i + 1], RelationName, Value);
-                    join = $"SELECT DISTINCT [{link.ParentId.ColumnName}] AS joinid FROM [{link.ParentTable.DbName}] WHERE {where}";
-                }
-                else
-                {
-                    var parentTable = link.ParentTable.DbName;
-                    var previousLink = links[i + 1];
-                    join = $"SELECT DISTINCT [{link.ParentId.ColumnName}] AS joinid FROM [{parentTable}] INNER JOIN ({join}) j ON j.joinid = [{parentTable}].[{previousLink.ChildId.ColumnName}]";
-                }
-            }
-            join = $" INNER JOIN ({join}) j ON j.joinid = [{alias ?? table.DbName}].[{links[0].ChildId.ColumnName}]";
-            return (join, "");
+            join = $" INNER JOIN ({join}) [{joinName}] ON [{joinName}].[joinid] = [{alias ?? table.DbName}].[{table.SingleLinks[ColumnName].ChildId.ColumnName}]";
+            return (join, filterText);
         }
 
+        private static string BuildSql(TableFilter filter, TableLinkDto link, bool includeValue = false)
+        {
+            if (filter is { Next: { } } || (filter.Next == null && filter.And.Count > 0) || (filter.Next == null && filter.Or.Count > 0))
+            {
+                switch (filter.FilterType)
+                {
+                    case FilterType.Join
+                        when link.ParentTable.SingleLinks.TryGetValue(filter.ColumnName, out var nextLink):
+                        {
+                            var next = BuildSql(filter.Next!, nextLink);
+                            return $"SELECT DISTINCT [{link.ParentId.ColumnName}] AS [joinid]{(includeValue ? ", [value]" : "")} FROM [{link.ParentTable.DbName}] INNER JOIN ({next}) [j] ON [j].[joinid] = [{link.ParentTable.DbName}].[{nextLink.ChildId.ColumnName}]";
+                        }
+                    case FilterType.Join:
+                        if (includeValue)
+                        {
+                            return
+                                $"SELECT DISTINCT [{link.ParentId.ColumnName}] AS [joinid], [{filter.ColumnName}] AS [value] FROM [{link.ParentTable.DbName}]";
+                        }
+                        else
+                        {
+                            var where = GetSingleFilter(link.ParentTable.DbName, filter.ColumnName, filter.Next!.RelationName, filter.Next.Value);
+                            return $"SELECT DISTINCT [{link.ParentId.ColumnName}] AS [joinid] FROM [{link.ParentTable.DbName}] WHERE {where}";
+                        }
+                }
+            }
+
+            return "";
+        }
+
+        private static string GetFilter(TableFilter filter, TableLinkDto link, string joinName, bool includeValue = false)
+        {
+            if (!includeValue) return "";
+
+            if (filter is { Next: { } } || (filter.Next == null && filter.And.Count > 0) || (filter.Next == null && filter.Or.Count > 0))
+            {
+                switch (filter.FilterType)
+                {
+                    case FilterType.Join
+                        when link.ParentTable.SingleLinks.TryGetValue(filter.ColumnName, out var nextLink):
+                        return GetFilter(filter.Next!, nextLink, joinName, includeValue);
+                    case FilterType.Join:
+                        return GetSingleFilter(joinName, "value", filter.Next!.RelationName,
+                            filter.Next.Value);
+                }
+            }
+
+            return "";
+        }
         public static TableFilter FromObject(object? value, string tableName)
         {
             var dictValue = value as Dictionary<string, object?> ?? throw new ArgumentNullException(nameof(value));
 
-            //var filter = StackFilters(dictValue, tableName);
-
-            var unwound = UnwindFilter(dictValue);
-            if (unwound.keys.Count < 2) throw new ArgumentOutOfRangeException(nameof(value), $"object must have two values");
-
-            var relation = unwound.keys.LastOrDefault() ?? throw new ArgumentOutOfRangeException(nameof(value), "relation must be specified");
-
-            return new TableFilter
-            {
-                TableName = tableName,
-                ColumnNames = unwound.keys.SkipLast(1).ToList(),
-                RelationName = relation,
-                Value = unwound.value
-            };
+            var filter = StackFilters(dictValue, tableName);
+            if (filter.And.Count == 0 && filter.Or.Count == 0 && filter.Next == null)
+                throw new ArgumentException("Invalid filter object", nameof(value));
+            return filter;
         }
 
-        private static TableFilter StackFilters(IDictionary<string, object?> filter, string? tableName)
+        private static TableFilter StackFilters(IDictionary<string, object?>? filter, string? tableName)
         {
-            var kv = filter?.FirstOrDefault() ?? throw new ArgumentNullException();
+            if (filter == null) throw new ArgumentNullException(nameof(filter));
+            var kv = filter.FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(kv.Key)) throw new ArgumentOutOfRangeException(nameof(filter));
             return kv switch
             {
                 { Key: "and" } => new TableFilter
                 {
-                    And = ((IEnumerable<IDictionary<string, object?>>)kv.Value!).Select(v => StackFilters(v, tableName)).ToList(),
+                    And = ((IEnumerable<object?>)kv.Value!).Select(v => StackFilters((IDictionary<string, object?>?)v, tableName)).ToList(),
+                    FilterType = FilterType.And,
                 },
                 { Key: "or" } => new TableFilter
                 {
-                    Or = ((IEnumerable<IDictionary<string, object?>>)kv.Value!).Select(v => StackFilters(v, tableName)).ToList(),
+                    Or = ((IEnumerable<object?>)kv.Value!).Select(v => StackFilters((IDictionary<string, object?>?)v, tableName)).ToList(),
+                    FilterType = FilterType.Or,
                 },
                 _ when kv.Value is IDictionary<string, object?> val => new TableFilter
                 {
                     ColumnName = kv.Key,
                     Next = StackFilters(val, null),
                     TableName = tableName,
+                    FilterType = FilterType.Join,
                 },
+                _ when kv.Value == null && kv.Key == null => throw new ArgumentNullException(),
                 _ => new TableFilter
                 {
                     RelationName = kv.Key,
                     Value = kv.Value,
+                    FilterType = FilterType.Relation,
                 },
             };
-        }
-
-        private static (List<string> keys, object? value) UnwindFilter(IDictionary<string, object?> filter)
-        {
-            var kv = filter?.FirstOrDefault();
-            if (kv == null)
-                return (new List<string>(), null);
-            if (kv.Value.Value is IDictionary<string, object?> subValue)
-            {
-                var unwoundValue = UnwindFilter(subValue);
-                unwoundValue.keys.Insert(0, kv.Value.Key);
-                return unwoundValue;
-            }
-            return (new List<string>() { kv.Value.Key }, kv.Value.Value);
         }
 
         public static string GetSingleFilter(string? table, string field, string op, object? value)

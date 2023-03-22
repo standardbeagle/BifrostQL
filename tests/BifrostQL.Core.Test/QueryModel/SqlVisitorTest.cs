@@ -1,7 +1,6 @@
 ﻿using FluentAssertions;
 using GraphQLParser;
 using BifrostQL.Core.QueryModel;
-using BifrostQL.QueryModel;
 using System;
 using System.Collections.Generic;
 using System.Linq;

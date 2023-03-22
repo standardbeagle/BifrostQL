@@ -1,9 +1,6 @@
 ﻿using BifrostQL.Core.Model;
-using BifrostQL.Model;
-using System.Diagnostics.CodeAnalysis;
-using static BifrostQL.DbTableResolver;
 
-namespace BifrostQL.QueryModel
+namespace BifrostQL.Core.QueryModel
 {
     public enum JoinType
     {
@@ -13,7 +10,6 @@ namespace BifrostQL.QueryModel
 
     public sealed class TableSqlData
     {
-        public TableSqlData? Parent => JoinFrom?.FromTable;
         public TableJoin? JoinFrom { get; set; }
         public string SchemaName { get; set; } = "";
         public string TableName { get; set; } = "";
@@ -29,18 +25,13 @@ namespace BifrostQL.QueryModel
         public List<string> ColumnNames { get; set; } = new List<string>();
         public List<TableSqlData> Links { get; set; } = new List<TableSqlData>();
         public List<string> Sort { get; set; } = new List<string>();
-        public List<FragmentSpread> FragmentSpreads { get; set; } = new List<FragmentSpread>();
         public TableFilter? Filter { get; set; }
         public int? Limit { get; set; }
         public int? Offset { get; set; }
         public bool IsFragment { get; set; }
         public bool IncludeResult { get; set; }
-        public bool ProcessingResultData { get; set; } = false;
         public List<TableJoin> Joins { get; set; } = new List<TableJoin>();
         private IEnumerable<TableJoin> RecurseJoins => Joins.Concat(Joins.SelectMany(j => j.ConnectedTable.RecurseJoins));
-
-        public IEnumerable<string> AllJoinNames => new[] { TableName }
-        .Concat(Joins.SelectMany(j => j.ConnectedTable.AllJoinNames.Select(n => $"{j.JoinName}+{n}")));
 
         public IEnumerable<(string name, string alias)> FullColumnNames =>
             ColumnNames.Where(c => c.StartsWith("__") == false)
@@ -56,9 +47,11 @@ namespace BifrostQL.QueryModel
 
             var filter = GetFilterSql(dbModel);
             var baseSql = cmdText + filter + GetSortAndPaging();
-            var result = new Dictionary<string, string>();
-            result.Add(KeyName, baseSql);
-            result.Add($"{KeyName}_count", $"SELECT COUNT(*) FROM {FullTableText}{filter}");
+            var result = new Dictionary<string, string>
+            {
+                { KeyName, baseSql },
+                { $"{KeyName}_count", $"SELECT COUNT(*) FROM {FullTableText}{filter}" }
+            };
             foreach (var join in RecurseJoins)
             {
                 result.Add(join.JoinName, join.GetSql(dbModel));
@@ -115,7 +108,7 @@ namespace BifrostQL.QueryModel
             if (Filter == null) return "";
             var (join, filter) = Filter.ToSql(model, alias);
             if (string.IsNullOrEmpty(filter)) return join;
-            return " WHERE " + filter;
+            return join + " WHERE " + filter;
         }
 
         public TableJoin? GetJoin(string? alias, string name)
@@ -125,14 +118,14 @@ namespace BifrostQL.QueryModel
 
         public string GetSortAndPaging()
         {
-            var orderby = " ORDER BY (SELECT NULL)";
+            var orderBy = " ORDER BY (SELECT NULL)";
             if (Sort.Any())
             {
-                orderby = " ORDER BY " + string.Join(", ", Sort);
+                orderBy = " ORDER BY " + string.Join(", ", Sort);
             }
-            orderby += Offset != null ? $" OFFSET {Offset} ROWS" : " OFFSET 0 ROWS";
-            orderby += Limit != null ? $" FETCH NEXT {Limit} ROWS ONLY" : "";
-            return orderby;
+            orderBy += Offset != null ? $" OFFSET {Offset} ROWS" : " OFFSET 0 ROWS";
+            orderBy += Limit != null ? $" FETCH NEXT {Limit} ROWS ONLY" : "";
+            return orderBy;
         }
 
         public override string ToString()

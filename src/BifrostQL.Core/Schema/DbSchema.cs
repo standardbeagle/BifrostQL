@@ -1,21 +1,9 @@
-﻿using System.Data;
-using System.Data.Common;
-using System.Data.SqlClient;
-using GraphQL;
-using GraphQL.Conversion;
-using GraphQL.Instrumentation;
-using GraphQL.Introspection;
+﻿using System.Text;
+using BifrostQL.Core.Model;
+using BifrostQL.Core.Resolvers;
 using GraphQL.Types;
-using GraphQL.Utilities;
-using GraphQLParser;
-using BifrostQL.Model;
-using Microsoft.Extensions.DependencyInjection;
-using BifrostQL.Resolvers;
-using System.Text;
-using System.ComponentModel.DataAnnotations;
-using System.Xml.Linq;
 
-namespace BifrostQL.Schema
+namespace BifrostQL.Core.Schema
 {
     public static class DbSchema
     {

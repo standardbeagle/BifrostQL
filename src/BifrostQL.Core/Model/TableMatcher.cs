@@ -1,7 +1,7 @@
-﻿using Microsoft.Extensions.Configuration;
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
+using Microsoft.Extensions.Configuration;
 
-namespace BifrostQL.Model
+namespace BifrostQL.Core.Model
 {
     public class TableMatcher
     {

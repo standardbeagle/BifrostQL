@@ -1,8 +1,7 @@
 ﻿using GraphQL.Validation;
 using GraphQLParser.Visitors;
-using BifrostQL.QueryModel;
 
-namespace BifrostQL.QueryModel
+namespace BifrostQL.Core.QueryModel
 {
 
     public interface ISqlContext : IASTVisitorContext

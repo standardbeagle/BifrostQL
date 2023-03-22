@@ -1,19 +1,11 @@
-﻿using GraphQL.Resolvers;
-using GraphQL;
-using GraphQLParser.AST;
-using BifrostQL.Model;
-using BifrostQL.QueryModel;
-using System.Data.SqlClient;
-using GraphQL.Types;
-using GraphQL.Validation.Complexity;
-using System.Drawing;
-using GraphQL.DataLoader;
-using System.Collections.Concurrent;
-using BifrostQL.Resolvers;
-using Microsoft.Extensions.DependencyInjection;
+﻿using System.Data.SqlClient;
+using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
+using BifrostQL.Model;
+using GraphQL;
+using GraphQL.Resolvers;
 
-namespace BifrostQL
+namespace BifrostQL.Core.Resolvers
 {
     public interface IDbTableResolver : IFieldResolver
     {

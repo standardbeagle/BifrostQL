@@ -1,12 +1,12 @@
-﻿using GraphQL;
-using GraphQL.Resolvers;
-using BifrostQL.Model;
-using Microsoft.Extensions.DependencyInjection;
-using System.Data.SqlClient;
+﻿using System.Data.SqlClient;
+using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
-using System;
+using BifrostQL.Model;
+using GraphQL;
+using GraphQL.Resolvers;
+using Microsoft.Extensions.DependencyInjection;
 
-namespace BifrostQL.Resolvers
+namespace BifrostQL.Core.Resolvers
 {
     public sealed class DbTableMutateResolver : IFieldResolver
     {

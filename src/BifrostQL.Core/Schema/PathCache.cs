@@ -9,7 +9,7 @@ namespace BifrostQL.Core.Schema
 {
     public sealed class PathCache<T>
     {
-        private Dictionary<string, Cache<T>> _schemas = new Dictionary<string, Cache<T>>();
+        private readonly Dictionary<string, Cache<T>> _schemas = new();
         public PathCache() { }
 
         public void AddLoader(string path, Func<T> loader)
@@ -23,10 +23,10 @@ namespace BifrostQL.Core.Schema
         }
     }
 
-    sealed class Cache<T>
+    internal sealed class Cache<T>
     {
         private T? _schema;
-        private Func<T> _loader;
+        private readonly Func<T> _loader;
         public Cache(Func<T> loader) {
             _loader= loader;
         }

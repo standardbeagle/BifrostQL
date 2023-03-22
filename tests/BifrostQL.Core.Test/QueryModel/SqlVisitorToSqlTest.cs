@@ -2,12 +2,12 @@
 using GraphQLParser;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Model;
-using BifrostQL.QueryModel;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using BifrostQL.Core.Model;
 
 namespace BifrostQL.Core.QueryModel
 {

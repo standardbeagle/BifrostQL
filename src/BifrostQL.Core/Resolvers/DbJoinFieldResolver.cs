@@ -1,9 +1,7 @@
-﻿using GraphQL.Resolvers;
-using GraphQL;
-using static BifrostQL.Resolvers.ReaderEnum;
-using BifrostQL.Resolvers;
+﻿using GraphQL;
+using GraphQL.Resolvers;
 
-namespace BifrostQL
+namespace BifrostQL.Core.Resolvers
 {
     public sealed class DbJoinFieldResolver : IFieldResolver
     {

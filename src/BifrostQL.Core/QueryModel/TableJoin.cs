@@ -1,14 +1,13 @@
-﻿using BifrostQL.Model;
-using static BifrostQL.DbTableResolver;
+﻿using BifrostQL.Core.Model;
+using BifrostQL.Model;
 
-namespace BifrostQL.QueryModel
+namespace BifrostQL.Core.QueryModel
 {
     public sealed class TableJoin
     {
         public string Name { get; set; } = null!;
         public string? Alias { get; set; } = null!;
         public string JoinName => $"{FromTable.Alias ?? FromTable.TableName}->{Alias ?? Name}";
-        public string Path { get; set; } = null!;
         public string FromColumn { get; set; } = null!;
         public string ConnectedColumn { get; set; } = null!;
         public JoinType JoinType { get; set; }

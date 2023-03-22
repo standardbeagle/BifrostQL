@@ -1,4 +1,4 @@
-﻿namespace BifrostQL.QueryModel
+﻿namespace BifrostQL.Core.QueryModel
 {
     public sealed class FragmentSpread
     {

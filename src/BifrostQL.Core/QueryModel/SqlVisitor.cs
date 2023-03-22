@@ -1,6 +1,5 @@
 ﻿using GraphQLParser.AST;
 using GraphQLParser.Visitors;
-using BifrostQL.QueryModel;
 using System;
 using System.Collections.Generic;
 using System.Linq;

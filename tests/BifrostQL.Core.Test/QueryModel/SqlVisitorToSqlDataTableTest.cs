@@ -1,7 +1,6 @@
 ﻿using FluentAssertions;
 using GraphQLParser;
 using BifrostQL.Core.QueryModel;
-using BifrostQL.QueryModel;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -94,7 +93,7 @@ namespace BifrostQL.Core.QueryModel
 
         }
 
-        [Fact(Skip = "New Feature")]
+        [Fact]
         public async Task FilterAndTestSuccess()
         {
             var ctx = new SqlContext();
@@ -109,6 +108,30 @@ namespace BifrostQL.Core.QueryModel
                     new
                     {
                         TableName = "workshops",
+                        Filter = new { And = new object[] { new { ColumnName = "startDate", Next = new { RelationName = "_gt", Value = "1-1-2022" } }, new { ColumnName = "endDate", Next = new { RelationName = "_lt", Value = "1-1-2023" } } } },
+                        Joins = new object[] { },
+                        Links = new object[] { },
+                        ColumnNames = new string[] { "id", "number" }
+                    });
+
+        }
+
+        [Fact]
+        public async Task FilterOrTestSuccess()
+        {
+            var ctx = new SqlContext();
+            var sut = new SqlVisitor();
+
+            var ast = Parser.Parse("query { workshops(filter: { and: [ {startDate: { _gt: \"1-1-2022\"}}, {endDate: { _lt: \"1-1-2023\"}} ]} ) { data { id number } } }");
+            await sut.VisitAsync(ast, ctx);
+            var tables = ctx.GetFinalTables();
+
+            tables.Should().ContainSingle()
+                .Which.Should().BeEquivalentTo(
+                    new
+                    {
+                        TableName = "workshops",
+                        Filter = new { And = new object[] { new { ColumnName = "startDate", Next = new { RelationName = "_gt", Value = "1-1-2022" } }, new { ColumnName = "endDate", Next = new { RelationName = "_lt", Value = "1-1-2023" } } } },
                         Joins = new object[] { },
                         Links = new object[] { },
                         ColumnNames = new string[] { "id", "number" }
@@ -131,7 +154,7 @@ namespace BifrostQL.Core.QueryModel
                     new
                     {
                         TableName = "workshops",
-                        Filter = new { ColumnNames = new[] { "id" }, RelationName = "_eq", Value = 10 },
+                        Filter = new { ColumnName =  "id", Next = new { RelationName = "_eq", Value = 10 }},
                         Limit = (int?)null,
                         Offset = (int?)null,
                         Sort = new string[] { },
@@ -156,7 +179,7 @@ namespace BifrostQL.Core.QueryModel
                     new
                     {
                         TableName = "sessions",
-                        Filter = new { ColumnNames = new[] { "workshop", "number" }, RelationName = "_eq", Value = "10-AA" },
+                        Filter = new { ColumnName = "workshop", Next = new { ColumnName = "number", Next = new { RelationName = "_eq", Value = "10-AA" } }},
                         Limit = (int?)null,
                         Offset = (int?)null,
                         Sort = new string[] { },

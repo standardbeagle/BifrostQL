@@ -18,7 +18,7 @@ namespace BifrostQL.Core.QueryModel
         {
             var ctx = new SqlContext();
             var visitor = new SqlVisitor();
-            var tables = new List<TableDto>();
+            List<TableDto> tables = GetFakeTables();
 
             var ast = Parser.Parse("query { workshops { data { id } } }");
             await visitor.VisitAsync(ast, ctx);
@@ -36,7 +36,7 @@ namespace BifrostQL.Core.QueryModel
         {
             var ctx = new SqlContext();
             var visitor = new SqlVisitor();
-            var tables = new List<TableDto>();
+            List<TableDto> tables = GetFakeTables();
 
             var ast = Parser.Parse("query { workshops { data { id sess:_join_sessions(on: [\"id\", \"workshopid\"]) { sid status } } } }");
             await visitor.VisitAsync(ast, ctx);
@@ -99,7 +99,7 @@ namespace BifrostQL.Core.QueryModel
             var sqls = ctx.GetFinalTables().Select(t => t.ToSql(new DbModel { Tables = tables })).ToArray();
             sqls.Should().ContainSingle()
                 .Which.Should().Equal(new Dictionary<string, string> {
-                    { "sessions", "SELECT [id] [id],[workshopid] [workshopid] FROM [sessions] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
+                    { "sessions", "SELECT [sid] [id],[workshopid] [workshopid] FROM [sessions] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
                     { "sessions_count", "SELECT COUNT(*) FROM [sessions]"},
                     { "sessions->workshop", "SELECT a.[JoinId] [src_id], b.[id] AS [id],b.[number] AS [number] FROM (SELECT DISTINCT [workshopid] AS JoinId FROM [sessions]) a INNER JOIN [workshops] b ON a.[JoinId] = b.[id]" },
                 });
@@ -116,7 +116,7 @@ namespace BifrostQL.Core.QueryModel
             var sqls = ctx.GetFinalTables().Select(t => t.ToSql(new DbModel { Tables = tables })).ToArray();
             sqls.Should().ContainSingle()
                 .Which.Should().Equal(new Dictionary<string, string> {
-                    { "sessions", "SELECT [id] [id],[workshopid] [workshopid] FROM [sessions] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
+                    { "sessions", "SELECT [sid] [id],[workshopid] [workshopid] FROM [sessions] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
                     { "sessions_count", "SELECT COUNT(*) FROM [sessions]"},
                     { "sessions->workshop", "SELECT a.[JoinId] [src_id], b.[id] AS [id],b.[number] AS [number] FROM (SELECT DISTINCT [workshopid] AS JoinId FROM [sessions]) a INNER JOIN [Workshops] b ON a.[JoinId] = b.[id]" },
                 });
@@ -134,6 +134,10 @@ namespace BifrostQL.Core.QueryModel
                         { "id", new ColumnDto { TableName = "workshops", ColumnName= "id", IsPrimaryKey= true } },
                         { "number", new ColumnDto { TableName = "workshops", ColumnName= "number", IsPrimaryKey= true } },
                     },
+                GraphQlLookup = new Dictionary<string, ColumnDto> {
+                    { "id", new ColumnDto { TableName = "workshops", ColumnName= "id", IsPrimaryKey= true } },
+                    { "number", new ColumnDto { TableName = "workshops", ColumnName= "number", IsPrimaryKey= true } },
+                },
             };
             var sessions = new TableDto
             {
@@ -145,6 +149,11 @@ namespace BifrostQL.Core.QueryModel
                         { "status", new ColumnDto { TableName = "sessions", ColumnName= "status", IsPrimaryKey= true } },
                         { "workshopid", new ColumnDto { TableName = "sessions", ColumnName= "workshopid", IsPrimaryKey= true } },
                     },
+                GraphQlLookup = new Dictionary<string, ColumnDto> {
+                    { "id", new ColumnDto { TableName = "sessions", ColumnName= "sid", IsPrimaryKey= true } },
+                    { "status", new ColumnDto { TableName = "sessions", ColumnName= "status", IsPrimaryKey= true } },
+                    { "workshopid", new ColumnDto { TableName = "sessions", ColumnName= "workshopid", IsPrimaryKey= true } },
+                },
             };
             workshops.MultiLinks.Add("sessions", new TableLinkDto
             {

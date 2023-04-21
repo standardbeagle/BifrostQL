@@ -77,9 +77,9 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine("}");
             }
 
-            foreach (var dataType in model.Tables.SelectMany(t => t.Columns).Select(c => c.DataType).Distinct())
+            foreach (var gqlType in model.Tables.SelectMany(t => t.Columns).Select(c => GetSimpleGraphQlTypeName(c.DataType)).Distinct())
             {
-                builder.AppendLine(GetFilterType(dataType));
+                builder.AppendLine(GetFilterType(gqlType));
             }
 
             foreach (var table in model.Tables)
@@ -180,10 +180,9 @@ namespace BifrostQL.Core.Schema
             }
         }
 
-        public static string GetFilterType(string dataType)
+        public static string GetFilterType(string gqlType)
         {
             var result = new StringBuilder();
-            string gqlType = GetSimpleGraphQlTypeName(dataType);
             var name = $"FilterType{gqlType}Input";
             var filters = new (string fieldName, string type)[] {
                             ("_eq", gqlType),

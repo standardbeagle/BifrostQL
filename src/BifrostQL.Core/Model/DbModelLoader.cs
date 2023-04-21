@@ -66,30 +66,28 @@ SELECT [TABLE_CATALOG]
         public DbModelLoader(IConfigurationSection bifrostSection, string connectionString)
         {
             _connStr = connectionString;
-            if (bifrostSection.Exists())
-            {
-                _ignoreTables = TableMatcher.FromSection(bifrostSection.GetSection("IgnoreTables"), false);
-                _includeTables = TableMatcher.FromSection(bifrostSection.GetSection("IncludeTables"), true);
-                var audit = bifrostSection.GetSection("Audit");
-                if (audit.Exists())
-                {
-                    _userAuditKey = audit.GetValue<string>("UserKey");
-                    _auditTableName = audit.GetValue<string>("AuditTable");
-                    _createDateMatcher = ColumnMatcher.FromSection(audit.GetSection("CreatedOn"), false);
-                    _updateDateMatcher = ColumnMatcher.FromSection(audit.GetSection("UpdatedOn"), false);
-                    _createByMatcher = ColumnMatcher.FromSection(audit.GetSection("CreatedBy"), false);
-                    _updateByMatcher = ColumnMatcher.FromSection(audit.GetSection("UpdatedBy"), false);
-                }
-            }
+            if (!bifrostSection.Exists()) return;
+
+            _ignoreTables = TableMatcher.FromSection(bifrostSection.GetSection("IgnoreTables"), false);
+            _includeTables = TableMatcher.FromSection(bifrostSection.GetSection("IncludeTables"), true);
+            var audit = bifrostSection.GetSection("Audit");
+            if (!audit.Exists()) return;
+
+            _userAuditKey = audit.GetValue<string>("UserKey");
+            _auditTableName = audit.GetValue<string>("AuditTable");
+            _createDateMatcher = ColumnMatcher.FromSection(audit.GetSection("CreatedOn"), false);
+            _updateDateMatcher = ColumnMatcher.FromSection(audit.GetSection("UpdatedOn"), false);
+            _createByMatcher = ColumnMatcher.FromSection(audit.GetSection("CreatedBy"), false);
+            _updateByMatcher = ColumnMatcher.FromSection(audit.GetSection("UpdatedBy"), false);
         }
 
         public async Task<IDbModel> LoadAsync()
         {
-            using var conn = new SqlConnection(_connStr);
+            await using var conn = new SqlConnection(_connStr);
             await conn.OpenAsync();
             var cmd = new SqlCommand(SCHEMA_SQL, conn);
-            using var reader = await cmd.ExecuteReaderAsync();
-            var columnConstraints = GetDtos<ColumnConstraintDto>(reader, r => ColumnConstraintDto.FromReader(r))
+            await using var reader = await cmd.ExecuteReaderAsync();
+            var columnConstraints = GetDtos<ColumnConstraintDto>(reader, ColumnConstraintDto.FromReader)
                 .GroupBy(k => new ColumnRef(k.TableCatalog, k.TableSchema, k.TableName, k.ColumnName))
                 .ToDictionary(g => g.Key, g => g.ToList());
             await reader.NextResultAsync();
@@ -118,7 +116,6 @@ SELECT [TABLE_CATALOG]
                     .Where(t => _ignoreTables.Match(t) == false)
                     .ToList()
                 };
-            var pluralizer = new Pluralizer();
             var singleTables = model.Tables
                                 .Where(t => t.KeyColumns.Count() == 1)
                                 .ToDictionary(t => t.NormalizedName, StringComparer.InvariantCultureIgnoreCase);

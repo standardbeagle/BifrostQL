@@ -42,7 +42,8 @@ namespace BifrostQL.Core.QueryModel
         public Dictionary<string, string> ToSql(IDbModel dbModel)
         {
             ConnectLinks(dbModel);
-            var columnSql = string.Join(",", FullColumnNames.Select(n => $"[{n.name}] [{n.alias}]"));
+            var sqlTable = dbModel.GetTableFromTableName(TableName);
+            var columnSql = string.Join(",", FullColumnNames.Select(n => $"[{sqlTable.GraphQlLookup[n.name].DbName}] [{n.alias}]"));
             var cmdText = $"SELECT {columnSql} FROM {FullTableText}";
 
             var filter = GetFilterSql(dbModel);

@@ -74,7 +74,7 @@ namespace BifrostQL.Core.QueryModel
             var ctx = new SqlContext();
             var sut = new SqlVisitor();
 
-            var ast = Parser.Parse("query { workshops(sort: [\"id desc\", \"number\"], limit: 10, offset: 12 ) { data { id number } } }");
+            var ast = Parser.Parse("query { workshops(sort: [id_desc, number_asc], limit: 10, offset: 12 ) { data { id number } } }");
             await sut.VisitAsync(ast, ctx);
             var tables = ctx.GetFinalTables();
 
@@ -85,10 +85,10 @@ namespace BifrostQL.Core.QueryModel
                         TableName = "workshops",
                         Limit = 10,
                         Offset = 12,
-                        Sort = new string[] { "id desc", "number" },
+                        Sort = new [] { "id_desc", "number_asc" },
                         Joins = new object[] { },
                         Links = new object[] { },
-                        ColumnNames = new string[] { "id", "number" }
+                        ColumnNames = new [] { "id", "number" }
                     });
 
         }

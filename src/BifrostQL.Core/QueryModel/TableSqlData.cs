@@ -122,7 +122,12 @@ namespace BifrostQL.Core.QueryModel
             var orderBy = " ORDER BY (SELECT NULL)";
             if (Sort.Any())
             {
-                orderBy = " ORDER BY " + string.Join(", ", Sort);
+                orderBy = " ORDER BY " + string.Join(", ", Sort.Select(s => s switch
+                {
+                    { } when s.EndsWith("_asc") => s[..^4] + " asc",
+                    { } when s.EndsWith("_desc") => s[..^5] + " desc",
+                    _ => throw new NotSupportedException()
+                }));
             }
             orderBy += Offset != null ? $" OFFSET {Offset} ROWS" : " OFFSET 0 ROWS";
             orderBy += Limit != null ? $" FETCH NEXT {Limit} ROWS ONLY" : "";

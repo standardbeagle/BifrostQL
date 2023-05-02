@@ -14,7 +14,7 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine("type database {");
             foreach (var table in model.Tables)
             {
-                builder.AppendLine($"{table.GraphQlName}(limit: Int, offset: Int, sort: [String!] filter: TableFilter{table.GraphQlName}Input) : {table.GraphQlName}Paged");
+                builder.AppendLine($"{table.GraphQlName}(limit: Int, offset: Int, sort: [{table.GraphQlName}SortEnum!] filter: TableFilter{table.GraphQlName}Input) : {table.GraphQlName}Paged");
             }
             builder.AppendLine("}");
 
@@ -33,9 +33,9 @@ namespace BifrostQL.Core.Schema
                 {
                     builder.AppendLine($"\t{link.Value.ChildTable.GraphQlName}(filter: TableFilter{link.Value.ChildTable.GraphQlName}Input) : [{link.Value.ChildTable.GraphQlName}]");
                 }
-                foreach (var joinTable in model.Tables)
+                foreach (var joinTable in model.Tables.Where(t => table.FullName != t.FullName))
                 {
-                    builder.AppendLine($"\t_join_{joinTable.GraphQlName}(on: [String!], filter: TableFilter{joinTable.GraphQlName}Input, sort: [String!]) : [{joinTable.GraphQlName}!]!");
+                    builder.AppendLine($"\t_join_{joinTable.GraphQlName}(on: [{table.GraphQlName}Enum], filter: TableFilter{joinTable.GraphQlName}Input, sort: [{joinTable.GraphQlName}SortEnum!]) : [{joinTable.GraphQlName}!]!");
                     builder.AppendLine($"\t_single_{joinTable.GraphQlName}(on: [String!]) : {joinTable.GraphQlName}");
                 }
                 builder.AppendLine("}");
@@ -77,11 +77,6 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine("}");
             }
 
-            foreach (var gqlType in model.Tables.SelectMany(t => t.Columns).Select(c => GetSimpleGraphQlTypeName(c.DataType)).Distinct())
-            {
-                builder.AppendLine(GetFilterType(gqlType));
-            }
-
             foreach (var table in model.Tables)
             {
                 builder.AppendLine($"enum {table.GraphQlName}Enum {{");
@@ -90,6 +85,22 @@ namespace BifrostQL.Core.Schema
                     builder.AppendLine(column.GraphQlName);
                 }
                 builder.AppendLine("}");
+            }
+
+            foreach (var table in model.Tables)
+            {
+                builder.AppendLine($"enum {table.GraphQlName}SortEnum {{");
+                foreach (var column in table.Columns)
+                {
+                    builder.AppendLine(column.GraphQlName + "_asc");
+                    builder.AppendLine(column.GraphQlName + "_desc");
+                }
+                builder.AppendLine("}");
+            }
+
+            foreach (var gqlType in model.Tables.SelectMany(t => t.Columns).Select(c => GetSimpleGraphQlTypeName(c.DataType)).Distinct())
+            {
+                builder.AppendLine(GetFilterType(gqlType));
             }
 
             return builder.ToString();
@@ -222,6 +233,49 @@ namespace BifrostQL.Core.Schema
             result.AppendLine("}");
             return result.ToString();
         }
+        public static string GetOnType(string gqlType)
+        {
+            var result = new StringBuilder();
+            var name = $"FilterType{gqlType}Input";
+            var filters = new (string fieldName, string type)[] {
+                ("_eq", gqlType),
+                ("_neq", gqlType),
+                ("_gt", gqlType),
+                ("_gte", gqlType),
+                ("_lt", gqlType),
+                ("_lte", gqlType),
+                ("_in", $"[{gqlType}]"),
+                ("_nin", $"[{gqlType}]"),
+                ("_between", $"[{gqlType}]"),
+                ("_nbetween", $"[{gqlType}]"),
+            };
+            var stringFilters = new (string fieldName, string type)[] {
+                ("_contains", gqlType),
+                ("_ncontains", gqlType),
+                ("_starts_with", gqlType),
+                ("_nstarts_with", gqlType),
+                ("_ends_with", gqlType),
+                ("_nends_with", gqlType),
+                ("_like", gqlType),
+                ("_nlike", gqlType),
+            };
+
+            result.AppendLine($"input {name} {{");
+            foreach (var (fieldName, type) in filters)
+            {
+                result.AppendLine($"\t{fieldName} : {type}");
+            }
+            if (gqlType == "String")
+            {
+                foreach (var (fieldName, type) in stringFilters)
+                {
+                    result.AppendLine($"\t{fieldName} : {type}");
+                }
+            }
+            result.AppendLine("}");
+            return result.ToString();
+        }
+
 
         public static string GetInputType(string action, TableDto table, IdentityType identityType)
         {

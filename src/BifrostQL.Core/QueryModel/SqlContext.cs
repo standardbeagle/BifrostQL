@@ -174,7 +174,7 @@ namespace BifrostQL.Core.QueryModel
             var rawSort = (IEnumerable<object?>?) Arguments.FirstOrDefault(a => a.Name == "sort")?.Value;
             var sort = rawSort?.Cast<string>()?.ToList() ?? new List<string>();
             var dataFields = Fields.FirstOrDefault(f => f.Name == "data")?.Fields ?? new List<Field>();
-            var fields = IncludeResult ? dataFields : Fields;
+            var fields = (IncludeResult ? dataFields : Fields).Where(f => !f.Name.StartsWith("__")).ToList();
             var result =  new TableSqlData
             {
                 Alias = Alias,

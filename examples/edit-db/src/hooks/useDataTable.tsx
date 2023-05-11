@@ -88,7 +88,7 @@ export function useDataTable(table: any, id?: string, filterTable?: string) {
     const { search } = useSearchParams();
     let { variables } = getFilterObj(search.get('filter'));
 
-    const sort: any[] = [table.columns.at(0)?.name];
+    const sort: any[] = [`${table.columns.at(0)?.name}_asc`];
     const offset = 0;
     const limit = 10;
     const query = getFilteredQuery(table, search, id, filterTable);

@@ -1,6 +1,7 @@
 .editdb-frame-layout {
     display: grid;
     grid-template-columns: minmax(150px, min-content) 1fr;
+    align-items: start;
 }
 
 .editdb-frame-layout-header {

@@ -20,10 +20,12 @@ export function DataDataTable({ table, id, filterTable }: DataDataTableParams): 
         error,
         data } = useDataTable(table, id, filterTable);
 
+        console.log({loading, error, data});
+
     const [resetPage, setResetpage] = useState(false);
+    useEffect(() => { data && data[table.name].offset === 0 && setResetpage(!resetPage);}, [data]);
     if (error) return <div>Error: {error.message}</div>;
     //This is required to make paging reset when loading a new dataset, it probably doesn't support all the edge cases yet.
-    useEffect(() => { data && data[table.name].offset === 0 && setResetpage(!resetPage);}, [data]);
 
     return <DataTable
         columns={tableColumns}

@@ -16,6 +16,7 @@ namespace BifrostQL.Core.Schema
             {
                 builder.AppendLine($"{table.GraphQlName}(limit: Int, offset: Int, sort: [{table.GraphQlName}SortEnum!] filter: TableFilter{table.GraphQlName}Input) : {table.GraphQlName}Paged");
             }
+            builder.AppendLine("_dbSchema(graphQlName: String): [dbTableSchema!]!");
             builder.AppendLine("}");
 
             foreach (var table in model.Tables)
@@ -123,6 +124,28 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine(GetFilterType(gqlType));
             }
 
+            builder.AppendLine("type dbTableSchema {");
+            builder.AppendLine("schema: String!");
+            builder.AppendLine("dbName: String!");
+            builder.AppendLine("graphQlName: String!");
+            builder.AppendLine("primaryKeys: [String!]");
+            builder.AppendLine("labelColumn: String!");
+            builder.AppendLine("multiJoins: [dbJoinSchema!]!");
+            builder.AppendLine("singleJoins: [dbJoinSchema!]!");
+            builder.AppendLine("columns: [dbColumnSchema!]!");
+            builder.AppendLine("}");
+
+            builder.AppendLine("type dbJoinSchema {");
+            builder.AppendLine("name: String!");
+            builder.AppendLine("sourceColumnNames: [String!]!");
+            builder.AppendLine("destinationTable: String!");
+            builder.AppendLine("destinationColumnNames: [String!]!");
+            builder.AppendLine("}");
+
+            builder.AppendLine("type dbColumnSchema {");
+            builder.AppendLine("dbName: String!");
+            builder.AppendLine("graphQlName: String!");
+            builder.AppendLine("}");
             return builder.ToString();
 
         }
@@ -166,6 +189,10 @@ namespace BifrostQL.Core.Schema
                         singleField.Resolver = DbJoinFieldResolver.Instance;
                     }
                 }
+
+                var dbSchema = query.FieldFor("_dbSchema");
+                dbSchema.Resolver = new DbSchemaResolver(model);
+
             });
             return schema;
         }

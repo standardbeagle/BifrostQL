@@ -38,9 +38,7 @@ namespace BifrostQL.Core.QueryModel
             var main = GetParentSql(dbModel);
             var connectedDbTable = dbModel.GetTableFromDbName(ConnectedTable.TableName);
             var connectedDbColumn = connectedDbTable.GraphQlLookup[ConnectedColumn];
-            var columns = ConnectedTable.FullColumnNames.ToHashSet();
-            columns.Add((connectedDbColumn.GraphQlName, connectedDbColumn.ColumnName));
-            var joinColumnSql = string.Join(",", columns.Select(c => $"[b].[{c.DbName}] AS [{c.GraphQlName}]"));
+            var joinColumnSql = string.Join(",", ConnectedTable.FullColumnNames.Select(c => $"[b].[{c.DbName}] AS [{c.GraphQlName}]"));
 
             var wrap = $"SELECT [a].[JoinId] [src_id], {joinColumnSql} FROM ({main}) [a]";
             var relation = TableFilter.GetSingleFilter("a", "JoinId", Operator,

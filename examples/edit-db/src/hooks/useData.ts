@@ -17,5 +17,9 @@ export function useSchema() {
                 ?.map((c: any) => ({ ...c, paramType: c?.type?.ofType?.name ?? "String" }))
         }
         ))
+        ?.sort((a: any, b: any) => {
+            if (a.name === "id") return -1;
+            if (b.name === "id") return 1;
+            return a.name.localeCompare(b.name);})
     return { loading, error, data: columns };
 }

@@ -36,6 +36,8 @@ export function Header() {
                 </select>
                 <input type="search" value={searchVal} onChange={(event) => setSearchVal(event.target.value)}></input>
                 <button onClick={filter}>filter</button>
+                <button onClick={() => navigate("/")}>clear</button>
+                <button onClick={() => navigate(`edit/`)}>add</button>
             </>}
         </header>
     )

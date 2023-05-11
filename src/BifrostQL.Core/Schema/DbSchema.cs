@@ -197,6 +197,14 @@ namespace BifrostQL.Core.Schema
             return schema;
         }
 
+        public static string GetGraphQlInsertTypeName(string dataType, bool isNullable = false)
+        {
+            if (dataType == "datetime2" || dataType == "datetime" || dataType == "datetimeoffset")
+                return $"String{(isNullable ? "" : "!")}";
+
+            return $"{GetSimpleGraphQlTypeName(dataType)}{(isNullable ? "" : "!")}";
+        }
+
         public static string GetGraphQlTypeName(string dataType, bool isNullable = false)
         {
             return $"{GetSimpleGraphQlTypeName(dataType)}{(isNullable ? "" : "!")}";
@@ -339,7 +347,7 @@ namespace BifrostQL.Core.Schema
                 if (identityType == IdentityType.Required && column.IsIdentity)
                     isNullable = false;
 
-                result.AppendLine($"\t{column.GraphQlName} : {GetGraphQlTypeName(column.DataType, isNullable)}");
+                result.AppendLine($"\t{column.GraphQlName} : {GetGraphQlInsertTypeName(column.DataType, isNullable)}");
             }
             result.AppendLine("}");
             return result.ToString();

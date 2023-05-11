@@ -30,6 +30,7 @@ const Layout = () => <div className='editdb-frame-layout'>
             <Route path='/:table/from/:filterTable/:id/edit/:editid' element={<DataEdit />} />
             <Route path='/:table/:id/edit/:editid' element={<DataEdit />} />
             <Route path='/:table/edit/:editid' element={<DataEdit />} />
+            <Route path='/:table/edit' element={<DataEdit />} />
         </Routes>
     </div>
 </div>

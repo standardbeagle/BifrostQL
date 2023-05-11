@@ -10,6 +10,8 @@
 
 .editdb-frame-layout-nav {
     border-right: thin solid black;
+    overflow-y: scroll;
+    max-height: 100vh;
 }
 
 .editdb-frame-layout-body {

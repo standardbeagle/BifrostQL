@@ -105,7 +105,7 @@ namespace BifrostQL.Core.QueryModel
             }, "tableName");
             var dbModel = Substitute.For<IDbModel>();
             Dictionary<string, TableDto> tables = GetTableModel();
-            dbModel.GetTableFromTableName("tableName").Returns(tables["tableName1"]);
+            dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
             var sut = filter.ToSql(dbModel, "table");
             sut.Should().Be((
                 $" INNER JOIN (SELECT DISTINCT [id] AS [joinid], [id] AS [value] FROM [Sessions]) [j0] ON [j0].[joinid] = [table].[sessionId]",
@@ -136,7 +136,7 @@ namespace BifrostQL.Core.QueryModel
             }, "tableName");
             var dbModel = Substitute.For<IDbModel>();
             Dictionary<string, TableDto> tables = GetTableModel();
-            dbModel.GetTableFromTableName("tableName").Returns(tables["tableName1"]);
+            dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
             var sut = filter.ToSql(dbModel, "table");
             sut.Should().Be((
                 $" INNER JOIN (SELECT DISTINCT [id] AS [joinid], [id] AS [value] FROM [Sessions]) [j0] ON [j0].[joinid] = [table].[sessionId]",
@@ -171,7 +171,7 @@ namespace BifrostQL.Core.QueryModel
             }, "tableName");
             var dbModel = Substitute.For<IDbModel>();
             Dictionary<string, TableDto> tables = GetTableModel();
-            dbModel.GetTableFromTableName("tableName").Returns(tables["tableName1"]);
+            dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
             var sut = filter.ToSql(dbModel, "table");
             sut.ToString().Should().Be(( 
                 $" INNER JOIN (SELECT DISTINCT [id] AS [joinid], [id] AS [value] FROM [Sessions]) [j0] ON [j0].[joinid] = [table].[sessionId] INNER JOIN (SELECT DISTINCT [id] AS [joinid], [id] AS [value] FROM [Sessions]) [j1] ON [j1].[joinid] = [table].[sessionId]",
@@ -191,7 +191,7 @@ namespace BifrostQL.Core.QueryModel
             }, "tableName");
             var dbModel = Substitute.For<IDbModel>();
             Dictionary<string, TableDto> tables = GetTableModel();
-            dbModel.GetTableFromTableName("tableName").Returns(tables["tableName1"]);
+            dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var sut = filter.ToSql(dbModel, alias);
             sut.Should().Be(($" INNER JOIN (SELECT DISTINCT [id] AS [joinid] FROM [Sessions] WHERE [Sessions].[id] = '321') [j] ON [j].[joinid] = [{result}].[sessionId]", ""));
@@ -209,7 +209,7 @@ namespace BifrostQL.Core.QueryModel
             }, "tableName");
             var dbModel = Substitute.For<IDbModel>();
             Dictionary<string, TableDto> tables = GetTableModel();
-            dbModel.GetTableFromTableName("tableName").Returns(tables["tableName1"]);
+            dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var sut = filter.ToSql(dbModel, "table");
             sut.Should().Be((" INNER JOIN (SELECT DISTINCT [id] AS [joinid] FROM [Sessions] INNER JOIN (SELECT DISTINCT [id] AS [joinid] FROM [workshops] WHERE [workshops].[id] = '321') [j] ON [j].[joinid] = [Sessions].[workshopId]) [j] ON [j].[joinid] = [table].[sessionId]", ""));

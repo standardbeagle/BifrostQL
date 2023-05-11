@@ -49,7 +49,7 @@ namespace BifrostQL.Core.QueryModel
             {
                 return ("", GetSingleFilter(alias ?? TableName, ColumnName, Next.RelationName, Next.Value));
             }
-            var table = model.GetTableFromTableName(TableName ?? throw new InvalidDataException("TableFilter with undefined TableName"));
+            var table = model.GetTableFromDbName(TableName ?? throw new InvalidDataException("TableFilter with undefined TableName"));
             var link = table.SingleLinks[ColumnName];
             var join = BuildSql(this.Next, link, includeValue);
             var filterText = GetFilter(this.Next, link, joinName, includeValue);
@@ -177,16 +177,20 @@ namespace BifrostQL.Core.QueryModel
                 "_between" or "_nbetween" => $"'{string.Join("' AND '", (object[])(value ?? Array.Empty<object>()))}'",
                 _ => $"'{value}'"
             };
-            if (op == "_eq" && val == null)
+            if (op == "_eq" && value == null)
             {
                 rel = "IS NULL";
                 val = "";
             }
-            if (op == "_neq" && val == null)
+            if (op == "_neq" && value == null)
             {
                 rel = "IS NOT NULL";
                 val = "";
             }
+
+            if (value is FieldRef fieldRef) 
+                val = fieldRef.ToString();
+
             if (table == null)
             {
                 string filter = $"[{field}] {rel} {val}";

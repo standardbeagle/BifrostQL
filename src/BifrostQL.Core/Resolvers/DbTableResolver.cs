@@ -72,13 +72,13 @@ namespace BifrostQL.Core.Resolvers
             return new ReaderEnum(table, data);
         }
 
-        private static async Task<List<TableSqlData>> GetTables(IResolveFieldContext context)
+        private async Task<List<TableSqlData>> GetTables(IResolveFieldContext context)
         {
             var visitor = new SqlVisitor();
             var sqlContext = new SqlContext() { Variables = context.Variables };
             await visitor.VisitAsync(context.Document, sqlContext);
 
-            var newTables = sqlContext.GetFinalTables();
+            var newTables = sqlContext.GetFinalTables(_dbModel);
             return newTables;
         }
 

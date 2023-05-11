@@ -14,7 +14,7 @@ namespace BifrostQL.Core.Resolvers
         {
             var conFactory = (IDbConnFactory)(context.InputExtensions["connFactory"] ?? throw new InvalidDataException("connection factory is not configured"));
             var model = (IDbModel)(context.InputExtensions["model"] ?? throw new InvalidDataException("database model is not configured"));
-            var table = model.GetTable(context.FieldAst.Name.StringValue);
+            var table = model.GetTableByFullGraphQlName(context.FieldAst.Name.StringValue);
             var modules = context.RequestServices!.GetRequiredService<IMutationModules>();
             modules.OnSave(context);
 

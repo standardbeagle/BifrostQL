@@ -9,8 +9,8 @@ namespace BifrostQL.Core.Model
         IReadOnlyCollection<TableDto> Tables { get; }
         string UserAuditKey { get; }
         string AuditTableName { get; }
-        TableDto GetTable(string fullName);
-        TableDto GetTableFromTableName(string tableName);
+        TableDto GetTableByFullGraphQlName(string fullName);
+        TableDto GetTableFromDbName(string tableName);
     }
 
     public interface ISchemaNames
@@ -25,25 +25,44 @@ namespace BifrostQL.Core.Model
         public IReadOnlyCollection<TableDto> Tables { get; init; } = null!;
         public string UserAuditKey { get; init; } = null!;
         public string AuditTableName { get; init; } = null!;
-        public TableDto GetTable(string fullName)
+        /// <summary>
+        /// Searches for the table by its full graphql name
+        /// </summary>
+        /// <param name="fullName"></param>
+        /// <returns></returns>
+        public TableDto GetTableByFullGraphQlName(string fullName)
         {
-            return Tables.First(t => t.MatchName(fullName));
+            return Tables?.FirstOrDefault(t => t.MatchName(fullName)) ?? throw new ArgumentOutOfRangeException(nameof(fullName), fullName, $"failed table lookup on graphql name: {fullName}");
         }
-        public TableDto GetTableFromTableName(string tableName)
+        public TableDto GetTableFromDbName(string tableName)
         {
-            return Tables.First(t => string.Equals(t.DbName, tableName, StringComparison.InvariantCultureIgnoreCase));
+            return Tables?.FirstOrDefault(t => string.Equals(t.DbName, tableName, StringComparison.InvariantCultureIgnoreCase)) ?? throw new ArgumentOutOfRangeException(nameof(tableName), tableName, $"failed table lookup on db name: {tableName}");
         }
     }
 
     public sealed class TableDto : ISchemaNames
     {
-        public string DbName { get; init; } = null!; //The name directly in the database
-        public string GraphQlName { get; init; } = null!; //The name translated so that it can be used as a graphql identifier
-        public string NormalizedName { get; private init; } = null!; //The table name translated so that it can be used to predict matches from other tables and columns
+        /// <summary>
+        /// The name of the table as it is in the database, includes spaces and special characters
+        /// </summary>
+        public string DbName { get; init; } = null!;
+        /// <summary>
+        /// The name translated so that it can be used as a graphql identifier
+        /// </summary>
+        public string GraphQlName { get; init; } = null!;
+        /// <summary>
+        /// The table name translated so that it can be used to predict matches from other tables and columns
+        /// </summary>
+        public string NormalizedName { get; private init; } = null!;
+        /// <summary>
+        /// The schema that the table belongs to using its database name
+        /// </summary>
         public string TableSchema { get; init; } = null!;
         public string TableType { get; init; } = null!;
+        /// <summary>
+        /// The graphql name of the table, including the schema if it is not dbo
+        /// </summary>
         public string FullName => $"{(TableSchema == "dbo" ? "" : $"{TableSchema}_")}{GraphQlName}";
-        //public string UniqueName => $"{TableSchema}.{DbName}";
         public bool MatchName(string fullName) => string.Equals(FullName, fullName, StringComparison.InvariantCultureIgnoreCase);
         public IEnumerable<ColumnDto> Columns => ColumnLookup.Values;
         public IDictionary<string, ColumnDto> ColumnLookup { get; init; } = null!;

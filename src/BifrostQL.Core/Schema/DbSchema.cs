@@ -33,9 +33,9 @@ namespace BifrostQL.Core.Schema
                 {
                     builder.AppendLine($"\t{link.Value.ChildTable.GraphQlName}(filter: TableFilter{link.Value.ChildTable.GraphQlName}Input) : [{link.Value.ChildTable.GraphQlName}]");
                 }
-                foreach (var joinTable in model.Tables.Where(t => table.FullName != t.FullName))
+                foreach (var joinTable in model.Tables)
                 {
-                    builder.AppendLine($"\t_join_{joinTable.GraphQlName}(on: [{table.GraphQlName}Enum], filter: TableFilter{joinTable.GraphQlName}Input, sort: [{joinTable.GraphQlName}SortEnum!]) : [{joinTable.GraphQlName}!]!");
+                    builder.AppendLine($"\t_join_{joinTable.GraphQlName}(on: TableOn{table.GraphQlName}{joinTable.GraphQlName}, filter: TableFilter{joinTable.GraphQlName}Input, sort: [{joinTable.GraphQlName}SortEnum!]) : [{joinTable.GraphQlName}!]!");
                     builder.AppendLine($"\t_single_{joinTable.GraphQlName}(on: [String!]) : {joinTable.GraphQlName}");
                 }
                 builder.AppendLine("}");
@@ -72,9 +72,29 @@ namespace BifrostQL.Core.Schema
                 {
                     builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : TableFilter{link.Value.ParentTable.GraphQlName}Input");
                 }
-                builder.AppendLine($"and: [TableFilter{table.GraphQlName}Input]");
-                builder.AppendLine($"or: [TableFilter{table.GraphQlName}Input]");
+                builder.AppendLine($"and: [TableFilter{table.GraphQlName}Input!]");
+                builder.AppendLine($"or: [TableFilter{table.GraphQlName}Input!]");
                 builder.AppendLine("}");
+                
+                foreach (var joinTable in model.Tables)
+                {
+                    builder.AppendLine($"input TableOn{table.GraphQlName}{joinTable.GraphQlName} {{");
+                    foreach (var column in table.Columns)
+                    {
+                        builder.AppendLine($"\t{column.GraphQlName} : FilterType{joinTable.GraphQlName}EnumInput");
+                    }
+
+                    builder.AppendLine($"and: [TableOn{table.GraphQlName}{joinTable.GraphQlName}!]");
+                    builder.AppendLine($"or: [TableOn{table.GraphQlName}{joinTable.GraphQlName}!]");
+
+                    //foreach (var link in table.SingleLinks)
+                    //{
+                    //    builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : {link.Value.ParentTable.GraphQlName}");
+                    //}
+                    builder.AppendLine("}");
+                }
+
+                builder.AppendLine(GetOnType($"{table.GraphQlName}Enum"));
             }
 
             foreach (var table in model.Tables)
@@ -233,31 +253,31 @@ namespace BifrostQL.Core.Schema
             result.AppendLine("}");
             return result.ToString();
         }
-        public static string GetOnType(string gqlType)
+        public static string GetOnType(string columnEnum)
         {
             var result = new StringBuilder();
-            var name = $"FilterType{gqlType}Input";
+            var name = $"FilterType{columnEnum}Input";
             var filters = new (string fieldName, string type)[] {
-                ("_eq", gqlType),
-                ("_neq", gqlType),
-                ("_gt", gqlType),
-                ("_gte", gqlType),
-                ("_lt", gqlType),
-                ("_lte", gqlType),
-                ("_in", $"[{gqlType}]"),
-                ("_nin", $"[{gqlType}]"),
-                ("_between", $"[{gqlType}]"),
-                ("_nbetween", $"[{gqlType}]"),
+                ("_eq", columnEnum),
+                ("_neq", columnEnum),
+                ("_gt", columnEnum),
+                ("_gte", columnEnum),
+                ("_lt", columnEnum),
+                ("_lte", columnEnum),
+                ("_in", $"[{columnEnum}]"),
+                ("_nin", $"[{columnEnum}]"),
+                ("_between", $"[{columnEnum}]"),
+                ("_nbetween", $"[{columnEnum}]"),
             };
             var stringFilters = new (string fieldName, string type)[] {
-                ("_contains", gqlType),
-                ("_ncontains", gqlType),
-                ("_starts_with", gqlType),
-                ("_nstarts_with", gqlType),
-                ("_ends_with", gqlType),
-                ("_nends_with", gqlType),
-                ("_like", gqlType),
-                ("_nlike", gqlType),
+                ("_contains", columnEnum),
+                ("_ncontains", columnEnum),
+                ("_starts_with", columnEnum),
+                ("_nstarts_with", columnEnum),
+                ("_ends_with", columnEnum),
+                ("_nends_with", columnEnum),
+                ("_like", columnEnum),
+                ("_nlike", columnEnum),
             };
 
             result.AppendLine($"input {name} {{");
@@ -265,12 +285,9 @@ namespace BifrostQL.Core.Schema
             {
                 result.AppendLine($"\t{fieldName} : {type}");
             }
-            if (gqlType == "String")
+            foreach (var (fieldName, type) in stringFilters)
             {
-                foreach (var (fieldName, type) in stringFilters)
-                {
-                    result.AppendLine($"\t{fieldName} : {type}");
-                }
+                result.AppendLine($"\t{fieldName} : {type}");
             }
             result.AppendLine("}");
             return result.ToString();

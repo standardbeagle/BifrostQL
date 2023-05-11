@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Xml.Linq;
+using BifrostQL.Core.Model;
 
 namespace BifrostQL.Core.QueryModel
 {
@@ -17,22 +18,27 @@ namespace BifrostQL.Core.QueryModel
             var ctx = new SqlContext();
             var sut = new SqlVisitor();
 
-            var ast = Parser.Parse("query { workshops { data { id number } } }");
+            var ast = Parser.Parse("query { work__shops { data { id number } } }");
             await sut.VisitAsync(ast, ctx);
-            var tables = ctx.GetFinalTables();
+            var tables = ctx.GetFinalTables(GetFakeModel());
 
             tables.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(
                     new { 
-                        TableName = "workshops",
+                        TableName = "work shops",
                         Limit = (int?)null,
                         Offset = (int?)null,
                         Sort = new string[] { },
                         Joins = new object[] { },
                         Links = new object[] { },
-                        ColumnNames = new[] { "id", "number" }
+                        //ColumnNames = new[] { "id", "number" }
                     });
 
+        }
+
+        private static IDbModel GetFakeModel()
+        {
+            return new DbModel { Tables = SqlVisitorToSqlTest.GetFakeTables() };
         }
 
         [Fact]
@@ -41,20 +47,20 @@ namespace BifrostQL.Core.QueryModel
             var ctx = new SqlContext();
             var sut = new SqlVisitor();
 
-            var ast = Parser.Parse("query { workshops { data { id number } } sessions { data { sessionid status } } }");
+            var ast = Parser.Parse("query { work__shops { data { id number } } sessions { data { id status } } }");
             await sut.VisitAsync(ast, ctx);
-            var tables = ctx.GetFinalTables();
+            var tables = ctx.GetFinalTables(GetFakeModel());
 
             tables.Should().BeEquivalentTo(
                 new[] {
                     new {
-                        TableName = "workshops",
+                        TableName = "work shops",
                         Limit = (int?)null,
                         Offset = (int?)null,
                         Sort = new string[] { },
                         Joins = new object[] { },
                         Links = new object[] { },
-                        ColumnNames = new[] { "id", "number" }
+                        //ColumnNames = new[] { "id", "number" }
                     },
                     new {
                         TableName = "sessions",
@@ -63,7 +69,7 @@ namespace BifrostQL.Core.QueryModel
                         Sort = new string[] { },
                         Joins = new object[] { },
                         Links = new object[] { },
-                        ColumnNames = new[] { "sessionid", "status" }
+                        //ColumnNames = new[] { "sessionid", "status" }
                     },
                 });
         }
@@ -74,21 +80,21 @@ namespace BifrostQL.Core.QueryModel
             var ctx = new SqlContext();
             var sut = new SqlVisitor();
 
-            var ast = Parser.Parse("query { workshops(sort: [id_desc, number_asc], limit: 10, offset: 12 ) { data { id number } } }");
+            var ast = Parser.Parse("query { work__shops(sort: [id_desc, number_asc], limit: 10, offset: 12 ) { data { id number } } }");
             await sut.VisitAsync(ast, ctx);
-            var tables = ctx.GetFinalTables();
+            var tables = ctx.GetFinalTables(GetFakeModel());
 
             tables.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(
                     new
                     {
-                        TableName = "workshops",
+                        TableName = "work shops",
                         Limit = 10,
                         Offset = 12,
                         Sort = new [] { "id_desc", "number_asc" },
                         Joins = new object[] { },
                         Links = new object[] { },
-                        ColumnNames = new [] { "id", "number" }
+                        //ColumnNames = new [] { "id", "number" }
                     });
 
         }
@@ -99,19 +105,19 @@ namespace BifrostQL.Core.QueryModel
             var ctx = new SqlContext();
             var sut = new SqlVisitor();
 
-            var ast = Parser.Parse("query { workshops(filter: { and: [ {startDate: { _gt: \"1-1-2022\"}}, {endDate: { _lt: \"1-1-2023\"}} ]} ) { data { id number } } }");
+            var ast = Parser.Parse("query { work__shops(filter: { and: [ {startDate: { _gt: \"1-1-2022\"}}, {endDate: { _lt: \"1-1-2023\"}} ]} ) { data { id number } } }");
             await sut.VisitAsync(ast, ctx);
-            var tables = ctx.GetFinalTables();
+            var tables = ctx.GetFinalTables(GetFakeModel());
 
             tables.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(
                     new
                     {
-                        TableName = "workshops",
+                        TableName = "work shops",
                         Filter = new { And = new object[] { new { ColumnName = "startDate", Next = new { RelationName = "_gt", Value = "1-1-2022" } }, new { ColumnName = "endDate", Next = new { RelationName = "_lt", Value = "1-1-2023" } } } },
                         Joins = new object[] { },
                         Links = new object[] { },
-                        ColumnNames = new string[] { "id", "number" }
+                        //ColumnNames = new string[] { "id", "number" }
                     });
 
         }
@@ -122,19 +128,19 @@ namespace BifrostQL.Core.QueryModel
             var ctx = new SqlContext();
             var sut = new SqlVisitor();
 
-            var ast = Parser.Parse("query { workshops(filter: { and: [ {startDate: { _gt: \"1-1-2022\"}}, {endDate: { _lt: \"1-1-2023\"}} ]} ) { data { id number } } }");
+            var ast = Parser.Parse("query { work__shops(filter: { and: [ {startDate: { _gt: \"1-1-2022\"}}, {endDate: { _lt: \"1-1-2023\"}} ]} ) { data { id number } } }");
             await sut.VisitAsync(ast, ctx);
-            var tables = ctx.GetFinalTables();
+            var tables = ctx.GetFinalTables(GetFakeModel());
 
             tables.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(
                     new
                     {
-                        TableName = "workshops",
+                        TableName = "work shops",
                         Filter = new { And = new object[] { new { ColumnName = "startDate", Next = new { RelationName = "_gt", Value = "1-1-2022" } }, new { ColumnName = "endDate", Next = new { RelationName = "_lt", Value = "1-1-2023" } } } },
                         Joins = new object[] { },
                         Links = new object[] { },
-                        ColumnNames = new string[] { "id", "number" }
+                        //ColumnNames = new string[] { "id", "number" }
                     });
 
         }
@@ -145,22 +151,22 @@ namespace BifrostQL.Core.QueryModel
             var ctx = new SqlContext();
             var sut = new SqlVisitor();
 
-            var ast = Parser.Parse("query { workshops(filter: {id: {_eq: 10} } ) { data { id number } } }");
+            var ast = Parser.Parse("query { work__shops(filter: {id: {_eq: 10} } ) { data { id number } } }");
             await sut.VisitAsync(ast, ctx);
-            var tables = ctx.GetFinalTables();
+            var tables = ctx.GetFinalTables(GetFakeModel());
 
             tables.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(
                     new
                     {
-                        TableName = "workshops",
+                        TableName = "work shops",
                         Filter = new { ColumnName =  "id", Next = new { RelationName = "_eq", Value = 10 }},
                         Limit = (int?)null,
                         Offset = (int?)null,
                         Sort = new string[] { },
                         Joins = new object[] {},
                         Links = new object[] { },
-                        ColumnNames = new string[] { "id", "number" }
+                        //ColumnNames = new string[] { "id", "number" }
                     });
         }
 
@@ -170,9 +176,9 @@ namespace BifrostQL.Core.QueryModel
             var ctx = new SqlContext();
             var sut = new SqlVisitor();
 
-            var ast = Parser.Parse("query { sessions(filter: { workshop: { number: {_eq: \"10-AA\"} } }) { data { id number } } }");
+            var ast = Parser.Parse("query { sessions(filter: { workshop: { number: {_eq: \"10-AA\"} } }) { data { id status } } }");
             await sut.VisitAsync(ast, ctx);
-            var tables = ctx.GetFinalTables();
+            var tables = ctx.GetFinalTables(GetFakeModel());
 
             tables.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(
@@ -185,7 +191,7 @@ namespace BifrostQL.Core.QueryModel
                         Sort = new string[] { },
                         Joins = new object[] { },
                         Links = new object[] { },
-                        ColumnNames = new string[] { "id", "number" }
+                        //ColumnNames = new string[] { "id", "number" }
                     });
         }
 
@@ -195,30 +201,34 @@ namespace BifrostQL.Core.QueryModel
             var ctx = new SqlContext();
             var sut = new SqlVisitor();
 
-            var ast = Parser.Parse("query { workshops { data { id _join_test__sessions(on: [\"idd\", \"workshopid\"]) { id } number } } }");
+            var ast = Parser.Parse("query { work__shops { data { id _join_sessions(on: {idd: {_eq: workshopid } }) { id } number } } }");
             await sut.VisitAsync(ast, ctx);
-            var tables = ctx.GetFinalTables();
+            var tables = ctx.GetFinalTables(GetFakeModel());
 
             tables.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(
                     new
                     {
-                        TableName = "workshops",
+                        TableName = "work shops",
                         Filter = (TableFilter?)null,
                         Limit = (int?)null,
                         Offset = (int?)null,
                         Sort = new string[] { },
                         Joins = new [] {
                             new {
-                                Name = "_join_test__sessions",
-                                FromTable = new { TableName = "workshops"},
-                                ConnectedTable = new { TableName = "test sessions", ColumnNames = new string[] { "id"}},
+                                Name = "_join_sessions",
+                                FromTable = new { TableName = "work shops"},
+                                ConnectedTable = new
+                                {
+                                    TableName = "sessions", 
+                                    //ColumnNames = new string[] { "id"}
+                                },
                                 FromColumn = "idd",
                                 ConnectedColumn = "workshopid",
                             }
                         },
                         Links = new object[] { },
-                        ColumnNames = new string[] { "id", "number" }
+                        //ColumnNames = new string[] { "id", "number" }
                     });
         }
 
@@ -228,15 +238,15 @@ namespace BifrostQL.Core.QueryModel
             var ctx = new SqlContext();
             var sut = new SqlVisitor();
 
-            var ast = Parser.Parse("query { workshops { data { id sessions { id status } number participants { firstname lastname } } } }");
+            var ast = Parser.Parse("query { work__shops { data { id sessions { id status } number participants__table { firstname lastname } } } }");
             await sut.VisitAsync(ast, ctx);
-            var tables = ctx.GetFinalTables();
+            var tables = ctx.GetFinalTables(GetFakeModel());
 
             tables.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(
                     new
                     {
-                        TableName = "workshops",
+                        TableName = "work shops",
                         Filter = (TableFilter?)null,
                         Limit = (int?)null,
                         Offset = (int?)null,
@@ -250,19 +260,19 @@ namespace BifrostQL.Core.QueryModel
                                 Offset = (int?)null,
                                 Sort = new string[] { },
                                 Joins = new object[] { },
-                                ColumnNames = new string[] { "id", "status" },
+                                //ColumnNames = new string[] { "id", "status" },
                             },
                             new {
-                                TableName = "participants",
+                                TableName = "participants table",
                                 Filter = (TableFilter?)null,
                                 Limit = (int?)null,
                                 Offset = (int?)null,
                                 Sort = new string[] { },
                                 Joins = new object[] { },
-                                ColumnNames = new string[] { "firstname", "lastname" },
+                                //ColumnNames = new string[] { "firstname", "lastname" },
                             },
                         },
-                        ColumnNames = new string[] { "id", "number" }
+                        //ColumnNames = new string[] { "id", "number" }
                     });
         }
 

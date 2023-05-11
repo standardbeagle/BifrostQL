@@ -22,7 +22,8 @@ namespace BifrostQL.Core.QueryModel
         public string? Alias { get; set; }
         public string Path { get; set; } = "";
         public string KeyName => $"{Alias ?? TableName}";
-        public List<string> ColumnNames { get; set; } = new List<string>();
+        public List<(string GraphQlName, string DbName)> Columns { get; init; } = new List<(string GraphQlName, string DbName)>();
+
         public List<TableSqlData> Links { get; set; } = new List<TableSqlData>();
         public List<string> Sort { get; set; } = new List<string>();
         public TableFilter? Filter { get; set; }
@@ -33,17 +34,15 @@ namespace BifrostQL.Core.QueryModel
         public List<TableJoin> Joins { get; set; } = new List<TableJoin>();
         private IEnumerable<TableJoin> RecurseJoins => Joins.Concat(Joins.SelectMany(j => j.ConnectedTable.RecurseJoins));
 
-        public IEnumerable<(string name, string alias)> FullColumnNames =>
-            ColumnNames.Where(c => c.StartsWith("__") == false)
-            .Select(c => (c, c))
+        public IEnumerable<(string GraphQlName, string DbName)> FullColumnNames =>
+            Columns.Where(c => c.GraphQlName.StartsWith("__") == false)
             .Concat(Joins.Select(j => (j.FromColumn, j.FromColumn)))
             .DistinctBy(c => c.Item2, SqlNameComparer.Instance);
 
         public Dictionary<string, string> ToSql(IDbModel dbModel)
         {
             ConnectLinks(dbModel);
-            var sqlTable = dbModel.GetTableFromTableName(TableName);
-            var columnSql = string.Join(",", FullColumnNames.Select(n => $"[{sqlTable.GraphQlLookup[n.name].DbName}] [{n.alias}]"));
+            var columnSql = string.Join(",", FullColumnNames.Select(n => $"[{n.DbName}] [{n.GraphQlName}]"));
             var cmdText = $"SELECT {columnSql} FROM {FullTableText}";
 
             var filter = GetFilterSql(dbModel);
@@ -64,7 +63,7 @@ namespace BifrostQL.Core.QueryModel
         {
             foreach (var link in Links)
             {
-                var thisDto = dbModel.GetTableFromTableName(TableName);
+                var thisDto = dbModel.GetTableFromDbName(TableName);
                 if (thisDto.MultiLinks.TryGetValue(link.GraphQlName, out var multiLink))
                 {
                     link.TableName = multiLink.ChildTable.DbName;

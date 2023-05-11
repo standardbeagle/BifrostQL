@@ -1,4 +1,5 @@
-﻿using GraphQL.Validation;
+﻿using BifrostQL.Core.Model;
+using GraphQL.Validation;
 using GraphQLParser.Visitors;
 
 namespace BifrostQL.Core.QueryModel
@@ -50,9 +51,9 @@ namespace BifrostQL.Core.QueryModel
             Setters.Pop();
         }
 
-        public List<TableSqlData> GetFinalTables()
+        public List<TableSqlData> GetFinalTables(IDbModel model)
         {
-            return Fields.Select(f => f.ToSqlData()).ToList();
+            return Fields.Select(f => f.ToSqlData(model)).ToList();
         }
 
         public void PushField(string name, string? alias)
@@ -165,11 +166,11 @@ namespace BifrostQL.Core.QueryModel
             if (name.StartsWith("_single_")) return true; 
             return false;
         }
-        public TableSqlData ToSqlData(Field? parent = null, string basePath = "")
+        public TableSqlData ToSqlData(IDbModel model, Field? parent = null, string basePath = "")
         {
-            var path = basePath + "/" + Alias ?? Name;
-            //TODO: Replace this with a global map between SQL names and graphql names
-            var name = Name.Replace("_join_", "").Replace("_single_", "").Replace("__", " ");
+            var path = basePath + "/" + Alias;
+            var tableName = Name.Replace("_join_", "").Replace("_single_", "");
+            var dbTable = model.GetTableByFullGraphQlName(tableName);
             var rawSort = (IEnumerable<object?>?) Arguments.FirstOrDefault(a => a.Name == "sort")?.Value;
             var sort = rawSort?.Cast<string>()?.ToList() ?? new List<string>();
             var dataFields = Fields.FirstOrDefault(f => f.Name == "data")?.Fields ?? new List<Field>();
@@ -177,47 +178,50 @@ namespace BifrostQL.Core.QueryModel
             var result =  new TableSqlData
             {
                 Alias = Alias,
-                TableName = name,
-                GraphQlName = Name,
+                TableName = dbTable.DbName,
+                SchemaName = dbTable.TableSchema,
+                GraphQlName = tableName,
                 Path = path,
                 IsFragment = false,
                 IncludeResult = IncludeResult,
-                ColumnNames = fields.Where(f => f.Fields.Any() == false).Select(f => f.Name).ToList(),
+                Columns = fields.Where(f => f.Fields.Any() == false).Select(f => (f.Name, dbTable.GraphQlLookup[f.Name].DbName)).ToList(),
                 Sort = sort,
                 Limit = (int?)Arguments.FirstOrDefault(a => a.Name == "limit")?.Value,
                 Offset = (int?)Arguments.FirstOrDefault(a => a.Name == "offset")?.Value,
-                Filter = Arguments.Where(a => a.Name == "filter").Select(arg => TableFilter.FromObject(arg.Value, name)).FirstOrDefault(),
+                Filter = Arguments.Where(a => a.Name == "filter").Select(arg => TableFilter.FromObject(arg.Value, dbTable.DbName)).FirstOrDefault(),
                 Links = fields
                             .Where((f) => f.Fields.Any() && IsSpecialColumn(f.Name) == false)
-                            .Select(f => f.ToSqlData(this, path))
+                            .Select(f => f.ToSqlData(model, this, path))
                             .ToList(),
             };
             result.Joins.AddRange(
                 fields
                     .Where((f) => f.Fields.Any() && IsSpecialColumn(f.Name) == true)
-                    .Select(f => f.ToJoin(result))
+                    .Select(f => f.ToJoin(model, result))
                 );
             return result;
         }
 
-        public TableJoin ToJoin(TableSqlData parent)
+        public TableJoin ToJoin(IDbModel model, TableSqlData parent)
         {
             var onArg = Arguments.FirstOrDefault(a => a.Name == "on");
 
             if (onArg == null)
                 throw new ArgumentException("joins require columns specified with the on argument");
 
-            var columns = (onArg.Value as IEnumerable<object?>)?.Cast<string>()?.ToArray() ?? throw new ArgumentException("on", "Unable to convert list");
-            if (columns.Length != 2)
+            var columns = (onArg.Value as IDictionary<string, object?>) ?? throw new ApplicationException("Unable to convert on value to object");
+            if (columns.Keys.Count != 1)
                 throw new ArgumentException("on joins only support two columns");
+            var relation = columns.Values.First() as IDictionary<string, object?> ?? throw new ApplicationException("Unable to convert on value to string");
             return new TableJoin
             {
                 Name = Name,
                 Alias = Alias,
                 FromTable = parent,
-                ConnectedTable = ToSqlData(),
-                FromColumn = columns[0],
-                ConnectedColumn= columns[1],
+                ConnectedTable = ToSqlData(model),
+                FromColumn = columns.Keys.First(),
+                ConnectedColumn = relation.Values?.First()?.ToString() ?? throw new ApplicationException("Unable to resolve join column"),
+                Operator = relation.Keys.First(),
                 JoinType = Name.StartsWith("_join_") ? JoinType.Join: JoinType.Single,
             };
         }

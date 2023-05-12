@@ -11,7 +11,7 @@ export function Header() {
     const tableName = tableData?.table;
     const options = useMemo(() => tableData?.table && schema
         ?.find((t: any) => t.name === tableName)?.columns
-        ?.map((c: any) => ({ key: c.name, value: `${c.name},${c.paramType}`, label: c.name })), [tableData, schema]);
+        ?.map((c: any) => ({ key: c.name, value: `${c.name},${c.paramType}`, label: c.label })), [tableData, schema]);
     const [column, setColumn] = useState(options?.at(0)?.value ?? "");
     //The control needs to reset state when a new table is selected, ie the filter is cleared
     useEffect(() => { setColumn(options?.at(0)?.value ?? ""); }, [tableData])
@@ -23,6 +23,8 @@ export function Header() {
         if (type === "String")
             navigate(`?filter=["${columnName}", "_eq", "${searchVal}", "${type}"]`);
     }
+    if (loading) return <div>Loading...</div>;
+    if (error) return <div>Error: {error.message}</div>;
     return (
         <header className="editdb-header">
             <div>

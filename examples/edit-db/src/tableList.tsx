@@ -6,7 +6,7 @@ import { useSchema } from './hooks/useData';
 const columns = [
     {
         name: "Table",
-        cell: (row: any) => <Link to={`/${row.name}`} className="plain-link">{row.name}</Link>,
+        cell: (row: any) => <Link to={`/${row.name}`} className="plain-link">{row.label}</Link>,
     }
 ];
 

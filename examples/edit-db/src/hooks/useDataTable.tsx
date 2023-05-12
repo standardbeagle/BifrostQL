@@ -23,7 +23,7 @@ const getTableColumns = (table:any): any[] => {
     const columns = table.columns
     .map((c: any) => {
         const result = {
-            name: c.name,
+            name: c.label,
             reorder: true,
             sortable: true,
             sortField: c.name,

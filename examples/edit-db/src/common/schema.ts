@@ -28,3 +28,29 @@ export const GET_SCHEMA = gql`{
     }
   }
   `;
+
+export const GET_DB_SCHEMA = gql`
+query dbSchema {
+  _dbSchema {
+    dbName
+    graphQlName
+    labelColumn
+    primaryKeys
+    columns {
+      dbName
+      graphQlName
+    }
+    multiJoins {
+      name
+      sourceColumnNames
+      destinationTable
+      destinationColumnNames
+    }
+    singleJoins {
+      name
+      sourceColumnNames
+      destinationTable
+      destinationColumnNames
+    }
+  }
+}`;

@@ -130,6 +130,7 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine("graphQlName: String!");
             builder.AppendLine("primaryKeys: [String!]");
             builder.AppendLine("labelColumn: String!");
+            builder.AppendLine("isEditable: Boolean!");
             builder.AppendLine("multiJoins: [dbJoinSchema!]!");
             builder.AppendLine("singleJoins: [dbJoinSchema!]!");
             builder.AppendLine("columns: [dbColumnSchema!]!");
@@ -145,6 +146,19 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine("type dbColumnSchema {");
             builder.AppendLine("dbName: String!");
             builder.AppendLine("graphQlName: String!");
+            builder.AppendLine("paramType: String!");
+            builder.AppendLine("dbType: String!");
+            builder.AppendLine("isNullable: Boolean!");
+            builder.AppendLine("isReadOnly: Boolean!");
+            builder.AppendLine("isPrimaryKey: Boolean!");
+            builder.AppendLine("isIdentity: Boolean!");
+            builder.AppendLine("isCreatedOnColumn: Boolean!");
+            builder.AppendLine("isCreatedByColumn: Boolean!");
+            builder.AppendLine("isUpdatedOnColumn: Boolean!");
+            builder.AppendLine("isUpdatedByColumn: Boolean!");
+            builder.AppendLine("isDeletedOnColumn: Boolean!");
+            builder.AppendLine("isDeletedColumn: Boolean!");
+
             builder.AppendLine("}");
             return builder.ToString();
 

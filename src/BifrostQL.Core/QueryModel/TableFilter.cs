@@ -45,11 +45,11 @@ namespace BifrostQL.Core.QueryModel
                 }
                 throw new ArgumentOutOfRangeException("value", "object must have two values");
             }
+            var table = model.GetTableFromDbName(TableName ?? throw new InvalidDataException("TableFilter with undefined TableName"));
             if (Next.Next == null)
             {
-                return ("", GetSingleFilter(alias ?? TableName, ColumnName, Next.RelationName, Next.Value));
+                return ("", GetSingleFilter(alias ?? TableName, table.GraphQlLookup[ColumnName].DbName, Next.RelationName, Next.Value));
             }
-            var table = model.GetTableFromDbName(TableName ?? throw new InvalidDataException("TableFilter with undefined TableName"));
             var link = table.SingleLinks[ColumnName];
             var join = BuildSql(this.Next, link, includeValue);
             var filterText = GetFilter(this.Next, link, joinName, includeValue);

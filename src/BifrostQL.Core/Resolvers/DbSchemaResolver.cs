@@ -6,6 +6,8 @@ using System.Text;
 using System.Threading.Tasks;
 using BifrostQL.Core.Model;
 using GraphQL;
+using System.Data.Common;
+using BifrostQL.Core.Schema;
 
 namespace BifrostQL.Core.Resolvers
 {
@@ -33,7 +35,24 @@ namespace BifrostQL.Core.Resolvers
                             t.GraphQlName,
                             labelColumn = t.Columns.First().GraphQlName,
                             primaryKeys = t.Columns.Where(c => c.IsPrimaryKey == true).Select(pk => pk.GraphQlName),
-                            columns = t.Columns.Select(c => new { dbName = c.DbName, graphQlName = c.GraphQlName }),
+                            isEditable = t.Columns.Any(c => c.IsPrimaryKey == true),
+                            columns = t.Columns.Select(c => new
+                            {
+                                dbName = c.DbName, 
+                                graphQlName = c.GraphQlName,
+                                paramType = DbSchema.GetGraphQlTypeName(c.DataType, c.IsNullable),
+                                dbType = c.DataType,
+                                isNullable = c.IsNullable,
+                                isPrimaryKey = c.IsPrimaryKey,
+                                isIdentity = c.IsIdentity,
+                                isCreatedOnColumn = c.IsCreatedOnColumn,
+                                isCreatedByColumn = c.IsCreatedByColumn,
+                                isUpdatedOnColumn = c.IsUpdatedOnColumn,
+                                isUpdatedByColumn = c.IsUpdatedByColumn,
+                                isReadOnly = c.IsPrimaryKey || c.IsIdentity || c.IsCreatedOnColumn || c.IsCreatedByColumn || c.IsUpdatedOnColumn || c.IsUpdatedByColumn,
+                                isDeletedOnColumn = false,
+                                isDeletedColumn = false,
+                            }),
                             multiJoins = t.MultiLinks.Values.Select(j => new
                             {
                                 name = j.Name, 

@@ -8,10 +8,11 @@ export function Header() {
     const [searchVal, setSearchVal] = useState("");
     const navigate = useNavigate();
     const { back, hasBack } = useNavigation();
+    console.log(schema, tableData);
     const tableName = tableData?.table;
-    const options = useMemo(() => tableData?.table && schema
-        ?.find((t: any) => t.name === tableName)?.columns
-        ?.map((c: any) => ({ key: c.name, value: `${c.name},${c.paramType}`, label: c.label })), [tableData, schema]);
+    const tableSchema = useMemo(() => schema?.find((t: any) => t.graphQlName === tableName), [schema, tableName]);
+    const options = tableSchema?.columns
+                        ?.map((c: any) => ({ key: c.name, value: `${c.name},${c.paramType}`, label: c.label }));
     const [column, setColumn] = useState(options?.at(0)?.value ?? "");
     //The control needs to reset state when a new table is selected, ie the filter is cleared
     useEffect(() => { setColumn(options?.at(0)?.value ?? ""); }, [tableData])
@@ -39,7 +40,7 @@ export function Header() {
                 <input type="search" value={searchVal} onChange={(event) => setSearchVal(event.target.value)}></input>
                 <button onClick={filter}>filter</button>
                 <button onClick={() => navigate("/")}>clear</button>
-                <button onClick={() => navigate(`edit/`)}>add</button>
+                { tableSchema?.isEditable &&  <button onClick={() => navigate(`edit/`)}>add</button>}
             </>}
         </header>
     )

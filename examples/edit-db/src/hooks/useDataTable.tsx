@@ -51,6 +51,9 @@ const getTableColumns = (table:any): any[] => {
             ...result
         };
     });
+    if (table.isEditable === false)
+        return columns;
+
     return [{ name: "edit", selector: (row: { [x: string]: any; }) => (
         <Link to={`edit/${row?.id}`}>edit</Link>
     )}, ...columns];
@@ -94,16 +97,14 @@ export function useDataTable(table: any, id?: string, filterTable?: string) {
     const query = getFilteredQuery(table, search, id, filterTable);
     const queryResult = useQuery(query, { variables: { sort: sort, limit: limit, offset: offset, ...routeObj, ...variables } });
     const handleUpdate = (value: any) : Promise<any> => {
-        console.log(value);
         return Promise.resolve(value);
     }
     
     const handleSort = (column: any, sortDirection: any) => {
-        const search = { offset: offset, sort: [`${column.sortField} ${sortDirection}`] };
+        const search = { offset: offset, sort: [`${column.sortField}_${sortDirection}`] };
         queryResult.refetch({ sort: search.sort, limit: limit, offset: offset, ...routeObj })
     }
     const handlePage = (page: number) => {
-        console.log('page', page);
         const search = { offset: +((page-1) * limit), sort: sort };
         queryResult.refetch({ sort: sort, limit: limit, offset: search.offset, ...routeObj });
     }

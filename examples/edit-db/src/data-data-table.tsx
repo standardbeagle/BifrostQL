@@ -20,7 +20,7 @@ export function DataDataTable({ table, id, filterTable }: DataDataTableParams): 
         error,
         data } = useDataTable(table, id, filterTable);
 
-        console.log({loading, error, data});
+        //console.log({loading, error, data});
 
     const [resetPage, setResetpage] = useState(false);
     useEffect(() => { data && data[table.name].offset === 0 && setResetpage(!resetPage);}, [data]);

@@ -36,9 +36,21 @@ query dbSchema {
     graphQlName
     labelColumn
     primaryKeys
+    isEditable
     columns {
       dbName
       graphQlName
+      paramType
+      isPrimaryKey
+      isIdentity
+      isNullable
+      isReadOnly
+      isUpdatedOnColumn
+      isUpdatedByColumn
+      isCreatedOnColumn
+      isCreatedByColumn
+      isDeletedColumn
+      isDeletedOnColumn
     }
     multiJoins {
       name

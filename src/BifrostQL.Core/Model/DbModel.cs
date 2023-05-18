@@ -9,15 +9,15 @@ namespace BifrostQL.Core.Model
         IReadOnlyCollection<TableDto> Tables { get; }
         string UserAuditKey { get; }
         string AuditTableName { get; }
-        TableDto GetTableByFullGraphQlName(string fullName);
-        TableDto GetTableFromDbName(string tableName);
+        IDbTable GetTableByFullGraphQlName(string fullName);
+        IDbTable GetTableFromDbName(string tableName);
     }
 
     public interface ISchemaNames
     {
-        string DbName { get; }
-        string GraphQlName { get; }
-        string NormalizedName { get; }
+        public string DbName { get; }
+        public string GraphQlName { get; }
+        public string NormalizedName { get; }
     }
     public sealed class DbModel : IDbModel
     {
@@ -30,17 +30,58 @@ namespace BifrostQL.Core.Model
         /// </summary>
         /// <param name="fullName"></param>
         /// <returns></returns>
-        public TableDto GetTableByFullGraphQlName(string fullName)
+        public IDbTable GetTableByFullGraphQlName(string fullName)
         {
             return Tables?.FirstOrDefault(t => t.MatchName(fullName)) ?? throw new ArgumentOutOfRangeException(nameof(fullName), fullName, $"failed table lookup on graphql name: {fullName}");
         }
-        public TableDto GetTableFromDbName(string tableName)
+        public IDbTable GetTableFromDbName(string tableName)
         {
             return Tables?.FirstOrDefault(t => string.Equals(t.DbName, tableName, StringComparison.InvariantCultureIgnoreCase)) ?? throw new ArgumentOutOfRangeException(nameof(tableName), tableName, $"failed table lookup on db name: {tableName}");
         }
     }
 
-    public sealed class TableDto : ISchemaNames
+    public interface IDbTable
+    {
+        /// <summary>
+        /// The name of the table as it is in the database, includes spaces and special characters
+        /// </summary>
+        string DbName { get; init; }
+
+        /// <summary>
+        /// The name translated so that it can be used as a graphql identifier
+        /// </summary>
+        string GraphQlName { get; init; }
+
+        /// <summary>
+        /// The table name translated so that it can be used to predict matches from other tables and columns
+        /// </summary>
+        string NormalizedName { get; }
+
+        /// <summary>
+        /// The schema that the table belongs to using its database name
+        /// </summary>
+        string TableSchema { get; init; }
+
+        string TableType { get; init; }
+
+        /// <summary>
+        /// The graphql name of the table, including the schema if it is not dbo
+        /// </summary>
+        string FullName { get; }
+
+        IEnumerable<ColumnDto> Columns { get; }
+        IDictionary<string, ColumnDto> ColumnLookup { get; init; }
+        IDictionary<string, ColumnDto> GraphQlLookup { get; init; }
+        IDictionary<string, TableLinkDto> SingleLinks { get; init; }
+        IDictionary<string, TableLinkDto> MultiLinks { get; init; }
+        IEnumerable<ColumnDto> KeyColumns { get; }
+        IEnumerable<ColumnDto> StandardColumns { get; }
+
+        bool MatchName(string fullName);
+        string ToString();
+    }
+
+    public sealed class TableDto : ISchemaNames, IDbTable
     {
         /// <summary>
         /// The name of the table as it is in the database, includes spaces and special characters
@@ -67,8 +108,8 @@ namespace BifrostQL.Core.Model
         public IEnumerable<ColumnDto> Columns => ColumnLookup.Values;
         public IDictionary<string, ColumnDto> ColumnLookup { get; init; } = null!;
         public IDictionary<string, ColumnDto> GraphQlLookup { get; init; } = null!;
-        public Dictionary<string, TableLinkDto> SingleLinks { get; init; } = new Dictionary<string, TableLinkDto>(StringComparer.InvariantCultureIgnoreCase);
-        public Dictionary<string, TableLinkDto> MultiLinks { get; init; } = new Dictionary<string, TableLinkDto>(StringComparer.InvariantCultureIgnoreCase);
+        public IDictionary<string, TableLinkDto> SingleLinks { get; init; } = new Dictionary<string, TableLinkDto>(StringComparer.InvariantCultureIgnoreCase);
+        public IDictionary<string, TableLinkDto> MultiLinks { get; init; } = new Dictionary<string, TableLinkDto>(StringComparer.InvariantCultureIgnoreCase);
         public IEnumerable<ColumnDto> KeyColumns => Columns.Where(c => c.IsPrimaryKey);
         public IEnumerable<ColumnDto> StandardColumns => Columns.Where(c => c.IsPrimaryKey == false);
         public override string ToString()

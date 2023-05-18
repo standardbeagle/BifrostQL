@@ -48,7 +48,8 @@ namespace BifrostQL.Core.QueryModel
             var table = model.GetTableFromDbName(TableName ?? throw new InvalidDataException("TableFilter with undefined TableName"));
             if (Next.Next == null)
             {
-                return ("", GetSingleFilter(alias ?? TableName, table.GraphQlLookup[ColumnName].DbName, Next.RelationName, Next.Value));
+                var lookup = table.GraphQlLookup;
+                return ("", GetSingleFilter(alias ?? TableName, lookup[ColumnName].DbName, Next.RelationName, Next.Value));
             }
             var link = table.SingleLinks[ColumnName];
             var join = BuildSql(this.Next, link, includeValue);

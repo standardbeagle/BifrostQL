@@ -14,9 +14,9 @@ namespace BifrostQL.Core.Modules
     public interface IMutationModule
     {
         public void OnSave(IResolveFieldContext context);
-        public string[] Insert(Dictionary<string, object?> data, TableDto table, IDictionary<string, object?> userContext, IDbModel model);
-        public string[] Update(Dictionary<string, object?> data, TableDto table, IDictionary<string, object?> userContext, IDbModel model);
-        public string[] Delete(Dictionary<string, object?> data, TableDto table, IDictionary<string, object?> userContext, IDbModel model);
+        public string[] Insert(Dictionary<string, object?> data, IDbTable table, IDictionary<string, object?> userContext, IDbModel model);
+        public string[] Update(Dictionary<string, object?> data, IDbTable table, IDictionary<string, object?> userContext, IDbModel model);
+        public string[] Delete(Dictionary<string, object?> data, IDbTable table, IDictionary<string, object?> userContext, IDbModel model);
     }
 
 
@@ -29,7 +29,7 @@ namespace BifrostQL.Core.Modules
         public IReadOnlyCollection<IMutationModule> Modules { get; init; } = null!;
         public int Count => Modules.Count;
 
-        public string[] Delete(Dictionary<string, object?> data, TableDto table, IDictionary<string, object?> userContext, IDbModel model)
+        public string[] Delete(Dictionary<string, object?> data, IDbTable table, IDictionary<string, object?> userContext, IDbModel model)
         {
             return Modules.SelectMany(module => module.Delete(data, table, userContext, model)).ToArray();
         }
@@ -39,7 +39,7 @@ namespace BifrostQL.Core.Modules
             return Modules.GetEnumerator();
         }
 
-        public string[] Insert(Dictionary<string, object?> data, TableDto table, IDictionary<string, object?> userContext, IDbModel model)
+        public string[] Insert(Dictionary<string, object?> data, IDbTable table, IDictionary<string, object?> userContext, IDbModel model)
         {
             return Modules.SelectMany(module => module.Insert(data, table, userContext, model)).ToArray();
         }
@@ -52,7 +52,7 @@ namespace BifrostQL.Core.Modules
             }
         }
 
-        public string[] Update(Dictionary<string, object?> data, TableDto table, IDictionary<string, object?> userContext, IDbModel model)
+        public string[] Update(Dictionary<string, object?> data, IDbTable table, IDictionary<string, object?> userContext, IDbModel model)
         {
             return Modules.SelectMany(module => module.Update(data, table, userContext, model)).ToArray();
         }

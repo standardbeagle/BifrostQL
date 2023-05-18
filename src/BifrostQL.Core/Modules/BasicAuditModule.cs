@@ -20,7 +20,7 @@ namespace BifrostQL.Core.Modules
         {
         }
 
-        public string[] Insert(Dictionary<string, object?> data, TableDto table, IDictionary<string, object?> userContext, IDbModel model)
+        public string[] Insert(Dictionary<string, object?> data, IDbTable table, IDictionary<string, object?> userContext, IDbModel model)
         {
             var dateTime = DateTime.UtcNow;
             foreach (var column in table.Columns)
@@ -33,7 +33,7 @@ namespace BifrostQL.Core.Modules
             return Array.Empty<string>();
         }
 
-        public string[] Update(Dictionary<string, object?> data, TableDto table, IDictionary<string, object?> userContext, IDbModel model)
+        public string[] Update(Dictionary<string, object?> data, IDbTable table, IDictionary<string, object?> userContext, IDbModel model)
         {
             var dateTime = DateTime.UtcNow;
             foreach (var column in table.Columns)
@@ -44,7 +44,7 @@ namespace BifrostQL.Core.Modules
             return Array.Empty<string>();
         }
 
-        public string[] Delete(Dictionary<string, object?> data, TableDto table, IDictionary<string, object?> userContext, IDbModel model)
+        public string[] Delete(Dictionary<string, object?> data, IDbTable table, IDictionary<string, object?> userContext, IDbModel model)
         {
             return Array.Empty<string>();
         }

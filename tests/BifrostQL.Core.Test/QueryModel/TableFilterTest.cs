@@ -36,6 +36,11 @@ namespace BifrostQL.Core.QueryModel
                 } }
             }, "tableName");
             var dbModel = Substitute.For<IDbModel>();
+            dbModel.GetTableFromDbName("tableName").Returns(new TableDto()
+            {
+                GraphQlLookup = new Dictionary<string, ColumnDto>() { { "id", new ColumnDto() { ColumnName = "id" } } }
+            });
+
             var sut = filter.ToSql(dbModel, "table");
             sut.Should().Be(("", "[table].[id] = '321'"));
         }
@@ -54,13 +59,17 @@ namespace BifrostQL.Core.QueryModel
                 } }
             }, "tableName");
             var dbModel = Substitute.For<IDbModel>();
+            dbModel.GetTableFromDbName("tableName").Returns(new TableDto()
+            {
+                GraphQlLookup = new Dictionary<string, ColumnDto>() { { "id", new ColumnDto() { ColumnName = "id" } } }
+            });
             var sut = filter.ToSql(dbModel, "table");
             sut.Should().Be(("", "[table].[id] = '321'"));
         }
 
         [Theory]
-        [InlineData("and", "id")]
-        [InlineData("or", "id")]
+        [InlineData("and", "id2")]
+        [InlineData("or", "id2")]
         [InlineData("and", "sessionId")]
         [InlineData("or", "sessionId")]
         public void DoubleAndOrFilterSuccess(string joinType, string column2)
@@ -78,8 +87,12 @@ namespace BifrostQL.Core.QueryModel
                     } }
             }, "tableName");
             var dbModel = Substitute.For<IDbModel>();
+            dbModel.GetTableFromDbName("tableName").Returns(new TableDto()
+            {
+                GraphQlLookup = new Dictionary<string, ColumnDto>() { { "id", new ColumnDto() { ColumnName = "id" } }, { column2, new ColumnDto() { ColumnName = column2+"_ha" } } }
+            });
             var sut = filter.ToSql(dbModel, "table");
-            sut.Should().Be(("", $"(([table].[id] = '321') {joinType.ToUpper()} ([table].[{column2}] > '321'))"));
+            sut.Should().Be(("", $"(([table].[id] = '321') {joinType.ToUpper()} ([table].[{column2}_ha] > '321'))"));
         }
 
         [Theory]
@@ -108,8 +121,8 @@ namespace BifrostQL.Core.QueryModel
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
             var sut = filter.ToSql(dbModel, "table");
             sut.Should().Be((
-                $" INNER JOIN (SELECT DISTINCT [id] AS [joinid], [id] AS [value] FROM [Sessions]) [j0] ON [j0].[joinid] = [table].[sessionId]",
-                $"(([j0].[value] = '321') {joinType.ToUpper()} ([table].[{column2}] > '321'))"));
+                $" INNER JOIN (SELECT DISTINCT [id] AS [joinid], [id] AS [value] FROM [Sessions]) [j0] ON [j0].[joinid] = [table].[sessionId_db]",
+                $"(([j0].[value] = '321') {joinType.ToUpper()} ([table].[{column2}_db] > '321'))"));
         }
 
         [Theory]
@@ -139,8 +152,8 @@ namespace BifrostQL.Core.QueryModel
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
             var sut = filter.ToSql(dbModel, "table");
             sut.Should().Be((
-                $" INNER JOIN (SELECT DISTINCT [id] AS [joinid], [id] AS [value] FROM [Sessions]) [j0] ON [j0].[joinid] = [table].[sessionId]",
-                $"(([j0].[value] = '321') {joinType.ToUpper()} ([table].[{column2}] > '321'))"));
+                $" INNER JOIN (SELECT DISTINCT [id] AS [joinid], [id] AS [value] FROM [Sessions]) [j0] ON [j0].[joinid] = [table].[sessionId_db]",
+                $"(([j0].[value] = '321') {joinType.ToUpper()} ([table].[{column2}_db] > '321'))"));
         }
 
         [Theory]
@@ -174,8 +187,8 @@ namespace BifrostQL.Core.QueryModel
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
             var sut = filter.ToSql(dbModel, "table");
             sut.ToString().Should().Be(( 
-                $" INNER JOIN (SELECT DISTINCT [id] AS [joinid], [id] AS [value] FROM [Sessions]) [j0] ON [j0].[joinid] = [table].[sessionId] INNER JOIN (SELECT DISTINCT [id] AS [joinid], [id] AS [value] FROM [Sessions]) [j1] ON [j1].[joinid] = [table].[sessionId]",
-                $"(((([j0].[value] = '321') OR ([j1].[value] = '322'))) {joinType.ToUpper()} ([table].[{column2}] > '321'))").ToString());
+                $" INNER JOIN (SELECT DISTINCT [id] AS [joinid], [id] AS [value] FROM [Sessions]) [j0] ON [j0].[joinid] = [table].[sessionId_db] INNER JOIN (SELECT DISTINCT [id] AS [joinid], [id] AS [value] FROM [Sessions]) [j1] ON [j1].[joinid] = [table].[sessionId_db]",
+                $"(((([j0].[value] = '321') OR ([j1].[value] = '322'))) {joinType.ToUpper()} ([table].[{column2}_db] > '321'))").ToString());
         }
         [Theory]
         [InlineData("alias", "alias")]
@@ -194,7 +207,7 @@ namespace BifrostQL.Core.QueryModel
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var sut = filter.ToSql(dbModel, alias);
-            sut.Should().Be(($" INNER JOIN (SELECT DISTINCT [id] AS [joinid] FROM [Sessions] WHERE [Sessions].[id] = '321') [j] ON [j].[joinid] = [{result}].[sessionId]", ""));
+            sut.Should().Be(($" INNER JOIN (SELECT DISTINCT [id] AS [joinid] FROM [Sessions] WHERE [Sessions].[id] = '321') [j] ON [j].[joinid] = [{result}].[sessionId_db]", ""));
         }
 
         [Fact]
@@ -212,28 +225,71 @@ namespace BifrostQL.Core.QueryModel
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var sut = filter.ToSql(dbModel, "table");
-            sut.Should().Be((" INNER JOIN (SELECT DISTINCT [id] AS [joinid] FROM [Sessions] INNER JOIN (SELECT DISTINCT [id] AS [joinid] FROM [workshops] WHERE [workshops].[id] = '321') [j] ON [j].[joinid] = [Sessions].[workshopId]) [j] ON [j].[joinid] = [table].[sessionId]", ""));
+            sut.Should().Be((" INNER JOIN (SELECT DISTINCT [id] AS [joinid] FROM [Sessions] INNER JOIN (SELECT DISTINCT [id] AS [joinid] FROM [workshops] WHERE [workshops].[id] = '321') [j] ON [j].[joinid] = [Sessions].[workshopId]) [j] ON [j].[joinid] = [table].[sessionId_db]", ""));
         }
 
         private static Dictionary<string, TableDto> GetTableModel()
         {
+            var table1Columns = new Dictionary<string, ColumnDto>
+            {
+                {
+                    "id", new ColumnDto
+                    {
+                        ColumnName = "id_db",
+                        GraphQlName = "id",
+                        IsPrimaryKey = true,
+                        DataType = "int",
+                    }
+                },
+                {
+                    "sessionId", new ColumnDto
+                    {
+                        ColumnName = "sessionId_db",
+                        GraphQlName = "sessionId",
+                        IsPrimaryKey = false,
+                        DataType = "int",
+                    }
+                }
+            };
+            var sessionColumns = new Dictionary<string, ColumnDto>
+            {
+                {
+                    "id", new ColumnDto
+                    {
+                        ColumnName = "id",
+                        GraphQlName = "id",
+                        IsPrimaryKey = true,
+                        DataType = "int",
+                    }
+                },
+                {
+                    "workshopId", new ColumnDto
+                    {
+                        ColumnName = "workshopId",
+                        GraphQlName = "workshopId",
+                        IsPrimaryKey = true,
+                        DataType = "int",
+                    }
+                }
+            };
+            var workshopColumns = new Dictionary<string, ColumnDto>
+            {
+                {
+                    "id", new ColumnDto
+                    {
+                        ColumnName = "id",
+                        GraphQlName = "id",
+                        IsPrimaryKey = true,
+                        DataType = "int",
+                    }
+                }
+            };
             var tables = new Dictionary<string, TableDto> {
                 { "tableName1", new TableDto
                     {
                         DbName = "tableName1",
-                        ColumnLookup = new Dictionary<string, ColumnDto> {
-                            { "id", new ColumnDto {
-                                ColumnName = "id",
-                                GraphQlName = "id",
-                                IsPrimaryKey = true,
-                                DataType = "int",
-                            } },
-                            { "sessionId", new ColumnDto {
-                                ColumnName = "sessionId",
-                                GraphQlName = "sessionId",
-                                IsPrimaryKey = false,
-                                DataType = "int",
-                            } } },
+                        ColumnLookup = table1Columns,
+                        GraphQlLookup = table1Columns.Values.ToDictionary(x => x.GraphQlName, x => x),
                     }
                 },
                 { "sessions", new TableDto
@@ -241,31 +297,16 @@ namespace BifrostQL.Core.QueryModel
                         TableSchema = "dbo",
                         DbName = "Sessions",
                         GraphQlName = "sessions",
-                        ColumnLookup = new Dictionary<string, ColumnDto> {
-                        { "id", new ColumnDto {
-                            ColumnName = "id",
-                            GraphQlName = "id",
-                            IsPrimaryKey = true,
-                            DataType = "int",
-                        } },
-                        { "workshopId", new ColumnDto {
-                            ColumnName = "workshopId",
-                            GraphQlName = "workshopId",
-                            IsPrimaryKey = true,
-                            DataType = "int",
-                        } } },
+                        ColumnLookup = sessionColumns,
+                        GraphQlLookup = sessionColumns.Values.ToDictionary(x => x.GraphQlName, x => x),
                         SingleLinks = new Dictionary<string, TableLinkDto>()
                     }
                 },
                 { "workshops", new TableDto
                     {
                         DbName = "workshops",
-                        ColumnLookup = new Dictionary<string, ColumnDto> { { "id", new ColumnDto {
-                            ColumnName = "id",
-                            GraphQlName = "id",
-                            IsPrimaryKey = true,
-                            DataType = "int",
-                        } } },
+                        ColumnLookup = workshopColumns,
+                        GraphQlLookup = workshopColumns.Values.ToDictionary(x => x.GraphQlName, x => x),
                     }
                 },
             };

@@ -8,7 +8,7 @@ export function Header() {
     const [searchVal, setSearchVal] = useState("");
     const navigate = useNavigate();
     const { back, hasBack } = useNavigation();
-    console.log(schema, tableData);
+    //console.log(schema, tableData);
     const tableName = tableData?.table;
     const tableSchema = useMemo(() => schema?.find((t: any) => t.graphQlName === tableName), [schema, tableName]);
     const options = tableSchema?.columns

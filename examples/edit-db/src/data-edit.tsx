@@ -11,14 +11,14 @@ function getTable(data: any[], tableName: string) {
 
 function DataEditDetail({ table, schema, editid }: { table: any, schema: any, editid: number }) {
     const isInsert = editid === undefined;
-    console.log({ editid, isInsert });
+    ///console.log({ editid, isInsert });
     const dataTable = getTable(schema, table);
     const navigate = useNavigate();
     const editColumns = dataTable.columns
         .filter((c: any) => (c?.type?.kind !== "OBJECT" && c?.type?.kind !== "LIST"))
         .filter((c: any) => !isInsert || c?.name !== "id")
         .filter((c: any) => !(c?.name.endsWith("On") || c?.name.endsWith("By")));
-    console.log(editColumns);
+    //console.log(editColumns);
 
     const dialogRef = useRef<HTMLDialogElement>(null);
     const { loading, error, data } = useQuery(
@@ -26,7 +26,7 @@ function DataEditDetail({ table, schema, editid }: { table: any, schema: any, ed
         { variables: { id: +editid } }
     );
 
-    console.log('dt', dataTable)
+    //console.log('dt', dataTable)
     const [mutate, mutateState] = useMutation<any>(
         gql`mutation updateSingle($detail: Update${dataTable.name}){ ${dataTable.name}(update: $detail)}`,
         {
@@ -56,7 +56,7 @@ function DataEditDetail({ table, schema, editid }: { table: any, schema: any, ed
     }));
 
     const onSubmit = (event: any) => {
-        console.log(event, detail);
+        //console.log(event, detail);
         for(const col of editColumns) {
             if(col.paramType === "Int") {
                 detail[col.name] = +detail[col.name];
@@ -64,13 +64,13 @@ function DataEditDetail({ table, schema, editid }: { table: any, schema: any, ed
         }
         if (isInsert) {
             insertMutate({ variables: { detail } }).then(update => {
-                console.log(update);
+                //console.log(update);
                 navigate('../..');
             });
         } else {
             mutate({ variables: { detail } })
             .then(update => {
-                console.log(update);
+                //console.log(update);
                 navigate('../..');
             });
         }

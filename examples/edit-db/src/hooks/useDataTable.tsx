@@ -1,5 +1,6 @@
 import { gql, useQuery } from "@apollo/client";
 import { Link, useSearchParams } from "./usePath";
+import { useEffect, useState } from "react";
 
 const getFilterObj = (filterString: string): any => {
     try {
@@ -91,24 +92,34 @@ export function useDataTable(table: any, id?: string, filterTable?: string) {
     const { search } = useSearchParams();
     let { variables } = getFilterObj(search.get('filter'));
 
-    const sort: any[] = [`${table.columns.at(0)?.name}_asc`];
-    const offset = 0;
-    const limit = 10;
+    const [sort, setSort] = useState<string[]>([`${table.columns.at(0)?.name}_asc`]);
+    const [offset, setOffset] = useState(0);
+    const [limit, setLimit] = useState(10);
     const query = getFilteredQuery(table, search, id, filterTable);
     const queryResult = useQuery(query, { variables: { sort: sort, limit: limit, offset: offset, ...routeObj, ...variables } });
     const handleUpdate = (value: any) : Promise<any> => {
         return Promise.resolve(value);
     }
+
+    useEffect(() => {  
+        setSort([`${table.columns.at(0)?.name}_asc`]);
+        setOffset(0);        
+     },[table, id, filterTable]);
     
     const handleSort = (column: any, sortDirection: any) => {
-        const search = { offset: offset, sort: [`${column.sortField}_${sortDirection}`] };
+        const newSort = [`${column.sortField}_${sortDirection}`];
+        setSort(newSort);
+        const search = { offset: offset, sort: newSort };
         queryResult.refetch({ sort: search.sort, limit: limit, offset: offset, ...routeObj })
     }
     const handlePage = (page: number) => {
-        const search = { offset: +((page-1) * limit), sort: sort };
+        var newOffset = +((page-1) * limit);
+        setOffset(newOffset);
+        const search = { offset: newOffset, sort: sort };
         queryResult.refetch({ sort: sort, limit: limit, offset: search.offset, ...routeObj });
     }
     const handlePageSize = (size: number) => {
+        setLimit(size);
         queryResult.refetch({ sort: sort, limit: size, offset: offset, ...routeObj });
     }
 

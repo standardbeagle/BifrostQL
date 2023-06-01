@@ -65,30 +65,35 @@ namespace BifrostQL.Core.Resolvers
             return null;
         }
 
-        public async ValueTask<object?> ExecuteSql(IDbConnFactory connFactory, SqlCommand cmd, Func<SqlDataReader, ValueTask<object?>> read)
+        private async ValueTask<object?> ExecuteScalar(IDbConnFactory connFactory, SqlCommand cmd)
         {
-            using var conn = connFactory.GetConnection();
+            await using var conn = connFactory.GetConnection();
             cmd.Connection = conn;
-            await conn.OpenAsync();
-            using var reader = await cmd.ExecuteReaderAsync();
-            return await read(reader);
+            try
+            {
+                await conn.OpenAsync();
+                var result = await cmd.ExecuteScalarAsync();
+                return result;
+            }
+            catch (Exception ex)
+            {
+                throw new ExecutionError(ex.Message, ex);
+            }
         }
-        public async ValueTask<object?> ExecuteScalar(IDbConnFactory connFactory, SqlCommand cmd)
+        private async ValueTask<int> ExecuteNonQuery(IDbConnFactory connFactory, SqlCommand cmd)
         {
-            using var conn = connFactory.GetConnection();
+            await using var conn = connFactory.GetConnection();
             cmd.Connection = conn;
-            await conn.OpenAsync();
-            var result = await cmd.ExecuteScalarAsync();
-            return result;
-        }
-        public async ValueTask<int> ExecuteNonQuery(IDbConnFactory connFactory, SqlCommand cmd)
-        {
-            using var conn = connFactory.GetConnection();
-            cmd.Connection = conn;
-            await conn.OpenAsync();
-            var result = await cmd.ExecuteNonQueryAsync();
-            return result;
-
+            try
+            {
+                await conn.OpenAsync();
+                var result = await cmd.ExecuteNonQueryAsync();
+                return result;
+            }
+            catch (Exception ex)
+            {
+                throw new ExecutionError(ex.Message, ex);
+            }
         }
 
         private static string Join(string str, string[] array)

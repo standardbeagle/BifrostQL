@@ -42,7 +42,8 @@ namespace BifrostQL.Core.Resolvers
         private List<TableSqlData>? _tables = null;
         private readonly IDbModel _dbModel;
 
-        public TableReaderFactory(IDbModel dbModel) {
+        public TableReaderFactory(IDbModel dbModel)
+        {
             _dbModel = dbModel;
         }
         public async ValueTask<object?> ResolveAsync(IResolveFieldContext context)
@@ -89,29 +90,37 @@ namespace BifrostQL.Core.Resolvers
             string sql = string.Join(";\r\n", sqlList.Values);
 
             using var conn = connFactory.GetConnection();
-            conn.Open();
-            var command = new SqlCommand(sql, conn);
-            using var reader = command.ExecuteReader();
-            var results = new Dictionary<string, (IDictionary<string, int> index, IList<object?[]> data)>();
-            var resultIndex = 0;
-            do
+            try
             {
-                var resultName = resultNames[resultIndex++];
-                var index = Enumerable.Range(0, reader.FieldCount).Select(i => (i, reader.GetName(i))).ToDictionary(x => x.Item2, x => x.i, StringComparer.OrdinalIgnoreCase);
-                var result = new List<object?[]>();
-                while (reader.Read())
+                conn.Open();
+                var command = new SqlCommand(sql, conn);
+                using var reader = command.ExecuteReader();
+                var results = new Dictionary<string, (IDictionary<string, int> index, IList<object?[]> data)>();
+                var resultIndex = 0;
+                do
                 {
-                    var row = new object?[reader.FieldCount];
-                    reader.GetValues(row);
-                    result.Add(row);
-                }
-                if (result.Count == 0)
-                    results.Add(resultName, (index, new List<object?[]>()));
-                else
-                    results.Add(resultName, (index, result));
-            } while (reader.NextResult());
-            return results;
-        }
+                    var resultName = resultNames[resultIndex++];
+                    var index = Enumerable.Range(0, reader.FieldCount).Select(i => (i, reader.GetName(i)))
+                        .ToDictionary(x => x.Item2, x => x.i, StringComparer.OrdinalIgnoreCase);
+                    var result = new List<object?[]>();
+                    while (reader.Read())
+                    {
+                        var row = new object?[reader.FieldCount];
+                        reader.GetValues(row);
+                        result.Add(row);
+                    }
 
+                    var currentResult = result.Count == 0 ?
+                        (index, new List<object?[]>()) :
+                        (index, result);
+                    results.Add(resultName, currentResult);
+                } while (reader.NextResult());
+                return results;
+            }
+            catch (Exception ex)
+            {
+                throw new ExecutionError(ex.Message, ex);
+            }
+        }
     }
 }

@@ -104,6 +104,7 @@ namespace BifrostQL.Server
             if (_connectionString == null) throw new ArgumentNullException("connectionString");
 
             var path = _bifrostConfig.GetValue<string>("Path", "/graphql");
+            var includeDynamicJoins = _bifrostConfig.GetValue<bool>("IncludeDynamicJoins", true);
 
             var extensionsLoader = new PathCache<Inputs>();
             extensionsLoader.AddLoader(path, () =>
@@ -111,7 +112,7 @@ namespace BifrostQL.Server
                 var loader = new DbModelLoader(_bifrostConfig, _connectionString);
                 var model = loader.LoadAsync().Result;
                 var connFactory = new DbConnFactory(_connectionString);
-                var schema = DbSchema.SchemaFromModel(model);
+                var schema = DbSchema.SchemaFromModel(model, includeDynamicJoins);
                 return new Inputs(new Dictionary<string, object?>
                 {
                     { "model", model}, 

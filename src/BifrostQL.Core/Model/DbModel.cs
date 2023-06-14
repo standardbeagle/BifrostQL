@@ -251,6 +251,7 @@ namespace BifrostQL.Core.Model
             {
                 ' ' => "_",
                 '-' => "_",
+                '_' => "_",
                 >= 'a' and <= 'z' => c.ToString(),
                 >= 'A' and <= 'Z' => c.ToString(),
                 >= '0' and <= '9' => c.ToString(),

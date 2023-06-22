@@ -67,7 +67,7 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine("type databaseInput {");
             foreach (var table in model.Tables)
             {
-                builder.AppendLine($"\t{table.GraphQlName}(insert: Insert{table.GraphQlName}, update: Update{table.GraphQlName}, upsert: Upsert{table.GraphQlName}, delete: Int) : Int");
+                builder.AppendLine($"\t{table.GraphQlName}(insert: Insert{table.GraphQlName}, update: Update{table.GraphQlName}, upsert: Upsert{table.GraphQlName}, delete: Delete{table.GraphQlName}) : Int");
             }
             builder.AppendLine("}");
 
@@ -76,6 +76,7 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine(GetInputType("Insert", table, IdentityType.None));
                 builder.AppendLine(GetInputType("Update", table, IdentityType.Required));
                 builder.AppendLine(GetInputType("Upsert", table, IdentityType.Optional));
+                builder.AppendLine(GetInputType("Delete", table, IdentityType.Optional, true));
 
                 builder.AppendLine($"input TableFilter{table.GraphQlName}Input {{");
                 foreach (var column in table.Columns)
@@ -361,7 +362,7 @@ namespace BifrostQL.Core.Schema
         }
 
 
-        public static string GetInputType(string action, TableDto table, IdentityType identityType)
+        public static string GetInputType(string action, TableDto table, IdentityType identityType, bool isDelete = false)
         {
             var result = new StringBuilder();
             var name = action + table.GraphQlName;
@@ -379,6 +380,7 @@ namespace BifrostQL.Core.Schema
                 if (identityType == IdentityType.Required && column.IsIdentity)
                     isNullable = false;
 
+                if (isDelete) isNullable = true;
                 result.AppendLine($"\t{column.GraphQlName} : {GetGraphQlInsertTypeName(column.DataType, isNullable)}");
             }
             result.AppendLine("}");

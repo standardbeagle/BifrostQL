@@ -1,6 +1,7 @@
 ﻿using System.Text;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Resolvers;
+using GraphQL;
 using GraphQL.Types;
 
 namespace BifrostQL.Core.Schema
@@ -10,17 +11,11 @@ namespace BifrostQL.Core.Schema
         public static string SchemaTextFromModel(IDbModel model, bool includeDynamicJoins = true)
         {
             var builder = new StringBuilder();
-            //builder.AppendLine("directive @len(max: Int!) on FIELD_DEFINITION");
-            //builder.AppendLine("directive @identity() on FIELD_DEFINITION");
-            //builder.AppendLine("directive @audit() on FIELD_DEFINITION");
-            //builder.AppendLine("directive @lookup() on FIELD_DEFINITION");
-            //builder.AppendLine("directive @label() on FIELD_DEFINITION");
-            //builder.AppendLine("directive @Db(fieldName: String!, ) on FIELD_DEFINITION");
             builder.AppendLine("schema { query: database mutation: databaseInput }");
             builder.AppendLine("type database {");
             foreach (var table in model.Tables)
             {
-                builder.AppendLine($"{table.GraphQlName}(limit: Int, offset: Int, sort: [{table.GraphQlName}SortEnum!] filter: TableFilter{table.GraphQlName}Input) : {table.GraphQlName}Paged");
+                builder.AppendLine($"{table.GraphQlName}(limit: Int, offset: Int, sort: [{table.GraphQlName}SortEnum!] filter: TableFilter{table.GraphQlName}Input): {table.GraphQlName}Paged");
             }
             builder.AppendLine("_dbSchema(graphQlName: String): [dbTableSchema!]!");
             builder.AppendLine("}");
@@ -30,7 +25,7 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine($"type {table.GraphQlName} {{");
                 foreach (var column in table.Columns)
                 {
-                    builder.AppendLine($"\t{column.GraphQlName} : {GetGraphQlTypeName(column.DataType, column.IsNullable)} {GetColumnDirectives(column)}");
+                    builder.AppendLine($"\t{column.GraphQlName} : {GetGraphQlTypeName(column.DataType, column.IsNullable)}");
                 }
                 foreach (var link in table.SingleLinks)
                 {
@@ -178,15 +173,10 @@ namespace BifrostQL.Core.Schema
 
         }
 
-        private static string GetColumnDirectives(ColumnDto column)
-        {
-            return "";
-        }
-
         public static ISchema SchemaFromModel(IDbModel model, bool includeDynamicJoins)
         {
             var schemaText = SchemaTextFromModel(model, includeDynamicJoins);
-            var schema = GraphQL.Types.Schema.For(schemaText, _ =>
+            var schema = GraphQL.Types.Schema.For<DbSchemaBuilder>(schemaText, _ =>
             {
                 var query = _.Types.For("database");
                 var mut = _.Types.For("databaseInput");

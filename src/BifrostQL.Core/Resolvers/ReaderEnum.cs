@@ -26,7 +26,7 @@ namespace BifrostQL.Core.Resolvers
             }
             return ValueTask.FromResult(DbConvert(table.data[row][index]));
         }
-        public ValueTask<object?> GetDataForMissingColumn(IResolveFieldContext context, (IDictionary<string, int> index, IList<object?[]> data) table , int row)
+        public ValueTask<object?> GetDataForMissingColumn(IResolveFieldContext context, (IDictionary<string, int> index, IList<object?[]> data) table, int row)
         {
             string name = context.FieldAst.Name.StringValue;
             string? alias = context.FieldAst.Alias?.Name?.StringValue;
@@ -71,7 +71,7 @@ namespace BifrostQL.Core.Resolvers
         {
             return new ReaderEnumerator(this);
         }
-        private static object? DbConvert(object? val)
+        public static object? DbConvert(object? val)
         {
             return val switch
             {
@@ -157,7 +157,7 @@ namespace BifrostQL.Core.Resolvers
                 return _root.GetDataForMissingColumn(context, _table, row);
             }
 
-            return ValueTask.FromResult(_data[row][index]);
+            return ValueTask.FromResult(ReaderEnum.DbConvert(_data[row][index]));
         }
 
 
@@ -207,7 +207,7 @@ namespace BifrostQL.Core.Resolvers
         {
             var name = context.FieldAst.Name.StringValue;
             if (_index.TryGetValue(name, out var index))
-                return ValueTask.FromResult(_row[index]);
+                return ValueTask.FromResult(ReaderEnum.DbConvert(_row[index]));
 
             _data ??= new List<object?[]> { _row };
 

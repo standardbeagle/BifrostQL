@@ -33,16 +33,15 @@ namespace BifrostQL.Core.Resolvers
 
             var join = _tableSql.GetJoin(alias, name);
             if (join == null)
-                throw new Exception("join not found");
+                throw new ExecutionError($"Unable to find field: {name} on table: {_tableSql.Alias ?? _tableSql.GraphQlName }");
             var keyFound = table.index.TryGetValue(join.FromColumn, out int keyIndex);
             if (!keyFound)
-                throw new Exception("join column not found.");
+                throw new ExecutionError("join column not found.");
 
             var key = table.data[row][keyIndex];
             if (key == null)
-                throw new Exception("key value is null");
+                throw new ExecutionError("key value is null");
 
-            //var fullName = $"{_tableSql.KeyName}->{alias ?? name}";
             var tableData = _tables[join.JoinName];
             if (join.JoinType == JoinType.Join)
                 return ValueTask.FromResult<object?>(new SubTableEnumerable(this, key, tableData));
@@ -52,14 +51,7 @@ namespace BifrostQL.Core.Resolvers
                 var data = tableData.data.FirstOrDefault(r => Equals(r[srcIdIndex], key));
                 return ValueTask.FromResult<object?>(data == null ? null : new SingleRowLookup(data, tableData.index, this));
             }
-            throw new ArgumentOutOfRangeException("unexpected Join type:" + join.JoinName);
-        }
-
-        public TableSqlData TableSqlData => _tableSql;
-
-        public (IDictionary<string, int> index, IList<object?[]> data) GetTableData(string name)
-        {
-            return _tables[name];
+            throw new ExecutionError("unexpected Join type: " + join.JoinName);
         }
 
         public IEnumerator<object?> GetEnumerator()

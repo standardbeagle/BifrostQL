@@ -1,4 +1,5 @@
 ﻿using BifrostQL.Core.Model;
+using GraphQL;
 using GraphQL.Validation;
 using GraphQLParser.Visitors;
 
@@ -7,13 +8,11 @@ namespace BifrostQL.Core.QueryModel
 
     public interface ISqlContext : IASTVisitorContext
     {
-        public List<Field> Fields { get; }
+        public List<IField> Fields { get; }
         public Variables Variables { get; }
         public Stack<Action<string, object?>> FieldSetters { get; }
         public Stack<Action<object?>> Setters { get; }
-        public Cleanup AddSetter(Action<object?>? setter);
         public void Set(object? value);
-        public void PopSetter();
         public void PushField(string name, string? alias);
         public void PopField();
         public void AddValue(object? value);
@@ -29,33 +28,20 @@ namespace BifrostQL.Core.QueryModel
     {
         public Variables Variables { get; init; } = null!;
         public CancellationToken CancellationToken { get; init; }
-        public Stack<Action<string, object?>> FieldSetters { get; init; } = new Stack<Action<string, object?>>();
-        public Stack<Action<object?>> Setters { get; init; } = new Stack<Action<object?>>();
-        public List<Field> Fields { get; init; } = new List<Field>();
-        public List<Field> Fragments { get; init; } = new List<Field>();
-        public Stack<Field> FieldsStack { get; init; } = new Stack<Field>();
+        public Stack<Action<string, object?>> FieldSetters { get; init; } = new();
+        public Stack<Action<object?>> Setters { get; init; } = new();
+        public List<IField> Fields { get; init; } = new();
+        public List<IField> Fragments { get; init; } = new();
+        public Stack<IField> FieldsStack { get; init; } = new();
         public Argument? CurrentArgument { get; set; }
-
-        public Cleanup AddSetter(Action<object?>? setter)
-        {
-            if (setter == null) return Cleanup.Skip;
-            Setters.Push(setter);
-            return new Cleanup() { Action = PopSetter };
-        }
         public void Set(object? value)
         {
             Setters.FirstOrDefault()?.Invoke(value);
         }
-        public void PopSetter()
-        {
-            Setters.Pop();
-        }
-
         public List<TableSqlData> GetFinalTables(IDbModel model)
         {
             return Fields.Select(f => f.ToSqlData(model)).ToList();
         }
-
         public void PushField(string name, string? alias)
         {
             var field = new Field { Name = name, Alias = alias };
@@ -99,7 +85,7 @@ namespace BifrostQL.Core.QueryModel
         public void PopFragment() { FieldsStack.Pop(); }
         public void PushArgument(string name)
         {
-            Argument arg = new Argument { Name = name };
+            var arg = new Argument { Name = name };
             FieldsStack.First().Arguments.Add(arg);
             CurrentArgument = arg;
         }
@@ -114,7 +100,7 @@ namespace BifrostQL.Core.QueryModel
             }
         }
 
-        public void SyncFieldFragments(Field field, IDictionary<string, Field> fragmentList)
+        public void SyncFieldFragments(IField field, IDictionary<string, IField> fragmentList)
         {
             foreach (var fragmentField in field.Fragments.Select(f => fragmentList[f]).SelectMany(f => f.Fields))
             {
@@ -126,7 +112,7 @@ namespace BifrostQL.Core.QueryModel
             }
         }
 
-        public Field CopyField(Field field)
+        public IField CopyField(IField field)
         {
             return new Field()
             {
@@ -141,39 +127,53 @@ namespace BifrostQL.Core.QueryModel
     }
     public class Cleanup : IDisposable
     {
-        public static Cleanup Skip = new Cleanup();
+        public static readonly Cleanup Skip = new();
         public Action? Action { get; init; }
         public void Dispose()
         {
+            GC.SuppressFinalize(this);
             Action?.Invoke();
         }
     }
 
-    public sealed class Field
+    public interface IField
+    {
+        string? Alias { get; init; }
+        string Name { get; init; }
+        object? Value { get; set; }
+        bool IncludeResult { get; set; }
+        List<IField> Fields { get; init; }
+        List<Argument> Arguments { get; init; }
+        List<string> Fragments { get; init; }
+        string ToString();
+        TableSqlData ToSqlData(IDbModel model, IField? parent = null, string basePath = "");
+        TableJoin ToJoin(IDbModel model, TableSqlData parent);
+    }
+
+    public sealed class Field : IField
     {
         public string? Alias { get; init; }
         public string Name { get; init; } = null!;
         public object? Value { get; set; }
         public bool IncludeResult { get; set; }
-        public List<Field> Fields { get; init; } = new List<Field>();
-        public List<Argument> Arguments { get; init; } = new List<Argument>();
-        public List<string> Fragments { get; init; } = new List<string>();
+        public List<IField> Fields { get; init; } = new();
+        public List<Argument> Arguments { get; init; } = new();
+        public List<string> Fragments { get; init; } = new();
         public override string ToString() => $"{Alias}:{Name}={Value}({Arguments.Count})/{Fields.Count}/{Fragments.Count}";
 
-        public static bool IsSpecialColumn(string name)
+        private static bool IsSpecialColumn(string name)
         {
-            if (name.StartsWith("_join_")) return true;
-            if (name.StartsWith("_single_")) return true; 
-            return false;
+            return name.StartsWith("_join_") || name.StartsWith("_single_");
         }
-        public TableSqlData ToSqlData(IDbModel model, Field? parent = null, string basePath = "")
+
+        public TableSqlData ToSqlData(IDbModel model, IField? parent = null, string basePath = "")
         {
             var path = basePath + "/" + Alias;
             var tableName = Name.Replace("_join_", "").Replace("_single_", "");
             var dbTable = model.GetTableByFullGraphQlName(tableName);
             var rawSort = (IEnumerable<object?>?) Arguments.FirstOrDefault(a => a.Name == "sort")?.Value;
             var sort = rawSort?.Cast<string>()?.ToList() ?? new List<string>();
-            var dataFields = Fields.FirstOrDefault(f => f.Name == "data")?.Fields ?? new List<Field>();
+            var dataFields = Fields.FirstOrDefault(f => f.Name == "data")?.Fields ?? new List<IField>();
             var fields = (IncludeResult ? dataFields : Fields).Where(f => !f.Name.StartsWith("__")).ToList();
             var result =  new TableSqlData
             {
@@ -188,7 +188,7 @@ namespace BifrostQL.Core.QueryModel
                 Sort = sort,
                 Limit = (int?)Arguments.FirstOrDefault(a => a.Name == "limit")?.Value,
                 Offset = (int?)Arguments.FirstOrDefault(a => a.Name == "offset")?.Value,
-                Filter = Arguments.Where(a => a.Name == "filter").Select(arg => TableFilter.FromObject(arg.Value, dbTable.DbName)).FirstOrDefault(),
+                Filter = Arguments.Where(a => a is { Name: "filter", Value: not null }).Select(arg => TableFilter.FromObject(arg.Value, dbTable.DbName)).FirstOrDefault(),
                 Links = fields
                             .Where((f) => f.Fields.Any() && IsSpecialColumn(f.Name) == false)
                             .Select(f => f.ToSqlData(model, this, path))
@@ -207,12 +207,12 @@ namespace BifrostQL.Core.QueryModel
             var onArg = Arguments.FirstOrDefault(a => a.Name == "on");
 
             if (onArg == null)
-                throw new ArgumentException("joins require columns specified with the on argument");
+                throw new ExecutionError($"join on table {parent.GraphQlName} missing on argument.");
 
-            var columns = (onArg.Value as IDictionary<string, object?>) ?? throw new ApplicationException("Unable to convert on value to object");
+            var columns = (onArg.Value as IDictionary<string, object?>) ?? throw new ExecutionError($"While joining table {parent.GraphQlName}, unable to convert on value to object");
             if (columns.Keys.Count != 1)
                 throw new ArgumentException("on joins only support two columns");
-            var relation = columns.Values.First() as IDictionary<string, object?> ?? throw new ApplicationException("Unable to convert on value to string");
+            var relation = columns.Values.First() as IDictionary<string, object?> ?? throw new ExecutionError($"While joining table {parent.GraphQlName}, unable to convert on value to a string");
             return new TableJoin
             {
                 Name = Name,
@@ -220,7 +220,7 @@ namespace BifrostQL.Core.QueryModel
                 FromTable = parent,
                 ConnectedTable = ToSqlData(model),
                 FromColumn = columns.Keys.First(),
-                ConnectedColumn = relation.Values?.First()?.ToString() ?? throw new ApplicationException("Unable to resolve join column"),
+                ConnectedColumn = relation.Values?.First()?.ToString() ?? throw new ExecutionError($"While joining table {parent.GraphQlName}, unable to resolve join column {relation?.Keys?.FirstOrDefault()}"),
                 Operator = relation.Keys.First(),
                 JoinType = Name.StartsWith("_join_") ? JoinType.Join: JoinType.Single,
             };

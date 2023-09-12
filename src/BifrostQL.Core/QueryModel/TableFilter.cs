@@ -1,4 +1,5 @@
 ﻿using BifrostQL.Core.Model;
+using GraphQL;
 
 namespace BifrostQL.Core.QueryModel
 {
@@ -109,7 +110,7 @@ namespace BifrostQL.Core.QueryModel
         }
         public static TableFilter FromObject(object? value, string tableName)
         {
-            var dictValue = value as Dictionary<string, object?> ?? throw new ArgumentNullException(nameof(value));
+            var dictValue = value as Dictionary<string, object?> ?? throw new ExecutionError($"Error filtering {tableName}, null filter value");
 
             var filter = StackFilters(dictValue, tableName);
             if (filter.And.Count == 0 && filter.Or.Count == 0 && filter.Next == null)
@@ -117,21 +118,20 @@ namespace BifrostQL.Core.QueryModel
             return filter;
         }
 
-        private static TableFilter StackFilters(IDictionary<string, object?>? filter, string? tableName)
+        private static TableFilter StackFilters(IDictionary<string, object?> filter, string? tableName)
         {
-            if (filter == null) throw new ArgumentNullException(nameof(filter));
             var kv = filter.FirstOrDefault();
-            if (string.IsNullOrWhiteSpace(kv.Key)) throw new ArgumentOutOfRangeException(nameof(filter));
+            if (string.IsNullOrWhiteSpace(kv.Key)) throw new ExecutionError($"Filter on {tableName} has empty property name");
             return kv switch
             {
                 { Key: "and" } => new TableFilter
                 {
-                    And = ((IEnumerable<object?>)kv.Value!).Select(v => StackFilters((IDictionary<string, object?>?)v, tableName)).ToList(),
+                    And = ((IEnumerable<object>)kv.Value!).Select(v => StackFilters((IDictionary<string, object?>)v, tableName)).ToList(),
                     FilterType = FilterType.And,
                 },
                 { Key: "or" } => new TableFilter
                 {
-                    Or = ((IEnumerable<object?>)kv.Value!).Select(v => StackFilters((IDictionary<string, object?>?)v, tableName)).ToList(),
+                    Or = ((IEnumerable<object>)kv.Value!).Select(v => StackFilters((IDictionary<string, object?>)v, tableName)).ToList(),
                     FilterType = FilterType.Or,
                 },
                 _ when kv.Value is IDictionary<string, object?> val => new TableFilter
@@ -141,7 +141,7 @@ namespace BifrostQL.Core.QueryModel
                     TableName = tableName,
                     FilterType = FilterType.Join,
                 },
-                _ when kv.Value == null && kv.Key == null => throw new ArgumentNullException(),
+                _ when kv.Value == null && kv.Key == null => throw new ExecutionError($"Filter on {tableName} has null key and value."),
                 _ => new TableFilter
                 {
                     RelationName = kv.Key,

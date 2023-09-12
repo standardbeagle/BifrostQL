@@ -146,6 +146,31 @@ namespace BifrostQL.Core.QueryModel
         }
 
         [Fact]
+        public async Task FilterTestNullSuccess()
+        {
+            var ctx = new SqlContext();
+            var sut = new SqlVisitor();
+
+            var ast = Parser.Parse("query { work__shops(filter: null ) { data { id number } } }");
+            await sut.VisitAsync(ast, ctx);
+            var tables = ctx.GetFinalTables(GetFakeModel());
+
+            tables.Should().ContainSingle()
+                .Which.Should().BeEquivalentTo(
+                    new
+                    {
+                        TableName = "work shops",
+                        Filter = (TableFilter?)null,
+                        Limit = (int?)null,
+                        Offset = (int?)null,
+                        Sort = new string[] { },
+                        Joins = new object[] { },
+                        Links = new object[] { },
+                        //ColumnNames = new string[] { "id", "number" }
+                    });
+        }
+
+        [Fact]
         public async Task FilterTestSuccess()
         {
             var ctx = new SqlContext();

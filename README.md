@@ -18,26 +18,35 @@ Mutations are generated for inserts, updates, upserts, and deletes. BifrostQL re
  - [x] Support dynamic parent/single object joins
  - [x] Use column names to infer simple joins between tables
  - [x] Add Single join ref to filters
- - [ ] Add support for integrating oauth2 authentication services
+ - [x] Add support for integrating oauth2 authentication services
+ - [x] Switch to direct graphQL schema generation
+ - [x] Add multi column filter options
+ - [x] Add multi colmun joins using relations
  - [ ] Add configuration to automatically fill audit type columns
- - [ ] Add configuration to automatically generate filters based on userid/column mappings 
- - [ ] Add multi column filter options
- - [ ] Add multi colmun joins using relations
- - [ ] Add simplified many-to-many join syntax
- - [ ] Use foreign keys to infer simple joins between tables
  - [ ] Add support for soft deletes
- - [ ] Add support to use database auth
  - [ ] Add aggregation operators
- - [ ] Support multiple schemas as fields, and joins between schemas
+ - [ ] Add Generic table data type
+ - [ ] Add GraphQLJSON support
  - [ ] Stored procedures
  - [ ] Raw SQL queries, maybe add raw filter arguments as well
+ - [ ] Add info/status endpoint update response headers with bifrost as the server
+ - [ ] SqlLite
  - [ ] PostreSQL
  - [ ] MySQL
- - [ ] SqlLite
  - [ ] Add Enum designation to lookup tables
- - [ ] Switch to direct graphQL schema generation
- - [ ] Support for collation
+ - [ ] Batched operation commands
+ - [ ] Inferred batch object tree sync
+ - [ ] Add configuration to automatically generate filters based on userid/column mappings 
+ - [ ] Add simplified many-to-many join syntax
+ - [ ] Use foreign keys to infer simple joins between tables
+ - [ ] Support multiple schemas as prefixes
+ - [ ] Support multiple schemas as fields, and joins between schemas
+ - [ ] Multiple databases as endpoints
+ - [ ] Multiple databases as fields
+ - [ ] Add support to use database auth
  - [ ] Try out pivot tables for kicks
+ - [ ] Multiple configuration sources, config file, database table, config database
+ - [ ] Configuration file builder/importer
 
  ### Why BifrostQL
  At StandardBeagle we've built many prototypes, and like using GraphQL. Over time we've started to use applications like [hasura](https://hasura.io/) to roll out apis for prototypes quickly. We wanted to try and build something similar, but that put more power in the hands of the front end developer. 

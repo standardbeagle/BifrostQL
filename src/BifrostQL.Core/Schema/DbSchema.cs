@@ -58,82 +58,48 @@ namespace BifrostQL.Core.Schema
         public static string SchemaTextFromModel(IDbModel model, bool includeDynamicJoins = true)
         {
             var builder = new StringBuilder();
+            var tableGenerators = model.Tables.Select(t => new TableSchemaGenerator(t)).ToList();
             builder.AppendLine("schema { query: database mutation: databaseInput }");
             builder.AppendLine("type database {");
-            foreach (var table in model.Tables)
+            foreach (var generator in tableGenerators)
             {
-                builder.AppendLine($"{table.GraphQlName}(limit: Int, offset: Int, sort: [{table.GraphQlName}SortEnum!] filter: TableFilter{table.GraphQlName}Input): {table.GraphQlName}Paged");
+                builder.AppendLine(generator.GetTableFieldDefinition());
             }
             builder.AppendLine("_dbSchema(graphQlName: String): [dbTableSchema!]!");
             builder.AppendLine("}");
 
-            foreach (var table in model.Tables)
+            foreach (var generator in tableGenerators)
             {
-                builder.AppendLine($"type {table.GraphQlName} {{");
-                foreach (var column in table.Columns)
-                {
-                    builder.AppendLine($"\t{column.GraphQlName} : {GetGraphQlTypeName(column.DataType, column.IsNullable)}");
-                }
-                foreach (var link in table.SingleLinks)
-                {
-                    builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : {link.Value.ParentTable.GraphQlName}");
-                }
-                foreach (var link in table.MultiLinks)
-                {
-                    builder.AppendLine($"\t{link.Value.ChildTable.GraphQlName}(filter: TableFilter{link.Value.ChildTable.GraphQlName}Input) : [{link.Value.ChildTable.GraphQlName}]");
-                }
-
-                if (includeDynamicJoins)
-                {
-                    foreach (var joinTable in model.Tables)
-                    {
-                        builder.AppendLine(
-                            $"\t_join_{joinTable.GraphQlName}(on: TableOn{table.GraphQlName}{joinTable.GraphQlName}, filter: TableFilter{joinTable.GraphQlName}Input, sort: [{joinTable.GraphQlName}SortEnum!]) : [{joinTable.GraphQlName}!]!");
-                        builder.AppendLine(
-                            $"\t_single_{joinTable.GraphQlName}(on: [String!]) : {joinTable.GraphQlName}");
-                    }
-                }
-
-                builder.AppendLine("}");
-            }
-            foreach (var table in model.Tables)
-            {
-                builder.AppendLine($"type {table.GraphQlName}Paged {{");
-                builder.AppendLine($"\tdata:[{table.GraphQlName}]");
-                builder.AppendLine("\ttotal: Int!");
-                builder.AppendLine("\toffset: Int");
-                builder.AppendLine("\tlimit: Int");
-                builder.AppendLine("}");
+                builder.AppendLine(generator.GetTableTypeDefinition(model, includeDynamicJoins));
+                builder.AppendLine(generator.GetPagedTableTypeDefinition());
             }
 
             builder.AppendLine("type databaseInput {");
-            foreach (var table in model.Tables)
+            foreach (var generator in tableGenerators)
             {
-                builder.AppendLine($"\t{table.GraphQlName}(insert: Insert{table.GraphQlName}, update: Update{table.GraphQlName}, upsert: Upsert{table.GraphQlName}, delete: Delete{table.GraphQlName}) : Int");
+                builder.AppendLine(generator.GetInputFieldDefinition());
             }
             builder.AppendLine("}");
 
-            foreach (var table in model.Tables)
+            foreach (var generator in tableGenerators)
             {
-                var generator = new TableSchemaGenerator(table);
-
-                builder.AppendLine(generator.GetInputType("Insert", IdentityType.None));
-                builder.AppendLine(generator.GetInputType("Update", IdentityType.Required));
-                builder.AppendLine(generator.GetInputType("Upsert", IdentityType.Optional));
-                builder.AppendLine(generator.GetInputType("Delete", IdentityType.Optional, true));
+                builder.AppendLine(generator.GetInputParameterType("Insert", IdentityType.None));
+                builder.AppendLine(generator.GetInputParameterType("Update", IdentityType.Required));
+                builder.AppendLine(generator.GetInputParameterType("Upsert", IdentityType.Optional));
+                builder.AppendLine(generator.GetInputParameterType("Delete", IdentityType.Optional, true));
 
                 builder.AppendLine(generator.GetTableFilterDefinition());
 
                 builder.AppendLine(generator.GetJoinDefinitions(model));
 
-                builder.AppendLine(GetOnType($"{table.GraphQlName}Enum"));
+                builder.AppendLine(generator.GetTableJoinType());
 
                 builder.AppendLine(generator.GetTableEnumDefinition());
-                //builder.AppendLine(generator.GetTableColumnEnumDefinition());
+                builder.AppendLine(generator.GetTableColumnEnumDefinition());
                 builder.AppendLine(generator.GetTableSortEnumDefinition());
             }
 
-            //Define the column types of all the columns in the database, needs to be specific to the connected database, and distinct because of GraphQL.
+            //Define the filter types of all the columns in the database, needs to be specific to the connected database, and distinct because of GraphQL.
             foreach (var gqlType in model.Tables.SelectMany(t => t.Columns).Select(c => GetSimpleGraphQlTypeName(c.DataType)).Distinct())
             {
                 builder.AppendLine(GetFilterType(gqlType));

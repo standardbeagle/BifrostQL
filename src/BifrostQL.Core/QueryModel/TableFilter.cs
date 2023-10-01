@@ -134,14 +134,14 @@ namespace BifrostQL.Core.QueryModel
                     Or = ((IEnumerable<object>)kv.Value!).Select(v => StackFilters((IDictionary<string, object?>)v, tableName)).ToList(),
                     FilterType = FilterType.Or,
                 },
-                _ when kv.Value is IDictionary<string, object?> val => new TableFilter
+                _ when kv is { Value: IDictionary<string, object?> val } => new TableFilter
                 {
                     ColumnName = kv.Key,
                     Next = StackFilters(val, null),
                     TableName = tableName,
                     FilterType = FilterType.Join,
                 },
-                _ when kv.Value == null && kv.Key == null => throw new ExecutionError($"Filter on {tableName} has null key and value."),
+                _ when kv is { Value: null, Key: null } => throw new ExecutionError($"Filter on {tableName} has null key and value."),
                 _ => new TableFilter
                 {
                     RelationName = kv.Key,

@@ -125,6 +125,35 @@ namespace BifrostQL.Core.QueryModel
         }
 
         [Fact]
+        public async Task MultipleFilterSameTableQuerySuccess()
+        {
+            var ctx = new SqlContext();
+            var visitor = new SqlVisitor();
+
+            var model = new DbModel { Tables = GetFakeTables() };
+            var ast = Parser.Parse(
+                "query { work__shops { data { id } } work__shops(filter: null) { data { id } } work__shops(filter: { id: { _eq: 1} }) { data { id } }}");
+            await visitor.VisitAsync(ast, ctx);
+            var sqls = ctx.GetFinalTables(model).Select(t => t.ToSql(model)).ToArray();
+            sqls.Should().HaveCount(3);
+            sqls[0].Should().Equal(new Dictionary<string, string>
+            {
+                { "work shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY (SELECT NULL) OFFSET 0 ROWS" },
+                { "work shops_count", "SELECT COUNT(*) FROM [dbo].[work shops]" },
+            });
+            sqls[1].Should().Equal(new Dictionary<string, string>
+            {
+                { "work shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY (SELECT NULL) OFFSET 0 ROWS" },
+                { "work shops_count", "SELECT COUNT(*) FROM [dbo].[work shops]" },
+            });
+            sqls[2].Should().Equal(new Dictionary<string, string>
+            {
+                { "work shops", "SELECT [id] [id] FROM [dbo].[work shops] WHERE [work shops].[id] = '1' ORDER BY (SELECT NULL) OFFSET 0 ROWS" },
+                { "work shops_count", "SELECT COUNT(*) FROM [dbo].[work shops] WHERE [work shops].[id] = '1'" },
+            });
+        }
+
+        [Fact]
         public async Task SimpleSingleLinkQueryException()
         {
             var ctx = new SqlContext();
@@ -141,7 +170,7 @@ namespace BifrostQL.Core.QueryModel
                     { "sessions->work__shops", "SELECT [a].[JoinId] [src_id], [b].[id] AS [id],[b].[number] AS [number] FROM (SELECT DISTINCT [workshopid] AS JoinId FROM [sessions]) [a] INNER JOIN [work shops] [b] ON [a].[JoinId] = [b].[id]" },
                 });
         }
-        
+
         [Fact]
         public async Task SimpleSingleLinkQuerySuccess()
         {
@@ -166,7 +195,7 @@ namespace BifrostQL.Core.QueryModel
             var ctx = new SqlContext();
             var visitor = new SqlVisitor();
 
-            var model = new DbModel { Tables =  GetFakeTables() };
+            var model = new DbModel { Tables = GetFakeTables() };
             var ast = Parser.Parse("query { sessions { data { id workshop: _single_Work__shops(on: {workshopid: {_eq: id }}) { id number } } } }");
             await visitor.VisitAsync(ast, ctx);
             var sqls = ctx.GetFinalTables(model).Select(t => t.ToSql(model)).ToArray();

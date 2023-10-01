@@ -8,6 +8,53 @@ namespace BifrostQL.Core.Schema
 {
     public static class DbSchema
     {
+        public static ISchema SchemaFromModel(IDbModel model, bool includeDynamicJoins)
+        {
+            var schemaText = SchemaTextFromModel(model, includeDynamicJoins);
+            var schema = GraphQL.Types.Schema.For<DbSchemaBuilder>(schemaText, _ =>
+            {
+                var query = _.Types.For("database");
+                var mut = _.Types.For("databaseInput");
+                foreach (var table in model.Tables)
+                {
+                    var tableField = query.FieldFor(table.GraphQlName);
+                    tableField.Resolver = new DbTableResolver();
+                    var tableType = _.Types.For(table.GraphQlName);
+
+                    var tableInsertField = mut.FieldFor(table.GraphQlName);
+                    tableInsertField.Resolver = new DbTableMutateResolver();
+
+                    foreach (var column in table.Columns)
+                    {
+                        var columnField = tableType.FieldFor(column.GraphQlName);
+                        columnField.Resolver = DbJoinFieldResolver.Instance;
+                    };
+                    foreach (var singleLink in table.SingleLinks)
+                    {
+                        var columnField = tableType.FieldFor(singleLink.Value.ParentTable.GraphQlName);
+                        columnField.Resolver = DbJoinFieldResolver.Instance;
+                    };
+                    foreach (var multiLink in table.MultiLinks)
+                    {
+                        var columnField = tableType.FieldFor(multiLink.Value.ChildTable.GraphQlName);
+                        columnField.Resolver = DbJoinFieldResolver.Instance;
+                    };
+                    foreach (var joinTable in model.Tables)
+                    {
+                        var joinField = tableType.FieldFor($"_join_{joinTable.GraphQlName}");
+                        joinField.Resolver = DbJoinFieldResolver.Instance;
+                        var singleField = tableType.FieldFor($"_single_{joinTable.GraphQlName}");
+                        singleField.Resolver = DbJoinFieldResolver.Instance;
+                    }
+                }
+
+                var dbSchema = query.FieldFor("_dbSchema");
+                dbSchema.Resolver = new DbSchemaResolver(model);
+
+            });
+            return schema;
+        }
+
         public static string SchemaTextFromModel(IDbModel model, bool includeDynamicJoins = true)
         {
             var builder = new StringBuilder();
@@ -68,66 +115,25 @@ namespace BifrostQL.Core.Schema
 
             foreach (var table in model.Tables)
             {
-                builder.AppendLine(GetInputType("Insert", table, IdentityType.None));
-                builder.AppendLine(GetInputType("Update", table, IdentityType.Required));
-                builder.AppendLine(GetInputType("Upsert", table, IdentityType.Optional));
-                builder.AppendLine(GetInputType("Delete", table, IdentityType.Optional, true));
+                var generator = new TableSchemaGenerator(table);
 
-                builder.AppendLine($"input TableFilter{table.GraphQlName}Input {{");
-                foreach (var column in table.Columns)
-                {
-                    builder.AppendLine($"\t{column.GraphQlName} : FilterType{GetSimpleGraphQlTypeName(column.DataType)}Input");
-                }
-                foreach (var link in table.SingleLinks)
-                {
-                    builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : TableFilter{link.Value.ParentTable.GraphQlName}Input");
-                }
-                builder.AppendLine($"and: [TableFilter{table.GraphQlName}Input!]");
-                builder.AppendLine($"or: [TableFilter{table.GraphQlName}Input!]");
-                builder.AppendLine("}");
-                
-                foreach (var joinTable in model.Tables)
-                {
-                    builder.AppendLine($"input TableOn{table.GraphQlName}{joinTable.GraphQlName} {{");
-                    foreach (var column in table.Columns)
-                    {
-                        builder.AppendLine($"\t{column.GraphQlName} : FilterType{joinTable.GraphQlName}EnumInput");
-                    }
+                builder.AppendLine(generator.GetInputType("Insert", IdentityType.None));
+                builder.AppendLine(generator.GetInputType("Update", IdentityType.Required));
+                builder.AppendLine(generator.GetInputType("Upsert", IdentityType.Optional));
+                builder.AppendLine(generator.GetInputType("Delete", IdentityType.Optional, true));
 
-                    builder.AppendLine($"and: [TableOn{table.GraphQlName}{joinTable.GraphQlName}!]");
-                    builder.AppendLine($"or: [TableOn{table.GraphQlName}{joinTable.GraphQlName}!]");
+                builder.AppendLine(generator.GetTableFilterDefinition());
 
-                    //foreach (var link in table.SingleLinks)
-                    //{
-                    //    builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : {link.Value.ParentTable.GraphQlName}");
-                    //}
-                    builder.AppendLine("}");
-                }
+                builder.AppendLine(generator.GetJoinDefinitions(model));
 
                 builder.AppendLine(GetOnType($"{table.GraphQlName}Enum"));
+
+                builder.AppendLine(generator.GetTableEnumDefinition());
+                //builder.AppendLine(generator.GetTableColumnEnumDefinition());
+                builder.AppendLine(generator.GetTableSortEnumDefinition());
             }
 
-            foreach (var table in model.Tables)
-            {
-                builder.AppendLine($"enum {table.GraphQlName}Enum {{");
-                foreach (var column in table.Columns)
-                {
-                    builder.AppendLine(column.GraphQlName);
-                }
-                builder.AppendLine("}");
-            }
-
-            foreach (var table in model.Tables)
-            {
-                builder.AppendLine($"enum {table.GraphQlName}SortEnum {{");
-                foreach (var column in table.Columns)
-                {
-                    builder.AppendLine(column.GraphQlName + "_asc");
-                    builder.AppendLine(column.GraphQlName + "_desc");
-                }
-                builder.AppendLine("}");
-            }
-
+            //Define the column types of all the columns in the database, needs to be specific to the connected database, and distinct because of GraphQL.
             foreach (var gqlType in model.Tables.SelectMany(t => t.Columns).Select(c => GetSimpleGraphQlTypeName(c.DataType)).Distinct())
             {
                 builder.AppendLine(GetFilterType(gqlType));
@@ -171,53 +177,6 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine("}");
             return builder.ToString();
 
-        }
-
-        public static ISchema SchemaFromModel(IDbModel model, bool includeDynamicJoins)
-        {
-            var schemaText = SchemaTextFromModel(model, includeDynamicJoins);
-            var schema = GraphQL.Types.Schema.For<DbSchemaBuilder>(schemaText, _ =>
-            {
-                var query = _.Types.For("database");
-                var mut = _.Types.For("databaseInput");
-                foreach (var table in model.Tables)
-                {
-                    var tableField = query.FieldFor(table.GraphQlName);
-                    tableField.Resolver = new DbTableResolver();
-                    var tableType = _.Types.For(table.GraphQlName);
-
-                    var tableInsertField = mut.FieldFor(table.GraphQlName);
-                    tableInsertField.Resolver = new DbTableMutateResolver();
-
-                    foreach (var column in table.Columns)
-                    {
-                        var columnField = tableType.FieldFor(column.GraphQlName);
-                        columnField.Resolver = DbJoinFieldResolver.Instance;
-                    };
-                    foreach (var singleLink in table.SingleLinks)
-                    {
-                        var columnField = tableType.FieldFor(singleLink.Value.ParentTable.GraphQlName);
-                        columnField.Resolver = DbJoinFieldResolver.Instance;
-                    };
-                    foreach (var multiLink in table.MultiLinks)
-                    {
-                        var columnField = tableType.FieldFor(multiLink.Value.ChildTable.GraphQlName);
-                        columnField.Resolver = DbJoinFieldResolver.Instance;
-                    };
-                    foreach (var joinTable in model.Tables)
-                    {
-                        var joinField = tableType.FieldFor($"_join_{joinTable.GraphQlName}");
-                        joinField.Resolver = DbJoinFieldResolver.Instance;
-                        var singleField = tableType.FieldFor($"_single_{joinTable.GraphQlName}");
-                        singleField.Resolver = DbJoinFieldResolver.Instance;
-                    }
-                }
-
-                var dbSchema = query.FieldFor("_dbSchema");
-                dbSchema.Resolver = new DbSchemaResolver(model);
-
-            });
-            return schema;
         }
 
         public static string GetGraphQlInsertTypeName(string dataType, bool isNullable = false)
@@ -346,32 +305,6 @@ namespace BifrostQL.Core.Schema
             foreach (var (fieldName, type) in stringFilters)
             {
                 result.AppendLine($"\t{fieldName} : {type}");
-            }
-            result.AppendLine("}");
-            return result.ToString();
-        }
-
-
-        public static string GetInputType(string action, TableDto table, IdentityType identityType, bool isDelete = false)
-        {
-            var result = new StringBuilder();
-            var name = action + table.GraphQlName;
-            result.AppendLine($"input {name} {{");
-            foreach (var column in table.Columns)
-            {
-                if (identityType == IdentityType.None && column.IsIdentity)
-                    continue;
-
-                var isNullable = column.IsNullable;
-                if (column.IsCreatedOnColumn || column.IsCreatedByColumn || column.IsUpdatedByColumn || column.IsUpdatedOnColumn)
-                    isNullable = true;
-                if (identityType == IdentityType.Optional && column.IsIdentity)
-                    isNullable = true;
-                if (identityType == IdentityType.Required && column.IsIdentity)
-                    isNullable = false;
-
-                if (isDelete) isNullable = true;
-                result.AppendLine($"\t{column.GraphQlName} : {GetGraphQlInsertTypeName(column.DataType, isNullable)}");
             }
             result.AppendLine("}");
             return result.ToString();

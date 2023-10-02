@@ -10,7 +10,7 @@ namespace BifrostQL.Core.QueryModel
 {
     public class SqlVisitor : ASTVisitor<ISqlContext>
     {
-        protected async override ValueTask VisitFieldAsync(GraphQLField field, ISqlContext context)
+        protected override async ValueTask VisitFieldAsync(GraphQLField field, ISqlContext context)
         {
             if (field == null)
                 return;
@@ -18,7 +18,7 @@ namespace BifrostQL.Core.QueryModel
             await base.VisitFieldAsync(field, context);
             context.PopField();
         }
-        protected async override ValueTask VisitArgumentAsync(GraphQLArgument argument, ISqlContext context)
+        protected override async ValueTask VisitArgumentAsync(GraphQLArgument argument, ISqlContext context)
         {
             context.PushArgument(argument.Name.StringValue);
             await base.VisitArgumentAsync(argument, context);
@@ -42,7 +42,7 @@ namespace BifrostQL.Core.QueryModel
             context.Setters.Pop();
         }
 
-        protected async override ValueTask VisitVariableAsync(GraphQLVariable variable, ISqlContext context)
+        protected override async ValueTask VisitVariableAsync(GraphQLVariable variable, ISqlContext context)
         {
             var foundVariable = context.Variables.FirstOrDefault(v => v.Name == variable.Name.StringValue);
             if (foundVariable == null)
@@ -52,13 +52,13 @@ namespace BifrostQL.Core.QueryModel
             await base.VisitVariableAsync(variable, context);
         }
 
-        protected async override ValueTask VisitFragmentSpreadAsync(GraphQLFragmentSpread spread, ISqlContext context)
+        protected override async ValueTask VisitFragmentSpreadAsync(GraphQLFragmentSpread spread, ISqlContext context)
         {
             context.AddFragmentSpread(spread.FragmentName.Name.StringValue);
             await base.VisitFragmentSpreadAsync(spread, context);
         }
 
-        protected async override ValueTask VisitFragmentDefinitionAsync(GraphQLFragmentDefinition fragmentDefinition, ISqlContext context)
+        protected override async ValueTask VisitFragmentDefinitionAsync(GraphQLFragmentDefinition fragmentDefinition, ISqlContext context)
         {
             context.PushFragment(fragmentDefinition.FragmentName.Name.StringValue, fragmentDefinition.FragmentName.Name.StringValue);
             await base.VisitFragmentDefinitionAsync(fragmentDefinition, context);
@@ -102,7 +102,7 @@ namespace BifrostQL.Core.QueryModel
             context.AddValue(value.Name.StringValue);
             return base.VisitEnumValueAsync(value, context);
         }
-        protected async override ValueTask VisitListValueAsync(GraphQLListValue listType, ISqlContext context)
+        protected override async ValueTask VisitListValueAsync(GraphQLListValue listType, ISqlContext context)
         {
             var result = new List<object?>();
             context.Setters.Push(value => result.Add(value));
@@ -112,7 +112,7 @@ namespace BifrostQL.Core.QueryModel
             context.AddValue(result);
         }
 
-        protected async override ValueTask VisitDocumentAsync(GraphQLDocument document, ISqlContext context)
+        protected override async ValueTask VisitDocumentAsync(GraphQLDocument document, ISqlContext context)
         {
             await base.VisitDocumentAsync(document, context);
             context.SyncFragments();

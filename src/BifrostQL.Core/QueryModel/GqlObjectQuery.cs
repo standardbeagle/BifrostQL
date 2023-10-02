@@ -8,7 +8,7 @@ namespace BifrostQL.Core.QueryModel
         Single = 1,
     }
 
-    public sealed class TableSqlData
+    public sealed class GqlObjectQuery
     {
         public TableJoin? JoinFrom { get; set; }
         public string SchemaName { get; set; } = "";
@@ -22,16 +22,16 @@ namespace BifrostQL.Core.QueryModel
         public string? Alias { get; set; }
         public string Path { get; set; } = "";
         public string KeyName => $"{Alias ?? TableName}";
-        public List<(string GraphQlName, string DbName)> Columns { get; init; } = new List<(string GraphQlName, string DbName)>();
+        public List<(string GraphQlName, string DbName)> Columns { get; init; } = new ();
 
-        public List<TableSqlData> Links { get; set; } = new List<TableSqlData>();
-        public List<string> Sort { get; set; } = new List<string>();
+        public List<GqlObjectQuery> Links { get; set; } = new ();
+        public List<string> Sort { get; set; } = new ();
         public TableFilter? Filter { get; set; }
         public int? Limit { get; set; }
         public int? Offset { get; set; }
         public bool IsFragment { get; set; }
         public bool IncludeResult { get; set; }
-        public List<TableJoin> Joins { get; set; } = new List<TableJoin>();
+        public List<TableJoin> Joins { get; set; } = new ();
         private IEnumerable<TableJoin> RecurseJoins => Joins.Concat(Joins.SelectMany(j => j.ConnectedTable.RecurseJoins));
 
         public IEnumerable<(string GraphQlName, string DbName)> FullColumnNames =>

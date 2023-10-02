@@ -7,11 +7,11 @@ namespace BifrostQL.Core.Resolvers
     public class ReaderEnum : IEnumerable<object?>
     {
         private readonly IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> _tables;
-        private readonly TableSqlData _tableSql;
+        private readonly GqlObjectQuery _tableSql;
 
-        public ReaderEnum(TableSqlData tableSqlData, IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> tableData)
+        public ReaderEnum(GqlObjectQuery gqlObjectQuery, IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> tableData)
         {
-            _tableSql = tableSqlData;
+            _tableSql = gqlObjectQuery;
             _tables = tableData;
         }
 
@@ -33,7 +33,7 @@ namespace BifrostQL.Core.Resolvers
 
             var join = _tableSql.GetJoin(alias, name);
             if (join == null)
-                throw new ExecutionError($"Unable to find field: {name} on table: {_tableSql.Alias ?? _tableSql.GraphQlName }");
+                throw new ExecutionError($"Unable to find field: {name} on table: {_tableSql.Alias}:{_tableSql.GraphQlName }");
             var keyFound = table.index.TryGetValue(join.FromColumn, out int keyIndex);
             if (!keyFound)
                 throw new ExecutionError("join column not found.");

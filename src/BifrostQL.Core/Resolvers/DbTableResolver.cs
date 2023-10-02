@@ -14,13 +14,15 @@ namespace BifrostQL.Core.Resolvers
 
     public class DbTableResolver : IDbTableResolver
     {
-        public DbTableResolver()
+        private readonly IDbTable _table;
+        public DbTableResolver(IDbTable table)
         {
+            _table = table;
         }
         public ValueTask<object?> ResolveAsync(IResolveFieldContext context)
         {
             var factory = (ITableReaderFactory)(context.InputExtensions["tableReaderFactory"] ?? throw new InvalidDataException("tableReaderFactory not configured"));
-            return factory.ResolveAsync(context);
+            return factory.ResolveAsync(context, _table);
         }
     }
 
@@ -35,18 +37,19 @@ namespace BifrostQL.Core.Resolvers
 
     public interface ITableReaderFactory
     {
-        public ValueTask<object?> ResolveAsync(IResolveFieldContext context);
+        public ValueTask<object?> ResolveAsync(IResolveFieldContext context, IDbTable table);
     }
+
     public sealed class TableReaderFactory : ITableReaderFactory
     {
-        private List<TableSqlData>? _tables = null;
+        private List<GqlObjectQuery>? _tables = null;
         private readonly IDbModel _dbModel;
 
         public TableReaderFactory(IDbModel dbModel)
         {
             _dbModel = dbModel;
         }
-        public async ValueTask<object?> ResolveAsync(IResolveFieldContext context)
+        public async ValueTask<object?> ResolveAsync(IResolveFieldContext context, IDbTable dbTable)
         {
             if (context.SubFields == null)
                 throw new ArgumentNullException(nameof(context) + ".SubFields");
@@ -55,6 +58,7 @@ namespace BifrostQL.Core.Resolvers
             var alias = context.FieldAst.Alias?.Name.StringValue;
             var graphqlName = context.FieldAst.Name.StringValue;
             var table = _tables.First(t => (alias != null && t.Alias == alias) || t.GraphQlName == graphqlName);
+            //var table = _tables.First(t => t.TableName == dbTable.DbName);
             var conFactory = (IDbConnFactory)(context.InputExtensions["connFactory"] ?? throw new InvalidDataException("connection factory is not configured"));
 
             var data = LoadData(table, conFactory);
@@ -73,7 +77,7 @@ namespace BifrostQL.Core.Resolvers
             return new ReaderEnum(table, data);
         }
 
-        private async Task<List<TableSqlData>> GetTables(IResolveFieldContext context)
+        private async Task<List<GqlObjectQuery>> GetTables(IResolveFieldContext context)
         {
             var visitor = new SqlVisitor();
             var sqlContext = new SqlContext() { Variables = context.Variables };
@@ -83,7 +87,7 @@ namespace BifrostQL.Core.Resolvers
             return newTables;
         }
 
-        private IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> LoadData(TableSqlData table, IDbConnFactory connFactory)
+        private IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> LoadData(GqlObjectQuery table, IDbConnFactory connFactory)
         {
             var sqlList = table.ToSql(_dbModel);
             var resultNames = sqlList.Keys.ToArray();

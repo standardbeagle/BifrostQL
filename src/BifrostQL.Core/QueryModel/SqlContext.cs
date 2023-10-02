@@ -38,7 +38,7 @@ namespace BifrostQL.Core.QueryModel
         {
             Setters.FirstOrDefault()?.Invoke(value);
         }
-        public List<TableSqlData> GetFinalTables(IDbModel model)
+        public List<GqlObjectQuery> GetFinalTables(IDbModel model)
         {
             return Fields.Select(f => f.ToSqlData(model)).ToList();
         }
@@ -146,8 +146,8 @@ namespace BifrostQL.Core.QueryModel
         List<Argument> Arguments { get; init; }
         List<string> Fragments { get; init; }
         string ToString();
-        TableSqlData ToSqlData(IDbModel model, IField? parent = null, string basePath = "");
-        TableJoin ToJoin(IDbModel model, TableSqlData parent);
+        GqlObjectQuery ToSqlData(IDbModel model, IField? parent = null, string basePath = "");
+        TableJoin ToJoin(IDbModel model, GqlObjectQuery parent);
     }
 
     public sealed class Field : IField
@@ -166,7 +166,7 @@ namespace BifrostQL.Core.QueryModel
             return name.StartsWith("_join_") || name.StartsWith("_single_");
         }
 
-        public TableSqlData ToSqlData(IDbModel model, IField? parent = null, string basePath = "")
+        public GqlObjectQuery ToSqlData(IDbModel model, IField? parent = null, string basePath = "")
         {
             var path = basePath + "/" + Alias;
             var tableName = Name.Replace("_join_", "").Replace("_single_", "");
@@ -175,7 +175,7 @@ namespace BifrostQL.Core.QueryModel
             var sort = rawSort?.Cast<string>()?.ToList() ?? new List<string>();
             var dataFields = Fields.FirstOrDefault(f => f.Name == "data")?.Fields ?? new List<IField>();
             var fields = (IncludeResult ? dataFields : Fields).Where(f => !f.Name.StartsWith("__")).ToList();
-            var result =  new TableSqlData
+            var result =  new GqlObjectQuery
             {
                 Alias = Alias,
                 TableName = dbTable.DbName,
@@ -202,7 +202,7 @@ namespace BifrostQL.Core.QueryModel
             return result;
         }
 
-        public TableJoin ToJoin(IDbModel model, TableSqlData parent)
+        public TableJoin ToJoin(IDbModel model, GqlObjectQuery parent)
         {
             var onArg = Arguments.FirstOrDefault(a => a.Name == "on");
 

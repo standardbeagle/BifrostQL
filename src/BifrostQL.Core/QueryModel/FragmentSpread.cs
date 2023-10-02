@@ -3,7 +3,7 @@
     public sealed class FragmentSpread
     {
         public string FragmentName { get; init; } = null!;
-        public TableSqlData? Table { get; set; }
+        public GqlObjectQuery? Table { get; set; }
 
     }
 }

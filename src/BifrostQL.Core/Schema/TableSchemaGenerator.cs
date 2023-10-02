@@ -28,7 +28,7 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine($"type {_table.GraphQlName} {{");
             foreach (var column in _table.Columns)
             {
-                builder.AppendLine($"\t{column.GraphQlName} : {DbSchema.GetGraphQlTypeName(column.DataType, column.IsNullable)}");
+                builder.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetGraphQlTypeName(column.DataType, column.IsNullable)}");
             }
             foreach (var link in _table.SingleLinks)
             {
@@ -53,6 +53,11 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine("}");
 
             return builder.ToString();
+        }
+
+        public string GetTableAggregateDefinition()
+        {
+            return $"_agg_{_table.GraphQlName}(operation: AggregateOperations! value: {_table.GraphQlName}_columns!) : Float";
         }
 
         public string GetPagedTableTypeDefinition()
@@ -128,7 +133,7 @@ namespace BifrostQL.Core.Schema
                     isNullable = false;
 
                 if (isDelete) isNullable = true;
-                result.AppendLine($"\t{column.GraphQlName} : {DbSchema.GetGraphQlInsertTypeName(column.DataType, isNullable)}");
+                result.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetGraphQlInsertTypeName(column.DataType, isNullable)}");
             }
             result.AppendLine("}");
             return result.ToString();
@@ -164,7 +169,7 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine($"input TableFilter{_table.GraphQlName}Input {{");
             foreach (var column in _table.Columns)
             {
-                builder.AppendLine($"\t{column.GraphQlName} : FilterType{DbSchema.GetSimpleGraphQlTypeName(column.DataType)}Input");
+                builder.AppendLine($"\t{column.GraphQlName} : FilterType{SchemaGenerator.GetSimpleGraphQlTypeName(column.DataType)}Input");
             }
             foreach (var link in _table.SingleLinks)
             {
@@ -185,7 +190,7 @@ namespace BifrostQL.Core.Schema
 
         public string GetTableJoinType()
         {
-            return DbSchema.GetOnType($"{_table.GraphQlName}Enum");
+            return SchemaGenerator.GetOnType($"{_table.GraphQlName}Enum");
         }
     }
 }

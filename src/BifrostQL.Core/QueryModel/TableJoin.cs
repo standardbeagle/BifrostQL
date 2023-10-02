@@ -12,8 +12,8 @@ namespace BifrostQL.Core.QueryModel
         public string ConnectedColumn { get; init; } = null!;
         public JoinType JoinType { get; init; }
         public string Operator { get; init; } = null!;
-        public TableSqlData FromTable { get; init; } = null!;
-        public TableSqlData ConnectedTable { get; init; } =  null!;
+        public GqlObjectQuery FromTable { get; init; } = null!;
+        public GqlObjectQuery ConnectedTable { get; init; } =  null!;
 
         public string GetParentSql(IDbModel dbModel)
         {

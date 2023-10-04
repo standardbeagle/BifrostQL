@@ -85,7 +85,7 @@ namespace BifrostQL.Core.QueryModel
 
             var columns = (onArg.Value as IDictionary<string, object?>) ?? throw new ExecutionError($"While joining table {parent.GraphQlName}, unable to convert on value to object");
             if (columns.Keys.Count != 1)
-                throw new ArgumentException("on joins only support two columns");
+                throw new ArgumentException("on joins only support one column per table");
             var relation = columns.Values.First() as IDictionary<string, object?> ?? throw new ExecutionError($"While joining table {parent.GraphQlName}, unable to convert on value to a string");
             return new TableJoin
             {

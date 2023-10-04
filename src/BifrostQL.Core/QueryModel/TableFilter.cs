@@ -120,6 +120,8 @@ namespace BifrostQL.Core.QueryModel
 
         private static TableFilter StackFilters(IDictionary<string, object?> filter, string? tableName)
         {
+            if (!filter.Any()) throw new ExecutionError($"Filter on {tableName} has no properties");
+
             var kv = filter.FirstOrDefault();
             if (string.IsNullOrWhiteSpace(kv.Key)) throw new ExecutionError($"Filter on {tableName} has empty property name");
             return kv switch
@@ -134,14 +136,14 @@ namespace BifrostQL.Core.QueryModel
                     Or = ((IEnumerable<object>)kv.Value!).Select(v => StackFilters((IDictionary<string, object?>)v, tableName)).ToList(),
                     FilterType = FilterType.Or,
                 },
-                _ when kv is { Value: IDictionary<string, object?> val } => new TableFilter
+                { Value: IDictionary<string, object?> val } => new TableFilter
                 {
-                    ColumnName = kv.Key,
+                    ColumnName = kv.Key!,
                     Next = StackFilters(val, null),
                     TableName = tableName,
                     FilterType = FilterType.Join,
                 },
-                _ when kv is { Value: null, Key: null } => throw new ExecutionError($"Filter on {tableName} has null key and value."),
+                { Value: null, Key: null } => throw new ExecutionError($"Filter on {tableName} has null key and value."),
                 _ => new TableFilter
                 {
                     RelationName = kv.Key,
@@ -178,15 +180,16 @@ namespace BifrostQL.Core.QueryModel
                 "_between" or "_nbetween" => $"'{string.Join("' AND '", (object[])(value ?? Array.Empty<object>()))}'",
                 _ => $"'{value}'"
             };
-            if (op == "_eq" && value == null)
+            switch (op)
             {
-                rel = "IS NULL";
-                val = "";
-            }
-            if (op == "_neq" && value == null)
-            {
-                rel = "IS NOT NULL";
-                val = "";
+                case "_eq" when value == null:
+                    rel = "IS NULL";
+                    val = "";
+                    break;
+                case "_neq" when value == null:
+                    rel = "IS NOT NULL";
+                    val = "";
+                    break;
             }
 
             if (value is FieldRef fieldRef) 
@@ -194,7 +197,7 @@ namespace BifrostQL.Core.QueryModel
 
             if (table == null)
             {
-                string filter = $"[{field}] {rel} {val}";
+                var filter = $"[{field}] {rel} {val}";
                 return filter;
             }
             return $"[{table}].[{field}] {rel} {val}";

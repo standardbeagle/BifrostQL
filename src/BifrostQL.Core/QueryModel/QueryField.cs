@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using BifrostQL.Core.Schema;
 
 namespace BifrostQL.Core.QueryModel
 {
@@ -47,6 +48,14 @@ namespace BifrostQL.Core.QueryModel
             var sort = rawSort?.Cast<string>()?.ToList() ?? new List<string>();
             var dataFields = Fields.FirstOrDefault(f => f.Name == "data")?.Fields ?? new List<IQueryField>();
             var standardFields = (IncludeResult ? dataFields : Fields).Where(f => !f.Name.StartsWith("__")).ToList();
+            var queryType = GetQueryType(Name);
+            if (queryType == QueryType.Aggregate)
+            {
+                var agg = Arguments.FirstOrDefault(a => a.Name == "operation")?.Value?.ToString() ?? throw new ExecutionError("Aggregate query missing operation argument.");
+                var aggType = (AggregateOperationType)Enum.Parse(typeof(AggregateOperationType), agg);
+                var value = Arguments.FirstOrDefault(a => a.Name == "value")?.Value?.ToString() ?? throw new ExecutionError("Aggregate query missing value argument.");
+            }
+
             var result = new GqlObjectQuery
             {
                 Alias = Alias,
@@ -54,6 +63,7 @@ namespace BifrostQL.Core.QueryModel
                 SchemaName = dbTable.TableSchema,
                 GraphQlName = tableName,
                 Path = path,
+                QueryType = queryType,
                 IsFragment = false,
                 IncludeResult = IncludeResult,
                 ScalarColumns = standardFields.Where(f => f.Fields.Any() == false).Select(f => (f.Name, dbTable.GraphQlLookup[f.Name].DbName)).ToList(),
@@ -96,7 +106,7 @@ namespace BifrostQL.Core.QueryModel
                 FromColumn = columns.Keys.First(),
                 ConnectedColumn = relation.Values?.First()?.ToString() ?? throw new ExecutionError($"While joining table {parent.GraphQlName}, unable to resolve join column {relation?.Keys?.FirstOrDefault()}"),
                 Operator = relation.Keys.First(),
-                JoinType = GetJoinType(Name),
+                QueryType = GetQueryType(Name),
             };
         }
 
@@ -126,11 +136,11 @@ namespace BifrostQL.Core.QueryModel
         }
 
         private static string[] _specialColumns = new[] { "_join_", "_single_", "_agg_" };
-        private static readonly (string, JoinType)[] ColumnTypeMap = new[]
+        private static readonly (string, QueryType)[] ColumnTypeMap = new[]
         {
-            ("_join_", JoinType.Join),
-            ("_single_", JoinType.Single),
-            ("_agg_", JoinType.Aggregate),
+            ("_join_", QueryType.Join),
+            ("_single_", QueryType.Single),
+            ("_agg_", QueryType.Aggregate),
         };
 
         private static string NormalizeColumnName(string name)
@@ -153,14 +163,14 @@ namespace BifrostQL.Core.QueryModel
             return false;
         }
 
-        private static JoinType GetJoinType(string name)
+        private static QueryType GetQueryType(string name)
         {
             foreach (var (prefix, type) in ColumnTypeMap)
             {
                 if (name.StartsWith(prefix))
                     return type;
             }
-            return JoinType.Single;
+            return QueryType.Standard;
         }
     }
 

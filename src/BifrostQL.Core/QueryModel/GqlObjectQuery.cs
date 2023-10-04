@@ -4,11 +4,12 @@ using GraphQL;
 
 namespace BifrostQL.Core.QueryModel
 {
-    public enum JoinType
+    public enum QueryType
     {
-        Join = 0,
-        Single = 1,
-        Aggregate = 2,
+        Standard = 0,
+        Join = 1,
+        Single = 2,
+        Aggregate = 3,
     }
 
     public sealed class GqlObjectQuery
@@ -25,6 +26,7 @@ namespace BifrostQL.Core.QueryModel
         public string? Alias { get; set; }
         public string Path { get; set; } = "";
         public string KeyName => $"{Alias ?? GraphQlName}";
+        public QueryType QueryType { get; set; }
         public AggregateOperationType? Aggregate { get; set; }
         public List<(string GraphQlName, string DbName)> ScalarColumns { get; init; } = new ();
 
@@ -94,7 +96,7 @@ namespace BifrostQL.Core.QueryModel
                         ConnectedColumn = multiLink.ChildId.ColumnName,
                         FromTable = this,
                         FromColumn = multiLink.ParentId.ColumnName,
-                        JoinType = JoinType.Join,
+                        QueryType = QueryType.Join,
                     };
                     Joins.Add(join);
                     continue;
@@ -110,7 +112,7 @@ namespace BifrostQL.Core.QueryModel
                         ConnectedColumn = singleLink.ParentId.ColumnName,
                         FromTable = this,
                         FromColumn = singleLink.ChildId.ColumnName,
-                        JoinType = JoinType.Single,
+                        QueryType = QueryType.Single,
                     };
                     Joins.Add(join);
                     continue;

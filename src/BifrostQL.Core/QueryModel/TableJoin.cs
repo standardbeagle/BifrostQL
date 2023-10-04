@@ -11,7 +11,7 @@ namespace BifrostQL.Core.QueryModel
         public string Path => $"{FromTable.Path}/{Alias ?? Name}";
         public string FromColumn { get; init; } = null!;
         public string ConnectedColumn { get; init; } = null!;
-        public JoinType JoinType { get; init; }
+        public QueryType QueryType { get; init; }
         public string Operator { get; init; } = null!;
         public GqlObjectQuery FromTable { get; init; } = null!;
         public GqlObjectQuery ConnectedTable { get; init; } =  null!;
@@ -47,7 +47,7 @@ namespace BifrostQL.Core.QueryModel
             wrap += $" INNER JOIN [{ConnectedTable.TableName}] [b] ON {relation}";
 
             var filter = ConnectedTable.GetFilterSql(dbModel, "b");
-            return JoinType == JoinType.Single ? wrap : wrap + filter + ConnectedTable.GetSortAndPaging();
+            return QueryType == QueryType.Single ? wrap : wrap + filter + ConnectedTable.GetSortAndPaging();
         }
 
         public override string ToString()

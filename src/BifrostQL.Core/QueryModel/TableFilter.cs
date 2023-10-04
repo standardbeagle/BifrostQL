@@ -19,8 +19,8 @@ namespace BifrostQL.Core.QueryModel
         public object? Value { get; set; }
         public FilterType FilterType { get; init; }
         public TableFilter? Next { get; set; }
-        public List<TableFilter> And { get; init; } = new List<TableFilter>();
-        public List<TableFilter> Or { get; init; } = new List<TableFilter>();
+        public List<TableFilter> And { get; init; } = new ();
+        public List<TableFilter> Or { get; init; } = new ();
 
         public (string join, string comparison) ToSql(IDbModel model, string? alias = null, string joinName = "j", bool includeValue = false)
         {
@@ -44,9 +44,9 @@ namespace BifrostQL.Core.QueryModel
                         string.Join("", joins),
                         filters.Length == 1 ? filters[0] : $"(({string.Join(") OR (", filters)}))");
                 }
-                throw new ArgumentOutOfRangeException("value", "object must have two values");
+                throw new ExecutionError("Filter object missing all required fields.");
             }
-            var table = model.GetTableFromDbName(TableName ?? throw new InvalidDataException("TableFilter with undefined TableName"));
+            var table = model.GetTableFromDbName(TableName ?? throw new ExecutionError("TableFilter with undefined TableName"));
             if (Next.Next == null)
             {
                 var lookup = table.GraphQlLookup;

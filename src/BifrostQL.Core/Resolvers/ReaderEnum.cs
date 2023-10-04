@@ -43,9 +43,9 @@ namespace BifrostQL.Core.Resolvers
                 throw new ExecutionError("key value is null");
 
             var tableData = _tables[join.JoinName];
-            if (join.JoinType == JoinType.Join)
+            if (join.QueryType == QueryType.Join)
                 return ValueTask.FromResult<object?>(new SubTableEnumerable(this, key, tableData));
-            if (join.JoinType == JoinType.Single)
+            if (join.QueryType == QueryType.Single)
             {
                 var srcIdIndex = tableData.index["src_id"];
                 var data = tableData.data.FirstOrDefault(r => Equals(r[srcIdIndex], key));

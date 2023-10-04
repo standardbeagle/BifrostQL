@@ -20,7 +20,7 @@ namespace BifrostQL.Core.Schema
             foreach (var table in _model.Tables)
             {
                 var tableSchema = new TableSchemaGenerator(table);
-                sb.AppendLine($"{table.GraphQlName}_agg(field: {tableSchema.GetFieldEnumReference()}_enum function : AggregateType) : (Int | Float | Boolean | String)");
+                sb.AppendLine($"{table.GraphQlName}_agg(queryField: {tableSchema.GetFieldEnumReference()}_enum function : AggregateType) : (Int | Float | Boolean | String)");
             }
             return sb.ToString();
         }

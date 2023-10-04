@@ -1,4 +1,5 @@
 ﻿using BifrostQL.Core.Model;
+using GraphQL;
 
 namespace BifrostQL.Core.QueryModel
 {
@@ -6,6 +7,7 @@ namespace BifrostQL.Core.QueryModel
     {
         Join = 0,
         Single = 1,
+        Aggregate = 2,
     }
 
     public sealed class GqlObjectQuery
@@ -21,8 +23,8 @@ namespace BifrostQL.Core.QueryModel
         };
         public string? Alias { get; set; }
         public string Path { get; set; } = "";
-        public string KeyName => $"{Alias ?? TableName}";
-        public List<(string GraphQlName, string DbName)> Columns { get; init; } = new ();
+        public string KeyName => $"{Alias ?? GraphQlName}";
+        public List<(string GraphQlName, string DbName)> ScalarColumns { get; init; } = new ();
 
         public List<GqlObjectQuery> Links { get; set; } = new ();
         public List<string> Sort { get; set; } = new ();
@@ -35,13 +37,12 @@ namespace BifrostQL.Core.QueryModel
         private IEnumerable<TableJoin> RecurseJoins => Joins.Concat(Joins.SelectMany(j => j.ConnectedTable.RecurseJoins));
 
         public IEnumerable<(string GraphQlName, string DbName)> FullColumnNames =>
-            Columns.Where(c => c.GraphQlName.StartsWith("__") == false)
+            ScalarColumns.Where(c => c.GraphQlName.StartsWith("__") == false)
             .Concat(Joins.Select(j => (j.FromColumn, j.FromColumn)))
             .DistinctBy(c => c.Item2, SqlNameComparer.Instance);
 
         public Dictionary<string, string> ToSql(IDbModel dbModel)
         {
-            ConnectLinks(dbModel);
             var columnSql = string.Join(",", FullColumnNames.Select(n => $"[{n.DbName}] [{n.GraphQlName}]"));
             var cmdText = $"SELECT {columnSql} FROM {FullTableText}";
 
@@ -50,7 +51,7 @@ namespace BifrostQL.Core.QueryModel
             var result = new Dictionary<string, string>
             {
                 { KeyName, baseSql },
-                { $"{KeyName}_count", $"SELECT COUNT(*) FROM {FullTableText}{filter}" }
+                { $"{KeyName}=>count", $"SELECT COUNT(*) FROM {FullTableText}{filter}" }
             };
             foreach (var join in RecurseJoins)
             {
@@ -96,6 +97,7 @@ namespace BifrostQL.Core.QueryModel
                     Joins.Add(join);
                     continue;
                 }
+                throw new ExecutionError($"Unable to find join {link.GraphQlName} on table {TableName}");   
             }
             foreach (var join in RecurseJoins)
             {

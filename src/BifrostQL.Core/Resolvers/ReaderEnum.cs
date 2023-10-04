@@ -33,7 +33,7 @@ namespace BifrostQL.Core.Resolvers
 
             var join = _tableSql.GetJoin(alias, name);
             if (join == null)
-                throw new ExecutionError($"Unable to find field: {name} on table: {_tableSql.Alias}:{_tableSql.GraphQlName }");
+                throw new ExecutionError($"Unable to find queryField: {name} on table: {_tableSql.Alias}:{_tableSql.GraphQlName }");
             var keyFound = table.index.TryGetValue(join.FromColumn, out int keyIndex);
             if (!keyFound)
                 throw new ExecutionError("join column not found.");

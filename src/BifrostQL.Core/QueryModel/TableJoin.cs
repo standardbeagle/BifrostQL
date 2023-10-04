@@ -7,7 +7,8 @@ namespace BifrostQL.Core.QueryModel
     {
         public string Name { get; init; } = null!;
         public string? Alias { get; init; }
-        public string JoinName => $"{FromTable.Alias ?? FromTable.TableName}->{Alias ?? Name}";
+        public string JoinName => $"{FromTable.Path}->{Alias ?? Name}";
+        public string Path => $"{FromTable.Path}/{Alias ?? Name}";
         public string FromColumn { get; init; } = null!;
         public string ConnectedColumn { get; init; } = null!;
         public JoinType JoinType { get; init; }

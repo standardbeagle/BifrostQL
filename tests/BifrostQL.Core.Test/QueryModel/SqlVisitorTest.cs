@@ -105,7 +105,7 @@ namespace BifrostQL.Core.QueryModel
             await sut.VisitAsync(ast, ctx);
             ctx.Fields.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(new { Name = "workshops", Alias = (string?)null })
-                .And.BeOfType<Field>()
+                .And.BeOfType<QueryField>()
                 .Which.Fragments.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo("wr");
 
@@ -113,20 +113,20 @@ namespace BifrostQL.Core.QueryModel
             {
                 ctx.Fragments.Should().ContainSingle()
                     .Which.Should().BeEquivalentTo(new { Name = "wr" })
-                    .And.BeOfType<Field>()
+                    .And.BeOfType<QueryField>()
                     .Which.Fields.Should().ContainSingle()
                     .Which.Should().BeEquivalentTo(new { Name = "data", Alias = (string?)null })
-                    .And.BeOfType<Field>()
+                    .And.BeOfType<QueryField>()
                     .Which.Fields.Should().HaveCount(2)
                     .And.ContainEquivalentOf(new { Name = "id", Alias = (string?)null })
                     .And.ContainEquivalentOf(new { Name = "number", Alias = (string?)null });
             }
 
             ctx.Fields.Should().ContainSingle()
-                .Which.Should().BeOfType<Field>()
+                .Which.Should().BeOfType<QueryField>()
                 .Which.Fields.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(new { Name = "data", Alias = (string?)null })
-                .And.BeOfType<Field>()
+                .And.BeOfType<QueryField>()
                 .Which.Fields.Should().HaveCount(2)
                 .And.ContainEquivalentOf(new { Name = "id", Alias = (string?)null })
                 .And.ContainEquivalentOf(new { Name = "number", Alias = (string?)null });

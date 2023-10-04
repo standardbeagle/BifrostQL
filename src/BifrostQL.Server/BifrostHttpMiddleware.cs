@@ -8,6 +8,7 @@ using GraphQL.Types;
 
 namespace BifrostQL.Server
 {
+    // ReSharper disable once ClassNeverInstantiated.Global
     public class BifrostHttpMiddleware : GraphQLHttpMiddleware
     {
         public BifrostHttpMiddleware(
@@ -39,14 +40,14 @@ namespace BifrostQL.Server
             var context = contextAccessor.HttpContext;
             var extensionsLoader = options.RequestServices!.GetRequiredService<PathCache<Inputs>>();
 
-            PathString path = context?.Request?.Path ?? throw new ArgumentNullException("path", "HttpConext.Request has a null path or Request is null");
+            PathString path = context?.Request?.Path ?? throw new ArgumentNullException("path", "HttpContext.Request has a null path or Request is null");
             var sharedExtensions = extensionsLoader.GetValue(path);
             var model = (IDbModel)(sharedExtensions["model"] ?? throw new InvalidDataException("dbSchema not configured"));
             options.Schema = (ISchema)(sharedExtensions["dbSchema"] ?? throw new InvalidDataException("dbSchema not configured"));
 
             options.Extensions = Combine(
                 sharedExtensions, 
-                new Dictionary<string, object?> { { "tableReaderFactory", new TableReaderFactory(model) } }
+                new Dictionary<string, object?> { { "tableReaderFactory", new SqlExecutionManager(model, options.Schema) } }
             );
             var result = _documentExecutor.ExecuteAsync(options);
             return result;

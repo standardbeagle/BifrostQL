@@ -20,7 +20,7 @@ namespace BifrostQL.Core.QueryModel
 
             var ast = Parser.Parse("query { work__shops { data { id number } } }");
             await sut.VisitAsync(ast, ctx);
-            var tables = ctx.GetFinalTables(GetFakeModel());
+            var tables = ctx.GetFinalQueries(GetFakeModel());
 
             tables.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(
@@ -49,7 +49,7 @@ namespace BifrostQL.Core.QueryModel
 
             var ast = Parser.Parse("query { work__shops { data { id number } } sessions { data { id status } } }");
             await sut.VisitAsync(ast, ctx);
-            var tables = ctx.GetFinalTables(GetFakeModel());
+            var tables = ctx.GetFinalQueries(GetFakeModel());
 
             tables.Should().BeEquivalentTo(
                 new[] {
@@ -82,7 +82,7 @@ namespace BifrostQL.Core.QueryModel
 
             var ast = Parser.Parse("query { work__shops(sort: [id_desc, number_asc], limit: 10, offset: 12 ) { data { id number } } }");
             await sut.VisitAsync(ast, ctx);
-            var tables = ctx.GetFinalTables(GetFakeModel());
+            var tables = ctx.GetFinalQueries(GetFakeModel());
 
             tables.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(
@@ -107,7 +107,7 @@ namespace BifrostQL.Core.QueryModel
 
             var ast = Parser.Parse("query { work__shops(filter: { and: [ {startDate: { _gt: \"1-1-2022\"}}, {endDate: { _lt: \"1-1-2023\"}} ]} ) { data { id number } } }");
             await sut.VisitAsync(ast, ctx);
-            var tables = ctx.GetFinalTables(GetFakeModel());
+            var tables = ctx.GetFinalQueries(GetFakeModel());
 
             tables.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(
@@ -130,7 +130,7 @@ namespace BifrostQL.Core.QueryModel
 
             var ast = Parser.Parse("query { work__shops(filter: { and: [ {startDate: { _gt: \"1-1-2022\"}}, {endDate: { _lt: \"1-1-2023\"}} ]} ) { data { id number } } }");
             await sut.VisitAsync(ast, ctx);
-            var tables = ctx.GetFinalTables(GetFakeModel());
+            var tables = ctx.GetFinalQueries(GetFakeModel());
 
             tables.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(
@@ -153,7 +153,7 @@ namespace BifrostQL.Core.QueryModel
 
             var ast = Parser.Parse("query { work__shops(filter: null ) { data { id number } } }");
             await sut.VisitAsync(ast, ctx);
-            var tables = ctx.GetFinalTables(GetFakeModel());
+            var tables = ctx.GetFinalQueries(GetFakeModel());
 
             tables.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(
@@ -178,7 +178,7 @@ namespace BifrostQL.Core.QueryModel
 
             var ast = Parser.Parse("query { work__shops(filter: {id: {_eq: 10} } ) { data { id number } } }");
             await sut.VisitAsync(ast, ctx);
-            var tables = ctx.GetFinalTables(GetFakeModel());
+            var tables = ctx.GetFinalQueries(GetFakeModel());
 
             tables.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(
@@ -203,7 +203,7 @@ namespace BifrostQL.Core.QueryModel
 
             var ast = Parser.Parse("query { sessions(filter: { workshop: { number: {_eq: \"10-AA\"} } }) { data { id status } } }");
             await sut.VisitAsync(ast, ctx);
-            var tables = ctx.GetFinalTables(GetFakeModel());
+            var tables = ctx.GetFinalQueries(GetFakeModel());
 
             tables.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(
@@ -228,7 +228,7 @@ namespace BifrostQL.Core.QueryModel
 
             var ast = Parser.Parse("query { work__shops { data { id _join_sessions(on: {idd: {_eq: workshopid } }) { id } number } } }");
             await sut.VisitAsync(ast, ctx);
-            var tables = ctx.GetFinalTables(GetFakeModel());
+            var tables = ctx.GetFinalQueries(GetFakeModel());
 
             tables.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(
@@ -239,6 +239,7 @@ namespace BifrostQL.Core.QueryModel
                         Limit = (int?)null,
                         Offset = (int?)null,
                         Sort = new string[] { },
+                        Path = "work__shops",
                         Joins = new [] {
                             new {
                                 Name = "_join_sessions",
@@ -250,6 +251,7 @@ namespace BifrostQL.Core.QueryModel
                                 },
                                 FromColumn = "idd",
                                 ConnectedColumn = "workshopid",
+                                Path = "work__shops/_join_sessions",
                             }
                         },
                         Links = new object[] { },
@@ -265,7 +267,7 @@ namespace BifrostQL.Core.QueryModel
 
             var ast = Parser.Parse("query { work__shops { data { id sessions { id status } number participants__table { firstname lastname } } } }");
             await sut.VisitAsync(ast, ctx);
-            var tables = ctx.GetFinalTables(GetFakeModel());
+            var tables = ctx.GetFinalQueries(GetFakeModel());
 
             tables.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(
@@ -276,7 +278,17 @@ namespace BifrostQL.Core.QueryModel
                         Limit = (int?)null,
                         Offset = (int?)null,
                         Sort = new string[] { },
-                        Joins = new object[] { },
+                        Joins = new object[]
+                        {
+                            new
+                            {
+                                Name = "sessions",
+                            },
+                            new
+                            {
+                                Name = "participants__table",
+                            }
+                        },
                         Links = new object[] {
                             new {
                                 TableName = "sessions",

@@ -2,12 +2,14 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Resolvers;
 using GraphQL;
+using GraphQL.Resolvers;
 using GraphQL.Types;
 
 namespace BifrostQL.Core.Schema
 {
     public static class DbSchema
     {
+
         public static ISchema SchemaFromModel(IDbModel model, bool includeDynamicJoins)
         {
             var schemaText = SchemaGenerator.SchemaTextFromModel(model, includeDynamicJoins);
@@ -19,6 +21,7 @@ namespace BifrostQL.Core.Schema
                 {
                     var tableField = query.FieldFor(table.GraphQlName);
                     tableField.Resolver = new DbTableResolver(table);
+
                     var tableType = _.Types.For(table.GraphQlName);
 
                     var tableAggField = query.FieldFor($"_agg_{table.GraphQlName}");
@@ -58,6 +61,12 @@ namespace BifrostQL.Core.Schema
             return schema;
         }
     }
+
+    internal record NameMatcher {
+        public string PrimaryGqlTableName { get; set; }
+        public string NestedGqlTableName { get; set; }
+    }
+
     public enum IdentityType
     {
         None,

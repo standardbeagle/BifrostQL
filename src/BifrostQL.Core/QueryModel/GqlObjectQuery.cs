@@ -1,4 +1,5 @@
 ﻿using BifrostQL.Core.Model;
+using BifrostQL.Core.Schema;
 using GraphQL;
 
 namespace BifrostQL.Core.QueryModel
@@ -24,6 +25,7 @@ namespace BifrostQL.Core.QueryModel
         public string? Alias { get; set; }
         public string Path { get; set; } = "";
         public string KeyName => $"{Alias ?? GraphQlName}";
+        public AggregateOperationType? Aggregate { get; set; }
         public List<(string GraphQlName, string DbName)> ScalarColumns { get; init; } = new ();
 
         public List<GqlObjectQuery> Links { get; set; } = new ();
@@ -43,7 +45,17 @@ namespace BifrostQL.Core.QueryModel
 
         public Dictionary<string, string> ToSql(IDbModel dbModel)
         {
-            var columnSql = string.Join(",", FullColumnNames.Select(n => $"[{n.DbName}] [{n.GraphQlName}]"));
+            var columnSql = Aggregate switch
+            {
+                AggregateOperationType.Count => $"COUNT([{ScalarColumns[0].DbName}]) AS [Value]",
+                AggregateOperationType.Sum => $"SUM([{ScalarColumns[0].DbName}]) AS [Value]",
+                AggregateOperationType.Avg => $"AVG([{ScalarColumns[0].DbName}]) AS [Value]",
+                AggregateOperationType.Min => $"MIN([{ScalarColumns[0].DbName}]) AS [Value]",
+                AggregateOperationType.Max => $"MAX([{ScalarColumns[0].DbName}]) AS [Value]",
+
+                _ => string.Join(",", FullColumnNames.Select(n => $"[{n.DbName}] [{n.GraphQlName}]"))
+            };
+                
             var cmdText = $"SELECT {columnSql} FROM {FullTableText}";
 
             var filter = GetFilterSql(dbModel);

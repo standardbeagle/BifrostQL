@@ -62,10 +62,10 @@ namespace BifrostQL.Core.Schema
         }
     }
 
-    internal record NameMatcher {
-        public string PrimaryGqlTableName { get; set; }
-        public string NestedGqlTableName { get; set; }
-    }
+    //internal record NameMatcher {
+    //    public string PrimaryGqlTableName { get; set; }
+    //    public string NestedGqlTableName { get; set; }
+    //}
 
     public enum IdentityType
     {

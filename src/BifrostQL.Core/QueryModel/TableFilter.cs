@@ -144,6 +144,7 @@ namespace BifrostQL.Core.QueryModel
                     FilterType = FilterType.Join,
                 },
                 { Value: null, Key: null } => throw new ExecutionError($"Filter on {tableName} has null key and value."),
+                { Key: null } => throw new ExecutionError($"Filter on {tableName} has null key."),
                 _ => new TableFilter
                 {
                     RelationName = kv.Key,

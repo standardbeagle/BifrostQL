@@ -1,4 +1,5 @@
-﻿using BifrostQL.Core.Model;
+﻿using System.Data.SqlTypes;
+using BifrostQL.Core.Model;
 using BifrostQL.Core.Schema;
 using GraphQL;
 
@@ -14,7 +15,8 @@ namespace BifrostQL.Core.QueryModel
 
     public sealed class GqlObjectQuery
     {
-        public TableJoin? JoinFrom { get; set; }
+        public GqlObjectQuery() { }
+        //public TableJoin? JoinFrom { get; set; }
         public string SchemaName { get; set; } = "";
         public string TableName { get; set; } = "";
         public string GraphQlName { get; set; } = "";
@@ -38,14 +40,14 @@ namespace BifrostQL.Core.QueryModel
         public bool IsFragment { get; set; }
         public bool IncludeResult { get; set; }
         public List<TableJoin> Joins { get; set; } = new ();
-        private IEnumerable<TableJoin> RecurseJoins => Joins.Concat(Joins.SelectMany(j => j.ConnectedTable.RecurseJoins));
+        public IEnumerable<TableJoin> RecurseJoins => Joins.Concat(Joins.SelectMany(j => j.ConnectedTable.RecurseJoins));
 
         public IEnumerable<(string GraphQlName, string DbName)> FullColumnNames =>
             ScalarColumns.Where(c => c.GraphQlName.StartsWith("__") == false)
             .Concat(Joins.Select(j => (j.FromColumn, j.FromColumn)))
             .DistinctBy(c => c.Item2, SqlNameComparer.Instance);
 
-        public Dictionary<string, string> ToSql(IDbModel dbModel)
+        public void AddSql(IDbModel dbModel, IDictionary<string, string> sqls, QueryLink? queryLink = null)
         {
             var columnSql = Aggregate switch
             {
@@ -62,16 +64,66 @@ namespace BifrostQL.Core.QueryModel
 
             var filter = GetFilterSql(dbModel);
             var baseSql = cmdText + filter + GetSortAndPaging();
-            var result = new Dictionary<string, string>
+            var sqlKeyName = queryLink == null ? KeyName : queryLink.Join.JoinName;
+            sqls[sqlKeyName] = baseSql;
+            if (IncludeResult)
+                sqls[$"{sqlKeyName}=>count"] = $"SELECT COUNT(*) FROM {FullTableText}{filter}";
+            foreach (var join in Joins)
             {
-                { KeyName, baseSql },
-                { $"{KeyName}=>count", $"SELECT COUNT(*) FROM {FullTableText}{filter}" }
-            };
-            foreach (var join in RecurseJoins)
-            {
-                result.Add(join.JoinName, join.GetSql(dbModel));
+                var joinQueryLink = new QueryLink { FromTable = this, Join = join, Parent = queryLink};
+                AddJoinSql(dbModel, sqls, joinQueryLink);
             }
-            return result;
+        }
+
+        private static void AddJoinSql(IDbModel model, IDictionary<string, string> sqls, QueryLink queryLink)
+        {
+            var main = GetRestrictedSql(model, queryLink);
+
+            var sql = ToConnectedSql(model, main, queryLink.Join);
+            sqls[queryLink.Join.JoinName] = sql;
+            foreach (var join in queryLink.Join.ConnectedTable.Joins)
+            {
+                var joinQueryLink = new QueryLink { FromTable = queryLink.Join.ConnectedTable, Join = join, Parent = queryLink };
+                AddJoinSql(model, sqls, joinQueryLink);
+            }
+        }
+
+        public static string ToConnectedSql(IDbModel dbModel, string main, TableJoin tableJoin)
+        {
+            var connectedDbTable = dbModel.GetTableFromDbName(tableJoin.ConnectedTable.TableName);
+            var connectedDbColumn = connectedDbTable.GraphQlLookup[tableJoin.ConnectedColumn];
+            var joinColumnSql = string.Join(",",
+                tableJoin.ConnectedTable.FullColumnNames.Select(c => $"[b].[{c.DbName}] AS [{c.GraphQlName}]"));
+
+            var wrap = $"SELECT [a].[JoinId] [src_id], {joinColumnSql} FROM ({main}) [a]";
+            var relation = TableFilter.GetSingleFilter("a", "JoinId", tableJoin.Operator,
+                new FieldRef() { TableName = "b", ColumnName = connectedDbColumn.DbName });
+            wrap += $" INNER JOIN [{tableJoin.ConnectedTable.TableName}] [b] ON {relation}";
+            if (tableJoin.QueryType == QueryType.Single)
+                return wrap;
+
+            var filter = tableJoin.ConnectedTable.GetFilterSql(dbModel, "b");
+            var sort = tableJoin.ConnectedTable.GetSortAndPaging();
+            return wrap + filter + sort;
+        }
+
+        public static string GetRestrictedSql(IDbModel dbModel, QueryLink query)
+        {
+            if (query.Parent == null)
+            {
+                var filter = query.FromTable.GetFilterSql(dbModel);
+                return $"SELECT DISTINCT [{query.Join.FromColumn}] AS JoinId FROM [{query.FromTable.TableName}]" + filter;
+            }
+            else
+            {
+                var baseSql = GetRestrictedSql(dbModel, query.Parent);
+
+                var filter = query.FromTable.GetFilterSql(dbModel, "[a]");
+                var relation = TableFilter.GetSingleFilter("b", "JoinId", query.Join.Operator,
+                    new FieldRef() { TableName = "a", ColumnName = query.Join.FromColumn });
+
+                return $"SELECT DISTINCT [a].[{query.Join.FromColumn}] AS JoinId FROM [{query.FromTable.TableName}] [a] INNER JOIN ({baseSql}) [b] ON {relation}{filter}";
+            }
         }
 
         /// <summary>

@@ -251,7 +251,7 @@ namespace BifrostQL.Core.QueryModel
                                 },
                                 FromColumn = "idd",
                                 ConnectedColumn = "workshopid",
-                                Path = "work__shops/_join_sessions",
+                                JoinName = "work__shops->_join_sessions",
                             }
                         },
                         Links = new object[] { },

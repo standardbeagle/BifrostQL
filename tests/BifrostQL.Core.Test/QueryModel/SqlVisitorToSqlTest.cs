@@ -13,6 +13,18 @@ namespace BifrostQL.Core.QueryModel
 {
     public sealed class SqlVisitorToSqlTest
     {
+        private static Dictionary<string, string> GetSql(GqlObjectQuery query, IDbModel model)
+        {
+            Dictionary<string, string> sqls = new();
+            query.AddSql(model, sqls);
+            return sqls;
+        }
+
+        private static Dictionary<string, string>[] GetSqls(SqlContext ctx, IDbModel model)
+        {
+            return ctx.GetFinalQueries(model).Select(q => GetSql(q, model)).ToArray();
+        }
+
         [Fact]
         public async Task SimpleQuerySuccess()
         {
@@ -22,7 +34,7 @@ namespace BifrostQL.Core.QueryModel
             var model = new DbModel { Tables = GetFakeTables() };
             var ast = Parser.Parse("query { work__shops { data { id } } }");
             await visitor.VisitAsync(ast, ctx);
-            var sqls = ctx.GetFinalQueries(model).Select(t => t.ToSql(model)).ToArray();
+            var sqls = GetSqls(ctx, model);
             sqls.Should().ContainSingle()
                 .Which.Should().Equal(new Dictionary<string, string> {
                     { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
@@ -40,7 +52,7 @@ namespace BifrostQL.Core.QueryModel
             var model = new DbModel { Tables = GetFakeTables() };
             var ast = Parser.Parse("query { work__shops { data { id percentage_34 } } }");
             await visitor.VisitAsync(ast, ctx);
-            var sqls = ctx.GetFinalQueries(model).Select(t => t.ToSql(model)).ToArray();
+            var sqls = GetSqls(ctx, model);
             sqls.Should().ContainSingle()
                 .Which.Should().Equal(new Dictionary<string, string> {
                     { "work__shops", "SELECT [id] [id],[percentage%] [percentage_34] FROM [dbo].[work shops] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
@@ -58,7 +70,7 @@ namespace BifrostQL.Core.QueryModel
             var model = new DbModel { Tables = GetFakeTables() };
             var ast = Parser.Parse("query { work__shops { data { id sess:_join_sessions(on: {id: {_neq: workshopid}}) { id status } } } }");
             await visitor.VisitAsync(ast, ctx);
-            var sqls = ctx.GetFinalQueries(model).Select(t => t.ToSql(model)).ToArray();
+            var sqls = GetSqls(ctx, model);
             sqls.Should().ContainSingle()
                 .Which.Should().Equal(new Dictionary<string, string> {
                     { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
@@ -77,7 +89,7 @@ namespace BifrostQL.Core.QueryModel
             var model = new DbModel { Tables = GetFakeTables() };
             var ast = Parser.Parse("query { work__shops { data { id sess:_join_sessions(on: {id: {_neq: workshopid}}) { id status } } } }");
             await visitor.VisitAsync(ast, ctx);
-            var sqls = ctx.GetFinalQueries(model).Select(t => t.ToSql(model)).ToArray();
+            var sqls = GetSqls(ctx, model);
             sqls.Should().ContainSingle()
                 .Which.Should().Equal(new Dictionary<string, string> {
                     { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
@@ -96,7 +108,7 @@ namespace BifrostQL.Core.QueryModel
             var model = new DbModel { Tables = GetFakeTables() };
             var ast = Parser.Parse("query { work__shops { data { id sess:sessions { id status } } } }");
             await visitor.VisitAsync(ast, ctx);
-            var sqls = ctx.GetFinalQueries(model).Select(t => t.ToSql(model)).ToArray();
+            var sqls = GetSqls(ctx, model);
             sqls.Should().ContainSingle()
                 .Which.Should().Equal(new Dictionary<string, string> {
                     { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
@@ -114,7 +126,7 @@ namespace BifrostQL.Core.QueryModel
             var model = new DbModel { Tables = GetFakeTables() };
             var ast = Parser.Parse("query { work__shops { data { id sess:sessions(filter: { status: {_eq : 0} }) { id status } } } }");
             await visitor.VisitAsync(ast, ctx);
-            var sqls = ctx.GetFinalQueries(model).Select(t => t.ToSql(model)).ToArray();
+            var sqls = GetSqls(ctx, model);
             sqls.Should().ContainSingle()
                 .Which.Should().Equal(new Dictionary<string, string> {
                     { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
@@ -134,7 +146,7 @@ namespace BifrostQL.Core.QueryModel
             var ast = Parser.Parse(
                 "query { work__shops { data { id } } work__shops(filter: null) { data { id } } work__shops(filter: { id: { _eq: 1} }) { data { id } }}");
             await visitor.VisitAsync(ast, ctx);
-            var sqls = ctx.GetFinalQueries(model).Select(t => t.ToSql(model)).ToArray();
+            var sqls = GetSqls(ctx, model);
             sqls.Should().HaveCount(3);
             sqls[0].Should().Equal(new Dictionary<string, string>
             {
@@ -162,7 +174,7 @@ namespace BifrostQL.Core.QueryModel
             var model = new DbModel { Tables = GetFakeTables() };
             var ast = Parser.Parse("query { sessions { data { id work__shops { id number } } } }");
             await visitor.VisitAsync(ast, ctx);
-            var sqls = ctx.GetFinalQueries(model).Select(t => t.ToSql(model)).ToArray();
+            var sqls = GetSqls(ctx, model);
             sqls.Should().ContainSingle()
                 .Which.Should().Equal(new Dictionary<string, string> {
                     { "sessions", "SELECT [sid] [id],[workshopid] [workshopid] FROM [dbo].[sessions] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
@@ -180,7 +192,7 @@ namespace BifrostQL.Core.QueryModel
             var model = new DbModel { Tables = GetFakeTables() };
             var ast = Parser.Parse("query { sessions { data { id shops: work__shops { id number } } } }");
             await visitor.VisitAsync(ast, ctx);
-            var sqls = ctx.GetFinalQueries(model).Select(t => t.ToSql(model)).ToArray();
+            var sqls = GetSqls(ctx, model);
             sqls.Should().ContainSingle()
                 .Which.Should().Equal(new Dictionary<string, string> {
                     { "sessions", "SELECT [sid] [id],[workshopid] [workshopid] FROM [dbo].[sessions] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
@@ -198,7 +210,7 @@ namespace BifrostQL.Core.QueryModel
             var model = new DbModel { Tables = GetFakeTables() };
             var ast = Parser.Parse("query { sessions { data { id work__shops { id number } } } }");
             await visitor.VisitAsync(ast, ctx);
-            var sqls = ctx.GetFinalQueries(model).Select(t => t.ToSql(model)).ToArray();
+            var sqls = GetSqls(ctx, model);
             sqls.Should().ContainSingle()
                 .Which.Should().Equal(new Dictionary<string, string> {
                     { "sessions", "SELECT [sid] [id],[workshopid] [workshopid] FROM [dbo].[sessions] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
@@ -218,13 +230,33 @@ namespace BifrostQL.Core.QueryModel
             var ast = Parser.Parse("query { sessions { data { id work__shops { id number participants__table { id firstname } } } } }");
             await visitor.VisitAsync(ast, ctx);
             var gqlObjectQueries = ctx.GetFinalQueries(model);
-            var sqls = gqlObjectQueries.Select(t => t.ToSql(model)).ToArray();
+            var sqls = GetSqls(ctx, model);
             sqls.Should().ContainSingle()
                 .Which.Should().Equal(new Dictionary<string, string> {
                     { "sessions", "SELECT [sid] [id],[workshopid] [workshopid] FROM [dbo].[sessions] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
                     { "sessions=>count", "SELECT COUNT(*) FROM [dbo].[sessions]"},
                     { "sessions->work__shops", "SELECT [a].[JoinId] [src_id], [b].[id] AS [id],[b].[number] AS [number] FROM (SELECT DISTINCT [workshopid] AS JoinId FROM [sessions]) [a] INNER JOIN [work shops] [b] ON [a].[JoinId] = [b].[id]" },
-                    { "sessions->work__shops->participants__table", "SELECT [a].[JoinId] [src_id], [b].[sid] AS [id],[b].[firstname] AS [firstname] FROM (SELECT DISTINCT [id] AS JoinId FROM [work shops]) [a] INNER JOIN [participants table] [b] ON [a].[JoinId] = [b].[workshopid] ORDER BY (SELECT NULL) OFFSET 0 ROWS" },
+                    { "sessions->work__shops->participants__table", "SELECT [a].[JoinId] [src_id], [b].[sid] AS [id],[b].[firstname] AS [firstname] FROM (SELECT DISTINCT [a].[id] AS JoinId FROM [work shops] [a] INNER JOIN (SELECT DISTINCT [workshopid] AS JoinId FROM [sessions]) [b] ON [b].[JoinId] = [a].[id]) [a] INNER JOIN [participants table] [b] ON [a].[JoinId] = [b].[workshopid] ORDER BY (SELECT NULL) OFFSET 0 ROWS" },
+                });
+        }
+
+        [Fact]
+        public async Task FilterDoubleLinkQuerySuccess()
+        {
+            var ctx = new SqlContext();
+            var visitor = new SqlVisitor();
+
+            var model = new DbModel { Tables = GetFakeTables() };
+            var ast = Parser.Parse("query { sessions(filter: { id: {_eq: 1}}) { data { id work__shops { id number participants__table { id firstname } } } } }");
+            await visitor.VisitAsync(ast, ctx);
+            var gqlObjectQueries = ctx.GetFinalQueries(model);
+            var sqls = GetSqls(ctx, model);
+            sqls.Should().ContainSingle()
+                .Which.Should().Equal(new Dictionary<string, string> {
+                    { "sessions", "SELECT [sid] [id],[workshopid] [workshopid] FROM [dbo].[sessions] WHERE [sessions].[sid] = '1' ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
+                    { "sessions=>count", "SELECT COUNT(*) FROM [dbo].[sessions] WHERE [sessions].[sid] = '1'"},
+                    { "sessions->work__shops", "SELECT [a].[JoinId] [src_id], [b].[id] AS [id],[b].[number] AS [number] FROM (SELECT DISTINCT [workshopid] AS JoinId FROM [sessions] WHERE [sessions].[sid] = '1') [a] INNER JOIN [work shops] [b] ON [a].[JoinId] = [b].[id]" },
+                    { "sessions->work__shops->participants__table", "SELECT [a].[JoinId] [src_id], [b].[sid] AS [id],[b].[firstname] AS [firstname] FROM (SELECT DISTINCT [a].[id] AS JoinId FROM [work shops] [a] INNER JOIN (SELECT DISTINCT [workshopid] AS JoinId FROM [sessions] WHERE [sessions].[sid] = '1') [b] ON [b].[JoinId] = [a].[id]) [a] INNER JOIN [participants table] [b] ON [a].[JoinId] = [b].[workshopid] ORDER BY (SELECT NULL) OFFSET 0 ROWS" },
                 });
         }
 
@@ -237,7 +269,7 @@ namespace BifrostQL.Core.QueryModel
             var model = new DbModel { Tables = GetFakeTables() };
             var ast = Parser.Parse("query { sessions { data { id workshop: _single_Work__shops(on: {workshopid: {_eq: id }}) { id number } } } }");
             await visitor.VisitAsync(ast, ctx);
-            var sqls = ctx.GetFinalQueries(model).Select(t => t.ToSql(model)).ToArray();
+            var sqls = GetSqls(ctx, model);
             sqls.Should().ContainSingle()
                 .Which.Should().Equal(new Dictionary<string, string> {
                     { "sessions", "SELECT [sid] [id],[workshopid] [workshopid] FROM [dbo].[sessions] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},

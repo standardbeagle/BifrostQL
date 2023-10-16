@@ -66,7 +66,8 @@ namespace BifrostQL.Core.Resolvers
 
         private IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> LoadData(GqlObjectQuery query, IDbConnFactory connFactory)
         {
-            var sqlList = query.ToSql(_dbModel);
+            var sqlList = new Dictionary<string, string>();
+            query.AddSql(_dbModel, sqlList);
             var resultNames = sqlList.Keys.ToArray();
             string sql = string.Join(";\r\n", sqlList.Values);
 

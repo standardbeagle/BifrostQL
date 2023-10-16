@@ -120,7 +120,7 @@ namespace BifrostQL.Core.QueryModel
 
                 var filter = query.FromTable.GetFilterSql(dbModel, "[a]");
                 var relation = TableFilter.GetSingleFilter("b", "JoinId", query.Join.Operator,
-                    new FieldRef() { TableName = "a", ColumnName = query.Join.FromColumn });
+                    new FieldRef() { TableName = "a", ColumnName = query.Parent.Join.ConnectedColumn });
 
                 return $"SELECT DISTINCT [a].[{query.Join.FromColumn}] AS JoinId FROM [{query.FromTable.TableName}] [a] INNER JOIN ({baseSql}) [b] ON {relation}{filter}";
             }

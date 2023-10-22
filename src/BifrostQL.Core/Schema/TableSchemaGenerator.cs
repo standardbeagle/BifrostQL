@@ -144,10 +144,10 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine($"and: [{_table.GetJoinTypeName(joinTable)}!]");
                 builder.AppendLine($"or: [{_table.GetJoinTypeName(joinTable)}!]");
 
-                //foreach (var link in _table.SingleLinks)
-                //{
-                //    builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : {link.Value.ParentTable.GraphQlName}");
-                //}
+                foreach (var link in _table.SingleLinks)
+                {
+                    builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : {_table.GetJoinTypeName(link.Value.ParentTable) }");
+                }
                 builder.AppendLine("}");
             }
 

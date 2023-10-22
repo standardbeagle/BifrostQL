@@ -10,24 +10,24 @@ namespace BifrostQL.Core.Model
     public sealed class TableDto : ISchemaNames, IDbTable
     {
         /// <summary>
-        /// The name of the table as it is in the database, includes spaces and special characters
+        /// The dbName of the table as it is in the database, includes spaces and special characters
         /// </summary>
         public string DbName { get; init; } = null!;
         /// <summary>
-        /// The name translated so that it can be used as a graphql identifier
+        /// The dbName translated so that it can be used as a graphql identifier
         /// </summary>
         public string GraphQlName { get; init; } = null!;
         /// <summary>
-        /// The table name translated so that it can be used to predict matches from other tables and columns
+        /// The table dbName translated so that it can be used to predict matches from other tables and columns
         /// </summary>
         public string NormalizedName { get; private init; } = null!;
         /// <summary>
-        /// The schema that the table belongs to using its database name
+        /// The schema that the table belongs to using its database dbName
         /// </summary>
         public string TableSchema { get; init; } = null!;
         public string TableType { get; init; } = null!;
         /// <summary>
-        /// The graphql name of the table, including the schema if it is not dbo
+        /// The graphql dbName of the table, including the schema if it is not dbo
         /// </summary>
         public string FullName => $"{(TableSchema == "dbo" ? "" : $"{TableSchema}_")}{GraphQlName}";
         public bool MatchName(string fullName) => string.Equals(FullName, fullName, StringComparison.InvariantCultureIgnoreCase);

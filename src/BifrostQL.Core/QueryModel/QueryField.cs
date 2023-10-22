@@ -20,18 +20,42 @@ namespace BifrostQL.Core.QueryModel
         string ToString();
         GqlObjectQuery ToSqlData(IDbModel model, IQueryField? parent = null, string basePath = "");
         TableJoin ToJoin(IDbModel model, GqlObjectQuery parent);
+        FieldType Type { get; }
+        GqlObjectColumn ToScalarSql(IDbTable dbTable);
+        GqlObjectColumn ToAggregateSql(IDbTable dbTable);
+
+
+    }
+
+    public enum FieldType
+    {
+        Scalar,
+        Join,
+        Link,
+        Aggregate,
+        System,
     }
 
     public sealed class QueryField : IQueryField
     {
         public string? Alias { get; init; }
         public string Name { get; init; } = null!;
+        public string RefName => Alias ?? Name;
         public object? Value { get; set; }
         public bool IncludeResult { get; set; }
         public List<IQueryField> Fields { get; init; } = new();
         public List<QueryArgument> Arguments { get; init; } = new();
         public List<string> Fragments { get; init; } = new();
         public override string ToString() => $"{Alias}:{Name}={Value}({Arguments.Count})/{Fields.Count}/{Fragments.Count}";
+
+        public FieldType Type => this switch
+        {
+            { Fields: var fields, Name: var n } when fields.Any() && IsSpecialColumn(n) => FieldType.Join,
+            { Fields: var fields, Name: var n } when fields.Any() && IsSpecialColumn(n) == false => FieldType.Link,
+            { Name: "_agg" } => FieldType.Aggregate,
+            { Name: var n } when n.StartsWith("__") => FieldType.System,
+            _ => FieldType.Scalar,
+        };
 
         public string GetUniqueName()
         {
@@ -40,19 +64,21 @@ namespace BifrostQL.Core.QueryModel
 
         public GqlObjectQuery ToSqlData(IDbModel model, IQueryField? parent = null, string basePath = "")
         {
-            var path = string.IsNullOrWhiteSpace(basePath) 
-                switch { true => GetUniqueName(), false => basePath + "->" + GetUniqueName() };
+            var path = string.IsNullOrWhiteSpace(basePath)
+                switch
+            { true => GetUniqueName(), false => basePath + "->" + GetUniqueName() };
             var tableName = NormalizeColumnName(Name);
             var dbTable = model.GetTableByFullGraphQlName(tableName);
             var rawSort = (IEnumerable<object?>?)Arguments.FirstOrDefault(a => a.Name == "sort")?.Value;
             var sort = rawSort?.Cast<string>()?.ToList() ?? new List<string>();
             var dataFields = Fields.FirstOrDefault(f => f.Name == "data")?.Fields ?? new List<IQueryField>();
-            var standardFields = (IncludeResult ? dataFields : Fields).Where(f => !f.Name.StartsWith("__")).ToList();
+            var queryFields = (IncludeResult ? dataFields : Fields);
+            var standardFields = queryFields.Where(f => f.Type != FieldType.System).ToList();
             var queryType = GetQueryType(Name);
             if (queryType == QueryType.Aggregate)
             {
                 var agg = Arguments.FirstOrDefault(a => a.Name == "operation")?.Value?.ToString() ?? throw new ExecutionError("Aggregate query missing operation argument.");
-                var aggType = (AggregateOperationType)Enum.Parse(typeof(AggregateOperationType), agg);
+                var aggType = (AggregateOperationType)Enum.Parse(typeof(AggregateOperationType), agg, true);
                 var value = Arguments.FirstOrDefault(a => a.Name == "value")?.Value?.ToString() ?? throw new ExecutionError("Aggregate query missing value argument.");
             }
 
@@ -66,19 +92,20 @@ namespace BifrostQL.Core.QueryModel
                 QueryType = queryType,
                 IsFragment = false,
                 IncludeResult = IncludeResult,
-                ScalarColumns = standardFields.Where(f => f.Fields.Any() == false).Select(f => (f.Name, dbTable.GraphQlLookup[f.Name].DbName)).ToList(),
+                ScalarColumns = standardFields.Where(f => f.Type == FieldType.Scalar).Select(f => f.ToScalarSql(dbTable)).ToList(),
+                AggregateColumns = standardFields.Where(f => f.Type == FieldType.Aggregate).Select(f => f.ToAggregateSql(dbTable)).ToList(),
                 Sort = sort,
                 Limit = (int?)Arguments.FirstOrDefault(a => a.Name == "limit")?.Value,
                 Offset = (int?)Arguments.FirstOrDefault(a => a.Name == "offset")?.Value,
                 Filter = Arguments.Where(a => a is { Name: "filter", Value: not null }).Select(arg => TableFilter.FromObject(arg.Value, dbTable.DbName)).FirstOrDefault(),
                 Links = standardFields
-                            .Where((f) => f.Fields.Any() && IsSpecialColumn(f.Name) == false)
+                            .Where((f) => f.Type == FieldType.Link)
                             .Select(f => f.ToSqlData(model, this, path))
                             .ToList(),
             };
             result.Joins.AddRange(
                 standardFields
-                    .Where((f) => f.Fields.Any() && IsSpecialColumn(f.Name) == true)
+                    .Where((f) => f.Type == FieldType.Join)
                     .Select(f => f.ToJoin(model, result))
                 );
             if (parent == null)
@@ -110,6 +137,21 @@ namespace BifrostQL.Core.QueryModel
             };
         }
 
+        public GqlObjectColumn ToScalarSql(IDbTable dbTable)
+        {
+            return new GqlObjectColumn(dbTable.GraphQlLookup[Name].DbName, RefName);
+        }
+
+
+        public GqlObjectColumn ToAggregateSql(IDbTable dbTable)
+        {
+            var agg = Arguments.FirstOrDefault(a => a.Name == "operation")?.Value?.ToString() ?? throw new ExecutionError("Aggregate query missing operation argument.");
+            var aggType = (AggregateOperationType)Enum.Parse(typeof(AggregateOperationType), agg, true);
+            var value = Arguments.FirstOrDefault(a => a.Name == "value")?.Value?.ToString() ?? throw new ExecutionError("Aggregate query missing value argument.");
+            return new GqlObjectColumn(dbTable.GraphQlLookup[value].DbName, RefName, aggType);
+
+        }
+
         public static void SyncFieldFragments(IQueryField queryField, IDictionary<string, IQueryField> fragmentList)
         {
             foreach (var fragmentField in queryField.Fragments.Select(f => fragmentList[f]).SelectMany(f => f.Fields))
@@ -135,18 +177,17 @@ namespace BifrostQL.Core.QueryModel
             };
         }
 
-        private static string[] _specialColumns = new[] { "_join_", "_single_", "_agg_" };
         private static readonly (string, QueryType)[] ColumnTypeMap = new[]
         {
             ("_join_", QueryType.Join),
             ("_single_", QueryType.Single),
-            ("_agg_", QueryType.Aggregate),
+            ("_agg", QueryType.Aggregate),
         };
 
         private static string NormalizeColumnName(string name)
         {
             var result = name;
-            foreach (var (prefix,_) in ColumnTypeMap)
+            foreach (var (prefix, _) in ColumnTypeMap)
             {
                 result = result.Replace(prefix, "");
             }

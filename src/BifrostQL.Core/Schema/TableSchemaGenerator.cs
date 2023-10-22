@@ -30,6 +30,8 @@ namespace BifrostQL.Core.Schema
             {
                 builder.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetGraphQlTypeName(column.DataType, column.IsNullable)}");
             }
+
+            builder.AppendLine($"_agg(operation: AggregateOperations! value: {_table.GraphQlName}_columns!) : Float");
             foreach (var link in _table.SingleLinks)
             {
                 builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : {link.Value.ParentTable.GraphQlName}");
@@ -155,7 +157,7 @@ namespace BifrostQL.Core.Schema
 
                 //foreach (var link in table.SingleLinks)
                 //{
-                //    builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : {link.Value.ParentTable.GraphQlName}");
+                //    builder.AppendLine($"\t{link.Value.ParentTable.GraphQlDbName} : {link.Value.ParentTable.GraphQlDbName}");
                 //}
                 builder.AppendLine("}");
             }

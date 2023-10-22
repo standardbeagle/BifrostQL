@@ -18,7 +18,7 @@ namespace BifrostQL.Core.Schema
             foreach (var generator in tableGenerators)
             {
                 builder.AppendLine(generator.GetTableFieldDefinition());
-                builder.AppendLine(generator.GetTableAggregateDefinition());
+               // builder.AppendLine(generator.GetTableAggregateDefinition());
             }
             builder.AppendLine("_dbSchema(graphQlName: String): [dbTableSchema!]!");
             builder.AppendLine("}");
@@ -73,7 +73,7 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine("}");
 
             builder.AppendLine("type dbJoinSchema {");
-            builder.AppendLine("name: String!");
+            builder.AppendLine("dbName: String!");
             builder.AppendLine("sourceColumnNames: [String!]!");
             builder.AppendLine("destinationTable: String!");
             builder.AppendLine("destinationColumnNames: [String!]!");
@@ -240,6 +240,7 @@ namespace BifrostQL.Core.Schema
     }
     public enum AggregateOperationType
     {
+        None,
         Count,
         Sum,
         Avg,

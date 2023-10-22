@@ -60,7 +60,7 @@ namespace BifrostQL.Core.QueryModel
                         Sort = new string[] { },
                         Joins = new object[] { },
                         Links = new object[] { },
-                        ScalarColumns = new[] { ("id", "id"), ("number", "number") },
+                        ScalarColumns = new[] { new GqlObjectColumn("id", "id"), new GqlObjectColumn("number", "number") },
                     },
                     new {
                         TableName = "sessions",
@@ -69,7 +69,7 @@ namespace BifrostQL.Core.QueryModel
                         Sort = new string[] { },
                         Joins = new object[] { },
                         Links = new object[] { },
-                        ScalarColumns = new[] { ("id", "sid"), ("status", "status") },
+                        ScalarColumns = new[] { new GqlObjectColumn("sid", "id"), new GqlObjectColumn("status", "status") },
                     },
                 });
         }
@@ -94,7 +94,7 @@ namespace BifrostQL.Core.QueryModel
                         Sort = new [] { "id_desc", "number_asc" },
                         Joins = new object[] { },
                         Links = new object[] { },
-                        ScalarColumns = new[] { ("id", "id"), ("number", "number") },
+                        ScalarColumns = new[] { new GqlObjectColumn("id", "id"), new GqlObjectColumn("number", "number") },
                     });
 
         }
@@ -117,7 +117,7 @@ namespace BifrostQL.Core.QueryModel
                         Filter = new { And = new object[] { new { ColumnName = "startDate", Next = new { RelationName = "_gt", Value = "1-1-2022" } }, new { ColumnName = "endDate", Next = new { RelationName = "_lt", Value = "1-1-2023" } } } },
                         Joins = new object[] { },
                         Links = new object[] { },
-                        ScalarColumns = new[] { ("id", "id"), ("number", "number") },
+                        ScalarColumns = new[] { new GqlObjectColumn("id", "id"), new GqlObjectColumn("number", "number") },
                     });
 
         }
@@ -140,7 +140,7 @@ namespace BifrostQL.Core.QueryModel
                         Filter = new { And = new object[] { new { ColumnName = "startDate", Next = new { RelationName = "_gt", Value = "1-1-2022" } }, new { ColumnName = "endDate", Next = new { RelationName = "_lt", Value = "1-1-2023" } } } },
                         Joins = new object[] { },
                         Links = new object[] { },
-                        ScalarColumns = new[] { ("id", "id"), ("number", "number") },
+                        ScalarColumns = new[] { new GqlObjectColumn("id", "id"), new GqlObjectColumn("number", "number") },
                     });
 
         }
@@ -166,7 +166,7 @@ namespace BifrostQL.Core.QueryModel
                         Sort = new string[] { },
                         Joins = new object[] { },
                         Links = new object[] { },
-                        ScalarColumns = new[] { ("id", "id"), ("number", "number") },
+                        ScalarColumns = new[] { new GqlObjectColumn("id", "id"), new GqlObjectColumn("number", "number") },
                     });
         }
 
@@ -191,7 +191,7 @@ namespace BifrostQL.Core.QueryModel
                         Sort = new string[] { },
                         Joins = new object[] {},
                         Links = new object[] { },
-                        ScalarColumns = new[] { ("id", "id"), ("number", "number") },
+                        ScalarColumns = new[] { new GqlObjectColumn("id", "id"), new GqlObjectColumn("number", "number") },
                     });
         }
 
@@ -216,7 +216,7 @@ namespace BifrostQL.Core.QueryModel
                         Sort = new string[] { },
                         Joins = new object[] { },
                         Links = new object[] { },
-                        ScalarColumns = new[] { ("id", "sid"), ("status", "status") },
+                        ScalarColumns = new[] { new GqlObjectColumn("sid", "id"), new GqlObjectColumn("status", "status") },
                     });
         }
 
@@ -247,7 +247,7 @@ namespace BifrostQL.Core.QueryModel
                                 ConnectedTable = new
                                 {
                                     TableName = "sessions",
-                                    ScalarColumns = new[] { ("id", "sid") },
+                                    ScalarColumns = new[] { new GqlObjectColumn("sid", "id") },
                                 },
                                 FromColumn = "idd",
                                 ConnectedColumn = "workshopid",
@@ -255,7 +255,7 @@ namespace BifrostQL.Core.QueryModel
                             }
                         },
                         Links = new object[] { },
-                        ScalarColumns = new[] { ("id", "id"), ("number", "number") },
+                        ScalarColumns = new[] { new GqlObjectColumn("id", "id"), new GqlObjectColumn("number", "number") },
                     });
         }
 
@@ -297,7 +297,7 @@ namespace BifrostQL.Core.QueryModel
                                 Offset = (int?)null,
                                 Sort = new string[] { },
                                 Joins = new object[] { },
-                                ScalarColumns = new[] { ("id", "sid"), ("status", "status") },
+                                ScalarColumns = new[] { new GqlObjectColumn("sid", "id"), new GqlObjectColumn("status", "status") },
                             },
                             new {
                                 TableName = "participants table",
@@ -306,10 +306,10 @@ namespace BifrostQL.Core.QueryModel
                                 Offset = (int?)null,
                                 Sort = new string[] { },
                                 Joins = new object[] { },
-                                ScalarColumns = new[] { ("firstname", "firstname"), ("lastname", "lastname") },
+                                ScalarColumns = new[] { new GqlObjectColumn("firstname", "firstname"), new GqlObjectColumn("lastname", "lastname") },
                             },
                         },
-                        ScalarColumns = new[] { ("id", "id"), ("number", "number") },
+                        ScalarColumns = new[] { new GqlObjectColumn("id", "id"), new GqlObjectColumn("number", "number") },
                     });
         }
 

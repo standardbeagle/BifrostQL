@@ -29,8 +29,8 @@ namespace BifrostQL.Core.QueryModel
         public string Path { get; set; } = "";
         public string KeyName => $"{Alias ?? GraphQlName}";
         public QueryType QueryType { get; set; }
-        public AggregateOperationType? Aggregate { get; set; }
-        public List<(string GraphQlName, string DbName)> ScalarColumns { get; init; } = new ();
+        public List<GqlObjectColumn> ScalarColumns { get; init; } = new ();
+        public List<GqlObjectColumn> AggregateColumns { get; init; } = new ();
 
         public List<GqlObjectQuery> Links { get; set; } = new ();
         public List<string> Sort { get; set; } = new ();
@@ -42,24 +42,14 @@ namespace BifrostQL.Core.QueryModel
         public List<TableJoin> Joins { get; set; } = new ();
         public IEnumerable<TableJoin> RecurseJoins => Joins.Concat(Joins.SelectMany(j => j.ConnectedTable.RecurseJoins));
 
-        public IEnumerable<(string GraphQlName, string DbName)> FullColumnNames =>
-            ScalarColumns.Where(c => c.GraphQlName.StartsWith("__") == false)
-            .Concat(Joins.Select(j => (j.FromColumn, j.FromColumn)))
-            .DistinctBy(c => c.Item2, SqlNameComparer.Instance);
+        public IEnumerable<GqlObjectColumn> FullColumnNames =>
+            ScalarColumns.Where(c => c.GraphQlDbName.StartsWith("__") == false)
+            .Concat(Joins.Select(j => new GqlObjectColumn(j.FromColumn)))
+            .DistinctBy(c => c.DbDbName, SqlNameComparer.Instance);
 
         public void AddSql(IDbModel dbModel, IDictionary<string, string> sqls, QueryLink? queryLink = null)
         {
-            var columnSql = Aggregate switch
-            {
-                AggregateOperationType.Count => $"COUNT([{ScalarColumns[0].DbName}]) AS [Value]",
-                AggregateOperationType.Sum => $"SUM([{ScalarColumns[0].DbName}]) AS [Value]",
-                AggregateOperationType.Avg => $"AVG([{ScalarColumns[0].DbName}]) AS [Value]",
-                AggregateOperationType.Min => $"MIN([{ScalarColumns[0].DbName}]) AS [Value]",
-                AggregateOperationType.Max => $"MAX([{ScalarColumns[0].DbName}]) AS [Value]",
-
-                _ => string.Join(",", FullColumnNames.Select(n => $"[{n.DbName}] [{n.GraphQlName}]"))
-            };
-                
+            var columnSql = string.Join(",", FullColumnNames.Select(n => $"[{n.DbDbName}] [{n.GraphQlDbName}]"));
             var cmdText = $"SELECT {columnSql} FROM {FullTableText}";
 
             var filter = GetFilterSql(dbModel);
@@ -68,6 +58,8 @@ namespace BifrostQL.Core.QueryModel
             sqls[sqlKeyName] = baseSql;
             if (IncludeResult)
                 sqls[$"{sqlKeyName}=>count"] = $"SELECT COUNT(*) FROM {FullTableText}{filter}";
+            if (AggregateColumns.Any())
+                sqls[$"{sqlKeyName}=>aggregate"] = $"SELECT {string.Join(",", AggregateColumns.Select(c => c.GetSqlColumn()))} FROM {FullTableText}{filter}";
             foreach (var join in Joins)
             {
                 var joinQueryLink = new QueryLink { FromTable = this, Join = join, Parent = queryLink};
@@ -93,7 +85,7 @@ namespace BifrostQL.Core.QueryModel
             var connectedDbTable = dbModel.GetTableFromDbName(tableJoin.ConnectedTable.TableName);
             var connectedDbColumn = connectedDbTable.GraphQlLookup[tableJoin.ConnectedColumn];
             var joinColumnSql = string.Join(",",
-                tableJoin.ConnectedTable.FullColumnNames.Select(c => $"[b].[{c.DbName}] AS [{c.GraphQlName}]"));
+                tableJoin.ConnectedTable.FullColumnNames.Select(c => $"[b].[{c.DbDbName}] AS [{c.GraphQlDbName}]"));
 
             var wrap = $"SELECT [a].[JoinId] [src_id], {joinColumnSql} FROM ({main}) [a]";
             var relation = TableFilter.GetSingleFilter("a", "JoinId", tableJoin.Operator,
@@ -129,8 +121,8 @@ namespace BifrostQL.Core.QueryModel
         /// <summary>
         /// Converts links to joins and connects them to the parent table
         /// </summary>
-        /// <param name="dbModel"></param>
-        /// <param name="basePath"></param>
+        /// <param dbName="dbModel"></param>
+        /// <param dbName="basePath"></param>
         /// <exception cref="ExecutionError"></exception>
         public void ConnectLinks(IDbModel dbModel, string basePath = "")
         {

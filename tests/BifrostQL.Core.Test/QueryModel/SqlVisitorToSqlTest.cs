@@ -44,6 +44,42 @@ namespace BifrostQL.Core.QueryModel
         }
 
         [Fact]
+        public async Task SimpleCountQuerySuccess()
+        {
+            var ctx = new SqlContext();
+            var visitor = new SqlVisitor();
+
+            var model = new DbModel { Tables = GetFakeTables() };
+            var ast = Parser.Parse("query { work__shops { data { id _agg(value: id operation: count) } } }");
+            await visitor.VisitAsync(ast, ctx);
+            var sqls = GetSqls(ctx, model);
+            sqls.Should().ContainSingle()
+                .Which.Should().Equal(new Dictionary<string, string> {
+                    { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
+                    { "work__shops=>count", "SELECT COUNT(*) FROM [dbo].[work shops]"},
+                    { "work__shops=>aggregate", "SELECT Count([id]) [_agg] FROM [dbo].[work shops]"}
+                });
+        }
+
+        [Fact]
+        public async Task AliasCountQuerySuccess()
+        {
+            var ctx = new SqlContext();
+            var visitor = new SqlVisitor();
+
+            var model = new DbModel { Tables = GetFakeTables() };
+            var ast = Parser.Parse("query { work__shops { data { id ct: _agg(value: id operation: count) } } }");
+            await visitor.VisitAsync(ast, ctx);
+            var sqls = GetSqls(ctx, model);
+            sqls.Should().ContainSingle()
+                .Which.Should().Equal(new Dictionary<string, string> {
+                    { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
+                    { "work__shops=>count", "SELECT COUNT(*) FROM [dbo].[work shops]"},
+                    { "work__shops=>aggregate", "SELECT Count([id]) [ct] FROM [dbo].[work shops]"}
+                });
+
+        }
+        [Fact]
         public async Task SimpleQueryNonStandardColumnSuccess()
         {
             var ctx = new SqlContext();
@@ -69,6 +105,44 @@ namespace BifrostQL.Core.QueryModel
 
             var model = new DbModel { Tables = GetFakeTables() };
             var ast = Parser.Parse("query { work__shops { data { id sess:_join_sessions(on: {id: {_neq: workshopid}}) { id status } } } }");
+            await visitor.VisitAsync(ast, ctx);
+            var sqls = GetSqls(ctx, model);
+            sqls.Should().ContainSingle()
+                .Which.Should().Equal(new Dictionary<string, string> {
+                    { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
+                    { "work__shops=>count", "SELECT COUNT(*) FROM [dbo].[work shops]"},
+                    { "work__shops->sess", "SELECT [a].[JoinId] [src_id], [b].[sid] AS [id],[b].[status] AS [status] FROM (SELECT DISTINCT [id] AS JoinId FROM [work shops]) [a] INNER JOIN [sessions] [b] ON [a].[JoinId] != [b].[workshopid] ORDER BY (SELECT NULL) OFFSET 0 ROWS" },
+                });
+
+        }
+
+        [Fact(Skip = "aggregate still beta")]
+        public async Task SimpleAggQuerySuccess()
+        {
+            var ctx = new SqlContext();
+            var visitor = new SqlVisitor();
+
+            var model = new DbModel { Tables = GetFakeTables() };
+            var ast = Parser.Parse("query { __agg_work__shops(operation: count value:id)");
+            await visitor.VisitAsync(ast, ctx);
+            var sqls = GetSqls(ctx, model);
+            sqls.Should().ContainSingle()
+                .Which.Should().Equal(new Dictionary<string, string> {
+                    { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
+                    { "work__shops=>count", "SELECT COUNT(*) FROM [dbo].[work shops]"},
+                    { "work__shops->sess", "SELECT [a].[JoinId] [src_id], [b].[sid] AS [id],[b].[status] AS [status] FROM (SELECT DISTINCT [id] AS JoinId FROM [work shops]) [a] INNER JOIN [sessions] [b] ON [a].[JoinId] != [b].[workshopid] ORDER BY (SELECT NULL) OFFSET 0 ROWS" },
+                });
+
+        }
+
+        [Fact(Skip = "aggregate still beta")]
+        public async Task SimpleAggAndJoinQuerySuccess()
+        {
+            var ctx = new SqlContext();
+            var visitor = new SqlVisitor();
+
+            var model = new DbModel { Tables = GetFakeTables() };
+            var ast = Parser.Parse("query { __agg_work__shops(operation: count value:id) work__shops { data { id sess:_join_sessions(on: {id: {_neq: workshopid}}) { id status } } } }");
             await visitor.VisitAsync(ast, ctx);
             var sqls = GetSqls(ctx, model);
             sqls.Should().ContainSingle()

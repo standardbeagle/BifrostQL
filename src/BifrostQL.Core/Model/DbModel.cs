@@ -26,46 +26,46 @@ namespace BifrostQL.Core.Model
         public string UserAuditKey { get; init; } = null!;
         public string AuditTableName { get; init; } = null!;
         /// <summary>
-        /// Searches for the table by its full graphql name
+        /// Searches for the table by its full graphql dbName
         /// </summary>
-        /// <param name="fullName"></param>
+        /// <param dbName="fullName"></param>
         /// <returns></returns>
         public IDbTable GetTableByFullGraphQlName(string fullName)
         {
-            return Tables?.FirstOrDefault(t => t.MatchName(fullName)) ?? throw new ArgumentOutOfRangeException(nameof(fullName), fullName, $"failed table lookup on graphql name: {fullName}");
+            return Tables?.FirstOrDefault(t => t.MatchName(fullName)) ?? throw new ArgumentOutOfRangeException(nameof(fullName), fullName, $"failed table lookup on graphql dbName: {fullName}");
         }
         public IDbTable GetTableFromDbName(string tableName)
         {
-            return Tables?.FirstOrDefault(t => string.Equals(t.DbName, tableName, StringComparison.InvariantCultureIgnoreCase)) ?? throw new ArgumentOutOfRangeException(nameof(tableName), tableName, $"failed table lookup on db name: {tableName}");
+            return Tables?.FirstOrDefault(t => string.Equals(t.DbName, tableName, StringComparison.InvariantCultureIgnoreCase)) ?? throw new ArgumentOutOfRangeException(nameof(tableName), tableName, $"failed table lookup on db dbName: {tableName}");
         }
     }
 
     public interface IDbTable
     {
         /// <summary>
-        /// The name of the table as it is in the database, includes spaces and special characters
+        /// The dbName of the table as it is in the database, includes spaces and special characters
         /// </summary>
         string DbName { get; init; }
 
         /// <summary>
-        /// The name translated so that it can be used as a graphql identifier
+        /// The dbName translated so that it can be used as a graphql identifier
         /// </summary>
         string GraphQlName { get; init; }
 
         /// <summary>
-        /// The table name translated so that it can be used to predict matches from other tables and columns
+        /// The table dbName translated so that it can be used to predict matches from other tables and columns
         /// </summary>
         string NormalizedName { get; }
 
         /// <summary>
-        /// The schema that the table belongs to using its database name
+        /// The schema that the table belongs to using its database dbName
         /// </summary>
         string TableSchema { get; init; }
 
         string TableType { get; init; }
 
         /// <summary>
-        /// The graphql name of the table, including the schema if it is not dbo
+        /// The graphql dbName of the table, including the schema if it is not dbo
         /// </summary>
         string FullName { get; }
 

@@ -70,11 +70,13 @@ namespace BifrostQL.Core.Model
         string FullName { get; }
 
         string ColumnEnumTypeName { get; }
+        string ColumnFilterTypeName { get; }
         string TableFilterTypeName { get; }
         string TableColumnSortEnumName { get;  }
 
         string JoinFieldName { get; }
         string SingleFieldName { get; }
+        string GetJoinTypeName(IDbTable joinTable);
 
         IEnumerable<ColumnDto> Columns { get; }
         IDictionary<string, ColumnDto> ColumnLookup { get; init; }

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.NetworkInformation;
 using System.Text;
 using System.Threading.Tasks;
 using BifrostQL.Core.Model;
@@ -126,6 +127,11 @@ namespace BifrostQL.Core.Schema
             return $"{GetSimpleGraphQlTypeName(dataType)}{(isNullable ? "" : "!")}";
         }
 
+        public static string GetFilterInputTypeName(string dataType)
+        {
+            return $"FilterType{GetSimpleGraphQlTypeName(dataType)}Input";
+        }
+
         public static string GetSimpleGraphQlTypeName(string dataType)
         {
             switch (dataType)
@@ -206,10 +212,11 @@ namespace BifrostQL.Core.Schema
             return result.ToString();
         }
 
-        public static string GetOnType(string columnEnum)
+        public static string GetOnType(IDbTable dbTable)
         {
+            var columnEnum = dbTable.ColumnEnumTypeName;
             var result = new StringBuilder();
-            var name = $"FilterType{columnEnum}Input";
+            var name = dbTable.ColumnFilterTypeName;
             var filters = new (string fieldName, string type)[] {
                 ("_eq", columnEnum),
                 ("_neq", columnEnum),

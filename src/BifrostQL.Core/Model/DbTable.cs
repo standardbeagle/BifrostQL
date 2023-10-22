@@ -32,10 +32,12 @@ namespace BifrostQL.Core.Model
         public string FullName => $"{(TableSchema == "dbo" ? "" : $"{TableSchema}_")}{GraphQlName}";
 
         public string ColumnEnumTypeName => $"{GraphQlName}Enum";
+        public string ColumnFilterTypeName => $"FilterType{GraphQlName}EnumInput";
         public string TableFilterTypeName => $"TableFilter{GraphQlName}Input";
         public string TableColumnSortEnumName => $"{GraphQlName}SortEnum";
         public string JoinFieldName => $"_join_{GraphQlName}";
         public string SingleFieldName => $"_single_{GraphQlName}";
+        public string GetJoinTypeName(IDbTable joinTable) => $"TableOn{GraphQlName}{joinTable.GraphQlName}";
         public bool MatchName(string fullName) => string.Equals(FullName, fullName, StringComparison.InvariantCultureIgnoreCase);
         public IEnumerable<ColumnDto> Columns => ColumnLookup.Values;
         public IDictionary<string, ColumnDto> ColumnLookup { get; init; } = null!;

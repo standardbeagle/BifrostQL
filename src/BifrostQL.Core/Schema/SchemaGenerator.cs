@@ -29,30 +29,7 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine(generator.GetPagedTableTypeDefinition());
             }
 
-            builder.AppendLine("type databaseInput {");
-            foreach (var generator in tableGenerators)
-            {
-                builder.AppendLine(generator.GetInputFieldDefinition());
-            }
-            builder.AppendLine("}");
-
-            foreach (var generator in tableGenerators)
-            {
-                builder.AppendLine(generator.GetInputParameterType("Insert", IdentityType.None));
-                builder.AppendLine(generator.GetInputParameterType("Update", IdentityType.Required));
-                builder.AppendLine(generator.GetInputParameterType("Upsert", IdentityType.Optional));
-                builder.AppendLine(generator.GetInputParameterType("Delete", IdentityType.Optional, true));
-
-                builder.AppendLine(generator.GetTableFilterDefinition());
-
-                builder.AppendLine(generator.GetJoinDefinitions(model));
-
-                builder.AppendLine(generator.GetTableJoinType());
-
-                builder.AppendLine(generator.GetTableEnumDefinition());
-                builder.AppendLine(generator.GetTableColumnEnumDefinition());
-                builder.AppendLine(generator.GetTableSortEnumDefinition());
-            }
+            builder.Append(GetInputAndArgumentTypes(model, tableGenerators));
 
             //Define the filter types of all the columns in the database, needs to be specific to the connected database, and distinct because of GraphQL.
             foreach (var gqlType in model.Tables.SelectMany(t => t.Columns).Select<ColumnDto, string>(c => GetSimpleGraphQlTypeName(c.DataType)).Distinct())
@@ -103,6 +80,37 @@ namespace BifrostQL.Core.Schema
 
             return builder.ToString();
 
+        }
+
+        private static StringBuilder GetInputAndArgumentTypes(IDbModel model, List<TableSchemaGenerator> tableGenerators)
+        {
+            var builder = new StringBuilder();
+            builder.AppendLine("type databaseInput {");
+            foreach (var generator in tableGenerators)
+            {
+                builder.AppendLine(generator.GetInputFieldDefinition());
+            }
+
+            builder.AppendLine("}");
+
+            foreach (var generator in tableGenerators)
+            {
+                builder.AppendLine(generator.GetMutationParameterType("Insert", IdentityType.None));
+                builder.AppendLine(generator.GetMutationParameterType("Update", IdentityType.Required));
+                builder.AppendLine(generator.GetMutationParameterType("Upsert", IdentityType.Optional));
+                builder.AppendLine(generator.GetMutationParameterType("Delete", IdentityType.Optional, true));
+
+                builder.AppendLine(generator.GetTableFilterDefinition());
+
+                builder.AppendLine(generator.GetJoinDefinitions(model));
+
+                builder.AppendLine(generator.GetTableJoinType());
+
+                builder.AppendLine(generator.GetTableColumnEnumDefinition());
+                builder.AppendLine(generator.GetTableSortEnumDefinition());
+            }
+
+            return builder;
         }
 
         public static string GetGraphQlInsertTypeName(string dataType, bool isNullable = false)

@@ -111,7 +111,7 @@ SELECT [TABLE_CATALOG]
                 {
                     AuditTableName = _auditTableName ?? "",
                     UserAuditKey = _userAuditKey ?? "",
-                    Tables = GetDtos<TableDto>(reader, r => TableDto.FromReader(
+                    Tables = GetDtos<DbTable>(reader, r => DbTable.FromReader(
                         r, 
                         columns[new TableRef((string)reader["TABLE_CATALOG"], (string)reader["TABLE_SCHEMA"], (string)reader["TABLE_NAME"])]))
                     .Where(t => _includeTables.Match(t) == true)

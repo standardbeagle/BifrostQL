@@ -24,8 +24,8 @@ namespace BifrostQL.Core.Schema
 
                     var tableType = _.Types.For(table.GraphQlName);
 
-                    var tableAggField = query.FieldFor($"_agg_{table.GraphQlName}");
-                    tableAggField.Resolver = new DbAggregateResolver(table);
+                    //var tableAggField = query.FieldFor($"_agg_{table.GraphQlName}");
+                    //tableAggField.Resolver = new DbAggregateResolver(table);
 
                     var tableInsertField = mut.FieldFor(table.GraphQlName);
                     tableInsertField.Resolver = new DbTableMutateResolver(table);
@@ -47,9 +47,9 @@ namespace BifrostQL.Core.Schema
                     };
                     foreach (var joinTable in model.Tables)
                     {
-                        var joinField = tableType.FieldFor($"_join_{joinTable.GraphQlName}");
+                        var joinField = tableType.FieldFor(joinTable.JoinFieldName);
                         joinField.Resolver = DbJoinFieldResolver.Instance;
-                        var singleField = tableType.FieldFor($"_single_{joinTable.GraphQlName}");
+                        var singleField = tableType.FieldFor(joinTable.SingleFieldName);
                         singleField.Resolver = DbJoinFieldResolver.Instance;
                     }
                 }

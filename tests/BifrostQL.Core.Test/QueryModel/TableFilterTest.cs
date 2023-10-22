@@ -36,7 +36,7 @@ namespace BifrostQL.Core.QueryModel
                 } }
             }, "tableName");
             var dbModel = Substitute.For<IDbModel>();
-            dbModel.GetTableFromDbName("tableName").Returns(new TableDto()
+            dbModel.GetTableFromDbName("tableName").Returns(new DbTable()
             {
                 GraphQlLookup = new Dictionary<string, ColumnDto>() { { "id", new ColumnDto() { ColumnName = "id" } } }
             });
@@ -59,7 +59,7 @@ namespace BifrostQL.Core.QueryModel
                 } }
             }, "tableName");
             var dbModel = Substitute.For<IDbModel>();
-            dbModel.GetTableFromDbName("tableName").Returns(new TableDto()
+            dbModel.GetTableFromDbName("tableName").Returns(new DbTable()
             {
                 GraphQlLookup = new Dictionary<string, ColumnDto>() { { "id", new ColumnDto() { ColumnName = "id" } } }
             });
@@ -87,7 +87,7 @@ namespace BifrostQL.Core.QueryModel
                     } }
             }, "tableName");
             var dbModel = Substitute.For<IDbModel>();
-            dbModel.GetTableFromDbName("tableName").Returns(new TableDto()
+            dbModel.GetTableFromDbName("tableName").Returns(new DbTable()
             {
                 GraphQlLookup = new Dictionary<string, ColumnDto>() { { "id", new ColumnDto() { ColumnName = "id" } }, { column2, new ColumnDto() { ColumnName = column2+"_ha" } } }
             });
@@ -117,7 +117,7 @@ namespace BifrostQL.Core.QueryModel
                     } }
             }, "tableName");
             var dbModel = Substitute.For<IDbModel>();
-            Dictionary<string, TableDto> tables = GetTableModel();
+            Dictionary<string, DbTable> tables = GetTableModel();
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
             var sut = filter.ToSql(dbModel, "table");
             sut.Should().Be((
@@ -148,7 +148,7 @@ namespace BifrostQL.Core.QueryModel
                     } }
             }, "tableName");
             var dbModel = Substitute.For<IDbModel>();
-            Dictionary<string, TableDto> tables = GetTableModel();
+            Dictionary<string, DbTable> tables = GetTableModel();
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
             var sut = filter.ToSql(dbModel, "table");
             sut.Should().Be((
@@ -183,7 +183,7 @@ namespace BifrostQL.Core.QueryModel
                     } }
             }, "tableName");
             var dbModel = Substitute.For<IDbModel>();
-            Dictionary<string, TableDto> tables = GetTableModel();
+            Dictionary<string, DbTable> tables = GetTableModel();
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
             var sut = filter.ToSql(dbModel, "table");
             sut.ToString().Should().Be(( 
@@ -203,7 +203,7 @@ namespace BifrostQL.Core.QueryModel
                 } } } }
             }, "tableName");
             var dbModel = Substitute.For<IDbModel>();
-            Dictionary<string, TableDto> tables = GetTableModel();
+            Dictionary<string, DbTable> tables = GetTableModel();
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var sut = filter.ToSql(dbModel, alias);
@@ -221,14 +221,14 @@ namespace BifrostQL.Core.QueryModel
                 } } } } } }
             }, "tableName");
             var dbModel = Substitute.For<IDbModel>();
-            Dictionary<string, TableDto> tables = GetTableModel();
+            Dictionary<string, DbTable> tables = GetTableModel();
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var sut = filter.ToSql(dbModel, "table");
             sut.Should().Be((" INNER JOIN (SELECT DISTINCT [id] AS [joinid] FROM [Sessions] INNER JOIN (SELECT DISTINCT [id] AS [joinid] FROM [workshops] WHERE [workshops].[id] = '321') [j] ON [j].[joinid] = [Sessions].[workshopId]) [j] ON [j].[joinid] = [table].[sessionId_db]", ""));
         }
 
-        private static Dictionary<string, TableDto> GetTableModel()
+        private static Dictionary<string, DbTable> GetTableModel()
         {
             var table1Columns = new Dictionary<string, ColumnDto>
             {
@@ -284,15 +284,15 @@ namespace BifrostQL.Core.QueryModel
                     }
                 }
             };
-            var tables = new Dictionary<string, TableDto> {
-                { "tableName1", new TableDto
+            var tables = new Dictionary<string, DbTable> {
+                { "tableName1", new DbTable
                     {
                         DbName = "tableName1",
                         ColumnLookup = table1Columns,
                         GraphQlLookup = table1Columns.Values.ToDictionary(x => x.GraphQlName, x => x),
                     }
                 },
-                { "sessions", new TableDto
+                { "sessions", new DbTable
                     {
                         TableSchema = "dbo",
                         DbName = "Sessions",
@@ -302,7 +302,7 @@ namespace BifrostQL.Core.QueryModel
                         SingleLinks = new Dictionary<string, TableLinkDto>()
                     }
                 },
-                { "workshops", new TableDto
+                { "workshops", new DbTable
                     {
                         DbName = "workshops",
                         ColumnLookup = workshopColumns,

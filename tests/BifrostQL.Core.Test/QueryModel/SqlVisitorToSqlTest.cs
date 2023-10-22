@@ -79,6 +79,26 @@ namespace BifrostQL.Core.QueryModel
                 });
 
         }
+
+        [Fact]
+        public async Task MultipleAggregateQuerySuccess()
+        {
+            var ctx = new SqlContext();
+            var visitor = new SqlVisitor();
+
+            var model = new DbModel { Tables = GetFakeTables() };
+            var ast = Parser.Parse("query { work__shops { data { id ct: _agg(value: id operation: count) sum: _agg(value: id operation: sum) } } }");
+            await visitor.VisitAsync(ast, ctx);
+            var sqls = GetSqls(ctx, model);
+            sqls.Should().ContainSingle()
+                .Which.Should().Equal(new Dictionary<string, string> {
+                    { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY (SELECT NULL) OFFSET 0 ROWS"},
+                    { "work__shops=>count", "SELECT COUNT(*) FROM [dbo].[work shops]"},
+                    { "work__shops=>aggregate", "SELECT Count([id]) [ct], Sum([id]) [sum] FROM [dbo].[work shops]"}
+                });
+
+        }
+
         [Fact]
         public async Task SimpleQueryNonStandardColumnSuccess()
         {
@@ -353,9 +373,9 @@ namespace BifrostQL.Core.QueryModel
 
         }
 
-        public static List<TableDto> GetFakeTables()
+        public static List<DbTable> GetFakeTables()
         {
-            var workshops = new TableDto
+            var workshops = new DbTable
             {
                 TableSchema = "dbo",
                 DbName = "work shops",
@@ -371,7 +391,7 @@ namespace BifrostQL.Core.QueryModel
                     { "percentage_34", new ColumnDto { TableName = "work shops", ColumnName= "percentage%", IsPrimaryKey= false } },
                 },
             };
-            var sessions = new TableDto
+            var sessions = new DbTable
             {
                 TableSchema = "dbo",
                 DbName = "sessions",
@@ -389,7 +409,7 @@ namespace BifrostQL.Core.QueryModel
                     { "percentage_34", new ColumnDto { TableName = "sessions", ColumnName= "percentage%", IsPrimaryKey= false } },
                 },
             };
-            var participants = new TableDto
+            var participants = new DbTable
             {
                 TableSchema = "dbo",
                 DbName = "participants table",
@@ -441,7 +461,7 @@ namespace BifrostQL.Core.QueryModel
                 ChildTable = participants,
                 ChildId = participants.ColumnLookup["workshopid"],
             });
-            var tables = new List<TableDto>() { workshops, sessions, participants };
+            var tables = new List<DbTable>() { workshops, sessions, participants };
             return tables;
         }
     }

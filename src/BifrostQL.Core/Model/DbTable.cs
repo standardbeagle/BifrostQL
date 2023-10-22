@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace BifrostQL.Core.Model
 {
-    public sealed class TableDto : ISchemaNames, IDbTable
+    public sealed class DbTable : ISchemaNames, IDbTable
     {
         /// <summary>
         /// The dbName of the table as it is in the database, includes spaces and special characters
@@ -30,6 +30,12 @@ namespace BifrostQL.Core.Model
         /// The graphql dbName of the table, including the schema if it is not dbo
         /// </summary>
         public string FullName => $"{(TableSchema == "dbo" ? "" : $"{TableSchema}_")}{GraphQlName}";
+
+        public string ColumnEnumTypeName => $"{GraphQlName}Enum";
+        public string TableFilterTypeName => $"TableFilter{GraphQlName}Input";
+        public string TableColumnSortEnumName => $"{GraphQlName}SortEnum";
+        public string JoinFieldName => $"_join_{GraphQlName}";
+        public string SingleFieldName => $"_single_{GraphQlName}";
         public bool MatchName(string fullName) => string.Equals(FullName, fullName, StringComparison.InvariantCultureIgnoreCase);
         public IEnumerable<ColumnDto> Columns => ColumnLookup.Values;
         public IDictionary<string, ColumnDto> ColumnLookup { get; init; } = null!;
@@ -43,11 +49,11 @@ namespace BifrostQL.Core.Model
             return $"[{TableSchema}].[{DbName}]";
         }
 
-        public static TableDto FromReader(IDataReader reader, IReadOnlyCollection<ColumnDto>? columns = null)
+        public static DbTable FromReader(IDataReader reader, IReadOnlyCollection<ColumnDto>? columns = null)
         {
             var name = (string)reader["TABLE_NAME"];
             var graphQlName = name.ToGraphQl("tbl");
-            return new TableDto
+            return new DbTable
             {
                 DbName = name,
                 GraphQlName = graphQlName,

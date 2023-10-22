@@ -20,11 +20,11 @@ namespace BifrostQL.Core.Model
             _default = defaultResult;
         }
 
-        public bool Match(TableDto table)
+        public bool Match(DbTable dbTable)
         {
             if (_matchers.Length == 0)
                 return _default;
-            return _matchers.Any(m => m.schema.IsMatch(table.TableSchema) && m.tables.Any(t => t.IsMatch(table.DbName)));
+            return _matchers.Any(m => m.schema.IsMatch(dbTable.TableSchema) && m.tables.Any(t => t.IsMatch(dbTable.DbName)));
         }
         public static TableMatcher FromSection(IConfigurationSection section, bool defaultResult)
         {

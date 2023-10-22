@@ -59,7 +59,7 @@ namespace BifrostQL.Core.QueryModel
             if (IncludeResult)
                 sqls[$"{sqlKeyName}=>count"] = $"SELECT COUNT(*) FROM {FullTableText}{filter}";
             if (AggregateColumns.Any())
-                sqls[$"{sqlKeyName}=>aggregate"] = $"SELECT {string.Join(",", AggregateColumns.Select(c => c.GetSqlColumn()))} FROM {FullTableText}{filter}";
+                sqls[$"{sqlKeyName}=>aggregate"] = $"SELECT {string.Join(", ", AggregateColumns.Select(c => c.GetSqlColumn()))} FROM {FullTableText}{filter}";
             foreach (var join in Joins)
             {
                 var joinQueryLink = new QueryLink { FromTable = this, Join = join, Parent = queryLink};

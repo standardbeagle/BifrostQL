@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Data.Common;
 using System.Linq;
 using System.Reflection;
 using System.Text;
@@ -19,7 +20,7 @@ namespace BifrostQL.Core.Schema
         public string GetTableFieldDefinition()
         {
             return
-                $"{_table.GraphQlName}(limit: Int, offset: Int, sort: [{_table.GraphQlName}SortEnum!] filter: TableFilter{_table.GraphQlName}Input): {_table.GraphQlName}Paged";
+                $"{_table.GraphQlName}(limit: Int, offset: Int, sort: [{_table.TableColumnSortEnumName}!] filter: {_table.TableFilterTypeName}): {_table.GraphQlName}Paged";
         }
 
         public string GetTableTypeDefinition(IDbModel model, bool includeDynamicJoins)
@@ -31,14 +32,14 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetGraphQlTypeName(column.DataType, column.IsNullable)}");
             }
 
-            builder.AppendLine($"_agg(operation: AggregateOperations! value: {_table.GraphQlName}_columns!) : Float");
+            builder.AppendLine($"_agg(operation: AggregateOperations! value: {_table.ColumnEnumTypeName}!) : Float");
             foreach (var link in _table.SingleLinks)
             {
                 builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : {link.Value.ParentTable.GraphQlName}");
             }
             foreach (var link in _table.MultiLinks)
             {
-                builder.AppendLine($"\t{link.Value.ChildTable.GraphQlName}(filter: TableFilter{link.Value.ChildTable.GraphQlName}Input) : [{link.Value.ChildTable.GraphQlName}]");
+                builder.AppendLine($"\t{link.Value.ChildTable.GraphQlName}(filter: {link.Value.ChildTable.TableFilterTypeName}) : [{link.Value.ChildTable.GraphQlName}]");
             }
 
             if (includeDynamicJoins)
@@ -46,7 +47,7 @@ namespace BifrostQL.Core.Schema
                 foreach (var joinTable in model.Tables)
                 {
                     builder.AppendLine(
-                        $"\t_join_{joinTable.GraphQlName}(on: TableOn{_table.GraphQlName}{joinTable.GraphQlName}, filter: TableFilter{joinTable.GraphQlName}Input, sort: [{joinTable.GraphQlName}SortEnum!]) : [{joinTable.GraphQlName}!]!");
+                        $"\t_join_{joinTable.GraphQlName}(on: TableOn{_table.GraphQlName}{joinTable.GraphQlName}, filter: {joinTable.TableFilterTypeName}, sort: [{joinTable.TableColumnSortEnumName}!]) : [{joinTable.GraphQlName}!]!");
                     builder.AppendLine(
                         $"\t_single_{joinTable.GraphQlName}(on: [String!]) : {joinTable.GraphQlName}");
                 }
@@ -59,7 +60,7 @@ namespace BifrostQL.Core.Schema
 
         public string GetTableAggregateDefinition()
         {
-            return $"_agg_{_table.GraphQlName}(operation: AggregateOperations! value: {_table.GraphQlName}_columns!) : Float";
+            return $"_agg_{_table.GraphQlName}(operation: AggregateOperations! value: {_table.ColumnEnumTypeName}!) : Float";
         }
 
         public string GetPagedTableTypeDefinition()
@@ -77,19 +78,7 @@ namespace BifrostQL.Core.Schema
         public string GetTableColumnEnumDefinition()
         {
             var sb = new StringBuilder();
-            sb.AppendLine($"enum {_table.GraphQlName}_columns {{");
-            foreach (var column in _table.Columns)
-            {
-                sb.AppendLine($"    {column.GraphQlName},");
-            }
-            sb.AppendLine("}");
-            return sb.ToString();
-        }
-
-        public string GetTableEnumDefinition()
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine($"enum {_table.GraphQlName}Enum {{");
+            sb.AppendLine($"enum {_table.ColumnEnumTypeName} {{");
             foreach (var column in _table.Columns)
             {
                 sb.AppendLine($"    {column.GraphQlName},");
@@ -101,7 +90,7 @@ namespace BifrostQL.Core.Schema
         public string GetTableSortEnumDefinition()
         {
             var sb = new StringBuilder();
-            sb.AppendLine($"enum {_table.GraphQlName}SortEnum {{");
+            sb.AppendLine($"enum {_table.TableColumnSortEnumName} {{");
             foreach (var column in _table.Columns)
             {
                 sb.AppendLine($"    {column.GraphQlName}_asc,");
@@ -113,10 +102,10 @@ namespace BifrostQL.Core.Schema
 
         public string GetFieldEnumReference()
         {
-            return $"{_table.GraphQlName}_columns";
+            return $"{_table.ColumnEnumTypeName}";
         }
 
-        public string GetInputParameterType(string action, IdentityType identityType, bool isDelete = false)
+        public string GetMutationParameterType(string action, IdentityType identityType, bool isDelete = false)
         {
             var result = new StringBuilder();
             var name = action + _table.GraphQlName;
@@ -155,12 +144,29 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine($"and: [TableOn{_table.GraphQlName}{joinTable.GraphQlName}!]");
                 builder.AppendLine($"or: [TableOn{_table.GraphQlName}{joinTable.GraphQlName}!]");
 
-                //foreach (var link in table.SingleLinks)
+                //foreach (var link in _table.SingleLinks)
                 //{
-                //    builder.AppendLine($"\t{link.Value.ParentTable.GraphQlDbName} : {link.Value.ParentTable.GraphQlDbName}");
+                //    builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : {link.Value.ParentTable.GraphQlName}");
                 //}
                 builder.AppendLine("}");
             }
+
+            return builder.ToString();
+        }
+        public string GetAggregateLinkDefinitions(IDbModel model)
+        {
+            var builder = new StringBuilder();
+            builder.AppendLine($"input TableAggregate_{_table.GraphQlName} {{");
+            foreach (var joinTable in model.Tables)
+            {
+                builder.AppendLine($"\t{joinTable.GraphQlName} : FilterType{joinTable.GraphQlName}EnumInput");
+
+                foreach (var link in _table.SingleLinks)
+                {
+                    builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : {link.Value.ParentTable.GraphQlName}");
+                }
+            }
+            builder.AppendLine("}");
 
             return builder.ToString();
         }
@@ -168,7 +174,7 @@ namespace BifrostQL.Core.Schema
         public string GetTableFilterDefinition()
         {
             StringBuilder builder = new StringBuilder();
-            builder.AppendLine($"input TableFilter{_table.GraphQlName}Input {{");
+            builder.AppendLine($"input {_table.TableFilterTypeName} {{");
             foreach (var column in _table.Columns)
             {
                 builder.AppendLine($"\t{column.GraphQlName} : FilterType{SchemaGenerator.GetSimpleGraphQlTypeName(column.DataType)}Input");
@@ -192,7 +198,7 @@ namespace BifrostQL.Core.Schema
 
         public string GetTableJoinType()
         {
-            return SchemaGenerator.GetOnType($"{_table.GraphQlName}Enum");
+            return SchemaGenerator.GetOnType($"{_table.ColumnEnumTypeName}");
         }
     }
 }

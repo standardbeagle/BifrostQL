@@ -69,13 +69,19 @@ namespace BifrostQL.Core.Model
         /// </summary>
         string FullName { get; }
 
+        string ColumnEnumTypeName { get; }
+        string TableFilterTypeName { get; }
+        string TableColumnSortEnumName { get;  }
+
+        string JoinFieldName { get; }
+        string SingleFieldName { get; }
+
         IEnumerable<ColumnDto> Columns { get; }
         IDictionary<string, ColumnDto> ColumnLookup { get; init; }
         IDictionary<string, ColumnDto> GraphQlLookup { get; init; }
         IDictionary<string, TableLinkDto> SingleLinks { get; init; }
         IDictionary<string, TableLinkDto> MultiLinks { get; init; }
         IEnumerable<ColumnDto> KeyColumns { get; }
-        IEnumerable<ColumnDto> StandardColumns { get; }
 
         bool MatchName(string fullName);
         string ToString();

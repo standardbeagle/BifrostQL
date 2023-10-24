@@ -21,7 +21,7 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "BifrostQL.Core.Test", "test
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{1FB4C907-457E-4779-8CCE-6EE29AC863A7}"
 	ProjectSection(SolutionItems) = preProject
-\		README.md = README.md
+		README.md = README.md
 	EndProjectSection
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "BifrostQL.Host", "src\BifrostQL.Host\BifrostQL.Host.csproj", "{85C49467-12CD-424F-84A3-DCAF0562BEA9}"

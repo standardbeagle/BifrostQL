@@ -214,5 +214,4 @@ namespace BifrostQL.Core.QueryModel
             return QueryType.Standard;
         }
     }
-
 }

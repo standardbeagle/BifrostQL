@@ -40,7 +40,7 @@ namespace BifrostQL.Core.Schema
 
             builder.AppendLine("type dbTableSchema {");
             builder.AppendLine("schema: String!");
-            builder.AppendLine("dbName: String!");
+            builder.AppendLine("name: String!");
             builder.AppendLine("graphQlName: String!");
             builder.AppendLine("primaryKeys: [String!]");
             builder.AppendLine("labelColumn: String!");
@@ -51,14 +51,14 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine("}");
 
             builder.AppendLine("type dbJoinSchema {");
-            builder.AppendLine("dbName: String!");
+            builder.AppendLine("name: String!");
             builder.AppendLine("sourceColumnNames: [String!]!");
             builder.AppendLine("destinationTable: String!");
             builder.AppendLine("destinationColumnNames: [String!]!");
             builder.AppendLine("}");
 
             builder.AppendLine("type dbColumnSchema {");
-            builder.AppendLine("dbName: String!");
+            builder.AppendLine("name: String!");
             builder.AppendLine("graphQlName: String!");
             builder.AppendLine("paramType: String!");
             builder.AppendLine("dbType: String!");
@@ -106,6 +106,7 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine(generator.GetJoinDefinitions(model));
 
                 builder.AppendLine(generator.GetTableJoinType());
+                builder.AppendLine(generator.GetAggregateLinkDefinitions());
 
                 builder.AppendLine(generator.GetTableColumnEnumDefinition());
                 builder.AppendLine(generator.GetTableSortEnumDefinition());

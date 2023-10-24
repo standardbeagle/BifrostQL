@@ -121,8 +121,8 @@ namespace BifrostQL.Core.QueryModel
         /// <summary>
         /// Converts links to joins and connects them to the parent table
         /// </summary>
-        /// <param dbName="dbModel"></param>
-        /// <param dbName="basePath"></param>
+        /// <param name="dbModel"></param>
+        /// <param name="basePath"></param>
         /// <exception cref="ExecutionError"></exception>
         public void ConnectLinks(IDbModel dbModel, string basePath = "")
         {

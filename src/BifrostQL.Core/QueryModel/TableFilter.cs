@@ -123,7 +123,7 @@ namespace BifrostQL.Core.QueryModel
             if (!filter.Any()) throw new ExecutionError($"Filter on {tableName} has no properties");
 
             var kv = filter.FirstOrDefault();
-            if (string.IsNullOrWhiteSpace(kv.Key)) throw new ExecutionError($"Filter on {tableName} has empty property dbName");
+            if (string.IsNullOrWhiteSpace(kv.Key)) throw new ExecutionError($"Filter on {tableName} has empty property name");
             return kv switch
             {
                 { Key: "and" } => new TableFilter

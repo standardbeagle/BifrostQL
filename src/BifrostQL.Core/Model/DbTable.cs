@@ -10,24 +10,24 @@ namespace BifrostQL.Core.Model
     public sealed class DbTable : ISchemaNames, IDbTable
     {
         /// <summary>
-        /// The dbName of the table as it is in the database, includes spaces and special characters
+        /// The name of the table as it is in the database, includes spaces and special characters
         /// </summary>
         public string DbName { get; init; } = null!;
         /// <summary>
-        /// The dbName translated so that it can be used as a graphql identifier
+        /// The name translated so that it can be used as a graphql identifier
         /// </summary>
         public string GraphQlName { get; init; } = null!;
         /// <summary>
-        /// The table dbName translated so that it can be used to predict matches from other tables and columns
+        /// The table name translated so that it can be used to predict matches from other tables and columns
         /// </summary>
         public string NormalizedName { get; private init; } = null!;
         /// <summary>
-        /// The schema that the table belongs to using its database dbName
+        /// The schema that the table belongs to using its database name
         /// </summary>
         public string TableSchema { get; init; } = null!;
         public string TableType { get; init; } = null!;
         /// <summary>
-        /// The graphql dbName of the table, including the schema if it is not dbo
+        /// The graphql name of the table, including the schema if it is not dbo
         /// </summary>
         public string FullName => $"{(TableSchema == "dbo" ? "" : $"{TableSchema}_")}{GraphQlName}";
 
@@ -38,6 +38,7 @@ namespace BifrostQL.Core.Model
         public string JoinFieldName => $"_join_{GraphQlName}";
         public string SingleFieldName => $"_single_{GraphQlName}";
         public string GetJoinTypeName(IDbTable joinTable) => $"TableOn{GraphQlName}{joinTable.GraphQlName}";
+        public string AggregateValueTypeName => $"{GraphQlName}_AggregateValue";
         public bool MatchName(string fullName) => string.Equals(FullName, fullName, StringComparison.InvariantCultureIgnoreCase);
         public IEnumerable<ColumnDto> Columns => ColumnLookup.Values;
         public IDictionary<string, ColumnDto> ColumnLookup { get; init; } = null!;

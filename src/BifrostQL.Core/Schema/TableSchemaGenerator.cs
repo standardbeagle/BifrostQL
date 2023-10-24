@@ -32,7 +32,7 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetGraphQlTypeName(column.DataType, column.IsNullable)}");
             }
 
-            builder.AppendLine($"_agg(operation: AggregateOperations! value: {_table.ColumnEnumTypeName}!) : Float");
+            builder.AppendLine($"_agg(operation: AggregateOperations! value: {_table.AggregateValueTypeName}!) : Float");
             foreach (var link in _table.SingleLinks)
             {
                 builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : {link.Value.ParentTable.GraphQlName}");
@@ -153,18 +153,20 @@ namespace BifrostQL.Core.Schema
 
             return builder.ToString();
         }
-        public string GetAggregateLinkDefinitions(IDbModel model)
+        public string GetAggregateLinkDefinitions()
         {
             var builder = new StringBuilder();
-            builder.AppendLine($"input TableAggregate_{_table.GraphQlName} {{");
-            foreach (var joinTable in model.Tables)
+            builder.AppendLine($"input {_table.AggregateValueTypeName} {{");
+            builder.AppendLine($"column : { _table.ColumnEnumTypeName }");
+            foreach (var link in _table.MultiLinks)
             {
-                builder.AppendLine($"\t{joinTable.GraphQlName} : {joinTable.ColumnFilterTypeName}");
-
-                foreach (var link in _table.SingleLinks)
-                {
-                    builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : {link.Value.ParentTable.GraphQlName}");
-                }
+                //For multi-links _table is the ParentTable
+                builder.AppendLine($"\t{link.Value.ChildTable.GraphQlName} : {link.Value.ChildTable.AggregateValueTypeName}");
+            }
+            foreach (var link in _table.SingleLinks)
+            {
+                //For single links _table is the ChildTable
+                builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : {link.Value.ParentTable.AggregateValueTypeName}");
             }
             builder.AppendLine("}");
 

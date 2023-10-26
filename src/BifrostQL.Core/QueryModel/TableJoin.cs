@@ -35,6 +35,13 @@ namespace BifrostQL.Core.QueryModel
 
     public class QueryLink
     {
+        public QueryLink(TableJoin join, GqlObjectQuery fromTable, QueryLink? parent)
+        {
+            Join = join;
+            FromTable = fromTable;
+            Parent = parent;
+        }
+
         public TableJoin Join { get; init; }
         public GqlObjectQuery FromTable { get; init; }
         public QueryLink? Parent { get; init; }

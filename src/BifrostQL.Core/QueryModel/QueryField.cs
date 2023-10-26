@@ -22,7 +22,7 @@ namespace BifrostQL.Core.QueryModel
         TableJoin ToJoin(IDbModel model, GqlObjectQuery parent);
         FieldType Type { get; }
         GqlObjectColumn ToScalarSql(IDbTable dbTable);
-        GqlObjectColumn ToAggregateSql(IDbTable dbTable);
+        GqlAggregateColumn ToAggregateSql(IDbTable dbTable);
 
 
     }
@@ -143,12 +143,43 @@ namespace BifrostQL.Core.QueryModel
         }
 
 
-        public GqlObjectColumn ToAggregateSql(IDbTable dbTable)
+        public GqlAggregateColumn ToAggregateSql(IDbTable dbTable)
         {
             var agg = Arguments.FirstOrDefault(a => a.Name == "operation")?.Value?.ToString() ?? throw new ExecutionError("Aggregate query missing operation argument.");
             var aggType = (AggregateOperationType)Enum.Parse(typeof(AggregateOperationType), agg, true);
-            var value = Arguments.FirstOrDefault(a => a.Name == "value")?.Value?.ToString() ?? throw new ExecutionError("Aggregate query missing value argument.");
-            return new GqlObjectColumn(dbTable.GraphQlLookup[value].DbName, RefName, aggType);
+
+            var links = new List<(LinkDirection direction, TableLinkDto link)>();
+            var value = Arguments.FirstOrDefault(a => a.Name == "value")?.Value;
+            var currentTable = dbTable;
+            while (value is IDictionary<string, object?> objVal)
+            {
+                if (objVal.Keys.Count != 1)
+                    throw new ExecutionError("Aggregations only support one join per aggregation");
+                var linkName = objVal.Keys.First();
+                var matched = false;
+                if (currentTable.MultiLinks.TryGetValue(linkName, out var multiLink))
+                {
+                    links.Add((LinkDirection.OneToMany , multiLink));
+                    currentTable = multiLink.ChildTable;
+                    matched = true;
+                }
+
+                if (currentTable.SingleLinks.TryGetValue(linkName, out var singleLink))
+                {
+                    links.Add((LinkDirection.ManyToOne, singleLink));
+                    currentTable = singleLink.ParentTable;
+                    matched = true;
+                }
+                if (!matched)
+                    throw new ExecutionError($"Unable to find link {linkName} on table {currentTable.GraphQlName}");
+
+                value = objVal.Values.First();
+            }
+            var aggColumn = value?.ToString() ?? throw new ExecutionError("Aggregate query value must be a column enum.");
+
+
+
+            return new GqlAggregateColumn(links, currentTable.GraphQlLookup[aggColumn].DbName, GetUniqueName(), aggType);
 
         }
 

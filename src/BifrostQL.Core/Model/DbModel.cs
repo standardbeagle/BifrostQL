@@ -1,4 +1,6 @@
 ﻿using System.Data;
+using System.Text;
+using BifrostQL.Core.QueryModel;
 using Pluralize.NET.Core;
 
 namespace BifrostQL.Core.Model
@@ -84,6 +86,7 @@ namespace BifrostQL.Core.Model
         IDictionary<string, TableLinkDto> SingleLinks { get; init; }
         IDictionary<string, TableLinkDto> MultiLinks { get; init; }
         IEnumerable<ColumnDto> KeyColumns { get; }
+        string DbTableRef { get; }
 
         bool MatchName(string fullName);
         string ToString();
@@ -103,6 +106,51 @@ namespace BifrostQL.Core.Model
         public ColumnDto ParentId { get; init; } = null!;
         /// <summary>Child id always refers to the many in one to many relations in database joins</summary>
         public ColumnDto ChildId { get; init; } = null!;
+
+        public string GetSqlSourceTableRef(LinkDirection direction)
+        {
+            if (direction == LinkDirection.ManyToOne)
+                return ChildTable.DbTableRef;
+            else
+                return ParentTable.DbTableRef;
+        }
+
+        public string GetSqlDestTableRef(LinkDirection direction)
+        {
+            if (direction == LinkDirection.ManyToOne)
+                return ParentTable.DbTableRef;
+            else
+                return ChildTable.DbTableRef;
+        }
+
+        public string GetSqlDestJoinColumn(LinkDirection direction)
+        {
+            if (direction == LinkDirection.ManyToOne)
+                return ParentId.DbName;
+            else
+                return ChildId.DbName;
+        }
+
+        public string GetSqlSourceColumns(LinkDirection direction, string tableName = null, string columnName = null)
+        {
+            var builder = new StringBuilder();
+            if (!string.IsNullOrWhiteSpace(tableName))
+                builder.Append($"[{tableName}].");
+            else if (direction == LinkDirection.ManyToOne)
+                builder.Append($"[{ChildTable.DbName}].");
+            else
+                builder.Append($"[{ParentTable.DbName}].");
+
+            if (direction == LinkDirection.ManyToOne)
+                builder.Append($"[{ ChildId.DbName }]");
+            else
+                builder.Append($"[{ParentId.DbName}]");
+
+            if (!string.IsNullOrWhiteSpace(columnName))
+                builder.Append($" AS [{columnName}]");
+
+            return builder.ToString();
+        }
         public override string ToString() => $"{Name}-[{ChildId.TableName}.{ChildId.ColumnName}={ParentId.TableName}.{ParentId.ColumnName}]";
     }
 

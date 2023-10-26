@@ -29,17 +29,17 @@ namespace BifrostQL.Core.QueryModel
         public string Path { get; set; } = "";
         public string KeyName => $"{Alias ?? GraphQlName}";
         public QueryType QueryType { get; set; }
-        public List<GqlObjectColumn> ScalarColumns { get; init; } = new ();
-        public List<GqlObjectColumn> AggregateColumns { get; init; } = new ();
+        public List<GqlObjectColumn> ScalarColumns { get; init; } = new();
+        public List<GqlAggregateColumn> AggregateColumns { get; init; } = new();
 
-        public List<GqlObjectQuery> Links { get; set; } = new ();
-        public List<string> Sort { get; set; } = new ();
+        public List<GqlObjectQuery> Links { get; set; } = new();
+        public List<string> Sort { get; set; } = new();
         public TableFilter? Filter { get; set; }
         public int? Limit { get; set; }
         public int? Offset { get; set; }
         public bool IsFragment { get; set; }
         public bool IncludeResult { get; set; }
-        public List<TableJoin> Joins { get; set; } = new ();
+        public List<TableJoin> Joins { get; set; } = new();
         public IEnumerable<TableJoin> RecurseJoins => Joins.Concat(Joins.SelectMany(j => j.ConnectedTable.RecurseJoins));
 
         public IEnumerable<GqlObjectColumn> FullColumnNames =>
@@ -58,11 +58,14 @@ namespace BifrostQL.Core.QueryModel
             sqls[sqlKeyName] = baseSql;
             if (IncludeResult)
                 sqls[$"{sqlKeyName}=>count"] = $"SELECT COUNT(*) FROM {FullTableText}{filter}";
-            if (AggregateColumns.Any())
-                sqls[$"{sqlKeyName}=>aggregate"] = $"SELECT {string.Join(", ", AggregateColumns.Select(c => c.GetSqlColumn()))} FROM {FullTableText}{filter}";
+            foreach (var col in AggregateColumns)
+            {
+                var aggregateSql = col.ToSql(filter);
+                sqls[$"{sqlKeyName}=>agg_{col.FinalColumnGraphQlName}"] = aggregateSql;
+            }
             foreach (var join in Joins)
             {
-                var joinQueryLink = new QueryLink { FromTable = this, Join = join, Parent = queryLink};
+                var joinQueryLink = new QueryLink(join, this, queryLink);
                 AddJoinSql(dbModel, sqls, joinQueryLink);
             }
         }
@@ -75,7 +78,7 @@ namespace BifrostQL.Core.QueryModel
             sqls[queryLink.Join.JoinName] = sql;
             foreach (var join in queryLink.Join.ConnectedTable.Joins)
             {
-                var joinQueryLink = new QueryLink { FromTable = queryLink.Join.ConnectedTable, Join = join, Parent = queryLink };
+                var joinQueryLink = new QueryLink(join, queryLink.Join.ConnectedTable, queryLink);
                 AddJoinSql(model, sqls, joinQueryLink);
             }
         }
@@ -161,7 +164,7 @@ namespace BifrostQL.Core.QueryModel
                     Joins.Add(join);
                     continue;
                 }
-                throw new ExecutionError($"Unable to find join {link.GraphQlName} on table {TableName}");   
+                throw new ExecutionError($"Unable to find join {link.GraphQlName} on table {TableName}");
             }
             foreach (var join in RecurseJoins)
             {

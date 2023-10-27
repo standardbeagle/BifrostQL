@@ -22,13 +22,12 @@ namespace BifrostQL.Core.Schema
                     var tableField = query.FieldFor(table.GraphQlName);
                     tableField.Resolver = new DbTableResolver(table);
 
-                    var tableType = _.Types.For(table.GraphQlName);
-
-                    //var tableAggField = query.FieldFor($"_agg_{table.GraphQlName}");
-                    //tableAggField.Resolver = new DbAggregateResolver(table);
-
                     var tableInsertField = mut.FieldFor(table.GraphQlName);
                     tableInsertField.Resolver = new DbTableMutateResolver(table);
+
+                    var tableType = _.Types.For(table.GraphQlName);
+                    var aggregateType = tableType.FieldFor("_agg");
+                    aggregateType.Resolver = DbJoinFieldResolver.Instance;
 
                     foreach (var column in table.Columns)
                     {

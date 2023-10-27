@@ -20,11 +20,9 @@ namespace BifrostQL.Core.Resolvers
             var table = _tables[_tableSql.KeyName];
             var column = context.FieldDefinition.Name;
             var found = table.index.TryGetValue(column, out int index);
-            if (!found)
-            {
-                return GetDataForMissingColumn(context, table, row);
-            }
-            return ValueTask.FromResult(DbConvert(table.data[row][index]));
+            if (found) 
+                return ValueTask.FromResult(DbConvert(table.data[row][index]));
+            return GetDataForMissingColumn(context, table, row);
         }
         public ValueTask<object?> GetDataForMissingColumn(IResolveFieldContext context, (IDictionary<string, int> index, IList<object?[]> data) table, int row)
         {
@@ -32,8 +30,25 @@ namespace BifrostQL.Core.Resolvers
             string? alias = context.FieldAst.Alias?.Name?.StringValue;
 
             var join = _tableSql.GetJoin(alias, name);
-            if (join == null)
-                throw new ExecutionError($"Unable to find queryField: {name} on table: {_tableSql.Alias}:{_tableSql.GraphQlName }");
+            if (join != null)
+                return GetJoinResult(table, row, join);
+
+            var aggregate = _tableSql.GetAggregate(alias, name);
+            if (aggregate != null)
+            {
+                var tableData = _tables[aggregate.SqlKey!];
+                var valueFound = tableData.index.TryGetValue(aggregate.FinalColumnGraphQlName, out int valueIndex);
+                var keyFound = tableData.index.TryGetValue("srcId", out int keyIndex);
+                var parentKeyIndex = table.index[_tableSql.DbTable.KeyColumns.First().DbName];
+                var parentKeyValue = table.data[row][parentKeyIndex];
+                var value = tableData.data.FirstOrDefault(r => Equals(r[keyIndex], parentKeyValue))?[valueIndex];
+                return ValueTask.FromResult<object?>(value);
+            }
+            throw new ExecutionError($"Unable to find queryField: {name} on table: {_tableSql.Alias}:{_tableSql.GraphQlName}");
+        }
+
+        private ValueTask<object?> GetJoinResult((IDictionary<string, int> index, IList<object?[]> data) table, int row, TableJoin join)
+        {
             var keyFound = table.index.TryGetValue(join.FromColumn, out int keyIndex);
             if (!keyFound)
                 throw new ExecutionError("join column not found.");
@@ -51,6 +66,7 @@ namespace BifrostQL.Core.Resolvers
                 var data = tableData.data.FirstOrDefault(r => Equals(r[srcIdIndex], key));
                 return ValueTask.FromResult<object?>(data == null ? null : new SingleRowLookup(data, tableData.index, this));
             }
+
             throw new ExecutionError("unexpected Join type: " + join.JoinName);
         }
 

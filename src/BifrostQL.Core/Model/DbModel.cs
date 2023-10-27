@@ -131,7 +131,7 @@ namespace BifrostQL.Core.Model
                 return ChildId.DbName;
         }
 
-        public string GetSqlSourceColumns(LinkDirection direction, string tableName = null, string columnName = null)
+        public string GetSqlSourceColumns(LinkDirection direction, string? tableName = null, string? columnName = null)
         {
             var builder = new StringBuilder();
             if (!string.IsNullOrWhiteSpace(tableName))

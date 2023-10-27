@@ -17,6 +17,7 @@ namespace BifrostQL.Core.QueryModel
     {
         public GqlObjectQuery() { }
         //public TableJoin? JoinFrom { get; set; }
+        public IDbTable DbTable { get; init; } = null!;
         public string SchemaName { get; set; } = "";
         public string TableName { get; set; } = "";
         public string GraphQlName { get; set; } = "";
@@ -61,7 +62,8 @@ namespace BifrostQL.Core.QueryModel
             foreach (var col in AggregateColumns)
             {
                 var aggregateSql = col.ToSql(filter);
-                sqls[$"{sqlKeyName}=>agg_{col.FinalColumnGraphQlName}"] = aggregateSql;
+                col.SqlKey = $"{sqlKeyName}=>agg_{col.FinalColumnGraphQlName}";
+                sqls[col.SqlKey] = aggregateSql;
             }
             foreach (var join in Joins)
             {
@@ -183,6 +185,11 @@ namespace BifrostQL.Core.QueryModel
         public TableJoin? GetJoin(string? alias, string name)
         {
             return RecurseJoins.FirstOrDefault(j => (alias != null && j.Alias == alias) || j.Name == name);
+        }
+
+        public GqlAggregateColumn? GetAggregate(string? alias, string name)
+        {
+            return AggregateColumns.FirstOrDefault(j => (alias != null && j.FinalColumnGraphQlName == alias) || j.FinalColumnGraphQlName == name);
         }
 
         public string GetSortAndPaging()

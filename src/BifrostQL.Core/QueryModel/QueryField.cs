@@ -85,6 +85,7 @@ namespace BifrostQL.Core.QueryModel
             var result = new GqlObjectQuery
             {
                 Alias = Alias,
+                DbTable = dbTable,
                 TableName = dbTable.DbName,
                 SchemaName = dbTable.TableSchema,
                 GraphQlName = tableName,
@@ -156,6 +157,12 @@ namespace BifrostQL.Core.QueryModel
                 if (objVal.Keys.Count != 1)
                     throw new ExecutionError("Aggregations only support one join per aggregation");
                 var linkName = objVal.Keys.First();
+                if (linkName == "column")
+                {
+                    value = objVal.Values.First();
+                    continue;
+                }
+
                 var matched = false;
                 if (currentTable.MultiLinks.TryGetValue(linkName, out var multiLink))
                 {

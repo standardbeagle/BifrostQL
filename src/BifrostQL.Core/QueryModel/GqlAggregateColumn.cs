@@ -24,6 +24,7 @@ namespace BifrostQL.Core.QueryModel
         public List<(LinkDirection direction, TableLinkDto link)> Links { get; init; }
         public string FinalColumnName { get; init; }
         public string FinalColumnGraphQlName { get; init; }
+        public string? SqlKey { get; set; }
 
         public AggregateOperationType? AggregateType { get; init; }
 

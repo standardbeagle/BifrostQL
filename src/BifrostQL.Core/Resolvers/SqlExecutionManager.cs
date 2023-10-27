@@ -32,12 +32,13 @@ namespace BifrostQL.Core.Resolvers
             if (context.SubFields == null)
                 throw new ArgumentNullException(nameof(context) + ".SubFields");
 
-            _objectQueries ??= await GetAllObjectQueries(context);
             var alias = context.FieldAst.Alias?.Name.StringValue;
             var graphqlName = context.FieldAst.Name.StringValue;
-            var table = _objectQueries.First(t => (alias != null && t.Alias == alias) || (alias == null && t.GraphQlName == graphqlName));
-            var conFactory = (IDbConnFactory)(context.InputExtensions["connFactory"] ?? throw new InvalidDataException("connection factory is not configured"));
 
+            _objectQueries ??= await GetAllObjectQueries(context);
+            var table = _objectQueries.First(t => (alias != null && t.Alias == alias) || (alias == null && t.GraphQlName == graphqlName));
+
+            var conFactory = (IDbConnFactory)(context.InputExtensions["connFactory"] ?? throw new InvalidDataException("connection factory is not configured"));
             var data = LoadData(table, conFactory);
             var count = data.First(kv => kv.Key == (table.KeyName +  "=>count")).Value.data[0][0] as int?;
 

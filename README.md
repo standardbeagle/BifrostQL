@@ -22,11 +22,11 @@ Mutations are generated for inserts, updates, upserts, and deletes. BifrostQL re
  - [x] Switch to direct graphQL schema generation
  - [x] Add multi column filter options
  - [x] Add multi colmun joins using relations
+ - [x] Add aggregation operators
  - [ ] Add configuration to automatically fill audit type columns
  - [ ] Add support for soft deletes
- - [ ] Add aggregation operators
- - [ ] Add Generic table data type
  - [ ] Add GraphQLJSON support
+ - [ ] Add Generic table data type
  - [ ] Stored procedures
  - [ ] Raw SQL queries, maybe add raw filter arguments as well
  - [ ] Add info/status endpoint update response headers with bifrost as the server

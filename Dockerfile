@@ -1,6 +1,6 @@
 #See https://aka.ms/containerfastmode to understand how Visual Studio uses this Dockerfile to build your images for faster debugging.
 
-ARG VARIANT="20-bullseye"
+ARG VARIANT="16-bullseye"
 ARG DOTNET_VERSION="6.0"
 
 FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS base
@@ -27,8 +27,6 @@ RUN npm install
 FROM edit-db-base AS edit-db-build
 RUN npm run build
 RUN npm run build-storybook
-
-
 
 FROM base AS final
 WORKDIR /app

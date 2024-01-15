@@ -26,7 +26,7 @@ namespace BifrostQL.Core.Model
         public bool IsUpdatedOnColumn { get; set; } = false;
         public bool IsCreatedByColumn { get; set; } = false;
         public bool IsUpdatedByColumn { get; set; } = false;
-        public Dictionary<string, bool> Flags { get; init; } = new Dictionary<string, bool>();
+        public IDictionary<string, object?> Metadata { get; init; } = new Dictionary<string, object?>();
 
         public override string ToString()
         {

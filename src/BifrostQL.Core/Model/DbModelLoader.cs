@@ -9,14 +9,15 @@ namespace BifrostQL.Model
     public sealed class DbModelLoader
     {
         private readonly string _connStr;
-        private readonly TableMatcher _ignoreTables = new TableMatcher(false);
-        private readonly TableMatcher _includeTables = new TableMatcher(true);
-        private readonly ColumnMatcher _createDateMatcher = new ColumnMatcher(false);
-        private readonly ColumnMatcher _updateDateMatcher = new ColumnMatcher(false);
-        private readonly ColumnMatcher _updateByMatcher = new ColumnMatcher(false);
-        private readonly ColumnMatcher _createByMatcher = new ColumnMatcher(false);
+        private readonly TableMatcher _ignoreTables = new(false);
+        private readonly TableMatcher _includeTables = new(true);
+        private readonly ColumnMatcher _createDateMatcher = new(false);
+        private readonly ColumnMatcher _updateDateMatcher = new(false);
+        private readonly ColumnMatcher _updateByMatcher = new(false);
+        private readonly ColumnMatcher _createByMatcher = new(false);
         private readonly string? _userAuditKey;
         private readonly string? _auditTableName;
+        private readonly IMetadataLoader _metadataLoader;
 
         private const string SCHEMA_SQL = @"
 SELECT CCU.[TABLE_CATALOG]
@@ -65,9 +66,10 @@ SELECT [TABLE_CATALOG]
   FROM [INFORMATION_SCHEMA].[TABLES]
   ORDER BY [TABLE_CATALOG],[TABLE_SCHEMA],[TABLE_NAME];
 ";
-        public DbModelLoader(IConfigurationSection bifrostSection, string connectionString)
+        public DbModelLoader(IConfigurationSection bifrostSection, string connectionString, IMetadataLoader metadataLoader)
         {
             _connStr = connectionString;
+            _metadataLoader = metadataLoader;
             if (!bifrostSection.Exists()) return;
 
             _ignoreTables = TableMatcher.FromSection(bifrostSection.GetSection("IgnoreTables"), false);

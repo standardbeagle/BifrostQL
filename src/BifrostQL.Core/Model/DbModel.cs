@@ -13,20 +13,17 @@ namespace BifrostQL.Core.Model
         string AuditTableName { get; }
         IDbTable GetTableByFullGraphQlName(string fullName);
         IDbTable GetTableFromDbName(string tableName);
+
+        IDictionary<string, object?> Metadata { get; init; }
     }
 
-    public interface ISchemaNames
-    {
-        public string DbName { get; }
-        public string GraphQlName { get; }
-        public string NormalizedName { get; }
-    }
     public sealed class DbModel : IDbModel
     {
         internal static readonly Pluralizer Pluralizer = new Pluralizer();
         public IReadOnlyCollection<IDbTable> Tables { get; init; } = null!;
         public string UserAuditKey { get; init; } = null!;
         public string AuditTableName { get; init; } = null!;
+        public IDictionary<string, object?> Metadata { get; init; } = new Dictionary<string, object?>();
         /// <summary>
         /// Searches for the table by its full graphql name
         /// </summary>
@@ -42,6 +39,12 @@ namespace BifrostQL.Core.Model
         }
     }
 
+    public interface ISchemaNames
+    {
+        public string DbName { get; }
+        public string GraphQlName { get; }
+        public string NormalizedName { get; }
+    }
     public interface IDbTable
     {
         /// <summary>
@@ -89,7 +92,6 @@ namespace BifrostQL.Core.Model
         string DbTableRef { get; }
 
         bool MatchName(string fullName);
-        string ToString();
     }
 
  

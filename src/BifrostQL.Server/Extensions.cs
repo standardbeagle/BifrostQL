@@ -105,11 +105,12 @@ namespace BifrostQL.Server
 
             var path = _bifrostConfig.GetValue<string>("Path", "/graphql");
             var includeDynamicJoins = _bifrostConfig.GetValue<bool>("IncludeDynamicJoins", true);
+            var metadataLoader = new MetadataLoader(_bifrostConfig, "Metadata");
 
             var extensionsLoader = new PathCache<Inputs>();
             extensionsLoader.AddLoader(path, () =>
             {
-                var loader = new DbModelLoader(_bifrostConfig, _connectionString);
+                var loader = new DbModelLoader(_bifrostConfig, _connectionString, metadataLoader);
                 var model = loader.LoadAsync().Result;
                 var connFactory = new DbConnFactory(_connectionString);
                 var schema = DbSchema.SchemaFromModel(model, includeDynamicJoins);

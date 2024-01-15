@@ -26,6 +26,7 @@ namespace BifrostQL.Core.Model
         /// </summary>
         public string TableSchema { get; init; } = null!;
         public string TableType { get; init; } = null!;
+        public IDictionary<string, object?> Metadata { get; init; } = new Dictionary<string, object?>();
         /// <summary>
         /// The graphql name of the table, including the schema if it is not dbo
         /// </summary>

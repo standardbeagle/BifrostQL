@@ -29,6 +29,7 @@ namespace BifrostQL.Core.Schema
                     var aggregateType = tableType.FieldFor("_agg");
                     aggregateType.Resolver = DbJoinFieldResolver.Instance;
 
+
                     foreach (var column in table.Columns)
                     {
                         var columnField = tableType.FieldFor(column.GraphQlName);

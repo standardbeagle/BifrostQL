@@ -26,6 +26,11 @@ namespace BifrostQL.Core.Schema
 
             foreach (var generator in tableGenerators)
             {
+                if (includeDynamicJoins)
+                {
+                    builder.AppendLine(generator.GetDynamicJoinDefinition(model, false));
+                    builder.AppendLine(generator.GetDynamicJoinDefinition(model, true));
+                }
                 builder.AppendLine(generator.GetTableTypeDefinition(model, includeDynamicJoins));
                 builder.AppendLine(generator.GetPagedTableTypeDefinition());
             }

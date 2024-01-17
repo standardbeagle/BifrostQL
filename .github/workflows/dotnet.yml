@@ -35,7 +35,7 @@ jobs:
     - name: Test
       run: dotnet test --no-build --verbosity normal --configuration Release
     - name: Pack
-      run: dotnet pack --configuration Release --no-build -p :PackageVersion=0.3.${{ github.run_id }} -p ReleaseNotes="${{github.event.release.body}}"
+      run: dotnet pack --configuration Release --no-build -p :PackageVersion=0.3.${{ github.run_number }} 
     - name: add source
       run: dotnet nuget add source --username standardbeagle --password ${{secrets.REPO_NUGET}} --store-password-in-clear-text --name github "https://nuget.pkg.github.com/standardbeagle/index.json"
     - name: publish Core to repo
@@ -50,7 +50,7 @@ jobs:
         restore-keys: npm-
     - name: set editor version
       working-directory: ./examples/edit-db
-      run: npm version 0.3.${{ github.run_id }}
+      run: npm version 0.3.${{ github.run_number }}
     - name: install editor
       working-directory: ./examples/edit-db
       run: npm ci 

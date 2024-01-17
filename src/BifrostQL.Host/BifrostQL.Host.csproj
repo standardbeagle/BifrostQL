@@ -7,6 +7,7 @@
     <UserSecretsId>2af0e77e-3ec8-4ca3-a0f9-b3e5281a21a5</UserSecretsId>
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
     <DockerfileContext>..\..</DockerfileContext>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
   </PropertyGroup>
 
   <ItemGroup>

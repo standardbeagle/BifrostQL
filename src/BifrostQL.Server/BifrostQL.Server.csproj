@@ -15,6 +15,9 @@
 		<Authors>Andy Brummer</Authors>
 		<Description>The fastest way to publish your SQL database as a GraphQL API.</Description>
 		<EnablePackageValidation>true</EnablePackageValidation>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<Copyright>Copyright © Standard Beagle Studio LLC.</Copyright>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -26,4 +29,7 @@
 		<ProjectReference Include="..\BifrostQL.Core\BifrostQL.Core.csproj" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<None Include="..\..\README.md" Pack="true" PackagePath="/" />
+	</ItemGroup>
 </Project>

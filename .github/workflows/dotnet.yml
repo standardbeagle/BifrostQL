@@ -35,7 +35,9 @@ jobs:
     - name: Test
       run: dotnet test --no-build --verbosity normal --configuration Release
     - name: Pack
-      run: dotnet pack --configuration Release --no-build -p :PackageVersion=0.3.${{ github.run_number }} 
+      run: |
+        dotnet pack "src/BifrostQL.Core/BifrostQL.Core.csproj"  --configuration Release --no-build -p:PackageVersion=0.3.${{ github.run_number }} 
+        dotnet pack "src/BifrostQL.Server/BifrostQL.Server.csproj"  --configuration Release --no-build -p:PackageVersion=0.3.${{ github.run_number }} 
     - name: add source
       run: dotnet nuget add source --username standardbeagle --password ${{secrets.REPO_NUGET}} --store-password-in-clear-text --name github "https://nuget.pkg.github.com/standardbeagle/index.json"
     - name: publish Core to repo

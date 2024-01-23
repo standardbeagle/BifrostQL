@@ -22,11 +22,14 @@ namespace BifrostQL.Core.Model
         public int OrdinalPosition { get; init; }
         public bool IsIdentity { get; init; } = false;
         public bool IsPrimaryKey { get; init; } = false;
-        public bool IsCreatedOnColumn { get; set; } = false;
-        public bool IsUpdatedOnColumn { get; set; } = false;
-        public bool IsCreatedByColumn { get; set; } = false;
-        public bool IsUpdatedByColumn { get; set; } = false;
         public IDictionary<string, object?> Metadata { get; init; } = new Dictionary<string, object?>();
+        public string? GetMetadataValue(string property) => Metadata.TryGetValue(property, out var v) ? v?.ToString() : null;
+        public bool GetMetadataBool(string property, bool defaultValue) => (Metadata.TryGetValue(property, out var v) && v?.ToString() == null) ? defaultValue : v?.ToString() == "true";
+        public bool CompareMetadata(string property, string value)
+        {
+            if (!Metadata.TryGetValue(property, out var v)) return false;
+            return string.Equals(v?.ToString(), value, StringComparison.InvariantCultureIgnoreCase);
+        }
 
         public override string ToString()
         {

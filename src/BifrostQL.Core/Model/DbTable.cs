@@ -27,10 +27,11 @@ namespace BifrostQL.Core.Model
         public string TableSchema { get; init; } = null!;
         public string TableType { get; init; } = null!;
         public IDictionary<string, object?> Metadata { get; init; } = new Dictionary<string, object?>();
+        public string? GetMetadataValue(string property) => Metadata.TryGetValue(property, out var v) ? v?.ToString() : null;
+        public bool GetMetadataBool(string property, bool defaultValue) => (Metadata.TryGetValue(property, out var v) && v?.ToString() == null) ? defaultValue : v?.ToString() == "true";
         public bool CompareMetadata(string property, string value)
         {
             if (!Metadata.TryGetValue(property, out var v)) return false;
-
             return string.Equals(v?.ToString(), value, StringComparison.InvariantCultureIgnoreCase);
         }
 

@@ -134,14 +134,23 @@ namespace BifrostQL.Core.Schema
                     continue;
 
                 var isNullable = column.IsNullable;
-                if (column.IsCreatedOnColumn || column.IsCreatedByColumn || column.IsUpdatedByColumn || column.IsUpdatedOnColumn)
+                if (column.CompareMetadata("populate", "created-on") || column.CompareMetadata("populate", "created-by") || 
+                    column.CompareMetadata("populate", "updated-on") || column.CompareMetadata("populate", "updated-by") ||
+                    column.CompareMetadata("populate", "deleted-on") || column.CompareMetadata("populate", "deleted-by") 
+                    )
                     isNullable = true;
-                if (identityType == IdentityType.Optional && column.IsIdentity)
-                    isNullable = true;
-                if (identityType == IdentityType.Required && column.IsIdentity)
-                    isNullable = false;
+                if (column.IsIdentity)
+                    isNullable = identityType switch
+                    {
+                        IdentityType.Optional => true, 
+                        IdentityType.Required => false, 
+                        IdentityType.None => true, 
+                        _ => throw new ArgumentOutOfRangeException(nameof(identityType), identityType, null)
+                    };
 
-                if (isDelete) isNullable = true;
+                //All columns except primary keys are nullable for delete
+                if (isDelete) isNullable = column.IsPrimaryKey == false;
+
                 result.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetGraphQlInsertTypeName(column.DataType, isNullable)}");
             }
             result.AppendLine("}");

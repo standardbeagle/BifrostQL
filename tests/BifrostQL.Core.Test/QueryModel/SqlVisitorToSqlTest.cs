@@ -151,7 +151,6 @@ namespace BifrostQL.Core.QueryModel
                     { "work__shops=>agg_ct", "SELECT [src].[srcId], Count([next].[sid]) [ct] FROM (SELECT [work shops].[id] AS [joinId], [work shops].[id] AS [srcId] FROM [dbo].[work shops]) [src] INNER JOIN [dbo].[sessions] [next] ON [src].[joinId] = [next].[workshopid] GROUP BY [src].[srcId]"},
                     { "work__shops=>agg_sum", "SELECT [src].[srcId], Sum([next].[sid]) [sum] FROM (SELECT [work shops].[id] AS [joinId], [work shops].[id] AS [srcId] FROM [dbo].[work shops]) [src] INNER JOIN [dbo].[sessions] [next] ON [src].[joinId] = [next].[workshopid] GROUP BY [src].[srcId]"}
                 });
-
         }
 
         [Fact]

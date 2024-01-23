@@ -106,7 +106,7 @@ namespace BifrostQL.Server
             var extensionsLoader = new PathCache<Inputs>();
             extensionsLoader.AddLoader(path, () =>
             {
-                var loader = new DbModelLoader(_bifrostConfig, _connectionString, metadataLoader);
+                var loader = new DbModelLoader(_connectionString, metadataLoader);
                 var model = loader.LoadAsync().Result;
                 var connFactory = new DbConnFactory(_connectionString);
                 var schema = DbSchema.SchemaFromModel(model);

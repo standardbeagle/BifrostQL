@@ -13,7 +13,6 @@ namespace BifrostQL.Core.QueryModel
 {
     public sealed class TableFilterTest
     {
-
         [Fact]
         public void FilterNoOperationThrows()
         {

@@ -10,9 +10,8 @@ namespace BifrostQL.Model
     {
         private readonly string _connStr;
         private readonly IMetadataLoader _metadataLoader;
-        private readonly IConfigurationSection _configuration;
 
-        private const string SCHEMA_SQL = @"
+        private const string SchemaSql = @"
 SELECT CCU.[TABLE_CATALOG]
       ,CCU.[TABLE_SCHEMA]
       ,CCU.[TABLE_NAME]
@@ -59,9 +58,8 @@ SELECT [TABLE_CATALOG]
   FROM [INFORMATION_SCHEMA].[TABLES]
   ORDER BY [TABLE_CATALOG],[TABLE_SCHEMA],[TABLE_NAME];
 ";
-        public DbModelLoader(IConfigurationSection bifrostSection, string connectionString, IMetadataLoader metadataLoader)
+        public DbModelLoader(string connectionString, IMetadataLoader metadataLoader)
         {
-            _configuration = bifrostSection;
             _connStr = connectionString;
             _metadataLoader = metadataLoader;
         }
@@ -70,7 +68,7 @@ SELECT [TABLE_CATALOG]
         {
             await using var conn = new SqlConnection(_connStr);
             await conn.OpenAsync();
-            var cmd = new SqlCommand(SCHEMA_SQL, conn);
+            var cmd = new SqlCommand(SchemaSql, conn);
             await using var reader = await cmd.ExecuteReaderAsync();
             var columnConstraints = GetDtos(reader, ColumnConstraintDto.FromReader)
                 .GroupBy(k => new ColumnRef(k.TableCatalog, k.TableSchema, k.TableName, k.ColumnName))
@@ -86,44 +84,8 @@ SELECT [TABLE_CATALOG]
                     r,
                     columns[new TableRef((string)reader["TABLE_CATALOG"], (string)reader["TABLE_SCHEMA"], (string)reader["TABLE_NAME"])]))
                 .ToList();
-            foreach (var table in tables)
-            {
-                _metadataLoader.ApplyTableMetadata(table, table.Metadata);
-                foreach (var column in table.Columns)
-                {
-                    _metadataLoader.ApplyColumnMetadata(table, column, column.Metadata);
-                }
-            }
-            var dbMetadata = new Dictionary<string, object?>();
-            _metadataLoader.ApplyDatabaseMetadata(dbMetadata);
-            var model =
-                new DbModel()
-                {
-                    Tables = tables.Where(t => t.CompareMetadata("visibility","hidden") == false).ToList(),
-                    Metadata = dbMetadata,
-                };
-            var singleTables = model.Tables
-                                .Where(t => t.KeyColumns.Count() == 1)
-                                .ToDictionary(t => t.NormalizedName, StringComparer.InvariantCultureIgnoreCase);
-            var idMatches = model.Tables
-                            .SelectMany(table => table.Columns.Select(column => (table, column)))
-                            .Where(c => singleTables.ContainsKey(c.column.NormalizedName))
-                            .Where(c => string.Equals(c.column.NormalizedName, c.table.NormalizedName, StringComparison.InvariantCultureIgnoreCase) == false)
-                            .Select(c => (c.column, c.table, parent: singleTables[c.column.NormalizedName]))
-                            .Where(c => c.column.DataType == c.parent.KeyColumns.First().DataType)
-                            .ToArray();
-            foreach (var idMatch in idMatches)
-            {
-                idMatch.table.SingleLinks.Add(idMatch.parent.GraphQlName, new TableLinkDto { Name = idMatch.parent.GraphQlName, ChildId = idMatch.column, ParentId = idMatch.parent.KeyColumns.First(), ChildTable = idMatch.table, ParentTable = idMatch.parent });
-                idMatch.parent.MultiLinks.Add(idMatch.table.GraphQlName, new TableLinkDto { Name = idMatch.table.GraphQlName, ChildId = idMatch.column, ParentId = idMatch.parent.KeyColumns.First(), ChildTable = idMatch.table, ParentTable = idMatch.parent });
-            }
 
-            foreach (var entry in _configuration.AsEnumerable())
-            {
-                if (entry.Value == null) continue;
-                model.ConfigurationData[entry.Key] = entry.Value;
-            }
-            return model;
+            return DbModel.LoadDbModel(tables, _metadataLoader);
         }
 
         private static IEnumerable<T> GetDtos<T>(IDataReader reader, Func<IDataReader, T> getDto)

@@ -47,6 +47,8 @@ Mutations are generated for inserts, updates, upserts, and deletes. BifrostQL re
  - [ ] Try out pivot tables for kicks
  - [ ] Multiple configuration sources, config file, database table, config database
  - [ ] Configuration file builder/importer
+ - [ ] dotnet new setup for creating a bifrost project
+ - [ ] dotnet tool integration to make it easy to manage and configure bifrost options.
 
  ### Why BifrostQL
  At StandardBeagle we've built many prototypes, and like using GraphQL. Over time we've started to use applications like [hasura](https://hasura.io/) to roll out apis for prototypes quickly. We wanted to try and build something similar, but that put more power in the hands of the front end developer. 

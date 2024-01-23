@@ -9,21 +9,26 @@ namespace BifrostQL.Core.Model
     public interface IDbModel
     {
         IReadOnlyCollection<IDbTable> Tables { get; }
-        string UserAuditKey { get; }
-        string AuditTableName { get; }
+        string? UserAuditKey { get; }
+        string? AuditTableName { get; }
         IDbTable GetTableByFullGraphQlName(string fullName);
         IDbTable GetTableFromDbName(string tableName);
-
         IDictionary<string, object?> Metadata { get; init; }
+        string? GetMetadataValue(string property);
+        bool GetMetadataBool(string property, bool defaultValue);
     }
 
     public sealed class DbModel : IDbModel
     {
-        internal static readonly Pluralizer Pluralizer = new Pluralizer();
+        internal static readonly Pluralizer Pluralizer = new();
         public IReadOnlyCollection<IDbTable> Tables { get; init; } = null!;
-        public string UserAuditKey { get; init; } = null!;
-        public string AuditTableName { get; init; } = null!;
-        public IDictionary<string, object?> Metadata { get; init; } = new Dictionary<string, object?>();
+
+        public IDictionary<string, object?> ConfigurationData { get; init; } = new Dictionary<string, object?>();
+        public string? UserAuditKey => GetMetadataValue("audit-user-key");
+        public string? AuditTableName => GetMetadataValue("audit-table-name");
+        public IDictionary<string, object?> Metadata { get; init; } = null!;
+        public string? GetMetadataValue(string property) => Metadata.TryGetValue(property, out var v) ? v?.ToString() : null;
+        public bool GetMetadataBool(string property, bool defaultValue) => (Metadata.TryGetValue(property, out var v) && v?.ToString() == null) ? defaultValue : v?.ToString() == "true";
         /// <summary>
         /// Searches for the table by its full graphql name
         /// </summary>
@@ -39,10 +44,14 @@ namespace BifrostQL.Core.Model
         }
     }
 
-    public interface ISchemaNames
+    public interface IDbSchema
     {
         public string DbName { get; }
         public string GraphQlName { get; }
+    }
+
+    public interface ISchemaNames : IDbSchema
+    {
         public string NormalizedName { get; }
     }
     public interface IDbTable
@@ -67,17 +76,13 @@ namespace BifrostQL.Core.Model
         /// </summary>
         string TableSchema { get; init; }
 
-        string TableType { get; init; }
-
         /// <summary>
         /// The graphql name of the table, including the schema if it is not dbo
         /// </summary>
-        string FullName { get; }
-
         string ColumnEnumTypeName { get; }
         string ColumnFilterTypeName { get; }
         string TableFilterTypeName { get; }
-        string TableColumnSortEnumName { get;  }
+        string TableColumnSortEnumName { get; }
         string JoinFieldName { get; }
         string SingleFieldName { get; }
         string GetJoinTypeName(IDbTable joinTable);
@@ -92,12 +97,15 @@ namespace BifrostQL.Core.Model
         string DbTableRef { get; }
 
         bool MatchName(string fullName);
+
+        IDictionary<string, object?> Metadata { get; init; }
+        bool CompareMetadata(string property, string value);
     }
 
- 
+
     public class TableLinkDto
     {
-        public TableLinkDto() {}
+        public TableLinkDto() { }
         /// <summary>The name of the join in the scope of the table being linked from, it is context dependent. The ParentTable and ChildTable properties refer to the same tables from both sides of the link.</summary>
         public string Name { get; init; } = null!;
         /// <summary>Parent table always refers to the one in one to many relations in database joins</summary>
@@ -113,24 +121,21 @@ namespace BifrostQL.Core.Model
         {
             if (direction == LinkDirection.ManyToOne)
                 return ChildTable.DbTableRef;
-            else
-                return ParentTable.DbTableRef;
+            return ParentTable.DbTableRef;
         }
 
         public string GetSqlDestTableRef(LinkDirection direction)
         {
             if (direction == LinkDirection.ManyToOne)
                 return ParentTable.DbTableRef;
-            else
-                return ChildTable.DbTableRef;
+            return ChildTable.DbTableRef;
         }
 
         public string GetSqlDestJoinColumn(LinkDirection direction)
         {
             if (direction == LinkDirection.ManyToOne)
                 return ParentId.DbName;
-            else
-                return ChildId.DbName;
+            return ChildId.DbName;
         }
 
         public string GetSqlSourceColumns(LinkDirection direction, string? tableName = null, string? columnName = null)
@@ -144,7 +149,7 @@ namespace BifrostQL.Core.Model
                 builder.Append($"[{ParentTable.DbName}].");
 
             if (direction == LinkDirection.ManyToOne)
-                builder.Append($"[{ ChildId.DbName }]");
+                builder.Append($"[{ChildId.DbName}]");
             else
                 builder.Append($"[{ParentId.DbName}]");
 

@@ -13,15 +13,15 @@ namespace BifrostQL.Core.QueryModel
         [Fact(Skip = "This will take some work")]
         public void FakeSchemaLoadsWithDynamicJoins()
         {
-            var model = new DbModel { Tables = SqlVisitorToSqlTest.GetFakeTables() };
-            var schema = DbSchema.SchemaFromModel(model, true);
+            var model = new DbModel { Tables = SqlVisitorToSqlTest.GetFakeTables(), Metadata = new Dictionary<string, object?>() };
+            var schema = DbSchema.SchemaFromModel(model);
         }
 
         [Fact(Skip = "This will take some work")]
         public void FakeSchemaLoadsWithoutDynamicJoins()
         {
-            var model = new DbModel { Tables = SqlVisitorToSqlTest.GetFakeTables() };
-            var schema = DbSchema.SchemaFromModel(model, false);
+            var model = new DbModel { Tables = SqlVisitorToSqlTest.GetFakeTables(), Metadata = new Dictionary<string, object?>() { { "dynamic-joins", "false" } } };
+            var schema = DbSchema.SchemaFromModel(model);
         }
     }
 }

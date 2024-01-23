@@ -8,8 +8,9 @@ namespace BifrostQL.Core.Model
 {
     public interface IMetadataLoader
     {
-        IDictionary<string, object?> GetDatabaseMetadata();
-        IDictionary<string, object?> GetTableMetadata(IDbTable table);
-        IDictionary<string, object?> GetColumnMetadata(ISchemaNames column);
+        void ApplyDatabaseMetadata(IDictionary<string, object?> metadata, string rootName = ":root");
+        void ApplySchemaMetadata(IDbSchema schema, IDictionary<string, object?> metadata);
+        void ApplyTableMetadata(IDbTable table, IDictionary<string, object?> metadata);
+        void  ApplyColumnMetadata(IDbTable table, ColumnDto column, IDictionary<string, object?> metadata);
     }
 }

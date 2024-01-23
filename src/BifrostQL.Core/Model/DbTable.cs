@@ -27,6 +27,13 @@ namespace BifrostQL.Core.Model
         public string TableSchema { get; init; } = null!;
         public string TableType { get; init; } = null!;
         public IDictionary<string, object?> Metadata { get; init; } = new Dictionary<string, object?>();
+        public bool CompareMetadata(string property, string value)
+        {
+            if (!Metadata.TryGetValue(property, out var v)) return false;
+
+            return string.Equals(v?.ToString(), value, StringComparison.InvariantCultureIgnoreCase);
+        }
+
         /// <summary>
         /// The graphql name of the table, including the schema if it is not dbo
         /// </summary>

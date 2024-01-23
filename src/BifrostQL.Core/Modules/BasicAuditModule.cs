@@ -23,13 +23,13 @@ namespace BifrostQL.Core.Modules
         public string[] Insert(Dictionary<string, object?> data, IDbTable table, IDictionary<string, object?> userContext, IDbModel model)
         {
             var dateTime = DateTime.UtcNow;
-            foreach (var column in table.Columns)
-            {
-                if (column.IsCreatedOnColumn) data[column.ColumnName] = dateTime;
-                if (column.IsUpdatedOnColumn) data[column.ColumnName] = dateTime;
-                if (column.IsCreatedByColumn && userContext.Keys.Contains(model.UserAuditKey)) data[column.ColumnName] = userContext[model.UserAuditKey];
-                if (column.IsUpdatedByColumn && userContext.Keys.Contains(model.UserAuditKey)) data[column.ColumnName] = userContext[model.UserAuditKey];
-            }
+            //foreach (var column in table.Columns)
+            //{
+            //    if (column.IsCreatedOnColumn) data[column.ColumnName] = dateTime;
+            //    if (column.IsUpdatedOnColumn) data[column.ColumnName] = dateTime;
+            //    if (column.IsCreatedByColumn && userContext.Keys.Contains(model.UserAuditKey)) data[column.ColumnName] = userContext[model.UserAuditKey];
+            //    if (column.IsUpdatedByColumn && userContext.Keys.Contains(model.UserAuditKey)) data[column.ColumnName] = userContext[model.UserAuditKey];
+            //}
             return Array.Empty<string>();
         }
 
@@ -38,8 +38,8 @@ namespace BifrostQL.Core.Modules
             var dateTime = DateTime.UtcNow;
             foreach (var column in table.Columns)
             {
-                if (column.IsUpdatedOnColumn) data[column.ColumnName] = dateTime;
-                if (column.IsUpdatedByColumn && userContext.Keys.Contains(model.UserAuditKey)) data[column.ColumnName] = userContext[model.UserAuditKey];
+                //if (column.IsUpdatedOnColumn) data[column.ColumnName] = dateTime;
+                //if (column.IsUpdatedByColumn && userContext.Keys.Contains(model.UserAuditKey)) data[column.ColumnName] = userContext[model.UserAuditKey];
             }
             return Array.Empty<string>();
         }

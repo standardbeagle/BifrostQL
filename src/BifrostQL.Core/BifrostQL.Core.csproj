@@ -23,7 +23,7 @@
 		<PackageReference Include="GraphQL.Server.Ui.Playground" Version="7.2.0" />
 		<PackageReference Include="Pluralize.NET.Core" Version="1.0.0" />
 		<PackageReference Include="System.Data.Common" Version="4.3.0" />
-		<PackageReference Include="System.Data.SqlClient" Version="4.8.5" />
+		<PackageReference Include="System.Data.SqlClient" Version="4.8.6" />
 	</ItemGroup>
 	<ItemGroup>
 		<None Include="..\..\README.md" Pack="true" PackagePath="/" />

@@ -51,11 +51,6 @@ namespace BifrostQL.Server
         }
     }
 
-    public class BifrostUseOptions
-    {
-
-    }
-
     public class BifrostSetupOptions
     {
         private IConfigurationSection? _bifrostConfig;
@@ -65,24 +60,27 @@ namespace BifrostQL.Server
         private Func<IServiceProvider, IReadOnlyCollection<IMutationModule>>? _moduleLoader = null;
         public BifrostSetupOptions BindStandardConfig(IConfiguration config)
         {
+            if (config == null) throw new ArgumentNullException(nameof(config));
+            if (config.GetSection("BifrostQL") == null) throw new ArgumentOutOfRangeException(nameof(config), "Config is missing BifrostQL entry");
+            if (config.GetConnectionString("bifrost") == null) throw new ArgumentOutOfRangeException(nameof(config), "Config is missing bifrost connection string");
             return BindConfiguration(config.GetRequiredSection("BifrostQL"))
                     .BindJwtSettings(config.GetSection("JwtSettings"))
                     .BindConnectionString(config.GetConnectionString("bifrost"));
         }
 
-        public BifrostSetupOptions BindConnectionString(string connectionString)
+        public BifrostSetupOptions BindConnectionString(string? connectionString)
         {
             _connectionString = connectionString;
             return this;
         }
 
-        public BifrostSetupOptions BindConfiguration(IConfigurationSection section)
+        public BifrostSetupOptions BindConfiguration(IConfigurationSection? section)
         {
             _bifrostConfig = section;
             return this;
         }
 
-        public BifrostSetupOptions BindJwtSettings(IConfigurationSection section)
+        public BifrostSetupOptions BindJwtSettings(IConfigurationSection? section)
         {
             _jwtConfig = section;
             return this;
@@ -92,7 +90,7 @@ namespace BifrostQL.Server
             _modules = modules;
             return this;
         }
-        public BifrostSetupOptions AddModules(Func<IServiceProvider, IReadOnlyCollection<IMutationModule>> moduleLoader)
+        public BifrostSetupOptions AddModules(Func<IServiceProvider, IReadOnlyCollection<IMutationModule>>? moduleLoader)
         {
             _moduleLoader = moduleLoader;
             return this;
@@ -100,20 +98,18 @@ namespace BifrostQL.Server
 
         public void ConfigureServices(IServiceCollection services)
         {
-            if (_bifrostConfig == null) throw new ArgumentNullException("bifrostConfig");
-            if (_connectionString == null) throw new ArgumentNullException("connectionString");
+            if (_bifrostConfig == null) throw new InvalidOperationException("bifrostConfig not specified");
+            if (_connectionString == null) throw new InvalidOperationException("connectionString is empty");
 
-            var path = _bifrostConfig.GetValue<string>("Path", "/graphql");
-            var includeDynamicJoins = _bifrostConfig.GetValue<bool>("IncludeDynamicJoins", true);
+            var path = _bifrostConfig.GetValue<string>("Path", "/graphql")!;
             var metadataLoader = new MetadataLoader(_bifrostConfig, "Metadata");
-
             var extensionsLoader = new PathCache<Inputs>();
             extensionsLoader.AddLoader(path, () =>
             {
                 var loader = new DbModelLoader(_bifrostConfig, _connectionString, metadataLoader);
                 var model = loader.LoadAsync().Result;
                 var connFactory = new DbConnFactory(_connectionString);
-                var schema = DbSchema.SchemaFromModel(model, includeDynamicJoins);
+                var schema = DbSchema.SchemaFromModel(model);
                 return new Inputs(new Dictionary<string, object?>
                 {
                     { "model", model}, 
@@ -132,8 +128,9 @@ namespace BifrostQL.Server
             JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 
             var grapQLBuilder = services.AddGraphQL(b => b
-            .AddSystemTextJson()
-            .IfFluent(_jwtConfig.Exists(), b => b.AddUserContextBuilder(context => new BifrostContext(context))));
+                    .AddSystemTextJson()
+                    .IfFluent(_jwtConfig.Exists(), b => b.AddUserContextBuilder(context => new BifrostContext(context)))
+            );
 
             if (_jwtConfig?.Exists() ?? false)
             {

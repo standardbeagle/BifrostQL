@@ -39,6 +39,8 @@ namespace BifrostQL.Core.Resolvers
                 var tableData = _tables[aggregate.SqlKey!];
                 var valueFound = tableData.index.TryGetValue(aggregate.FinalColumnGraphQlName, out int valueIndex);
                 var keyFound = tableData.index.TryGetValue("srcId", out int keyIndex);
+                if (!valueFound || !keyFound)
+                    throw new ExecutionError($"Unable to find aggregate column: {name} on table: {_tableSql.Alias}:{_tableSql.GraphQlName}");
                 var parentKeyIndex = table.index[_tableSql.DbTable.KeyColumns.First().DbName];
                 var parentKeyValue = table.data[row][parentKeyIndex];
                 var value = tableData.data.FirstOrDefault(r => Equals(r[keyIndex], parentKeyValue))?[valueIndex];

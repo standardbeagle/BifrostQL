@@ -4,20 +4,13 @@ using Pluralize.NET.Core;
 using System.Data;
 using System.Data.SqlClient;
 
-namespace BifrostQL.Model 
+namespace BifrostQL.Model
 {
     public sealed class DbModelLoader
     {
         private readonly string _connStr;
-        private readonly TableMatcher _ignoreTables = new(false);
-        private readonly TableMatcher _includeTables = new(true);
-        private readonly ColumnMatcher _createDateMatcher = new(false);
-        private readonly ColumnMatcher _updateDateMatcher = new(false);
-        private readonly ColumnMatcher _updateByMatcher = new(false);
-        private readonly ColumnMatcher _createByMatcher = new(false);
-        private readonly string? _userAuditKey;
-        private readonly string? _auditTableName;
         private readonly IMetadataLoader _metadataLoader;
+        private readonly IConfigurationSection _configuration;
 
         private const string SCHEMA_SQL = @"
 SELECT CCU.[TABLE_CATALOG]
@@ -68,21 +61,9 @@ SELECT [TABLE_CATALOG]
 ";
         public DbModelLoader(IConfigurationSection bifrostSection, string connectionString, IMetadataLoader metadataLoader)
         {
+            _configuration = bifrostSection;
             _connStr = connectionString;
             _metadataLoader = metadataLoader;
-            if (!bifrostSection.Exists()) return;
-
-            _ignoreTables = TableMatcher.FromSection(bifrostSection.GetSection("IgnoreTables"), false);
-            _includeTables = TableMatcher.FromSection(bifrostSection.GetSection("IncludeTables"), true);
-            var audit = bifrostSection.GetSection("Audit");
-            if (!audit.Exists()) return;
-
-            _userAuditKey = audit.GetValue<string>("UserKey");
-            _auditTableName = audit.GetValue<string>("AuditTable");
-            _createDateMatcher = ColumnMatcher.FromSection(audit.GetSection("CreatedOn"), false);
-            _updateDateMatcher = ColumnMatcher.FromSection(audit.GetSection("UpdatedOn"), false);
-            _createByMatcher = ColumnMatcher.FromSection(audit.GetSection("CreatedBy"), false);
-            _updateByMatcher = ColumnMatcher.FromSection(audit.GetSection("UpdatedBy"), false);
         }
 
         public async Task<IDbModel> LoadAsync()
@@ -91,34 +72,35 @@ SELECT [TABLE_CATALOG]
             await conn.OpenAsync();
             var cmd = new SqlCommand(SCHEMA_SQL, conn);
             await using var reader = await cmd.ExecuteReaderAsync();
-            var columnConstraints = GetDtos<ColumnConstraintDto>(reader, ColumnConstraintDto.FromReader)
+            var columnConstraints = GetDtos(reader, ColumnConstraintDto.FromReader)
                 .GroupBy(k => new ColumnRef(k.TableCatalog, k.TableSchema, k.TableName, k.ColumnName))
                 .ToDictionary(g => g.Key, g => g.ToList());
             await reader.NextResultAsync();
 
-            var rawColumns = GetDtos<ColumnDto>(reader, r => ColumnDto.FromReader(r, columnConstraints)).ToArray();
-            foreach(var column in rawColumns)
-            {
-                column.IsCreatedOnColumn = _createDateMatcher.Match(column);
-                column.IsUpdatedOnColumn = _updateDateMatcher.Match(column);
-                column.IsCreatedByColumn = _createByMatcher.Match(column);
-                column.IsUpdatedByColumn = _updateByMatcher.Match(column);
-            }
+            var rawColumns = GetDtos(reader, r => ColumnDto.FromReader(r, columnConstraints)).ToArray();
             var columns = rawColumns
                 .GroupBy(c => new TableRef(c.TableCatalog, c.TableSchema, c.TableName))
                 .ToDictionary(g => g.Key, g => g.ToArray());
             await reader.NextResultAsync();
-            var model = 
+            var tables = GetDtos(reader, r => DbTable.FromReader(
+                    r,
+                    columns[new TableRef((string)reader["TABLE_CATALOG"], (string)reader["TABLE_SCHEMA"], (string)reader["TABLE_NAME"])]))
+                .ToList();
+            foreach (var table in tables)
+            {
+                _metadataLoader.ApplyTableMetadata(table, table.Metadata);
+                foreach (var column in table.Columns)
+                {
+                    _metadataLoader.ApplyColumnMetadata(table, column, column.Metadata);
+                }
+            }
+            var dbMetadata = new Dictionary<string, object?>();
+            _metadataLoader.ApplyDatabaseMetadata(dbMetadata);
+            var model =
                 new DbModel()
                 {
-                    AuditTableName = _auditTableName ?? "",
-                    UserAuditKey = _userAuditKey ?? "",
-                    Tables = GetDtos<DbTable>(reader, r => DbTable.FromReader(
-                        r, 
-                        columns[new TableRef((string)reader["TABLE_CATALOG"], (string)reader["TABLE_SCHEMA"], (string)reader["TABLE_NAME"])]))
-                    .Where(t => _includeTables.Match(t) == true)
-                    .Where(t => _ignoreTables.Match(t) == false)
-                    .ToList()
+                    Tables = tables.Where(t => t.CompareMetadata("visibility","hidden") == false).ToList(),
+                    Metadata = dbMetadata,
                 };
             var singleTables = model.Tables
                                 .Where(t => t.KeyColumns.Count() == 1)
@@ -135,9 +117,16 @@ SELECT [TABLE_CATALOG]
                 idMatch.table.SingleLinks.Add(idMatch.parent.GraphQlName, new TableLinkDto { Name = idMatch.parent.GraphQlName, ChildId = idMatch.column, ParentId = idMatch.parent.KeyColumns.First(), ChildTable = idMatch.table, ParentTable = idMatch.parent });
                 idMatch.parent.MultiLinks.Add(idMatch.table.GraphQlName, new TableLinkDto { Name = idMatch.table.GraphQlName, ChildId = idMatch.column, ParentId = idMatch.parent.KeyColumns.First(), ChildTable = idMatch.table, ParentTable = idMatch.parent });
             }
+
+            foreach (var entry in _configuration.AsEnumerable())
+            {
+                if (entry.Value == null) continue;
+                model.ConfigurationData[entry.Key] = entry.Value;
+            }
             return model;
         }
-        IEnumerable<T> GetDtos<T>(IDataReader reader, Func<IDataReader, T> getDto)
+
+        private static IEnumerable<T> GetDtos<T>(IDataReader reader, Func<IDataReader, T> getDto)
         {
             while (reader.Read())
             {

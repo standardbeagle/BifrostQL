@@ -20,13 +20,15 @@ namespace BifrostQL.Core.Model
             _default = defaultResult;
         }
 
-        public ColumnMatcher((string schema, string table, string column)[] matches, bool defaultResult)
+        public ColumnMatcher((string schema, string table, string? column)[] matches, bool defaultResult)
         {
-            _matchers = matches.Select(m => (
-            new Regex(m.schema, RegexOptions.IgnoreCase), 
-            new Regex(m.table, RegexOptions.IgnoreCase),
-            new Regex(m.column, RegexOptions.IgnoreCase)
-            )).ToArray();
+            _matchers = matches
+                    .Where(m => m.column != null)
+                    .Select(m => (
+                        new Regex(m.schema, RegexOptions.IgnoreCase),
+                        new Regex(m.table, RegexOptions.IgnoreCase),
+                        new Regex(m.column!, RegexOptions.IgnoreCase)
+                    )).ToArray();
             _default = defaultResult;
 
         }
@@ -35,17 +37,15 @@ namespace BifrostQL.Core.Model
         {
             if (_matchers.Length == 0)
                 return _default;
-            return _matchers.Any(m => 
-                m.schema.IsMatch(column.TableSchema) && 
+            return _matchers.Any(m =>
+                m.schema.IsMatch(column.TableSchema) &&
                 m.table.IsMatch(column.TableName) &&
                 m.column.IsMatch(column.ColumnName)
                 );
         }
         public static ColumnMatcher FromSection(IConfigurationSection section, bool defaultResult)
         {
-            if (section == null)
-                return new ColumnMatcher(defaultResult);
-            var matches = section.GetChildren().SelectMany(c => c.GetChildren().SelectMany(cc => cc.GetChildren().Select(ccc => (cc.Key, ccc.Key, ccc.Value)))).ToArray();
+            var matches = section.GetChildren().SelectMany(c => c.GetChildren().SelectMany(cc => cc.GetChildren().Select(ccc => (cc.Key, ccc.Key, (string?)ccc.Value)))).ToArray();
             return new ColumnMatcher(matches, defaultResult);
         }
     }

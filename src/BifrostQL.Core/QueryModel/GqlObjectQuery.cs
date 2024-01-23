@@ -204,8 +204,14 @@ namespace BifrostQL.Core.QueryModel
                     _ => throw new NotSupportedException()
                 }));
             }
+            var  actualLimit = Limit switch
+            {
+                null => 100,
+                -1 => null,
+                _ => Limit
+            };
             orderBy += Offset != null ? $" OFFSET {Offset} ROWS" : " OFFSET 0 ROWS";
-            orderBy += Limit != null ? $" FETCH NEXT {Limit} ROWS ONLY" : "";
+            orderBy += actualLimit != null ? $" FETCH NEXT {actualLimit} ROWS ONLY" : "";
             return orderBy;
         }
 

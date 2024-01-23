@@ -28,9 +28,7 @@ namespace BifrostQL.Core.Model
         }
         public static TableMatcher FromSection(IConfigurationSection section, bool defaultResult)
         {
-            if (section == null)
-                return new TableMatcher(defaultResult);
-            var matches = section.GetChildren().Select(c => (c.Key, c.GetChildren().Select(cc => cc.Value).ToArray())).ToArray();
+            var matches = section.GetChildren().Select(c => ( schema: c.Key, tables: c.GetChildren().Where(cc => cc.Value != null).Select(cc => cc.Value ?? "").ToArray())).ToArray();
             return new TableMatcher(matches, defaultResult);
         }
     }

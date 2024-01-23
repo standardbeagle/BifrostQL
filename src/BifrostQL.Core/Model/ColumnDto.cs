@@ -42,6 +42,7 @@ namespace BifrostQL.Core.Model
             var columnRef = new ColumnRef(catalog, schema, table, column);
             var isPrimary = constraints.TryGetValue(columnRef, out var con) && con.Any(c => c.ConstraintType == "PRIMARY KEY");
             var graphQlName = column.ToGraphQl("col");
+
             return new ColumnDto
             {
                 TableCatalog = catalog,

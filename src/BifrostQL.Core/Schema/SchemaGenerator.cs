@@ -8,7 +8,7 @@ using BifrostQL.Core.Model;
 
 namespace BifrostQL.Core.Schema
 {
-    internal sealed class SchemaGenerator
+    internal static class SchemaGenerator
     {
         public static string SchemaTextFromModel(IDbModel model, bool includeDynamicJoins = true)
         {
@@ -19,7 +19,6 @@ namespace BifrostQL.Core.Schema
             foreach (var generator in tableGenerators)
             {
                 builder.AppendLine(generator.GetTableFieldDefinition());
-               // builder.AppendLine(generator.GetTableAggregateDefinition());
             }
             builder.AppendLine("_dbSchema(graphQlName: String): [dbTableSchema!]!");
             builder.AppendLine("}");
@@ -138,7 +137,7 @@ namespace BifrostQL.Core.Schema
             return $"FilterType{GetSimpleGraphQlTypeName(dataType)}Input";
         }
 
-        public static string GetSimpleGraphQlTypeName(string dataType)
+        private static string GetSimpleGraphQlTypeName(string dataType)
         {
             switch (dataType)
             {
@@ -175,7 +174,7 @@ namespace BifrostQL.Core.Schema
             }
         }
 
-        public static string GetFilterType(string gqlType)
+        private static string GetFilterType(string gqlType)
         {
             var result = new StringBuilder();
             var name = $"FilterType{gqlType}Input";

@@ -109,7 +109,7 @@ namespace BifrostQL.Server
                 var loader = new DbModelLoader(_connectionString, metadataLoader);
                 var model = loader.LoadAsync().Result;
                 var connFactory = new DbConnFactory(_connectionString);
-                var schema = DbSchema.SchemaFromModel(model);
+                var schema = DbSchema.FromModel(model);
                 return new Inputs(new Dictionary<string, object?>
                 {
                     { "model", model}, 

@@ -85,7 +85,7 @@ SELECT [TABLE_CATALOG]
                     columns[new TableRef((string)reader["TABLE_CATALOG"], (string)reader["TABLE_SCHEMA"], (string)reader["TABLE_NAME"])]))
                 .ToList();
 
-            return DbModel.LoadDbModel(tables, _metadataLoader);
+            return DbModel.FromTables(tables, _metadataLoader);
         }
 
         private static IEnumerable<T> GetDtos<T>(IDataReader reader, Func<IDataReader, T> getDto)

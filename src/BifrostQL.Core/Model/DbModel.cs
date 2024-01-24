@@ -73,7 +73,7 @@ namespace BifrostQL.Core.Model
             }
         }
 
-        public static DbModel LoadDbModel(List<DbTable> tables, IMetadataLoader metadataLoader)
+        public static DbModel FromTables(List<DbTable> tables, IMetadataLoader metadataLoader)
         {
             foreach (var table in tables)
             {

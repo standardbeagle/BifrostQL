@@ -20,7 +20,7 @@ namespace BifrostQL.Core.Model
         /// <summary>
         /// The table name translated so that it can be used to predict matches from other tables and columns
         /// </summary>
-        public string NormalizedName { get; private init; } = null!;
+        public string NormalizedName { get; init; } = null!;
         /// <summary>
         /// The schema that the table belongs to using its database name
         /// </summary>

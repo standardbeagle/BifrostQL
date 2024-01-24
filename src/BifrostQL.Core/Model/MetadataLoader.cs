@@ -23,8 +23,15 @@ namespace BifrostQL.Core.Model
             _metaRules = rules.Select(r => new MetadataLoaderRule(r)).ToArray();
         }
 
+        public MetadataLoader(IReadOnlyCollection<string> rules)
+        {
+            ArgumentNullException.ThrowIfNull(rules, nameof(rules));
+            _metaRules = rules.Select(r => new MetadataLoaderRule(r)).ToArray();
+        }
+
         public void ApplyDatabaseMetadata(IDictionary<string, object?> metadata, string rootName = ":root")
         {
+            ArgumentNullException.ThrowIfNull(metadata, nameof(metadata));
             foreach (var rule in _metaRules)
             {
                 rule.ApplyToSchema(rootName, metadata);
@@ -33,6 +40,7 @@ namespace BifrostQL.Core.Model
 
         public void ApplySchemaMetadata(IDbSchema schema, IDictionary<string, object?> metadata)
         {
+            ArgumentNullException.ThrowIfNull(schema, nameof(schema));
             foreach (var rule in _metaRules)
             {
                 rule.ApplyToSchema(schema.DbName, metadata);
@@ -41,6 +49,7 @@ namespace BifrostQL.Core.Model
 
         public void ApplyTableMetadata(IDbTable table, IDictionary<string, object?> metadata)
         {
+            ArgumentNullException.ThrowIfNull(table, nameof(table));
             foreach (var rule in _metaRules)
             {
                 rule.ApplyToTable(table.TableSchema, table.DbName, table.Columns.Select(c => c.DbName).ToArray(), metadata);
@@ -49,6 +58,7 @@ namespace BifrostQL.Core.Model
 
         public void ApplyColumnMetadata(IDbTable table, ColumnDto column, IDictionary<string, object?> metadata)
         {
+            ArgumentNullException.ThrowIfNull(table, nameof(table));
             foreach (var rule in _metaRules)
             {
                 rule.ApplyToColumn(table.TableSchema, table.DbName, table.Columns.Select(c => c.DbName).ToArray(), column.DbName, metadata);
@@ -66,6 +76,8 @@ namespace BifrostQL.Core.Model
 
         public MetadataLoaderRule(string rule)
         {
+            ArgumentNullException.ThrowIfNull(rule, nameof(rule));
+
             var split = RuleRegex.Match(rule);
             var selectors = split.Groups["selectors"].Value;
             var selectorList = selectors.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries).Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToArray();

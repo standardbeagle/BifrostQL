@@ -10,7 +10,7 @@ namespace BifrostQL.Core.Schema
     public static class DbSchema
     {
 
-        public static ISchema SchemaFromModel(IDbModel model)
+        public static ISchema FromModel(IDbModel model)
         {
             var includeDynamicJoins = model.GetMetadataBool("dynamic-joins", true);
             var schemaText = SchemaGenerator.SchemaTextFromModel(model, includeDynamicJoins);

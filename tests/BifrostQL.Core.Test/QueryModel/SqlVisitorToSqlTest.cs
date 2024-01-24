@@ -8,6 +8,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using BifrostQL.Core.Model;
+using GraphQL;
 
 namespace BifrostQL.Core.QueryModel
 {
@@ -444,77 +445,66 @@ namespace BifrostQL.Core.QueryModel
 
         }
 
+
         public static List<DbTable> GetFakeTables()
         {
+            var workshopColumns = new Dictionary<string, ColumnDto> {
+                { "id", new ColumnDto { TableName = "work shops", ColumnName= "id", IsPrimaryKey= true } },
+                { "number", new ColumnDto { TableName = "work shops", ColumnName= "number", IsPrimaryKey= false } },
+                { "percentage%", new ColumnDto { TableName = "work shops", ColumnName= "percentage%", IsPrimaryKey= false } },
+            };
             var workshops = new DbTable
             {
                 TableSchema = "dbo",
                 DbName = "work shops",
                 GraphQlName = "work__shops",
-                ColumnLookup = new Dictionary<string, ColumnDto> {
-                        { "id", new ColumnDto { TableName = "work shops", ColumnName= "id", IsPrimaryKey= true } },
-                        { "number", new ColumnDto { TableName = "work shops", ColumnName= "number", IsPrimaryKey= false } },
-                        { "percentage%", new ColumnDto { TableName = "work shops", ColumnName= "percentage%", IsPrimaryKey= false } },
-                },
-                GraphQlLookup = new Dictionary<string, ColumnDto> {
-                    { "id", new ColumnDto { TableName = "work shops", ColumnName= "id", IsPrimaryKey= true } },
-                    { "number", new ColumnDto { TableName = "work shops", ColumnName= "number", IsPrimaryKey= false } },
-                    { "percentage_34", new ColumnDto { TableName = "work shops", ColumnName= "percentage%", IsPrimaryKey= false } },
-                },
+                NormalizedName = "work__shops",
+                ColumnLookup = workshopColumns.ToNormalized(),
+                GraphQlLookup = workshopColumns.ToNormalized().ToGraphQlLookup(),
             };
-            var sessions = new DbTable
-            {
+            var sessionColumns = new Dictionary<string, ColumnDto> {
+                { "id", new ColumnDto { TableName = "sessions", ColumnName= "sid", IsPrimaryKey= true } },
+                { "status", new ColumnDto { TableName = "sessions", ColumnName= "status", IsPrimaryKey= false } },
+                { "workshopid", new ColumnDto { TableName = "sessions", ColumnName= "workshopid", IsPrimaryKey= false } },
+                { "percentage%", new ColumnDto { TableName = "sessions", ColumnName= "percentage%", IsPrimaryKey= false } },
+            };
+            var sessions = new DbTable {
                 TableSchema = "dbo",
                 DbName = "sessions",
                 GraphQlName = "sessions",
-                ColumnLookup = new Dictionary<string, ColumnDto> {
-                        { "id", new ColumnDto { TableName = "sessions", ColumnName= "sid", IsPrimaryKey= true } },
-                        { "status", new ColumnDto { TableName = "sessions", ColumnName= "status", IsPrimaryKey= false } },
-                        { "workshopid", new ColumnDto { TableName = "sessions", ColumnName= "workshopid", IsPrimaryKey= false } },
-                        { "percentage%", new ColumnDto { TableName = "sessions", ColumnName= "percentage%", IsPrimaryKey= false } },
-                    },
-                GraphQlLookup = new Dictionary<string, ColumnDto> {
-                    { "id", new ColumnDto { TableName = "sessions", ColumnName= "sid", IsPrimaryKey= true } },
-                    { "status", new ColumnDto { TableName = "sessions", ColumnName= "status", IsPrimaryKey= false } },
-                    { "workshopid", new ColumnDto { TableName = "sessions", ColumnName= "workshopid", IsPrimaryKey= false } },
-                    { "percentage_34", new ColumnDto { TableName = "sessions", ColumnName= "percentage%", IsPrimaryKey= false } },
-                },
+                NormalizedName = "sessions",
+                ColumnLookup = sessionColumns.ToNormalized(),
+                GraphQlLookup = sessionColumns.ToNormalized().ToGraphQlLookup(),
+            };
+            var participantColumns = new Dictionary<string, ColumnDto> {
+                { "id", new ColumnDto { TableName = "participants table", ColumnName= "sid", IsPrimaryKey= true } },
+                { "status code", new ColumnDto { TableName = "participants table", ColumnName= "status code", IsPrimaryKey= false } },
+                { "firstname", new ColumnDto { TableName = "participants table", ColumnName= "firstname", IsPrimaryKey= false } },
+                { "lastname", new ColumnDto { TableName = "participants table", ColumnName= "lastname", IsPrimaryKey= false } },
+                { "workshopid", new ColumnDto { TableName = "participants table", ColumnName= "workshopid", IsPrimaryKey= false } },
             };
             var participants = new DbTable
             {
                 TableSchema = "dbo",
                 DbName = "participants table",
                 GraphQlName = "participants__table",
-                ColumnLookup = new Dictionary<string, ColumnDto> {
-                    { "id", new ColumnDto { TableName = "participants table", ColumnName= "sid", IsPrimaryKey= true } },
-                    { "status code", new ColumnDto { TableName = "participants table", ColumnName= "status code", IsPrimaryKey= false } },
-                    { "firstname", new ColumnDto { TableName = "participants table", ColumnName= "firstname", IsPrimaryKey= false } },
-                    { "lastname", new ColumnDto { TableName = "participants table", ColumnName= "lastname", IsPrimaryKey= false } },
-                    { "workshopid", new ColumnDto { TableName = "participants table", ColumnName= "workshopid", IsPrimaryKey= false } },
-                },
-                GraphQlLookup = new Dictionary<string, ColumnDto> {
-                    { "id", new ColumnDto { TableName = "participants table", ColumnName= "sid", IsPrimaryKey= true } },
-                    { "status__code", new ColumnDto { TableName = "participants table", ColumnName= "status code", IsPrimaryKey= false } },
-                    { "firstname", new ColumnDto { TableName = "participants table", ColumnName= "firstname", IsPrimaryKey= false } },
-                    { "lastname", new ColumnDto { TableName = "participants table", ColumnName= "lastname", IsPrimaryKey= false } },
-                    { "workshopid", new ColumnDto { TableName = "participants table", ColumnName= "workshopid", IsPrimaryKey= false } },
-                },
+                NormalizedName = "participants__table",
+                ColumnLookup = participantColumns.ToNormalized(),
+                GraphQlLookup = participantColumns.ToNormalized().ToGraphQlLookup(),
+            };
+            var entryColumns = new Dictionary<string, ColumnDto> {
+                { "id", new ColumnDto { TableName = "entry", ColumnName="id", IsPrimaryKey= true } },
+                { "value", new ColumnDto { TableName = "entry", ColumnName= "value", IsPrimaryKey= false } },
+                { "session_id", new ColumnDto { TableName = "entry", ColumnName= "session_id", IsPrimaryKey= false } },
             };
             var entries = new DbTable
             {
                 TableSchema = "dbo",
                 DbName = "entry",
                 GraphQlName = "entry",
-                ColumnLookup = new Dictionary<string, ColumnDto> {
-                    { "id", new ColumnDto { TableName = "entry", ColumnName= "id", IsPrimaryKey= true } },
-                    { "value", new ColumnDto { TableName = "entry", ColumnName= "value", IsPrimaryKey= false } },
-                    { "session_id", new ColumnDto { TableName = "entry", ColumnName= "session_id", IsPrimaryKey= false } },
-                },
-                GraphQlLookup = new Dictionary<string, ColumnDto> {
-                    { "id", new ColumnDto { TableName = "entry", ColumnName= "sid", IsPrimaryKey= true } },
-                    { "value", new ColumnDto { TableName = "entry", ColumnName= "value", IsPrimaryKey= false } },
-                    { "session_id", new ColumnDto { TableName = "entry", ColumnName= "session_id", IsPrimaryKey= false } },
-                },
+                NormalizedName = "entry",
+                ColumnLookup = entryColumns.ToNormalized(),
+                GraphQlLookup = entryColumns.ToNormalized().ToGraphQlLookup(),
             };
             workshops.MultiLinks.Add("sessions", new TableLinkDto
             {
@@ -566,6 +556,30 @@ namespace BifrostQL.Core.QueryModel
             });
             var tables = new List<DbTable>() { workshops, sessions, participants };
             return tables;
+        }
+    }
+
+    public static class TestExtensions
+    {
+        public static IDictionary<string, ColumnDto> ToNormalized(this IDictionary<string, ColumnDto> lookup)
+        {
+            return lookup.ToDictionary(kv => kv.Key, kv => new ColumnDto()
+            {
+                TableName = kv.Value.TableName,
+                ColumnName = kv.Value.ColumnName,
+                NormalizedName = kv.Value.ColumnName,
+                IsPrimaryKey = kv.Value.IsPrimaryKey
+            });
+        }
+        public static IDictionary<string, ColumnDto> ToGraphQlLookup(this IDictionary<string, ColumnDto> lookup)
+        {
+            return lookup.ToDictionary(kv => kv.Key.Replace("%", "_34"), kv => new ColumnDto()
+            {
+                TableName = kv.Value.TableName,
+                ColumnName = kv.Value.ColumnName,
+                NormalizedName = kv.Value.NormalizedName,
+                IsPrimaryKey = kv.Value.IsPrimaryKey
+            });
         }
     }
 }

@@ -32,7 +32,7 @@ export function Header() {
                 {hasBack && <button onClick={() => back()}>‹</button>}
                 {!hasBack && <span>‹</span>}
             </div>
-            <h3>Table: {tableData?.table ?? "(Select)"}</h3>
+            <h3>Table: { tableSchema?.dbName ?? tableData?.table ?? "(Select)"}</h3>
             {options && <>
                 <select onChange={e => setColumn(e.target.value)}>
                     {options.map((c: any) => (<option key={c.key} value={c.value}>{c.label}</option>))}

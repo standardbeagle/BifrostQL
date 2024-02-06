@@ -1,9 +1,9 @@
 import React from 'react';
-import { ComponentStory, ComponentMeta } from '@storybook/react';
+import type { Meta } from '@storybook/react';
 import { Editor }  from './editor';
 import { ApolloClient, InMemoryCache} from '@apollo/client'
 
-export default {
+const meta :Meta<typeof Editor> = {
   title: 'Example/Editor',
   component: Editor,
   parameters: {
@@ -11,14 +11,15 @@ export default {
         routePath: '/'
     }
   },
-  argTypes: {
-    url: {
-        type: { name: 'string', reqired: false }
-    }
-  }
-} as ComponentMeta<typeof Editor>;
+//   argTypes: {
+//     url: {
+//         type: { name: 'string', reqired: false }
+//     }
+//   }
+};
 
-//👇 We create a “template” of how args map to rendering
+export default meta;
+
 const Template: any = ({url, ...args} : { url: string }) => { 
     let client = undefined;
     if (url) client = new ApolloClient({

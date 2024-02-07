@@ -1,0 +1,22 @@
+{
+  "name": "bifrostql",
+  "version": "1.0.0",
+  "description": "Is a magical bridge connecting your front end code to your SQL datasources.",
+  "main": "index.js",
+  "directories": {
+    "example": "examples",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "workspaces": [
+    "examples/*"
+  ],
+  "dependencies": {
+    "@standardbeagle/virtual-router": "^1.0.1"
+  }
+}

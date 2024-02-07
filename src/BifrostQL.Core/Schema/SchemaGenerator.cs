@@ -44,11 +44,12 @@ namespace BifrostQL.Core.Schema
 
             builder.AppendLine("type dbTableSchema {");
             builder.AppendLine("schema: String!");
-            builder.AppendLine("name: String!");
+            builder.AppendLine("dbName: String!");
             builder.AppendLine("graphQlName: String!");
             builder.AppendLine("primaryKeys: [String!]");
             builder.AppendLine("labelColumn: String!");
             builder.AppendLine("isEditable: Boolean!");
+            builder.AppendLine("metadata: [dbMetadataSchema!]!");
             builder.AppendLine("multiJoins: [dbJoinSchema!]!");
             builder.AppendLine("singleJoins: [dbJoinSchema!]!");
             builder.AppendLine("columns: [dbColumnSchema!]!");
@@ -59,10 +60,11 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine("sourceColumnNames: [String!]!");
             builder.AppendLine("destinationTable: String!");
             builder.AppendLine("destinationColumnNames: [String!]!");
+            builder.AppendLine("metadata: [dbMetadataSchema!]!");
             builder.AppendLine("}");
 
             builder.AppendLine("type dbColumnSchema {");
-            builder.AppendLine("name: String!");
+            builder.AppendLine("dbName: String!");
             builder.AppendLine("graphQlName: String!");
             builder.AppendLine("paramType: String!");
             builder.AppendLine("dbType: String!");
@@ -76,8 +78,10 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine("isUpdatedByColumn: Boolean!");
             builder.AppendLine("isDeletedOnColumn: Boolean!");
             builder.AppendLine("isDeletedColumn: Boolean!");
-
+            builder.AppendLine("metadata: [dbMetadataSchema!]!");
             builder.AppendLine("}");
+            
+            builder.AppendLine("type dbMetadataSchema { key: String! value: String! }");
 
             builder.AppendLine("enum AggregateOperations {");
             builder.AppendLine( string.Join(',', Enum.GetNames(typeof (AggregateOperationType))));

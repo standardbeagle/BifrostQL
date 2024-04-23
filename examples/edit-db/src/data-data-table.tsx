@@ -6,10 +6,10 @@ import { useDataTable } from './hooks/useDataTable';
 interface DataDataTableParams {
     table: any,
     id?: string,
-    filterTable?: string
+    tableFilter?: string
 }
 
-export function DataDataTable({ table, id, filterTable }: DataDataTableParams): JSX.Element {
+export function DataDataTable({ table, id, tableFilter }: DataDataTableParams): JSX.Element {
     const {
         limit,
         tableColumns,
@@ -18,24 +18,23 @@ export function DataDataTable({ table, id, filterTable }: DataDataTableParams): 
         handlePageSize,
         loading,
         error,
-        data } = useDataTable(table, id, filterTable);
+        data } = useDataTable(table, id, tableFilter);
 
-        //console.log({loading, error, data});
+        //console.log({tableColumns, loading, error, data});
 
     const [resetPage, setResetpage] = useState(false);
     useEffect(() => { data && data[table.name].offset === 0 && setResetpage(!resetPage);}, [data]);
     if (error) return <div>Error: {error.message}</div>;
-    //This is required to make paging reset when loading a new dataset, it probably doesn't support all the edge cases yet.
 
     return <DataTable
         columns={tableColumns}
-        data={data ? data[table.name].data : []}
+        data={(data?.[table.name]?.data) ?? []}
         progressPending={loading}
         sortServer
         onSort={handleSort}
         pagination
         paginationServer
-        paginationTotalRows={data ? data[table.name].total : 0}
+        paginationTotalRows={(data?.[table.name]?.total) ?? 0}
         paginationPerPage={limit}
         paginationDefaultPage={1}
         paginationResetDefaultPage={resetPage}

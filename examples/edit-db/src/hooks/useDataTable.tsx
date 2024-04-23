@@ -1,4 +1,4 @@
-import { gql, useQuery } from "@apollo/client";
+import { OperationVariables, QueryResult, gql, useQuery } from "@apollo/client";
 import { Link, useSearchParams } from "./usePath";
 import { useEffect, useState } from "react";
 
@@ -60,7 +60,8 @@ const getTableColumns = (table:any): any[] => {
     )}, ...columns];
 }
 
-const getFilteredQuery = (table:any, search: any, id?:string, filterTable?: string) => {
+const getFilteredQuery = (table:any, search: any, id?:string, tableFilter?: string) => {
+    //console.log({table, search, id, tableFilter});
     let { param, filterText } = getFilterObj(search.get('filter'));
     const searchColumns = table.columns
         .filter((x: { type: any }) => x?.type?.kind !== "LIST")
@@ -71,17 +72,25 @@ const getFilteredQuery = (table:any, search: any, id?:string, filterTable?: stri
             return x.name;
         })
         .join(' ');
-    if (id && !filterTable) {
+    if (id && !tableFilter) {
         param = ", $id: Int";
         filterText = "filter: { id: { _eq: $id}}";
     }
-    if (id && filterTable) {
+    if (id && tableFilter) {
         param = ", $id: Int";
-        filterText = `filter: { ${filterTable}: { id: { _eq: $id}}}`;
+        filterText = `filter: { ${tableFilter}: { id: { _eq: $id}}}`;
     }
 
     return gql`query Get${table.name}($sort: [String], $limit: Int, $offset: Int ${param}) { ${table.name}(sort: $sort limit: $limit offset: $offset ${filterText}) { total offset limit data {${searchColumns}}}}`;
 }
+
+const getAppliedSort = (table:any, sort: any[]): string[] => {
+    if (!table) return [];
+    if (!sort) return [`${table.columns.at(0)?.name}_asc`];
+    return sort
+        .filter((s: any) => s.table.name === table.name)
+        .map((s: any) => `${s.columnName}_${s.order}`);
+};
 
 
 export function useDataTable(table: any, id?: string, filterTable?: string) {
@@ -92,23 +101,31 @@ export function useDataTable(table: any, id?: string, filterTable?: string) {
     const { search } = useSearchParams();
     let { variables } = getFilterObj(search.get('filter'));
 
-    const [sort, setSort] = useState<string[]>([`${table.columns.at(0)?.name}_asc`]);
+    const [sort, setSort] = useState<any[]>([{table, columnName:table.columns.at(0)?.name, order: 'asc'}]);
     const [offset, setOffset] = useState(0);
     const [limit, setLimit] = useState(10);
+    const [result, setResult] = useState<QueryResult<any, OperationVariables>>();
     const query = getFilteredQuery(table, search, id, filterTable);
-    const queryResult = useQuery(query, { variables: { sort: sort, limit: limit, offset: offset, ...routeObj, ...variables } });
+    const appliedSort = getAppliedSort(table, sort);
+    const queryResult = useQuery(query, { variables: { sort: appliedSort, limit: limit, offset: offset, ...routeObj, ...variables } });
     const handleUpdate = (value: any) : Promise<any> => {
         return Promise.resolve(value);
     }
 
     useEffect(() => {  
-        setSort([`${table.columns.at(0)?.name}_asc`]);
+        setSort([{table, 
+            columnName: table.columns.at(0)?.name, 
+            order: 'asc'}]);
         setOffset(0);        
      },[table, id, filterTable]);
+
+    useEffect(() => {
+        setResult(queryResult);
+    }, [queryResult]);
     
     const handleSort = (column: any, sortDirection: any) => {
         const newSort = [`${column.sortField}_${sortDirection}`];
-        setSort(newSort);
+        setSort([{table, columnName:column.sortField, order: sortDirection}]);
         const search = { offset: offset, sort: newSort };
         queryResult.refetch({ sort: search.sort, limit: limit, offset: offset, ...routeObj })
     }
@@ -123,6 +140,6 @@ export function useDataTable(table: any, id?: string, filterTable?: string) {
         queryResult.refetch({ sort: sort, limit: size, offset: offset, ...routeObj });
     }
 
-    return { tableColumns, offset, limit, handleSort, handlePage, handlePageSize, handleUpdate, ...queryResult };
+    return { tableColumns, offset, limit, handleSort, handlePage, handlePageSize, handleUpdate, ...result };
 }
 

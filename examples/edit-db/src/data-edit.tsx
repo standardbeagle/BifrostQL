@@ -28,13 +28,13 @@ function DataEditDetail({ table, schema, editid }: { table: any, schema: any, ed
 
     //console.log('dt', dataTable)
     const [mutate, mutateState] = useMutation<any>(
-        gql`mutation updateSingle($detail: Update${dataTable.name}){ ${dataTable.name}(update: $detail)}`,
+        gql`mutation updateSingle($detail: Update_${dataTable.name}){ ${dataTable.name}(update: $detail)}`,
         {
             refetchQueries: [`Get${dataTable.name}`]
         }
     );
     const [insertMutate, insertState] = useMutation<any>(
-        gql`mutation insertSingle($detail: Insert${dataTable.name}){ ${dataTable.name}(insert: $detail)}`,
+        gql`mutation insertSingle($detail: Insert_${dataTable.name}){ ${dataTable.name}(insert: $detail)}`,
         {
             refetchQueries: [`Get${dataTable.name}`]
         }
@@ -49,16 +49,17 @@ function DataEditDetail({ table, schema, editid }: { table: any, schema: any, ed
     if (error) return <div>Error: {error.message}</div>;
     const value = data?.[dataTable.name]?.data?.at(0) ?? {};
     const detail = Object.fromEntries(editColumns.map((c: any) => {
-        if (c.paramType === "DateTime") {
+        if (c.paramType === "DateTime" || c.paramType === "DateTime!") {
             return [c.name, value[c.name]?.split("T")[0]];
         }
         return [c.name, value[c.name]]; 
     }));
 
     const onSubmit = (event: any) => {
-        //console.log(event, detail);
+        //console.log({event, detail});
         for(const col of editColumns) {
-            if(col.paramType === "Int") {
+            //console.log(col.name, col.paramType, detail[col.name]);
+            if(col.paramType === "Int" || col.paramType === "Int!") {
                 detail[col.name] = +detail[col.name];
             }
         }

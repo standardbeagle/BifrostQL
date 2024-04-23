@@ -17,5 +17,5 @@ export function DataPanel() {
     if (loading) return <div>Loading...</div>;
     if (error) return <div>Error: {error.message}</div>;
 
-    return <DataDataTable table={getTable(data, table)} id={id} filterTable={filterTable} />;
+    return <DataDataTable table={getTable(data, table)} id={id} tableFilter={filterTable} />;
 }

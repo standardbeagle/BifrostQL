@@ -86,8 +86,10 @@ function DataEditDetail({ table, schema, editid }: { table: any, schema: any, ed
                     <input type={ec.paramType === "DateTime" ? "date" : "text"} defaultValue={detail?.[ec.name]} onChange={event => { detail[ec.name] = event.target.value; }} />
                 </li>)}
             </ul>
-            <Link className="editdb-dialog-edit__cancel" to="../..">Cancel</Link>
-            <button type="submit" className="editdb-dialog-edit__submit">edit</button>
+            <div className="button-row">
+                <Link className="editdb-dialog-edit__cancel" to="../..">Cancel</Link>
+                <button type="submit" className="editdb-dialog-edit__submit">edit</button>
+            </div>
         </form>
     </dialog>;
 }

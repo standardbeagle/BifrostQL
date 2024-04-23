@@ -17,12 +17,13 @@ export function Header() {
     //The control needs to reset state when a new table is selected, ie the filter is cleared
     useEffect(() => { setColumn(options?.at(0)?.value ?? ""); }, [tableData])
     const filter = () => {
+        console.log({ column, searchVal });
         if (!searchVal) return;
         const [columnName, type] = column.split(",");
-        if (type === "Int")
+        if (type === "Int" || type === "Int!")
             navigate(`?filter=["${columnName}", "_eq", ${searchVal}, "${type}"]`);
-        if (type === "String")
-            navigate(`?filter=["${columnName}", "_eq", "${searchVal}", "${type}"]`);
+        if (type === "String" || type === "String!")
+            navigate(`?filter=["${columnName}", "_starts_with", "${searchVal}", "${type}"]`);
     }
     if (loading) return <div>Loading...</div>;
     if (error) return <div>Error: {error.message}</div>;

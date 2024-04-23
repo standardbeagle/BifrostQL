@@ -14,9 +14,24 @@
     }
 }
 
+.button-row {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: min-content;
+    place-content: end;
+    place-items: stretch;
+    gap: 1rem;
+}
+
 .editdb-dialog-edit {
     padding: 1rem;
     text-align: right;
+    display: grid;
+    form {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 1rem 0;
+    }
 
     &__heading {
         margin-top: 0;
@@ -32,10 +47,17 @@
     }
     &__input-item {
         list-style: none;
-        display: contents;
+        display: grid;
+        grid-column: 1 / -1;
+        grid-template-columns: subgrid;
+        > label {
+            grid-column: 1 / 2;
+        }
+        > input {
+            grid-column: 2 / 3;
+        }
     }
     &__submit, &__cancel {
         @extend .btn;
-        margin: 1rem 0.5rem;
     }
 }

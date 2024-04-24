@@ -21,6 +21,7 @@ const toLocaleDate = (d:string):String => {
 };
 
 const getTableColumns = (table:any): any[] => {
+    if (!table) return [];
     const columns = table.columns
     .map((c: any) => {
         const result = {
@@ -61,7 +62,8 @@ const getTableColumns = (table:any): any[] => {
 }
 
 const getFilteredQuery = (table:any, search: any, id?:string, tableFilter?: string) => {
-    //console.log({table, search, id, tableFilter});
+    if (!table) return null;
+    console.log({table, search, id, tableFilter});
     let { param, filterText } = getFilterObj(search.get('filter'));
     const searchColumns = table.columns
         .filter((x: { type: any }) => x?.type?.kind !== "LIST")
@@ -101,18 +103,19 @@ export function useDataTable(table: any, id?: string, filterTable?: string) {
     const { search } = useSearchParams();
     let { variables } = getFilterObj(search.get('filter'));
 
-    const [sort, setSort] = useState<any[]>([{table, columnName:table.columns.at(0)?.name, order: 'asc'}]);
+    const [sort, setSort] = useState<any[]>([]);
     const [offset, setOffset] = useState(0);
     const [limit, setLimit] = useState(10);
     const [result, setResult] = useState<QueryResult<any, OperationVariables>>();
     const query = getFilteredQuery(table, search, id, filterTable);
     const appliedSort = getAppliedSort(table, sort);
-    const queryResult = useQuery(query, { variables: { sort: appliedSort, limit: limit, offset: offset, ...routeObj, ...variables } });
+    const queryResult = useQuery(query??gql`query {__schema { __typename }}`, { skip: !query, variables: { sort: appliedSort, limit: limit, offset: offset, ...routeObj, ...variables } });
     const handleUpdate = (value: any) : Promise<any> => {
         return Promise.resolve(value);
     }
 
     useEffect(() => {  
+        if (!table) return;
         setSort([{table, 
             columnName: table.columns.at(0)?.name, 
             order: 'asc'}]);
@@ -120,8 +123,9 @@ export function useDataTable(table: any, id?: string, filterTable?: string) {
      },[table, id, filterTable]);
 
     useEffect(() => {
+        if (!query) return;
         setResult(queryResult);
-    }, [queryResult]);
+    }, [queryResult, query]);
     
     const handleSort = (column: any, sortDirection: any) => {
         const newSort = [`${column.sortField}_${sortDirection}`];
@@ -133,11 +137,13 @@ export function useDataTable(table: any, id?: string, filterTable?: string) {
         var newOffset = +((page-1) * limit);
         setOffset(newOffset);
         const search = { offset: newOffset, sort: sort };
-        queryResult.refetch({ sort: sort, limit: limit, offset: search.offset, ...routeObj });
+        const appliedSort = getAppliedSort(table, sort);
+        queryResult.refetch({ sort: appliedSort, limit: limit, offset: search.offset, ...routeObj });
     }
     const handlePageSize = (size: number) => {
         setLimit(size);
-        queryResult.refetch({ sort: sort, limit: size, offset: offset, ...routeObj });
+        const appliedSort = getAppliedSort(table, sort);
+        queryResult.refetch({ sort: appliedSort, limit: size, offset: offset, ...routeObj });
     }
 
     return { tableColumns, offset, limit, handleSort, handlePage, handlePageSize, handleUpdate, ...result };

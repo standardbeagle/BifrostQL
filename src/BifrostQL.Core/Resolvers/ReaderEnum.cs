@@ -18,8 +18,9 @@ namespace BifrostQL.Core.Resolvers
         public ValueTask<object?> Get(int row, IResolveFieldContext context)
         {
             var table = _tables[_tableSql.KeyName];
-            var column = context.FieldDefinition.Name;
-            var found = table.index.TryGetValue(column, out int index);
+            var name = context.FieldAst.Name.StringValue;
+            var alias = context.FieldAst.Alias?.Name?.StringValue;
+            var found = table.index.TryGetValue(alias ?? name, out var index);
             if (found) 
                 return ValueTask.FromResult(DbConvert(table.data[row][index]));
             return GetDataForMissingColumn(context, table, row);

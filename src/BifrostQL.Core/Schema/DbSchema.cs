@@ -56,7 +56,7 @@ namespace BifrostQL.Core.Schema
                 }
 
                 var dbSchema = query.FieldFor("_dbSchema");
-                dbSchema.Resolver = new DbSchemaResolver(model);
+                dbSchema.Resolver = new MetaSchemaResolver(model);
 
             });
             return schema;

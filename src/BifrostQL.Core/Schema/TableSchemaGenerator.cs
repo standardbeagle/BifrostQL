@@ -31,8 +31,8 @@ namespace BifrostQL.Core.Schema
             {
                 //if (single)
                 //{
-                    builder.AppendLine(
-                        $"\t{joinTable.GraphQlName}(on: [String!]) : {joinTable.GraphQlName}");
+                builder.AppendLine(
+                    $"\t{joinTable.GraphQlName}(on: [String!]) : {joinTable.GraphQlName}");
                 //}
                 //else
                 //{
@@ -123,10 +123,10 @@ namespace BifrostQL.Core.Schema
             return $"{_table.ColumnEnumTypeName}";
         }
 
-        public string GetMutationParameterType(string action, IdentityType identityType, bool isDelete = false)
+        public string GetMutationParameterType(MutateActions action, IdentityType identityType, bool isDelete = false)
         {
             var result = new StringBuilder();
-            var name = action + _table.GraphQlName;
+            var name = _table.GetActionTypeName(action);
             result.AppendLine($"input {name} {{");
             foreach (var column in _table.Columns)
             {
@@ -134,17 +134,17 @@ namespace BifrostQL.Core.Schema
                     continue;
 
                 var isNullable = column.IsNullable;
-                if (column.CompareMetadata("populate", "created-on") || column.CompareMetadata("populate", "created-by") || 
+                if (column.CompareMetadata("populate", "created-on") || column.CompareMetadata("populate", "created-by") ||
                     column.CompareMetadata("populate", "updated-on") || column.CompareMetadata("populate", "updated-by") ||
-                    column.CompareMetadata("populate", "deleted-on") || column.CompareMetadata("populate", "deleted-by") 
+                    column.CompareMetadata("populate", "deleted-on") || column.CompareMetadata("populate", "deleted-by")
                     )
                     isNullable = true;
                 if (column.IsIdentity)
                     isNullable = identityType switch
                     {
-                        IdentityType.Optional => true, 
-                        IdentityType.Required => false, 
-                        IdentityType.None => true, 
+                        IdentityType.Optional => true,
+                        IdentityType.Required => false,
+                        IdentityType.None => true,
                         _ => throw new ArgumentOutOfRangeException(nameof(identityType), identityType, null)
                     };
 
@@ -153,6 +153,19 @@ namespace BifrostQL.Core.Schema
 
                 result.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetGraphQlInsertTypeName(column.DataType, isNullable)}");
             }
+            result.AppendLine("}");
+            return result.ToString();
+        }
+
+        public string GetBatchMutationParameterType()
+        {
+            var result = new StringBuilder();
+            var name = "batch_" + _table.GraphQlName;
+            result.AppendLine($"input {name} {{");
+            result.AppendLine($"insert: {_table.GetActionTypeName(MutateActions.Insert)}");
+            result.AppendLine($"update: {_table.GetActionTypeName(MutateActions.Update)}");
+            result.AppendLine($"upsert: {_table.GetActionTypeName(MutateActions.Upsert)}");
+            result.AppendLine($"delete: {_table.GetActionTypeName(MutateActions.Delete)}");
             result.AppendLine("}");
             return result.ToString();
         }
@@ -221,8 +234,13 @@ namespace BifrostQL.Core.Schema
 
         public string GetInputFieldDefinition()
         {
-            return
-                $"\t{_table.GraphQlName}(insert: Insert{_table.GraphQlName}, update: Update{_table.GraphQlName}, upsert: Upsert{_table.GraphQlName}, delete: Delete{_table.GraphQlName}) : Int";
+            var result = new StringBuilder();
+
+            result.AppendLine(
+                $"\t{_table.GraphQlName}(insert: {_table.GetActionTypeName(MutateActions.Insert)}, update: {_table.GetActionTypeName(MutateActions.Update)}, upsert: {_table.GetActionTypeName(MutateActions.Upsert)}, delete: {_table.GetActionTypeName(MutateActions.Delete)}) : Int");
+
+            result.AppendLine($"{_table.GraphQlName}_batch(actions: [batch_{_table.GraphQlName}!]!) : Int");
+            return result.ToString();
         }
 
         public string GetTableJoinType()

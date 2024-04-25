@@ -49,6 +49,8 @@ namespace BifrostQL.Core.Model
         public string GetJoinTypeName(IDbTable joinTable) => $"TableOn{GraphQlName}{joinTable.GraphQlName}";
         public string AggregateValueTypeName => $"{GraphQlName}_AggregateValue";
         public bool MatchName(string fullName) => string.Equals(FullName, fullName, StringComparison.InvariantCultureIgnoreCase);
+        public string GetActionTypeName(MutateActions action) => $"{action}_{GraphQlName}";
+
         public IEnumerable<ColumnDto> Columns => ColumnLookup.Values;
         public IDictionary<string, ColumnDto> ColumnLookup { get; init; } = null!;
         public IDictionary<string, ColumnDto> GraphQlLookup { get; init; } = null!;

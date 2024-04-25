@@ -2,6 +2,7 @@
 using System.Text;
 using BifrostQL.Core.QueryModel;
 using Pluralize.NET.Core;
+using static BifrostQL.Core.Schema.TableSchemaGenerator;
 
 namespace BifrostQL.Core.Model
 {
@@ -97,6 +98,14 @@ namespace BifrostQL.Core.Model
         }
     }
 
+    public enum MutateActions
+    {
+        Insert,
+        Update,
+        Delete,
+        Upsert
+    }
+
     public interface IDbSchema
     {
         public string DbName { get; }
@@ -140,6 +149,8 @@ namespace BifrostQL.Core.Model
         string SingleFieldName { get; }
         string GetJoinTypeName(IDbTable joinTable);
         string AggregateValueTypeName { get; }
+
+        string GetActionTypeName(MutateActions action);
 
         IEnumerable<ColumnDto> Columns { get; }
         IDictionary<string, ColumnDto> ColumnLookup { get; init; }

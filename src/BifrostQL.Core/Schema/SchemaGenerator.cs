@@ -104,10 +104,11 @@ namespace BifrostQL.Core.Schema
 
             foreach (var generator in tableGenerators)
             {
-                builder.AppendLine(generator.GetMutationParameterType("Insert", IdentityType.None));
-                builder.AppendLine(generator.GetMutationParameterType("Update", IdentityType.Required));
-                builder.AppendLine(generator.GetMutationParameterType("Upsert", IdentityType.Optional));
-                builder.AppendLine(generator.GetMutationParameterType("Delete", IdentityType.Optional, true));
+                builder.AppendLine(generator.GetMutationParameterType(MutateActions.Insert, IdentityType.None));
+                builder.AppendLine(generator.GetMutationParameterType(MutateActions.Update, IdentityType.Required));
+                builder.AppendLine(generator.GetMutationParameterType(MutateActions.Upsert, IdentityType.Optional));
+                builder.AppendLine(generator.GetMutationParameterType(MutateActions.Delete, IdentityType.Optional, true));
+                builder.AppendLine(generator.GetBatchMutationParameterType());
 
                 builder.AppendLine(generator.GetTableFilterDefinition());
 

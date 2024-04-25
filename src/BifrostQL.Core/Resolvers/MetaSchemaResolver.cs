@@ -16,10 +16,10 @@ namespace BifrostQL.Core.Resolvers
 
     }
 
-    public class DbSchemaResolver : IDbSchemaResolver
+    public class MetaSchemaResolver : IDbSchemaResolver
     {
         private readonly IDbModel _dbModel;
-        public DbSchemaResolver(IDbModel dbModel)
+        public MetaSchemaResolver(IDbModel dbModel)
         {
             _dbModel = dbModel;
         }

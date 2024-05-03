@@ -29,8 +29,15 @@ namespace BifrostQL.Server
             return services;
         }
 
-        public static IApplicationBuilder UseBifrostQL(this IApplicationBuilder app, string endpointPath = "/graphql", string playgroundPath = "/", bool useAuth = false)
+        public static IApplicationBuilder UseBifrostQL(this IApplicationBuilder app)
         {
+            var options = app.ApplicationServices.GetService<BifrostSetupOptions>();
+            if (options == null) throw new InvalidOperationException("BifrostSetupOptions not configured. Call AddBifrostQL before UseBifrostQL");
+            var useAuth = options.IsUsingAuth;
+            var endpointPath = options.EndpointPath;
+            var playgroundPath = options.PlaygroundPath;
+
+
             app.IfFluent(useAuth, a => a.UseAuthentication().UseCookiePolicy());
             app.IfFluent(useAuth, a => a.UseUiAuth());
             app.UseGraphQL<BifrostHttpMiddleware>(endpointPath);
@@ -96,12 +103,16 @@ namespace BifrostQL.Server
             return this;
         }
 
+        public bool IsUsingAuth => _jwtConfig?.Exists() ?? false;
+        public string EndpointPath => _bifrostConfig?.GetValue<string>("Path", "/graphql")!;
+        public string PlaygroundPath => _bifrostConfig?.GetValue<string>("Playground", "/")!;
+
         public void ConfigureServices(IServiceCollection services)
         {
             if (_bifrostConfig == null) throw new InvalidOperationException("bifrostConfig not specified");
             if (_connectionString == null) throw new InvalidOperationException("connectionString is empty");
 
-            var path = _bifrostConfig.GetValue<string>("Path", "/graphql")!;
+            var path = EndpointPath;
             var metadataLoader = new MetadataLoader(_bifrostConfig, "Metadata");
             var extensionsLoader = new PathCache<Inputs>();
             extensionsLoader.AddLoader(path, () =>
@@ -118,7 +129,7 @@ namespace BifrostQL.Server
                 });
             });
 
-
+            services.AddSingleton(this);
             services.AddSingleton(extensionsLoader);
             services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
             services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = _modules });
@@ -127,7 +138,7 @@ namespace BifrostQL.Server
 
             JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 
-            var grapQLBuilder = services.AddGraphQL(b => b
+            var grapQlBuilder = services.AddGraphQL(b => b
                     .AddSystemTextJson()
                     .IfFluent(_jwtConfig.Exists(), b => b.AddUserContextBuilder(context => new BifrostContext(context)))
             );

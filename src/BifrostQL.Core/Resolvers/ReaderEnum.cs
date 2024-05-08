@@ -161,8 +161,10 @@ namespace BifrostQL.Core.Resolvers
         }
         public ValueTask<object?> Get(int row, IResolveFieldContext context)
         {
-            var column = context.FieldDefinition.Name;
-            var found = _table.index.TryGetValue(column, out int index);
+            var column = context.FieldAst.Name?.StringValue;
+            var alias = context.FieldAst.Alias?.Name?.StringValue;
+            var lookup = alias ?? column ?? throw new ExecutionError($"column name not defined");
+            var found = _table.index.TryGetValue(lookup, out int index);
             if (!found)
             {
                 return _root.GetDataForMissingColumn(context, _table, row);

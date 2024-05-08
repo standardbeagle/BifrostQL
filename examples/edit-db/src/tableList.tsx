@@ -1,7 +1,7 @@
 import React from 'react'
 import DataTable from 'react-data-table-component'
 import { Link } from './hooks/usePath';
-import { useSchema } from './hooks/useData';
+import { useSchema } from './hooks/useSchema';
 
 const columns = [
     {

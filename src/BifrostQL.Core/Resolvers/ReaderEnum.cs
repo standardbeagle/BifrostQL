@@ -217,7 +217,8 @@ namespace BifrostQL.Core.Resolvers
         public ValueTask<object?> Get(IResolveFieldContext context)
         {
             var name = context.FieldAst.Name.StringValue;
-            if (_index.TryGetValue(name, out var index))
+            var alias = context.FieldAst.Alias?.Name?.StringValue;
+            if (_index.TryGetValue(alias ?? name, out var index))
                 return ValueTask.FromResult(ReaderEnum.DbConvert(_row[index]));
 
             _data ??= new List<object?[]> { _row };

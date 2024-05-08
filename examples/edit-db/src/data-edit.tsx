@@ -1,6 +1,6 @@
 import { gql, useMutation, useQuery } from "@apollo/client";
 import React, { ReactElement, useEffect, useRef } from "react";
-import { useSchema } from "./hooks/useData";
+import { useSchema } from "./hooks/useSchema";
 import { Link, useParams, useNavigate } from "./hooks/usePath";
 import './data-edit.scss';
 

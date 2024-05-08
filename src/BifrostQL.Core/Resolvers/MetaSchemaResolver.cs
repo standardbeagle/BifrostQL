@@ -28,43 +28,55 @@ namespace BifrostQL.Core.Resolvers
         {
             var tableName = context.GetArgument<string?>("graphQlName");
             return ValueTask.FromResult<object?>(
-                _dbModel.Tables.Where(t => tableName == null || t.GraphQlName == tableName).Select(t => new
-                {
-                    Schema = t.TableSchema,
-                    t.DbName,
-                    t.GraphQlName,
-                    labelColumn = t.Columns.First().GraphQlName,
-                    primaryKeys = t.Columns.Where(c => c.IsPrimaryKey == true).Select(pk => pk.GraphQlName),
-                    isEditable = t.Columns.Any(c => c.IsPrimaryKey == true),
-                    metadata = t.Metadata,
-                    columns = t.Columns.Select(c => new
+                _dbModel.Tables
+                    .Where(t => tableName == null || t.GraphQlName == tableName)
+                    .Select(t =>
                     {
-                        dbName = c.DbName,
-                        graphQlName = c.GraphQlName,
-                        paramType = SchemaGenerator.GetGraphQlTypeName(c.DataType, c.IsNullable),
-                        dbType = c.DataType,
-                        isNullable = c.IsNullable,
-                        isPrimaryKey = c.IsPrimaryKey,
-                        isIdentity = c.IsIdentity,
-                        isReadOnly = c.IsPrimaryKey || c.IsIdentity || c.CompareMetadata("populate", "created-on") || c.CompareMetadata("populate", "created-by") || c.CompareMetadata("populate", "updated-on") || c.CompareMetadata("populate", "updated-by"),
-                        metadata = c.Metadata
-                    }),
-                    multiJoins = t.MultiLinks.Values.Select(j => new
-                    {
-                        name = j.Name,
-                        sourceColumnNames = new[] { j.ParentId.GraphQlName },
-                        destinationTable = j.ChildTable.GraphQlName,
-                        destinationColumnNames = new[] { j.ChildId.GraphQlName },
-                    }),
-                    singleJoins = t.SingleLinks.Values.Select(j => new
-                    {
-                        name = j.Name,
-                        sourceColumnNames = new[] { j.ChildId.GraphQlName },
-                        destinationTable = j.ParentTable.GraphQlName,
-                        destinationColumnNames = new[] { j.ParentId.GraphQlName },
+                        var labelColumnName = t.GetMetadataValue("label");
+                        var labelColumn = t.Columns.FirstOrDefault(c => Equal(c.DbName, labelColumnName) ) ?? t.Columns.First();
+                        return new
+                        {
+                            Schema = t.TableSchema,
+                            t.DbName,
+                            t.GraphQlName,
+                            labelColumn = labelColumn.GraphQlName,
+                            primaryKeys = t.Columns.Where(c => c.IsPrimaryKey == true).Select(pk => pk.GraphQlName),
+                            isEditable = t.Columns.Any(c => c.IsPrimaryKey == true),
+                            metadata = t.Metadata,
+                            columns = t.Columns.Select(c => new
+                            {
+                                dbName = c.DbName,
+                                graphQlName = c.GraphQlName,
+                                paramType = SchemaGenerator.GetGraphQlTypeName(c.DataType, c.IsNullable),
+                                dbType = c.DataType,
+                                isNullable = c.IsNullable,
+                                isPrimaryKey = c.IsPrimaryKey,
+                                isIdentity = c.IsIdentity,
+                                isReadOnly = c.IsPrimaryKey || c.IsIdentity ||
+                                             c.CompareMetadata("populate", "created-on") ||
+                                             c.CompareMetadata("populate", "created-by") ||
+                                             c.CompareMetadata("populate", "updated-on") ||
+                                             c.CompareMetadata("populate", "updated-by"),
+                                metadata = c.Metadata
+                            }),
+                            multiJoins = t.MultiLinks.Values.Select(j => new
+                            {
+                                name = j.Name,
+                                sourceColumnNames = new[] { j.ParentId.GraphQlName },
+                                destinationTable = j.ChildTable.GraphQlName,
+                                destinationColumnNames = new[] { j.ChildId.GraphQlName },
+                            }),
+                            singleJoins = t.SingleLinks.Values.Select(j => new
+                            {
+                                name = j.Name,
+                                sourceColumnNames = new[] { j.ChildId.GraphQlName },
+                                destinationTable = j.ParentTable.GraphQlName,
+                                destinationColumnNames = new[] { j.ParentId.GraphQlName },
+                            })
+                        };
                     })
-                })
             );
         }
+        static bool Equal(string? a, string? b) => string.Equals(a, b, StringComparison.InvariantCultureIgnoreCase);
     }
 }

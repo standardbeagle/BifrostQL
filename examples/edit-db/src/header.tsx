@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useSchema } from './hooks/useData';
+import { useSchema } from './hooks/useSchema';
 import { useHistory, useNavigate, useNavigation, useParams } from './hooks/usePath';
 
 export function Header() {

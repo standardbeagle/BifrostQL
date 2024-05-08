@@ -46,6 +46,7 @@ Mutations are generated for inserts, updates, upserts, and deletes. BifrostQL re
  - [ ] Add support to use database auth
  - [ ] Try out pivot tables for kicks
  - [ ] Multiple configuration sources, config file, database table, config database
+ - [ ] Add a _primaryKey filter taking an array of strings which allows filters without knowing the specific column names. 
  - [ ] Configuration file builder/importer
  - [ ] dotnet new setup for creating a bifrost project
  - [ ] dotnet tool integration to make it easy to manage and configure bifrost options.

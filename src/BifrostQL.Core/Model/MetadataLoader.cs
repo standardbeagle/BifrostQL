@@ -140,12 +140,12 @@ namespace BifrostQL.Core.Model
             var split = RuleRegex.Match(rule);
             if (split.Success && split.Groups["attributeRule"].Value != "")
             {
-                _nameRule = new Regex(split.Groups["nameRule"].Value.Replace("*", ".*"), RegexOptions.IgnoreCase);
-                _attributeRule = new Regex(split.Groups["attributeRule"].Value.Replace("*", ".*"), RegexOptions.IgnoreCase);
+                _nameRule = new Regex($"^{split.Groups["nameRule"].Value.Replace("*", ".*")}$", RegexOptions.IgnoreCase);
+                _attributeRule = new Regex($"^{split.Groups["attributeRule"].Value.Replace("*", ".*")}$", RegexOptions.IgnoreCase);
             }
             else
             {
-                _nameRule = new Regex(rule.Replace("*", ".*"), RegexOptions.IgnoreCase);
+                _nameRule = new Regex($"^{rule.Replace("*", ".*")}$", RegexOptions.IgnoreCase);
                 _attributeRule = null;
             }
         }

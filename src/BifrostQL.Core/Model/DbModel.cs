@@ -163,6 +163,7 @@ namespace BifrostQL.Core.Model
         bool MatchName(string fullName);
 
         IDictionary<string, object?> Metadata { get; init; }
+        string? GetMetadataValue(string property);
         bool CompareMetadata(string property, string value);
     }
 

@@ -1,7 +1,7 @@
 import React from 'react'
 import { DataDataTable } from './data-data-table';
 import { useParams } from './hooks/usePath';
-import { useSchema } from './hooks/useData';
+import { useSchema } from './hooks/useSchema';
 
 function getTable(data: any[], tableName: string) {
     const table = data.find((x: { name: string | undefined; }) => x.name == tableName);

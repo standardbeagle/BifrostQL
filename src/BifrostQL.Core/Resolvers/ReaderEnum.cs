@@ -222,6 +222,8 @@ namespace BifrostQL.Core.Resolvers
             var alias = context.FieldAst.Alias?.Name?.StringValue;
             if (_index.TryGetValue(alias ?? name, out var index))
                 return ValueTask.FromResult(ReaderEnum.DbConvert(_row[index]));
+            if (_index.TryGetValue(name, out var index2))
+                return ValueTask.FromResult(ReaderEnum.DbConvert(_row[index2]));
 
             _data ??= new List<object?[]> { _row };
 

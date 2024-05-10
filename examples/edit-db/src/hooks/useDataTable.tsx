@@ -32,7 +32,7 @@ const getTableColumns = (table: any, schema: any): any[] => {
                 sortField: c.name,
             };
             const singleJoin = table.singleJoins.find((j: any) => j.sourceColumnNames?.[0] === c.name);
-            console.log({singleJoin});
+            //console.log({singleJoin});
             if (singleJoin) {
                 const columnName = singleJoin.destinationTable;
                 const joinTable = schema.findTable(singleJoin.destinationTable);
@@ -64,14 +64,26 @@ const getTableColumns = (table: any, schema: any): any[] => {
                 ...result
             };
         });
+
+    const multiJoins = table.multiJoins
+        .map((j: any) => {
+            const joinTable = schema.findTable(j.destinationTable);
+            return {
+                name: joinTable?.name,
+                selector: (row: { [x: string]: any; }) => (!!row && <Link to={"/" + joinTable?.name + "/from/" + table.name + "/" + row?.id}>{joinTable?.name}</Link>),
+                reorder: false,
+                sortable: false,
+                sortField: j.sourceColumnNames?.[0],
+            }
+        });
     if (table.isEditable === false)
-        return columns;
+        return [...columns, ...multiJoins];
 
     return [{
         name: "edit", selector: (row: { [x: string]: any; }) => (
             <Link to={`edit/${row?.id}`}>edit</Link>
         )
-    }, ...columns];
+    }, ...columns, ...multiJoins];
 }
 
 const emptyQuery = gql`query {__schema { __typename }}`;
@@ -80,7 +92,7 @@ const getFilteredQuery = (table: any, search: any, id?: string, tableFilter?: st
     if (!table || !schema?.data) return [false, emptyQuery];
     const tableSchema = schema.findTable(table.graphQlName);
     if (!tableSchema) return [false, emptyQuery];
-    //console.log({schema});
+    console.log({tableSchema, schema, tableFilter, id});
     const primaryKey = tableSchema?.primaryKeys?.[0] ?? "id";
     let { param, filterText } = getFilterObj(search.get('filter'));
     //The columns output in the grid
@@ -142,8 +154,9 @@ export function useDataTable(table: any, id?: string, filterTable?: string) {
     const [runQuery, query] = getFilteredQuery(table, search, id, filterTable, schema);
     const tableColumns = getTableColumns(table, schema);
     const appliedSort = getAppliedSort(table, sort);
+    const skip = !runQuery || (appliedSort?.length ?? 0) === 0;
 
-    const queryResult = useQuery(query, { skip: !runQuery, variables: { sort: appliedSort, limit: limit, offset: offset, ...routeObj, ...variables } });
+    const queryResult = useQuery(query, { skip: skip, variables: { sort: appliedSort, limit: limit, offset: offset, ...routeObj, ...variables } });
     const handleUpdate = useCallback((value: any): Promise<any> => {
         return Promise.resolve(value);
     }, []);

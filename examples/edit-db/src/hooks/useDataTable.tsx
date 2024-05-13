@@ -81,7 +81,7 @@ const getTableColumns = (table: any, schema: any): any[] => {
 
     return [{
         name: "edit", selector: (row: { [x: string]: any; }) => (
-            <Link to={`edit/${row?.id}`}>edit</Link>
+            <Link to={`${table.graphQlName}/edit/${row?.id}`}>edit</Link>
         )
     }, ...columns, ...multiJoins];
 }
@@ -92,7 +92,7 @@ const getFilteredQuery = (table: any, search: any, id?: string, tableFilter?: st
     if (!table || !schema?.data) return [false, emptyQuery];
     const tableSchema = schema.findTable(table.graphQlName);
     if (!tableSchema) return [false, emptyQuery];
-    console.log({tableSchema, schema, tableFilter, id});
+    //console.log({tableSchema, schema, tableFilter, id});
     const primaryKey = tableSchema?.primaryKeys?.[0] ?? "id";
     let { param, filterText } = getFilterObj(search.get('filter'));
     //The columns output in the grid

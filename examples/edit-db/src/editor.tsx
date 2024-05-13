@@ -1,7 +1,9 @@
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ApolloClient, InMemoryCache, ApolloProvider } from '@apollo/client'
 import { MainFrame } from './main-frame';
 import { PathProvider } from './hooks/usePath';
+import { SchemaMetaFieldDef } from 'graphql';
+import { SchemaProvider } from './hooks/useSchema';
 
 interface EditorProps {
     uri?: string;
@@ -41,7 +43,9 @@ export function Editor({
     return (
         <ApolloProvider client={client || uriClient!}>
             <PathProvider path={uiPath || "/"}>
-                <div><MainFrame onLocate={onLocate} /></div>
+                <SchemaProvider>
+                    <div><MainFrame onLocate={onLocate} /></div>
+                </SchemaProvider>
             </PathProvider>
         </ApolloProvider>
     )

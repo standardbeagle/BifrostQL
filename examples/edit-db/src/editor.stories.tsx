@@ -1,4 +1,3 @@
-import React from 'react';
 import type { Meta } from '@storybook/react';
 import { Editor }  from './editor';
 import { ApolloClient, InMemoryCache} from '@apollo/client'

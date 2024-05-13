@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSchema } from './hooks/useSchema';
-import { useHistory, useNavigate, useNavigation, useParams } from './hooks/usePath';
+import { useNavigate, useNavigation, useParams } from './hooks/usePath';
 
 export function Header() {
     const tableData = useParams();
@@ -17,7 +17,7 @@ export function Header() {
     //The control needs to reset state when a new table is selected, ie the filter is cleared
     useEffect(() => { setColumn(options?.at(0)?.value ?? ""); }, [tableData])
     const filter = () => {
-        console.log({ column, searchVal });
+        //console.log({ column, searchVal });
         if (!searchVal) return;
         const [columnName, type] = column.split(",");
         if (type === "Int" || type === "Int!")

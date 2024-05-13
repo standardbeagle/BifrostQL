@@ -1,5 +1,5 @@
 import { gql, useMutation, useQuery } from "@apollo/client";
-import React, { ReactElement, useEffect, useRef } from "react";
+import { ReactElement, useEffect, useRef } from "react";
 import { useSchema } from "./hooks/useSchema";
 import { Link, useParams, useNavigate } from "./hooks/usePath";
 import './data-edit.scss';
@@ -9,24 +9,25 @@ const booleanTypes = ["Boolean", "Boolean!"];
 const dateTypes = ["DateTime", "DateTime!"];
 
 function getTable(data: any[], tableName: string) {
-    const table = data.find((x: { name: string | undefined; }) => x.name == tableName);
-    return table;
+    const table = data?.find((x: { name: string | undefined; }) => x.name == tableName);
+    return table ?? {};
 }
 
-function DataEditDetail({ table, schema, editid }: { table: any, schema: any, editid: number }) {
-    const isInsert = editid === undefined;
-    const dataTable = getTable(schema, table);
-    console.log(dataTable, schema, table, editid);
+function DataEditDetail({table, schema, editid}: {table: string, schema: any, editid: string}) {
     const navigate = useNavigate();
-    const editColumns = dataTable.columns
-        .filter((c: any) => (c?.type?.kind !== "OBJECT" && c?.type?.kind !== "LIST"))
-        .filter((c: any) => !isInsert || c?.name !== "id")
-        .filter((c: any) => !(c?.name.endsWith("On") || c?.name.endsWith("By")));
+    console.log({table, editid, schema});
+    const isInsert = editid === undefined;
+    const dataTable = getTable(schema.data ?? [], table);
+    console.log({dataTable, schema, table, editid});
+    const editColumns = dataTable?.columns
+        ?.filter((c: any) => (c?.type?.kind !== "OBJECT" && c?.type?.kind !== "LIST"))
+        ?.filter((c: any) => !isInsert || c?.name !== "id")
+        ?.filter((c: any) => !(c?.name.endsWith("On") || c?.name.endsWith("By")));
 
     const dialogRef = useRef<HTMLDialogElement>(null);
     const { loading, error, data } = useQuery(
         gql`query GetSingle($id: Int){ ${dataTable.name}(filter: {id: { _eq: $id}}) { data { ${editColumns.map((c: any) => c.name).join(" ")} }}}`,
-        { variables: { id: +editid } }
+        { skip:!dataTable, variables: { id: +editid } }
     );
 
     const [mutate, mutateState] = useMutation<any>(
@@ -47,9 +48,10 @@ function DataEditDetail({ table, schema, editid }: { table: any, schema: any, ed
         return () => dialogRef?.current?.close();
     });
 
-    if (loading) return <div>Loading...</div>;
+    if (loading || !dataTable) return <div>Loading...</div>;
     if (error) return <div>Error: {error.message}</div>;
-    const value = data?.[dataTable.name]?.data?.at(0) ?? {};
+    console.log({data, dataTable, editColumns});
+    const value = !!dataTable ? (data?.[dataTable.name]?.data?.at(0) ?? {}) : {};
     const detail = Object.fromEntries(editColumns.map((c: any) => {
         if (dateTypes.some(t => t === c.paramType)) {
             return [c.name, value[c.name]?.split("T")?.[0]];

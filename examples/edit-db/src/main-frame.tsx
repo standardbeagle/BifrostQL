@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react'
+import { useEffect } from 'react'
 import { TableList } from './tableList';
 import { DataPanel } from './data-panel';
 import { Route, Routes, usePath } from './hooks/usePath';

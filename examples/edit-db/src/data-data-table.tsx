@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import DataTable from 'react-data-table-component';
 import { useDataTable } from './hooks/useDataTable';
 

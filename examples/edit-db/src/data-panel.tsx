@@ -1,4 +1,3 @@
-import React from 'react'
 import { DataDataTable } from './data-data-table';
 import { useParams } from './hooks/usePath';
 import { useSchema } from './hooks/useSchema';

@@ -1,10 +1,24 @@
 import { useQuery } from "@apollo/client";
 import { GET_DB_SCHEMA } from "../common/schema";
-import { useCallback, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 
 //Load both regular and enhanced schema, and return enhanced schema if available
 const { loading, error, data } = { loading: false, error: null, data: null };
+
+const SchemaContext = createContext<any>(null);
+
+export const SchemaProvider = ({ children }: { children: any }) => {
+    const value = useSchemaLoader();
+    return (<SchemaContext.Provider value={value}>
+        {children}
+    </SchemaContext.Provider>);
+};
+
 export function useSchema() {
+    return useContext(SchemaContext);
+}
+
+function useSchemaLoader() {
     //const client = useApolloClient();
     const { loading: dbLoading, error: dbError, data: dbData } = useQuery(GET_DB_SCHEMA);
     // const { loading, error, data } = useQuery(GET_SCHEMA);

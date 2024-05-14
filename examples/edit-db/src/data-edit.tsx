@@ -17,7 +17,7 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: any,
     const navigate = useNavigate();
     const isInsert = editid === undefined;
     const dataTable = getTable(schema ?? [], table);
-    console.log({ dataTable, schema, table, editid });
+    //console.log({ dataTable, schema, table, editid });
     const editColumns = dataTable.columns
         .filter((c: any) => !c.isReadOnly && !c.isIdentity);
     const idColumns = dataTable.columns.filter((c: any) => c.isIdentity);
@@ -48,7 +48,7 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: any,
 
     if (loading || !dataTable) return <div>Loading...</div>;
     if (error) return <div>Error: {error.message}</div>;
-    console.log({ data, dataTable, editColumns });
+
     const value = !!dataTable ? (data?.[dataTable.name]?.data?.at(0) ?? {}) : {};
     const detail = Object.fromEntries(editColumns.map((c: any) => {
         if (dateTypes.some(t => t === c.paramType)) {
@@ -95,7 +95,7 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: any,
             </ul>
             <div className="button-row">
                 <Link className="editdb-dialog-edit__cancel" to="../..">Cancel</Link>
-                <button type="submit" className="editdb-dialog-edit__submit">edit</button>
+                <button type="submit" className="editdb-dialog-edit__submit">Save</button>
             </div>
         </form>
     </dialog>;
@@ -104,7 +104,6 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: any,
 export function DataEdit(): ReactElement {
     const { table, editid } = useParams();
     const { loading, error, data: schema } = useSchema();
-    console.log(table, schema, editid);
 
     if (!table) return <div>Table missing</div>;
     if (loading) return <div>Loading...</div>;

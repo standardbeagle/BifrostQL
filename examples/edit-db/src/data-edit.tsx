@@ -9,25 +9,23 @@ const booleanTypes = ["Boolean", "Boolean!"];
 const dateTypes = ["DateTime", "DateTime!"];
 
 function getTable(data: any[], tableName: string) {
-    const table = data?.find((x: { name: string | undefined; }) => x.name == tableName);
+    const table = data?.find((x: { graphQlName: string | undefined; }) => x.graphQlName == tableName);
     return table ?? {};
 }
 
-function DataEditDetail({table, schema, editid}: {table: string, schema: any, editid: string}) {
+function DataEditDetail({ table, schema, editid }: { table: string, schema: any, editid: string }) {
     const navigate = useNavigate();
-    console.log({table, editid, schema});
     const isInsert = editid === undefined;
-    const dataTable = getTable(schema.data ?? [], table);
-    console.log({dataTable, schema, table, editid});
-    const editColumns = dataTable?.columns
-        ?.filter((c: any) => (c?.type?.kind !== "OBJECT" && c?.type?.kind !== "LIST"))
-        ?.filter((c: any) => !isInsert || c?.name !== "id")
-        ?.filter((c: any) => !(c?.name.endsWith("On") || c?.name.endsWith("By")));
+    const dataTable = getTable(schema ?? [], table);
+    console.log({ dataTable, schema, table, editid });
+    const editColumns = dataTable.columns
+        .filter((c: any) => !c.isReadOnly && !c.isIdentity);
+    const idColumns = dataTable.columns.filter((c: any) => c.isIdentity);
 
     const dialogRef = useRef<HTMLDialogElement>(null);
     const { loading, error, data } = useQuery(
         gql`query GetSingle($id: Int){ ${dataTable.name}(filter: {id: { _eq: $id}}) { data { ${editColumns.map((c: any) => c.name).join(" ")} }}}`,
-        { skip:!dataTable, variables: { id: +editid } }
+        { skip: !dataTable, variables: { id: +editid }, fetchPolicy: "network-only"}
     );
 
     const [mutate, mutateState] = useMutation<any>(
@@ -50,23 +48,26 @@ function DataEditDetail({table, schema, editid}: {table: string, schema: any, ed
 
     if (loading || !dataTable) return <div>Loading...</div>;
     if (error) return <div>Error: {error.message}</div>;
-    console.log({data, dataTable, editColumns});
+    console.log({ data, dataTable, editColumns });
     const value = !!dataTable ? (data?.[dataTable.name]?.data?.at(0) ?? {}) : {};
     const detail = Object.fromEntries(editColumns.map((c: any) => {
         if (dateTypes.some(t => t === c.paramType)) {
             return [c.name, value[c.name]?.split("T")?.[0]];
         }
-        return [c.name, value[c.name]]; 
+        return [c.name, value[c.name]];
     }));
 
     const onSubmit = (event: any) => {
-        for(const col of editColumns) {
-            if(numericTypes.some(t => t === col.paramType)) {
+        for (const col of editColumns) {
+            if (numericTypes.some(t => t === col.paramType)) {
                 detail[col.name] = +detail[col.name];
             }
-            if(booleanTypes.some(t => t === col.paramType)) {
+            if (booleanTypes.some(t => t === col.paramType)) {
                 detail[col.name] = !!detail[col.name];
             }
+        }
+        for (const col of idColumns) {
+            detail[col.name] = col.paramType.startsWith("Int") ? +editid : editid;
         }
         if (isInsert) {
             insertMutate({ variables: { detail } }).then(() => {
@@ -74,14 +75,17 @@ function DataEditDetail({table, schema, editid}: {table: string, schema: any, ed
             });
         } else {
             mutate({ variables: { detail } })
-            .then(() => {
-                navigate('../..');
-            });
+                .then(() => {
+                    navigate('../..');
+                });
         }
     }
 
     return <dialog className="editdb-dialog-edit" ref={dialogRef}>
         <form method="dialog" onSubmit={onSubmit}>
+            {idColumns.map((c: any) => 
+                <input key={c.name} type="hidden" name={c.name} defaultValue={editid} />
+            )}
             <h3 className="editdb-dialog-edit__heading">{table}:{editid}</h3>
             <ul className="editdb-dialog-edit__input-list">
                 {editColumns.map((ec: any) => <li key={ec.name} className="editdb-dialog-edit__input-item">
@@ -99,7 +103,7 @@ function DataEditDetail({table, schema, editid}: {table: string, schema: any, ed
 
 export function DataEdit(): ReactElement {
     const { table, editid } = useParams();
-    const { loading, error, data:schema } = useSchema();
+    const { loading, error, data: schema } = useSchema();
     console.log(table, schema, editid);
 
     if (!table) return <div>Table missing</div>;

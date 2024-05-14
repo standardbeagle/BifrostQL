@@ -81,6 +81,14 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: any,
         }
     }
 
+    console.log({ editColumns, detail, dataTable, editid, isInsert });
+    const editFields = editColumns.map((ec: any) => ({
+        type: ec.paramType.startsWith("DateTime") ? "date" : "text",
+        name: ec.name,
+        required: ec.isNullable ? {} : { required: true },
+        value: detail[ec.name],
+    }));
+
     return <dialog className="editdb-dialog-edit" ref={dialogRef}>
         <form method="dialog" onSubmit={onSubmit}>
             {idColumns.map((c: any) => 
@@ -88,9 +96,9 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: any,
             )}
             <h3 className="editdb-dialog-edit__heading">{table}:{editid}</h3>
             <ul className="editdb-dialog-edit__input-list">
-                {editColumns.map((ec: any) => <li key={ec.name} className="editdb-dialog-edit__input-item">
+                {editFields.map(({required, ...ec}: {required: any, [key: string]: any}) => <li key={ec.name} className="editdb-dialog-edit__input-item">
                     <label>{ec.name}</label>
-                    <input type={ec.paramType === "DateTime" ? "date" : "text"} defaultValue={detail?.[ec.name]} onChange={event => { detail[ec.name] = event.target.value; }} />
+                    <input type={ec.type} defaultValue={ec.value} {...required} onChange={event => { detail[ec.name] = event.target.value; }} />
                 </li>)}
             </ul>
             <div className="button-row">

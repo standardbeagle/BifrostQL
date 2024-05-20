@@ -17,6 +17,10 @@
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
 		<Copyright>Copyright © Standard Beagle Studio LLC.</Copyright>
+		<IncludeSymbols>True</IncludeSymbols>
+		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
+		<Title>BifrostQL Core</Title>
+		<PackAsTool>False</PackAsTool>
 	</PropertyGroup>
 	<ItemGroup>
 		<PackageReference Include="GraphQL.Server.All" Version="7.2.0" />

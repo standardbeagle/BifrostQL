@@ -92,6 +92,7 @@ namespace BifrostQL.Server
 
         public BifrostSetupOptions BindJwtSettings(IConfigurationSection? section)
         {
+            if (!section.Exists()) return this;
             _jwtConfig = section;
             return this;
         }
@@ -106,7 +107,7 @@ namespace BifrostQL.Server
             return this;
         }
 
-        public bool IsUsingAuth => _jwtConfig?.Exists() ?? false;
+        public bool IsUsingAuth => !_bifrostConfig.GetValue<bool>("DisableAuth", true);
         public string EndpointPath => _bifrostConfig?.GetValue<string>("Path", "/graphql")!;
         public string PlaygroundPath => _bifrostConfig?.GetValue<string>("Playground", "/")!;
 

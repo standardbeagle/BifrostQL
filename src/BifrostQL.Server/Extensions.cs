@@ -69,14 +69,16 @@ namespace BifrostQL.Server
         {
             if (config == null) throw new ArgumentNullException(nameof(config));
             if (config.GetSection("BifrostQL") == null) throw new ArgumentOutOfRangeException(nameof(config), "Config is missing BifrostQL entry");
-            if (config.GetConnectionString("bifrost") == null) throw new ArgumentOutOfRangeException(nameof(config), "Config is missing bifrost connection string");
+            if (string.IsNullOrWhiteSpace(_connectionString) && config.GetConnectionString("bifrost") == null) throw new ArgumentOutOfRangeException(nameof(config), "Connection string has not been explicitly set and config is missing bifrost connection string");
             return BindConfiguration(config.GetRequiredSection("BifrostQL"))
                     .BindJwtSettings(config.GetSection("JwtSettings"))
-                    .BindConnectionString(config.GetConnectionString("bifrost"));
+                    .BindConnectionString(config.GetConnectionString("bifrost"), !string.IsNullOrWhiteSpace(_connectionString));
         }
 
-        public BifrostSetupOptions BindConnectionString(string? connectionString)
+        public BifrostSetupOptions BindConnectionString(string? connectionString, bool skip = false)
         {
+            if (skip) return this;
+
             _connectionString = connectionString;
             return this;
         }

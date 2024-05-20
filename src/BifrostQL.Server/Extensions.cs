@@ -70,6 +70,7 @@ namespace BifrostQL.Server
             if (config == null) throw new ArgumentNullException(nameof(config));
             if (config.GetSection("BifrostQL") == null) throw new ArgumentOutOfRangeException(nameof(config), "Config is missing BifrostQL entry");
             if (string.IsNullOrWhiteSpace(_connectionString) && config.GetConnectionString("bifrost") == null) throw new ArgumentOutOfRangeException(nameof(config), "Connection string has not been explicitly set and config is missing bifrost connection string");
+            if (config.GetValue<bool>("BifrostQL:DisableAuth") == false && config.GetSection("JwtSettings").Exists() == false) throw new ArgumentOutOfRangeException(nameof(config), "GraphQL auth is enabled and JwtSettings is missing from config");
             return BindConfiguration(config.GetRequiredSection("BifrostQL"))
                     .BindJwtSettings(config.GetSection("JwtSettings"))
                     .BindConnectionString(config.GetConnectionString("bifrost"), !string.IsNullOrWhiteSpace(_connectionString));
@@ -138,14 +139,16 @@ namespace BifrostQL.Server
             if (_moduleLoader != null)
                 services.AddSingleton<IMutationModules>((sp => new ModulesWrap { Modules = _moduleLoader(sp) }));
 
-            JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
+            var isAuthEnabled = !_bifrostConfig.GetValue<bool>("DisableAuth", true);
+
+            //JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 
             var grapQlBuilder = services.AddGraphQL(b => b
                     .AddSystemTextJson()
-                    .IfFluent(_jwtConfig.Exists(), b => b.AddUserContextBuilder(context => new BifrostContext(context)))
+                    .IfFluent(isAuthEnabled, b => b.AddUserContextBuilder(context => new BifrostContext(context)))
             );
 
-            if (_jwtConfig?.Exists() ?? false)
+            if (isAuthEnabled)
             {
                 var scopes = new HashSet<string>() { "openid" };
                 foreach (var scope in (_jwtConfig["Scopes"] ?? "").Split(" "))

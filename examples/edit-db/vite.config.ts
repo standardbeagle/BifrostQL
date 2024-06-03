@@ -11,15 +11,16 @@ export default defineConfig({
     lib: {
       entry: path.resolve(__dirname, 'src/index.ts'),
       name: 'editor',
-      // formats: ['es', 'umd'],
+      formats: ['es', 'umd'],
       fileName: (format) => `editor.${format}.${( format ==='umd' ? "c" : "")}js`,
     },
     rollupOptions: {
-      external: ['react', 'react-dom', "@apollo/client", "graphql"],
+      external: ['react', 'react-dom'],
       output: {
         globals: {
           react: 'React',
           'react-dom': 'ReactDOM',
+          import: 'import',
         },
       },
     },

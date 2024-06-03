@@ -15,7 +15,7 @@ export default defineConfig({
       fileName: (format) => `editor.${format}.${( format ==='umd' ? "c" : "")}js`,
     },
     rollupOptions: {
-      external: ['react', 'react-dom'],
+      external: ['react', 'react-dom', "@apollo/client", "graphql"],
       output: {
         globals: {
           react: 'React',

@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { ApolloClient, InMemoryCache, ApolloProvider } from '@apollo/client'
 import { MainFrame } from './main-frame';
 import { PathProvider } from './hooks/usePath';
-import { SchemaMetaFieldDef } from 'graphql';
 import { SchemaProvider } from './hooks/useSchema';
 
 interface EditorProps {

@@ -11,7 +11,7 @@ export default defineConfig({
     lib: {
       entry: path.resolve(__dirname, 'src/index.ts'),
       name: 'editor',
-      formats: ['es', 'umd'],
+      // formats: ['es', 'umd'],
       fileName: (format) => `editor.${format}.${( format ==='umd' ? "c" : "")}js`,
     },
     rollupOptions: {

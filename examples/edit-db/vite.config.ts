@@ -8,7 +8,7 @@ import dts from 'vite-plugin-dts';
 export default defineConfig({
   plugins: [react(), dts({ insertTypesEntry: true })],
   define: { 
-    'import.meta.NODE_ENV': 'production' //Hack for crazy output from react
+    'import.meta.NODE_ENV': '"production"' //Hack for crazy output from react
   },
   build: {
     lib: {

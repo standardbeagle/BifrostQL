@@ -7,7 +7,7 @@ const getFilterObj = (filterString: string): any => {
     try {
         if (!filterString) return { variables: {}, param: "", filterText: "" };
         const [column, action, value, type] = JSON.parse(filterString);
-        return { variables: { filter: value }, param: `, $filter: ${type}`, filterText: ` filter: {${column}: {${action}: $filter} }` }
+        return { variables: { filter: value }, param: `, $filter: ${type}`, filterText: `{${column}: {${action}: $filter} }` }
     } catch (ex) {
         return { variables: {}, param: "", filterText: "" };
     }
@@ -94,6 +94,7 @@ const getFilteredQuery = (table: any, search: any, id?: string, tableFilter?: st
     if (!tableSchema) return [false, emptyQuery];
     const primaryKey = tableSchema?.primaryKeys?.[0] ?? "id";
     let { param, filterText } = getFilterObj(search.get('filter'));
+    console.log({param, filterText});
     //The columns output in the grid
     const dataColumns = table.columns
         .filter((x: { type: any }) => x?.type?.kind !== "LIST")
@@ -116,15 +117,21 @@ const getFilteredQuery = (table: any, search: any, id?: string, tableFilter?: st
             return x.name;
         })
         .join(' ');
+    //Don't merge filter because this only has one record by the primary key
     if (id && !tableFilter) {
         param = ", $id: Int";
-        filterText = `filter: { ${ primaryKey }: { _eq: $id}}`;
+        filterText = `{ ${ primaryKey }: { _eq: $id}}`;
     }
     if (id && tableFilter) {
-        param = ", $id: Int";
-        filterText = `filter: { ${tableFilter}: { ${ primaryKey }: { _eq: $id}}}`;
+        param = ", $id: Int" + param;
+        if (filterText)
+            filterText = `{and: [${filterText}, { ${tableFilter}: { ${ primaryKey }: { _eq: $id}}} ]}`;
+        else
+            filterText = `{ ${tableFilter}: { ${ primaryKey }: { _eq: $id}}}`;
     }
 
+    if (filterText) filterText = `filter: ${filterText}`;
+    console.log({param, filterText});
     return [true, gql`query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${table.name}(sort: $sort limit: $limit offset: $offset ${filterText}) { total offset limit data {${dataColumns}}}}`];
 }
 

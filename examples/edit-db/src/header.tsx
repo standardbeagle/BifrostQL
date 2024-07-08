@@ -11,19 +11,21 @@ export function Header() {
     //console.log(schema, tableData);
     const tableName = tableData?.table;
     const tableSchema = useMemo(() => schema?.find((t: any) => t.graphQlName === tableName), [schema, tableName]);
-    const options = tableSchema?.columns
-                        ?.map((c: any) => ({ key: c.name, value: `${c.name},${c.paramType}`, label: c.label }));
+    const options = tableSchema?.columns?.map((c: any) => ({ key: c.name, value: `${c.name},${c.paramType}`, label: c.label }));
     const [column, setColumn] = useState(options?.at(0)?.value ?? "");
     //The control needs to reset state when a new table is selected, ie the filter is cleared
-    useEffect(() => { setColumn(options?.at(0)?.value ?? ""); }, [tableData])
+    useEffect(() => { 
+        setSearchVal("");
+        setColumn(options?.at(0)?.value ?? ""); 
+    }, [tableSchema]);
     const filter = () => {
-        //console.log({ column, searchVal });
+        console.log({ column, searchVal });
         if (!searchVal) return;
         const [columnName, type] = column.split(",");
-        if (type === "Int" || type === "Int!")
+        if (type === "Int" || type === "Int!" || type === "Float" || type === "Float!")
             navigate(`?filter=["${columnName}", "_eq", ${searchVal}, "${type}"]`);
         if (type === "String" || type === "String!")
-            navigate(`?filter=["${columnName}", "_starts_with", "${searchVal}", "${type}"]`);
+            navigate(`?filter=["${columnName}", "_contains", "${searchVal}", "${type}"]`);
     }
     if (loading) return <div>Loading...</div>;
     if (error) return <div>Error: {error.message}</div>;

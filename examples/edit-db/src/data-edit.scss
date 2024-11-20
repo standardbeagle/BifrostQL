@@ -1,16 +1,21 @@
-:root{
-    --btn-bg: orchid;
-    --btn-bg-hover: purple;
+:root {
+    --btn-bg: #444444;
+    --btn-color: white;
+    --btn-bg-hover: #666666;
+    --btn-border-color: #333333;
+    --btn-hover-text: white;
+    --btn-loading-border: #ffffff;
+    --btn-loading-border-right: transparent;
 }
 .btn {
-    padding: 0.5rem;
+    padding: 0.5em 1.5em;
     background-color: var(--btn-bg);
-    border: thin solid black;
-    color: black;
+    border: thin solid var(--btn-border-color);
+    color: var(--btn-color);
     text-decoration: none;
     &:hover {
-        background-color: purple;
-        color: white;
+        background-color: var(--btn-bg-hover);
+        color: var(--btn-hover-text);
     }
 }
 
@@ -56,8 +61,41 @@
         > input {
             grid-column: 2 / 3;
         }
+        input[type="checkbox"] {
+            margin-left: auto;
+            display: block;
+        }
     }
     &__submit, &__cancel {
         @extend .btn;
     }
+
+    &__submit {
+        position: relative;
+        
+        &::before {
+            content: '';
+            position: absolute;
+            width: 0.6em;
+            height: 0.6em;
+            top: 50%;
+            left: 0.5em;
+            margin-top: -0.3em;
+            opacity: 0;
+            border: 0.125em solid var(--btn-loading-border-right);
+            border-radius: 50%;
+        }
+
+        &--loading::before {
+            opacity: 1;
+            border-color: var(--btn-loading-border);
+            border-right-color: var(--btn-loading-border-right);
+            animation: button-spin 0.75s linear infinite;
+        }
+    }
+
+@keyframes button-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
 }

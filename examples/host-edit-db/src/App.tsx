@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import './App.css'
 import Editor from '@standardbeagle/edit-db'
 
@@ -8,7 +7,7 @@ function App() {
     <>
       <h1>Host Edit DB</h1>
       <p>Host Edit DB</p>
-      <Editor uri='https://localhost:7077/graphql' />
+      <Editor uri='https://localhost:7077/raw' />
     </>
   )
 }

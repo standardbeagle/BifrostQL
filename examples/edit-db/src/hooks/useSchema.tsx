@@ -1,11 +1,9 @@
 import { useQuery } from "@apollo/client";
 import { GET_DB_SCHEMA } from "../common/schema";
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { Schema, Table, Column, TableMetadata } from '../types/schema';
 
-//Load both regular and enhanced schema, and return enhanced schema if available
-const { loading, error, data } = { loading: false, error: null, data: null };
-
-const SchemaContext = createContext<any>(null);
+const SchemaContext = createContext<Schema>({loading: true, error: null, data: [], findTable: () => undefined});
 
 export const SchemaProvider = ({ children }: { children: any }) => {
     const value = useSchemaLoader();
@@ -18,80 +16,62 @@ export function useSchema() {
     return useContext(SchemaContext);
 }
 
-function useSchemaLoader() {
-    //const client = useApolloClient();
+function useSchemaLoader(): Schema {
     const { loading: dbLoading, error: dbError, data: dbData } = useQuery(GET_DB_SCHEMA);
-    // const { loading, error, data } = useQuery(GET_SCHEMA);
-    const [result, setResult] = useState<any>({
+    const [result, setResult] = useState<Schema>({
+        loading: false,
+        error: null,
+        data: [],
+        findTable: () => undefined
+    });
+    const [internal, setInternal] = useState<Omit<Schema, 'findTable'>>({ 
         loading: false,
         error: null,
         data: []
     });
-    const [internal, setInternal] = useState<any>({ data: []});
 
-    const findTable = useCallback((tableName: string) => {
-        return internal.data.find((t: any) => t.graphQlName === tableName);
+    const findTable = useCallback((tableName: string): Table | undefined => {
+        return internal.data.find((t: Table) => t.graphQlName === tableName);
     }, [internal]);
 
-
     useEffect(() => {
-        //console.log([dbLoading, dbError, dbData, loading, error, data]);
-        if (dbLoading || loading) {
-            setResult({ loading: true, error: null, data: [] });
+        if (dbLoading) {
+            setResult({ loading: true, error: null, data: [], findTable });
             return;
         }
-        if (dbError || error) {
-            setResult({ loading: false, error: [dbError, error].join(' '), data: [] });
+        if (dbError) {
+            setResult({ loading: false, error: { message: dbError.message }, data: [], findTable });
             return;
         }
-        if (!dbData && !data) {
-            setResult({ loading, error, data: [] });
+        if (!dbData) {
+            setResult({ loading: false, error: null, data: [], findTable });
             return;
         }
-        //Regular graphql schema
-        // if (data && !dbLoading && !dbError && !dbData) {
-        //     const tables = (data?.schema?.queryType?.fields ?? [])
-        //         .map((f: any) => ({
-        //             ...f,
-        //             label: f.name,
-        //             columns: f?.type?.fields
-        //                 ?.find((d: any) => d.name === "data")
-        //                 ?.type?.ofType.fields
-        //                 ?.filter((c: any) => c.name.startsWith('_') == false)
-        //                 ?.map((c: any) => ({ ...c, paramType: c?.type?.ofType?.name ?? "String" }))
-        //         }
-        //         ))
-        //         ?.sort((a: any, b: any) => a.name.localeCompare(b.name));
 
-        //     console.log(tables);
-        //     setResult({ loading: false, error: null, data: tables });
-        // }
-        //Enhanced graphql schema
-        const schema = {
+        const schema: Omit<Schema, 'findTable'> = {
             loading: false,
             error: null,
-            data: dbData._dbSchema
-                .map((s: any) => ({
-                    ...s,
-                    name: s.graphQlName,
-                    label: s.dbName,
-                    metadata: parseMetadata(s.metadata),
-                    columns: s.columns.map((c: any) => ({
-                        ...c,
-                        name: c.graphQlName,
-                        label: c.dbName,
-                        metadata: parseMetadata(c.metadata),
-                    }))
-                })),
+            data: dbData._dbSchema.map((s: any): Table => ({
+                ...s,
+                name: s.graphQlName,
+                label: s.dbName,
+                metadata: parseMetadata(s.metadata),
+                columns: s.columns.map((c: any): Column => ({
+                    ...c,
+                    name: c.graphQlName,
+                    label: c.dbName,
+                    metadata: parseMetadata(c.metadata),
+                }))
+            })),
         };
         setInternal(schema);
-
-    }, [dbLoading, dbError, dbData, loading, error, data]);
+    }, [dbLoading, dbError, dbData]);
 
     useEffect(() => {
-        const value = {...internal, findTable};
+        const value: Schema = {...internal, findTable};
         setResult(value);
-    }, [internal]);
+    }, [internal, findTable]);
+
     return result;
 }
 
@@ -104,14 +84,14 @@ function getMetaValue({key, value}: {key: string, value: string}) {
     return value;
 }
 
-function parseTableType(lookup: string) {
+function parseTableType(lookup: string): TableMetadata['type'] {
     const lookupMatch = lookup.match(/lookup\s*\(\s*(?<id>\w+)\s*,\s*(?<label>\w+)\s*\)/m);
-    if (lookupMatch?.groups) return { type: 'lookup', ...lookupMatch.groups };
-    return {};
+    if (lookupMatch?.groups?.id && lookupMatch?.groups?.label) {
+        return { 
+            type: 'lookup', 
+            id: lookupMatch.groups.id, 
+            label: lookupMatch.groups.label 
+        };
+    }
+    return undefined;
 }
-
-
-// https://regex101.com/r/UUAoSj/1
-// function parseJoins(joins: string) {
-//     return joins.matchAll(/((?:[_\w]+\s+[\w]+\((?:([\.=\w]+)|(\s*,\s*))*\))+?)(?:(?:\s*,\s*)|(?:\s*$))/gm)
-// }

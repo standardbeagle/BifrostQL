@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using GraphQLParser.AST;
 
 namespace BifrostQL.Core.QueryModel
 {
@@ -140,8 +141,12 @@ namespace BifrostQL.Core.QueryModel
             {
                 Variables = new GraphQL.Validation.Variables()
             };
-            ctx.Variables.Add(new GraphQL.Validation.Variable("limit") { Value = limit });
-            ctx.Variables.Add(new GraphQL.Validation.Variable("sort") { Value = new string[] { "number desc" } });
+            var limitDef = new GraphQLVariableDefinition(new GraphQLVariable(new GraphQLName("limit")),
+                new GraphQLNamedType(new GraphQLName("number")));
+            var sortDef = new GraphQLVariableDefinition(new GraphQLVariable(new GraphQLName("sort")),
+                new GraphQLListType(new GraphQLNamedType(new GraphQLName("string"))));
+            ctx.Variables.Add(new GraphQL.Validation.Variable("limit", limitDef) { Value = limit });
+            ctx.Variables.Add(new GraphQL.Validation.Variable("sort", sortDef) { Value = new string[] { "number desc" } });
             var sut = new SqlVisitor();
 
             var ast = Parser.Parse("query GetWorkshops($limit: Int, $sort: [String]) { workshops(sort: $sort limit: $limit ) { data { id }} }");

@@ -16,6 +16,8 @@ using System.IdentityModel.Tokens.Jwt;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.Schema;
+using BifrostQL.Server.Logging;
+using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Server
 {
@@ -146,6 +148,14 @@ namespace BifrostQL.Server
 
             var grapQlBuilder = services.AddGraphQL(b => b
                     .AddSystemTextJson()
+                    .AddBifrostErrorLogging(options => {
+                        // Get logging configuration from BifrostQL section if it exists
+                        var loggingConfig = _bifrostConfig?.GetSection("Logging");
+                        options.EnableConsole = loggingConfig?.GetValue("EnableConsole", true) ?? true;
+                        options.EnableFile = loggingConfig?.GetValue("EnableFile", true) ?? true;
+                        options.MinimumLevel = loggingConfig?.GetValue("MinimumLevel", LogLevel.Information) ?? LogLevel.Information;
+                        options.LogFilePath = loggingConfig?.GetValue<string>("FilePath");
+                    })
                     .IfFluent(isAuthEnabled, b => b.AddUserContextBuilder(context => new BifrostContext(context)))
             );
 

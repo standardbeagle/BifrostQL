@@ -1,62 +1,59 @@
-﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">  
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <OutputType>Library</OutputType>
+    <Company>Standard Beagle Studio</Company>
+    <PackageId>BifrostQL.Server</PackageId>
+    <IsPackable>true</IsPackable>
+    <PackageProjectUrl>https://github.com/standardbeagle/BifrostQL</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/standardbeagle/BifrostQL</RepositoryUrl>
+    <PackageTags>GraphQL SqlServer</PackageTags>
+    <PackageVersion>0.3.0</PackageVersion>
+    <Authors>Andy Brummer</Authors>
+    <Description>The fastest way to publish your SQL database as a GraphQL API.</Description>
+    <EnablePackageValidation>true</EnablePackageValidation>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Copyright>Copyright © Standard Beagle Studio LLC.</Copyright>
+    <RepositoryType>git</RepositoryType>
+    <IncludeSymbols>True</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
 
-	<PropertyGroup>
-		<TargetFrameworks>net6.0;net7.0;net8.0</TargetFrameworks>
-		<Nullable>enable</Nullable>
-		<ImplicitUsings>enable</ImplicitUsings>
-		<OutputType>Library</OutputType>
-		<Company>Standard Beagle Studio</Company>
-		<PackageId>BifrostQL.Server</PackageId>
-		<IsPackable>true</IsPackable>
-		<PackageProjectUrl>https://github.com/standardbeagle/BifrostQL</PackageProjectUrl>
-		<RepositoryUrl>https://github.com/standardbeagle/BifrostQL</RepositoryUrl>
-		<PackageTags>GraphQL SqlServer </PackageTags>
-		<PackageVersion>0.3.0</PackageVersion>
-		<Authors>Andy Brummer</Authors>
-		<Description>The fastest way to publish your SQL database as a GraphQL API.</Description>
-		<EnablePackageValidation>true</EnablePackageValidation>
-		<PackageLicenseExpression>MIT</PackageLicenseExpression>
-		<PackageReadmeFile>README.md</PackageReadmeFile>
-		<Copyright>Copyright © Standard Beagle Studio LLC.</Copyright>
-		<RepositoryType>git</RepositoryType>
-		<IncludeSymbols>True</IncludeSymbols>
-		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  <PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|net8.0|AnyCPU'">
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|net9.0|AnyCPU'">
+		<DebugType>embedded</DebugType>
 	</PropertyGroup>
 
-	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|net6.0|AnyCPU'">
-	  <DebugType>embedded</DebugType>
+  <PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release|net8.0|AnyCPU'">
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release|net9.0|AnyCPU'">
+		<DebugType>embedded</DebugType>
 	</PropertyGroup>
 
-	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|net7.0|AnyCPU'">
-	  <DebugType>embedded</DebugType>
-	</PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" Condition="'$(TargetFramework)'=='net8.0'" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="9.0.0" Condition="'$(TargetFramework)'=='net9.0'" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="8.0.0" Condition="'$(TargetFramework)'=='net8.0'" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="9.0.0" Condition="'$(TargetFramework)'=='net9.0'" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.1" />
+    <PackageReference Include="NLog" Version="5.3.4" />
+    <PackageReference Include="NLog.Web.AspNetCore" Version="5.3.4" />
+  </ItemGroup>
 
-	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|net8.0|AnyCPU'">
-	  <DebugType>embedded</DebugType>
-	</PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\BifrostQL.Core\BifrostQL.Core.csproj" />
+  </ItemGroup>
 
-	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release|net6.0|AnyCPU'">
-	  <DebugType>embedded</DebugType>
-	</PropertyGroup>
-
-	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release|net7.0|AnyCPU'">
-	  <DebugType>embedded</DebugType>
-	</PropertyGroup>
-
-	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release|net8.0|AnyCPU'">
-	  <DebugType>embedded</DebugType>
-	</PropertyGroup>
-
-	<ItemGroup>
-		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="6.0.13" />
-		<PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="6.0.13" />
-	</ItemGroup>
-
-	<ItemGroup>
-		<ProjectReference Include="..\BifrostQL.Core\BifrostQL.Core.csproj" />
-	</ItemGroup>
-
-	<ItemGroup>
-		<None Include="..\..\README.md" Pack="true" PackagePath="/" />
-	</ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 </Project>

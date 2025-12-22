@@ -3,7 +3,7 @@ using BifrostQL.Model;
 
 namespace BifrostQL.Core.QueryModel
 {
-    public sealed class TableJoin// : ISqlJoinGenerator
+    public sealed class TableJoin
     {
         public TableJoin() { }
         public string Name { get; init; } = null!;
@@ -14,7 +14,7 @@ namespace BifrostQL.Core.QueryModel
         public QueryType QueryType { get; init; }
         public string Operator { get; init; } = null!;
         public GqlObjectQuery FromTable { get; init; } = null!;
-        public GqlObjectQuery ConnectedTable { get; init; } =  null!;
+        public GqlObjectQuery ConnectedTable { get; init; } = null!;
 
         public override string ToString()
         {

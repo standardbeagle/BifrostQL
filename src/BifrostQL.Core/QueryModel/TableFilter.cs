@@ -19,95 +19,9 @@ namespace BifrostQL.Core.QueryModel
         public object? Value { get; set; }
         public FilterType FilterType { get; init; }
         public TableFilter? Next { get; set; }
-        public List<TableFilter> And { get; init; } = new ();
-        public List<TableFilter> Or { get; init; } = new ();
+        public List<TableFilter> And { get; init; } = new();
+        public List<TableFilter> Or { get; init; } = new();
 
-        public (string join, string comparison) ToSql(IDbModel model, string? alias = null, string joinName = "j", bool includeValue = false)
-        {
-            if (Next == null)
-            {
-                if (And.Count > 0)
-                {
-                    var test = And.Select((j, i) => j.ToSql(model, alias, $"j{i}", true)).ToArray();
-                    var joins = test.Where(t => !string.IsNullOrWhiteSpace(t.join)).Select(t => t.join);
-                    var filters = test.Where(t => !string.IsNullOrWhiteSpace(t.comparison)).Select(t => t.comparison).ToArray();
-                    return (
-                        string.Join("", joins),
-                        filters.Length == 1 ? filters[0] : $"(({ string.Join(") AND (", filters) }))");
-                }
-                if (Or.Count > 0)
-                {
-                    var test = Or.Select((j, i) => j.ToSql(model, alias, $"j{i}", true)).ToArray();
-                    var joins = test.Where(t => !string.IsNullOrWhiteSpace(t.join)).Select(t => t.join);
-                    var filters = test.Where(t => !string.IsNullOrWhiteSpace(t.comparison)).Select(t => t.comparison).ToArray();
-                    return (
-                        string.Join("", joins),
-                        filters.Length == 1 ? filters[0] : $"(({string.Join(") OR (", filters)}))");
-                }
-                throw new ExecutionError("Filter object missing all required fields.");
-            }
-            var table = model.GetTableFromDbName(TableName ?? throw new ExecutionError("TableFilter with undefined TableName"));
-            if (Next.Next == null)
-            {
-                var lookup = table.GraphQlLookup;
-                return ("", GetSingleFilter(alias ?? TableName, lookup[ColumnName].DbName, Next.RelationName, Next.Value));
-            }
-            var link = table.SingleLinks[ColumnName];
-            var join = BuildSql(this.Next, link, includeValue);
-            var filterText = GetFilter(this.Next, link, joinName, includeValue);
-
-            join = $" INNER JOIN ({join}) [{joinName}] ON [{joinName}].[joinid] = [{alias ?? table.DbName}].[{table.SingleLinks[ColumnName].ChildId.ColumnName}]";
-            return (join, filterText);
-        }
-
-        private static string BuildSql(TableFilter filter, TableLinkDto link, bool includeValue = false)
-        {
-            if (filter is { Next: { } } || (filter.Next == null && filter.And.Count > 0) || (filter.Next == null && filter.Or.Count > 0))
-            {
-                switch (filter.FilterType)
-                {
-                    case FilterType.Join
-                        when link.ParentTable.SingleLinks.TryGetValue(filter.ColumnName, out var nextLink):
-                        {
-                            var next = BuildSql(filter.Next!, nextLink);
-                            return $"SELECT DISTINCT [{link.ParentId.ColumnName}] AS [joinid]{(includeValue ? ", [value]" : "")} FROM [{link.ParentTable.DbName}] INNER JOIN ({next}) [j] ON [j].[joinid] = [{link.ParentTable.DbName}].[{nextLink.ChildId.ColumnName}]";
-                        }
-                    case FilterType.Join:
-                        if (includeValue)
-                        {
-                            return
-                                $"SELECT DISTINCT [{link.ParentId.ColumnName}] AS [joinid], [{filter.ColumnName}] AS [value] FROM [{link.ParentTable.DbName}]";
-                        }
-                        else
-                        {
-                            var where = GetSingleFilter(link.ParentTable.DbName, filter.ColumnName, filter.Next!.RelationName, filter.Next.Value);
-                            return $"SELECT DISTINCT [{link.ParentId.ColumnName}] AS [joinid] FROM [{link.ParentTable.DbName}] WHERE {where}";
-                        }
-                }
-            }
-
-            return "";
-        }
-
-        private static string GetFilter(TableFilter filter, TableLinkDto link, string joinName, bool includeValue = false)
-        {
-            if (!includeValue) return "";
-
-            if (filter is { Next: { } } || (filter.Next == null && filter.And.Count > 0) || (filter.Next == null && filter.Or.Count > 0))
-            {
-                switch (filter.FilterType)
-                {
-                    case FilterType.Join
-                        when link.ParentTable.SingleLinks.TryGetValue(filter.ColumnName, out var nextLink):
-                        return GetFilter(filter.Next!, nextLink, joinName, includeValue);
-                    case FilterType.Join:
-                        return GetSingleFilter(joinName, "value", filter.Next!.RelationName,
-                            filter.Next.Value);
-                }
-            }
-
-            return "";
-        }
         public static TableFilter FromObject(object? value, string tableName)
         {
             var dictValue = value as Dictionary<string, object?> ?? throw new ExecutionError($"Error filtering {tableName}, null filter value");
@@ -152,56 +66,6 @@ namespace BifrostQL.Core.QueryModel
                     FilterType = FilterType.Relation,
                 },
             };
-        }
-
-        public static string GetSingleFilter(string? table, string field, string op, object? value)
-        {
-            var rel = op switch
-            {
-                "_eq" => "=",
-                "_neq" => "!=",
-                "_lt" => "<",
-                "_lte" => "<=",
-                "_gt" => ">",
-                "_gte" => ">=",
-                "_contains" or "_starts_with" or "_ends_with" or "_like" => "like",
-                "_ncontains" or "_nstarts_with" or "_nends_with" or "_nlike" => "not like",
-                "_in" => "in",
-                "_nin" => "not in",
-                "_between" => "between",
-                "_nbetween" => "not between",
-                _ => "="
-            };
-            var val = op switch
-            {
-                "_starts_with" or "_nstarts_with" => $"'{value}%'",
-                "_ends_with" or "_nends_with" => $"'%{value}'",
-                "_contains" or "_ncontains" => $"'%{value}%'",
-                "_in" or "_nin" => $"('{string.Join("','", (object[])(value ?? Array.Empty<object>()))}')",
-                "_between" or "_nbetween" => $"'{string.Join("' AND '", (object[])(value ?? Array.Empty<object>()))}'",
-                _ => $"'{value}'"
-            };
-            switch (op)
-            {
-                case "_eq" when value == null:
-                    rel = "IS NULL";
-                    val = "";
-                    break;
-                case "_neq" when value == null:
-                    rel = "IS NOT NULL";
-                    val = "";
-                    break;
-            }
-
-            if (value is FieldRef fieldRef)
-                val = fieldRef.ToString();
-
-            if (table == null)
-            {
-                var filter = $"[{field}] {rel} {val}";
-                return filter;
-            }
-            return $"[{table}].[{field}] {rel} {val}";
         }
 
         public static ParameterizedSql GetSingleFilterParameterized(
@@ -315,10 +179,81 @@ namespace BifrostQL.Core.QueryModel
                 return GetSingleFilterParameterized(dialect, parameters, alias ?? TableName, lookup[ColumnName].DbName, Next.RelationName, Next.Value);
             }
 
-            // For complex joins, fall back to existing logic but with parameterized leaf filters
-            // This maintains compatibility while securing the value injection points
-            var (join, filter) = ToSql(model, alias);
-            return new ParameterizedSql(join + (string.IsNullOrEmpty(filter) ? "" : " WHERE " + filter), Array.Empty<SqlParameterInfo>());
+            // For complex joins, use parameterized SQL throughout
+            var link = table.SingleLinks[ColumnName];
+            var (joinSql, joinParams) = BuildSqlParameterized(Next, link, dialect, parameters, includeValue: false);
+            var (filterSql, filterParams) = GetFilterParameterized(Next, link, dialect, parameters, "j", includeValue: false);
+
+            var fullJoin = $" INNER JOIN ({joinSql}) [j] ON [j].[joinid] = {dialect.EscapeIdentifier(alias ?? table.DbName)}.{dialect.EscapeIdentifier(table.SingleLinks[ColumnName].ChildId.ColumnName)}";
+            var allParams = joinParams.Concat(filterParams).ToList();
+
+            if (string.IsNullOrEmpty(filterSql))
+                return new ParameterizedSql(fullJoin, allParams);
+            return new ParameterizedSql(fullJoin + " WHERE " + filterSql, allParams);
+        }
+
+        private static (string sql, List<SqlParameterInfo> parameters) BuildSqlParameterized(
+            TableFilter filter,
+            TableLinkDto link,
+            ISqlDialect dialect,
+            SqlParameterCollection parameters,
+            bool includeValue = false)
+        {
+            if (filter is { Next: { } } || (filter.Next == null && filter.And.Count > 0) || (filter.Next == null && filter.Or.Count > 0))
+            {
+                switch (filter.FilterType)
+                {
+                    case FilterType.Join
+                        when link.ParentTable.SingleLinks.TryGetValue(filter.ColumnName, out var nextLink):
+                        {
+                            var (nextSql, nextParams) = BuildSqlParameterized(filter.Next!, nextLink, dialect, parameters);
+                            var sql = $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS [joinid]{(includeValue ? ", [value]" : "")} FROM {dialect.EscapeIdentifier(link.ParentTable.DbName)} INNER JOIN ({nextSql}) [j] ON [j].[joinid] = {dialect.EscapeIdentifier(link.ParentTable.DbName)}.{dialect.EscapeIdentifier(nextLink.ChildId.ColumnName)}";
+                            return (sql, nextParams);
+                        }
+                    case FilterType.Join:
+                        if (includeValue)
+                        {
+                            return (
+                                $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS [joinid], {dialect.EscapeIdentifier(filter.ColumnName)} AS [value] FROM {dialect.EscapeIdentifier(link.ParentTable.DbName)}",
+                                new List<SqlParameterInfo>());
+                        }
+                        else
+                        {
+                            var filterResult = GetSingleFilterParameterized(dialect, parameters, link.ParentTable.DbName, filter.ColumnName, filter.Next!.RelationName, filter.Next.Value);
+                            return (
+                                $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS [joinid] FROM {dialect.EscapeIdentifier(link.ParentTable.DbName)} WHERE {filterResult.Sql}",
+                                filterResult.Parameters.ToList());
+                        }
+                }
+            }
+
+            return ("", new List<SqlParameterInfo>());
+        }
+
+        private static (string sql, List<SqlParameterInfo> parameters) GetFilterParameterized(
+            TableFilter filter,
+            TableLinkDto link,
+            ISqlDialect dialect,
+            SqlParameterCollection parameters,
+            string joinName,
+            bool includeValue = false)
+        {
+            if (!includeValue) return ("", new List<SqlParameterInfo>());
+
+            if (filter is { Next: { } } || (filter.Next == null && filter.And.Count > 0) || (filter.Next == null && filter.Or.Count > 0))
+            {
+                switch (filter.FilterType)
+                {
+                    case FilterType.Join
+                        when link.ParentTable.SingleLinks.TryGetValue(filter.ColumnName, out var nextLink):
+                        return GetFilterParameterized(filter.Next!, nextLink, dialect, parameters, joinName, includeValue);
+                    case FilterType.Join:
+                        var filterResult = GetSingleFilterParameterized(dialect, parameters, joinName, "value", filter.Next!.RelationName, filter.Next.Value);
+                        return (filterResult.Sql, filterResult.Parameters.ToList());
+                }
+            }
+
+            return ("", new List<SqlParameterInfo>());
         }
 
     }

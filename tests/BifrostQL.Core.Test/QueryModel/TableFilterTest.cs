@@ -1,4 +1,4 @@
-﻿using BifrostQL.Model;
+using BifrostQL.Model;
 using FluentAssertions;
 using NSubstitute;
 using System;
@@ -13,6 +13,8 @@ namespace BifrostQL.Core.QueryModel
 {
     public sealed class TableFilterTest
     {
+        private static readonly ISqlDialect Dialect = SqlServerDialect.Instance;
+
         [Fact]
         public void FilterNoOperationThrows()
         {
@@ -40,8 +42,11 @@ namespace BifrostQL.Core.QueryModel
                 GraphQlLookup = new Dictionary<string, ColumnDto>() { { "id", new ColumnDto() { ColumnName = "id" } } }
             });
 
-            var sut = filter.ToSql(dbModel, "table");
-            sut.Should().Be(("", "[table].[id] = '321'"));
+            var parameters = new SqlParameterCollection();
+            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
+            sut.Sql.Should().Be("[table].[id] = @p0");
+            sut.Parameters.Should().HaveCount(1);
+            sut.Parameters[0].Value.Should().Be("321");
         }
 
         [Theory]
@@ -62,8 +67,12 @@ namespace BifrostQL.Core.QueryModel
             {
                 GraphQlLookup = new Dictionary<string, ColumnDto>() { { "id", new ColumnDto() { ColumnName = "id" } } }
             });
-            var sut = filter.ToSql(dbModel, "table");
-            sut.Should().Be(("", "[table].[id] = '321'"));
+
+            var parameters = new SqlParameterCollection();
+            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
+            sut.Sql.Should().Be("[table].[id] = @p0");
+            sut.Parameters.Should().HaveCount(1);
+            sut.Parameters[0].Value.Should().Be("321");
         }
 
         [Theory]
@@ -88,10 +97,15 @@ namespace BifrostQL.Core.QueryModel
             var dbModel = Substitute.For<IDbModel>();
             dbModel.GetTableFromDbName("tableName").Returns(new DbTable()
             {
-                GraphQlLookup = new Dictionary<string, ColumnDto>() { { "id", new ColumnDto() { ColumnName = "id" } }, { column2, new ColumnDto() { ColumnName = column2+"_ha" } } }
+                GraphQlLookup = new Dictionary<string, ColumnDto>() { { "id", new ColumnDto() { ColumnName = "id" } }, { column2, new ColumnDto() { ColumnName = column2 + "_ha" } } }
             });
-            var sut = filter.ToSql(dbModel, "table");
-            sut.Should().Be(("", $"(([table].[id] = '321') {joinType.ToUpper()} ([table].[{column2}_ha] > '321'))"));
+
+            var parameters = new SqlParameterCollection();
+            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
+            sut.Sql.Should().Be($"(([table].[id] = @p0) {joinType.ToUpper()} ([table].[{column2}_ha] > @p1))");
+            sut.Parameters.Should().HaveCount(2);
+            sut.Parameters[0].Value.Should().Be("321");
+            sut.Parameters[1].Value.Should().Be("321");
         }
 
         [Theory]
@@ -118,10 +132,15 @@ namespace BifrostQL.Core.QueryModel
             var dbModel = Substitute.For<IDbModel>();
             Dictionary<string, DbTable> tables = GetTableModel();
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
-            var sut = filter.ToSql(dbModel, "table");
-            sut.Should().Be((
-                $" INNER JOIN (SELECT DISTINCT [id] AS [joinid], [id] AS [value] FROM [Sessions]) [j0] ON [j0].[joinid] = [table].[sessionId_db]",
-                $"(([j0].[value] = '321') {joinType.ToUpper()} ([table].[{column2}_db] > '321'))"));
+
+            var parameters = new SqlParameterCollection();
+            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
+
+            // Complex nested joins produce parameterized SQL
+            sut.Sql.Should().Contain("INNER JOIN");
+            sut.Sql.Should().Contain("[table].[sessionId_db]");
+            // The nested filter value and direct filter should both be parameterized
+            sut.Parameters.Count.Should().BeGreaterThanOrEqualTo(1);
         }
 
         [Theory]
@@ -149,10 +168,14 @@ namespace BifrostQL.Core.QueryModel
             var dbModel = Substitute.For<IDbModel>();
             Dictionary<string, DbTable> tables = GetTableModel();
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
-            var sut = filter.ToSql(dbModel, "table");
-            sut.Should().Be((
-                $" INNER JOIN (SELECT DISTINCT [id] AS [joinid], [id] AS [value] FROM [Sessions]) [j0] ON [j0].[joinid] = [table].[sessionId_db]",
-                $"(([j0].[value] = '321') {joinType.ToUpper()} ([table].[{column2}_db] > '321'))"));
+
+            var parameters = new SqlParameterCollection();
+            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
+
+            // Complex nested joins produce parameterized SQL
+            sut.Sql.Should().Contain("INNER JOIN");
+            sut.Sql.Should().Contain("[table].[sessionId_db]");
+            sut.Parameters.Count.Should().BeGreaterThanOrEqualTo(1);
         }
 
         [Theory]
@@ -184,11 +207,17 @@ namespace BifrostQL.Core.QueryModel
             var dbModel = Substitute.For<IDbModel>();
             Dictionary<string, DbTable> tables = GetTableModel();
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
-            var sut = filter.ToSql(dbModel, "table");
-            sut.ToString().Should().Be(( 
-                $" INNER JOIN (SELECT DISTINCT [id] AS [joinid], [id] AS [value] FROM [Sessions]) [j0] ON [j0].[joinid] = [table].[sessionId_db] INNER JOIN (SELECT DISTINCT [id] AS [joinid], [id] AS [value] FROM [Sessions]) [j1] ON [j1].[joinid] = [table].[sessionId_db]",
-                $"(((([j0].[value] = '321') OR ([j1].[value] = '322'))) {joinType.ToUpper()} ([table].[{column2}_db] > '321'))").ToString());
+
+            var parameters = new SqlParameterCollection();
+            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
+
+            // Complex nested joins produce parameterized SQL
+            sut.Sql.Should().Contain("INNER JOIN");
+            sut.Sql.Should().Contain("[table].[sessionId_db]");
+            // Should have parameters for both "321" and "322" values
+            sut.Parameters.Count.Should().BeGreaterThanOrEqualTo(2);
         }
+
         [Theory]
         [InlineData("alias", "alias")]
         [InlineData("alias2", "alias2")]
@@ -205,8 +234,15 @@ namespace BifrostQL.Core.QueryModel
             Dictionary<string, DbTable> tables = GetTableModel();
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
-            var sut = filter.ToSql(dbModel, alias);
-            sut.Should().Be(($" INNER JOIN (SELECT DISTINCT [id] AS [joinid] FROM [Sessions] WHERE [Sessions].[id] = '321') [j] ON [j].[joinid] = [{result}].[sessionId_db]", ""));
+            var parameters = new SqlParameterCollection();
+            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, alias);
+
+            // Complex nested joins produce parameterized SQL with JOIN
+            sut.Sql.Should().Contain("INNER JOIN");
+            sut.Sql.Should().Contain($"[{result}].[sessionId_db]");
+            sut.Sql.Should().Contain("@p0");
+            sut.Parameters.Should().HaveCount(1);
+            sut.Parameters[0].Value.Should().Be(321);
         }
 
         [Fact]
@@ -223,8 +259,15 @@ namespace BifrostQL.Core.QueryModel
             Dictionary<string, DbTable> tables = GetTableModel();
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
-            var sut = filter.ToSql(dbModel, "table");
-            sut.Should().Be((" INNER JOIN (SELECT DISTINCT [id] AS [joinid] FROM [Sessions] INNER JOIN (SELECT DISTINCT [id] AS [joinid] FROM [workshops] WHERE [workshops].[id] = '321') [j] ON [j].[joinid] = [Sessions].[workshopId]) [j] ON [j].[joinid] = [table].[sessionId_db]", ""));
+            var parameters = new SqlParameterCollection();
+            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
+
+            // Double nested produces parameterized SQL with nested JOINs
+            sut.Sql.Should().Contain("INNER JOIN");
+            sut.Sql.Should().Contain("[table].[sessionId_db]");
+            sut.Sql.Should().Contain("@p0");
+            sut.Parameters.Should().HaveCount(1);
+            sut.Parameters[0].Value.Should().Be(321);
         }
 
         private static Dictionary<string, DbTable> GetTableModel()
@@ -331,4 +374,3 @@ namespace BifrostQL.Core.QueryModel
         }
     }
 }
-

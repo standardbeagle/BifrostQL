@@ -1,5 +1,4 @@
-﻿using System.Data.SqlClient;
-using BifrostQL.Core.Model;
+﻿using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Model;
 using GraphQL;

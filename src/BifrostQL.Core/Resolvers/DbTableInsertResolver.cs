@@ -1,7 +1,8 @@
-﻿using System.Data.SqlClient;
+﻿using Microsoft.Data.SqlClient;
 using System.Reflection;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
+using BifrostQL.Core.QueryModel;
 using BifrostQL.Model;
 using GraphQL;
 using GraphQL.Resolvers;
@@ -22,21 +23,22 @@ namespace BifrostQL.Core.Resolvers
         {
             var conFactory = (IDbConnFactory)(context.InputExtensions["connFactory"] ?? throw new InvalidDataException("connection factory is not configured"));
             var model = (IDbModel)(context.InputExtensions["model"] ?? throw new InvalidDataException("database model is not configured"));
+            var dialect = conFactory.Dialect;
             var table = _table;
             var modules = context.RequestServices!.GetRequiredService<IMutationModules>();
             modules.OnSave(context);
 
             if (context.HasArgument("insert"))
             {
-                return await InsertObject(context, table, modules, model, conFactory);
+                return await InsertObject(context, table, modules, model, conFactory, dialect);
             }
             if (context.HasArgument("update"))
             {
-                return await UpdateObject(context, table, modules, model, conFactory);
+                return await UpdateObject(context, table, modules, model, conFactory, dialect);
             }
             if (context.HasArgument("delete"))
             {
-                return await DeleteObject(context, modules, table, model, conFactory);
+                return await DeleteObject(context, modules, table, model, conFactory, dialect);
             }
 
             if (context.HasArgument("upsert"))
@@ -45,9 +47,9 @@ namespace BifrostQL.Core.Resolvers
                 if (!propertyInfo.data.Any())
                     return 0;
                 if (propertyInfo.keyData.Any())
-                    return await UpdateObject(context, table, modules, model, conFactory, "upsert");
+                    return await UpdateObject(context, table, modules, model, conFactory, dialect, "upsert");
 
-                return await InsertObject(context, table, modules, model, conFactory, "upsert");
+                return await InsertObject(context, table, modules, model, conFactory, dialect, "upsert");
             }
             return null;
         }
@@ -69,21 +71,22 @@ namespace BifrostQL.Core.Resolvers
         }
 
         private async Task<object?> DeleteObject(IResolveFieldContext context, IMutationModules modules, IDbTable table, IDbModel model,
-            IDbConnFactory conFactory)
+            IDbConnFactory conFactory, ISqlDialect dialect)
         {
             var data = context.GetArgument<Dictionary<string, object?>>("delete");
             if (!data.Any())
                 return 0;
             var moduleSql = modules.Delete(data, table, context.UserContext, model);
-            var sql =
-                $"DELETE FROM [{table.TableSchema}].[{table.DbName}] WHERE {string.Join(" AND ", data.Select(kv => $"[{kv.Key}]=@{kv.Key}"))};";
+            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+            var whereClause = string.Join(" AND ", data.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+            var sql = $"DELETE FROM {tableRef} WHERE {whereClause};";
             var cmd = new SqlCommand(Join(sql, moduleSql));
             cmd.Parameters.AddRange(data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value ?? DBNull.Value)).ToArray());
             return await ExecuteNonQuery(conFactory, cmd);
         }
 
         private async Task<object?> UpdateObject(IResolveFieldContext context, IDbTable table, IMutationModules modules, IDbModel model,
-            IDbConnFactory conFactory, string parameterName = "update")
+            IDbConnFactory conFactory, ISqlDialect dialect, string parameterName = "update")
         {
             var propertyInfo = GetPropertyInfo(context, table, parameterName);
             if (!propertyInfo.data.Any())
@@ -93,9 +96,10 @@ namespace BifrostQL.Core.Resolvers
                 return 0;
 
             var moduleSql = modules.Update(propertyInfo.data, table, context.UserContext, model);
-            var sql = $@"UPDATE [{table.TableSchema}].[{table.DbName}] 
-                    SET {string.Join(",", propertyInfo.standardData.Select(kv => $"[{kv.Key}]=@{kv.Key}"))}
-                    WHERE {string.Join(" AND ", propertyInfo.keyData.Select(kv => $"[{kv.Key}]=@{kv.Key}"))};";
+            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+            var setClause = string.Join(",", propertyInfo.standardData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+            var whereClause = string.Join(" AND ", propertyInfo.keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+            var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause};";
             var cmd = new SqlCommand(Join(sql, moduleSql));
             cmd.Parameters.AddRange(propertyInfo.data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value ?? DBNull.Value)
             { IsNullable = table.ColumnLookup[kv.Key].IsNullable }).ToArray());
@@ -104,12 +108,14 @@ namespace BifrostQL.Core.Resolvers
         }
 
         private async Task<object?> InsertObject(IResolveFieldContext context, IDbTable table, IMutationModules modules, IDbModel model,
-            IDbConnFactory conFactory, string parameterName = "insert")
+            IDbConnFactory conFactory, ISqlDialect dialect, string parameterName = "insert")
         {
             var data = context.GetArgument<Dictionary<string, object?>>(parameterName);
             var moduleSql = modules.Insert(data, table, context.UserContext, model);
-            var sql =
-                $@"INSERT INTO [{table.TableSchema}].[{table.DbName}]([{string.Join("],[", data.Keys)}]) VALUES({string.Join(",", data.Keys.Select(k => $"@{k}"))});SELECT SCOPE_IDENTITY() ID;";
+            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+            var columns = string.Join(",", data.Keys.Select(k => dialect.EscapeIdentifier(k)));
+            var values = string.Join(",", data.Keys.Select(k => $"@{k}"));
+            var sql = $"INSERT INTO {tableRef}({columns}) VALUES({values});SELECT SCOPE_IDENTITY() ID;";
             var cmd = new SqlCommand(Join(sql, moduleSql));
             cmd.Parameters.AddRange(data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value ?? DBNull.Value)
             { IsNullable = table.ColumnLookup[kv.Key].IsNullable }).ToArray());

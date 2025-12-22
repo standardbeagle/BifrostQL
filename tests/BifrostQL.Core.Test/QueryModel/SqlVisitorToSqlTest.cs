@@ -16,9 +16,11 @@ namespace BifrostQL.Core.QueryModel
     {
         private static Dictionary<string, string> GetSql(GqlObjectQuery query, IDbModel model)
         {
-            Dictionary<string, string> sqls = new();
-            query.AddSql(model, sqls);
-            return sqls;
+            var dialect = SqlServerDialect.Instance;
+            var parameters = new SqlParameterCollection();
+            Dictionary<string, ParameterizedSql> sqls = new();
+            query.AddSqlParameterized(model, dialect, sqls, parameters);
+            return sqls.ToDictionary(kv => kv.Key, kv => kv.Value.Sql);
         }
 
         private static Dictionary<string, string>[] GetSqls(SqlContext ctx, IDbModel model)
@@ -110,9 +112,9 @@ namespace BifrostQL.Core.QueryModel
             var sqls = GetSqls(ctx, model);
             sqls.Should().ContainSingle()
                 .Which.Should().Equal(new Dictionary<string, string> {
-                    { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] WHERE [work shops].[id] = '1' ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY"},
-                    { "work__shops=>count", "SELECT COUNT(*) FROM [dbo].[work shops] WHERE [work shops].[id] = '1'"},
-                    { "work__shops=>agg__agg", "SELECT [src].[srcId], Avg([next].[value]) [_agg] FROM (SELECT [next].[id] AS [joinId], [src].[srcId] FROM (SELECT [work shops].[id] AS [joinId], [work shops].[id] AS [srcId] FROM [dbo].[work shops] WHERE [work shops].[id] = '1') [src] INNER JOIN [dbo].[sessions] [next] ON [src].[joinId] = [next].[workshopid]) [src] INNER JOIN [dbo].[entry] [next] ON [src].[joinId] = [next].[session_id] GROUP BY [src].[srcId]"}
+                    { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] WHERE [work shops].[id] = @p0 ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY"},
+                    { "work__shops=>count", "SELECT COUNT(*) FROM [dbo].[work shops] WHERE [work shops].[id] = @p0"},
+                    { "work__shops=>agg__agg", "SELECT [src].[srcId], Avg([next].[value]) [_agg] FROM (SELECT [next].[id] AS [joinId], [src].[srcId] FROM (SELECT [work shops].[id] AS [joinId], [work shops].[id] AS [srcId] FROM [dbo].[work shops] WHERE [work shops].[id] = @p0) [src] INNER JOIN [dbo].[sessions] [next] ON [src].[joinId] = [next].[workshopid]) [src] INNER JOIN [dbo].[entry] [next] ON [src].[joinId] = [next].[session_id] GROUP BY [src].[srcId]"}
                 });
         }
 
@@ -280,7 +282,7 @@ namespace BifrostQL.Core.QueryModel
                 .Which.Should().Equal(new Dictionary<string, string> {
                     { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY"},
                     { "work__shops=>count", "SELECT COUNT(*) FROM [dbo].[work shops]"},
-                    { "work__shops->sess", "SELECT [a].[JoinId] [src_id], [b].[sid] AS [id],[b].[status] AS [status] FROM (SELECT DISTINCT [id] AS JoinId FROM [work shops]) [a] INNER JOIN [sessions] [b] ON [a].[JoinId] = [b].[workshopid] WHERE [b].[status] = '0' ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY" },
+                    { "work__shops->sess", "SELECT [a].[JoinId] [src_id], [b].[sid] AS [id],[b].[status] AS [status] FROM (SELECT DISTINCT [id] AS JoinId FROM [work shops]) [a] INNER JOIN [sessions] [b] ON [a].[JoinId] = [b].[workshopid] WHERE [b].[status] = @p0 ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY" },
                 });
 
         }
@@ -309,8 +311,8 @@ namespace BifrostQL.Core.QueryModel
             });
             sqls[2].Should().Equal(new Dictionary<string, string>
             {
-                { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] WHERE [work shops].[id] = '1' ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY" },
-                { "work__shops=>count", "SELECT COUNT(*) FROM [dbo].[work shops] WHERE [work shops].[id] = '1'" },
+                { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] WHERE [work shops].[id] = @p0 ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY" },
+                { "work__shops=>count", "SELECT COUNT(*) FROM [dbo].[work shops] WHERE [work shops].[id] = @p0" },
             });
         }
 
@@ -419,10 +421,10 @@ namespace BifrostQL.Core.QueryModel
             var sqls = GetSqls(ctx, model);
             sqls.Should().ContainSingle()
                 .Which.Should().Equal(new Dictionary<string, string> {
-                    { "sessions", "SELECT [sid] [id],[workshopid] [workshopid] FROM [dbo].[sessions] WHERE [sessions].[sid] = '1' ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY"},
-                    { "sessions=>count", "SELECT COUNT(*) FROM [dbo].[sessions] WHERE [sessions].[sid] = '1'"},
-                    { "sessions->work__shops", "SELECT [a].[JoinId] [src_id], [b].[id] AS [id],[b].[number] AS [number] FROM (SELECT DISTINCT [workshopid] AS JoinId FROM [sessions] WHERE [sessions].[sid] = '1') [a] INNER JOIN [work shops] [b] ON [a].[JoinId] = [b].[id]" },
-                    { "sessions->work__shops->participants__table", "SELECT [a].[JoinId] [src_id], [b].[sid] AS [id],[b].[firstname] AS [firstname] FROM (SELECT DISTINCT [a].[id] AS JoinId FROM [work shops] [a] INNER JOIN (SELECT DISTINCT [workshopid] AS JoinId FROM [sessions] WHERE [sessions].[sid] = '1') [b] ON [b].[JoinId] = [a].[id]) [a] INNER JOIN [participants table] [b] ON [a].[JoinId] = [b].[workshopid] ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY" },
+                    { "sessions", "SELECT [sid] [id],[workshopid] [workshopid] FROM [dbo].[sessions] WHERE [sessions].[sid] = @p0 ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY"},
+                    { "sessions=>count", "SELECT COUNT(*) FROM [dbo].[sessions] WHERE [sessions].[sid] = @p0"},
+                    { "sessions->work__shops", "SELECT [a].[JoinId] [src_id], [b].[id] AS [id],[b].[number] AS [number] FROM (SELECT DISTINCT [workshopid] AS JoinId FROM [sessions] WHERE [sessions].[sid] = @p1) [a] INNER JOIN [work shops] [b] ON [a].[JoinId] = [b].[id]" },
+                    { "sessions->work__shops->participants__table", "SELECT [a].[JoinId] [src_id], [b].[sid] AS [id],[b].[firstname] AS [firstname] FROM (SELECT DISTINCT [a].[id] AS JoinId FROM [work shops] [a] INNER JOIN (SELECT DISTINCT [workshopid] AS JoinId FROM [sessions] WHERE [sessions].[sid] = @p2) [b] ON [b].[JoinId] = [a].[id]) [a] INNER JOIN [participants table] [b] ON [a].[JoinId] = [b].[workshopid] ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY" },
                 });
         }
 

@@ -1,10 +1,12 @@
-﻿using System.Data.SqlClient;
+﻿using Microsoft.Data.SqlClient;
+using BifrostQL.Core.QueryModel;
 
 namespace BifrostQL.Core.Model
 {
     public interface IDbConnFactory
     {
         SqlConnection GetConnection();
+        ISqlDialect Dialect { get; }
     }
 
     public class DbConnFactory : IDbConnFactory
@@ -14,6 +16,8 @@ namespace BifrostQL.Core.Model
         {
             _connectionString = connectionString;
         }
+
+        public ISqlDialect Dialect => SqlServerDialect.Instance;
 
         public SqlConnection GetConnection()
         {

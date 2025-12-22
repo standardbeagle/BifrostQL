@@ -43,12 +43,12 @@ namespace BifrostQL.Server
             app.IfFluent(useAuth, a => a.UseAuthentication().UseCookiePolicy());
             app.IfFluent(useAuth, a => a.UseUiAuth());
             app.UseGraphQL<BifrostHttpMiddleware>(endpointPath);
-            app.UseGraphQLPlayground(playgroundPath,
-                new GraphQL.Server.Ui.Playground.PlaygroundOptions
+            app.UseGraphQLGraphiQL(playgroundPath,
+                new GraphQL.Server.Ui.GraphiQL.GraphiQLOptions
                 {
                     GraphQLEndPoint = endpointPath,
                     SubscriptionsEndPoint = endpointPath,
-                    RequestCredentials = GraphQL.Server.Ui.Playground.RequestCredentials.SameOrigin,
+                    RequestCredentials = GraphQL.Server.Ui.GraphiQL.RequestCredentials.SameOrigin,
                 });
             return app;
         }
@@ -109,9 +109,9 @@ namespace BifrostQL.Server
             return this;
         }
 
-        public bool IsUsingAuth => !_bifrostConfig.GetValue<bool>("DisableAuth", true);
-        public string EndpointPath => _bifrostConfig?.GetValue<string>("Path", "/graphql")!;
-        public string PlaygroundPath => _bifrostConfig?.GetValue<string>("Playground", "/")!;
+        public bool IsUsingAuth => _bifrostConfig is not null && !_bifrostConfig.GetValue<bool>("DisableAuth", true);
+        public string EndpointPath => _bifrostConfig?.GetValue<string>("Path", "/graphql") ?? "/graphql";
+        public string PlaygroundPath => _bifrostConfig?.GetValue<string>("Playground", "/") ?? "/";
 
         public void ConfigureServices(IServiceCollection services)
         {
@@ -159,7 +159,7 @@ namespace BifrostQL.Server
                     .IfFluent(isAuthEnabled, b => b.AddUserContextBuilder(context => new BifrostContext(context)))
             );
 
-            if (isAuthEnabled)
+            if (isAuthEnabled && _jwtConfig is not null)
             {
                 var scopes = new HashSet<string>() { "openid" };
                 foreach (var scope in (_jwtConfig["Scopes"] ?? "").Split(" "))

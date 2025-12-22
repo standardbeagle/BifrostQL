@@ -4,7 +4,7 @@ using GraphQL.Types;
 using GraphQL;
 using System;
 using System.Collections.Generic;
-using System.Data.SqlClient;
+using Microsoft.Data.SqlClient;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -39,7 +39,7 @@ namespace BifrostQL.Core.Resolvers
             var table = _objectQueries.First(t => (alias != null && t.Alias == alias) || (alias == null && t.GraphQlName == graphqlName));
 
             var conFactory = (IDbConnFactory)(context.InputExtensions["connFactory"] ?? throw new InvalidDataException("connection factory is not configured"));
-            var data = LoadData(table, conFactory);
+            var data = LoadDataParameterized(table, conFactory);
             var count = data.First(kv => kv.Key == (table.KeyName +  "=>count")).Value.data[0][0] as int?;
 
             if (table.IncludeResult)
@@ -65,18 +65,37 @@ namespace BifrostQL.Core.Resolvers
             return newTables;
         }
 
-        private IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> LoadData(GqlObjectQuery query, IDbConnFactory connFactory)
+        private IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> LoadDataParameterized(GqlObjectQuery query, IDbConnFactory connFactory)
         {
-            var sqlList = new Dictionary<string, string>();
-            query.AddSql(_dbModel, sqlList);
+            var dialect = connFactory.Dialect;
+            var parameters = new QueryModel.SqlParameterCollection();
+            var sqlList = new Dictionary<string, ParameterizedSql>();
+            query.AddSqlParameterized(_dbModel, dialect, sqlList, parameters);
+
             var resultNames = sqlList.Keys.ToArray();
-            string sql = string.Join(";\r\n", sqlList.Values);
+            string sql = string.Join(";\r\n", sqlList.Values.Select(p => p.Sql));
 
             using var conn = connFactory.GetConnection();
             try
             {
                 conn.Open();
                 var command = new SqlCommand(sql, conn);
+
+                // Add all parameters
+                foreach (var param in parameters.Parameters)
+                {
+                    var sqlParam = new SqlParameter
+                    {
+                        ParameterName = param.Name,
+                        Value = param.Value ?? DBNull.Value
+                    };
+                    if (param.DbType != null)
+                    {
+                        sqlParam.DbType = (System.Data.DbType)Enum.Parse(typeof(System.Data.DbType), param.DbType);
+                    }
+                    command.Parameters.Add(sqlParam);
+                }
+
                 using var reader = command.ExecuteReader();
                 var results = new Dictionary<string, (IDictionary<string, int> index, IList<object?[]> data)>();
                 var resultIndex = 0;

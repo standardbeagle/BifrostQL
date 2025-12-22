@@ -2,7 +2,7 @@
 using Microsoft.Extensions.Configuration;
 using Pluralize.NET.Core;
 using System.Data;
-using System.Data.SqlClient;
+using Microsoft.Data.SqlClient;
 
 namespace BifrostQL.Model
 {

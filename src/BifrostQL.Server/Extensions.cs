@@ -129,7 +129,7 @@ namespace BifrostQL.Server
                 var schema = DbSchema.FromModel(model);
                 return new Inputs(new Dictionary<string, object?>
                 {
-                    { "model", model}, 
+                    { "model", model},
                     { "connFactory", connFactory },
                     { "dbSchema", schema },
                 });
@@ -148,7 +148,8 @@ namespace BifrostQL.Server
 
             var grapQlBuilder = services.AddGraphQL(b => b
                     .AddSystemTextJson()
-                    .AddBifrostErrorLogging(options => {
+                    .AddBifrostErrorLogging(options =>
+                    {
                         // Get logging configuration from BifrostQL section if it exists
                         var loggingConfig = _bifrostConfig?.GetSection("Logging");
                         options.EnableConsole = loggingConfig?.GetValue("EnableConsole", true) ?? true;

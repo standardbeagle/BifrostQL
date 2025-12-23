@@ -33,7 +33,7 @@ namespace BifrostQL.Core.Resolvers
                     .Select(t =>
                     {
                         var labelColumnName = t.GetMetadataValue("label");
-                        var labelColumn = t.Columns.FirstOrDefault(c => Equal(c.DbName, labelColumnName) ) ?? t.Columns.First();
+                        var labelColumn = t.Columns.FirstOrDefault(c => Equal(c.DbName, labelColumnName)) ?? t.Columns.First();
                         return new
                         {
                             Schema = t.TableSchema,

@@ -19,9 +19,9 @@ namespace BifrostQL.Server.Logging
                 throw new ArgumentNullException(nameof(builder));
 
             // Add logging services
-            var services = builder.Services as IServiceCollection 
+            var services = builder.Services as IServiceCollection
                 ?? throw new InvalidOperationException("GraphQLBuilder.Services must be of type IServiceCollection");
-            
+
             services.AddBifrostLogging(configureOptions);
 
             // Add middleware for error handling

@@ -1,0 +1,264 @@
+using BifrostQL.Core.Model;
+using BifrostQL.Model;
+
+namespace BifrostQL.Core.QueryModel.TestFixtures;
+
+/// <summary>
+/// Fluent builder for creating test IDbModel instances with minimal setup.
+/// Reduces test setup from 100+ lines to ~10 lines.
+/// </summary>
+public sealed class DbModelTestFixture
+{
+    private readonly Dictionary<string, DbTable> _tables = new();
+    private readonly List<(string childTable, string childColumn, string parentTable, string parentColumn, string linkName)> _singleLinks = new();
+    private readonly List<(string parentTable, string parentColumn, string childTable, string childColumn, string linkName)> _multiLinks = new();
+
+    public static DbModelTestFixture Create() => new();
+
+    public DbModelTestFixture WithTable(string tableName, Action<TableBuilder> configure)
+    {
+        var builder = new TableBuilder(tableName);
+        configure(builder);
+        _tables[tableName] = builder.Build();
+        return this;
+    }
+
+    public DbModelTestFixture WithSingleLink(string childTable, string childColumn, string parentTable, string parentColumn, string? linkName = null)
+    {
+        _singleLinks.Add((childTable, childColumn, parentTable, parentColumn, linkName ?? parentTable));
+        return this;
+    }
+
+    public DbModelTestFixture WithMultiLink(string parentTable, string parentColumn, string childTable, string childColumn, string? linkName = null)
+    {
+        _multiLinks.Add((parentTable, parentColumn, childTable, childColumn, linkName ?? childTable));
+        return this;
+    }
+
+    public IDbModel Build()
+    {
+        // Connect single links (child -> parent: ManyToOne)
+        foreach (var (childTable, childColumn, parentTable, parentColumn, linkName) in _singleLinks)
+        {
+            if (!_tables.TryGetValue(childTable, out var child))
+                throw new InvalidOperationException($"Child table '{childTable}' not found");
+            if (!_tables.TryGetValue(parentTable, out var parent))
+                throw new InvalidOperationException($"Parent table '{parentTable}' not found");
+
+            var link = new TableLinkDto
+            {
+                Name = $"{childTable}->{parentTable}",
+                ChildTable = child,
+                ChildId = child.ColumnLookup[childColumn],
+                ParentTable = parent,
+                ParentId = parent.ColumnLookup[parentColumn],
+            };
+            child.SingleLinks[linkName] = link;
+        }
+
+        // Connect multi links (parent -> children: OneToMany)
+        foreach (var (parentTable, parentColumn, childTable, childColumn, linkName) in _multiLinks)
+        {
+            if (!_tables.TryGetValue(parentTable, out var parent))
+                throw new InvalidOperationException($"Parent table '{parentTable}' not found");
+            if (!_tables.TryGetValue(childTable, out var child))
+                throw new InvalidOperationException($"Child table '{childTable}' not found");
+
+            var link = new TableLinkDto
+            {
+                Name = $"{parentTable}->{childTable}",
+                ParentTable = parent,
+                ParentId = parent.ColumnLookup[parentColumn],
+                ChildTable = child,
+                ChildId = child.ColumnLookup[childColumn],
+            };
+            parent.MultiLinks[linkName] = link;
+        }
+
+        return new TestDbModel(_tables);
+    }
+
+    public sealed class TableBuilder
+    {
+        private readonly string _tableName;
+        private string? _schema;
+        private string? _graphQlName;
+        private readonly Dictionary<string, ColumnDto> _columns = new();
+
+        public TableBuilder(string tableName)
+        {
+            _tableName = tableName;
+        }
+
+        public TableBuilder WithSchema(string schema)
+        {
+            _schema = schema;
+            return this;
+        }
+
+        public TableBuilder WithGraphQlName(string name)
+        {
+            _graphQlName = name;
+            return this;
+        }
+
+        public TableBuilder WithColumn(string name, string dataType = "nvarchar", bool isPrimaryKey = false, bool isNullable = false, string? graphQlName = null)
+        {
+            _columns[name] = new ColumnDto
+            {
+                ColumnName = name,
+                GraphQlName = graphQlName ?? name,
+                DataType = dataType,
+                IsPrimaryKey = isPrimaryKey,
+                IsNullable = isNullable,
+            };
+            return this;
+        }
+
+        public TableBuilder WithPrimaryKey(string name, string dataType = "int")
+        {
+            return WithColumn(name, dataType, isPrimaryKey: true);
+        }
+
+        public DbTable Build()
+        {
+            return new DbTable
+            {
+                DbName = _tableName,
+                GraphQlName = _graphQlName ?? _tableName,
+                TableSchema = _schema ?? string.Empty,
+                ColumnLookup = _columns,
+                GraphQlLookup = _columns.Values.ToDictionary(c => c.GraphQlName, c => c),
+            };
+        }
+    }
+
+    private sealed class TestDbModel : IDbModel
+    {
+        private readonly Dictionary<string, DbTable> _tables;
+        private readonly Dictionary<string, DbTable> _tablesByGraphQlName;
+
+        public TestDbModel(Dictionary<string, DbTable> tables)
+        {
+            _tables = tables;
+            _tablesByGraphQlName = tables.Values.ToDictionary(t => t.GraphQlName, t => t);
+            Tables = tables.Values.Cast<IDbTable>().ToList();
+            Metadata = new Dictionary<string, object?>();
+        }
+
+        public IReadOnlyCollection<IDbTable> Tables { get; }
+        public IDictionary<string, object?> Metadata { get; init; }
+
+        public string? GetMetadataValue(string property) =>
+            Metadata.TryGetValue(property, out var v) ? v?.ToString() : null;
+
+        public bool GetMetadataBool(string property, bool defaultValue) =>
+            (Metadata.TryGetValue(property, out var v) && v?.ToString() == null) ? defaultValue : v?.ToString() == "true";
+
+        public IDbTable GetTableByFullGraphQlName(string graphQlName)
+        {
+            if (_tablesByGraphQlName.TryGetValue(graphQlName, out var table))
+                return table;
+            throw new KeyNotFoundException($"Table with GraphQL name '{graphQlName}' not found");
+        }
+
+        public IDbTable GetTableFromDbName(string dbName)
+        {
+            if (_tables.TryGetValue(dbName, out var table))
+                return table;
+            throw new KeyNotFoundException($"Table with DB name '{dbName}' not found");
+        }
+    }
+}
+
+/// <summary>
+/// Predefined test fixtures for common scenarios
+/// </summary>
+public static class StandardTestFixtures
+{
+    /// <summary>
+    /// Simple fixture with Users table
+    /// </summary>
+    public static IDbModel SimpleUsers() => DbModelTestFixture.Create()
+        .WithTable("Users", t => t
+            .WithPrimaryKey("Id")
+            .WithColumn("Name", "nvarchar")
+            .WithColumn("Email", "nvarchar")
+            .WithColumn("CreatedAt", "datetime2"))
+        .Build();
+
+    /// <summary>
+    /// Users with Orders (OneToMany relationship)
+    /// </summary>
+    public static IDbModel UsersWithOrders() => DbModelTestFixture.Create()
+        .WithTable("Users", t => t
+            .WithPrimaryKey("Id")
+            .WithColumn("Name", "nvarchar")
+            .WithColumn("Email", "nvarchar"))
+        .WithTable("Orders", t => t
+            .WithPrimaryKey("Id")
+            .WithColumn("UserId", "int")
+            .WithColumn("Total", "decimal")
+            .WithColumn("Status", "nvarchar"))
+        .WithSingleLink("Orders", "UserId", "Users", "Id", "user")
+        .WithMultiLink("Users", "Id", "Orders", "UserId", "orders")
+        .Build();
+
+    /// <summary>
+    /// Three-level hierarchy: Companies -> Departments -> Employees
+    /// </summary>
+    public static IDbModel CompanyHierarchy() => DbModelTestFixture.Create()
+        .WithTable("Companies", t => t
+            .WithPrimaryKey("Id")
+            .WithColumn("Name", "nvarchar")
+            .WithColumn("Industry", "nvarchar"))
+        .WithTable("Departments", t => t
+            .WithPrimaryKey("Id")
+            .WithColumn("CompanyId", "int")
+            .WithColumn("Name", "nvarchar")
+            .WithColumn("Budget", "decimal"))
+        .WithTable("Employees", t => t
+            .WithPrimaryKey("Id")
+            .WithColumn("DepartmentId", "int")
+            .WithColumn("Name", "nvarchar")
+            .WithColumn("Salary", "decimal")
+            .WithColumn("HireDate", "datetime2"))
+        .WithSingleLink("Departments", "CompanyId", "Companies", "Id", "company")
+        .WithSingleLink("Employees", "DepartmentId", "Departments", "Id", "department")
+        .WithMultiLink("Companies", "Id", "Departments", "CompanyId", "departments")
+        .WithMultiLink("Departments", "Id", "Employees", "DepartmentId", "employees")
+        .Build();
+
+    /// <summary>
+    /// E-commerce model: Products, Categories, Orders, OrderItems
+    /// </summary>
+    public static IDbModel ECommerce() => DbModelTestFixture.Create()
+        .WithTable("Categories", t => t
+            .WithPrimaryKey("Id")
+            .WithColumn("Name", "nvarchar")
+            .WithColumn("Description", "nvarchar"))
+        .WithTable("Products", t => t
+            .WithPrimaryKey("Id")
+            .WithColumn("CategoryId", "int")
+            .WithColumn("Name", "nvarchar")
+            .WithColumn("Price", "decimal")
+            .WithColumn("Stock", "int"))
+        .WithTable("Orders", t => t
+            .WithPrimaryKey("Id")
+            .WithColumn("CustomerId", "int")
+            .WithColumn("OrderDate", "datetime2")
+            .WithColumn("Total", "decimal")
+            .WithColumn("Status", "nvarchar"))
+        .WithTable("OrderItems", t => t
+            .WithPrimaryKey("Id")
+            .WithColumn("OrderId", "int")
+            .WithColumn("ProductId", "int")
+            .WithColumn("Quantity", "int")
+            .WithColumn("UnitPrice", "decimal"))
+        .WithSingleLink("Products", "CategoryId", "Categories", "Id", "category")
+        .WithSingleLink("OrderItems", "OrderId", "Orders", "Id", "order")
+        .WithSingleLink("OrderItems", "ProductId", "Products", "Id", "product")
+        .WithMultiLink("Categories", "Id", "Products", "CategoryId", "products")
+        .WithMultiLink("Orders", "Id", "OrderItems", "OrderId", "items")
+        .Build();
+}

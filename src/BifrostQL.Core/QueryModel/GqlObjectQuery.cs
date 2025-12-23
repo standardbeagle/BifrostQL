@@ -191,7 +191,7 @@ namespace BifrostQL.Core.QueryModel
                 }
                 throw new ExecutionError($"Unable to find join {link.GraphQlName} on table {TableName}");
             }
-            foreach (var join in RecurseJoins)
+            foreach (var join in Joins)
             {
                 join.ConnectedTable.ConnectLinks(dbModel);
             }

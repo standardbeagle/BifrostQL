@@ -166,7 +166,7 @@ namespace BifrostQL.Core.QueryModel
                 var matched = false;
                 if (currentTable.MultiLinks.TryGetValue(linkName, out var multiLink))
                 {
-                    links.Add((LinkDirection.OneToMany , multiLink));
+                    links.Add((LinkDirection.OneToMany, multiLink));
                     currentTable = multiLink.ChildTable;
                     matched = true;
                 }

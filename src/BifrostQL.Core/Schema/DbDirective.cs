@@ -11,7 +11,7 @@ namespace BifrostQL.Core.Schema
 {
     internal class DbDirective : Directive
     {
-        public DbDirective() : base("Db",DirectiveLocation.FieldDefinition, DirectiveLocation.InputFieldDefinition )
+        public DbDirective() : base("Db", DirectiveLocation.FieldDefinition, DirectiveLocation.InputFieldDefinition)
         {
             Description = "Meta data from the database schema such as the name in the database, the type, etc.";
             Arguments = new QueryArguments()

@@ -57,7 +57,7 @@ namespace BifrostQL.Core.Model
         public IDictionary<string, TableLinkDto> SingleLinks { get; init; } = new Dictionary<string, TableLinkDto>(StringComparer.InvariantCultureIgnoreCase);
         public IDictionary<string, TableLinkDto> MultiLinks { get; init; } = new Dictionary<string, TableLinkDto>(StringComparer.InvariantCultureIgnoreCase);
         public IEnumerable<ColumnDto> KeyColumns => Columns.Where(c => c.IsPrimaryKey);
-        public string DbTableRef => string.IsNullOrWhiteSpace(TableSchema) ? $"[{DbName}]" :  $"[{TableSchema}].[{DbName}]";
+        public string DbTableRef => string.IsNullOrWhiteSpace(TableSchema) ? $"[{DbName}]" : $"[{TableSchema}].[{DbName}]";
 
         public override string ToString()
         {

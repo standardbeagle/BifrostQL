@@ -10,7 +10,7 @@ using System.Collections.Generic;
 
 namespace BifrostQL.Server.Logging
 {
-    public class BifrostLoggingConfiguration 
+    public class BifrostLoggingConfiguration
     {
         public string? LogFilePath { get; set; }
         public LogLevel MinimumLevel { get; set; } = LogLevel.Information;
@@ -18,7 +18,7 @@ namespace BifrostQL.Server.Logging
         public bool EnableFile { get; set; } = true;
     }
 
-    public class BifrostLoggingModule 
+    public class BifrostLoggingModule
     {
         private readonly ILogger<BifrostLoggingModule> _logger;
         private readonly BifrostLoggingConfiguration _config;

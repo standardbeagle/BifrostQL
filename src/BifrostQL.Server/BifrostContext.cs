@@ -5,7 +5,7 @@ namespace BifrostQL.Server
 {
     internal class BifrostContext : Dictionary<string, object?>
     {
-        public ClaimsPrincipal? User { get; init;  }
+        public ClaimsPrincipal? User { get; init; }
 
         public BifrostContext(HttpContext context)
         {
@@ -16,7 +16,7 @@ namespace BifrostQL.Server
             id ??= context.User.FindFirstValue("sub");
             Add("id", id ?? context.User?.Identity?.Name ?? string.Empty);
             Add("user", context.User);
-            foreach(var g in context.User!.Claims.GroupBy(c => c.Type)) 
+            foreach (var g in context.User!.Claims.GroupBy(c => c.Type))
             {
                 Add(g.Key, g.Select(c => c.Value).ToArray());
             }

@@ -27,8 +27,9 @@ namespace BifrostQL.Core.Schema
     {
         private T? _schema;
         private readonly Func<T> _loader;
-        public Cache(Func<T> loader) {
-            _loader= loader;
+        public Cache(Func<T> loader)
+        {
+            _loader = loader;
         }
 
         public T Value => _schema ??= _loader();

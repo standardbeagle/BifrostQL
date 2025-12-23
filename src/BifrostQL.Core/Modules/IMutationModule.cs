@@ -46,7 +46,7 @@ namespace BifrostQL.Core.Modules
 
         public void OnSave(IResolveFieldContext context)
         {
-            foreach(var module in Modules)
+            foreach (var module in Modules)
             {
                 module.OnSave(context);
             }

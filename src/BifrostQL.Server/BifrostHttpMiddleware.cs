@@ -46,7 +46,7 @@ namespace BifrostQL.Server
             options.Schema = (ISchema)(sharedExtensions["dbSchema"] ?? throw new InvalidDataException("dbSchema not configured"));
 
             options.Extensions = Combine(
-                sharedExtensions, 
+                sharedExtensions,
                 new Dictionary<string, object?> { { "tableReaderFactory", new SqlExecutionManager(model, options.Schema) } }
             );
             var result = _documentExecutor.ExecuteAsync(options);
@@ -56,7 +56,7 @@ namespace BifrostQL.Server
         public Inputs Combine(IReadOnlyDictionary<string, object?> input1, IReadOnlyDictionary<string, object?> input2)
         {
             var dict = new Dictionary<string, object?>();
-            foreach(var kv in input1)
+            foreach (var kv in input1)
             {
                 dict.Add(kv.Key, kv.Value);
             }

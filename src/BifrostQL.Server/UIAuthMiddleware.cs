@@ -10,15 +10,17 @@ namespace BifrostQL.Server
             {
                 if ((context.User?.Identity?.IsAuthenticated ?? false) == false)
                 {
-                    await context.ChallengeAsync("oauth2", new AuthenticationProperties() { 
+                    await context.ChallengeAsync("oauth2", new AuthenticationProperties()
+                    {
                         RedirectUri = "/"
                     });
-                } else
+                }
+                else
                 {
                     await next.Invoke(context);
                 }
             });
             return app;
-        } 
+        }
     }
 }

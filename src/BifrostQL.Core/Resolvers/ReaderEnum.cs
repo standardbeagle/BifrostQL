@@ -21,7 +21,7 @@ namespace BifrostQL.Core.Resolvers
             var name = context.FieldAst.Name.StringValue;
             var alias = context.FieldAst.Alias?.Name?.StringValue;
             var found = table.index.TryGetValue(alias ?? name, out var index);
-            if (found) 
+            if (found)
                 return ValueTask.FromResult(DbConvert(table.data[row][index]));
             return GetDataForMissingColumn(context, table, row);
         }

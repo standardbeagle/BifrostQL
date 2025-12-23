@@ -352,7 +352,7 @@ namespace BifrostQL.Core.QueryModel
                 });
         }
 
-        [Fact(Skip="implement paging on linked tables.")]
+        [Fact(Skip = "implement paging on linked tables.")]
         public async Task PageBaseQuerySuccess()
         {
             var ctx = new SqlContext();
@@ -470,7 +470,8 @@ namespace BifrostQL.Core.QueryModel
                 { "workshopid", new ColumnDto { TableName = "sessions", ColumnName= "workshopid", IsPrimaryKey= false } },
                 { "percentage%", new ColumnDto { TableName = "sessions", ColumnName= "percentage%", IsPrimaryKey= false } },
             };
-            var sessions = new DbTable {
+            var sessions = new DbTable
+            {
                 TableSchema = "dbo",
                 DbName = "sessions",
                 GraphQlName = "sessions",

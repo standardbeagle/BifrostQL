@@ -40,7 +40,7 @@ namespace BifrostQL.Core.Resolvers
 
             var conFactory = (IDbConnFactory)(context.InputExtensions["connFactory"] ?? throw new InvalidDataException("connection factory is not configured"));
             var data = LoadDataParameterized(table, conFactory);
-            var count = data.First(kv => kv.Key == (table.KeyName +  "=>count")).Value.data[0][0] as int?;
+            var count = data.First(kv => kv.Key == (table.KeyName + "=>count")).Value.data[0][0] as int?;
 
             if (table.IncludeResult)
             {

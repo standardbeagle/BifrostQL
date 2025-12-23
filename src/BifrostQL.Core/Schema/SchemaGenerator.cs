@@ -80,11 +80,11 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine("isDeletedColumn: Boolean!");
             builder.AppendLine("metadata: [dbMetadataSchema!]!");
             builder.AppendLine("}");
-            
+
             builder.AppendLine("type dbMetadataSchema { key: String! value: String! }");
 
             builder.AppendLine("enum AggregateOperations {");
-            builder.AppendLine( string.Join(',', Enum.GetNames(typeof (AggregateOperationType))));
+            builder.AppendLine(string.Join(',', Enum.GetNames(typeof(AggregateOperationType))));
             builder.AppendLine("}");
 
             return builder.ToString();

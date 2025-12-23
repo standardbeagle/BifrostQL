@@ -62,14 +62,20 @@ namespace BifrostQL.Core.Model
                 idMatch.table.SingleLinks.Add(idMatch.parent.GraphQlName,
                     new TableLinkDto
                     {
-                        Name = idMatch.parent.GraphQlName, ChildId = idMatch.column,
-                        ParentId = idMatch.parent.KeyColumns.First(), ChildTable = idMatch.table, ParentTable = idMatch.parent
+                        Name = idMatch.parent.GraphQlName,
+                        ChildId = idMatch.column,
+                        ParentId = idMatch.parent.KeyColumns.First(),
+                        ChildTable = idMatch.table,
+                        ParentTable = idMatch.parent
                     });
                 idMatch.parent.MultiLinks.Add(idMatch.table.GraphQlName,
                     new TableLinkDto
                     {
-                        Name = idMatch.table.GraphQlName, ChildId = idMatch.column,
-                        ParentId = idMatch.parent.KeyColumns.First(), ChildTable = idMatch.table, ParentTable = idMatch.parent
+                        Name = idMatch.table.GraphQlName,
+                        ChildId = idMatch.column,
+                        ParentId = idMatch.parent.KeyColumns.First(),
+                        ChildTable = idMatch.table,
+                        ParentTable = idMatch.parent
                     });
             }
         }

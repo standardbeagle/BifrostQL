@@ -14,7 +14,8 @@ namespace BifrostQL.Core.QueryModel
     public sealed class SqlVisitorToSqlDataTableTest
     {
         [Fact]
-        public async Task BasicTestSuccess() {
+        public async Task BasicTestSuccess()
+        {
             var ctx = new SqlContext();
             var sut = new SqlVisitor();
 
@@ -24,7 +25,8 @@ namespace BifrostQL.Core.QueryModel
 
             tables.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(
-                    new { 
+                    new
+                    {
                         TableName = "work shops",
                         Limit = (int?)null,
                         Offset = (int?)null,
@@ -91,7 +93,7 @@ namespace BifrostQL.Core.QueryModel
                         TableName = "work shops",
                         Limit = 10,
                         Offset = 12,
-                        Sort = new [] { "id_desc", "number_asc" },
+                        Sort = new[] { "id_desc", "number_asc" },
                         Joins = new object[] { },
                         Links = new object[] { },
                         ScalarColumns = new[] { new GqlObjectColumn("id", "id"), new GqlObjectColumn("number", "number") },
@@ -185,11 +187,11 @@ namespace BifrostQL.Core.QueryModel
                     new
                     {
                         TableName = "work shops",
-                        Filter = new { ColumnName =  "id", Next = new { RelationName = "_eq", Value = 10 }},
+                        Filter = new { ColumnName = "id", Next = new { RelationName = "_eq", Value = 10 } },
                         Limit = (int?)null,
                         Offset = (int?)null,
                         Sort = new string[] { },
-                        Joins = new object[] {},
+                        Joins = new object[] { },
                         Links = new object[] { },
                         ScalarColumns = new[] { new GqlObjectColumn("id", "id"), new GqlObjectColumn("number", "number") },
                     });
@@ -210,7 +212,7 @@ namespace BifrostQL.Core.QueryModel
                     new
                     {
                         TableName = "sessions",
-                        Filter = new { ColumnName = "workshop", Next = new { ColumnName = "number", Next = new { RelationName = "_eq", Value = "10-AA" } }},
+                        Filter = new { ColumnName = "workshop", Next = new { ColumnName = "number", Next = new { RelationName = "_eq", Value = "10-AA" } } },
                         Limit = (int?)null,
                         Offset = (int?)null,
                         Sort = new string[] { },
@@ -240,7 +242,7 @@ namespace BifrostQL.Core.QueryModel
                         Offset = (int?)null,
                         Sort = new string[] { },
                         Path = "work__shops",
-                        Joins = new [] {
+                        Joins = new[] {
                             new {
                                 Name = "_join_sessions",
                                 FromTable = new { TableName = "work shops"},

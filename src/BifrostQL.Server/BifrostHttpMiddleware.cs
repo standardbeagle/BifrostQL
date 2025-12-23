@@ -1,4 +1,5 @@
-﻿using BifrostQL.Core.Model;
+using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
 using BifrostQL.Model;
@@ -39,6 +40,7 @@ namespace BifrostQL.Server
             var contextAccessor = options.RequestServices!.GetRequiredService<IHttpContextAccessor>();
             var context = contextAccessor.HttpContext;
             var extensionsLoader = options.RequestServices!.GetRequiredService<PathCache<Inputs>>();
+            var transformerService = options.RequestServices!.GetRequiredService<IQueryTransformerService>();
 
             PathString path = context?.Request?.Path ?? throw new ArgumentNullException("path", "HttpContext.Request has a null path or Request is null");
             var sharedExtensions = extensionsLoader.GetValue(path);
@@ -47,7 +49,7 @@ namespace BifrostQL.Server
 
             options.Extensions = Combine(
                 sharedExtensions,
-                new Dictionary<string, object?> { { "tableReaderFactory", new SqlExecutionManager(model, options.Schema) } }
+                new Dictionary<string, object?> { { "tableReaderFactory", new SqlExecutionManager(model, options.Schema, transformerService) } }
             );
             var result = _documentExecutor.ExecuteAsync(options);
             return result;

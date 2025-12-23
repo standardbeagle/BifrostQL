@@ -84,6 +84,7 @@ public sealed class DbModelTestFixture
         private string? _schema;
         private string? _graphQlName;
         private readonly Dictionary<string, ColumnDto> _columns = new();
+        private readonly Dictionary<string, object?> _metadata = new();
 
         public TableBuilder(string tableName)
         {
@@ -99,6 +100,12 @@ public sealed class DbModelTestFixture
         public TableBuilder WithGraphQlName(string name)
         {
             _graphQlName = name;
+            return this;
+        }
+
+        public TableBuilder WithMetadata(string key, object? value)
+        {
+            _metadata[key] = value;
             return this;
         }
 
@@ -122,7 +129,7 @@ public sealed class DbModelTestFixture
 
         public DbTable Build()
         {
-            return new DbTable
+            var table = new DbTable
             {
                 DbName = _tableName,
                 GraphQlName = _graphQlName ?? _tableName,
@@ -130,6 +137,11 @@ public sealed class DbModelTestFixture
                 ColumnLookup = _columns,
                 GraphQlLookup = _columns.Values.ToDictionary(c => c.GraphQlName, c => c),
             };
+            foreach (var (key, value) in _metadata)
+            {
+                table.Metadata[key] = value;
+            }
+            return table;
         }
     }
 

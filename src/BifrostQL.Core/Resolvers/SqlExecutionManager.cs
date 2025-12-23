@@ -1,4 +1,5 @@
-﻿using BifrostQL.Core.Model;
+using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
 using GraphQL.Types;
 using GraphQL;
@@ -21,11 +22,18 @@ namespace BifrostQL.Core.Resolvers
         private List<GqlObjectQuery>? _objectQueries = null;
         private readonly IDbModel _dbModel;
         private readonly ISchema _schema;
+        private readonly IQueryTransformerService _transformerService;
 
         public SqlExecutionManager(IDbModel dbModel, ISchema schema)
+            : this(dbModel, schema, NullQueryTransformerService.Instance)
+        {
+        }
+
+        public SqlExecutionManager(IDbModel dbModel, ISchema schema, IQueryTransformerService transformerService)
         {
             _dbModel = dbModel;
             _schema = schema;
+            _transformerService = transformerService;
         }
         public async ValueTask<object?> ResolveAsync(IResolveFieldContext context, IDbTable dbTable)
         {
@@ -37,6 +45,10 @@ namespace BifrostQL.Core.Resolvers
 
             _objectQueries ??= await GetAllObjectQueries(context);
             var table = _objectQueries.First(t => (alias != null && t.Alias == alias) || (alias == null && t.GraphQlName == graphqlName));
+
+            // Apply filter transformers (tenant isolation, soft-delete, etc.)
+            var userContext = context.UserContext as IDictionary<string, object?> ?? new Dictionary<string, object?>();
+            _transformerService.ApplyTransformers(table, _dbModel, userContext);
 
             var conFactory = (IDbConnFactory)(context.InputExtensions["connFactory"] ?? throw new InvalidDataException("connection factory is not configured"));
             var data = LoadDataParameterized(table, conFactory);

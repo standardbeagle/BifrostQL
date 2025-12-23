@@ -12,7 +12,7 @@ namespace BifrostQL.Core.QueryModel
     }
     public sealed class TableFilter
     {
-        private TableFilter() { }
+        internal TableFilter() { }
         public string? TableName { get; init; }
         public string ColumnName { get; init; } = null!;
         public string RelationName { get; set; } = null!;

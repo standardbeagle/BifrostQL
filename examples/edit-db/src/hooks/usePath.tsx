@@ -7,13 +7,45 @@ interface NavContext {
     history: string[];
     location: number;
 }
+interface RouteParams {
+    [key: string]: string | undefined;
+}
+
 interface PathData {
     path: string;
-    data: any;
+    data: RouteParams;
     hash: string;
     query: string;
 }
+
 interface RouteContext extends PathData {
+}
+
+interface NavigationState extends NavContext {
+    navigate: (path: string) => void;
+    back: (count?: number) => void;
+    forward: (count?: number) => void;
+    hasBack: boolean;
+}
+
+interface SearchParamsResult {
+    search: URLSearchParams;
+    hash: string;
+}
+
+interface RouteError {
+    message?: string;
+    status?: number;
+}
+
+interface FlatRoute {
+    route: string;
+    element: ReactElement;
+}
+
+interface LinkProps extends React.AnchorHTMLAttributes<HTMLAnchorElement> {
+    to: string;
+    children?: ReactNode;
 }
 
 interface Action<T> {
@@ -24,8 +56,10 @@ interface Action<T> {
 const defaultState: NavContext = { path: '/', history: [], location: 0 };
 const defaultRoute: RouteContext = { path: '*', data: {}, hash: '', query: '' };
 
+type PathDispatchFn = (action: unknown) => void;
+
 const PathContext = createContext(defaultState);
-const PathDispatchContext = createContext<((x: any) => void) | null>(null);
+const PathDispatchContext = createContext<PathDispatchFn | null>(null);
 const RouteContext = createContext<RouteContext>(defaultRoute);
 
 const { navigate, back, forward } = createActions({
@@ -39,8 +73,9 @@ interface PathMatch extends PathData {
     remainer: string,
 }
 
-const reducer = handleActions({
-    NAVIGATE: (state: NavContext, action: Action<any>): NavContext => {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const reducer = handleActions<NavContext, any>({
+    NAVIGATE: (state: NavContext, action: Action<string>): NavContext => {
         let { history, location } = state;
         if (location > 0) {
             history = history.slice(location)
@@ -88,38 +123,38 @@ export function useHistory(): string[] {
 }
 
 export function useNavigate(): (url: string) => void {
-    const dispatch = useContext(PathDispatchContext) as (x: any) => void;
-    return (path: string) => dispatch(navigate(path));
+    const dispatch = useContext(PathDispatchContext);
+    return (path: string) => dispatch?.(navigate(path));
 }
 
-export function useNavigation(): any {
-    const dispatch = useContext(PathDispatchContext) as (x: any) => void;
-    const pathState = useContext(PathContext) as NavContext;
+export function useNavigation(): NavigationState {
+    const dispatch = useContext(PathDispatchContext);
+    const pathState = useContext(PathContext);
     return {
-        navigate: (path: string) => dispatch(navigate(path)),
-        back: (count: number = 1) => dispatch(back(count)),
-        forward: (count: number = 1) => dispatch(forward(count)),
+        navigate: (path: string) => dispatch?.(navigate(path)),
+        back: (count: number = 1) => dispatch?.(back(count)),
+        forward: (count: number = 1) => dispatch?.(forward(count)),
         hasBack: pathState.location < pathState.history.length - 1,
         ...pathState
     };
 }
 
-export function useParams(): any {
-    return useContext(RouteContext).data;
+export function useParams<T extends RouteParams = RouteParams>(): T {
+    return useContext(RouteContext).data as T;
 }
 
-export function useSearchParams(): any {
-    var { query, hash } = useContext(RouteContext);
+export function useSearchParams(): SearchParamsResult {
+    const { query, hash } = useContext(RouteContext);
     return { search: new URLSearchParams(query), hash };
 }
 
-export function useRouteError(): any {
+export function useRouteError(): RouteError {
     return {};
 }
 
-export function PathProvider({ path, children }: { path: string, children: any }) {
+export function PathProvider({ path, children }: { path: string, children: ReactNode }) {
     const initialState = !!path ? { path: path, history: [], location: 0 } : defaultState;
-    const [state, dispatch] = useReducer(reducer, initialState) as [NavContext, DispatchWithoutAction];
+    const [state, dispatch] = useReducer(reducer as React.Reducer<NavContext, unknown>, initialState);
 
     return (
         <PathContext.Provider value={state}>
@@ -132,8 +167,7 @@ export function PathProvider({ path, children }: { path: string, children: any }
     );
 }
 
-export const Link = forwardRef((props: any, ref: any) => {
-    const { to, children, ...rest } = props as { to: string, children: ReactElement[] };
+export const Link = forwardRef<HTMLAnchorElement, LinkProps>(({ to, children, ...rest }, ref) => {
     const navigate = useNavigate();
 
     const handleClick = (event: React.MouseEvent<HTMLAnchorElement, MouseEvent>) => {
@@ -143,7 +177,7 @@ export const Link = forwardRef((props: any, ref: any) => {
 
     return <a {...rest}
         href={to}
-        ref={ref as any}
+        ref={ref}
         onClick={handleClick} >
         {children}
     </a>;
@@ -153,8 +187,8 @@ export function Routes({ children }: { children: ReactNode }) {
     const routeContext = useContext(RouteContext);
     const pathContext = useContext(PathContext);
     const routes = flatRoutes(children, routeContext.path)
-        .map(r => [r, matchPath(r.route, pathContext.path)])
-        .filter(([r, match]) => match.isMatch);
+        .map((r): [FlatRoute, PathMatch] => [r, matchPath(r.route, pathContext.path)])
+        .filter(([, match]) => match.isMatch);
     return <>{ routes.map(([route, match], index) => {
         return (<RouteContext.Provider key={ index } value={{ ...match }}>{route.element}</RouteContext.Provider>);
     })}</>
@@ -164,8 +198,8 @@ export function Route({ path, element }: { path: string, element: ReactElement }
     return <></>;
 }
 
-function flatRoutes(children: ReactNode, base: string): any[] {
-    const result: any[] = [];
+function flatRoutes(children: ReactNode, base: string): FlatRoute[] {
+    const result: FlatRoute[] = [];
     Children.map(children, (element) => {
         if (!isValidElement(element)) return;
 
@@ -174,9 +208,10 @@ function flatRoutes(children: ReactNode, base: string): any[] {
             return;
         }
 
+        const props = element.props as { path: string; element: ReactElement };
         result.push({
-            route: combineRoutes(base, element.props.path),
-            element: element.props.element
+            route: combineRoutes(base, props.path),
+            element: props.element
         });
         return element;
     });
@@ -224,7 +259,7 @@ const matchPath = (route: string, path: string): PathMatch => {
         return { isMatch: false, remainer: "", data: {}, query: "", hash: "", path: "" };
     if (routeSegments.length < pathSegments.length && routeSegments.at(-1) !== "*")
         return { isMatch: false, remainer: "", data: {}, query: "", hash: "", path: "" };
-    let data: any = {};
+    let data: RouteParams = {};
     let query: string = "";
     let hash: string = "";
     for (let i = 0; i < routeSegments.length; ++i) {

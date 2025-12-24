@@ -7,8 +7,14 @@ export interface TableMetadata {
   [key: string]: any;
 }
 
+export interface LookupMetadata {
+  type: 'lookup';
+  id: string;
+  label: string;
+}
+
 export interface ColumnMetadata {
-  [key: string]: string;
+  [key: string]: string | LookupMetadata | undefined;
 }
 
 export interface Column {

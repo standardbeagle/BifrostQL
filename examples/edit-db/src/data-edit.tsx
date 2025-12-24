@@ -1,5 +1,5 @@
 import { gql, useMutation, useQuery } from "@apollo/client";
-import { ReactElement, useEffect, useMemo, useRef } from "react";
+import { FormEvent, ReactElement, useEffect, useMemo, useRef } from "react";
 import { useSchema } from "./hooks/useSchema";
 import { Link, useParams, useNavigate } from "./hooks/usePath";
 import './data-edit.scss';
@@ -10,10 +10,22 @@ const numericTypes = ["Int", "Int!", "Float", "Float!"];
 const booleanTypes = ["Boolean", "Boolean!"];
 const dateTypes = ["DateTime", "DateTime!"];
 
+interface DataEditRouteParams {
+    table?: string;
+    editid?: string;
+    [key: string]: string | undefined;
+}
+
 interface ColumnJoin {
     column: Column;
     join?: Join;
 }
+
+interface MutationResult {
+    [key: string]: unknown;
+}
+
+type DetailRecord = Record<string, string | number | boolean | undefined>;
 
 function useTable(schema: Schema, tableName: string) {
     return useMemo(() => {
@@ -45,23 +57,24 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
         { skip: !dataTable, variables: { id: +editid }, fetchPolicy: "network-only" }
     );
 
-    const [mutate, mutateState] = useMutation<any>(
+    const [mutate, mutateState] = useMutation<MutationResult>(
         updateMutation,
         {
             refetchQueries: [`Get${dataTable.name}`]
         }
     );
 
-    const [insertMutate, insertState] = useMutation<any>(
+    const [insertMutate, insertState] = useMutation<MutationResult>(
         insertMutation,
         {
             refetchQueries: [`Get${dataTable.name}`]
         }
     );
     useEffect(() => {
-        dialogRef?.current?.showModal();
-        return () => dialogRef?.current?.close();
-    });
+        const dialog = dialogRef.current;
+        dialog?.showModal();
+        return () => dialog?.close();
+    }, []);
 
     if (loading || !dataTable) return <div>Loading...</div>;
     if (error) return <div>Error: {error.message}</div>;
@@ -70,7 +83,7 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
 
     const value = (data?.value?.data?.at(0) ?? {});
 
-    const detail = Object.fromEntries(editColumns.map(({ column: c }: ColumnJoin) => {
+    const detail: DetailRecord = Object.fromEntries(editColumns.map(({ column: c }: ColumnJoin) => {
         if (dateTypes.some(t => t === c.paramType)) {
             const dateValue = value[c.name]?.split("T")?.[0];
             return [c.name, dateValue === '0001-01-01' ? '' : dateValue];
@@ -78,10 +91,11 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
         return [c.name, value[c.name]];
     }));
 
-    const onSubmit = (event: any) => {
+    const onSubmit = (_event: FormEvent<HTMLFormElement>) => {
         for (const { column: col } of editColumns) {
             if (numericTypes.some(t => t === col.paramType)) {
-                detail[col.name] = +detail[col.name];
+                const val = detail[col.name];
+                detail[col.name] = val !== undefined ? +val : undefined;
             }
             if (booleanTypes.some(t => t === col.paramType)) {
                 detail[col.name] = !!detail[col.name];
@@ -113,7 +127,6 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
         value: detail[ec.name],
         join
     }));
-    console.log({ editColumns, editFields, detail, dataTable, editid, isInsert });
 
     return <dialog className="editdb-dialog-edit" ref={dialogRef}>
         <form method="dialog" onSubmit={onSubmit}>
@@ -135,25 +148,25 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
 }
 
 export function DataEdit(): ReactElement {
-    const { table, editid } = useParams();
+    const { table, editid } = useParams<DataEditRouteParams>();
     const schema = useSchema();
 
     if (!table) return <div>Table missing</div>;
     if (schema.loading) return <div>Loading...</div>;
     if (schema.error) return <div>Error: {schema.error.message}</div>;
 
-    return <DataEditDetail table={table} schema={schema} editid={editid} />
+    return <DataEditDetail table={table} schema={schema} editid={editid ?? ''} />
 }
 
-function EditFields({ fields, detail }: { fields: EditFieldDef[], detail: any }): JSX.Element {
+function EditFields({ fields, detail }: { fields: EditFieldDef[], detail: DetailRecord }): JSX.Element {
     return (
         <ul className="editdb-dialog-edit__input-list">
-            {fields.map((field: any) => <EditField key={field.name} field={field} detail={detail} />)}
+            {fields.map((field: EditFieldDef) => <EditField key={field.name} field={field} detail={detail} />)}
         </ul>
     );
 }
 
-function EditField({ field, detail }: { field: EditFieldDef, detail: any }): JSX.Element {
+function EditField({ field, detail }: { field: EditFieldDef, detail: DetailRecord }): JSX.Element {
     let InputComponent = DefaultInput;
 
     if (field.join) {
@@ -171,41 +184,40 @@ function EditField({ field, detail }: { field: EditFieldDef, detail: any }): JSX
         </li>
     );
 }
-function BooleanInput({ field, detail }: { field: EditFieldDef, detail: any }): JSX.Element {
+function BooleanInput({ field, detail }: { field: EditFieldDef, detail: DetailRecord }): JSX.Element {
     return (
         <input
             type="checkbox"
-            defaultChecked={field.value}
+            defaultChecked={field.value as boolean}
             onChange={event => { detail[field.name] = event.target.checked; }}
         />
     );
 }
 
-function DefaultInput({ field, detail }: { field: EditFieldDef, detail: any }): JSX.Element {
+function DefaultInput({ field, detail }: { field: EditFieldDef, detail: DetailRecord }): JSX.Element {
     return (
         <input
             type="text"
-            defaultValue={field.value}
+            defaultValue={field.value as string}
             {...field.required}
             onChange={event => { detail[field.name] = event.target.value; }}
         />
     );
 }
 
-function DateTimeInput({ field, detail }: { field: EditFieldDef, detail: any }): JSX.Element {
+function DateTimeInput({ field, detail }: { field: EditFieldDef, detail: DetailRecord }): JSX.Element {
     return (
         <input
             type="date"
-            defaultValue={field.value}
+            defaultValue={field.value as string}
             {...field.required}
             onChange={event => { detail[field.name] = event.target.value; }}
         />
     );
 }
 
-function ParentInput({ field, detail }: { field: EditFieldDef, detail: any }): JSX.Element {
+function ParentInput({ field, detail }: { field: EditFieldDef, detail: DetailRecord }): JSX.Element {
     const schema = useSchema();
-    console.log({ field, detail });
     const parentData = useTableRef(schema, field.join!.destinationTable, field.join!.destinationColumnNames[0]);
     return (<select
         onChange={event => { detail[field.name] = event.target.value; }}
@@ -219,7 +231,7 @@ interface EditFieldDef {
     name: string;
     isReadOnly: boolean;
     required: { required?: boolean };
-    value: any;
+    value: string | number | boolean | undefined;
     join?: Join;
 }
 

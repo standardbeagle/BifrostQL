@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ApolloClient, InMemoryCache, ApolloProvider } from '@apollo/client'
+import { ApolloClient, InMemoryCache, ApolloProvider, NormalizedCacheObject } from '@apollo/client'
 import { MainFrame } from './main-frame';
 import { PathProvider } from './hooks/usePath';
 import { SchemaProvider } from './hooks/useSchema';
@@ -7,11 +7,11 @@ import { SchemaProvider } from './hooks/useSchema';
 interface EditorProps {
     uri?: string;
     uiPath?: string;
-    client?: ApolloClient<any>;
+    client?: ApolloClient<NormalizedCacheObject>;
     onLocate?: (location: string) => void;
 }
 
-let clients: { [name: string]: ApolloClient<any> } = {};
+const clients: Record<string, ApolloClient<NormalizedCacheObject>> = {};
 
 export function Editor({
     uri,
@@ -19,7 +19,7 @@ export function Editor({
     uiPath,
     onLocate,
 }: EditorProps) {
-    let [uriClient, setUriClient] = useState<ApolloClient<any> | null>(null);
+    const [uriClient, setUriClient] = useState<ApolloClient<NormalizedCacheObject> | null>(null);
 
 
     useEffect(() => {

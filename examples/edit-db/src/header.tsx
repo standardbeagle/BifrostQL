@@ -1,25 +1,38 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSchema } from './hooks/useSchema';
 import { useNavigate, useNavigation, useParams } from './hooks/usePath';
+import { Table, Column } from './types/schema';
+
+interface HeaderRouteParams {
+    table?: string;
+    [key: string]: string | undefined;
+}
+
+interface ColumnOption {
+    key: string;
+    value: string;
+    label: string;
+}
 
 export function Header() {
-    const tableData = useParams();
+    const tableData = useParams<HeaderRouteParams>();
     const { loading, error, data: schema } = useSchema();
     const [searchVal, setSearchVal] = useState("");
     const navigate = useNavigate();
     const { back, hasBack } = useNavigation();
-    //console.log(schema, tableData);
     const tableName = tableData?.table;
-    const tableSchema = useMemo(() => schema?.find((t: any) => t.graphQlName === tableName), [schema, tableName]);
-    const options = tableSchema?.columns?.map((c: any) => ({ key: c.name, value: `${c.name},${c.paramType}`, label: c.label }));
+    const tableSchema = useMemo(() => schema?.find((t: Table) => t.graphQlName === tableName), [schema, tableName]);
+    const options: ColumnOption[] | undefined = useMemo(
+        () => tableSchema?.columns?.map((c: Column) => ({ key: c.name, value: `${c.name},${c.paramType}`, label: c.label })),
+        [tableSchema]
+    );
     const [column, setColumn] = useState(options?.at(0)?.value ?? "");
-    //The control needs to reset state when a new table is selected, ie the filter is cleared
-    useEffect(() => { 
+    // Reset state when a new table is selected (filter is cleared)
+    useEffect(() => {
         setSearchVal("");
-        setColumn(options?.at(0)?.value ?? ""); 
-    }, [tableSchema]);
+        setColumn(options?.at(0)?.value ?? "");
+    }, [options]);
     const filter = () => {
-        console.log({ column, searchVal });
         if (!searchVal) return;
         const [columnName, type] = column.split(",");
         if (type === "Int" || type === "Int!" || type === "Float" || type === "Float!")
@@ -38,7 +51,7 @@ export function Header() {
             <h3>Table: { tableSchema?.dbName ?? tableData?.table ?? "(Select)"}</h3>
             {options && <>
                 <select onChange={e => setColumn(e.target.value)}>
-                    {options.map((c: any) => (<option key={c.key} value={c.value}>{c.label}</option>))}
+                    {options.map((c: ColumnOption) => (<option key={c.key} value={c.value}>{c.label}</option>))}
                 </select>
                 <input type="search" value={searchVal} onChange={(event) => setSearchVal(event.target.value)}></input>
                 <button onClick={filter}>filter</button>

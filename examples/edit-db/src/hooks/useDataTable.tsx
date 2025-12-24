@@ -2,8 +2,32 @@ import { DocumentNode, OperationVariables, QueryResult, gql, useQuery } from "@a
 import { Link, useSearchParams } from "./usePath";
 import { useCallback, useEffect, useState } from "react";
 import { useSchema } from "./useSchema";
+import { Table, Column, Join, Schema } from "../types/schema";
+import { TableColumn, SortOrder } from "react-data-table-component";
 
-const getFilterObj = (filterString: string): any => {
+interface FilterResult {
+    variables: Record<string, unknown>;
+    param: string;
+    filterText: string;
+}
+
+interface SortState {
+    table: Table;
+    columnName: string;
+    order: 'asc' | 'desc';
+}
+
+interface RowData {
+    id?: number | string;
+    [key: string]: unknown;
+}
+
+interface ColumnWithJoin extends Column {
+    joinTable?: Join;
+    joinLabelColumn?: string;
+}
+
+const getFilterObj = (filterString: string): FilterResult => {
     try {
         if (!filterString) return { variables: {}, param: "", filterText: "" };
         const [column, action, value, type] = JSON.parse(filterString);
@@ -13,64 +37,57 @@ const getFilterObj = (filterString: string): any => {
     }
 }
 
-const toLocaleDate = (d: string): String => {
+const toLocaleDate = (d: string): string => {
     if (!d) return "";
-    var dd = new Date(d);
-    if (dd.toString() === "invalid date") return "";
+    const dd = new Date(d);
+    if (dd.toString() === "Invalid Date") return "";
     if (dd < new Date('1973-01-01')) return "";
     return dd.toLocaleString();
 };
 
-const getTableColumns = (table: any, schema: any): any[] => {
+const getTableColumns = (table: Table, schema: Schema): TableColumn<RowData>[] => {
     if (!table || !schema) return [];
     const columns = table.columns
-        .map((c: any) => {
+        .map((c: Column) => {
             const result = {
                 name: c.label,
                 reorder: true,
                 sortable: true,
                 sortField: c.name,
             };
-            const singleJoin = table.singleJoins.find((j: any) => j.sourceColumnNames?.[0] === c.name);
-            //console.log({singleJoin});
+            const singleJoin = table.singleJoins.find((j: Join) => j.sourceColumnNames?.[0] === c.name);
             if (singleJoin) {
                 const columnName = singleJoin.destinationTable;
                 const joinTable = schema.findTable(singleJoin.destinationTable);
                 return {
-                    selector: (row: { [x: string]: any; }) => (!!row && <Link to={"/" + joinTable.name + "/" + row?.[columnName]?.id}>{row?.[columnName]?.label}</Link>),
+                    cell: (row: RowData) => (!!row && <Link to={"/" + joinTable?.name + "/" + (row?.[columnName] as RowData)?.id}>{(row?.[columnName] as RowData)?.label as string}</Link>),
                     ...result
                 }
             }
-            if (c?.type?.kind === "OBJECT") {
+            if ((c as ColumnWithJoin)?.joinTable) {
                 return {
-                    selector: (row: { [x: string]: any; }) => (!!row && <Link to={"/" + c.name + "/" + row?.[c.name]?.id}>{c.name}</Link>),
-                    ...result
-                }
-            }
-            if (c?.type?.kind === "LIST") {
-                return {
-                    selector: (row: { [x: string]: any; }) => (<Link to={"/" + c.name + "/from/" + table.name + "/" + row["id"]}>{c.name}</Link>),
+                    cell: (row: RowData) => (!!row && <Link to={"/" + c.name + "/" + (row?.[c.name] as RowData)?.id}>{c.name}</Link>),
                     ...result
                 }
             }
             if (c?.paramType === "DateTime") {
                 return {
-                    selector: (row: { [x: string]: any; }) => ((!!c?.name && toLocaleDate(row?.[c?.name])) ?? ""),
+                    selector: (row: RowData) => (!!c?.name && toLocaleDate(row?.[c?.name] as string)) || "",
                     ...result
                 }
             }
             return {
-                selector: (row: { [x: string]: any; }) => (!!c?.name && row?.[c?.name]) ?? "",
+                selector: (row: RowData) => (!!c?.name ? String(row?.[c?.name] ?? "") : ""),
                 ...result
             };
         });
 
     const multiJoins = table.multiJoins
-        .map((j: any) => {
+        .map((j: Join) => {
             const joinTable = schema.findTable(j.destinationTable);
             return {
                 name: joinTable?.name,
-                selector: (row: { [x: string]: any; }) => (!!row && <Link to={"/" + joinTable?.name + "/from/" + table.name + "/" + row?.id}>{joinTable?.name}</Link>),
+                cell: (row: RowData) => (!!row && <Link to={"/" + joinTable?.name + "/from/" + table.name + "/" + row?.id}>{joinTable?.name}</Link>),
                 reorder: false,
                 sortable: false,
                 sortField: j.sourceColumnNames?.[0],
@@ -80,7 +97,8 @@ const getTableColumns = (table: any, schema: any): any[] => {
         return [...columns, ...multiJoins];
 
     return [{
-        name: "edit", selector: (row: { [x: string]: any; }) => (
+        name: "edit",
+        cell: (row: RowData) => (
             <Link to={`/${table.graphQlName}/edit/${row?.id}`}>edit</Link>
         )
     }, ...columns, ...multiJoins];
@@ -88,30 +106,25 @@ const getTableColumns = (table: any, schema: any): any[] => {
 
 const emptyQuery = gql`query {__schema { __typename }}`;
 //useQuery fails when query is null, so I have to use a dummy query, even though it will never be called
-const getFilteredQuery = (table: any, search: any, id?: string, tableFilter?: string, schema?:any): [runQuery: boolean, query: DocumentNode] => {
+const getFilteredQuery = (table: Table | null, search: URLSearchParams, id?: string, tableFilter?: string, schema?: Schema): [runQuery: boolean, query: DocumentNode] => {
     if (!table || !schema?.data) return [false, emptyQuery];
     const tableSchema = schema.findTable(table.graphQlName);
     if (!tableSchema) return [false, emptyQuery];
     const primaryKey = tableSchema?.primaryKeys?.[0] ?? "id";
-    let { param, filterText } = getFilterObj(search.get('filter'));
-    console.log({param, filterText});
+    let { param, filterText } = getFilterObj(search.get('filter') ?? '');
     //The columns output in the grid
     const dataColumns = table.columns
-        .filter((x: { type: any }) => x?.type?.kind !== "LIST")
-        .map((x: { name: string, type: any }) => {
-            const joinTable = tableSchema.singleJoins.find((j: any) => j.sourceColumnNames?.[0] === x.name);
+        .filter((x: Column) => (x as ColumnWithJoin)?.joinTable === undefined)
+        .map((x: Column): ColumnWithJoin => {
+            const joinTable = tableSchema.singleJoins.find((j: Join) => j.sourceColumnNames?.[0] === x.name);
             if (!joinTable) return x;
 
             const joinSchema = schema.findTable(joinTable.destinationTable);
             const labelColumn = joinSchema?.labelColumn ?? "id";
-            return {...x, joinTable, joinLabelColumn: labelColumn}; 
+            return {...x, joinTable, joinLabelColumn: labelColumn};
         })
-        .map((x: { name: string, type: any, joinTable: any, joinLabelColumn?: string }) => {
-            if (x?.type?.kind === "OBJECT") {
-                return x.name + "{ id }";
-            }
+        .map((x: ColumnWithJoin) => {
             if (x?.joinTable) {
-
                 return x.name + ` ${x.joinTable.destinationTable} { id: ${x.joinTable.destinationColumnNames?.[0]} label: ${x.joinLabelColumn} }`;
             }
             return x.name;
@@ -131,38 +144,61 @@ const getFilteredQuery = (table: any, search: any, id?: string, tableFilter?: st
     }
 
     if (filterText) filterText = `filter: ${filterText}`;
-    console.log({param, filterText});
     return [true, gql`query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${table.name}(sort: $sort limit: $limit offset: $offset ${filterText}) { total offset limit data {${dataColumns}}}}`];
 }
 
-const getAppliedSort = (table: any, sort: any[]): string[] => {
+const getAppliedSort = (table: Table | null, sort: SortState[]): string[] => {
     if (!table) return [];
-    if (!sort) return [`${table.columns.at(0)?.name}_asc`];
+    if (!sort || sort.length === 0) return [`${table.columns.at(0)?.name}_asc`];
     return sort
-        .filter((s: any) => s.table.name === table.name)
-        .map((s: any) => `${s.columnName}_${s.order}`);
+        .filter((s: SortState) => s.table.name === table.name)
+        .map((s: SortState) => `${s.columnName}_${s.order}`);
 };
 
+interface DataTableColumn {
+    sortField?: string;
+}
 
-export function useDataTable(table: any, id?: string, filterTable?: string) {
+interface TableQueryData {
+    data: RowData[];
+    total: number;
+    offset: number;
+    limit: number;
+}
+
+interface QueryData {
+    [tableName: string]: TableQueryData;
+}
+
+interface UseDataTableResult extends Partial<QueryResult<QueryData, OperationVariables>> {
+    tableColumns: TableColumn<RowData>[];
+    offset: number;
+    limit: number;
+    handleSort: (column: DataTableColumn, sortDirection: SortOrder) => void;
+    handlePage: (page: number) => void;
+    handlePageSize: (size: number) => void;
+    handleUpdate: <T>(value: T) => Promise<T>;
+}
+
+export function useDataTable(table: Table | null, id?: string, filterTable?: string): UseDataTableResult {
     const idObj = !id ? {} : { id: +id };
     const filterTableObj = !filterTable ? {} : { filterTable };
     const routeObj = { ...idObj, ...filterTableObj };
     const { search } = useSearchParams();
-    let { variables } = getFilterObj(search.get('filter'));
+    const { variables } = getFilterObj(search.get('filter') ?? '');
     const schema = useSchema();
 
-    const [sort, setSort] = useState<any[]>([]);
+    const [sort, setSort] = useState<SortState[]>([]);
     const [offset, setOffset] = useState(0);
     const [limit, setLimit] = useState(10);
-    const [result, setResult] = useState<QueryResult<any, OperationVariables>>();
+    const [result, setResult] = useState<QueryResult<QueryData, OperationVariables>>();
     const [runQuery, query] = getFilteredQuery(table, search, id, filterTable, schema);
-    const tableColumns = getTableColumns(table, schema);
+    const tableColumns = table ? getTableColumns(table, schema) : [];
     const appliedSort = getAppliedSort(table, sort);
     const skip = !runQuery || (appliedSort?.length ?? 0) === 0;
 
-    const queryResult = useQuery(query, { skip: skip, variables: { sort: appliedSort, limit: limit, offset: offset, ...routeObj, ...variables } });
-    const handleUpdate = useCallback((value: any): Promise<any> => {
+    const queryResult = useQuery<QueryData>(query, { skip: skip, variables: { sort: appliedSort, limit: limit, offset: offset, ...routeObj, ...variables } });
+    const handleUpdate = useCallback(<T,>(value: T): Promise<T> => {
         return Promise.resolve(value);
     }, []);
 
@@ -170,7 +206,7 @@ export function useDataTable(table: any, id?: string, filterTable?: string) {
         if (!table) return;
         setSort([{
             table,
-            columnName: table.columns.at(0)?.name,
+            columnName: table.columns.at(0)?.name ?? 'id',
             order: 'asc'
         }]);
         setOffset(0);
@@ -181,26 +217,24 @@ export function useDataTable(table: any, id?: string, filterTable?: string) {
         setResult(queryResult);
     }, [queryResult, query]);
 
-    const handleSort = useCallback((column: any, sortDirection: any) => {
+    const handleSort = useCallback((column: DataTableColumn, sortDirection: SortOrder) => {
         const newSort = [`${column.sortField}_${sortDirection}`];
-        setSort([{ table, columnName: column.sortField, order: sortDirection }]);
-        const search = { offset: offset, sort: newSort };
-        queryResult.refetch({ sort: search.sort, limit: limit, offset: offset, ...routeObj })
-    }, [queryResult, offset, limit, routeObj]);
+        setSort([{ table: table!, columnName: column.sortField ?? 'id', order: sortDirection as 'asc' | 'desc' }]);
+        queryResult.refetch({ sort: newSort, limit: limit, offset: offset, ...routeObj })
+    }, [queryResult, offset, limit, routeObj, table]);
 
     const handlePage = useCallback((page: number) => {
-        var newOffset = +((page - 1) * limit);
+        const newOffset = +((page - 1) * limit);
         setOffset(newOffset);
-        const search = { offset: newOffset, sort: sort };
         const appliedSort = getAppliedSort(table, sort);
-        queryResult.refetch({ sort: appliedSort, limit: limit, offset: search.offset, ...routeObj });
-    }, [queryResult, limit, sort, routeObj]);
+        queryResult.refetch({ sort: appliedSort, limit: limit, offset: newOffset, ...routeObj });
+    }, [queryResult, limit, sort, routeObj, table]);
 
     const handlePageSize = useCallback((size: number) => {
         setLimit(size);
         const appliedSort = getAppliedSort(table, sort);
         queryResult.refetch({ sort: appliedSort, limit: size, offset: offset, ...routeObj });
-    }, [queryResult, offset, sort, routeObj]);
+    }, [queryResult, offset, sort, routeObj, table]);
 
     return { tableColumns, offset, limit, handleSort, handlePage, handlePageSize, handleUpdate, ...result };
 }

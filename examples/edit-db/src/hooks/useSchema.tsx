@@ -1,11 +1,39 @@
 import { useQuery } from "@apollo/client";
 import { GET_DB_SCHEMA } from "../common/schema";
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from "react";
 import { Schema, Table, Column, TableMetadata } from '../types/schema';
+
+interface MetadataItem {
+    key: string;
+    value: string;
+}
+
+interface DbColumnItem {
+    graphQlName: string;
+    dbName: string;
+    paramType: string;
+    isPrimaryKey: boolean;
+    isIdentity: boolean;
+    isNullable: boolean;
+    isReadOnly: boolean;
+    metadata: MetadataItem[];
+}
+
+interface DbSchemaItem {
+    graphQlName: string;
+    dbName: string;
+    labelColumn: string;
+    primaryKeys: string[];
+    isEditable: boolean;
+    metadata: MetadataItem[];
+    columns: DbColumnItem[];
+    multiJoins: { name: string; sourceColumnNames: string[]; destinationTable: string; destinationColumnNames: string[] }[];
+    singleJoins: { name: string; sourceColumnNames: string[]; destinationTable: string; destinationColumnNames: string[] }[];
+}
 
 const SchemaContext = createContext<Schema>({loading: true, error: null, data: [], findTable: () => undefined});
 
-export const SchemaProvider = ({ children }: { children: any }) => {
+export const SchemaProvider = ({ children }: { children: ReactNode }) => {
     const value = useSchemaLoader();
     return (<SchemaContext.Provider value={value}>
         {children}
@@ -36,27 +64,27 @@ function useSchemaLoader(): Schema {
 
     useEffect(() => {
         if (dbLoading) {
-            setResult({ loading: true, error: null, data: [], findTable });
+            setInternal({ loading: true, error: null, data: [] });
             return;
         }
         if (dbError) {
-            setResult({ loading: false, error: { message: dbError.message }, data: [], findTable });
+            setInternal({ loading: false, error: { message: dbError.message }, data: [] });
             return;
         }
         if (!dbData) {
-            setResult({ loading: false, error: null, data: [], findTable });
+            setInternal({ loading: false, error: null, data: [] });
             return;
         }
 
         const schema: Omit<Schema, 'findTable'> = {
             loading: false,
             error: null,
-            data: dbData._dbSchema.map((s: any): Table => ({
+            data: dbData._dbSchema.map((s: DbSchemaItem): Table => ({
                 ...s,
                 name: s.graphQlName,
                 label: s.dbName,
                 metadata: parseMetadata(s.metadata),
-                columns: s.columns.map((c: any): Column => ({
+                columns: s.columns.map((c: DbColumnItem): Column => ({
                     ...c,
                     name: c.graphQlName,
                     label: c.dbName,
@@ -75,8 +103,8 @@ function useSchemaLoader(): Schema {
     return result;
 }
 
-function parseMetadata(metadata: any) {
-    return metadata.reduce((acc: any, m: any) => ({ ...acc, [m.key]: getMetaValue(m) }), {});
+function parseMetadata(metadata: MetadataItem[]): Record<string, string | TableMetadata['type']> {
+    return metadata.reduce((acc: Record<string, string | TableMetadata['type']>, m: MetadataItem) => ({ ...acc, [m.key]: getMetaValue(m) }), {});
 }
 
 function getMetaValue({key, value}: {key: string, value: string}) {

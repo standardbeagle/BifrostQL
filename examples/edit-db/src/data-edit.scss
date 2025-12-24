@@ -99,3 +99,60 @@
     to { transform: rotate(360deg); }
 }
 }
+
+/* Responsive dialog styles */
+@media screen and (max-width: 768px) {
+    .editdb-dialog-edit {
+        width: 90vw;
+        max-width: none;
+        padding: 0.75rem;
+        margin: 1rem;
+
+        &__input-list {
+            grid-template-columns: 1fr;
+        }
+
+        &__input-item {
+            grid-template-columns: 1fr;
+            gap: 0.25rem;
+
+            > label {
+                grid-column: 1;
+                font-weight: 500;
+            }
+
+            > input, > select {
+                grid-column: 1;
+                width: 100%;
+                box-sizing: border-box;
+            }
+        }
+    }
+
+    .button-row {
+        grid-auto-flow: row;
+        grid-auto-columns: 1fr;
+        gap: 0.5rem;
+    }
+}
+
+@media screen and (max-width: 480px) {
+    .editdb-dialog-edit {
+        width: calc(100vw - 2rem);
+        padding: 0.5rem;
+        margin: 0.5rem;
+
+        &__heading {
+            font-size: 1rem;
+        }
+
+        form {
+            gap: 0.75rem 0;
+        }
+    }
+
+    .btn {
+        padding: 0.75em 1em;
+        font-size: 0.9rem;
+    }
+}

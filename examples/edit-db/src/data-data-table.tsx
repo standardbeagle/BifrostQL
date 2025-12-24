@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import DataTable from 'react-data-table-component';
 import { useDataTable } from './hooks/useDataTable';
+import { Table } from './types/schema';
 
 
 interface DataDataTableParams {
-    table: any,
+    table: Table,
     id?: string,
     tableFilter?: string
 }
@@ -20,10 +21,12 @@ export function DataDataTable({ table, id, tableFilter }: DataDataTableParams): 
         error,
         data } = useDataTable(table, id, tableFilter);
 
-        console.log({tableFilter, tableColumns, loading, error, data});
-
     const [resetPage, setResetpage] = useState(false);
-    useEffect(() => { data && data[table.name].offset === 0 && setResetpage(!resetPage);}, [data]);
+    useEffect(() => {
+        if (data && data[table.name]?.offset === 0) {
+            setResetpage(prev => !prev);
+        }
+    }, [data, table.name]);
     if (error) return <div>Error: {error.message}</div>;
 
     return <DataTable

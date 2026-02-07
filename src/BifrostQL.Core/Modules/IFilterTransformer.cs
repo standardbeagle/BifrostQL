@@ -156,4 +156,23 @@ public static class TableFilterFactory
             }
         };
     }
+
+    /// <summary>
+    /// Creates an IN filter: column IN (value1, value2, ...)
+    /// </summary>
+    public static TableFilter In(string tableName, string columnName, IEnumerable<object?> values)
+    {
+        return new TableFilter
+        {
+            TableName = tableName,
+            ColumnName = columnName,
+            FilterType = FilterType.Join,
+            Next = new TableFilter
+            {
+                RelationName = "_in",
+                Value = values,
+                FilterType = FilterType.Relation,
+            }
+        };
+    }
 }

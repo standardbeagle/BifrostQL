@@ -48,7 +48,9 @@ namespace BifrostQL.Core.Model
         public string SingleFieldName => $"_single_{GraphQlName}";
         public string GetJoinTypeName(IDbTable joinTable) => $"TableOn{GraphQlName}{joinTable.GraphQlName}";
         public string AggregateValueTypeName => $"{GraphQlName}_AggregateValue";
-        public bool MatchName(string fullName) => string.Equals(FullName, fullName, StringComparison.InvariantCultureIgnoreCase);
+        public bool MatchName(string fullName) =>
+            string.Equals(FullName, fullName, StringComparison.InvariantCultureIgnoreCase)
+            || string.Equals(GraphQlName, fullName, StringComparison.InvariantCultureIgnoreCase);
         public string GetActionTypeName(MutateActions action) => $"{action}_{GraphQlName}";
 
         public IEnumerable<ColumnDto> Columns => ColumnLookup.Values;
@@ -56,6 +58,7 @@ namespace BifrostQL.Core.Model
         public IDictionary<string, ColumnDto> GraphQlLookup { get; init; } = null!;
         public IDictionary<string, TableLinkDto> SingleLinks { get; init; } = new Dictionary<string, TableLinkDto>(StringComparer.InvariantCultureIgnoreCase);
         public IDictionary<string, TableLinkDto> MultiLinks { get; init; } = new Dictionary<string, TableLinkDto>(StringComparer.InvariantCultureIgnoreCase);
+        public IDictionary<string, ManyToManyLink> ManyToManyLinks { get; init; } = new Dictionary<string, ManyToManyLink>(StringComparer.InvariantCultureIgnoreCase);
         public IEnumerable<ColumnDto> KeyColumns => Columns.Where(c => c.IsPrimaryKey);
         public string DbTableRef => string.IsNullOrWhiteSpace(TableSchema) ? $"[{DbName}]" : $"[{TableSchema}].[{DbName}]";
 
@@ -77,6 +80,32 @@ namespace BifrostQL.Core.Model
                 TableType = (string)reader["TABLE_TYPE"],
                 ColumnLookup = (columns ?? Array.Empty<ColumnDto>()).ToDictionary(c => c.ColumnName, StringComparer.OrdinalIgnoreCase),
                 GraphQlLookup = (columns ?? Array.Empty<ColumnDto>()).ToDictionary(c => c.ColumnName.ToGraphQl("col"), StringComparer.OrdinalIgnoreCase),
+            };
+        }
+
+        /// <summary>
+        /// Returns a new DbTable with the GraphQlName prefixed according to the schema prefix options.
+        /// All other properties including column lookups, links, and metadata are shared with the original.
+        /// </summary>
+        internal DbTable WithSchemaPrefix(SchemaPrefixOptions options)
+        {
+            var prefixedName = options.ApplyPrefix(GraphQlName, TableSchema);
+            if (string.Equals(prefixedName, GraphQlName, StringComparison.Ordinal))
+                return this;
+
+            return new DbTable
+            {
+                DbName = DbName,
+                GraphQlName = prefixedName,
+                NormalizedName = NormalizedName,
+                TableSchema = TableSchema,
+                TableType = TableType,
+                Metadata = Metadata,
+                ColumnLookup = ColumnLookup,
+                GraphQlLookup = GraphQlLookup,
+                SingleLinks = SingleLinks,
+                MultiLinks = MultiLinks,
+                ManyToManyLinks = ManyToManyLinks,
             };
         }
     }

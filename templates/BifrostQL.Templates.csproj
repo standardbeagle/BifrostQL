@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>netstandard2.0</TargetFramework>
+		<PackageType>Template</PackageType>
+		<PackageId>BifrostQL.Templates</PackageId>
+		<PackageVersion>0.3.0</PackageVersion>
+		<Authors>Andy Brummer</Authors>
+		<Company>StandardBeagle</Company>
+		<Description>Project templates for BifrostQL - the fastest way to publish your SQL database as a GraphQL API.</Description>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<PackageProjectUrl>https://github.com/standardbeagle/BifrostQL</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/standardbeagle/BifrostQL</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+		<PackageTags>dotnet-new;templates;GraphQL;BifrostQL;SQLServer;PostgreSQL;MySQL;SQLite</PackageTags>
+		<Copyright>Copyright (c) Standard Beagle Studio LLC.</Copyright>
+		<Title>BifrostQL Project Templates</Title>
+
+		<IncludeContentInPack>true</IncludeContentInPack>
+		<IncludeBuildOutput>false</IncludeBuildOutput>
+		<ContentTargetFolders>content</ContentTargetFolders>
+		<NoDefaultExcludes>true</NoDefaultExcludes>
+		<NoWarn>$(NoWarn);NU5128</NoWarn>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<Content Include="bifrost/**/*" Exclude="bifrost/**/bin/**;bifrost/**/obj/**" />
+		<Compile Remove="**/*" />
+	</ItemGroup>
+
+</Project>

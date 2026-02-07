@@ -19,8 +19,10 @@ namespace BifrostQL.Core.Schema
 
         public string GetTableFieldDefinition()
         {
+            var hasSoftDelete = _table.Metadata.TryGetValue("soft-delete", out var sdVal) && sdVal != null;
+            var includeDeletedArg = hasSoftDelete ? " _includeDeleted: Boolean" : "";
             return
-                $"{_table.GraphQlName}(limit: Int, offset: Int, sort: [{_table.TableColumnSortEnumName}!] filter: {_table.TableFilterTypeName}): {_table.GraphQlName}_paged";
+                $"{_table.GraphQlName}(limit: Int, offset: Int, sort: [{_table.TableColumnSortEnumName}!] filter: {_table.TableFilterTypeName} _primaryKey: [String]{includeDeletedArg}): {_table.GraphQlName}_paged";
         }
 
         public string GetDynamicJoinDefinition(IDbModel model, bool single)
@@ -50,7 +52,7 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine($"type {_table.GraphQlName} {{");
             foreach (var column in _table.Columns)
             {
-                builder.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetGraphQlTypeName(column.DataType, column.IsNullable)}");
+                builder.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetGraphQlTypeName(column.EffectiveDataType, column.IsNullable)}");
             }
 
             builder.AppendLine($"_agg(operation: AggregateOperations! value: {_table.AggregateValueTypeName}!) : Float");
@@ -61,6 +63,12 @@ namespace BifrostQL.Core.Schema
             foreach (var link in _table.MultiLinks)
             {
                 builder.AppendLine($"\t{link.Value.ChildTable.GraphQlName}(filter: {link.Value.ChildTable.TableFilterTypeName}) : [{link.Value.ChildTable.GraphQlName}]");
+            }
+            foreach (var link in _table.ManyToManyLinks)
+            {
+                if (_table.SingleLinks.ContainsKey(link.Key) || _table.MultiLinks.ContainsKey(link.Key))
+                    continue;
+                builder.AppendLine($"\t{link.Value.TargetTable.GraphQlName}(filter: {link.Value.TargetTable.TableFilterTypeName}) : [{link.Value.TargetTable.GraphQlName}]");
             }
 
             if (includeDynamicJoins)
@@ -151,7 +159,7 @@ namespace BifrostQL.Core.Schema
                 //All columns except primary keys are nullable for delete
                 if (isDelete) isNullable = column.IsPrimaryKey == false;
 
-                result.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetGraphQlInsertTypeName(column.DataType, isNullable)}");
+                result.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetGraphQlInsertTypeName(column.EffectiveDataType, isNullable)}");
             }
             result.AppendLine("}");
             return result.ToString();
@@ -219,7 +227,7 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine($"input {_table.TableFilterTypeName} {{");
             foreach (var column in _table.Columns)
             {
-                builder.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetFilterInputTypeName(column.DataType)}");
+                builder.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetFilterInputTypeName(column.EffectiveDataType)}");
             }
             foreach (var link in _table.SingleLinks)
             {
@@ -237,7 +245,7 @@ namespace BifrostQL.Core.Schema
             var result = new StringBuilder();
 
             result.AppendLine(
-                $"\t{_table.GraphQlName}(insert: {_table.GetActionTypeName(MutateActions.Insert)}, update: {_table.GetActionTypeName(MutateActions.Update)}, upsert: {_table.GetActionTypeName(MutateActions.Upsert)}, delete: {_table.GetActionTypeName(MutateActions.Delete)}) : Int");
+                $"\t{_table.GraphQlName}(insert: {_table.GetActionTypeName(MutateActions.Insert)}, update: {_table.GetActionTypeName(MutateActions.Update)}, upsert: {_table.GetActionTypeName(MutateActions.Upsert)}, delete: {_table.GetActionTypeName(MutateActions.Delete)}, _primaryKey: [String]) : Int");
 
             result.AppendLine($"{_table.GraphQlName}_batch(actions: [batch_{_table.GraphQlName}!]!) : Int");
             return result.ToString();

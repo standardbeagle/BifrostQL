@@ -98,7 +98,7 @@ namespace BifrostQL.Core.QueryModel
                 Sort = sort,
                 Limit = (int?)Arguments.FirstOrDefault(a => a.Name == "limit")?.Value,
                 Offset = (int?)Arguments.FirstOrDefault(a => a.Name == "offset")?.Value,
-                Filter = Arguments.Where(a => a is { Name: "filter", Value: not null }).Select(arg => TableFilter.FromObject(arg.Value, dbTable.DbName)).FirstOrDefault(),
+                Filter = BuildCombinedFilter(Arguments, dbTable),
                 Links = standardFields
                             .Where((f) => f.Type == FieldType.Link)
                             .Select(f => f.ToSqlData(model, this, path))
@@ -250,6 +250,33 @@ namespace BifrostQL.Core.QueryModel
                     return type;
             }
             return QueryType.Standard;
+        }
+
+        private static TableFilter? BuildCombinedFilter(List<QueryArgument> arguments, IDbTable dbTable)
+        {
+            var filterArg = arguments.FirstOrDefault(a => a is { Name: "filter", Value: not null });
+            var pkArg = arguments.FirstOrDefault(a => a is { Name: "_primaryKey", Value: not null });
+
+            TableFilter? filterResult = filterArg != null
+                ? TableFilter.FromObject(filterArg.Value, dbTable.DbName)
+                : null;
+
+            TableFilter? pkResult = null;
+            if (pkArg?.Value is IEnumerable<object?> pkValues)
+            {
+                pkResult = TableFilter.FromPrimaryKey(pkValues, dbTable.KeyColumns, dbTable.DbName);
+            }
+
+            if (filterResult != null && pkResult != null)
+            {
+                return new TableFilter
+                {
+                    And = new List<TableFilter> { filterResult, pkResult },
+                    FilterType = FilterType.And,
+                };
+            }
+
+            return filterResult ?? pkResult;
         }
     }
 }

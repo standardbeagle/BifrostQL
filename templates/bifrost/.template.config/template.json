@@ -1,0 +1,141 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Andy Brummer",
+  "classifications": [
+    "Web",
+    "GraphQL",
+    "BifrostQL"
+  ],
+  "identity": "BifrostQL.Templates.Host",
+  "name": "BifrostQL Host Project",
+  "shortName": "bifrost",
+  "description": "A project template for creating a BifrostQL GraphQL API host that publishes a SQL database as a GraphQL endpoint.",
+  "tags": {
+    "language": "C#",
+    "type": "project"
+  },
+  "sourceName": "BifrostQLProject",
+  "preferNameDirectory": true,
+  "symbols": {
+    "database": {
+      "type": "parameter",
+      "datatype": "choice",
+      "description": "The database provider to use.",
+      "defaultValue": "sqlserver",
+      "choices": [
+        {
+          "choice": "sqlserver",
+          "description": "Microsoft SQL Server"
+        },
+        {
+          "choice": "postgres",
+          "description": "PostgreSQL"
+        },
+        {
+          "choice": "mysql",
+          "description": "MySQL / MariaDB"
+        },
+        {
+          "choice": "sqlite",
+          "description": "SQLite"
+        }
+      ]
+    },
+    "auth": {
+      "type": "parameter",
+      "datatype": "choice",
+      "description": "The authentication mode to use.",
+      "defaultValue": "none",
+      "choices": [
+        {
+          "choice": "none",
+          "description": "No authentication"
+        },
+        {
+          "choice": "jwt",
+          "description": "JWT bearer token authentication"
+        }
+      ]
+    },
+    "playground": {
+      "type": "parameter",
+      "datatype": "bool",
+      "description": "Whether to enable the GraphiQL playground UI.",
+      "defaultValue": "true"
+    },
+    "UseSqlServer": {
+      "type": "computed",
+      "value": "(database == \"sqlserver\")"
+    },
+    "UsePostgres": {
+      "type": "computed",
+      "value": "(database == \"postgres\")"
+    },
+    "UseMySql": {
+      "type": "computed",
+      "value": "(database == \"mysql\")"
+    },
+    "UseSqlite": {
+      "type": "computed",
+      "value": "(database == \"sqlite\")"
+    },
+    "UseJwtAuth": {
+      "type": "computed",
+      "value": "(auth == \"jwt\")"
+    },
+    "NoAuth": {
+      "type": "computed",
+      "value": "(auth == \"none\")"
+    }
+  },
+  "sources": [
+    {
+      "modifiers": [
+        {
+          "condition": "(UseSqlServer)",
+          "rename": {
+            "docker-compose.sqlserver.yml": "docker-compose.yml"
+          }
+        },
+        {
+          "condition": "(!UseSqlServer)",
+          "exclude": [
+            "docker-compose.sqlserver.yml"
+          ]
+        },
+        {
+          "condition": "(UsePostgres)",
+          "rename": {
+            "docker-compose.postgres.yml": "docker-compose.yml"
+          }
+        },
+        {
+          "condition": "(!UsePostgres)",
+          "exclude": [
+            "docker-compose.postgres.yml"
+          ]
+        },
+        {
+          "condition": "(UseMySql)",
+          "rename": {
+            "docker-compose.mysql.yml": "docker-compose.yml"
+          }
+        },
+        {
+          "condition": "(!UseMySql)",
+          "exclude": [
+            "docker-compose.mysql.yml"
+          ]
+        },
+        {
+          "condition": "(UseSqlite)",
+          "exclude": [
+            "docker-compose.sqlserver.yml",
+            "docker-compose.postgres.yml",
+            "docker-compose.mysql.yml"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,10 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using GraphQL.Utilities;
-using GraphQLParser.AST;
 
 namespace BifrostQL.Core.Schema
 {
@@ -13,6 +7,7 @@ namespace BifrostQL.Core.Schema
         protected override void PreConfigure(GraphQL.Types.Schema schema)
         {
             schema.Directives.Register(new DbDirective());
+            schema.RegisterType(new JsonScalarGraphType());
             base.PreConfigure(schema);
         }
     }

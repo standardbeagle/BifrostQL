@@ -26,6 +26,9 @@ namespace BifrostQL.Core.Schema
                     var tableInsertField = mut.FieldFor(table.GraphQlName);
                     tableInsertField.Resolver = new DbTableMutateResolver(table);
 
+                    var tableBatchField = mut.FieldFor($"{table.GraphQlName}_batch");
+                    tableBatchField.Resolver = new DbTableBatchResolver(table);
+
                     var tableType = _.Types.For(table.GraphQlName);
                     var aggregateType = tableType.FieldFor("_agg");
                     aggregateType.Resolver = DbJoinFieldResolver.Instance;
@@ -57,6 +60,56 @@ namespace BifrostQL.Core.Schema
 
                 var dbSchema = query.FieldFor("_dbSchema");
                 dbSchema.Resolver = new MetaSchemaResolver(model);
+
+                if (SchemaGenerator.IsRawSqlEnabled(model))
+                {
+                    var rawQuery = query.FieldFor("_rawQuery");
+                    rawQuery.Resolver = new RawSqlQueryResolver(model);
+                }
+
+                if (SchemaGenerator.IsGenericTableEnabled(model))
+                {
+                    var config = GenericTableConfig.FromModel(model);
+                    var genericTableField = query.FieldFor("_table");
+                    genericTableField.Resolver = new GenericTableQueryResolver(model, config);
+
+                    var genericResultType = _.Types.For("GenericTableResult");
+                    foreach (var fieldName in new[] { "tableName", "columns", "rows", "totalCount" })
+                    {
+                        genericResultType.FieldFor(fieldName).Resolver = DbJoinFieldResolver.Instance;
+                    }
+
+                    var genericColumnType = _.Types.For("GenericColumnMetadata");
+                    foreach (var fieldName in new[] { "name", "dataType", "isNullable", "isPrimaryKey" })
+                    {
+                        genericColumnType.FieldFor(fieldName).Resolver = DbJoinFieldResolver.Instance;
+                    }
+                }
+
+                foreach (var proc in model.StoredProcedures)
+                {
+                    var resolver = new StoredProcedureResolver(proc);
+                    if (proc.IsReadOnly)
+                    {
+                        var procField = query.FieldFor(proc.FullGraphQlName);
+                        procField.Resolver = resolver;
+                    }
+                    else
+                    {
+                        var procField = mut.FieldFor(proc.FullGraphQlName);
+                        procField.Resolver = resolver;
+                    }
+
+                    var resultType = _.Types.For(proc.ResultTypeName);
+                    foreach (var fieldName in new[] { "resultSets", "affectedRows" })
+                    {
+                        resultType.FieldFor(fieldName).Resolver = DbJoinFieldResolver.Instance;
+                    }
+                    foreach (var outputParam in proc.OutputParameters)
+                    {
+                        resultType.FieldFor(outputParam.GraphQlName).Resolver = DbJoinFieldResolver.Instance;
+                    }
+                }
 
             });
             return schema;

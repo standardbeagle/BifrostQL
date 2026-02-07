@@ -14,13 +14,33 @@ namespace BifrostQL.Core.Schema
         {
             var builder = new StringBuilder();
             var tableGenerators = model.Tables.Select(t => new TableSchemaGenerator(t)).ToList();
+            var spGenerators = model.StoredProcedures.Select(p => new StoredProcedureSchemaGenerator(p)).ToList();
+            var readOnlySpGenerators = model.StoredProcedures
+                .Where(p => p.IsReadOnly)
+                .Select(p => new StoredProcedureSchemaGenerator(p)).ToList();
+            var mutatingSpGenerators = model.StoredProcedures
+                .Where(p => !p.IsReadOnly)
+                .Select(p => new StoredProcedureSchemaGenerator(p)).ToList();
+
             builder.AppendLine("schema { query: database mutation: databaseInput }");
             builder.AppendLine("type database {");
             foreach (var generator in tableGenerators)
             {
                 builder.AppendLine(generator.GetTableFieldDefinition());
             }
+            foreach (var generator in readOnlySpGenerators)
+            {
+                builder.AppendLine(generator.GetFieldDefinition());
+            }
             builder.AppendLine("_dbSchema(graphQlName: String): [dbTableSchema!]!");
+            if (IsRawSqlEnabled(model))
+            {
+                builder.AppendLine("_rawQuery(sql: String!, params: JSON, timeout: Int): [JSON]!");
+            }
+            if (IsGenericTableEnabled(model))
+            {
+                builder.AppendLine("_table(name: String!, limit: Int, offset: Int, filter: JSON): GenericTableResult!");
+            }
             builder.AppendLine("}");
 
             foreach (var generator in tableGenerators)
@@ -34,70 +54,96 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine(generator.GetPagedTableTypeDefinition());
             }
 
-            builder.Append(GetInputAndArgumentTypes(model, tableGenerators));
+            builder.Append(GetInputAndArgumentTypes(model, tableGenerators, mutatingSpGenerators));
+
+            foreach (var generator in spGenerators)
+            {
+                builder.AppendLine(generator.GetResultTypeDefinition());
+                var inputType = generator.GetInputTypeDefinition();
+                if (!string.IsNullOrEmpty(inputType))
+                    builder.AppendLine(inputType);
+            }
 
             //Define the filter types of all the columns in the database, needs to be specific to the connected database, and distinct because of GraphQL.
-            foreach (var gqlType in model.Tables.SelectMany(t => t.Columns).Select<ColumnDto, string>(c => GetSimpleGraphQlTypeName(c.DataType)).Distinct())
+            foreach (var gqlType in model.Tables.SelectMany(t => t.Columns).Select<ColumnDto, string>(c => GetSimpleGraphQlTypeName(c.EffectiveDataType)).Distinct())
             {
                 builder.AppendLine(GetFilterType(gqlType));
             }
 
-            builder.AppendLine("type dbTableSchema {");
-            builder.AppendLine("schema: String!");
-            builder.AppendLine("dbName: String!");
-            builder.AppendLine("graphQlName: String!");
-            builder.AppendLine("primaryKeys: [String!]");
-            builder.AppendLine("labelColumn: String!");
-            builder.AppendLine("isEditable: Boolean!");
-            builder.AppendLine("metadata: [dbMetadataSchema!]!");
-            builder.AppendLine("multiJoins: [dbJoinSchema!]!");
-            builder.AppendLine("singleJoins: [dbJoinSchema!]!");
-            builder.AppendLine("columns: [dbColumnSchema!]!");
-            builder.AppendLine("}");
+            builder.AppendLine(GetMetadataSchemaTypes());
 
-            builder.AppendLine("type dbJoinSchema {");
-            builder.AppendLine("name: String!");
-            builder.AppendLine("sourceColumnNames: [String!]!");
-            builder.AppendLine("destinationTable: String!");
-            builder.AppendLine("destinationColumnNames: [String!]!");
-            builder.AppendLine("metadata: [dbMetadataSchema!]!");
-            builder.AppendLine("}");
-
-            builder.AppendLine("type dbColumnSchema {");
-            builder.AppendLine("dbName: String!");
-            builder.AppendLine("graphQlName: String!");
-            builder.AppendLine("paramType: String!");
-            builder.AppendLine("dbType: String!");
-            builder.AppendLine("isNullable: Boolean!");
-            builder.AppendLine("isReadOnly: Boolean!");
-            builder.AppendLine("isPrimaryKey: Boolean!");
-            builder.AppendLine("isIdentity: Boolean!");
-            builder.AppendLine("isCreatedOnColumn: Boolean!");
-            builder.AppendLine("isCreatedByColumn: Boolean!");
-            builder.AppendLine("isUpdatedOnColumn: Boolean!");
-            builder.AppendLine("isUpdatedByColumn: Boolean!");
-            builder.AppendLine("isDeletedOnColumn: Boolean!");
-            builder.AppendLine("isDeletedColumn: Boolean!");
-            builder.AppendLine("metadata: [dbMetadataSchema!]!");
-            builder.AppendLine("}");
-
-            builder.AppendLine("type dbMetadataSchema { key: String! value: String! }");
-
-            builder.AppendLine("enum AggregateOperations {");
-            builder.AppendLine(string.Join(',', Enum.GetNames(typeof(AggregateOperationType))));
-            builder.AppendLine("}");
+            if (IsGenericTableEnabled(model))
+            {
+                builder.AppendLine(GetGenericTableTypes());
+            }
 
             return builder.ToString();
 
         }
 
-        private static StringBuilder GetInputAndArgumentTypes(IDbModel model, List<TableSchemaGenerator> tableGenerators)
+        internal static string GetMetadataSchemaTypes()
+        {
+            var sb = new StringBuilder();
+
+            sb.AppendLine("type dbTableSchema {");
+            sb.AppendLine("schema: String!");
+            sb.AppendLine("dbName: String!");
+            sb.AppendLine("graphQlName: String!");
+            sb.AppendLine("primaryKeys: [String!]");
+            sb.AppendLine("labelColumn: String!");
+            sb.AppendLine("isEditable: Boolean!");
+            sb.AppendLine("metadata: [dbMetadataSchema!]!");
+            sb.AppendLine("multiJoins: [dbJoinSchema!]!");
+            sb.AppendLine("singleJoins: [dbJoinSchema!]!");
+            sb.AppendLine("columns: [dbColumnSchema!]!");
+            sb.AppendLine("}");
+
+            sb.AppendLine("type dbJoinSchema {");
+            sb.AppendLine("name: String!");
+            sb.AppendLine("sourceColumnNames: [String!]!");
+            sb.AppendLine("destinationTable: String!");
+            sb.AppendLine("destinationColumnNames: [String!]!");
+            sb.AppendLine("metadata: [dbMetadataSchema!]!");
+            sb.AppendLine("}");
+
+            sb.AppendLine("type dbColumnSchema {");
+            sb.AppendLine("dbName: String!");
+            sb.AppendLine("graphQlName: String!");
+            sb.AppendLine("paramType: String!");
+            sb.AppendLine("dbType: String!");
+            sb.AppendLine("isNullable: Boolean!");
+            sb.AppendLine("isReadOnly: Boolean!");
+            sb.AppendLine("isPrimaryKey: Boolean!");
+            sb.AppendLine("isIdentity: Boolean!");
+            sb.AppendLine("isCreatedOnColumn: Boolean!");
+            sb.AppendLine("isCreatedByColumn: Boolean!");
+            sb.AppendLine("isUpdatedOnColumn: Boolean!");
+            sb.AppendLine("isUpdatedByColumn: Boolean!");
+            sb.AppendLine("isDeletedOnColumn: Boolean!");
+            sb.AppendLine("isDeletedColumn: Boolean!");
+            sb.AppendLine("metadata: [dbMetadataSchema!]!");
+            sb.AppendLine("}");
+
+            sb.AppendLine("type dbMetadataSchema { key: String! value: String! }");
+
+            sb.AppendLine("enum AggregateOperations {");
+            sb.AppendLine(string.Join(',', Enum.GetNames(typeof(AggregateOperationType))));
+            sb.AppendLine("}");
+
+            return sb.ToString();
+        }
+
+        private static StringBuilder GetInputAndArgumentTypes(IDbModel model, List<TableSchemaGenerator> tableGenerators, List<StoredProcedureSchemaGenerator> mutatingSpGenerators)
         {
             var builder = new StringBuilder();
             builder.AppendLine("type databaseInput {");
             foreach (var generator in tableGenerators)
             {
                 builder.AppendLine(generator.GetInputFieldDefinition());
+            }
+            foreach (var generator in mutatingSpGenerators)
+            {
+                builder.AppendLine(generator.GetFieldDefinition());
             }
 
             builder.AppendLine("}");
@@ -166,6 +212,8 @@ namespace BifrostQL.Core.Schema
                     return "DateTimeOffset";
                 case "bit":
                     return "Boolean";
+                case "json":
+                    return "JSON";
                 case "varchar":
                 case "nvarchar":
                 case "char":
@@ -179,7 +227,7 @@ namespace BifrostQL.Core.Schema
             }
         }
 
-        private static string GetFilterType(string gqlType)
+        internal static string GetFilterType(string gqlType)
         {
             var result = new StringBuilder();
             var name = $"FilterType{gqlType}Input";
@@ -220,6 +268,39 @@ namespace BifrostQL.Core.Schema
             }
             result.AppendLine("}");
             return result.ToString();
+        }
+
+        internal static bool IsRawSqlEnabled(IDbModel model)
+        {
+            var value = model.GetMetadataValue("raw-sql");
+            return string.Equals(value, "enabled", StringComparison.OrdinalIgnoreCase);
+        }
+
+        internal static bool IsGenericTableEnabled(IDbModel model)
+        {
+            var value = model.GetMetadataValue(Model.GenericTableConfig.MetadataKey);
+            return string.Equals(value, Model.GenericTableConfig.MetadataEnabled, StringComparison.OrdinalIgnoreCase);
+        }
+
+        internal static string GetGenericTableTypes()
+        {
+            var sb = new StringBuilder();
+
+            sb.AppendLine("type GenericTableResult {");
+            sb.AppendLine("tableName: String!");
+            sb.AppendLine("columns: [GenericColumnMetadata!]!");
+            sb.AppendLine("rows: [JSON]!");
+            sb.AppendLine("totalCount: Int!");
+            sb.AppendLine("}");
+
+            sb.AppendLine("type GenericColumnMetadata {");
+            sb.AppendLine("name: String!");
+            sb.AppendLine("dataType: String!");
+            sb.AppendLine("isNullable: Boolean!");
+            sb.AppendLine("isPrimaryKey: Boolean!");
+            sb.AppendLine("}");
+
+            return sb.ToString();
         }
 
         public static string GetOnType(IDbTable dbTable)

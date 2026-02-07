@@ -26,6 +26,7 @@ namespace BifrostQL.Core.Resolvers
             var dialect = conFactory.Dialect;
             var table = _table;
             var modules = context.RequestServices!.GetRequiredService<IMutationModules>();
+            var mutationTransformers = context.RequestServices!.GetRequiredService<IMutationTransformers>();
             modules.OnSave(context);
 
             if (context.HasArgument("insert"))
@@ -38,7 +39,7 @@ namespace BifrostQL.Core.Resolvers
             }
             if (context.HasArgument("delete"))
             {
-                return await DeleteObject(context, modules, table, model, conFactory, dialect);
+                return await DeleteObject(context, modules, mutationTransformers, table, model, conFactory, dialect);
             }
 
             if (context.HasArgument("upsert"))
@@ -59,30 +60,95 @@ namespace BifrostQL.Core.Resolvers
             var baseData = context.GetArgument<Dictionary<string, object?>>(parameterName) ?? new();
 
             var data = new Dictionary<string, object?>(baseData!, StringComparer.OrdinalIgnoreCase);
-            var keyData = data.Where(d => table.ColumnLookup[d.Key].IsPrimaryKey)
-                .ToDictionary(kv => kv.Key, kv => kv.Value);
+
+            var pkKeyData = ResolvePrimaryKeyArgument(context, table);
+            var keyData = pkKeyData
+                ?? data.Where(d => table.ColumnLookup[d.Key].IsPrimaryKey)
+                    .ToDictionary(kv => kv.Key, kv => kv.Value);
 
             var standardData = data
-                .Where(d => table.ColumnLookup[d.Key].IsPrimaryKey == false)
+                .Where(d => !keyData.ContainsKey(d.Key))
                 .ToDictionary(kv => kv.Key, kv => kv.Value);
 
-            return (data, keyData, standardData);
+            var allData = new Dictionary<string, object?>(standardData, StringComparer.OrdinalIgnoreCase);
+            foreach (var kv in keyData)
+                allData[kv.Key] = kv.Value;
 
+            return (allData, keyData, standardData);
         }
 
-        private async Task<object?> DeleteObject(IResolveFieldContext context, IMutationModules modules, IDbTable table, IDbModel model,
+        private static Dictionary<string, object?>? ResolvePrimaryKeyArgument(IResolveFieldContext context, IDbTable table)
+        {
+            if (!context.HasArgument("_primaryKey"))
+                return null;
+
+            var pkValues = context.GetArgument<List<object?>>("_primaryKey");
+            if (pkValues == null || pkValues.Count == 0)
+                return null;
+
+            var keyColumns = table.KeyColumns.ToList();
+
+            if (keyColumns.Count == 0)
+                throw new ExecutionError($"Table '{table.DbName}' has no primary key columns.");
+
+            if (pkValues.Count != keyColumns.Count)
+                throw new ExecutionError(
+                    $"_primaryKey for '{table.DbName}' expects {keyColumns.Count} value(s) " +
+                    $"({string.Join(", ", keyColumns.Select(c => c.GraphQlName))}) but received {pkValues.Count}.");
+
+            return keyColumns.Zip(pkValues, (col, val) => new { col.ColumnName, Value = val })
+                .ToDictionary(x => x.ColumnName, x => x.Value);
+        }
+
+        private async Task<object?> DeleteObject(IResolveFieldContext context, IMutationModules modules,
+            IMutationTransformers mutationTransformers, IDbTable table, IDbModel model,
             IDbConnFactory conFactory, ISqlDialect dialect)
         {
             var data = context.GetArgument<Dictionary<string, object?>>("delete");
             if (!data.Any())
                 return 0;
-            var moduleSql = modules.Delete(data, table, context.UserContext, model);
-            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var whereClause = string.Join(" AND ", data.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
-            var sql = $"DELETE FROM {tableRef} WHERE {whereClause};";
-            var cmd = new SqlCommand(Join(sql, moduleSql));
-            cmd.Parameters.AddRange(data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value ?? DBNull.Value)).ToArray());
-            return await ExecuteNonQuery(conFactory, cmd);
+
+            var pkKeyData = ResolvePrimaryKeyArgument(context, table);
+            if (pkKeyData != null)
+            {
+                foreach (var kv in pkKeyData)
+                    data[kv.Key] = kv.Value;
+            }
+
+            var userContext = context.UserContext as IDictionary<string, object?> ?? new Dictionary<string, object?>();
+            var transformContext = new MutationTransformContext { Model = model, UserContext = userContext };
+            var transformResult = mutationTransformers.Transform(table, MutationType.Delete, data, transformContext);
+
+            if (transformResult.Errors.Length > 0)
+                throw new ExecutionError(string.Join("; ", transformResult.Errors));
+
+            if (transformResult.MutationType == MutationType.Update)
+            {
+                // Soft-delete: transformed to UPDATE
+                var moduleSql = modules.Delete(transformResult.Data, table, context.UserContext, model);
+                var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+
+                var keyData = transformResult.Data.Where(d => table.ColumnLookup.ContainsKey(d.Key) && table.ColumnLookup[d.Key].IsPrimaryKey)
+                    .ToDictionary(kv => kv.Key, kv => kv.Value);
+                var setData = transformResult.Data.Where(d => !table.ColumnLookup.ContainsKey(d.Key) || !table.ColumnLookup[d.Key].IsPrimaryKey)
+                    .ToDictionary(kv => kv.Key, kv => kv.Value);
+
+                var setClause = string.Join(",", setData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+                var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+                var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause};";
+                var cmd = new SqlCommand(Join(sql, moduleSql));
+                cmd.Parameters.AddRange(transformResult.Data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value ?? DBNull.Value)).ToArray());
+                return await ExecuteNonQuery(conFactory, cmd);
+            }
+
+            // Standard DELETE (no transformation)
+            var deleteModuleSql = modules.Delete(data, table, context.UserContext, model);
+            var deleteTableRef = dialect.TableReference(table.TableSchema, table.DbName);
+            var deleteWhereClause = string.Join(" AND ", data.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+            var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause};";
+            var deleteCmd = new SqlCommand(Join(deleteSql, deleteModuleSql));
+            deleteCmd.Parameters.AddRange(data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value ?? DBNull.Value)).ToArray());
+            return await ExecuteNonQuery(conFactory, deleteCmd);
         }
 
         private async Task<object?> UpdateObject(IResolveFieldContext context, IDbTable table, IMutationModules modules, IDbModel model,

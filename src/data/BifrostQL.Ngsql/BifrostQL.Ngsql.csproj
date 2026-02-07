@@ -6,6 +6,19 @@
 		<Nullable>enable</Nullable>
 		<IsPublishable>False</IsPublishable>
 		<IsPackable>true</IsPackable>
+		<PackageId>BifrostQL.Ngsql</PackageId>
+		<Authors>Andy Brummer</Authors>
+		<Company>StandardBeagle</Company>
+		<Description>PostgreSQL dialect support for BifrostQL.</Description>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
 	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Npgsql" Version="8.0.6" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\..\BifrostQL.Core\BifrostQL.Core.csproj" />
+	</ItemGroup>
 
 </Project>

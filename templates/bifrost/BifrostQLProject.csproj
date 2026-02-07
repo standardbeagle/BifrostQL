@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+	<PropertyGroup>
+		<TargetFramework>net9.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="BifrostQL.Core" Version="0.3.0" />
+		<PackageReference Include="BifrostQL.Server" Version="0.3.0" />
+	</ItemGroup>
+
+	<!--#if (UseSqlServer) -->
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.2" />
+	</ItemGroup>
+	<!--#endif -->
+	<!--#if (UsePostgres) -->
+	<ItemGroup>
+		<PackageReference Include="BifrostQL.Ngsql" Version="0.3.0" />
+	</ItemGroup>
+	<!--#endif -->
+	<!--#if (UseMySql) -->
+	<ItemGroup>
+		<PackageReference Include="BifrostQL.MySql" Version="0.3.0" />
+	</ItemGroup>
+	<!--#endif -->
+	<!--#if (UseSqlite) -->
+	<ItemGroup>
+		<PackageReference Include="BifrostQL.Sqlite" Version="0.3.0" />
+	</ItemGroup>
+	<!--#endif -->
+
+	<!--#if (UseJwtAuth) -->
+	<ItemGroup>
+		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="9.0.1" />
+	</ItemGroup>
+	<!--#endif -->
+
+	<ItemGroup>
+		<Content Update="appsettings.Development.json">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+		</Content>
+		<Content Update="appsettings.json">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+		</Content>
+	</ItemGroup>
+
+</Project>

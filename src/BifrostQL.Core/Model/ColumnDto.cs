@@ -18,6 +18,11 @@ namespace BifrostQL.Core.Model
         public string NormalizedName { get; init; } = null!;
         public ColumnRef ColumnRef { get; init; } = null!;
         public string DataType { get; init; } = null!;
+        /// <summary>
+        /// Returns the effective data type, checking for metadata type override (e.g., "type: json").
+        /// Use this instead of DataType for schema generation and type mapping.
+        /// </summary>
+        public string EffectiveDataType => GetMetadataValue("type") ?? DataType;
         public bool IsNullable { get; init; }
         public int OrdinalPosition { get; init; }
         public bool IsIdentity { get; init; } = false;

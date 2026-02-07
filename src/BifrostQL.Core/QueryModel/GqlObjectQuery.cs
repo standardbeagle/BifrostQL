@@ -189,6 +189,45 @@ namespace BifrostQL.Core.QueryModel
                     Joins.Add(join);
                     continue;
                 }
+                if (thisDto.ManyToManyLinks.TryGetValue(link.GraphQlName, out var m2mLink))
+                {
+                    // Create a junction query that selects the FK column to the target
+                    var junctionQuery = new GqlObjectQuery
+                    {
+                        DbTable = m2mLink.JunctionTable,
+                        TableName = m2mLink.JunctionTable.DbName,
+                        SchemaName = m2mLink.JunctionTable.TableSchema,
+                        GraphQlName = m2mLink.JunctionTable.GraphQlName,
+                        Path = $"{Path}->{m2mLink.JunctionTable.GraphQlName}",
+                        QueryType = QueryType.Standard,
+                        ScalarColumns = { new GqlObjectColumn(m2mLink.JunctionTargetColumn.ColumnName) },
+                    };
+                    // First hop: source -> junction (OneToMany)
+                    var junctionJoin = new TableJoin
+                    {
+                        Name = m2mLink.JunctionTable.GraphQlName,
+                        ConnectedTable = junctionQuery,
+                        ConnectedColumn = m2mLink.JunctionSourceColumn.ColumnName,
+                        FromTable = this,
+                        FromColumn = m2mLink.SourceColumn.ColumnName,
+                        QueryType = QueryType.Join,
+                    };
+                    // Second hop: junction -> target (ManyToOne via junction FK)
+                    link.TableName = m2mLink.TargetTable.DbName;
+                    var targetJoin = new TableJoin
+                    {
+                        Alias = link.Alias,
+                        Name = link.GraphQlName,
+                        ConnectedTable = link,
+                        ConnectedColumn = m2mLink.TargetColumn.ColumnName,
+                        FromTable = junctionQuery,
+                        FromColumn = m2mLink.JunctionTargetColumn.ColumnName,
+                        QueryType = QueryType.Join,
+                    };
+                    junctionQuery.Joins.Add(targetJoin);
+                    Joins.Add(junctionJoin);
+                    continue;
+                }
                 throw new ExecutionError($"Unable to find join {link.GraphQlName} on table {TableName}");
             }
             foreach (var join in Joins)

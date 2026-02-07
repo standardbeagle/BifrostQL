@@ -47,7 +47,7 @@ namespace BifrostQL.Core.Resolvers
                             {
                                 dbName = c.DbName,
                                 graphQlName = c.GraphQlName,
-                                paramType = SchemaGenerator.GetGraphQlTypeName(c.DataType, c.IsNullable),
+                                paramType = SchemaGenerator.GetGraphQlTypeName(c.EffectiveDataType, c.IsNullable),
                                 dbType = c.DataType,
                                 isNullable = c.IsNullable,
                                 isPrimaryKey = c.IsPrimaryKey,
@@ -56,7 +56,15 @@ namespace BifrostQL.Core.Resolvers
                                              c.CompareMetadata("populate", "created-on") ||
                                              c.CompareMetadata("populate", "created-by") ||
                                              c.CompareMetadata("populate", "updated-on") ||
-                                             c.CompareMetadata("populate", "updated-by"),
+                                             c.CompareMetadata("populate", "updated-by") ||
+                                             c.CompareMetadata("populate", "deleted-on") ||
+                                             c.CompareMetadata("populate", "deleted-by"),
+                                isCreatedOnColumn = c.CompareMetadata("populate", "created-on"),
+                                isCreatedByColumn = c.CompareMetadata("populate", "created-by"),
+                                isUpdatedOnColumn = c.CompareMetadata("populate", "updated-on"),
+                                isUpdatedByColumn = c.CompareMetadata("populate", "updated-by"),
+                                isDeletedOnColumn = c.CompareMetadata("populate", "deleted-on"),
+                                isDeletedColumn = c.CompareMetadata("populate", "deleted-by"),
                                 metadata = c.Metadata
                             }),
                             multiJoins = t.MultiLinks.Values.Select(j => new

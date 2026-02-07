@@ -64,7 +64,12 @@ SELECT [TABLE_CATALOG]
             _metadataLoader = metadataLoader;
         }
 
-        public async Task<IDbModel> LoadAsync()
+        public Task<IDbModel> LoadAsync()
+        {
+            return LoadAsync(null);
+        }
+
+        public async Task<IDbModel> LoadAsync(IDictionary<string, IDictionary<string, object?>>? additionalMetadata)
         {
             await using var conn = new SqlConnection(_connStr);
             await conn.OpenAsync();
@@ -85,7 +90,7 @@ SELECT [TABLE_CATALOG]
                     columns[new TableRef((string)reader["TABLE_CATALOG"], (string)reader["TABLE_SCHEMA"], (string)reader["TABLE_NAME"])]))
                 .ToList();
 
-            return DbModel.FromTables(tables, _metadataLoader);
+            return DbModel.FromTables(tables, _metadataLoader, Array.Empty<DbStoredProcedure>(), Array.Empty<DbForeignKey>(), additionalMetadata);
         }
 
         private static IEnumerable<T> GetDtos<T>(IDataReader reader, Func<IDataReader, T> getDto)

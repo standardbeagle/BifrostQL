@@ -48,6 +48,13 @@ namespace BifrostQL.Core.Resolvers
 
             // Apply filter transformers (tenant isolation, soft-delete, etc.)
             var userContext = context.UserContext as IDictionary<string, object?> ?? new Dictionary<string, object?>();
+
+            // Pass _includeDeleted argument to UserContext for SoftDeleteFilterTransformer
+            if (context.HasArgument("_includeDeleted") && context.GetArgument<bool>("_includeDeleted"))
+            {
+                userContext[Modules.SoftDeleteFilterTransformer.IncludeDeletedKey] = true;
+            }
+
             _transformerService.ApplyTransformers(table, _dbModel, userContext);
 
             var conFactory = (IDbConnFactory)(context.InputExtensions["connFactory"] ?? throw new InvalidDataException("connection factory is not configured"));

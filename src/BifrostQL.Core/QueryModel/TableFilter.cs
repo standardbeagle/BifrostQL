@@ -22,6 +22,36 @@ namespace BifrostQL.Core.QueryModel
         public List<TableFilter> And { get; init; } = new();
         public List<TableFilter> Or { get; init; } = new();
 
+        public static TableFilter FromPrimaryKey(IEnumerable<object?> values, IEnumerable<ColumnDto> keyColumns, string tableName)
+        {
+            var keyColumnList = keyColumns.ToList();
+            var valueList = values.ToList();
+
+            if (keyColumnList.Count == 0)
+                throw new ExecutionError($"Table '{tableName}' has no primary key columns.");
+
+            if (valueList.Count != keyColumnList.Count)
+                throw new ExecutionError(
+                    $"_primaryKey for '{tableName}' expects {keyColumnList.Count} value(s) " +
+                    $"({string.Join(", ", keyColumnList.Select(c => c.GraphQlName))}) but received {valueList.Count}.");
+
+            if (keyColumnList.Count == 1)
+            {
+                return FromObject(new Dictionary<string, object?>
+                {
+                    { keyColumnList[0].GraphQlName, new Dictionary<string, object?> { { "_eq", valueList[0] } } }
+                }, tableName);
+            }
+
+            var andFilters = keyColumnList.Zip(valueList, (col, val) =>
+                (object?)new Dictionary<string, object?>
+                {
+                    { col.GraphQlName, new Dictionary<string, object?> { { "_eq", val } } }
+                }).ToList();
+
+            return FromObject(new Dictionary<string, object?> { { "and", andFilters } }, tableName);
+        }
+
         public static TableFilter FromObject(object? value, string tableName)
         {
             var dictValue = value as Dictionary<string, object?> ?? throw new ExecutionError($"Error filtering {tableName}, null filter value");

@@ -1,6 +1,7 @@
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Integration.Test.Infrastructure;
 using FluentAssertions;
+using Xunit;
 
 namespace BifrostQL.Integration.Test.Navigation;
 
@@ -16,6 +17,7 @@ public abstract class FilteringTestBase<TDatabase> : IClassFixture<DatabaseFixtu
 
     private GqlObjectQuery BuildQuery(string tableName, object? filter = null)
     {
+        Fixture.EnsureAvailable();
         var db = Fixture.Database;
         var table = db.DbModel.GetTableFromDbName(tableName);
         var query = new GqlObjectQuery
@@ -39,7 +41,7 @@ public abstract class FilteringTestBase<TDatabase> : IClassFixture<DatabaseFixtu
 
     // --- Equality ---
 
-    [Fact]
+    [SkippableFact]
     public void EqualityFilter_String()
     {
         var filter = new Dictionary<string, object?>
@@ -55,7 +57,7 @@ public abstract class FilteringTestBase<TDatabase> : IClassFixture<DatabaseFixtu
         data[0][nameIndex]?.ToString().Should().Be("Laptop");
     }
 
-    [Fact]
+    [SkippableFact]
     public void EqualityFilter_Int()
     {
         var filter = new Dictionary<string, object?>
@@ -69,7 +71,7 @@ public abstract class FilteringTestBase<TDatabase> : IClassFixture<DatabaseFixtu
         data.Should().HaveCount(TestSchema.Counts.ProductsPerCategory);
     }
 
-    [Fact]
+    [SkippableFact]
     public void NotEqualFilter()
     {
         var filter = new Dictionary<string, object?>
@@ -87,7 +89,7 @@ public abstract class FilteringTestBase<TDatabase> : IClassFixture<DatabaseFixtu
 
     // --- Comparison ---
 
-    [Fact]
+    [SkippableFact]
     public void GreaterThanFilter()
     {
         var filter = new Dictionary<string, object?>
@@ -103,7 +105,7 @@ public abstract class FilteringTestBase<TDatabase> : IClassFixture<DatabaseFixtu
         data.All(row => Convert.ToDecimal(row[priceIndex]) > 100m).Should().BeTrue();
     }
 
-    [Fact]
+    [SkippableFact]
     public void LessThanFilter()
     {
         var filter = new Dictionary<string, object?>
@@ -119,7 +121,7 @@ public abstract class FilteringTestBase<TDatabase> : IClassFixture<DatabaseFixtu
         data.All(row => Convert.ToDecimal(row[priceIndex]) < 30m).Should().BeTrue();
     }
 
-    [Fact]
+    [SkippableFact]
     public void GreaterThanOrEqualFilter()
     {
         var filter = new Dictionary<string, object?>
@@ -135,7 +137,7 @@ public abstract class FilteringTestBase<TDatabase> : IClassFixture<DatabaseFixtu
         data.All(row => Convert.ToInt32(row[stockIndex]) >= 200).Should().BeTrue();
     }
 
-    [Fact]
+    [SkippableFact]
     public void LessThanOrEqualFilter()
     {
         var filter = new Dictionary<string, object?>
@@ -153,7 +155,7 @@ public abstract class FilteringTestBase<TDatabase> : IClassFixture<DatabaseFixtu
 
     // --- String patterns ---
 
-    [Fact]
+    [SkippableFact]
     public void ContainsFilter()
     {
         var filter = new Dictionary<string, object?>
@@ -169,7 +171,7 @@ public abstract class FilteringTestBase<TDatabase> : IClassFixture<DatabaseFixtu
         data.All(row => row[nameIndex]?.ToString()?.Contains("top", StringComparison.OrdinalIgnoreCase) == true).Should().BeTrue();
     }
 
-    [Fact]
+    [SkippableFact]
     public void StartsWithFilter()
     {
         var filter = new Dictionary<string, object?>
@@ -185,7 +187,7 @@ public abstract class FilteringTestBase<TDatabase> : IClassFixture<DatabaseFixtu
         data.All(row => row[nameIndex]?.ToString()?.StartsWith("T", StringComparison.OrdinalIgnoreCase) == true).Should().BeTrue();
     }
 
-    [Fact]
+    [SkippableFact]
     public void EndsWithFilter()
     {
         var filter = new Dictionary<string, object?>
@@ -203,7 +205,7 @@ public abstract class FilteringTestBase<TDatabase> : IClassFixture<DatabaseFixtu
 
     // --- Set membership ---
 
-    [Fact]
+    [SkippableFact]
     public void InFilter()
     {
         var filter = new Dictionary<string, object?>
@@ -223,7 +225,7 @@ public abstract class FilteringTestBase<TDatabase> : IClassFixture<DatabaseFixtu
         }).Should().BeTrue();
     }
 
-    [Fact]
+    [SkippableFact]
     public void NotInFilter()
     {
         var filter = new Dictionary<string, object?>
@@ -241,7 +243,7 @@ public abstract class FilteringTestBase<TDatabase> : IClassFixture<DatabaseFixtu
 
     // --- BETWEEN ---
 
-    [Fact]
+    [SkippableFact]
     public void BetweenFilter()
     {
         var filter = new Dictionary<string, object?>
@@ -263,7 +265,7 @@ public abstract class FilteringTestBase<TDatabase> : IClassFixture<DatabaseFixtu
 
     // --- NULL handling ---
 
-    [Fact]
+    [SkippableFact]
     public void NullEqualityFilter_IsNull()
     {
         var filter = new Dictionary<string, object?>
@@ -279,7 +281,7 @@ public abstract class FilteringTestBase<TDatabase> : IClassFixture<DatabaseFixtu
         data.All(row => row[cityIndex] == null).Should().BeTrue();
     }
 
-    [Fact]
+    [SkippableFact]
     public void NullNotEqualFilter_IsNotNull()
     {
         var filter = new Dictionary<string, object?>
@@ -295,7 +297,7 @@ public abstract class FilteringTestBase<TDatabase> : IClassFixture<DatabaseFixtu
 
     // --- Logical composition ---
 
-    [Fact]
+    [SkippableFact]
     public void AndFilter()
     {
         var filter = new Dictionary<string, object?>
@@ -326,7 +328,7 @@ public abstract class FilteringTestBase<TDatabase> : IClassFixture<DatabaseFixtu
         ).Should().BeTrue();
     }
 
-    [Fact]
+    [SkippableFact]
     public void OrFilter()
     {
         var filter = new Dictionary<string, object?>
@@ -357,7 +359,7 @@ public abstract class FilteringTestBase<TDatabase> : IClassFixture<DatabaseFixtu
 
     // --- Filter with pagination ---
 
-    [Fact]
+    [SkippableFact]
     public void FilterWithPagination()
     {
         // Filter: CategoryId = 1, then paginate

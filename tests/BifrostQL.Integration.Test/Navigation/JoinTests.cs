@@ -1,6 +1,7 @@
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Integration.Test.Infrastructure;
 using FluentAssertions;
+using Xunit;
 
 namespace BifrostQL.Integration.Test.Navigation;
 
@@ -16,6 +17,7 @@ public abstract class JoinTestBase<TDatabase> : IClassFixture<DatabaseFixture<TD
 
     private GqlObjectQuery BuildQuery(string tableName, int? limit = null)
     {
+        Fixture.EnsureAvailable();
         var db = Fixture.Database;
         var table = db.DbModel.GetTableFromDbName(tableName);
         return new GqlObjectQuery
@@ -32,6 +34,7 @@ public abstract class JoinTestBase<TDatabase> : IClassFixture<DatabaseFixture<TD
 
     private GqlObjectQuery BuildLinkedQuery(string tableName)
     {
+        Fixture.EnsureAvailable();
         var db = Fixture.Database;
         var table = db.DbModel.GetTableFromDbName(tableName);
         return new GqlObjectQuery
@@ -46,7 +49,7 @@ public abstract class JoinTestBase<TDatabase> : IClassFixture<DatabaseFixture<TD
         };
     }
 
-    [Fact]
+    [SkippableFact]
     public void ManyToOne_ProductToCategory()
     {
         // Products -> Categories (single link via CategoryId)
@@ -78,7 +81,7 @@ public abstract class JoinTestBase<TDatabase> : IClassFixture<DatabaseFixture<TD
         joinData.Select(row => row[srcIdIndex]).All(id => productIds.Contains(id)).Should().BeTrue();
     }
 
-    [Fact]
+    [SkippableFact]
     public void OneToMany_CategoryToProducts()
     {
         // Categories -> Products (multi link via Id -> CategoryId)
@@ -100,7 +103,7 @@ public abstract class JoinTestBase<TDatabase> : IClassFixture<DatabaseFixture<TD
         joinData.Should().HaveCount(TestSchema.Counts.Products); // All products linked back
     }
 
-    [Fact]
+    [SkippableFact]
     public void OneToMany_OrderToItems()
     {
         // Orders -> OrderItems (multi link via Id -> OrderId)
@@ -121,7 +124,7 @@ public abstract class JoinTestBase<TDatabase> : IClassFixture<DatabaseFixture<TD
         results[joinKey].data.Should().HaveCount(TestSchema.Counts.OrderItems);
     }
 
-    [Fact]
+    [SkippableFact]
     public void NestedJoin_OrderToItemsToProduct()
     {
         // Orders -> OrderItems -> Products (two-level join)
@@ -152,7 +155,7 @@ public abstract class JoinTestBase<TDatabase> : IClassFixture<DatabaseFixture<TD
         results[productJoinKey].data.Should().NotBeEmpty();
     }
 
-    [Fact]
+    [SkippableFact]
     public void JoinWithChildPagination()
     {
         // Categories -> Products with limit on child
@@ -172,7 +175,7 @@ public abstract class JoinTestBase<TDatabase> : IClassFixture<DatabaseFixture<TD
         results[joinKey].data.Count.Should().BeLessThanOrEqualTo(10);
     }
 
-    [Fact]
+    [SkippableFact]
     public void JoinWithFilter_OnParent()
     {
         // Filter categories to just Electronics, then get products

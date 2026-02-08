@@ -16,6 +16,9 @@ namespace BifrostQL.Server.Logging
         public LogLevel MinimumLevel { get; set; } = LogLevel.Information;
         public bool EnableConsole { get; set; } = true;
         public bool EnableFile { get; set; } = true;
+        public bool EnableQueryLogging { get; set; } = true;
+        public int SlowQueryThresholdMs { get; set; } = 1000;
+        public bool LogSql { get; set; } = false;
     }
 
     public class BifrostLoggingModule

@@ -84,6 +84,7 @@ public interface IQueryObservers : IReadOnlyCollection<IQueryObserver>
 public sealed class QueryObserversWrap : IQueryObservers
 {
     public IReadOnlyCollection<IQueryObserver> Observers { get; init; } = Array.Empty<IQueryObserver>();
+    public Action<Exception, IQueryObserver, QueryPhase>? OnError { get; init; }
 
     public int Count => Observers.Count;
 
@@ -95,10 +96,9 @@ public sealed class QueryObserversWrap : IQueryObservers
             {
                 await observer.OnQueryPhaseAsync(phase, context);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // Log but don't abort - observers are best-effort
-                // TODO: Add proper logging infrastructure
+                OnError?.Invoke(ex, observer, phase);
             }
         }
     }

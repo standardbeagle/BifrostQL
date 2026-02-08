@@ -343,10 +343,26 @@ namespace BifrostQL.Server
             else
                 services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap { Transformers = _mutationTransformers });
 
-            if (_queryObserverLoader != null)
-                services.AddSingleton<IQueryObservers>(sp => new QueryObserversWrap { Observers = _queryObserverLoader(sp) });
-            else
-                services.AddSingleton<IQueryObservers>(new QueryObserversWrap { Observers = _queryObservers });
+            services.AddSingleton<IQueryObservers>(sp =>
+            {
+                var userObservers = _queryObserverLoader != null
+                    ? _queryObserverLoader(sp)
+                    : _queryObservers;
+                var loggingConfig = sp.GetRequiredService<BifrostLoggingConfiguration>();
+                var allObservers = new List<IQueryObserver>(userObservers);
+                if (loggingConfig.EnableQueryLogging)
+                {
+                    allObservers.Insert(0, new QueryLoggingObserver(
+                        sp.GetRequiredService<ILogger<QueryLoggingObserver>>(), loggingConfig));
+                }
+                return new QueryObserversWrap
+                {
+                    Observers = allObservers,
+                    OnError = (ex, observer, phase) =>
+                        sp.GetRequiredService<ILogger<QueryObserversWrap>>()
+                          .LogError(ex, "Observer {Observer} failed at {Phase}", observer.GetType().Name, phase),
+                };
+            });
 
             services.AddSingleton<IQueryTransformerService, QueryTransformerService>();
 
@@ -360,6 +376,9 @@ namespace BifrostQL.Server
                         options.EnableFile = _loggingConfig?.GetValue("EnableFile", true) ?? true;
                         options.MinimumLevel = _loggingConfig?.GetValue("MinimumLevel", LogLevel.Information) ?? LogLevel.Information;
                         options.LogFilePath = _loggingConfig?.GetValue<string>("FilePath");
+                        options.EnableQueryLogging = _loggingConfig?.GetValue("EnableQueryLogging", true) ?? true;
+                        options.SlowQueryThresholdMs = _loggingConfig?.GetValue("SlowQueryThresholdMs", 1000) ?? 1000;
+                        options.LogSql = _loggingConfig?.GetValue("LogSql", false) ?? false;
                     })
                     .IfFluent(isAuthEnabled, b => b.AddUserContextBuilder(context => new BifrostContext(context)))
             );
@@ -577,11 +596,27 @@ namespace BifrostQL.Server
             else
                 services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap { Transformers = _mutationTransformers });
 
-            // Register query observers
-            if (_queryObserverLoader != null)
-                services.AddSingleton<IQueryObservers>(sp => new QueryObserversWrap { Observers = _queryObserverLoader(sp) });
-            else
-                services.AddSingleton<IQueryObservers>(new QueryObserversWrap { Observers = _queryObservers });
+            // Register query observers with built-in logging observer and error callback
+            services.AddSingleton<IQueryObservers>(sp =>
+            {
+                var userObservers = _queryObserverLoader != null
+                    ? _queryObserverLoader(sp)
+                    : _queryObservers;
+                var loggingConfig = sp.GetRequiredService<BifrostLoggingConfiguration>();
+                var allObservers = new List<IQueryObserver>(userObservers);
+                if (loggingConfig.EnableQueryLogging)
+                {
+                    allObservers.Insert(0, new QueryLoggingObserver(
+                        sp.GetRequiredService<ILogger<QueryLoggingObserver>>(), loggingConfig));
+                }
+                return new QueryObserversWrap
+                {
+                    Observers = allObservers,
+                    OnError = (ex, observer, phase) =>
+                        sp.GetRequiredService<ILogger<QueryObserversWrap>>()
+                          .LogError(ex, "Observer {Observer} failed at {Phase}", observer.GetType().Name, phase),
+                };
+            });
 
             // Register query transformer service
             services.AddSingleton<IQueryTransformerService, QueryTransformerService>();
@@ -600,6 +635,9 @@ namespace BifrostQL.Server
                         options.EnableFile = loggingConfig?.GetValue("EnableFile", true) ?? true;
                         options.MinimumLevel = loggingConfig?.GetValue("MinimumLevel", LogLevel.Information) ?? LogLevel.Information;
                         options.LogFilePath = loggingConfig?.GetValue<string>("FilePath");
+                        options.EnableQueryLogging = loggingConfig?.GetValue("EnableQueryLogging", true) ?? true;
+                        options.SlowQueryThresholdMs = loggingConfig?.GetValue("SlowQueryThresholdMs", 1000) ?? 1000;
+                        options.LogSql = loggingConfig?.GetValue("LogSql", false) ?? false;
                     })
                     .IfFluent(isAuthEnabled, b => b.AddUserContextBuilder(context => new BifrostContext(context)))
             );

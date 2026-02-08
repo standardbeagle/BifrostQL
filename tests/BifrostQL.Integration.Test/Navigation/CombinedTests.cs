@@ -1,6 +1,7 @@
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Integration.Test.Infrastructure;
 using FluentAssertions;
+using Xunit;
 
 namespace BifrostQL.Integration.Test.Navigation;
 
@@ -16,6 +17,7 @@ public abstract class CombinedTestBase<TDatabase> : IClassFixture<DatabaseFixtur
 
     private GqlObjectQuery BuildQuery(string tableName, object? filter = null, List<string>? sort = null, int? limit = null, int? offset = null, bool includeResult = false)
     {
+        Fixture.EnsureAvailable();
         var db = Fixture.Database;
         var table = db.DbModel.GetTableFromDbName(tableName);
         var query = new GqlObjectQuery
@@ -39,7 +41,7 @@ public abstract class CombinedTestBase<TDatabase> : IClassFixture<DatabaseFixtur
         return query;
     }
 
-    [Fact]
+    [SkippableFact]
     public void FilterSortPaginate_DataGridScenario()
     {
         // Simulate: show Electronics products, sorted by price desc, page 1 of 2
@@ -68,7 +70,7 @@ public abstract class CombinedTestBase<TDatabase> : IClassFixture<DatabaseFixtur
         prices.Should().BeInDescendingOrder();
     }
 
-    [Fact]
+    [SkippableFact]
     public void FilterSortPaginate_Page2()
     {
         // Get page 2 of the same query
@@ -108,7 +110,7 @@ public abstract class CombinedTestBase<TDatabase> : IClassFixture<DatabaseFixtur
         firstPage2Price.Should().BeLessThanOrEqualTo(lastPage1Price);
     }
 
-    [Fact]
+    [SkippableFact]
     public void ComplexFilter_MultiSort_Paginate()
     {
         // Orders with Total > 200, sorted by Status asc then Total desc, page 1
@@ -135,9 +137,10 @@ public abstract class CombinedTestBase<TDatabase> : IClassFixture<DatabaseFixtur
         totalCount.Should().BeGreaterThan(0);
     }
 
-    [Fact]
+    [SkippableFact]
     public void FilterWithJoin_CustomerOrdersFiltered()
     {
+        Fixture.EnsureAvailable();
         // Get customers, join with orders filtered to Shipped status
         var db = Fixture.Database;
         var customersTable = db.DbModel.GetTableFromDbName("Customers");
@@ -183,7 +186,7 @@ public abstract class CombinedTestBase<TDatabase> : IClassFixture<DatabaseFixtur
         results[joinKey].data.All(row => row[statusIndex]?.ToString() == "Shipped").Should().BeTrue();
     }
 
-    [Fact]
+    [SkippableFact]
     public void EmptyFilterResult_WithPagination()
     {
         // Filter that returns no results

@@ -1,6 +1,7 @@
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Integration.Test.Infrastructure;
 using FluentAssertions;
+using Xunit;
 
 namespace BifrostQL.Integration.Test.Navigation;
 
@@ -16,6 +17,7 @@ public abstract class PaginationTestBase<TDatabase> : IClassFixture<DatabaseFixt
 
     private GqlObjectQuery BuildQuery(string tableName, int? limit = null, int? offset = null, bool includeResult = false)
     {
+        Fixture.EnsureAvailable();
         var db = Fixture.Database;
         var table = db.DbModel.GetTableFromDbName(tableName);
         return new GqlObjectQuery
@@ -31,7 +33,7 @@ public abstract class PaginationTestBase<TDatabase> : IClassFixture<DatabaseFixt
         };
     }
 
-    [Fact]
+    [SkippableFact]
     public void DefaultLimit_Returns100OrAllRows()
     {
         var query = BuildQuery("Products"); // 20 products, default limit is 100
@@ -42,7 +44,7 @@ public abstract class PaginationTestBase<TDatabase> : IClassFixture<DatabaseFixt
         data.Count.Should().Be(TestSchema.Counts.Products); // 20 < 100 default
     }
 
-    [Fact]
+    [SkippableFact]
     public void ExplicitLimit_ReturnsRequestedRows()
     {
         var query = BuildQuery("Products", limit: 5);
@@ -51,7 +53,7 @@ public abstract class PaginationTestBase<TDatabase> : IClassFixture<DatabaseFixt
         results["Products"].data.Count.Should().Be(5);
     }
 
-    [Fact]
+    [SkippableFact]
     public void OffsetAndLimit_ReturnsCorrectPage()
     {
         // Get all products first
@@ -76,7 +78,7 @@ public abstract class PaginationTestBase<TDatabase> : IClassFixture<DatabaseFixt
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public void PageThroughEntireDataset_NoDuplicatesOrGaps()
     {
         var pageSize = 7;
@@ -103,7 +105,7 @@ public abstract class PaginationTestBase<TDatabase> : IClassFixture<DatabaseFixt
         allIds.Distinct().Should().HaveCount(TestSchema.Counts.Products);
     }
 
-    [Fact]
+    [SkippableFact]
     public void IncludeResult_ReturnsTotalCount()
     {
         var query = BuildQuery("Products", limit: 5, includeResult: true);
@@ -118,7 +120,7 @@ public abstract class PaginationTestBase<TDatabase> : IClassFixture<DatabaseFixt
         Convert.ToInt32(countData[0][0]).Should().Be(TestSchema.Counts.Products);
     }
 
-    [Fact]
+    [SkippableFact]
     public void OffsetBeyondData_ReturnsEmpty()
     {
         var query = BuildQuery("Products", limit: 10, offset: 1000);
@@ -128,7 +130,7 @@ public abstract class PaginationTestBase<TDatabase> : IClassFixture<DatabaseFixt
         results["Products"].data.Count.Should().Be(0);
     }
 
-    [Fact]
+    [SkippableFact]
     public void UnlimitedQuery_ReturnsAllRows()
     {
         var query = BuildQuery("OrderItems", limit: -1);

@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Diagnostics;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
@@ -18,17 +19,19 @@ namespace BifrostQL.Core.Resolvers
         private readonly IDbModel _dbModel;
         private readonly ISchema _schema;
         private readonly IQueryTransformerService _transformerService;
+        private readonly IQueryObservers? _observers;
 
         public SqlExecutionManager(IDbModel dbModel, ISchema schema)
             : this(dbModel, schema, NullQueryTransformerService.Instance)
         {
         }
 
-        public SqlExecutionManager(IDbModel dbModel, ISchema schema, IQueryTransformerService transformerService)
+        public SqlExecutionManager(IDbModel dbModel, ISchema schema, IQueryTransformerService transformerService, IQueryObservers? observers = null)
         {
             _dbModel = dbModel;
             _schema = schema;
             _transformerService = transformerService;
+            _observers = observers;
         }
         public async ValueTask<object?> ResolveAsync(IResolveFieldContext context, IDbTable dbTable)
         {
@@ -41,9 +44,22 @@ namespace BifrostQL.Core.Resolvers
             _objectQueries ??= await GetAllObjectQueries(context);
             var table = _objectQueries.First(t => (alias != null && t.Alias == alias) || (alias == null && t.GraphQlName == graphqlName));
 
-            // Apply filter transformers (tenant isolation, soft-delete, etc.)
             var userContext = context.UserContext as IDictionary<string, object?> ?? new Dictionary<string, object?>();
 
+            // Notify Parsed phase
+            if (_observers is { Count: > 0 })
+            {
+                await _observers.NotifyAsync(QueryPhase.Parsed, new QueryObserverContext
+                {
+                    Table = dbTable,
+                    Model = _dbModel,
+                    UserContext = userContext,
+                    QueryType = table.QueryType,
+                    Path = context.Path.ToString() ?? graphqlName,
+                });
+            }
+
+            // Apply filter transformers (tenant isolation, soft-delete, etc.)
             // Pass _includeDeleted argument to UserContext for SoftDeleteFilterTransformer
             if (context.HasArgument("_includeDeleted") && context.GetArgument<bool>("_includeDeleted"))
             {
@@ -52,8 +68,44 @@ namespace BifrostQL.Core.Resolvers
 
             _transformerService.ApplyTransformers(table, _dbModel, userContext);
 
+            // Notify Transformed phase
+            if (_observers is { Count: > 0 })
+            {
+                await _observers.NotifyAsync(QueryPhase.Transformed, new QueryObserverContext
+                {
+                    Table = dbTable,
+                    Model = _dbModel,
+                    UserContext = userContext,
+                    QueryType = table.QueryType,
+                    Path = context.Path.ToString() ?? graphqlName,
+                    Filter = table.Filter,
+                });
+            }
+
             var conFactory = (IDbConnFactory)(context.InputExtensions["connFactory"] ?? throw new InvalidDataException("connection factory is not configured"));
-            var data = LoadDataParameterized(table, conFactory);
+
+            var sw = Stopwatch.StartNew();
+            var (data, sql) = LoadDataParameterized(table, conFactory);
+            sw.Stop();
+
+            // Notify AfterExecute phase with timing data
+            if (_observers is { Count: > 0 })
+            {
+                var totalRows = data.Values.Sum(v => v.data.Count);
+                await _observers.NotifyAsync(QueryPhase.AfterExecute, new QueryObserverContext
+                {
+                    Table = dbTable,
+                    Model = _dbModel,
+                    UserContext = userContext,
+                    QueryType = table.QueryType,
+                    Path = context.Path.ToString() ?? graphqlName,
+                    Filter = table.Filter,
+                    Sql = sql,
+                    RowCount = totalRows,
+                    Duration = sw.Elapsed,
+                });
+            }
+
             var count = data.First(kv => kv.Key == (table.KeyName + "=>count")).Value.data[0][0] as int?;
 
             if (table.IncludeResult)
@@ -79,7 +131,7 @@ namespace BifrostQL.Core.Resolvers
             return newTables;
         }
 
-        private IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> LoadDataParameterized(GqlObjectQuery query, IDbConnFactory connFactory)
+        private (IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> results, string sql) LoadDataParameterized(GqlObjectQuery query, IDbConnFactory connFactory)
         {
             var dialect = connFactory.Dialect;
             var parameters = new QueryModel.SqlParameterCollection();
@@ -130,7 +182,7 @@ namespace BifrostQL.Core.Resolvers
                         (index, result);
                     results.Add(resultName, currentResult);
                 } while (reader.NextResult());
-                return results;
+                return (results, sql);
             }
             catch (Exception ex)
             {

@@ -1,6 +1,7 @@
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Integration.Test.Infrastructure;
 using FluentAssertions;
+using Xunit;
 
 namespace BifrostQL.Integration.Test.Navigation;
 
@@ -16,6 +17,7 @@ public abstract class SortingTestBase<TDatabase> : IClassFixture<DatabaseFixture
 
     private GqlObjectQuery BuildQuery(string tableName, List<string>? sort = null, int? limit = null)
     {
+        Fixture.EnsureAvailable();
         var db = Fixture.Database;
         var table = db.DbModel.GetTableFromDbName(tableName);
         return new GqlObjectQuery
@@ -30,7 +32,7 @@ public abstract class SortingTestBase<TDatabase> : IClassFixture<DatabaseFixture
         };
     }
 
-    [Fact]
+    [SkippableFact]
     public void SortAscending_ByName()
     {
         var query = BuildQuery("Categories", sort: new List<string> { "Name_asc" });
@@ -43,7 +45,7 @@ public abstract class SortingTestBase<TDatabase> : IClassFixture<DatabaseFixture
         names.Should().BeInAscendingOrder();
     }
 
-    [Fact]
+    [SkippableFact]
     public void SortDescending_ByName()
     {
         var query = BuildQuery("Categories", sort: new List<string> { "Name_desc" });
@@ -56,7 +58,7 @@ public abstract class SortingTestBase<TDatabase> : IClassFixture<DatabaseFixture
         names.Should().BeInDescendingOrder();
     }
 
-    [Fact]
+    [SkippableFact]
     public void SortAscending_ByPrice()
     {
         var query = BuildQuery("Products", sort: new List<string> { "Price_asc" });
@@ -69,7 +71,7 @@ public abstract class SortingTestBase<TDatabase> : IClassFixture<DatabaseFixture
         prices.Should().BeInAscendingOrder();
     }
 
-    [Fact]
+    [SkippableFact]
     public void SortDescending_ByPrice()
     {
         var query = BuildQuery("Products", sort: new List<string> { "Price_desc" });
@@ -82,7 +84,7 @@ public abstract class SortingTestBase<TDatabase> : IClassFixture<DatabaseFixture
         prices.Should().BeInDescendingOrder();
     }
 
-    [Fact]
+    [SkippableFact]
     public void SortAscending_ById()
     {
         var query = BuildQuery("Products", sort: new List<string> { "Id_asc" });
@@ -95,7 +97,7 @@ public abstract class SortingTestBase<TDatabase> : IClassFixture<DatabaseFixture
         ids.Should().BeInAscendingOrder();
     }
 
-    [Fact]
+    [SkippableFact]
     public void SortWithPagination_MaintainsOrder()
     {
         // Sort all products by price ascending, then take page 2
@@ -117,7 +119,7 @@ public abstract class SortingTestBase<TDatabase> : IClassFixture<DatabaseFixture
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public void MultiColumnSort()
     {
         // Sort by CategoryId asc, then Price desc

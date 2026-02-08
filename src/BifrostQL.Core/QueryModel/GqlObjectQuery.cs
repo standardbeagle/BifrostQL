@@ -51,8 +51,8 @@ namespace BifrostQL.Core.QueryModel
             var filter = GetFilterSqlParameterized(dbModel, dialect, parameters);
             var sortCols = Sort.Any() ? Sort.Select(s => s switch
             {
-                { } when s.EndsWith("_asc") => s[..^4] + " asc",
-                { } when s.EndsWith("_desc") => s[..^5] + " desc",
+                { } when s.EndsWith("_asc") => dialect.EscapeIdentifier(s[..^4]) + " asc",
+                { } when s.EndsWith("_desc") => dialect.EscapeIdentifier(s[..^5]) + " desc",
                 _ => throw new NotSupportedException()
             }) : null;
             var pagination = dialect.Pagination(sortCols, Offset, Limit);
@@ -101,14 +101,16 @@ namespace BifrostQL.Core.QueryModel
         {
             var connectedDbTable = dbModel.GetTableFromDbName(tableJoin.ConnectedTable.TableName);
             var connectedDbColumn = connectedDbTable.GraphQlLookup[tableJoin.ConnectedColumn];
+            var ea = dialect.EscapeIdentifier("a");
+            var eb = dialect.EscapeIdentifier("b");
             var joinColumnSql = string.Join(",",
-                tableJoin.ConnectedTable.FullColumnNames.Select(c => $"[b].{dialect.EscapeIdentifier(c.DbDbName)} AS {dialect.EscapeIdentifier(c.GraphQlDbName)}"));
+                tableJoin.ConnectedTable.FullColumnNames.Select(c => $"{eb}.{dialect.EscapeIdentifier(c.DbDbName)} AS {dialect.EscapeIdentifier(c.GraphQlDbName)}"));
 
             var relation = TableFilter.GetSingleFilterParameterized(dialect, parameters, "a", "JoinId", tableJoin.Operator,
                 new FieldRef() { TableName = "b", ColumnName = connectedDbColumn.DbName });
 
-            var wrap = $"SELECT [a].[JoinId] [src_id], {joinColumnSql} FROM ({main.Sql}) [a]";
-            wrap += $" INNER JOIN {dialect.EscapeIdentifier(tableJoin.ConnectedTable.TableName)} [b] ON {relation.Sql}";
+            var wrap = $"SELECT {ea}.{dialect.EscapeIdentifier("JoinId")} {dialect.EscapeIdentifier("src_id")}, {joinColumnSql} FROM ({main.Sql}) {ea}";
+            wrap += $" INNER JOIN {dialect.EscapeIdentifier(tableJoin.ConnectedTable.TableName)} {eb} ON {relation.Sql}";
 
             if (tableJoin.QueryType == QueryType.Single)
                 return new ParameterizedSql(wrap, main.Parameters.Concat(relation.Parameters).ToList());
@@ -116,8 +118,8 @@ namespace BifrostQL.Core.QueryModel
             var filter = tableJoin.ConnectedTable.GetFilterSqlParameterized(dbModel, dialect, parameters, "b");
             var sortCols = tableJoin.ConnectedTable.Sort.Any() ? tableJoin.ConnectedTable.Sort.Select(s => s switch
             {
-                { } when s.EndsWith("_asc") => s[..^4] + " asc",
-                { } when s.EndsWith("_desc") => s[..^5] + " desc",
+                { } when s.EndsWith("_asc") => dialect.EscapeIdentifier(s[..^4]) + " asc",
+                { } when s.EndsWith("_desc") => dialect.EscapeIdentifier(s[..^5]) + " desc",
                 _ => throw new NotSupportedException()
             }) : null;
             var pagination = dialect.Pagination(sortCols, tableJoin.ConnectedTable.Offset, tableJoin.ConnectedTable.Limit);
@@ -132,17 +134,19 @@ namespace BifrostQL.Core.QueryModel
             if (query.Parent == null)
             {
                 var filter = query.FromTable.GetFilterSqlParameterized(dbModel, dialect, parameters);
-                var sqlText = $"SELECT DISTINCT {dialect.EscapeIdentifier(query.Join.FromColumn)} AS JoinId FROM {dialect.EscapeIdentifier(query.FromTable.TableName)}";
+                var sqlText = $"SELECT DISTINCT {dialect.EscapeIdentifier(query.Join.FromColumn)} AS {dialect.EscapeIdentifier("JoinId")} FROM {dialect.EscapeIdentifier(query.FromTable.TableName)}";
                 return new ParameterizedSql(sqlText, Array.Empty<SqlParameterInfo>()).Append(filter);
             }
 
+            var ea = dialect.EscapeIdentifier("a");
+            var eb = dialect.EscapeIdentifier("b");
             var baseSql = GetRestrictedSqlParameterized(dbModel, dialect, parameters, query.Parent);
-            var filterSql = query.FromTable.GetFilterSqlParameterized(dbModel, dialect, parameters, "[a]");
+            var filterSql = query.FromTable.GetFilterSqlParameterized(dbModel, dialect, parameters, "a");
 
             var relation = TableFilter.GetSingleFilterParameterized(dialect, parameters, "b", "JoinId", query.Join.Operator,
                 new FieldRef() { TableName = "a", ColumnName = query.Parent.Join.ConnectedColumn });
 
-            var querySql = $"SELECT DISTINCT [a].{dialect.EscapeIdentifier(query.Join.FromColumn)} AS JoinId FROM {dialect.EscapeIdentifier(query.FromTable.TableName)} [a] INNER JOIN ({baseSql.Sql}) [b] ON {relation.Sql}";
+            var querySql = $"SELECT DISTINCT {ea}.{dialect.EscapeIdentifier(query.Join.FromColumn)} AS {dialect.EscapeIdentifier("JoinId")} FROM {dialect.EscapeIdentifier(query.FromTable.TableName)} {ea} INNER JOIN ({baseSql.Sql}) {eb} ON {relation.Sql}";
             return new ParameterizedSql(querySql, baseSql.Parameters.Concat(relation.Parameters).ToList()).Append(filterSql);
         }
 

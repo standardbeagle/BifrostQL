@@ -1,5 +1,4 @@
-﻿using Microsoft.Data.SqlClient;
-using System.Reflection;
+using System.Data.Common;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
@@ -136,9 +135,7 @@ namespace BifrostQL.Core.Resolvers
                 var setClause = string.Join(",", setData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
                 var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
                 var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause};";
-                var cmd = new SqlCommand(Join(sql, moduleSql));
-                cmd.Parameters.AddRange(transformResult.Data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value ?? DBNull.Value)).ToArray());
-                return await ExecuteNonQuery(conFactory, cmd);
+                return await ExecuteNonQuery(conFactory, Join(sql, moduleSql), transformResult.Data);
             }
 
             // Standard DELETE (no transformation)
@@ -146,9 +143,7 @@ namespace BifrostQL.Core.Resolvers
             var deleteTableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var deleteWhereClause = string.Join(" AND ", data.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause};";
-            var deleteCmd = new SqlCommand(Join(deleteSql, deleteModuleSql));
-            deleteCmd.Parameters.AddRange(data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value ?? DBNull.Value)).ToArray());
-            return await ExecuteNonQuery(conFactory, deleteCmd);
+            return await ExecuteNonQuery(conFactory, Join(deleteSql, deleteModuleSql), data);
         }
 
         private async Task<object?> UpdateObject(IResolveFieldContext context, IDbTable table, IMutationModules modules, IDbModel model,
@@ -166,10 +161,7 @@ namespace BifrostQL.Core.Resolvers
             var setClause = string.Join(",", propertyInfo.standardData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var whereClause = string.Join(" AND ", propertyInfo.keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause};";
-            var cmd = new SqlCommand(Join(sql, moduleSql));
-            cmd.Parameters.AddRange(propertyInfo.data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value ?? DBNull.Value)
-            { IsNullable = table.ColumnLookup[kv.Key].IsNullable }).ToArray());
-            await ExecuteNonQuery(conFactory, cmd);
+            await ExecuteNonQuery(conFactory, Join(sql, moduleSql), propertyInfo.data);
             return propertyInfo.keyData.Values.First();
         }
 
@@ -181,41 +173,51 @@ namespace BifrostQL.Core.Resolvers
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var columns = string.Join(",", data.Keys.Select(k => dialect.EscapeIdentifier(k)));
             var values = string.Join(",", data.Keys.Select(k => $"@{k}"));
-            var sql = $"INSERT INTO {tableRef}({columns}) VALUES({values});SELECT SCOPE_IDENTITY() ID;";
-            var cmd = new SqlCommand(Join(sql, moduleSql));
-            cmd.Parameters.AddRange(data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value ?? DBNull.Value)
-            { IsNullable = table.ColumnLookup[kv.Key].IsNullable }).ToArray());
-            return HandleDecimals(await ExecuteScalar(conFactory, cmd));
+            var sql = $"INSERT INTO {tableRef}({columns}) VALUES({values});SELECT {dialect.LastInsertedIdentity} ID;";
+            return HandleDecimals(await ExecuteScalar(conFactory, Join(sql, moduleSql), data));
         }
 
-        private async ValueTask<object?> ExecuteScalar(IDbConnFactory connFactory, SqlCommand cmd)
+        private static async ValueTask<object?> ExecuteScalar(IDbConnFactory connFactory, string sql, Dictionary<string, object?> data)
         {
             await using var conn = connFactory.GetConnection();
-            cmd.Connection = conn;
             try
             {
                 await conn.OpenAsync();
-                var result = await cmd.ExecuteScalarAsync();
-                return result;
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = sql;
+                AddParameters(cmd, data);
+                return await cmd.ExecuteScalarAsync();
             }
             catch (Exception ex)
             {
                 throw new ExecutionError(ex.Message, ex);
             }
         }
-        private async ValueTask<int> ExecuteNonQuery(IDbConnFactory connFactory, SqlCommand cmd)
+        private static async ValueTask<int> ExecuteNonQuery(IDbConnFactory connFactory, string sql, Dictionary<string, object?> data)
         {
             await using var conn = connFactory.GetConnection();
-            cmd.Connection = conn;
             try
             {
                 await conn.OpenAsync();
-                var result = await cmd.ExecuteNonQueryAsync();
-                return result;
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = sql;
+                AddParameters(cmd, data);
+                return await cmd.ExecuteNonQueryAsync();
             }
             catch (Exception ex)
             {
                 throw new ExecutionError(ex.Message, ex);
+            }
+        }
+
+        private static void AddParameters(DbCommand cmd, Dictionary<string, object?> data)
+        {
+            foreach (var kv in data)
+            {
+                var p = cmd.CreateParameter();
+                p.ParameterName = $"@{kv.Key}";
+                p.Value = kv.Value ?? DBNull.Value;
+                cmd.Parameters.Add(p);
             }
         }
 

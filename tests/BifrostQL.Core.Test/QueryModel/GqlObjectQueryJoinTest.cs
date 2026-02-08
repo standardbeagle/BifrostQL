@@ -279,7 +279,7 @@ public sealed class GqlObjectQueryJoinTest
         };
 
         var mainSql = new ParameterizedSql(
-            "SELECT DISTINCT [Id] AS JoinId FROM [Users]",
+            "SELECT DISTINCT [Id] AS [JoinId] FROM [Users]",
             new List<SqlParameterInfo>());
 
         var parameters = new SqlParameterCollection();
@@ -322,7 +322,7 @@ public sealed class GqlObjectQueryJoinTest
         };
 
         var mainSql = new ParameterizedSql(
-            "SELECT DISTINCT [UserId] AS JoinId FROM [Orders]",
+            "SELECT DISTINCT [UserId] AS [JoinId] FROM [Orders]",
             new List<SqlParameterInfo>());
 
         var parameters = new SqlParameterCollection();
@@ -366,7 +366,7 @@ public sealed class GqlObjectQueryJoinTest
         };
 
         var mainSql = new ParameterizedSql(
-            "SELECT DISTINCT [Id] AS JoinId FROM [Users]",
+            "SELECT DISTINCT [Id] AS [JoinId] FROM [Users]",
             new List<SqlParameterInfo>());
 
         var parameters = new SqlParameterCollection();
@@ -414,7 +414,7 @@ public sealed class GqlObjectQueryJoinTest
 
         // Assert
         result.Sql.Should().Contain("SELECT DISTINCT");
-        result.Sql.Should().Contain("[Id] AS JoinId");
+        result.Sql.Should().Contain("[Id] AS [JoinId]");
         result.Sql.Should().Contain("FROM [Users]");
     }
 

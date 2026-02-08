@@ -1,14 +1,9 @@
+using System.Data.Common;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
 using GraphQL.Types;
 using GraphQL;
-using System;
-using System.Collections.Generic;
-using Microsoft.Data.SqlClient;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace BifrostQL.Core.Resolvers
 {
@@ -98,21 +93,20 @@ namespace BifrostQL.Core.Resolvers
             try
             {
                 conn.Open();
-                var command = new SqlCommand(sql, conn);
+                var command = conn.CreateCommand();
+                command.CommandText = sql;
 
                 // Add all parameters
                 foreach (var param in parameters.Parameters)
                 {
-                    var sqlParam = new SqlParameter
-                    {
-                        ParameterName = param.Name,
-                        Value = param.Value ?? DBNull.Value
-                    };
+                    var dbParam = command.CreateParameter();
+                    dbParam.ParameterName = param.Name;
+                    dbParam.Value = param.Value ?? DBNull.Value;
                     if (param.DbType != null)
                     {
-                        sqlParam.DbType = (System.Data.DbType)Enum.Parse(typeof(System.Data.DbType), param.DbType);
+                        dbParam.DbType = (System.Data.DbType)Enum.Parse(typeof(System.Data.DbType), param.DbType);
                     }
-                    command.Parameters.Add(sqlParam);
+                    command.Parameters.Add(dbParam);
                 }
 
                 using var reader = command.ExecuteReader();

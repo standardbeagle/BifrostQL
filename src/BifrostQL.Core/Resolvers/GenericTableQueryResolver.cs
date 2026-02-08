@@ -1,8 +1,9 @@
+using System.Data.Common;
 using System.Security.Claims;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.QueryModel;
 using GraphQL;
 using GraphQL.Resolvers;
-using Microsoft.Data.SqlClient;
 
 namespace BifrostQL.Core.Resolvers
 {
@@ -92,14 +93,14 @@ namespace BifrostQL.Core.Resolvers
             }).ToList();
         }
 
-        public static (string whereSql, List<SqlParameter> parameters) BuildWhereClause(
-            IDbTable table, Dictionary<string, object?>? filter)
+        public static (string whereSql, List<(string name, object? value)> parameters) BuildWhereClause(
+            IDbTable table, ISqlDialect dialect, Dictionary<string, object?>? filter)
         {
             if (filter == null || filter.Count == 0)
-                return ("", new List<SqlParameter>());
+                return ("", new List<(string, object?)>());
 
             var conditions = new List<string>();
-            var parameters = new List<SqlParameter>();
+            var parameters = new List<(string name, object? value)>();
             var paramIndex = 0;
 
             foreach (var (columnName, filterValue) in filter)
@@ -115,35 +116,35 @@ namespace BifrostQL.Core.Resolvers
                 foreach (var (op, value) in ops)
                 {
                     var paramName = $"@gp{paramIndex++}";
-                    var (condition, sqlParam) = BuildCondition(column.DbName, op, paramName, value);
+                    var (condition, param) = BuildCondition(dialect, column.DbName, op, paramName, value);
                     if (condition != null)
                     {
                         conditions.Add(condition);
-                        if (sqlParam != null)
-                            parameters.Add(sqlParam);
+                        if (param != null)
+                            parameters.Add(param.Value);
                     }
                 }
             }
 
             if (conditions.Count == 0)
-                return ("", new List<SqlParameter>());
+                return ("", new List<(string, object?)>());
 
             return ($" WHERE {string.Join(" AND ", conditions)}", parameters);
         }
 
-        private static (string? condition, SqlParameter? parameter) BuildCondition(
-            string dbColumnName, string op, string paramName, object? value)
+        private static (string? condition, (string name, object? value)? parameter) BuildCondition(
+            ISqlDialect dialect, string dbColumnName, string op, string paramName, object? value)
         {
-            var escapedColumn = $"[{dbColumnName}]";
+            var escapedColumn = dialect.EscapeIdentifier(dbColumnName);
             return op switch
             {
-                "_eq" => ($"{escapedColumn} = {paramName}", new SqlParameter(paramName, value ?? DBNull.Value)),
-                "_neq" => ($"{escapedColumn} <> {paramName}", new SqlParameter(paramName, value ?? DBNull.Value)),
-                "_gt" => ($"{escapedColumn} > {paramName}", new SqlParameter(paramName, value ?? DBNull.Value)),
-                "_gte" => ($"{escapedColumn} >= {paramName}", new SqlParameter(paramName, value ?? DBNull.Value)),
-                "_lt" => ($"{escapedColumn} < {paramName}", new SqlParameter(paramName, value ?? DBNull.Value)),
-                "_lte" => ($"{escapedColumn} <= {paramName}", new SqlParameter(paramName, value ?? DBNull.Value)),
-                "_like" => ($"{escapedColumn} LIKE {paramName}", new SqlParameter(paramName, value ?? DBNull.Value)),
+                "_eq" => ($"{escapedColumn} = {paramName}", (paramName, value ?? (object)DBNull.Value)),
+                "_neq" => ($"{escapedColumn} <> {paramName}", (paramName, value ?? (object)DBNull.Value)),
+                "_gt" => ($"{escapedColumn} > {paramName}", (paramName, value ?? (object)DBNull.Value)),
+                "_gte" => ($"{escapedColumn} >= {paramName}", (paramName, value ?? (object)DBNull.Value)),
+                "_lt" => ($"{escapedColumn} < {paramName}", (paramName, value ?? (object)DBNull.Value)),
+                "_lte" => ($"{escapedColumn} <= {paramName}", (paramName, value ?? (object)DBNull.Value)),
+                "_like" => ($"{escapedColumn} LIKE {paramName}", (paramName, value ?? (object)DBNull.Value)),
                 _ => (null, null),
             };
         }
@@ -163,10 +164,12 @@ namespace BifrostQL.Core.Resolvers
             int offset,
             Dictionary<string, object?>? filter)
         {
-            var (whereSql, filterParams) = BuildWhereClause(table, filter);
+            var dialect = connFactory.Dialect;
+            var (whereSql, filterParams) = BuildWhereClause(table, dialect, filter);
 
             var countSql = $"SELECT COUNT(*) FROM {table.DbTableRef}{whereSql}";
-            var dataSql = $"SELECT * FROM {table.DbTableRef}{whereSql} ORDER BY (SELECT NULL) OFFSET {offset} ROWS FETCH NEXT {limit} ROWS ONLY";
+            var pagination = dialect.Pagination(null, offset, limit);
+            var dataSql = $"SELECT * FROM {table.DbTableRef}{whereSql}{pagination}";
 
             await using var conn = connFactory.GetConnection();
             try
@@ -174,21 +177,21 @@ namespace BifrostQL.Core.Resolvers
                 await conn.OpenAsync();
 
                 int totalCount;
-                using (var countCmd = new SqlCommand(countSql, conn))
                 {
-                    foreach (var p in filterParams)
-                        countCmd.Parameters.Add(CloneParameter(p));
+                    await using var countCmd = conn.CreateCommand();
+                    countCmd.CommandText = countSql;
+                    AddFilterParameters(countCmd, filterParams);
                     var countResult = await countCmd.ExecuteScalarAsync();
                     totalCount = Convert.ToInt32(countResult);
                 }
 
                 var rows = new List<Dictionary<string, object?>>();
-                using (var dataCmd = new SqlCommand(dataSql, conn))
                 {
-                    foreach (var p in filterParams)
-                        dataCmd.Parameters.Add(CloneParameter(p));
+                    await using var dataCmd = conn.CreateCommand();
+                    dataCmd.CommandText = dataSql;
+                    AddFilterParameters(dataCmd, filterParams);
 
-                    using var reader = await dataCmd.ExecuteReaderAsync();
+                    await using var reader = await dataCmd.ExecuteReaderAsync();
                     while (await reader.ReadAsync())
                     {
                         var row = new Dictionary<string, object?>();
@@ -209,15 +212,21 @@ namespace BifrostQL.Core.Resolvers
                     TotalCount = totalCount,
                 };
             }
-            catch (SqlException ex)
+            catch (DbException ex)
             {
                 throw new ExecutionError($"Generic table query error: {ex.Message}", ex);
             }
         }
 
-        private static SqlParameter CloneParameter(SqlParameter source)
+        private static void AddFilterParameters(DbCommand cmd, List<(string name, object? value)> filterParams)
         {
-            return new SqlParameter(source.ParameterName, source.Value);
+            foreach (var (name, value) in filterParams)
+            {
+                var p = cmd.CreateParameter();
+                p.ParameterName = name;
+                p.Value = value ?? DBNull.Value;
+                cmd.Parameters.Add(p);
+            }
         }
     }
 }

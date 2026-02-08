@@ -375,7 +375,7 @@ public sealed class GqlObjectQuerySqlTest
         query.AddSqlParameterized(dbModel, Dialect, sqls, parameters);
 
         // Assert
-        sqls["Users"].Sql.Should().Contain("ORDER BY Name asc");
+        sqls["Users"].Sql.Should().Contain("ORDER BY [Name] asc");
     }
 
     [Fact]
@@ -397,7 +397,7 @@ public sealed class GqlObjectQuerySqlTest
         query.AddSqlParameterized(dbModel, Dialect, sqls, parameters);
 
         // Assert
-        sqls["Users"].Sql.Should().Contain("ORDER BY Name desc");
+        sqls["Users"].Sql.Should().Contain("ORDER BY [Name] desc");
     }
 
     [Fact]
@@ -420,7 +420,7 @@ public sealed class GqlObjectQuerySqlTest
 
         // Assert
         var sql = sqls["Users"].Sql;
-        sql.Should().Contain("ORDER BY Name asc, Email desc");
+        sql.Should().Contain("ORDER BY [Name] asc, [Email] desc");
     }
 
     [Fact]

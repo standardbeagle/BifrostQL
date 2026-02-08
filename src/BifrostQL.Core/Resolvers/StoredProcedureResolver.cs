@@ -1,8 +1,8 @@
 using System.Data;
+using System.Data.Common;
 using BifrostQL.Core.Model;
 using GraphQL;
 using GraphQL.Resolvers;
-using Microsoft.Data.SqlClient;
 
 namespace BifrostQL.Core.Resolvers
 {
@@ -28,10 +28,9 @@ namespace BifrostQL.Core.Resolvers
             try
             {
                 await conn.OpenAsync();
-                using var cmd = new SqlCommand(_proc.FullDbRef, conn)
-                {
-                    CommandType = CommandType.StoredProcedure
-                };
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = _proc.FullDbRef;
+                cmd.CommandType = CommandType.StoredProcedure;
 
                 AddInputParameters(cmd, input);
                 var outputParams = AddOutputParameters(cmd);
@@ -67,9 +66,9 @@ namespace BifrostQL.Core.Resolvers
                     ["affectedRows"] = affectedRows,
                 };
 
-                foreach (var (paramName, sqlParam) in outputParams)
+                foreach (var (paramName, dbParam) in outputParams)
                 {
-                    result[paramName] = sqlParam.Value == DBNull.Value ? null : sqlParam.Value;
+                    result[paramName] = dbParam.Value == DBNull.Value ? null : dbParam.Value;
                 }
 
                 return result;
@@ -80,28 +79,26 @@ namespace BifrostQL.Core.Resolvers
             }
         }
 
-        private void AddInputParameters(SqlCommand cmd, Dictionary<string, object?>? input)
+        private void AddInputParameters(DbCommand cmd, Dictionary<string, object?>? input)
         {
             foreach (var param in _proc.InputParameters)
             {
                 object? value = null;
                 input?.TryGetValue(param.GraphQlName, out value);
 
-                var sqlParam = new SqlParameter
-                {
-                    ParameterName = $"@{param.DbName}",
-                    Value = value ?? DBNull.Value,
-                    Direction = param.Direction == ParameterDirection.InputOutput
-                        ? ParameterDirection.InputOutput
-                        : ParameterDirection.Input,
-                };
-                cmd.Parameters.Add(sqlParam);
+                var dbParam = cmd.CreateParameter();
+                dbParam.ParameterName = $"@{param.DbName}";
+                dbParam.Value = value ?? DBNull.Value;
+                dbParam.Direction = param.Direction == ParameterDirection.InputOutput
+                    ? ParameterDirection.InputOutput
+                    : ParameterDirection.Input;
+                cmd.Parameters.Add(dbParam);
             }
         }
 
-        private List<(string paramName, SqlParameter sqlParam)> AddOutputParameters(SqlCommand cmd)
+        private List<(string paramName, DbParameter dbParam)> AddOutputParameters(DbCommand cmd)
         {
-            var outputParams = new List<(string, SqlParameter)>();
+            var outputParams = new List<(string, DbParameter)>();
 
             foreach (var param in _proc.OutputParameters)
             {
@@ -109,19 +106,17 @@ namespace BifrostQL.Core.Resolvers
                 {
                     // Already added to cmd in AddInputParameters, but track for output collection
                     var existing = cmd.Parameters[$"@{param.DbName}"];
-                    outputParams.Add((param.GraphQlName, existing));
+                    outputParams.Add((param.GraphQlName, (DbParameter)existing!));
                     continue;
                 }
 
-                var sqlParam = new SqlParameter
-                {
-                    ParameterName = $"@{param.DbName}",
-                    Direction = param.Direction,
-                    Value = DBNull.Value,
-                    Size = GetDefaultSize(param.DataType),
-                };
-                cmd.Parameters.Add(sqlParam);
-                outputParams.Add((param.GraphQlName, sqlParam));
+                var dbParam = cmd.CreateParameter();
+                dbParam.ParameterName = $"@{param.DbName}";
+                dbParam.Direction = param.Direction;
+                dbParam.Value = DBNull.Value;
+                dbParam.Size = GetDefaultSize(param.DataType);
+                cmd.Parameters.Add(dbParam);
+                outputParams.Add((param.GraphQlName, dbParam));
             }
 
             return outputParams;

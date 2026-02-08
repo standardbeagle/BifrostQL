@@ -2,10 +2,10 @@ using System.Reflection;
 using System.Security.Claims;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel.TestFixtures;
+using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
 using FluentAssertions;
-using Microsoft.Data.SqlClient;
 using Xunit;
 
 namespace BifrostQL.Core.Test.Resolvers;
@@ -464,7 +464,7 @@ public sealed class GenericTableQueryTests
             .Build();
         var table = model.GetTableByFullGraphQlName("Users");
 
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, null);
+        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, null);
 
         whereSql.Should().BeEmpty();
         parameters.Should().BeEmpty();
@@ -478,7 +478,7 @@ public sealed class GenericTableQueryTests
             .Build();
         var table = model.GetTableByFullGraphQlName("Users");
 
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, new Dictionary<string, object?>());
+        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, new Dictionary<string, object?>());
 
         whereSql.Should().BeEmpty();
         parameters.Should().BeEmpty();
@@ -496,13 +496,13 @@ public sealed class GenericTableQueryTests
             ["Name"] = new Dictionary<string, object?> { ["_eq"] = "John" },
         };
 
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, filter);
+        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
 
         whereSql.Should().Contain("WHERE");
         whereSql.Should().Contain("[Name] = @gp0");
         parameters.Should().HaveCount(1);
-        parameters[0].ParameterName.Should().Be("@gp0");
-        parameters[0].Value.Should().Be("John");
+        parameters[0].name.Should().Be("@gp0");
+        parameters[0].value.Should().Be("John");
     }
 
     [Fact]
@@ -517,10 +517,10 @@ public sealed class GenericTableQueryTests
             ["Name"] = new Dictionary<string, object?> { ["_like"] = "%John%" },
         };
 
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, filter);
+        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
 
         whereSql.Should().Contain("[Name] LIKE @gp0");
-        parameters[0].Value.Should().Be("%John%");
+        parameters[0].value.Should().Be("%John%");
     }
 
     [Fact]
@@ -539,7 +539,7 @@ public sealed class GenericTableQueryTests
             ["Age"] = new Dictionary<string, object?> { ["_gt"] = 18 },
         };
 
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, filter);
+        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
 
         whereSql.Should().Contain("AND");
         parameters.Should().HaveCount(2);
@@ -561,7 +561,7 @@ public sealed class GenericTableQueryTests
             },
         };
 
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, filter);
+        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
 
         whereSql.Should().Contain("[Age] >= @gp0");
         whereSql.Should().Contain("[Age] < @gp1");
@@ -580,7 +580,7 @@ public sealed class GenericTableQueryTests
             ["NonExistentColumn"] = new Dictionary<string, object?> { ["_eq"] = "value" },
         };
 
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, filter);
+        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
 
         whereSql.Should().BeEmpty();
         parameters.Should().BeEmpty();
@@ -598,7 +598,7 @@ public sealed class GenericTableQueryTests
             ["Name"] = new Dictionary<string, object?> { ["_unknown_op"] = "value" },
         };
 
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, filter);
+        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
 
         whereSql.Should().BeEmpty();
         parameters.Should().BeEmpty();
@@ -616,10 +616,10 @@ public sealed class GenericTableQueryTests
             ["Name"] = new Dictionary<string, object?> { ["_eq"] = null },
         };
 
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, filter);
+        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
 
         whereSql.Should().Contain("[Name] = @gp0");
-        parameters[0].Value.Should().Be(DBNull.Value);
+        parameters[0].value.Should().Be(DBNull.Value);
     }
 
     [Fact]
@@ -634,7 +634,7 @@ public sealed class GenericTableQueryTests
             ["Name"] = "not-a-dictionary",
         };
 
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, filter);
+        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
 
         whereSql.Should().BeEmpty();
         parameters.Should().BeEmpty();
@@ -809,10 +809,10 @@ public sealed class GenericTableQueryTests
             ["Status"] = new Dictionary<string, object?> { ["_neq"] = "inactive" },
         };
 
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, filter);
+        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
 
         whereSql.Should().Contain("[Status] <> @gp0");
-        parameters[0].Value.Should().Be("inactive");
+        parameters[0].value.Should().Be("inactive");
     }
 
     [Fact]
@@ -827,10 +827,10 @@ public sealed class GenericTableQueryTests
             ["Age"] = new Dictionary<string, object?> { ["_lte"] = 100 },
         };
 
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, filter);
+        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
 
         whereSql.Should().Contain("[Age] <= @gp0");
-        parameters[0].Value.Should().Be(100);
+        parameters[0].value.Should().Be(100);
     }
 
     #endregion

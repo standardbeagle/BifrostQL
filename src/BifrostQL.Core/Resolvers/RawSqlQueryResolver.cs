@@ -1,8 +1,8 @@
+using System.Data.Common;
 using System.Security.Claims;
 using BifrostQL.Core.Model;
 using GraphQL;
 using GraphQL.Resolvers;
-using Microsoft.Data.SqlClient;
 
 namespace BifrostQL.Core.Resolvers
 {
@@ -100,22 +100,23 @@ namespace BifrostQL.Core.Resolvers
             try
             {
                 await conn.OpenAsync();
-                using var cmd = new SqlCommand(sql, conn)
-                {
-                    CommandTimeout = timeoutSeconds
-                };
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = sql;
+                cmd.CommandTimeout = timeoutSeconds;
 
                 if (parameters != null)
                 {
                     foreach (var (name, value) in parameters)
                     {
-                        var paramName = name.StartsWith("@") ? name : $"@{name}";
-                        cmd.Parameters.Add(new SqlParameter(paramName, value ?? DBNull.Value));
+                        var p = cmd.CreateParameter();
+                        p.ParameterName = name.StartsWith("@") ? name : $"@{name}";
+                        p.Value = value ?? DBNull.Value;
+                        cmd.Parameters.Add(p);
                     }
                 }
 
                 var results = new List<Dictionary<string, object?>>();
-                using var reader = await cmd.ExecuteReaderAsync();
+                await using var reader = await cmd.ExecuteReaderAsync();
                 var rowCount = 0;
                 while (await reader.ReadAsync() && rowCount < maxRows)
                 {
@@ -131,7 +132,7 @@ namespace BifrostQL.Core.Resolvers
 
                 return results;
             }
-            catch (SqlException ex)
+            catch (DbException ex)
             {
                 throw new ExecutionError($"SQL execution error: {ex.Message}", ex);
             }

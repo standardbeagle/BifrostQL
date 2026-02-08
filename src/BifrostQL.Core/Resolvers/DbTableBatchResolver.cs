@@ -1,4 +1,4 @@
-using Microsoft.Data.SqlClient;
+using System.Data.Common;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
@@ -40,7 +40,7 @@ namespace BifrostQL.Core.Resolvers
 
             await using var conn = conFactory.GetConnection();
             await conn.OpenAsync();
-            await using var transaction = (SqlTransaction)await conn.BeginTransactionAsync();
+            await using var transaction = await conn.BeginTransactionAsync();
             try
             {
                 var totalAffected = 0;
@@ -78,8 +78,8 @@ namespace BifrostQL.Core.Resolvers
             IMutationTransformers mutationTransformers,
             IDbModel model,
             ISqlDialect dialect,
-            SqlConnection conn,
-            SqlTransaction transaction,
+            DbConnection conn,
+            DbTransaction transaction,
             IDictionary<string, object?> userContext,
             MutationTransformContext transformContext)
         {
@@ -108,8 +108,8 @@ namespace BifrostQL.Core.Resolvers
             IMutationModules modules,
             IDbModel model,
             ISqlDialect dialect,
-            SqlConnection conn,
-            SqlTransaction transaction,
+            DbConnection conn,
+            DbTransaction transaction,
             IDictionary<string, object?> userContext)
         {
             if (data.Count == 0) return 0;
@@ -119,9 +119,10 @@ namespace BifrostQL.Core.Resolvers
             var columns = string.Join(",", data.Keys.Select(k => dialect.EscapeIdentifier(k)));
             var values = string.Join(",", data.Keys.Select(k => $"@{k}"));
             var sql = $"INSERT INTO {tableRef}({columns}) VALUES({values});";
-            var cmd = new SqlCommand(Join(sql, moduleSql), conn, transaction);
-            cmd.Parameters.AddRange(data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value ?? DBNull.Value)
-            { IsNullable = table.ColumnLookup[kv.Key].IsNullable }).ToArray());
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = Join(sql, moduleSql);
+            cmd.Transaction = transaction;
+            AddParameters(cmd, data);
             return await cmd.ExecuteNonQueryAsync();
         }
 
@@ -131,8 +132,8 @@ namespace BifrostQL.Core.Resolvers
             IMutationModules modules,
             IDbModel model,
             ISqlDialect dialect,
-            SqlConnection conn,
-            SqlTransaction transaction,
+            DbConnection conn,
+            DbTransaction transaction,
             IDictionary<string, object?> userContext)
         {
             if (data.Count == 0) return 0;
@@ -150,9 +151,10 @@ namespace BifrostQL.Core.Resolvers
             var setClause = string.Join(",", standardData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause};";
-            var cmd = new SqlCommand(Join(sql, moduleSql), conn, transaction);
-            cmd.Parameters.AddRange(caseData.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value ?? DBNull.Value)
-            { IsNullable = table.ColumnLookup[kv.Key].IsNullable }).ToArray());
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = Join(sql, moduleSql);
+            cmd.Transaction = transaction;
+            AddParameters(cmd, caseData);
             return await cmd.ExecuteNonQueryAsync();
         }
 
@@ -163,8 +165,8 @@ namespace BifrostQL.Core.Resolvers
             IMutationTransformers mutationTransformers,
             IDbModel model,
             ISqlDialect dialect,
-            SqlConnection conn,
-            SqlTransaction transaction,
+            DbConnection conn,
+            DbTransaction transaction,
             IDictionary<string, object?> userContext,
             MutationTransformContext transformContext)
         {
@@ -185,8 +187,10 @@ namespace BifrostQL.Core.Resolvers
                 var setClause = string.Join(",", setData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
                 var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
                 var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause};";
-                var cmd = new SqlCommand(Join(sql, moduleSql), conn, transaction);
-                cmd.Parameters.AddRange(transformResult.Data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value ?? DBNull.Value)).ToArray());
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = Join(sql, moduleSql);
+                cmd.Transaction = transaction;
+                AddParameters(cmd, transformResult.Data);
                 return await cmd.ExecuteNonQueryAsync();
             }
 
@@ -194,8 +198,10 @@ namespace BifrostQL.Core.Resolvers
             var deleteTableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var deleteWhereClause = string.Join(" AND ", data.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause};";
-            var deleteCmd = new SqlCommand(Join(deleteSql, deleteModuleSql), conn, transaction);
-            deleteCmd.Parameters.AddRange(data.Select(kv => new SqlParameter($"@{kv.Key}", kv.Value ?? DBNull.Value)).ToArray());
+            await using var deleteCmd = conn.CreateCommand();
+            deleteCmd.CommandText = Join(deleteSql, deleteModuleSql);
+            deleteCmd.Transaction = transaction;
+            AddParameters(deleteCmd, data);
             return await deleteCmd.ExecuteNonQueryAsync();
         }
 
@@ -205,8 +211,8 @@ namespace BifrostQL.Core.Resolvers
             IMutationModules modules,
             IDbModel model,
             ISqlDialect dialect,
-            SqlConnection conn,
-            SqlTransaction transaction,
+            DbConnection conn,
+            DbTransaction transaction,
             IDictionary<string, object?> userContext)
         {
             if (data.Count == 0) return 0;
@@ -219,6 +225,17 @@ namespace BifrostQL.Core.Resolvers
                 return await ExecuteUpdate(data, table, modules, model, dialect, conn, transaction, userContext);
 
             return await ExecuteInsert(data, table, modules, model, dialect, conn, transaction, userContext);
+        }
+
+        private static void AddParameters(DbCommand cmd, Dictionary<string, object?> data)
+        {
+            foreach (var kv in data)
+            {
+                var p = cmd.CreateParameter();
+                p.ParameterName = $"@{kv.Key}";
+                p.Value = kv.Value ?? DBNull.Value;
+                cmd.Parameters.Add(p);
+            }
         }
 
         private static string Join(string str, string[] array)

@@ -214,7 +214,8 @@ namespace BifrostQL.Core.QueryModel
             var (joinSql, joinParams) = BuildSqlParameterized(Next, link, dialect, parameters, includeValue: false);
             var (filterSql, filterParams) = GetFilterParameterized(Next, link, dialect, parameters, "j", includeValue: false);
 
-            var fullJoin = $" INNER JOIN ({joinSql}) [j] ON [j].[joinid] = {dialect.EscapeIdentifier(alias ?? table.DbName)}.{dialect.EscapeIdentifier(table.SingleLinks[ColumnName].ChildId.ColumnName)}";
+            var ej = dialect.EscapeIdentifier("j");
+            var fullJoin = $" INNER JOIN ({joinSql}) {ej} ON {ej}.{dialect.EscapeIdentifier("joinid")} = {dialect.EscapeIdentifier(alias ?? table.DbName)}.{dialect.EscapeIdentifier(table.SingleLinks[ColumnName].ChildId.ColumnName)}";
             var allParams = joinParams.Concat(filterParams).ToList();
 
             if (string.IsNullOrEmpty(filterSql))
@@ -231,27 +232,30 @@ namespace BifrostQL.Core.QueryModel
         {
             if (filter is { Next: { } } || (filter.Next == null && filter.And.Count > 0) || (filter.Next == null && filter.Or.Count > 0))
             {
+                var ej = dialect.EscapeIdentifier("j");
+                var ejoinid = dialect.EscapeIdentifier("joinid");
+                var evalue = dialect.EscapeIdentifier("value");
                 switch (filter.FilterType)
                 {
                     case FilterType.Join
                         when link.ParentTable.SingleLinks.TryGetValue(filter.ColumnName, out var nextLink):
                         {
                             var (nextSql, nextParams) = BuildSqlParameterized(filter.Next!, nextLink, dialect, parameters);
-                            var sql = $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS [joinid]{(includeValue ? ", [value]" : "")} FROM {dialect.EscapeIdentifier(link.ParentTable.DbName)} INNER JOIN ({nextSql}) [j] ON [j].[joinid] = {dialect.EscapeIdentifier(link.ParentTable.DbName)}.{dialect.EscapeIdentifier(nextLink.ChildId.ColumnName)}";
+                            var sql = $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid}{(includeValue ? $", {evalue}" : "")} FROM {dialect.EscapeIdentifier(link.ParentTable.DbName)} INNER JOIN ({nextSql}) {ej} ON {ej}.{ejoinid} = {dialect.EscapeIdentifier(link.ParentTable.DbName)}.{dialect.EscapeIdentifier(nextLink.ChildId.ColumnName)}";
                             return (sql, nextParams);
                         }
                     case FilterType.Join:
                         if (includeValue)
                         {
                             return (
-                                $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS [joinid], {dialect.EscapeIdentifier(filter.ColumnName)} AS [value] FROM {dialect.EscapeIdentifier(link.ParentTable.DbName)}",
+                                $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid}, {dialect.EscapeIdentifier(filter.ColumnName)} AS {evalue} FROM {dialect.EscapeIdentifier(link.ParentTable.DbName)}",
                                 new List<SqlParameterInfo>());
                         }
                         else
                         {
                             var filterResult = GetSingleFilterParameterized(dialect, parameters, link.ParentTable.DbName, filter.ColumnName, filter.Next!.RelationName, filter.Next.Value);
                             return (
-                                $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS [joinid] FROM {dialect.EscapeIdentifier(link.ParentTable.DbName)} WHERE {filterResult.Sql}",
+                                $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid} FROM {dialect.EscapeIdentifier(link.ParentTable.DbName)} WHERE {filterResult.Sql}",
                                 filterResult.Parameters.ToList());
                         }
                 }

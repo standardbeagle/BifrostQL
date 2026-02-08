@@ -1,0 +1,47 @@
+// bifrostui - Cross-platform desktop database explorer using Photino.NET
+// Strict KDL parsing: typos/unknown fields will cause clear errors
+
+project {
+    name "bifrostui"
+    type "dotnet-photino"
+}
+
+scripts {
+    // Backend dev server (headless mode on port 5000) with hot-reload
+    backend {
+        run "dotnet watch run --project src/BifrostQL.UI/BifrostQL.UI.csproj -- --headless --port 5000"
+        autostart true
+    }
+
+    // Frontend dev server (Vite on port 5173, proxies /graphql to backend:5000)
+    dev {
+        run "pnpm dev"
+        cwd "src/BifrostQL.UI/frontend"
+        autostart true
+        // Vite outputs: "Local: http://localhost:5173/"
+        url-matchers "Local:\\s+{url}"
+    }
+
+    // Build commands (not auto-started)
+    build {
+        run "dotnet build BifrostQL.sln"
+    }
+
+    test {
+        run "dotnet test BifrostQL.sln"
+    }
+}
+
+// Proxy for browser debugging - linked to dev script
+proxies {
+    dev {
+        script "dev"
+    }
+}
+
+hooks {
+    on-response {
+        toast true
+        indicator true
+    }
+}

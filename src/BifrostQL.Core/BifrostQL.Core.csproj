@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<TargetFrameworks>net8.0;net9.0</TargetFrameworks>
+		<TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 		<PackageId>BifrostQL.Core</PackageId>
@@ -31,6 +31,10 @@
 	  <DebugType>embedded</DebugType>
 	</PropertyGroup>
 
+	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|net10.0|AnyCPU'">
+	  <DebugType>embedded</DebugType>
+	</PropertyGroup>
+
 	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release|net8.0|AnyCPU'">
 	  <DebugType>embedded</DebugType>
 	</PropertyGroup>
@@ -38,11 +42,15 @@
 	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release|net9.0|AnyCPU'">
 	  <DebugType>embedded</DebugType>
 	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release|net10.0|AnyCPU'">
+	  <DebugType>embedded</DebugType>
+	</PropertyGroup>
 	<ItemGroup>
 		<PackageReference Include="GraphQL.Server.All" Version="8.3.3" />
 		<PackageReference Include="GraphQL.Server.Ui.GraphiQL" Version="8.3.3" />
 		<PackageReference Include="Pluralize.NET.Core" Version="1.0.0" />
-		<PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.2" />
+		<PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.4" />
 	</ItemGroup>
 	<ItemGroup>
 		<None Include="..\..\README.md" Pack="true" PackagePath="/" />

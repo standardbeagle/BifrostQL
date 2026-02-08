@@ -7,6 +7,7 @@ public sealed class ToolConfig
 {
     public string? ConnectionString { get; private set; }
     public string? ConfigPath { get; private set; }
+    public string? User { get; private set; }
     public bool JsonOutput { get; private set; }
     public string? CommandName { get; private set; }
     public string[] CommandArgs { get; private set; } = Array.Empty<string>();
@@ -17,6 +18,7 @@ public sealed class ToolConfig
     /// Arguments are positional for the command name, with named flags:
     ///   --connection-string &lt;connstr&gt;
     ///   --config &lt;path&gt;
+    ///   --user &lt;username&gt;
     ///   --json
     ///   --port &lt;number&gt;
     /// </summary>
@@ -34,6 +36,9 @@ public sealed class ToolConfig
                     break;
                 case "--config" when i + 1 < args.Length:
                     config.ConfigPath = args[++i];
+                    break;
+                case "--user" when i + 1 < args.Length:
+                    config.User = args[++i];
                     break;
                 case "--json":
                     config.JsonOutput = true;
@@ -55,5 +60,28 @@ public sealed class ToolConfig
         }
 
         return config;
+    }
+
+    /// <summary>
+    /// Creates a copy of this config for implicit serve routing.
+    /// The unrecognized command name is prepended to CommandArgs.
+    /// </summary>
+    internal ToolConfig WithImplicitServe()
+    {
+        var args = new string[(CommandName != null ? 1 : 0) + CommandArgs.Length];
+        if (CommandName != null)
+            args[0] = CommandName;
+        CommandArgs.CopyTo(args, CommandName != null ? 1 : 0);
+
+        return new ToolConfig
+        {
+            ConnectionString = ConnectionString,
+            ConfigPath = ConfigPath,
+            User = User,
+            JsonOutput = JsonOutput,
+            CommandName = "serve",
+            CommandArgs = args,
+            Port = Port,
+        };
     }
 }

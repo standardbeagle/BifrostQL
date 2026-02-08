@@ -106,7 +106,7 @@ public sealed class ConfigValidateCommand : ICommand
 }
 
 /// <summary>
-/// Reads metadata rules from a bifrostql.json config file.
+/// Reads metadata rules and configuration from a bifrostql.json config file.
 /// </summary>
 internal static class ConfigFileReader
 {
@@ -115,14 +115,12 @@ internal static class ConfigFileReader
         using var doc = System.Text.Json.JsonDocument.Parse(json);
         var root = doc.RootElement;
 
-        if (!root.TryGetProperty("bifrostQL", out var bifrostSection) &&
-            !root.TryGetProperty("BifrostQL", out bifrostSection))
-        {
+        var bifrostSection = GetBifrostSection(root);
+        if (bifrostSection == null)
             return Array.Empty<string>();
-        }
 
-        if (!bifrostSection.TryGetProperty("metadata", out var metadataArray) &&
-            !bifrostSection.TryGetProperty("Metadata", out metadataArray))
+        if (!bifrostSection.Value.TryGetProperty("metadata", out var metadataArray) &&
+            !bifrostSection.Value.TryGetProperty("Metadata", out metadataArray))
         {
             return Array.Empty<string>();
         }
@@ -139,4 +137,68 @@ internal static class ConfigFileReader
         }
         return rules;
     }
+
+    public static string? ReadConnectionString(string json, string key = "bifrost")
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        if (!root.TryGetProperty("connectionStrings", out var connSection) &&
+            !root.TryGetProperty("ConnectionStrings", out connSection))
+        {
+            return null;
+        }
+
+        if (connSection.TryGetProperty(key, out var value))
+            return value.GetString();
+
+        return null;
+    }
+
+    public static BifrostConfigSection ReadBifrostSection(string json)
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        var section = GetBifrostSection(root);
+        if (section == null)
+            return new BifrostConfigSection();
+
+        var result = new BifrostConfigSection();
+
+        if (section.Value.TryGetProperty("path", out var path) ||
+            section.Value.TryGetProperty("Path", out path))
+            result.Path = path.GetString();
+
+        if (section.Value.TryGetProperty("playground", out var playground) ||
+            section.Value.TryGetProperty("Playground", out playground))
+            result.Playground = playground.GetString();
+
+        if (section.Value.TryGetProperty("disableAuth", out var disableAuth) ||
+            section.Value.TryGetProperty("DisableAuth", out disableAuth))
+            result.DisableAuth = disableAuth.GetBoolean();
+
+        result.Metadata = ReadMetadataRules(json);
+
+        return result;
+    }
+
+    private static System.Text.Json.JsonElement? GetBifrostSection(System.Text.Json.JsonElement root)
+    {
+        if (root.TryGetProperty("bifrostQL", out var section) ||
+            root.TryGetProperty("BifrostQL", out section))
+        {
+            return section;
+        }
+        return null;
+    }
+}
+
+internal sealed class BifrostConfigSection
+{
+    public string? Path { get; set; }
+    public string? Playground { get; set; }
+    public bool DisableAuth { get; set; } = true;
+    public IReadOnlyList<string> Metadata { get; set; } = Array.Empty<string>();
+    public string? ConfigFilePath { get; set; }
 }

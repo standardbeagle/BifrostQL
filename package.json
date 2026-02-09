@@ -17,6 +17,10 @@
     "examples/*"
   ],
   "dependencies": {
-    "@standardbeagle/virtual-router": "^1.0.1"
+    "@standardbeagle/virtual-router": "^1.0.1",
+    "ajv": "^8.17.1"
+  },
+  "overrides": {
+    "ajv": "$ajv"
   }
 }

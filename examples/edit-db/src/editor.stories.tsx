@@ -1,6 +1,5 @@
 import type { Meta } from '@storybook/react';
 import { Editor }  from './editor';
-import { ApolloClient, InMemoryCache} from '@apollo/client'
 
 const meta :Meta<typeof Editor> = {
   title: 'Example/Editor',
@@ -10,22 +9,12 @@ const meta :Meta<typeof Editor> = {
         routePath: '/'
     }
   },
-//   argTypes: {
-//     url: {
-//         type: { name: 'string', reqired: false }
-//     }
-//   }
 };
 
 export default meta;
 
-const Template: any = ({url, ...args} : { url: string }) => { 
-    let client = undefined;
-    if (url) client = new ApolloClient({
-        uri: url,
-        cache: new InMemoryCache(),
-        });
-    return <Editor client={client} {...args} />; 
+const Template: any = ({url, ...args} : { url: string }) => {
+    return <Editor uri={url || undefined} {...args} />;
 };
 
 export const NoUrl = Template.bind({});

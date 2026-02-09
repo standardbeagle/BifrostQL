@@ -1,10 +1,11 @@
-import { gql, useMutation, useQuery } from "@apollo/client";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, ReactElement, useEffect, useMemo, useRef } from "react";
 import { useSchema } from "./hooks/useSchema";
 import { Link, useParams, useNavigate } from "./hooks/usePath";
 import './data-edit.scss';
 import { Schema, Table, Column, Join } from "./types/schema";
 import { TableRefValue, useTableRef } from "./hooks/useTableRef";
+import { useFetcher } from "./common/fetcher";
 
 const numericTypes = ["Int", "Int!", "Float", "Float!"];
 const booleanTypes = ["Boolean", "Boolean!"];
@@ -19,10 +20,6 @@ interface DataEditRouteParams {
 interface ColumnJoin {
     column: Column;
     join?: Join;
-}
-
-interface MutationResult {
-    [key: string]: unknown;
 }
 
 type DetailRecord = Record<string, string | number | boolean | undefined>;
@@ -42,56 +39,83 @@ function useTable(schema: Schema, tableName: string) {
 
 function DataEditDetail({ table, schema, editid }: { table: string, schema: Schema, editid: string }) {
     const navigate = useNavigate();
-    const isInsert = editid === undefined;
+    const fetcher = useFetcher();
+    const queryClient = useQueryClient();
+    const isInsert = editid === undefined || editid === '';
     const [dataTable, editColumns, idColumns] = useTable(schema, table);
     const labelColumn = dataTable.labelColumn;
     const label = dataTable.label;
 
     const dialogRef = useRef<HTMLDialogElement>(null);
-    const getSingleQuery = useGetSingleQuery(dataTable, editColumns);
-    const updateMutation = useUpdateMutation(dataTable);
-    const insertMutation = useInsertMutation(dataTable);
+    const detailRef = useRef<DetailRecord>({});
 
-    const { loading, error, data } = useQuery(
-        getSingleQuery,
-        { skip: !dataTable, variables: { id: +editid }, fetchPolicy: "network-only" }
+    const queryStr = useMemo(() =>
+        `query GetSingleEdit_${dataTable.name}($id: Int){
+            value: ${dataTable.name}(filter: {id: { _eq: $id}}) {
+                data { ${editColumns.map(({ column: c }) => c.name).join(" ")} }
+            }
+        }`,
+        [dataTable, editColumns]
     );
 
-    const [mutate, mutateState] = useMutation<MutationResult>(
-        updateMutation,
-        {
-            refetchQueries: [`Get${dataTable.name}`]
-        }
+    const updateQueryStr = useMemo(() =>
+        `mutation updateSingle($detail: Update_${dataTable.name}){
+            ${dataTable.name}(update: $detail)
+        }`,
+        [dataTable]
     );
 
-    const [insertMutate, insertState] = useMutation<MutationResult>(
-        insertMutation,
-        {
-            refetchQueries: [`Get${dataTable.name}`]
-        }
+    const insertQueryStr = useMemo(() =>
+        `mutation insertSingle($detail: Insert_${dataTable.name}){
+            ${dataTable.name}(insert: $detail)
+        }`,
+        [dataTable]
     );
+
+    const { isLoading, error, data } = useQuery({
+        queryKey: ['editRecord', dataTable.name, editid],
+        queryFn: () => fetcher.query<{ value: { data: Record<string, unknown>[] } }>(queryStr, { id: +editid }),
+        enabled: !!dataTable && !isInsert,
+    });
+
+    const updateMutation = useMutation({
+        mutationFn: (detail: DetailRecord) => fetcher.query(updateQueryStr, { detail }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tableData', dataTable.name] }),
+    });
+
+    const insertMutation = useMutation({
+        mutationFn: (detail: DetailRecord) => fetcher.query(insertQueryStr, { detail }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tableData', dataTable.name] }),
+    });
+
+    const value = useMemo(() => data?.value?.data?.at(0) ?? {}, [data]);
+
+    // Initialize detailRef from loaded data
+    useEffect(() => {
+        detailRef.current = Object.fromEntries(editColumns.map(({ column: c }: ColumnJoin) => {
+            if (dateTypes.some(t => t === c.paramType)) {
+                const dateValue = (value[c.name] as string)?.split("T")?.[0];
+                return [c.name, dateValue === '0001-01-01' ? '' : dateValue];
+            }
+            return [c.name, value[c.name] as string | number | boolean | undefined];
+        }));
+    }, [value, editColumns]);
+
     useEffect(() => {
         const dialog = dialogRef.current;
         dialog?.showModal();
         return () => dialog?.close();
     }, []);
 
-    if (loading || !dataTable) return <div>Loading...</div>;
-    if (error) return <div>Error: {error.message}</div>;
-    if (mutateState.error) return <div>Error: {mutateState.error.message}</div>;
-    if (insertState.error) return <div>Error: {insertState.error.message}</div>;
+    if (isLoading && !isInsert) return <div>Loading...</div>;
+    if (error) return <div>Error: {(error as Error).message}</div>;
+    if (updateMutation.error) return <div>Error: {(updateMutation.error as Error).message}</div>;
+    if (insertMutation.error) return <div>Error: {(insertMutation.error as Error).message}</div>;
 
-    const value = (data?.value?.data?.at(0) ?? {});
-
-    const detail: DetailRecord = Object.fromEntries(editColumns.map(({ column: c }: ColumnJoin) => {
-        if (dateTypes.some(t => t === c.paramType)) {
-            const dateValue = value[c.name]?.split("T")?.[0];
-            return [c.name, dateValue === '0001-01-01' ? '' : dateValue];
-        }
-        return [c.name, value[c.name]];
-    }));
+    const isMutating = updateMutation.isPending || insertMutation.isPending;
 
     const onSubmit = (_event: FormEvent<HTMLFormElement>) => {
+        const detail = { ...detailRef.current };
         for (const { column: col } of editColumns) {
             if (numericTypes.some(t => t === col.paramType)) {
                 const val = detail[col.name];
@@ -104,27 +128,20 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
         for (const col of idColumns) {
             detail[col.name] = col.paramType.startsWith("Int") ? +editid : editid;
         }
-        if (isInsert) {
-            insertMutate({ variables: { detail } }).then(() => {
-                navigate('../..');
-            });
-        } else {
-            mutate({ variables: { detail } })
-                .then(() => {
-                    navigate('../..');
-                });
-        }
+        const mutation = isInsert ? insertMutation : updateMutation;
+        mutation.mutateAsync(detail).then(() => {
+            navigate('../..');
+        });
     }
 
-
-    const labelIdValue = value?.[labelColumn] ?? editid;
+    const labelIdValue = (value?.[labelColumn] as string | number | undefined) ?? editid;
 
     const editFields: EditFieldDef[] = editColumns.map(({ column: ec, join }: ColumnJoin) => ({
         paramType: ec.paramType,
         isReadOnly: ec.isReadOnly,
         name: ec.name,
         required: ec.isNullable ? {} : { required: true },
-        value: detail[ec.name],
+        value: detailRef.current[ec.name] ?? (isInsert ? undefined : value[ec.name] as string | number | boolean | undefined),
         join
     }));
 
@@ -134,13 +151,13 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
                 <input key={c.name} type="hidden" name={c.name} defaultValue={editid} />
             )}
             <h3 className="editdb-dialog-edit__heading">{label}:{labelIdValue}</h3>
-            <EditFields fields={editFields} detail={detail} />
+            <EditFields fields={editFields} detailRef={detailRef} />
             <div className="button-row">
                 <Link className="editdb-dialog-edit__cancel" to="../..">Cancel</Link>
                 <button
                     type="submit"
-                    className={`editdb-dialog-edit__submit ${(mutateState.loading || insertState.loading) ? 'editdb-dialog-edit__submit--loading' : ''}`}
-                    disabled={mutateState.loading || insertState.loading}
+                    className={`editdb-dialog-edit__submit ${isMutating ? 'editdb-dialog-edit__submit--loading' : ''}`}
+                    disabled={isMutating}
                 >Save</button>
             </div>
         </form>
@@ -158,15 +175,15 @@ export function DataEdit(): ReactElement {
     return <DataEditDetail table={table} schema={schema} editid={editid ?? ''} />
 }
 
-function EditFields({ fields, detail }: { fields: EditFieldDef[], detail: DetailRecord }): JSX.Element {
+function EditFields({ fields, detailRef }: { fields: EditFieldDef[], detailRef: React.MutableRefObject<DetailRecord> }): JSX.Element {
     return (
         <ul className="editdb-dialog-edit__input-list">
-            {fields.map((field: EditFieldDef) => <EditField key={field.name} field={field} detail={detail} />)}
+            {fields.map((field: EditFieldDef) => <EditField key={field.name} field={field} detailRef={detailRef} />)}
         </ul>
     );
 }
 
-function EditField({ field, detail }: { field: EditFieldDef, detail: DetailRecord }): JSX.Element {
+function EditField({ field, detailRef }: { field: EditFieldDef, detailRef: React.MutableRefObject<DetailRecord> }): JSX.Element {
     let InputComponent = DefaultInput;
 
     if (field.join) {
@@ -180,49 +197,51 @@ function EditField({ field, detail }: { field: EditFieldDef, detail: DetailRecor
     return (
         <li className="editdb-dialog-edit__input-item">
             <label>{field.name}</label>
-            <InputComponent field={field} detail={detail} />
+            <InputComponent field={field} detailRef={detailRef} />
         </li>
     );
 }
-function BooleanInput({ field, detail }: { field: EditFieldDef, detail: DetailRecord }): JSX.Element {
+
+function BooleanInput({ field, detailRef }: { field: EditFieldDef, detailRef: React.MutableRefObject<DetailRecord> }): JSX.Element {
     return (
         <input
             type="checkbox"
             defaultChecked={field.value as boolean}
-            onChange={event => { detail[field.name] = event.target.checked; }}
+            onChange={event => { detailRef.current[field.name] = event.target.checked; }}
         />
     );
 }
 
-function DefaultInput({ field, detail }: { field: EditFieldDef, detail: DetailRecord }): JSX.Element {
+function DefaultInput({ field, detailRef }: { field: EditFieldDef, detailRef: React.MutableRefObject<DetailRecord> }): JSX.Element {
     return (
         <input
             type="text"
             defaultValue={field.value as string}
             {...field.required}
-            onChange={event => { detail[field.name] = event.target.value; }}
+            onChange={event => { detailRef.current[field.name] = event.target.value; }}
         />
     );
 }
 
-function DateTimeInput({ field, detail }: { field: EditFieldDef, detail: DetailRecord }): JSX.Element {
+function DateTimeInput({ field, detailRef }: { field: EditFieldDef, detailRef: React.MutableRefObject<DetailRecord> }): JSX.Element {
     return (
         <input
             type="date"
             defaultValue={field.value as string}
             {...field.required}
-            onChange={event => { detail[field.name] = event.target.value; }}
+            onChange={event => { detailRef.current[field.name] = event.target.value; }}
         />
     );
 }
 
-function ParentInput({ field, detail }: { field: EditFieldDef, detail: DetailRecord }): JSX.Element {
+function ParentInput({ field, detailRef }: { field: EditFieldDef, detailRef: React.MutableRefObject<DetailRecord> }): JSX.Element {
     const schema = useSchema();
     const parentData = useTableRef(schema, field.join!.destinationTable, field.join!.destinationColumnNames[0]);
     return (<select
-        onChange={event => { detail[field.name] = event.target.value; }}
+        defaultValue={field.value as string}
+        onChange={event => { detailRef.current[field.name] = event.target.value; }}
     >
-        {parentData.data.map((row: TableRefValue) => <option key={row.key} value={row.key} selected={row.key === field.value} >{row.label}</option>)}
+        {parentData.data.map((row: TableRefValue) => <option key={row.key} value={row.key}>{row.label}</option>)}
     </select>);
 }
 
@@ -234,23 +253,3 @@ interface EditFieldDef {
     value: string | number | boolean | undefined;
     join?: Join;
 }
-
-const useGetSingleQuery = (dataTable: Table, editColumns: ColumnJoin[]) => useMemo(() => {
-    return gql`query GetSingleEdit_${dataTable.name}($id: Int){ 
-        value: ${dataTable.name}(filter: {id: { _eq: $id}}) { 
-            data { ${editColumns.map(({ column: c }) => c.name).join(" ")} }
-        }
-    }`;
-}, [dataTable, editColumns]);
-
-const useUpdateMutation = (dataTable: Table) => useMemo(() => {
-    return gql`mutation updateSingle($detail: Update_${dataTable.name}){ 
-        ${dataTable.name}(update: $detail)
-    }`;
-}, [dataTable]);
-
-const useInsertMutation = (dataTable: Table) => useMemo(() => {
-    return gql`mutation insertSingle($detail: Insert_${dataTable.name}){ 
-        ${dataTable.name}(insert: $detail)
-    }`;
-}, [dataTable]);

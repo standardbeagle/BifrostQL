@@ -1,6 +1,4 @@
-import { gql } from "@apollo/client";
-
-export const GET_SCHEMA = gql`{
+export const GET_SCHEMA = `{
     schema: __schema {
       queryType {
         fields {
@@ -29,7 +27,7 @@ export const GET_SCHEMA = gql`{
   }
   `;
 
-export const GET_DB_SCHEMA = gql`
+export const GET_DB_SCHEMA = `
 query dbSchema {
   _dbSchema {
     dbName

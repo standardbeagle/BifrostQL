@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useMemo, useRef } from 'react'
 import DataTable from 'react-data-table-component';
 import { useDataTable } from './hooks/useDataTable';
 import { Table } from './types/schema';
@@ -21,12 +21,17 @@ export function DataDataTable({ table, id, tableFilter }: DataDataTableParams): 
         error,
         data } = useDataTable(table, id, tableFilter);
 
-    const [resetPage, setResetpage] = useState(false);
-    useEffect(() => {
-        if (data && data[table.name]?.offset === 0) {
-            setResetpage(prev => !prev);
+    const prevTableRef = useRef(table.name);
+    const resetCounter = useRef(0);
+
+    const resetPage = useMemo(() => {
+        if (prevTableRef.current !== table.name) {
+            prevTableRef.current = table.name;
+            resetCounter.current += 1;
         }
-    }, [data, table.name]);
+        return resetCounter.current % 2 === 1;
+    }, [table.name]);
+
     if (error) return <div>Error: {error.message}</div>;
 
     return <DataTable

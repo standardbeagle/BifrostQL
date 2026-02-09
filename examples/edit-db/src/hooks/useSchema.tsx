@@ -1,7 +1,8 @@
-import { useQuery } from "@apollo/client";
+import { useQuery } from "@tanstack/react-query";
 import { GET_DB_SCHEMA } from "../common/schema";
-import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useContext, useMemo, ReactNode } from "react";
 import { Schema, Table, Column, TableMetadata } from '../types/schema';
+import { useFetcher } from "../common/fetcher";
 
 interface MetadataItem {
     key: string;
@@ -31,6 +32,10 @@ interface DbSchemaItem {
     singleJoins: { name: string; sourceColumnNames: string[]; destinationTable: string; destinationColumnNames: string[] }[];
 }
 
+interface DbSchemaResponse {
+    _dbSchema: DbSchemaItem[];
+}
+
 const SchemaContext = createContext<Schema>({loading: true, error: null, data: [], findTable: () => undefined});
 
 export const SchemaProvider = ({ children }: { children: ReactNode }) => {
@@ -45,62 +50,37 @@ export function useSchema() {
 }
 
 function useSchemaLoader(): Schema {
-    const { loading: dbLoading, error: dbError, data: dbData } = useQuery(GET_DB_SCHEMA);
-    const [result, setResult] = useState<Schema>({
-        loading: false,
-        error: null,
-        data: [],
-        findTable: () => undefined
-    });
-    const [internal, setInternal] = useState<Omit<Schema, 'findTable'>>({ 
-        loading: false,
-        error: null,
-        data: []
+    const fetcher = useFetcher();
+
+    const { isLoading, error, data: dbData } = useQuery({
+        queryKey: ['dbSchema'],
+        queryFn: () => fetcher.query<DbSchemaResponse>(GET_DB_SCHEMA),
+        staleTime: Infinity,
     });
 
-    const findTable = useCallback((tableName: string): Table | undefined => {
-        return internal.data.find((t: Table) => t.graphQlName === tableName);
-    }, [internal]);
+    return useMemo((): Schema => {
+        if (isLoading) return { loading: true, error: null, data: [], findTable: () => undefined };
+        if (error) return { loading: false, error: { message: (error as Error).message }, data: [], findTable: () => undefined };
+        if (!dbData) return { loading: false, error: null, data: [], findTable: () => undefined };
 
-    useEffect(() => {
-        if (dbLoading) {
-            setInternal({ loading: true, error: null, data: [] });
-            return;
-        }
-        if (dbError) {
-            setInternal({ loading: false, error: { message: dbError.message }, data: [] });
-            return;
-        }
-        if (!dbData) {
-            setInternal({ loading: false, error: null, data: [] });
-            return;
-        }
+        const tables = dbData._dbSchema.map((s: DbSchemaItem): Table => ({
+            ...s,
+            name: s.graphQlName,
+            label: s.dbName,
+            metadata: parseMetadata(s.metadata),
+            columns: s.columns.map((c: DbColumnItem): Column => ({
+                ...c,
+                name: c.graphQlName,
+                label: c.dbName,
+                metadata: parseMetadata(c.metadata),
+            }))
+        }));
 
-        const schema: Omit<Schema, 'findTable'> = {
-            loading: false,
-            error: null,
-            data: dbData._dbSchema.map((s: DbSchemaItem): Table => ({
-                ...s,
-                name: s.graphQlName,
-                label: s.dbName,
-                metadata: parseMetadata(s.metadata),
-                columns: s.columns.map((c: DbColumnItem): Column => ({
-                    ...c,
-                    name: c.graphQlName,
-                    label: c.dbName,
-                    metadata: parseMetadata(c.metadata),
-                }))
-            })),
-        };
-        setInternal(schema);
-    }, [dbLoading, dbError, dbData]);
+        const findTable = (tableName: string): Table | undefined =>
+            tables.find((t: Table) => t.graphQlName === tableName);
 
-    useEffect(() => {
-        const value: Schema = {...internal, findTable};
-        setResult(value);
-    }, [internal, findTable]);
-
-    return result;
+        return { loading: false, error: null, data: tables, findTable };
+    }, [isLoading, error, dbData]);
 }
 
 function parseMetadata(metadata: MetadataItem[]): Record<string, string | TableMetadata['type']> {
@@ -115,10 +95,10 @@ function getMetaValue({key, value}: {key: string, value: string}) {
 function parseTableType(lookup: string): TableMetadata['type'] {
     const lookupMatch = lookup.match(/lookup\s*\(\s*(?<id>\w+)\s*,\s*(?<label>\w+)\s*\)/m);
     if (lookupMatch?.groups?.id && lookupMatch?.groups?.label) {
-        return { 
-            type: 'lookup', 
-            id: lookupMatch.groups.id, 
-            label: lookupMatch.groups.label 
+        return {
+            type: 'lookup',
+            id: lookupMatch.groups.id,
+            label: lookupMatch.groups.label
         };
     }
     return undefined;

@@ -1,9 +1,10 @@
-import { DocumentNode, OperationVariables, QueryResult, gql, useQuery } from "@apollo/client";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useSearchParams } from "./usePath";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useSchema } from "./useSchema";
 import { Table, Column, Join, Schema } from "../types/schema";
 import { TableColumn, SortOrder } from "react-data-table-component";
+import { useFetcher, GraphQLFetcher } from "../common/fetcher";
 
 interface FilterResult {
     variables: Record<string, unknown>;
@@ -12,7 +13,6 @@ interface FilterResult {
 }
 
 interface SortState {
-    table: Table;
     columnName: string;
     order: 'asc' | 'desc';
 }
@@ -32,7 +32,7 @@ const getFilterObj = (filterString: string): FilterResult => {
         if (!filterString) return { variables: {}, param: "", filterText: "" };
         const [column, action, value, type] = JSON.parse(filterString);
         return { variables: { filter: value }, param: `, $filter: ${type}`, filterText: `{${column}: {${action}: $filter} }` }
-    } catch (ex) {
+    } catch {
         return { variables: {}, param: "", filterText: "" };
     }
 }
@@ -104,21 +104,18 @@ const getTableColumns = (table: Table, schema: Schema): TableColumn<RowData>[] =
     }, ...columns, ...multiJoins];
 }
 
-const emptyQuery = gql`query {__schema { __typename }}`;
-//useQuery fails when query is null, so I have to use a dummy query, even though it will never be called
-const getFilteredQuery = (table: Table | null, search: URLSearchParams, id?: string, tableFilter?: string, schema?: Schema): [runQuery: boolean, query: DocumentNode] => {
-    if (!table || !schema?.data) return [false, emptyQuery];
+const buildQuery = (table: Table, schema: Schema, filterString: string, id?: string, tableFilter?: string): string | null => {
+    if (!table || !schema?.data) return null;
     const tableSchema = schema.findTable(table.graphQlName);
-    if (!tableSchema) return [false, emptyQuery];
+    if (!tableSchema) return null;
     const primaryKey = tableSchema?.primaryKeys?.[0] ?? "id";
-    let { param, filterText } = getFilterObj(search.get('filter') ?? '');
-    //The columns output in the grid
+    let { param, filterText } = getFilterObj(filterString);
+
     const dataColumns = table.columns
         .filter((x: Column) => (x as ColumnWithJoin)?.joinTable === undefined)
         .map((x: Column): ColumnWithJoin => {
             const joinTable = tableSchema.singleJoins.find((j: Join) => j.sourceColumnNames?.[0] === x.name);
             if (!joinTable) return x;
-
             const joinSchema = schema.findTable(joinTable.destinationTable);
             const labelColumn = joinSchema?.labelColumn ?? "id";
             return {...x, joinTable, joinLabelColumn: labelColumn};
@@ -130,7 +127,7 @@ const getFilteredQuery = (table: Table | null, search: URLSearchParams, id?: str
             return x.name;
         })
         .join(' ');
-    //Don't merge filter because this only has one record by the primary key
+
     if (id && !tableFilter) {
         param = ", $id: Int";
         filterText = `{ ${ primaryKey }: { _eq: $id}}`;
@@ -144,16 +141,8 @@ const getFilteredQuery = (table: Table | null, search: URLSearchParams, id?: str
     }
 
     if (filterText) filterText = `filter: ${filterText}`;
-    return [true, gql`query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${table.name}(sort: $sort limit: $limit offset: $offset ${filterText}) { total offset limit data {${dataColumns}}}}`];
+    return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${table.name}(sort: $sort limit: $limit offset: $offset ${filterText}) { total offset limit data {${dataColumns}}}}`;
 }
-
-const getAppliedSort = (table: Table | null, sort: SortState[]): string[] => {
-    if (!table) return [];
-    if (!sort || sort.length === 0) return [`${table.columns.at(0)?.name}_asc`];
-    return sort
-        .filter((s: SortState) => s.table.name === table.name)
-        .map((s: SortState) => `${s.columnName}_${s.order}`);
-};
 
 interface DataTableColumn {
     sortField?: string;
@@ -170,72 +159,78 @@ interface QueryData {
     [tableName: string]: TableQueryData;
 }
 
-interface UseDataTableResult extends Partial<QueryResult<QueryData, OperationVariables>> {
+interface UseDataTableResult {
     tableColumns: TableColumn<RowData>[];
     offset: number;
     limit: number;
     handleSort: (column: DataTableColumn, sortDirection: SortOrder) => void;
     handlePage: (page: number) => void;
     handlePageSize: (size: number) => void;
-    handleUpdate: <T>(value: T) => Promise<T>;
+    loading: boolean;
+    error: Error | null;
+    data: QueryData | undefined;
 }
 
 export function useDataTable(table: Table | null, id?: string, filterTable?: string): UseDataTableResult {
-    const idObj = !id ? {} : { id: +id };
-    const filterTableObj = !filterTable ? {} : { filterTable };
-    const routeObj = { ...idObj, ...filterTableObj };
     const { search } = useSearchParams();
-    const { variables } = getFilterObj(search.get('filter') ?? '');
+    const filterString = search.get('filter') ?? '';
+    const { variables: filterVariables } = getFilterObj(filterString);
     const schema = useSchema();
+    const fetcher = useFetcher();
 
-    const [sort, setSort] = useState<SortState[]>([]);
+    const [sort, setSort] = useState<SortState | null>(null);
     const [offset, setOffset] = useState(0);
     const [limit, setLimit] = useState(10);
-    const [result, setResult] = useState<QueryResult<QueryData, OperationVariables>>();
-    const [runQuery, query] = getFilteredQuery(table, search, id, filterTable, schema);
-    const tableColumns = table ? getTableColumns(table, schema) : [];
-    const appliedSort = getAppliedSort(table, sort);
-    const skip = !runQuery || (appliedSort?.length ?? 0) === 0;
 
-    const queryResult = useQuery<QueryData>(query, { skip: skip, variables: { sort: appliedSort, limit: limit, offset: offset, ...routeObj, ...variables } });
-    const handleUpdate = useCallback(<T,>(value: T): Promise<T> => {
-        return Promise.resolve(value);
-    }, []);
+    const appliedSort = sort
+        ? [`${sort.columnName}_${sort.order}`]
+        : table ? [`${table.columns.at(0)?.name ?? 'id'}_asc`] : [];
 
-    useEffect(() => {
-        if (!table) return;
-        setSort([{
-            table,
-            columnName: table.columns.at(0)?.name ?? 'id',
-            order: 'asc'
-        }]);
-        setOffset(0);
-    }, [table, id, filterTable]);
+    const query = useMemo(
+        () => buildQuery(table!, schema, filterString, id, filterTable),
+        [table, schema, filterString, id, filterTable]
+    );
 
-    useEffect(() => {
-        if (!query) return;
-        setResult(queryResult);
-    }, [queryResult, query]);
+    const queryVariables = useMemo(() => ({
+        sort: appliedSort,
+        limit,
+        offset,
+        ...(!id ? {} : { id: +id }),
+        ...filterVariables,
+    }), [appliedSort, limit, offset, id, filterVariables]);
+
+    const { isLoading, error, data } = useQuery({
+        queryKey: ['tableData', table?.name, queryVariables],
+        queryFn: () => fetcher.query<QueryData>(query!, queryVariables),
+        enabled: !!query && !!table && appliedSort.length > 0,
+    });
+
+    const tableColumns = useMemo(
+        () => table ? getTableColumns(table, schema) : [],
+        [table, schema]
+    );
 
     const handleSort = useCallback((column: DataTableColumn, sortDirection: SortOrder) => {
-        const newSort = [`${column.sortField}_${sortDirection}`];
-        setSort([{ table: table!, columnName: column.sortField ?? 'id', order: sortDirection as 'asc' | 'desc' }]);
-        queryResult.refetch({ sort: newSort, limit: limit, offset: offset, ...routeObj })
-    }, [queryResult, offset, limit, routeObj, table]);
+        setSort({ columnName: column.sortField ?? 'id', order: sortDirection as 'asc' | 'desc' });
+    }, []);
 
     const handlePage = useCallback((page: number) => {
-        const newOffset = +((page - 1) * limit);
-        setOffset(newOffset);
-        const appliedSort = getAppliedSort(table, sort);
-        queryResult.refetch({ sort: appliedSort, limit: limit, offset: newOffset, ...routeObj });
-    }, [queryResult, limit, sort, routeObj, table]);
+        setOffset((page - 1) * limit);
+    }, [limit]);
 
     const handlePageSize = useCallback((size: number) => {
         setLimit(size);
-        const appliedSort = getAppliedSort(table, sort);
-        queryResult.refetch({ sort: appliedSort, limit: size, offset: offset, ...routeObj });
-    }, [queryResult, offset, sort, routeObj, table]);
+    }, []);
 
-    return { tableColumns, offset, limit, handleSort, handlePage, handlePageSize, handleUpdate, ...result };
+    return {
+        tableColumns,
+        offset,
+        limit,
+        handleSort,
+        handlePage,
+        handlePageSize,
+        loading: isLoading,
+        error: error as Error | null,
+        data,
+    };
 }
-

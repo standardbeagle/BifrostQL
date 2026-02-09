@@ -18,11 +18,12 @@ export default defineConfig({
       fileName: (format) => `editor.${format}.${( format ==='umd' ? "c" : "")}js`,
     },
     rollupOptions: {
-      external: ['react', 'react-dom'],
+      external: ['react', 'react-dom', '@tanstack/react-query'],
       output: {
         globals: {
           react: 'React',
           'react-dom': 'ReactDOM',
+          '@tanstack/react-query': 'ReactQuery',
         },
       },
     },

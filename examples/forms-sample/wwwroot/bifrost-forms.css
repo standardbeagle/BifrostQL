@@ -1,0 +1,79 @@
+/* BifrostQL Forms - Optional defaults */
+:root {
+  --bf-font: system-ui, sans-serif;
+  --bf-text: #1a1a2e;
+  --bf-muted: #6c757d;
+  --bf-border: #ccc;
+  --bf-radius: 4px;
+  --bf-focus: #0056b3;
+  --bf-primary: #007bff;
+  --bf-danger: #dc3545;
+  --bf-stripe: #f8f9fa;
+}
+.bifrost-form, .bifrost-detail { max-width: 600px; margin: 0 auto; font-family: var(--bf-font); color: var(--bf-text); }
+.bifrost-list { max-width: 960px; margin: 0 auto; font-family: var(--bf-font); color: var(--bf-text); }
+.form-group { margin-bottom: 1rem; }
+.form-group label { display: block; margin-bottom: 0.25rem; font-weight: 500; }
+.form-group input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]),
+.form-group textarea, .form-group select {
+  display: block; width: 100%; padding: 0.5rem;
+  border: 1px solid var(--bf-border); border-radius: var(--bf-radius);
+  font: inherit; color: var(--bf-text); box-sizing: border-box;
+}
+.form-group textarea { resize: vertical; }
+.form-group input:focus, .form-group textarea:focus, .form-group select:focus {
+  outline: 2px solid var(--bf-focus); outline-offset: 1px; border-color: var(--bf-focus);
+}
+.form-group input[type="checkbox"] { width: auto; margin-right: 0.375rem; vertical-align: middle; }
+.form-group input[type="file"] { padding: 0.375rem 0; }
+.form-group fieldset { border: none; padding: 0; margin: 0; }
+.form-group fieldset legend { font-weight: 500; margin-bottom: 0.25rem; }
+.form-group fieldset label { display: inline-block; margin-right: 1rem; font-weight: normal; }
+.help-text { font-size: 0.875rem; color: var(--bf-muted); margin: 0.25rem 0 0; }
+.form-group.error input, .form-group.error textarea, .form-group.error select { border-color: var(--bf-danger); }
+.form-group.error input:focus, .form-group.error textarea:focus, .form-group.error select:focus { outline-color: var(--bf-danger); }
+.error-message { display: block; color: var(--bf-danger); font-size: 0.875rem; margin-top: 0.25rem; }
+.form-actions { margin-top: 1.5rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.btn-primary, .btn-secondary, .btn-danger {
+  display: inline-block; padding: 0.5rem 1rem; border: none; border-radius: var(--bf-radius);
+  font: inherit; font-size: 0.875rem; text-decoration: none; text-align: center;
+  cursor: pointer; line-height: 1.5; color: #fff;
+}
+.btn-primary { background: var(--bf-primary); }
+.btn-primary:hover, .btn-primary:focus-visible { background: #0056b3; }
+.btn-secondary { background: var(--bf-muted); }
+.btn-secondary:hover, .btn-secondary:focus-visible { background: #545b62; }
+.btn-danger { background: var(--bf-danger); }
+.btn-danger:hover, .btn-danger:focus-visible { background: #bd2130; }
+.btn-secondary.disabled { opacity: 0.5; pointer-events: none; }
+.bifrost-detail dl { display: grid; grid-template-columns: minmax(8rem, auto) 1fr; gap: 0.5rem 1rem; margin: 0 0 1.5rem; }
+.bifrost-detail dt { font-weight: 500; color: var(--bf-muted); }
+.bifrost-detail dd { margin: 0; }
+.bifrost-detail .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.null-value, .binary-value { color: var(--bf-muted); font-style: italic; }
+.list-actions { margin-bottom: 1rem; }
+.bifrost-search { display: flex; gap: 0.5rem; align-items: flex-end; margin-bottom: 1rem; flex-wrap: wrap; }
+.bifrost-search label { font-weight: 500; }
+.bifrost-search input[type="search"] { flex: 1; min-width: 10rem; padding: 0.5rem; border: 1px solid var(--bf-border); border-radius: var(--bf-radius); font: inherit; }
+.bifrost-list table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; }
+.bifrost-list th, .bifrost-list td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--bf-border); }
+.bifrost-list th { font-weight: 600; white-space: nowrap; }
+.bifrost-list th a { text-decoration: none; color: inherit; }
+.bifrost-list th a:hover { text-decoration: underline; }
+.bifrost-list tbody tr:nth-child(even) { background: var(--bf-stripe); }
+.bifrost-list tbody tr:hover { background: #e9ecef; }
+.bifrost-list td a { margin-right: 0.5rem; }
+.empty-list { color: var(--bf-muted); font-style: italic; padding: 2rem 0; text-align: center; }
+.pagination { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.pagination span { padding: 0.5rem; }
+@media (max-width: 640px) {
+  .bifrost-detail dl { grid-template-columns: 1fr; }
+  .bifrost-list table { display: block; overflow-x: auto; }
+  .form-actions, .bifrost-detail .actions, .pagination { flex-direction: column; align-items: stretch; }
+  .btn-primary, .btn-secondary, .btn-danger { text-align: center; }
+}
+@media print {
+  .form-actions, .bifrost-detail .actions, .list-actions, .bifrost-search, .pagination,
+  .bifrost-list td:last-child, .bifrost-list th:last-child { display: none; }
+  .bifrost-form, .bifrost-detail, .bifrost-list { max-width: none; }
+}

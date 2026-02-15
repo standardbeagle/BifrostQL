@@ -19,6 +19,7 @@ public sealed class SqliteDbConnFactory : IDbConnFactory
     }
 
     public ISqlDialect Dialect => SqliteDialect.Instance;
+    public ISchemaReader SchemaReader => new SqliteSchemaReader();
 
     public DbConnection GetConnection()
     {

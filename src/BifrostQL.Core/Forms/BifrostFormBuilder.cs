@@ -14,6 +14,7 @@ namespace BifrostQL.Core.Forms
         private readonly IDbModel _dbModel;
         private readonly string _basePath;
         private readonly FormsMetadataConfiguration? _metadataConfiguration;
+        private readonly Dictionary<string, LookupTableConfig> _lookupConfigs = new(StringComparer.OrdinalIgnoreCase);
         private IReadOnlyDictionary<string, IReadOnlyList<(string value, string displayText)>>? _foreignKeyOptions;
         private string? _currentTableName;
 
@@ -23,6 +24,23 @@ namespace BifrostQL.Core.Forms
             _dbModel = dbModel ?? throw new ArgumentNullException(nameof(dbModel));
             _basePath = basePath.TrimEnd('/');
             _metadataConfiguration = metadataConfiguration;
+            DetectLookupTables();
+        }
+
+        /// <summary>
+        /// Returns the detected lookup table configurations, keyed by table name.
+        /// </summary>
+        public IReadOnlyDictionary<string, LookupTableConfig> LookupConfigs => _lookupConfigs;
+
+        private void DetectLookupTables()
+        {
+            foreach (var table in _dbModel.Tables)
+            {
+                if (LookupTableDetector.IsLookupTable(table))
+                {
+                    _lookupConfigs[table.DbName] = LookupTableConfig.FromDetection(table);
+                }
+            }
         }
 
         /// <summary>
@@ -153,7 +171,8 @@ namespace BifrostQL.Core.Forms
                 sb.Append($"<label for=\"{Encode(columnId)}\">{Encode(FormatLabel(column.ColumnName))}</label>");
 
                 var options = GetForeignKeyOptions(column.ColumnName);
-                sb.Append(ForeignKeyHandler.GenerateSelect(column, options, value));
+                var uiMode = ResolveLookupUiMode(column, table, options.Count);
+                sb.Append(ForeignKeyHandler.GenerateSelect(column, options, value, uiMode));
 
                 AppendErrors(sb, columnId, fieldErrors, hasError);
                 sb.Append("</div>");
@@ -247,6 +266,26 @@ namespace BifrostQL.Core.Forms
                 _foreignKeyOptions.TryGetValue(columnName, out var options))
                 return options;
             return Array.Empty<(string, string)>();
+        }
+
+        /// <summary>
+        /// Determines the lookup UI mode for a foreign key column based on whether
+        /// the referenced table is a detected lookup table and the option count.
+        /// Returns null (default dropdown) when the referenced table is not a lookup.
+        /// </summary>
+        private LookupUiMode? ResolveLookupUiMode(ColumnDto column, IDbTable table, int optionCount)
+        {
+            var referencedTable = ForeignKeyHandler.GetReferencedTable(column, table);
+            if (referencedTable == null)
+                return null;
+
+            if (!_lookupConfigs.TryGetValue(referencedTable.DbName, out var config))
+                return null;
+
+            return LookupTableDetector.SelectUiMode(
+                optionCount,
+                config.DropdownThreshold,
+                config.AutocompleteThreshold);
         }
 
         private static void AppendConstraintAttributes(StringBuilder sb, ColumnDto column, ColumnMetadata? metadata = null)

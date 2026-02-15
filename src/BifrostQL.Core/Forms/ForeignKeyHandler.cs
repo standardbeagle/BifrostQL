@@ -86,19 +86,34 @@ namespace BifrostQL.Core.Forms
         }
 
         /// <summary>
+        /// Selects the display column using lookup column roles when available.
+        /// Falls back to standard heuristic detection if roles have no label column.
+        /// </summary>
+        public static string GetDisplayColumn(IDbTable referencedTable, LookupColumnRoles? roles)
+        {
+            if (roles?.LabelColumn != null)
+                return roles.LabelColumn;
+            return GetDisplayColumn(referencedTable);
+        }
+
+        /// <summary>
         /// Generates a complete HTML select element for a foreign key column.
         /// Options are provided as key-value pairs (value, display text).
         /// </summary>
         /// <param name="column">The FK column on the current table.</param>
         /// <param name="options">Available options as (value, displayText) pairs.</param>
         /// <param name="currentValue">The currently selected value, used to mark the selected option.</param>
+        /// <param name="uiMode">Optional UI mode override for lookup-aware rendering.</param>
         public static string GenerateSelect(ColumnDto column, IReadOnlyList<(string value, string displayText)> options,
-            string? currentValue = null)
+            string? currentValue = null, LookupUiMode? uiMode = null)
         {
             var sb = new StringBuilder();
             var columnId = column.ColumnName.ToLowerInvariant().Replace(' ', '-');
 
             sb.Append($"<select id=\"{Encode(columnId)}\" name=\"{Encode(column.ColumnName)}\"");
+
+            if (uiMode == LookupUiMode.Autocomplete)
+                sb.Append(" data-autocomplete=\"true\"");
 
             if (!column.IsNullable && !column.IsIdentity)
             {

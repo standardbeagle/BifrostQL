@@ -100,6 +100,25 @@ public sealed class ConfigPatternDetector
         return results;
     }
 
+    /// <summary>
+    /// Detects lookup/reference tables in the model based on structural heuristics.
+    /// </summary>
+    public IReadOnlyList<LookupTablePattern> DetectLookupTables(IDbModel model)
+    {
+        ArgumentNullException.ThrowIfNull(model, nameof(model));
+
+        var results = new List<LookupTablePattern>();
+        foreach (var table in model.Tables)
+        {
+            if (LookupTableDetector.IsLookupTable(table))
+            {
+                var roles = LookupTableDetector.DetectColumnRoles(table);
+                results.Add(new LookupTablePattern(table.TableSchema, table.DbName, roles));
+            }
+        }
+        return results;
+    }
+
     private static bool MatchesAny(string columnName, IReadOnlyList<Regex> patterns)
     {
         foreach (var pattern in patterns)
@@ -138,6 +157,11 @@ public sealed record TenantPattern(string ColumnName);
 /// Detected audit column pattern on a table.
 /// </summary>
 public sealed record AuditColumnPattern(string ColumnName, AuditRole Role);
+
+/// <summary>
+/// Detected lookup table pattern with column roles.
+/// </summary>
+public sealed record LookupTablePattern(string Schema, string TableName, LookupColumnRoles Roles);
 
 /// <summary>
 /// Aggregated detection results for a single table.

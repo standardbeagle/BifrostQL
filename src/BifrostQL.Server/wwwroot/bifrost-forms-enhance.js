@@ -226,4 +226,134 @@
       });
     })(ajaxForms[a]);
   }
+
+  // --- Autocomplete enhancement for lookup selects ---
+  var autocompleteSelects = document.querySelectorAll(
+    "select[data-autocomplete]"
+  );
+  for (var ac = 0; ac < autocompleteSelects.length; ac++) {
+    (function (select) {
+      var group = select.closest(".form-group");
+      if (!group) return;
+
+      var wrapper = document.createElement("div");
+      wrapper.className = "autocomplete-wrapper";
+
+      var input = document.createElement("input");
+      input.type = "text";
+      input.className = "autocomplete-input";
+      input.placeholder = "Type to search...";
+      input.setAttribute("autocomplete", "off");
+
+      var dropdown = document.createElement("ul");
+      dropdown.className = "autocomplete-dropdown";
+      dropdown.setAttribute("role", "listbox");
+      dropdown.hidden = true;
+
+      var options = [];
+      for (var i = 0; i < select.options.length; i++) {
+        var opt = select.options[i];
+        if (opt.value) {
+          options.push({ value: opt.value, text: opt.text });
+        }
+      }
+
+      // Set initial display value from selected option
+      if (select.selectedIndex > 0) {
+        input.value = select.options[select.selectedIndex].text;
+      }
+
+      function showDropdown(filtered) {
+        dropdown.innerHTML = "";
+        if (filtered.length === 0) {
+          dropdown.hidden = true;
+          return;
+        }
+        for (var i = 0; i < filtered.length; i++) {
+          var li = document.createElement("li");
+          li.setAttribute("role", "option");
+          li.textContent = filtered[i].text;
+          li.dataset.value = filtered[i].value;
+          li.addEventListener("mousedown", function (e) {
+            e.preventDefault();
+            select.value = this.dataset.value;
+            input.value = this.textContent;
+            dropdown.hidden = true;
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+          });
+          dropdown.appendChild(li);
+        }
+        dropdown.hidden = false;
+      }
+
+      input.addEventListener("input", function () {
+        var query = this.value.toLowerCase();
+        if (!query) {
+          showDropdown(options);
+          return;
+        }
+        var filtered = [];
+        for (var i = 0; i < options.length; i++) {
+          if (options[i].text.toLowerCase().indexOf(query) !== -1) {
+            filtered.push(options[i]);
+          }
+        }
+        showDropdown(filtered);
+      });
+
+      input.addEventListener("focus", function () {
+        showDropdown(options);
+      });
+
+      input.addEventListener("blur", function () {
+        // Delay to allow click on dropdown item
+        setTimeout(function () {
+          dropdown.hidden = true;
+        }, 200);
+      });
+
+      // Keyboard navigation
+      input.addEventListener("keydown", function (e) {
+        var items = dropdown.querySelectorAll("li");
+        var active = dropdown.querySelector("li.active");
+        var idx = -1;
+        if (active) {
+          for (var i = 0; i < items.length; i++) {
+            if (items[i] === active) {
+              idx = i;
+              break;
+            }
+          }
+        }
+
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          if (active) active.classList.remove("active");
+          idx = (idx + 1) % items.length;
+          items[idx].classList.add("active");
+          items[idx].scrollIntoView({ block: "nearest" });
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          if (active) active.classList.remove("active");
+          idx = idx <= 0 ? items.length - 1 : idx - 1;
+          items[idx].classList.add("active");
+          items[idx].scrollIntoView({ block: "nearest" });
+        } else if (e.key === "Enter" && active) {
+          e.preventDefault();
+          select.value = active.dataset.value;
+          input.value = active.textContent;
+          dropdown.hidden = true;
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+        } else if (e.key === "Escape") {
+          dropdown.hidden = true;
+        }
+      });
+
+      select.style.display = "none";
+      select.parentNode.insertBefore(wrapper, select);
+      wrapper.appendChild(input);
+      wrapper.appendChild(dropdown);
+      wrapper.appendChild(select);
+    })(autocompleteSelects[ac]);
+  }
 })();

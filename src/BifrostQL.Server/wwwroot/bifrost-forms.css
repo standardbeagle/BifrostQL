@@ -72,6 +72,24 @@
   .form-actions, .bifrost-detail .actions, .pagination { flex-direction: column; align-items: stretch; }
   .btn-primary, .btn-secondary, .btn-danger { text-align: center; }
 }
+/* Autocomplete select enhancement */
+.autocomplete-wrapper { position: relative; }
+.autocomplete-input {
+  display: block; width: 100%; padding: 0.5rem;
+  border: 1px solid var(--bf-border); border-radius: var(--bf-radius);
+  font: inherit; color: var(--bf-text); box-sizing: border-box;
+}
+.autocomplete-input:focus { outline: 2px solid var(--bf-focus); outline-offset: 1px; border-color: var(--bf-focus); }
+.autocomplete-dropdown {
+  position: absolute; top: 100%; left: 0; right: 0;
+  background: #fff; border: 1px solid var(--bf-border); border-top: none;
+  max-height: 200px; overflow-y: auto; z-index: 1000;
+  list-style: none; margin: 0; padding: 0;
+  border-radius: 0 0 var(--bf-radius) var(--bf-radius);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+.autocomplete-dropdown li { padding: 0.5rem; cursor: pointer; }
+.autocomplete-dropdown li:hover, .autocomplete-dropdown li.active { background: var(--bf-stripe); }
 @media print {
   .form-actions, .bifrost-detail .actions, .list-actions, .bifrost-search, .pagination,
   .bifrost-list td:last-child, .bifrost-list th:last-child { display: none; }

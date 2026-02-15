@@ -6,6 +6,19 @@
 		<Nullable>enable</Nullable>
 		<IsPublishable>False</IsPublishable>
 		<IsPackable>true</IsPackable>
+		<PackageId>BifrostQL.SqlServer</PackageId>
+		<Authors>Andy Brummer</Authors>
+		<Company>StandardBeagle</Company>
+		<Description>SQL Server dialect support for BifrostQL.</Description>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
 	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Data.SqlClient" Version="6.0.2" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\..\BifrostQL.Core\BifrostQL.Core.csproj" />
+	</ItemGroup>
 
 </Project>

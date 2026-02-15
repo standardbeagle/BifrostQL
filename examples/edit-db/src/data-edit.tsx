@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { FormEvent, ReactElement, useEffect, useMemo, useRef } from "react";
 import { useSchema } from "./hooks/useSchema";
 import { Link, useParams, useNavigate } from "./hooks/usePath";
@@ -6,8 +6,8 @@ import './data-edit.scss';
 import { Schema, Table, Column, Join } from "./types/schema";
 import { TableRefValue, useTableRef } from "./hooks/useTableRef";
 import { useFetcher } from "./common/fetcher";
+import { useTableMutation } from "./hooks/useTableMutation";
 
-const numericTypes = ["Int", "Int!", "Float", "Float!"];
 const booleanTypes = ["Boolean", "Boolean!"];
 const dateTypes = ["DateTime", "DateTime!"];
 
@@ -40,7 +40,6 @@ function useTable(schema: Schema, tableName: string) {
 function DataEditDetail({ table, schema, editid }: { table: string, schema: Schema, editid: string }) {
     const navigate = useNavigate();
     const fetcher = useFetcher();
-    const queryClient = useQueryClient();
     const isInsert = editid === undefined || editid === '';
     const [dataTable, editColumns, idColumns] = useTable(schema, table);
     const labelColumn = dataTable.labelColumn;
@@ -48,6 +47,8 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
 
     const dialogRef = useRef<HTMLDialogElement>(null);
     const detailRef = useRef<DetailRecord>({});
+
+    const mutation = useTableMutation(dataTable, editColumns, idColumns, editid);
 
     const queryStr = useMemo(() =>
         `query GetSingleEdit_${dataTable.name}($id: Int){
@@ -58,34 +59,10 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
         [dataTable, editColumns]
     );
 
-    const updateQueryStr = useMemo(() =>
-        `mutation updateSingle($detail: Update_${dataTable.name}){
-            ${dataTable.name}(update: $detail)
-        }`,
-        [dataTable]
-    );
-
-    const insertQueryStr = useMemo(() =>
-        `mutation insertSingle($detail: Insert_${dataTable.name}){
-            ${dataTable.name}(insert: $detail)
-        }`,
-        [dataTable]
-    );
-
     const { isLoading, error, data } = useQuery({
         queryKey: ['editRecord', dataTable.name, editid],
         queryFn: () => fetcher.query<{ value: { data: Record<string, unknown>[] } }>(queryStr, { id: +editid }),
         enabled: !!dataTable && !isInsert,
-    });
-
-    const updateMutation = useMutation({
-        mutationFn: (detail: DetailRecord) => fetcher.query(updateQueryStr, { detail }),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tableData', dataTable.name] }),
-    });
-
-    const insertMutation = useMutation({
-        mutationFn: (detail: DetailRecord) => fetcher.query(insertQueryStr, { detail }),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tableData', dataTable.name] }),
     });
 
     const value = useMemo(() => data?.value?.data?.at(0) ?? {}, [data]);
@@ -109,27 +86,11 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
 
     if (isLoading && !isInsert) return <div>Loading...</div>;
     if (error) return <div>Error: {(error as Error).message}</div>;
-    if (updateMutation.error) return <div>Error: {(updateMutation.error as Error).message}</div>;
-    if (insertMutation.error) return <div>Error: {(insertMutation.error as Error).message}</div>;
-
-    const isMutating = updateMutation.isPending || insertMutation.isPending;
+    if (mutation.error) return <div>Error: {mutation.error.message}</div>;
 
     const onSubmit = (_event: FormEvent<HTMLFormElement>) => {
-        const detail = { ...detailRef.current };
-        for (const { column: col } of editColumns) {
-            if (numericTypes.some(t => t === col.paramType)) {
-                const val = detail[col.name];
-                detail[col.name] = val !== undefined ? +val : undefined;
-            }
-            if (booleanTypes.some(t => t === col.paramType)) {
-                detail[col.name] = !!detail[col.name];
-            }
-        }
-        for (const col of idColumns) {
-            detail[col.name] = col.paramType.startsWith("Int") ? +editid : editid;
-        }
-        const mutation = isInsert ? insertMutation : updateMutation;
-        mutation.mutateAsync(detail).then(() => {
+        const mutate = isInsert ? mutation.insert : mutation.update;
+        mutate({ ...detailRef.current }).then(() => {
             navigate('../..');
         });
     }
@@ -156,8 +117,8 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
                 <Link className="editdb-dialog-edit__cancel" to="../..">Cancel</Link>
                 <button
                     type="submit"
-                    className={`editdb-dialog-edit__submit ${isMutating ? 'editdb-dialog-edit__submit--loading' : ''}`}
-                    disabled={isMutating}
+                    className={`editdb-dialog-edit__submit ${mutation.isPending ? 'editdb-dialog-edit__submit--loading' : ''}`}
+                    disabled={mutation.isPending}
                 >Save</button>
             </div>
         </form>

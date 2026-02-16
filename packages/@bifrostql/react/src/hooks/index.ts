@@ -27,7 +27,11 @@ export type {
 export { useBifrostTable } from './use-bifrost-table';
 export type {
   AggregateFn,
+  AggregateFormat,
   AggregateConfig,
+  AggregateResult,
+  GroupByConfig,
+  GroupRow,
   ColumnConfig,
   SortDirection,
   CustomSortFn,

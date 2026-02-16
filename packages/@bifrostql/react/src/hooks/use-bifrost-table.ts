@@ -15,6 +15,8 @@ import type {
 
 export type AggregateFn = 'sum' | 'avg' | 'min' | 'max' | 'count';
 
+export type AggregateFormat = 'currency' | 'percentage' | 'number';
+
 export type SortDirection = 'asc' | 'desc';
 
 export type CustomSortFn = (
@@ -26,6 +28,23 @@ export type CustomSortFn = (
 export interface AggregateConfig {
   field?: string;
   fn: AggregateFn | ((values: unknown[]) => unknown);
+  format?: AggregateFormat | ((value: unknown) => string);
+}
+
+export interface GroupByConfig {
+  field: string;
+  aggregates: Record<string, AggregateConfig>;
+}
+
+export interface AggregateResult {
+  value: unknown;
+  formatted: string | null;
+}
+
+export interface GroupRow {
+  groupKey: unknown;
+  rows: Record<string, unknown>[];
+  aggregates: Record<string, AggregateResult>;
 }
 
 export type EditorType =
@@ -233,6 +252,7 @@ export interface UseBifrostTableOptions extends UseBifrostOptions {
   urlSync?: boolean | UrlSyncConfig;
   localStorage?: LocalStorageConfig;
   aggregates?: Record<string, AggregateConfig>;
+  groupBy?: GroupByConfig;
   expandable?: boolean;
   childQuery?: ChildQueryConfig;
   editable?: boolean;
@@ -249,6 +269,8 @@ export interface UseBifrostTableResult<T = Record<string, unknown>> {
   pagination: PaginationState;
   selection: SelectionState<T>;
   aggregates: Record<string, unknown>;
+  formattedAggregates: Record<string, AggregateResult>;
+  groups: GroupRow[];
   expansion: ExpansionState;
   columnManagement: ColumnManagementState;
   editing: EditingState;
@@ -612,6 +634,81 @@ function computeBuiltinAggregate(fn: AggregateFn, values: number[]): number {
   }
 }
 
+function formatAggregateValue(
+  value: unknown,
+  format: AggregateFormat | ((value: unknown) => string) | undefined,
+): string | null {
+  if (!format) return null;
+  if (typeof format === 'function') return format(value);
+  if (typeof value !== 'number') return String(value ?? '');
+  switch (format) {
+    case 'currency':
+      return value.toLocaleString(undefined, {
+        style: 'currency',
+        currency: 'USD',
+      });
+    case 'percentage':
+      return value.toLocaleString(undefined, {
+        style: 'percent',
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+      });
+    case 'number':
+      return value.toLocaleString();
+  }
+}
+
+function computeAggregateForRows(
+  rows: Record<string, unknown>[],
+  config: AggregateConfig,
+): unknown {
+  if (typeof config.fn === 'function') {
+    const values = rows.map((row) =>
+      config.field ? row[config.field] : row,
+    );
+    return config.fn(values);
+  }
+  if (config.fn === 'count') return rows.length;
+  const values: number[] = [];
+  if (config.field) {
+    for (const row of rows) {
+      const val = row[config.field];
+      if (typeof val === 'number') values.push(val);
+    }
+  }
+  return computeBuiltinAggregate(config.fn, values);
+}
+
+function computeGroups(
+  data: Record<string, unknown>[],
+  groupBy: GroupByConfig,
+): GroupRow[] {
+  const groupMap = new Map<unknown, Record<string, unknown>[]>();
+  for (const row of data) {
+    const key = row[groupBy.field];
+    let group = groupMap.get(key);
+    if (!group) {
+      group = [];
+      groupMap.set(key, group);
+    }
+    group.push(row);
+  }
+
+  const groups: GroupRow[] = [];
+  for (const [groupKey, rows] of groupMap) {
+    const aggregates: Record<string, AggregateResult> = {};
+    for (const [name, config] of Object.entries(groupBy.aggregates)) {
+      const value = computeAggregateForRows(rows, config);
+      aggregates[name] = {
+        value,
+        formatted: formatAggregateValue(value, config.format),
+      };
+    }
+    groups.push({ groupKey, rows, aggregates });
+  }
+  return groups;
+}
+
 function mergeFiltersForQuery(
   filters: TableFilter,
   compoundFilter: CompoundFilter | null,
@@ -647,6 +744,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
     urlSync,
     localStorage: localStorageConfig,
     aggregates: aggregateConfigs,
+    groupBy: groupByConfig,
     expandable = false,
     childQuery,
     editable = false,
@@ -882,31 +980,34 @@ export function useBifrostTable<T = Record<string, unknown>>(
 
   const computedAggregates = useMemo(() => {
     if (!aggregateConfigs) return {};
+    const rows = dataWithComputed as Record<string, unknown>[];
     const result: Record<string, unknown> = {};
     for (const [key, config] of Object.entries(aggregateConfigs)) {
-      if (typeof config.fn === 'function') {
-        const values = dataWithComputed.map((row) =>
-          config.field ? (row as Record<string, unknown>)[config.field] : row,
-        );
-        result[key] = config.fn(values);
-      } else {
-        const field = config.field;
-        const values: number[] = [];
-        if (config.fn === 'count') {
-          result[key] = dataWithComputed.length;
-          continue;
-        }
-        for (const row of dataWithComputed) {
-          if (field) {
-            const val = (row as Record<string, unknown>)[field];
-            if (typeof val === 'number') values.push(val);
-          }
-        }
-        result[key] = computeBuiltinAggregate(config.fn, values);
-      }
+      result[key] = computeAggregateForRows(rows, config);
     }
     return result;
   }, [dataWithComputed, aggregateConfigs]);
+
+  const formattedAggregates = useMemo((): Record<string, AggregateResult> => {
+    if (!aggregateConfigs) return {};
+    const result: Record<string, AggregateResult> = {};
+    for (const [key, config] of Object.entries(aggregateConfigs)) {
+      const value = computedAggregates[key];
+      result[key] = {
+        value,
+        formatted: formatAggregateValue(value, config.format),
+      };
+    }
+    return result;
+  }, [computedAggregates, aggregateConfigs]);
+
+  const groups = useMemo((): GroupRow[] => {
+    if (!groupByConfig) return [];
+    return computeGroups(
+      dataWithComputed as Record<string, unknown>[],
+      groupByConfig,
+    );
+  }, [dataWithComputed, groupByConfig]);
 
   const toggleExpand = useCallback(
     (rowId: string) => {
@@ -1668,6 +1769,8 @@ export function useBifrostTable<T = Record<string, unknown>>(
       clearSelection,
     },
     aggregates: computedAggregates,
+    formattedAggregates,
+    groups,
     expansion: {
       expandedRows,
       toggleExpand,

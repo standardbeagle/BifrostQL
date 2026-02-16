@@ -7,6 +7,7 @@ import { useBifrostTable } from './use-bifrost-table';
 import type {
   ColumnConfig,
   AggregateConfig,
+  GroupByConfig,
   UrlSyncConfig,
   CustomSortFn,
   FilterPreset,
@@ -4910,6 +4911,631 @@ describe('useBifrostTable', () => {
         expect(result.current.editing.getRowChanges('1')).toEqual({});
         expect(result.current.editing.getRowChanges('999')).toEqual({});
       });
+    });
+  });
+
+  describe('computed column sorting', () => {
+    const mockUsers = [
+      { id: 1, first_name: 'Charlie', last_name: 'Zeta' },
+      { id: 2, first_name: 'Alice', last_name: 'Beta' },
+      { id: 3, first_name: 'Bob', last_name: 'Alpha' },
+    ];
+
+    const computedColumns: ColumnConfig[] = [
+      { field: 'id', header: 'ID' },
+      { field: 'first_name', header: 'First' },
+      { field: 'last_name', header: 'Last' },
+      {
+        field: 'full_name',
+        header: 'Full Name',
+        sortable: true,
+        computed: (row) => `${row.first_name} ${row.last_name}`,
+      },
+    ];
+
+    it('sorts by computed column client-side ascending', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: computedColumns,
+            clientSideSort: true,
+            defaultSort: [{ field: 'full_name', direction: 'asc' }],
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const names = result.current.data.map(
+        (r: Record<string, unknown>) => r.full_name,
+      );
+      expect(names).toEqual([
+        'Alice Beta',
+        'Bob Alpha',
+        'Charlie Zeta',
+      ]);
+    });
+
+    it('sorts by computed column client-side descending', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: computedColumns,
+            clientSideSort: true,
+            defaultSort: [{ field: 'full_name', direction: 'desc' }],
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const names = result.current.data.map(
+        (r: Record<string, unknown>) => r.full_name,
+      );
+      expect(names).toEqual([
+        'Charlie Zeta',
+        'Bob Alpha',
+        'Alice Beta',
+      ]);
+    });
+
+    it('toggles sort on computed column', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: computedColumns,
+            clientSideSort: true,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.sorting.toggleSort('full_name');
+      });
+
+      await waitFor(() => {
+        const names = result.current.data.map(
+          (r: Record<string, unknown>) => r.full_name,
+        );
+        expect(names).toEqual([
+          'Alice Beta',
+          'Bob Alpha',
+          'Charlie Zeta',
+        ]);
+      });
+    });
+  });
+
+  describe('computed column filtering', () => {
+    const mockUsers = [
+      { id: 1, first_name: 'Alice', last_name: 'Smith' },
+      { id: 2, first_name: 'Bob', last_name: 'Jones' },
+      { id: 3, first_name: 'Alice', last_name: 'Walker' },
+    ];
+
+    const computedColumns: ColumnConfig[] = [
+      { field: 'id', header: 'ID' },
+      { field: 'first_name', header: 'First' },
+      { field: 'last_name', header: 'Last' },
+      {
+        field: 'full_name',
+        header: 'Full Name',
+        filterable: true,
+        computed: (row) => `${row.first_name} ${row.last_name}`,
+      },
+    ];
+
+    it('filters on computed column with _eq', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: computedColumns,
+            clientSideFilter: true,
+            defaultFilters: { full_name: { _eq: 'Alice Smith' } },
+            filterDebounceMs: 0,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      await waitFor(() => {
+        expect(result.current.data).toHaveLength(1);
+      });
+      expect(
+        (result.current.data[0] as Record<string, unknown>).full_name,
+      ).toBe('Alice Smith');
+    });
+
+    it('filters on computed column with _contains', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: computedColumns,
+            clientSideFilter: true,
+            defaultFilters: { full_name: { _contains: 'alice' } },
+            filterDebounceMs: 0,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      await waitFor(() => {
+        expect(result.current.data).toHaveLength(2);
+      });
+    });
+  });
+
+  describe('aggregate formatting', () => {
+    const mockOrders = [
+      { id: 1, amount: 100, rating: 0.85 },
+      { id: 2, amount: 200, rating: 0.92 },
+      { id: 3, amount: 150, rating: 0.78 },
+    ];
+
+    const orderColumns: ColumnConfig[] = [
+      { field: 'id', header: 'ID' },
+      { field: 'amount', header: 'Amount' },
+      { field: 'rating', header: 'Rating' },
+    ];
+
+    it('formats aggregate as currency', async () => {
+      globalThis.fetch = createFetchMock({ data: { orders: mockOrders } });
+
+      const aggregates: Record<string, AggregateConfig> = {
+        total: { field: 'amount', fn: 'sum', format: 'currency' },
+      };
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'orders',
+            columns: orderColumns,
+            aggregates,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.formattedAggregates.total.value).toBe(450);
+      expect(result.current.formattedAggregates.total.formatted).toContain(
+        '450',
+      );
+      expect(result.current.formattedAggregates.total.formatted).not.toBeNull();
+    });
+
+    it('formats aggregate as percentage', async () => {
+      globalThis.fetch = createFetchMock({ data: { orders: mockOrders } });
+
+      const aggregates: Record<string, AggregateConfig> = {
+        avgRating: { field: 'rating', fn: 'avg', format: 'percentage' },
+      };
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'orders',
+            columns: orderColumns,
+            aggregates,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.formattedAggregates.avgRating.value).toBeCloseTo(
+        0.85,
+        2,
+      );
+      expect(
+        result.current.formattedAggregates.avgRating.formatted,
+      ).not.toBeNull();
+      expect(result.current.formattedAggregates.avgRating.formatted).toContain(
+        '%',
+      );
+    });
+
+    it('formats aggregate as number', async () => {
+      globalThis.fetch = createFetchMock({ data: { orders: mockOrders } });
+
+      const aggregates: Record<string, AggregateConfig> = {
+        total: { field: 'amount', fn: 'sum', format: 'number' },
+      };
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'orders',
+            columns: orderColumns,
+            aggregates,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.formattedAggregates.total.value).toBe(450);
+      expect(result.current.formattedAggregates.total.formatted).not.toBeNull();
+    });
+
+    it('formats aggregate with custom function', async () => {
+      globalThis.fetch = createFetchMock({ data: { orders: mockOrders } });
+
+      const aggregates: Record<string, AggregateConfig> = {
+        total: {
+          field: 'amount',
+          fn: 'sum',
+          format: (v) => `Total: $${v}`,
+        },
+      };
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'orders',
+            columns: orderColumns,
+            aggregates,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.formattedAggregates.total.value).toBe(450);
+      expect(result.current.formattedAggregates.total.formatted).toBe(
+        'Total: $450',
+      );
+    });
+
+    it('returns null formatted when no format specified', async () => {
+      globalThis.fetch = createFetchMock({ data: { orders: mockOrders } });
+
+      const aggregates: Record<string, AggregateConfig> = {
+        total: { field: 'amount', fn: 'sum' },
+      };
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'orders',
+            columns: orderColumns,
+            aggregates,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.formattedAggregates.total.value).toBe(450);
+      expect(result.current.formattedAggregates.total.formatted).toBeNull();
+    });
+
+    it('returns empty formattedAggregates when no aggregates configured', async () => {
+      globalThis.fetch = createFetchMock({ data: { orders: mockOrders } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'orders',
+            columns: orderColumns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.formattedAggregates).toEqual({});
+    });
+  });
+
+  describe('aggregates update on filter change', () => {
+    const mockOrders = [
+      { id: 1, amount: 100, status: 'paid' },
+      { id: 2, amount: 200, status: 'paid' },
+      { id: 3, amount: 150, status: 'pending' },
+    ];
+
+    const orderColumns: ColumnConfig[] = [
+      { field: 'id', header: 'ID' },
+      { field: 'amount', header: 'Amount' },
+      { field: 'status', header: 'Status', filterable: true },
+    ];
+
+    it('recalculates aggregates when client-side filter changes', async () => {
+      globalThis.fetch = createFetchMock({ data: { orders: mockOrders } });
+
+      const aggregates: Record<string, AggregateConfig> = {
+        total: { field: 'amount', fn: 'sum' },
+        count: { fn: 'count' },
+      };
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'orders',
+            columns: orderColumns,
+            aggregates,
+            clientSideFilter: true,
+            filterDebounceMs: 0,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.aggregates.total).toBe(450);
+      expect(result.current.aggregates.count).toBe(3);
+
+      act(() => {
+        result.current.filters.setColumnFilter('status', { _eq: 'paid' });
+      });
+
+      await waitFor(() => {
+        expect(result.current.aggregates.total).toBe(300);
+      });
+      expect(result.current.aggregates.count).toBe(2);
+    });
+  });
+
+  describe('group by', () => {
+    const mockOrders = [
+      { id: 1, amount: 100, category: 'electronics' },
+      { id: 2, amount: 200, category: 'clothing' },
+      { id: 3, amount: 150, category: 'electronics' },
+      { id: 4, amount: 50, category: 'clothing' },
+    ];
+
+    const orderColumns: ColumnConfig[] = [
+      { field: 'id', header: 'ID' },
+      { field: 'amount', header: 'Amount' },
+      { field: 'category', header: 'Category' },
+    ];
+
+    it('groups data by field with sub-aggregates', async () => {
+      globalThis.fetch = createFetchMock({ data: { orders: mockOrders } });
+
+      const groupBy: GroupByConfig = {
+        field: 'category',
+        aggregates: {
+          total: { field: 'amount', fn: 'sum' },
+          count: { fn: 'count' },
+        },
+      };
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'orders',
+            columns: orderColumns,
+            groupBy,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.groups).toHaveLength(2);
+
+      const electronicsGroup = result.current.groups.find(
+        (g) => g.groupKey === 'electronics',
+      );
+      const clothingGroup = result.current.groups.find(
+        (g) => g.groupKey === 'clothing',
+      );
+
+      expect(electronicsGroup).toBeDefined();
+      expect(electronicsGroup!.rows).toHaveLength(2);
+      expect(electronicsGroup!.aggregates.total.value).toBe(250);
+      expect(electronicsGroup!.aggregates.count.value).toBe(2);
+
+      expect(clothingGroup).toBeDefined();
+      expect(clothingGroup!.rows).toHaveLength(2);
+      expect(clothingGroup!.aggregates.total.value).toBe(250);
+      expect(clothingGroup!.aggregates.count.value).toBe(2);
+    });
+
+    it('returns empty groups when no groupBy configured', async () => {
+      globalThis.fetch = createFetchMock({ data: { orders: mockOrders } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'orders',
+            columns: orderColumns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.groups).toEqual([]);
+    });
+
+    it('groups with formatted aggregates', async () => {
+      globalThis.fetch = createFetchMock({ data: { orders: mockOrders } });
+
+      const groupBy: GroupByConfig = {
+        field: 'category',
+        aggregates: {
+          total: {
+            field: 'amount',
+            fn: 'sum',
+            format: (v) => `$${v}`,
+          },
+        },
+      };
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'orders',
+            columns: orderColumns,
+            groupBy,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const electronicsGroup = result.current.groups.find(
+        (g) => g.groupKey === 'electronics',
+      );
+      expect(electronicsGroup!.aggregates.total.formatted).toBe('$250');
+    });
+
+    it('groups with custom aggregate function', async () => {
+      globalThis.fetch = createFetchMock({ data: { orders: mockOrders } });
+
+      const groupBy: GroupByConfig = {
+        field: 'category',
+        aggregates: {
+          avgAmount: { field: 'amount', fn: 'avg' },
+          minAmount: { field: 'amount', fn: 'min' },
+          maxAmount: { field: 'amount', fn: 'max' },
+        },
+      };
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'orders',
+            columns: orderColumns,
+            groupBy,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const electronicsGroup = result.current.groups.find(
+        (g) => g.groupKey === 'electronics',
+      );
+      expect(electronicsGroup!.aggregates.avgAmount.value).toBe(125);
+      expect(electronicsGroup!.aggregates.minAmount.value).toBe(100);
+      expect(electronicsGroup!.aggregates.maxAmount.value).toBe(150);
+    });
+
+    it('recalculates groups when data changes via client-side filter', async () => {
+      globalThis.fetch = createFetchMock({ data: { orders: mockOrders } });
+
+      const groupBy: GroupByConfig = {
+        field: 'category',
+        aggregates: {
+          total: { field: 'amount', fn: 'sum' },
+        },
+      };
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'orders',
+            columns: orderColumns,
+            groupBy,
+            clientSideFilter: true,
+            defaultFilters: { amount: { _gt: 100 } },
+            filterDebounceMs: 0,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      await waitFor(() => {
+        expect(result.current.groups).toHaveLength(2);
+      });
+
+      const electronicsGroup = result.current.groups.find(
+        (g) => g.groupKey === 'electronics',
+      );
+      const clothingGroup = result.current.groups.find(
+        (g) => g.groupKey === 'clothing',
+      );
+
+      expect(electronicsGroup!.rows).toHaveLength(1);
+      expect(electronicsGroup!.aggregates.total.value).toBe(150);
+
+      expect(clothingGroup!.rows).toHaveLength(1);
+      expect(clothingGroup!.aggregates.total.value).toBe(200);
+    });
+  });
+
+  describe('computed column memoization', () => {
+    it('does not recompute when unrelated state changes', async () => {
+      const mockUsers = [
+        { id: 1, first_name: 'Alice', last_name: 'Smith' },
+      ];
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const computeFn = vi.fn(
+        (row: Record<string, unknown>) =>
+          `${row.first_name} ${row.last_name}`,
+      );
+
+      const columns: ColumnConfig[] = [
+        { field: 'id', header: 'ID' },
+        { field: 'first_name', header: 'First' },
+        { field: 'last_name', header: 'Last' },
+        { field: 'full_name', header: 'Full', computed: computeFn },
+      ];
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const callCount = computeFn.mock.calls.length;
+
+      act(() => {
+        result.current.selection.toggleRow(
+          result.current.data[0],
+        );
+      });
+
+      // Selection change should not trigger recomputation
+      expect(computeFn.mock.calls.length).toBe(callCount);
     });
   });
 });

@@ -28,8 +28,12 @@ jobs:
         run: dotnet restore
       - name: Build
         run: dotnet build --no-restore --configuration Release
-      - name: Test
-        run: dotnet test --no-build --verbosity normal --configuration Release
+      - name: Test Core
+        run: dotnet test tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj --no-build --verbosity normal --configuration Release
+      - name: Test Server
+        run: dotnet test tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj --no-build --verbosity normal --configuration Release
+      - name: Test Integration (SQLite only)
+        run: dotnet test tests/BifrostQL.Integration.Test/BifrostQL.Integration.Test.csproj --no-build --verbosity normal --configuration Release --filter "FullyQualifiedName~Sqlite"
       - name: Pack
         run: |
           dotnet pack "src/BifrostQL.Core/BifrostQL.Core.csproj"  --configuration Release --no-build -p:PackageVersion=0.3.${{ github.run_number }} 

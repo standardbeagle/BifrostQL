@@ -15,6 +15,7 @@ using System.IdentityModel.Tokens.Jwt;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
+using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
 using BifrostQL.Server.Logging;
 using Microsoft.Extensions.Logging;
@@ -128,6 +129,24 @@ namespace BifrostQL.Server
                         RequestCredentials = GraphQL.Server.Ui.GraphiQL.RequestCredentials.SameOrigin,
                     });
             }
+            return app;
+        }
+
+        /// <summary>
+        /// Maps the BifrostQL binary WebSocket endpoint at the specified path.
+        /// Clients connect via WebSocket and exchange protobuf-encoded binary frames.
+        /// Requires AddBifrostEngine() in service configuration and UseWebSockets() before this call.
+        /// </summary>
+        /// <param name="app">The application builder.</param>
+        /// <param name="path">The WebSocket endpoint path (e.g., "/bifrost-ws").</param>
+        /// <returns>The application builder for chaining.</returns>
+        public static IApplicationBuilder UseBifrostBinary(
+            this IApplicationBuilder app,
+            string path = "/bifrost-ws")
+        {
+            var engine = app.ApplicationServices.GetRequiredService<IBifrostEngine>();
+            app.Map(path, branch =>
+                branch.UseMiddleware<BifrostBinaryMiddleware>(engine, path));
             return app;
         }
 

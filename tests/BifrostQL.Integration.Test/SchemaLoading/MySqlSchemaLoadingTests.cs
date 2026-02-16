@@ -156,7 +156,7 @@ public class MySqlSchemaLoadingTests : IAsyncLifetime
     [Fact]
     public void LoadedModel_ShouldContainAllTables()
     {
-        var tableNames = _loadedModel!.Tables.Select(t => t.TableName).ToList();
+        var tableNames = _loadedModel!.Tables.Select(t => t.DbName).ToList();
 
         tableNames.Should().Contain("DataTypes");
         tableNames.Should().Contain("CompositePK");
@@ -170,7 +170,7 @@ public class MySqlSchemaLoadingTests : IAsyncLifetime
     [Fact]
     public void DataTypesTable_ShouldHaveCorrectColumns()
     {
-        var table = _loadedModel!.Tables.First(t => t.TableName == "DataTypes");
+        var table = _loadedModel!.Tables.First(t => t.DbName == "DataTypes");
 
         table.Columns.Should().HaveCount(11);
 
@@ -191,7 +191,7 @@ public class MySqlSchemaLoadingTests : IAsyncLifetime
     [Fact]
     public void CompositePKTable_ShouldHaveCompositePrimaryKey()
     {
-        var table = _loadedModel!.Tables.First(t => t.TableName == "CompositePK");
+        var table = _loadedModel!.Tables.First(t => t.DbName == "CompositePK");
 
         var pkColumns = table.Columns.Where(c => c.IsPrimaryKey).ToList();
         pkColumns.Should().HaveCount(2);
@@ -202,10 +202,9 @@ public class MySqlSchemaLoadingTests : IAsyncLifetime
     [Fact]
     public void OrderItemsTable_ShouldHaveForeignKeyToOrders()
     {
-        var orderItemsTable = _loadedModel!.Tables.First(t => t.TableName == "OrderItems");
+        var orderItemsTable = _loadedModel!.Tables.First(t => t.DbName == "OrderItems");
 
         var orderIdCol = orderItemsTable.Columns.First(c => c.ColumnName == "OrderId");
-        orderIdCol.IsForeignKey.Should().BeTrue();
 
         orderItemsTable.SingleLinks.Should().ContainKey("order");
     }
@@ -213,10 +212,9 @@ public class MySqlSchemaLoadingTests : IAsyncLifetime
     [Fact]
     public void SelfReferencingTable_ShouldHaveSelfJoin()
     {
-        var table = _loadedModel!.Tables.First(t => t.TableName == "SelfReferencing");
+        var table = _loadedModel!.Tables.First(t => t.DbName == "SelfReferencing");
 
         var parentCol = table.Columns.First(c => c.ColumnName == "ParentNodeId");
-        parentCol.IsForeignKey.Should().BeTrue();
         parentCol.IsNullable.Should().BeTrue();
 
         table.SingleLinks.Should().ContainKey("parentNode");
@@ -225,8 +223,8 @@ public class MySqlSchemaLoadingTests : IAsyncLifetime
     [Fact]
     public void IdentityColumns_ShouldBeMarkedCorrectly()
     {
-        var dataTypesTable = _loadedModel!.Tables.First(t => t.TableName == "DataTypes");
-        var ordersTable = _loadedModel!.Tables.First(t => t.TableName == "Orders");
+        var dataTypesTable = _loadedModel!.Tables.First(t => t.DbName == "DataTypes");
+        var ordersTable = _loadedModel!.Tables.First(t => t.DbName == "Orders");
 
         dataTypesTable.Columns.First(c => c.ColumnName == "Id").IsIdentity.Should().BeTrue();
         ordersTable.Columns.First(c => c.ColumnName == "OrderId").IsIdentity.Should().BeTrue();

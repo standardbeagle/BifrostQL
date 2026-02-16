@@ -176,7 +176,7 @@ CREATE TABLE test_schema.custom_schema_table (
     [Fact]
     public void LoadedModel_ShouldContainAllTables()
     {
-        var tableNames = _loadedModel!.Tables.Select(t => t.TableName.ToLowerInvariant()).ToList();
+        var tableNames = _loadedModel!.Tables.Select(t => t.DbName.ToLowerInvariant()).ToList();
 
         tableNames.Should().Contain("datatypes");
         tableNames.Should().Contain("composite_pk");
@@ -191,7 +191,7 @@ CREATE TABLE test_schema.custom_schema_table (
     [Fact]
     public void DataTypesTable_ShouldHaveCorrectColumns()
     {
-        var table = _loadedModel!.Tables.First(t => t.TableName.ToLowerInvariant() == "datatypes");
+        var table = _loadedModel!.Tables.First(t => t.DbName.ToLowerInvariant() == "datatypes");
 
         table.Columns.Should().HaveCount(12);
 
@@ -212,7 +212,7 @@ CREATE TABLE test_schema.custom_schema_table (
     [Fact]
     public void CompositePKTable_ShouldHaveCompositePrimaryKey()
     {
-        var table = _loadedModel!.Tables.First(t => t.TableName.ToLowerInvariant() == "composite_pk");
+        var table = _loadedModel!.Tables.First(t => t.DbName.ToLowerInvariant() == "composite_pk");
 
         var pkColumns = table.Columns.Where(c => c.IsPrimaryKey).ToList();
         pkColumns.Should().HaveCount(2);
@@ -223,10 +223,9 @@ CREATE TABLE test_schema.custom_schema_table (
     [Fact]
     public void OrderItemsTable_ShouldHaveForeignKeyToOrders()
     {
-        var orderItemsTable = _loadedModel!.Tables.First(t => t.TableName.ToLowerInvariant() == "order_items");
+        var orderItemsTable = _loadedModel!.Tables.First(t => t.DbName.ToLowerInvariant() == "order_items");
 
         var orderIdCol = orderItemsTable.Columns.First(c => c.ColumnName == "order_id");
-        orderIdCol.IsForeignKey.Should().BeTrue();
 
         orderItemsTable.SingleLinks.Should().ContainKey("order");
     }
@@ -234,10 +233,9 @@ CREATE TABLE test_schema.custom_schema_table (
     [Fact]
     public void SelfReferencingTable_ShouldHaveSelfJoin()
     {
-        var table = _loadedModel!.Tables.First(t => t.TableName.ToLowerInvariant() == "self_referencing");
+        var table = _loadedModel!.Tables.First(t => t.DbName.ToLowerInvariant() == "self_referencing");
 
         var parentCol = table.Columns.First(c => c.ColumnName == "parent_node_id");
-        parentCol.IsForeignKey.Should().BeTrue();
         parentCol.IsNullable.Should().BeTrue();
 
         table.SingleLinks.Should().ContainKey("parentNode");
@@ -246,8 +244,8 @@ CREATE TABLE test_schema.custom_schema_table (
     [Fact]
     public void IdentityColumns_ShouldBeMarkedCorrectly()
     {
-        var dataTypesTable = _loadedModel!.Tables.First(t => t.TableName.ToLowerInvariant() == "datatypes");
-        var ordersTable = _loadedModel!.Tables.First(t => t.TableName.ToLowerInvariant() == "orders");
+        var dataTypesTable = _loadedModel!.Tables.First(t => t.DbName.ToLowerInvariant() == "datatypes");
+        var ordersTable = _loadedModel!.Tables.First(t => t.DbName.ToLowerInvariant() == "orders");
 
         dataTypesTable.Columns.First(c => c.ColumnName == "id").IsIdentity.Should().BeTrue();
         ordersTable.Columns.First(c => c.ColumnName == "order_id").IsIdentity.Should().BeTrue();

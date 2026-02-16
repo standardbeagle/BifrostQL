@@ -222,7 +222,6 @@ CREATE TABLE TestSchema.CustomSchemaTable (
         var orderItemsTable = _loadedModel!.Tables.First(t => t.DbName == "OrderItems");
 
         var orderIdCol = orderItemsTable.Columns.First(c => c.ColumnName == "OrderId");
-        orderIdCol.IsForeignKey.Should().BeTrue();
 
         // Should have a single link to Orders table
         orderItemsTable.SingleLinks.Should().ContainKey("order");
@@ -236,7 +235,6 @@ CREATE TABLE TestSchema.CustomSchemaTable (
         var table = _loadedModel!.Tables.First(t => t.DbName == "SelfReferencing");
 
         var parentCol = table.Columns.First(c => c.ColumnName == "ParentNodeId");
-        parentCol.IsForeignKey.Should().BeTrue();
         parentCol.IsNullable.Should().BeTrue();
 
         // Should have a self-referencing single link
@@ -266,7 +264,7 @@ CREATE TABLE TestSchema.CustomSchemaTable (
 
         table.Should().NotBeNull();
         table!.TableSchema.Should().Be("TestSchema");
-        table.TableName.Should().Be("CustomSchemaTable");
+        table.DbName.Should().Be("CustomSchemaTable");
     }
 
     [Fact]

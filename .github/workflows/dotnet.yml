@@ -61,4 +61,4 @@ jobs:
         working-directory: ./examples/edit-db
         run: |
           echo "//registry.npmjs.org/:_authToken=${{secrets.NPM_TOKEN}}" > ~/.npmrc
-          npm publish
+          npm publish --access public

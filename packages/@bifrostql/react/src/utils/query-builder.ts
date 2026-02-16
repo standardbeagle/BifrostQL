@@ -1,6 +1,28 @@
-import type { QueryOptions, TableFilter, SortOption } from '../types';
+import type {
+  QueryOptions,
+  SortOption,
+  AdvancedFilter,
+  CompoundFilter,
+} from '../types';
 
-function buildFilterArgs(filter: TableFilter): string {
+function isCompoundFilter(filter: AdvancedFilter): filter is CompoundFilter {
+  return '_and' in filter || '_or' in filter;
+}
+
+function buildFilterObject(filter: AdvancedFilter): string {
+  if (isCompoundFilter(filter)) {
+    const parts: string[] = [];
+    if (filter._and) {
+      const inner = filter._and.map((f) => `{ ${buildFilterObject(f)} }`);
+      parts.push(`_and: [${inner.join(', ')}]`);
+    }
+    if (filter._or) {
+      const inner = filter._or.map((f) => `{ ${buildFilterObject(f)} }`);
+      parts.push(`_or: [${inner.join(', ')}]`);
+    }
+    return parts.join(', ');
+  }
+
   const entries = Object.entries(filter);
   if (entries.length === 0) return '';
 
@@ -10,12 +32,23 @@ function buildFilterArgs(filter: TableFilter): string {
       return `${field}: { _eq: ${JSON.stringify(value)} }`;
 
     const ops = Object.entries(value as Record<string, unknown>)
-      .map(([op, val]) => `${op}: ${JSON.stringify(val)}`)
+      .map(([op, val]) => {
+        if (op === '_between' && Array.isArray(val) && val.length === 2) {
+          return `_gte: ${JSON.stringify(val[0])}, _lte: ${JSON.stringify(val[1])}`;
+        }
+        return `${op}: ${JSON.stringify(val)}`;
+      })
       .join(', ');
     return `${field}: { ${ops} }`;
   });
 
-  return `filter: { ${parts.join(', ')} }`;
+  return parts.join(', ');
+}
+
+function buildFilterArgs(filter: AdvancedFilter): string {
+  const content = buildFilterObject(filter);
+  if (!content) return '';
+  return `filter: { ${content} }`;
 }
 
 function buildSortArgs(sort: SortOption[]): string {

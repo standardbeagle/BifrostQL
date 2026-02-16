@@ -9,6 +9,7 @@ import type {
   AggregateConfig,
   UrlSyncConfig,
   CustomSortFn,
+  FilterPreset,
 } from './use-bifrost-table';
 
 function createFetchMock(response: unknown, ok = true, status = 200) {
@@ -2049,11 +2050,9 @@ describe('useBifrostTable', () => {
 
       await waitFor(() => expect(result.current.loading).toBe(false));
 
-      expect(result.current.data.map((r: Record<string, unknown>) => r.name)).toEqual([
-        'Alice',
-        'Bob',
-        'Charlie',
-      ]);
+      expect(
+        result.current.data.map((r: Record<string, unknown>) => r.name),
+      ).toEqual(['Alice', 'Bob', 'Charlie']);
     });
 
     it('does not send sort to server when clientSideSort is enabled', async () => {
@@ -2094,11 +2093,9 @@ describe('useBifrostTable', () => {
 
       await waitFor(() => expect(result.current.loading).toBe(false));
 
-      expect(result.current.data.map((r: Record<string, unknown>) => r.name)).toEqual([
-        'Charlie',
-        'Bob',
-        'Alice',
-      ]);
+      expect(
+        result.current.data.map((r: Record<string, unknown>) => r.name),
+      ).toEqual(['Charlie', 'Bob', 'Alice']);
     });
 
     it('supports multi-column client-side sort', async () => {
@@ -2126,11 +2123,9 @@ describe('useBifrostTable', () => {
 
       await waitFor(() => expect(result.current.loading).toBe(false));
 
-      expect(result.current.data.map((r: Record<string, unknown>) => r.email)).toEqual([
-        'a@test.com',
-        'z@test.com',
-        'm@test.com',
-      ]);
+      expect(
+        result.current.data.map((r: Record<string, unknown>) => r.email),
+      ).toEqual(['a@test.com', 'z@test.com', 'm@test.com']);
     });
 
     it('handles numeric sorting correctly', async () => {
@@ -2154,9 +2149,9 @@ describe('useBifrostTable', () => {
 
       await waitFor(() => expect(result.current.loading).toBe(false));
 
-      expect(result.current.data.map((r: Record<string, unknown>) => r.id)).toEqual([
-        1, 2, 10,
-      ]);
+      expect(
+        result.current.data.map((r: Record<string, unknown>) => r.id),
+      ).toEqual([1, 2, 10]);
     });
 
     it('handles null values by sorting them last', async () => {
@@ -2180,11 +2175,9 @@ describe('useBifrostTable', () => {
 
       await waitFor(() => expect(result.current.loading).toBe(false));
 
-      expect(result.current.data.map((r: Record<string, unknown>) => r.name)).toEqual([
-        'Alice',
-        'Bob',
-        null,
-      ]);
+      expect(
+        result.current.data.map((r: Record<string, unknown>) => r.name),
+      ).toEqual(['Alice', 'Bob', null]);
     });
 
     it('respects threshold - skips client sort when data exceeds threshold', async () => {
@@ -2204,11 +2197,9 @@ describe('useBifrostTable', () => {
       await waitFor(() => expect(result.current.loading).toBe(false));
 
       // Data should NOT be sorted client-side since 3 > threshold of 2
-      expect(result.current.data.map((r: Record<string, unknown>) => r.name)).toEqual([
-        'Charlie',
-        'Alice',
-        'Bob',
-      ]);
+      expect(
+        result.current.data.map((r: Record<string, unknown>) => r.name),
+      ).toEqual(['Charlie', 'Alice', 'Bob']);
     });
 
     it('applies client sort when data is within threshold', async () => {
@@ -2231,10 +2222,9 @@ describe('useBifrostTable', () => {
 
       await waitFor(() => expect(result.current.loading).toBe(false));
 
-      expect(result.current.data.map((r: Record<string, unknown>) => r.name)).toEqual([
-        'Alice',
-        'Bob',
-      ]);
+      expect(
+        result.current.data.map((r: Record<string, unknown>) => r.name),
+      ).toEqual(['Alice', 'Bob']);
     });
 
     it('returns unsorted data when no sort is active', async () => {
@@ -2252,9 +2242,9 @@ describe('useBifrostTable', () => {
 
       await waitFor(() => expect(result.current.loading).toBe(false));
 
-      expect(result.current.data.map((r: Record<string, unknown>) => r.id)).toEqual([
-        3, 1, 2,
-      ]);
+      expect(
+        result.current.data.map((r: Record<string, unknown>) => r.id),
+      ).toEqual([3, 1, 2]);
     });
   });
 
@@ -2302,11 +2292,9 @@ describe('useBifrostTable', () => {
 
       await waitFor(() => expect(result.current.loading).toBe(false));
 
-      expect(result.current.data.map((r: Record<string, unknown>) => r.name)).toEqual([
-        'low',
-        'medium',
-        'high',
-      ]);
+      expect(
+        result.current.data.map((r: Record<string, unknown>) => r.name),
+      ).toEqual(['low', 'medium', 'high']);
     });
 
     it('custom sort respects desc direction', async () => {
@@ -2352,11 +2340,9 @@ describe('useBifrostTable', () => {
 
       await waitFor(() => expect(result.current.loading).toBe(false));
 
-      expect(result.current.data.map((r: Record<string, unknown>) => r.name)).toEqual([
-        'high',
-        'medium',
-        'low',
-      ]);
+      expect(
+        result.current.data.map((r: Record<string, unknown>) => r.name),
+      ).toEqual(['high', 'medium', 'low']);
     });
   });
 
@@ -2594,6 +2580,1125 @@ describe('useBifrostTable', () => {
         { field: 'name', direction: 'asc' },
         { field: 'email', direction: 'desc' },
       ]);
+    });
+  });
+
+  describe('filter debouncing', () => {
+    it('debounces filter changes before sending to server', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            filterDebounceMs: 100,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const callCountBefore = (globalThis.fetch as ReturnType<typeof vi.fn>)
+        .mock.calls.length;
+
+      act(() => {
+        result.current.filters.setColumnFilter('name', { _contains: 'a' });
+      });
+      act(() => {
+        result.current.filters.setColumnFilter('name', { _contains: 'al' });
+      });
+      act(() => {
+        result.current.filters.setColumnFilter('name', {
+          _contains: 'ali',
+        });
+      });
+
+      // Immediate state should reflect latest filter
+      expect(result.current.filters.current).toEqual({
+        name: { _contains: 'ali' },
+      });
+
+      // After debounce, the query should fire with the final filter
+      await waitFor(
+        () => {
+          const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock
+            .calls;
+          const lastBody = JSON.parse(calls[calls.length - 1][1].body);
+          expect(lastBody.query).toContain('_contains');
+          expect(lastBody.query).toContain('ali');
+        },
+        { timeout: 500 },
+      );
+    });
+  });
+
+  describe('active filter count', () => {
+    it('returns 0 when no filters are active', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      expect(result.current.filters.activeFilterCount).toBe(0);
+    });
+
+    it('counts column filters', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultFilters: { name: 'Alice', email: { _contains: 'test' } },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      expect(result.current.filters.activeFilterCount).toBe(2);
+    });
+
+    it('counts compound filter conditions', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.filters.setCompoundFilter({
+          _and: [
+            { status: { _eq: 'active' } },
+            { created_at: { _gte: '2024-01-01' } },
+          ],
+        });
+      });
+
+      expect(result.current.filters.activeFilterCount).toBe(2);
+    });
+
+    it('sums column and compound filter counts', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultFilters: { name: 'test' },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.filters.setCompoundFilter({
+          _or: [{ email: { _contains: 'a' } }, { email: { _contains: 'b' } }],
+        });
+      });
+
+      expect(result.current.filters.activeFilterCount).toBe(3);
+    });
+
+    it('returns 0 after clearFilters', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultFilters: { name: 'Alice' },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      expect(result.current.filters.activeFilterCount).toBe(1);
+
+      act(() => {
+        result.current.filters.clearFilters();
+      });
+
+      expect(result.current.filters.activeFilterCount).toBe(0);
+    });
+  });
+
+  describe('compound filters', () => {
+    it('starts with null compound filter', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      expect(result.current.filters.compoundFilter).toBeNull();
+    });
+
+    it('sets compound filter with _and', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.filters.setCompoundFilter({
+          _and: [
+            { status: { _eq: 'active' } },
+            { created_at: { _gte: '2024-01-01' } },
+          ],
+        });
+      });
+
+      expect(result.current.filters.compoundFilter).toEqual({
+        _and: [
+          { status: { _eq: 'active' } },
+          { created_at: { _gte: '2024-01-01' } },
+        ],
+      });
+    });
+
+    it('sets compound filter with _or', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.filters.setCompoundFilter({
+          _or: [{ name: { _eq: 'Alice' } }, { name: { _eq: 'Bob' } }],
+        });
+      });
+
+      expect(result.current.filters.compoundFilter).toEqual({
+        _or: [{ name: { _eq: 'Alice' } }, { name: { _eq: 'Bob' } }],
+      });
+    });
+
+    it('clears compound filter with null', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.filters.setCompoundFilter({
+          _and: [{ status: { _eq: 'active' } }],
+        });
+      });
+      expect(result.current.filters.compoundFilter).not.toBeNull();
+
+      act(() => {
+        result.current.filters.setCompoundFilter(null);
+      });
+      expect(result.current.filters.compoundFilter).toBeNull();
+    });
+
+    it('clearFilters also clears compound filter', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultFilters: { name: 'Alice' },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.filters.setCompoundFilter({
+          _and: [{ status: { _eq: 'active' } }],
+        });
+      });
+
+      act(() => {
+        result.current.filters.clearFilters();
+      });
+
+      expect(result.current.filters.current).toEqual({});
+      expect(result.current.filters.compoundFilter).toBeNull();
+    });
+
+    it('resets page when compound filter changes', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.pagination.setPage(3);
+      });
+      expect(result.current.pagination.page).toBe(3);
+
+      act(() => {
+        result.current.filters.setCompoundFilter({
+          _and: [{ status: { _eq: 'active' } }],
+        });
+      });
+      expect(result.current.pagination.page).toBe(0);
+    });
+
+    it('sends compound filter to server via query', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            filterDebounceMs: 0,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.filters.setCompoundFilter({
+          _and: [
+            { status: { _eq: 'active' } },
+            { created_at: { _gte: '2024-01-01' } },
+          ],
+        });
+      });
+
+      await waitFor(() => {
+        const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+        const lastBody = JSON.parse(calls[calls.length - 1][1].body);
+        expect(lastBody.query).toContain('_and');
+      });
+    });
+  });
+
+  describe('client-side filtering', () => {
+    const mockUsers = [
+      { id: 1, name: 'Alice', email: 'alice@test.com', age: 30 },
+      { id: 2, name: 'Bob', email: 'bob@test.com', age: 25 },
+      { id: 3, name: 'Charlie', email: 'charlie@test.com', age: 35 },
+      { id: 4, name: 'Alice B', email: 'aliceb@test.com', age: 28 },
+    ];
+
+    const extendedColumns: ColumnConfig[] = [
+      { field: 'id', header: 'ID', sortable: true },
+      { field: 'name', header: 'Name', sortable: true, filterable: true },
+      { field: 'email', header: 'Email', sortable: true, filterable: true },
+      { field: 'age', header: 'Age', sortable: true, filterable: true },
+    ];
+
+    it('filters data client-side with _eq', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: extendedColumns,
+            clientSideFilter: true,
+            defaultFilters: { name: { _eq: 'Alice' } },
+            filterDebounceMs: 0,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      // Wait for debounced filters to apply
+      await waitFor(() => {
+        expect(result.current.data).toHaveLength(1);
+      });
+      expect((result.current.data[0] as Record<string, unknown>).name).toBe(
+        'Alice',
+      );
+    });
+
+    it('filters data client-side with _contains', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: extendedColumns,
+            clientSideFilter: true,
+            defaultFilters: { name: { _contains: 'alice' } },
+            filterDebounceMs: 0,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      await waitFor(() => {
+        expect(result.current.data).toHaveLength(2);
+      });
+    });
+
+    it('filters data client-side with _gt', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: extendedColumns,
+            clientSideFilter: true,
+            defaultFilters: { age: { _gt: 28 } },
+            filterDebounceMs: 0,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      await waitFor(() => {
+        expect(result.current.data).toHaveLength(2);
+      });
+      expect(
+        result.current.data.map((r: Record<string, unknown>) => r.name),
+      ).toEqual(['Alice', 'Charlie']);
+    });
+
+    it('filters data client-side with _in', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: extendedColumns,
+            clientSideFilter: true,
+            defaultFilters: { name: { _in: ['Alice', 'Bob'] } },
+            filterDebounceMs: 0,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      await waitFor(() => {
+        expect(result.current.data).toHaveLength(2);
+      });
+    });
+
+    it('filters data client-side with _between', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: extendedColumns,
+            clientSideFilter: true,
+            defaultFilters: { age: { _between: [26, 32] } },
+            filterDebounceMs: 0,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      await waitFor(() => {
+        expect(result.current.data).toHaveLength(2);
+      });
+      expect(
+        result.current.data.map((r: Record<string, unknown>) => r.name),
+      ).toEqual(['Alice', 'Alice B']);
+    });
+
+    it('filters data client-side with _starts_with', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: extendedColumns,
+            clientSideFilter: true,
+            defaultFilters: { email: { _starts_with: 'alice' } },
+            filterDebounceMs: 0,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      await waitFor(() => {
+        expect(result.current.data).toHaveLength(2);
+      });
+    });
+
+    it('filters data client-side with _ends_with', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: extendedColumns,
+            clientSideFilter: true,
+            defaultFilters: { email: { _ends_with: 'test.com' } },
+            filterDebounceMs: 0,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      await waitFor(() => {
+        expect(result.current.data).toHaveLength(4);
+      });
+    });
+
+    it('does not send filter to server when clientSideFilter is enabled', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: extendedColumns,
+            clientSideFilter: true,
+            defaultFilters: { name: { _eq: 'Alice' } },
+            filterDebounceMs: 0,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const [, fetchOptions] = (globalThis.fetch as ReturnType<typeof vi.fn>)
+        .mock.calls[0];
+      const body = JSON.parse(fetchOptions.body);
+      expect(body.query).not.toContain('filter:');
+    });
+
+    it('applies compound filter client-side', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: extendedColumns,
+            clientSideFilter: true,
+            filterDebounceMs: 0,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.filters.setCompoundFilter({
+          _or: [{ name: { _eq: 'Alice' } }, { name: { _eq: 'Bob' } }],
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.data).toHaveLength(2);
+      });
+    });
+
+    it('respects client-side filter threshold', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: extendedColumns,
+            clientSideFilter: { enabled: true, threshold: 2 },
+            defaultFilters: { name: { _eq: 'Alice' } },
+            filterDebounceMs: 0,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      // Data count (4) exceeds threshold (2), so no client filtering
+      await waitFor(() => {
+        expect(result.current.data).toHaveLength(4);
+      });
+    });
+
+    it('filters with _neq', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: extendedColumns,
+            clientSideFilter: true,
+            defaultFilters: { name: { _neq: 'Alice' } },
+            filterDebounceMs: 0,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      await waitFor(() => {
+        expect(result.current.data).toHaveLength(3);
+      });
+    });
+
+    it('filters with _nin', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: extendedColumns,
+            clientSideFilter: true,
+            defaultFilters: { name: { _nin: ['Alice', 'Bob'] } },
+            filterDebounceMs: 0,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      await waitFor(() => {
+        expect(result.current.data).toHaveLength(2);
+      });
+    });
+
+    it('filters with _null', async () => {
+      const dataWithNulls = [
+        { id: 1, name: 'Alice', email: null, age: 30 },
+        { id: 2, name: 'Bob', email: 'bob@test.com', age: 25 },
+      ];
+      globalThis.fetch = createFetchMock({ data: { users: dataWithNulls } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: extendedColumns,
+            clientSideFilter: true,
+            defaultFilters: { email: { _null: true } },
+            filterDebounceMs: 0,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      await waitFor(() => {
+        expect(result.current.data).toHaveLength(1);
+      });
+      expect((result.current.data[0] as Record<string, unknown>).name).toBe(
+        'Alice',
+      );
+    });
+
+    it('filters with direct value (shorthand for _eq)', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: extendedColumns,
+            clientSideFilter: true,
+            defaultFilters: { name: 'Bob' },
+            filterDebounceMs: 0,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      await waitFor(() => {
+        expect(result.current.data).toHaveLength(1);
+      });
+    });
+
+    it('filters with null value (shorthand for _null)', async () => {
+      const dataWithNulls = [
+        { id: 1, name: null, email: 'a@test.com', age: 30 },
+        { id: 2, name: 'Bob', email: 'bob@test.com', age: 25 },
+      ];
+      globalThis.fetch = createFetchMock({ data: { users: dataWithNulls } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: extendedColumns,
+            clientSideFilter: true,
+            defaultFilters: { name: null },
+            filterDebounceMs: 0,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      await waitFor(() => {
+        expect(result.current.data).toHaveLength(1);
+      });
+    });
+  });
+
+  describe('filter presets', () => {
+    let getItemSpy: ReturnType<typeof vi.fn>;
+    let setItemSpy: ReturnType<typeof vi.fn>;
+    let removeItemSpy: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      getItemSpy = vi.fn().mockReturnValue(null);
+      setItemSpy = vi.fn();
+      removeItemSpy = vi.fn();
+      Object.defineProperty(window, 'localStorage', {
+        value: {
+          getItem: getItemSpy,
+          setItem: setItemSpy,
+          removeItem: removeItemSpy,
+        },
+        writable: true,
+        configurable: true,
+      });
+    });
+
+    it('starts with empty presets when no localStorage config', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      expect(result.current.filters.presets).toEqual([]);
+    });
+
+    it('saves a filter preset', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultFilters: { name: { _contains: 'alice' } },
+            localStorage: { key: 'test-table' },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.filters.savePreset('My Filter');
+      });
+
+      expect(result.current.filters.presets).toHaveLength(1);
+      expect(result.current.filters.presets[0].name).toBe('My Filter');
+      expect(result.current.filters.presets[0].filters).toEqual({
+        name: { _contains: 'alice' },
+      });
+    });
+
+    it('loads a saved filter preset', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultFilters: { name: { _contains: 'alice' } },
+            localStorage: { key: 'test-table' },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.filters.savePreset('Saved');
+      });
+
+      act(() => {
+        result.current.filters.clearFilters();
+      });
+      expect(result.current.filters.current).toEqual({});
+
+      act(() => {
+        result.current.filters.loadPreset('Saved');
+      });
+      expect(result.current.filters.current).toEqual({
+        name: { _contains: 'alice' },
+      });
+    });
+
+    it('deletes a filter preset', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultFilters: { name: 'test' },
+            localStorage: { key: 'test-table' },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.filters.savePreset('ToDelete');
+      });
+      expect(result.current.filters.presets).toHaveLength(1);
+
+      act(() => {
+        result.current.filters.deletePreset('ToDelete');
+      });
+      expect(result.current.filters.presets).toHaveLength(0);
+    });
+
+    it('overwrites preset with same name', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultFilters: { name: 'v1' },
+            localStorage: { key: 'test-table' },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.filters.savePreset('Reusable');
+      });
+
+      act(() => {
+        result.current.filters.setFilters({ name: 'v2' });
+      });
+
+      act(() => {
+        result.current.filters.savePreset('Reusable');
+      });
+
+      expect(result.current.filters.presets).toHaveLength(1);
+      expect(result.current.filters.presets[0].filters).toEqual({
+        name: 'v2',
+      });
+    });
+
+    it('loads presets from localStorage on mount', async () => {
+      const storedPresets: FilterPreset[] = [
+        { name: 'Active', filters: { status: { _eq: 'active' } } },
+      ];
+      getItemSpy.mockImplementation((key: string) => {
+        if (key === 'test-table_presets') return JSON.stringify(storedPresets);
+        return null;
+      });
+
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            localStorage: { key: 'test-table' },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      expect(result.current.filters.presets).toHaveLength(1);
+      expect(result.current.filters.presets[0].name).toBe('Active');
+    });
+
+    it('loadPreset does nothing for non-existent preset', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultFilters: { name: 'test' },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.filters.loadPreset('NonExistent');
+      });
+
+      expect(result.current.filters.current).toEqual({ name: 'test' });
+    });
+
+    it('loading preset resets page to 0', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultFilters: { name: 'test' },
+            localStorage: { key: 'test-table' },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.filters.savePreset('Test');
+      });
+
+      act(() => {
+        result.current.pagination.setPage(5);
+      });
+      expect(result.current.pagination.page).toBe(5);
+
+      act(() => {
+        result.current.filters.loadPreset('Test');
+      });
+      expect(result.current.pagination.page).toBe(0);
+    });
+  });
+
+  describe('localStorage filter persistence', () => {
+    let getItemSpy: ReturnType<typeof vi.fn>;
+    let setItemSpy: ReturnType<typeof vi.fn>;
+    let removeItemSpy: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      getItemSpy = vi.fn().mockReturnValue(null);
+      setItemSpy = vi.fn();
+      removeItemSpy = vi.fn();
+      Object.defineProperty(window, 'localStorage', {
+        value: {
+          getItem: getItemSpy,
+          setItem: setItemSpy,
+          removeItem: removeItemSpy,
+        },
+        writable: true,
+        configurable: true,
+      });
+    });
+
+    it('persists filters to localStorage when persistFilters is true', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            localStorage: { key: 'test-table', persistFilters: true },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.filters.setColumnFilter('name', { _contains: 'test' });
+      });
+
+      expect(setItemSpy).toHaveBeenCalledWith(
+        'test-table_filters',
+        JSON.stringify({ name: { _contains: 'test' } }),
+      );
+    });
+
+    it('reads filters from localStorage on mount when persistFilters is true', async () => {
+      getItemSpy.mockImplementation((key: string) => {
+        if (key === 'test-table_filters')
+          return JSON.stringify({ email: { _contains: '@test' } });
+        return null;
+      });
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            localStorage: { key: 'test-table', persistFilters: true },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      expect(result.current.filters.current).toEqual({
+        email: { _contains: '@test' },
+      });
+    });
+
+    it('does not persist filters when persistFilters is not set', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            localStorage: { key: 'test-table' },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.filters.setColumnFilter('name', 'test');
+      });
+
+      expect(setItemSpy).not.toHaveBeenCalledWith(
+        'test-table_filters',
+        expect.anything(),
+      );
+    });
+
+    it('removes filters from localStorage when cleared', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultFilters: { name: 'test' },
+            localStorage: { key: 'test-table', persistFilters: true },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.filters.clearFilters();
+      });
+
+      expect(removeItemSpy).toHaveBeenCalledWith('test-table_filters');
+    });
+
+    it('localStorage filters override defaultFilters', async () => {
+      getItemSpy.mockImplementation((key: string) => {
+        if (key === 'test-table_filters')
+          return JSON.stringify({ name: { _eq: 'Stored' } });
+        return null;
+      });
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultFilters: { name: { _eq: 'Default' } },
+            localStorage: { key: 'test-table', persistFilters: true },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      expect(result.current.filters.current).toEqual({
+        name: { _eq: 'Stored' },
+      });
     });
   });
 });

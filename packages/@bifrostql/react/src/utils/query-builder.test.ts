@@ -77,4 +77,60 @@ describe('buildGraphqlQuery', () => {
     expect(result).toContain('id');
     expect(result).toContain('name');
   });
+
+  it('builds a query with _between filter (expands to _gte + _lte)', () => {
+    const result = buildGraphqlQuery('orders', {
+      filter: { amount: { _between: [100, 500] } },
+      fields: ['id', 'amount'],
+    });
+    expect(result).toContain('_gte: 100');
+    expect(result).toContain('_lte: 500');
+    expect(result).not.toContain('_between');
+  });
+
+  it('builds a query with _and compound filter', () => {
+    const result = buildGraphqlQuery('users', {
+      filter: {
+        _and: [
+          { status: { _eq: 'active' } },
+          { created_at: { _gte: '2024-01-01' } },
+        ],
+      },
+      fields: ['id', 'name'],
+    });
+    expect(result).toContain('_and');
+    expect(result).toContain('_eq');
+    expect(result).toContain('_gte');
+  });
+
+  it('builds a query with _or compound filter', () => {
+    const result = buildGraphqlQuery('users', {
+      filter: {
+        _or: [{ name: { _eq: 'Alice' } }, { name: { _eq: 'Bob' } }],
+      },
+      fields: ['id', 'name'],
+    });
+    expect(result).toContain('_or');
+    expect(result).toContain('"Alice"');
+    expect(result).toContain('"Bob"');
+  });
+
+  it('builds a query with nested compound filters', () => {
+    const result = buildGraphqlQuery('users', {
+      filter: {
+        _and: [
+          { status: { _eq: 'active' } },
+          {
+            _or: [{ role: { _eq: 'admin' } }, { role: { _eq: 'editor' } }],
+          },
+        ],
+      },
+      fields: ['id'],
+    });
+    expect(result).toContain('_and');
+    expect(result).toContain('_or');
+    expect(result).toContain('"active"');
+    expect(result).toContain('"admin"');
+    expect(result).toContain('"editor"');
+  });
 });

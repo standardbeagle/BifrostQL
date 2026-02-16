@@ -33,6 +33,8 @@ export type {
   CustomSortFn,
   LocalStorageConfig,
   ClientSideSortConfig,
+  ClientSideFilterConfig,
+  FilterPreset,
   SortState,
   FilterState,
   PaginationState,

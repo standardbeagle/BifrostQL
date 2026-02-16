@@ -2,7 +2,13 @@ import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { useBifrostQuery } from './use-bifrost-query';
 import { readFromUrl, writeToUrl } from '../utils/url-state';
 import type { UseBifrostOptions } from './use-bifrost';
-import type { SortOption, TableFilter } from '../types';
+import type {
+  SortOption,
+  TableFilter,
+  FieldFilter,
+  AdvancedFilter,
+  CompoundFilter,
+} from '../types';
 
 export type AggregateFn = 'sum' | 'avg' | 'min' | 'max' | 'count';
 
@@ -25,12 +31,21 @@ export interface ColumnConfig {
   width?: number;
   sortable?: boolean;
   filterable?: boolean;
+  filterType?: 'text' | 'number' | 'select' | 'date';
+  filterOptions?: Array<{ label: string; value: string | number }>;
   computed?: (row: Record<string, unknown>) => unknown;
   customSort?: CustomSortFn;
 }
 
 export interface LocalStorageConfig {
   key: string;
+  persistFilters?: boolean;
+}
+
+export interface FilterPreset {
+  name: string;
+  filters: TableFilter;
+  compoundFilter?: CompoundFilter;
 }
 
 export interface SortState {
@@ -46,9 +61,16 @@ export interface SortState {
 
 export interface FilterState {
   current: TableFilter;
+  compoundFilter: CompoundFilter | null;
+  activeFilterCount: number;
   setFilters: (filters: TableFilter) => void;
   setColumnFilter: (field: string, value: TableFilter[string]) => void;
+  setCompoundFilter: (filter: CompoundFilter | null) => void;
   clearFilters: () => void;
+  presets: FilterPreset[];
+  savePreset: (name: string) => void;
+  loadPreset: (name: string) => void;
+  deletePreset: (name: string) => void;
 }
 
 export interface PaginationState {
@@ -97,6 +119,11 @@ export interface ClientSideSortConfig {
   threshold?: number;
 }
 
+export interface ClientSideFilterConfig {
+  enabled: boolean;
+  threshold?: number;
+}
+
 export interface UseBifrostTableOptions extends UseBifrostOptions {
   query: string;
   columns: ColumnConfig[];
@@ -106,6 +133,8 @@ export interface UseBifrostTableOptions extends UseBifrostOptions {
   defaultFilters?: TableFilter;
   multiSort?: boolean;
   clientSideSort?: boolean | ClientSideSortConfig;
+  clientSideFilter?: boolean | ClientSideFilterConfig;
+  filterDebounceMs?: number;
   rowKey?: string;
   urlSync?: boolean | UrlSyncConfig;
   localStorage?: LocalStorageConfig;
@@ -161,6 +190,18 @@ function resolveClientSideSortConfig(
   };
 }
 
+function resolveClientSideFilterConfig(
+  config: boolean | ClientSideFilterConfig | undefined,
+): { enabled: boolean; threshold: number } {
+  if (config === true) return { enabled: true, threshold: Infinity };
+  if (config === false || config === undefined)
+    return { enabled: false, threshold: 0 };
+  return {
+    enabled: config.enabled,
+    threshold: config.threshold ?? Infinity,
+  };
+}
+
 function readSortFromLocalStorage(key: string): SortOption[] | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -193,6 +234,82 @@ function writeSortToLocalStorage(key: string, sort: SortOption[]): void {
   } catch {
     // localStorage may be unavailable (private browsing, quota exceeded)
   }
+}
+
+function readFiltersFromLocalStorage(key: string): TableFilter | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(`${key}_filters`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+      return null;
+    return parsed as TableFilter;
+  } catch {
+    return null;
+  }
+}
+
+function writeFiltersToLocalStorage(key: string, filters: TableFilter): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (Object.keys(filters).length === 0) {
+      window.localStorage.removeItem(`${key}_filters`);
+    } else {
+      window.localStorage.setItem(`${key}_filters`, JSON.stringify(filters));
+    }
+  } catch {
+    // localStorage may be unavailable
+  }
+}
+
+function readPresetsFromLocalStorage(key: string): FilterPreset[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(`${key}_presets`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (p: unknown): p is FilterPreset =>
+        typeof p === 'object' &&
+        p !== null &&
+        'name' in p &&
+        'filters' in p &&
+        typeof (p as FilterPreset).name === 'string' &&
+        typeof (p as FilterPreset).filters === 'object',
+    );
+  } catch {
+    return [];
+  }
+}
+
+function writePresetsToLocalStorage(
+  key: string,
+  presets: FilterPreset[],
+): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (presets.length === 0) {
+      window.localStorage.removeItem(`${key}_presets`);
+    } else {
+      window.localStorage.setItem(`${key}_presets`, JSON.stringify(presets));
+    }
+  } catch {
+    // localStorage may be unavailable
+  }
+}
+
+function countActiveFilters(
+  filters: TableFilter,
+  compoundFilter: CompoundFilter | null,
+): number {
+  let count = Object.keys(filters).length;
+  if (compoundFilter) {
+    if (compoundFilter._and) count += compoundFilter._and.length;
+    if (compoundFilter._or) count += compoundFilter._or.length;
+  }
+  return count;
 }
 
 function defaultCompare(a: unknown, b: unknown): number {
@@ -231,6 +348,154 @@ function clientSortRows<T>(
   return sorted;
 }
 
+function matchesFieldFilter(value: unknown, filter: FieldFilter): boolean {
+  for (const [op, expected] of Object.entries(filter)) {
+    switch (op) {
+      case '_eq':
+        if (value !== expected) return false;
+        break;
+      case '_neq':
+        if (value === expected) return false;
+        break;
+      case '_gt':
+        if (value === null || value === undefined) return false;
+        if ((value as number) <= (expected as number)) return false;
+        break;
+      case '_gte':
+        if (value === null || value === undefined) return false;
+        if ((value as number) < (expected as number)) return false;
+        break;
+      case '_lt':
+        if (value === null || value === undefined) return false;
+        if ((value as number) >= (expected as number)) return false;
+        break;
+      case '_lte':
+        if (value === null || value === undefined) return false;
+        if ((value as number) > (expected as number)) return false;
+        break;
+      case '_in':
+        if (
+          !(expected as Array<string | number>).includes(
+            value as string | number,
+          )
+        )
+          return false;
+        break;
+      case '_nin':
+        if (
+          (expected as Array<string | number>).includes(
+            value as string | number,
+          )
+        )
+          return false;
+        break;
+      case '_contains':
+        if (
+          typeof value !== 'string' ||
+          !value.toLowerCase().includes((expected as string).toLowerCase())
+        )
+          return false;
+        break;
+      case '_ncontains':
+        if (
+          typeof value !== 'string' ||
+          value.toLowerCase().includes((expected as string).toLowerCase())
+        )
+          return false;
+        break;
+      case '_starts_with':
+        if (
+          typeof value !== 'string' ||
+          !value.toLowerCase().startsWith((expected as string).toLowerCase())
+        )
+          return false;
+        break;
+      case '_ends_with':
+        if (
+          typeof value !== 'string' ||
+          !value.toLowerCase().endsWith((expected as string).toLowerCase())
+        )
+          return false;
+        break;
+      case '_between':
+        if (value === null || value === undefined) return false;
+        if (Array.isArray(expected) && expected.length === 2) {
+          if ((value as number) < (expected[0] as number)) return false;
+          if ((value as number) > (expected[1] as number)) return false;
+        }
+        break;
+      case '_null':
+        if (expected === true && value !== null && value !== undefined)
+          return false;
+        if (expected === false && (value === null || value === undefined))
+          return false;
+        break;
+      case '_nnull':
+        if (expected === true && (value === null || value === undefined))
+          return false;
+        if (expected === false && value !== null && value !== undefined)
+          return false;
+        break;
+    }
+  }
+  return true;
+}
+
+function matchesTableFilter(
+  row: Record<string, unknown>,
+  filter: TableFilter,
+): boolean {
+  for (const [field, value] of Object.entries(filter)) {
+    const rowVal = row[field];
+    if (value === null) {
+      if (rowVal !== null && rowVal !== undefined) return false;
+    } else if (typeof value !== 'object') {
+      if (rowVal !== value) return false;
+    } else {
+      if (!matchesFieldFilter(rowVal, value as FieldFilter)) return false;
+    }
+  }
+  return true;
+}
+
+function matchesAdvancedFilter(
+  row: Record<string, unknown>,
+  filter: AdvancedFilter,
+): boolean {
+  if ('_and' in filter || '_or' in filter) {
+    const compound = filter as CompoundFilter;
+    if (compound._and) {
+      if (!compound._and.every((f) => matchesAdvancedFilter(row, f)))
+        return false;
+    }
+    if (compound._or) {
+      if (!compound._or.some((f) => matchesAdvancedFilter(row, f)))
+        return false;
+    }
+    return true;
+  }
+  return matchesTableFilter(row, filter as TableFilter);
+}
+
+function clientFilterRows<T>(
+  rows: T[],
+  filters: TableFilter,
+  compoundFilter: CompoundFilter | null,
+): T[] {
+  let result = rows;
+  if (Object.keys(filters).length > 0) {
+    result = result.filter((row) =>
+      matchesTableFilter(row as Record<string, unknown>, filters),
+    );
+  }
+  if (compoundFilter) {
+    result = result.filter((row) =>
+      matchesAdvancedFilter(row as Record<string, unknown>, compoundFilter),
+    );
+  }
+  return result;
+}
+
 function computeBuiltinAggregate(fn: AggregateFn, values: number[]): number {
   if (values.length === 0) return 0;
   switch (fn) {
@@ -247,6 +512,23 @@ function computeBuiltinAggregate(fn: AggregateFn, values: number[]): number {
   }
 }
 
+function mergeFiltersForQuery(
+  filters: TableFilter,
+  compoundFilter: CompoundFilter | null,
+): AdvancedFilter | undefined {
+  const hasFilters = Object.keys(filters).length > 0;
+  const hasCompound = compoundFilter !== null;
+
+  if (!hasFilters && !hasCompound) return undefined;
+  if (hasFilters && !hasCompound) return filters;
+  if (!hasFilters && hasCompound) return compoundFilter;
+
+  // Merge: wrap column filters + compound filter into a single _and
+  const parts: Array<TableFilter | CompoundFilter> = [filters];
+  parts.push(compoundFilter!);
+  return { _and: parts };
+}
+
 export function useBifrostTable<T = Record<string, unknown>>(
   options: UseBifrostTableOptions,
 ): UseBifrostTableResult<T> {
@@ -259,6 +541,8 @@ export function useBifrostTable<T = Record<string, unknown>>(
     defaultFilters = {},
     multiSort = false,
     clientSideSort: clientSideSortProp,
+    clientSideFilter: clientSideFilterProp,
+    filterDebounceMs = 300,
     rowKey = 'id',
     urlSync,
     localStorage: localStorageConfig,
@@ -269,6 +553,8 @@ export function useBifrostTable<T = Record<string, unknown>>(
 
   const syncConfig = resolveUrlSyncConfig(urlSync);
   const clientSortConfig = resolveClientSideSortConfig(clientSideSortProp);
+  const clientFilterConfig =
+    resolveClientSideFilterConfig(clientSideFilterProp);
   const initialPageSize = paginationConfig?.pageSize ?? 25;
 
   const initialUrlState = useMemo(() => {
@@ -285,12 +571,33 @@ export function useBifrostTable<T = Record<string, unknown>>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const initialLocalStorageFilters = useMemo(() => {
+    if (!localStorageConfig?.key || !localStorageConfig.persistFilters)
+      return null;
+    return readFiltersFromLocalStorage(localStorageConfig.key);
+    // Only read localStorage on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const initialPresets = useMemo(() => {
+    if (!localStorageConfig?.key) return [];
+    return readPresetsFromLocalStorage(localStorageConfig.key);
+    // Only read localStorage on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [sort, setSort] = useState<SortOption[]>(
     initialUrlState?.sort ?? initialLocalStorageSort ?? defaultSort,
   );
   const [filters, setFilters] = useState<TableFilter>(
-    initialUrlState?.filter ?? defaultFilters,
+    initialUrlState?.filter ?? initialLocalStorageFilters ?? defaultFilters,
   );
+  const [debouncedFilters, setDebouncedFilters] = useState<TableFilter>(
+    initialUrlState?.filter ?? initialLocalStorageFilters ?? defaultFilters,
+  );
+  const [compoundFilter, setCompoundFilterState] =
+    useState<CompoundFilter | null>(null);
+  const [presets, setPresets] = useState<FilterPreset[]>(initialPresets);
   const [page, setPage] = useState(initialUrlState?.page ?? 0);
   const [pageSize, setPageSizeState] = useState(
     initialUrlState?.pageSize ?? initialPageSize,
@@ -304,29 +611,50 @@ export function useBifrostTable<T = Record<string, unknown>>(
     columns.map((c) => c.field),
   );
 
-  const debounceTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const urlDebounceTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const filterDebounceTimerRef = useRef<ReturnType<typeof setTimeout>>();
+
+  // Debounce filter changes before sending to server
+  useEffect(() => {
+    if (filterDebounceTimerRef.current) {
+      clearTimeout(filterDebounceTimerRef.current);
+    }
+
+    filterDebounceTimerRef.current = setTimeout(() => {
+      setDebouncedFilters(filters);
+    }, filterDebounceMs);
+
+    return () => {
+      if (filterDebounceTimerRef.current) {
+        clearTimeout(filterDebounceTimerRef.current);
+      }
+    };
+  }, [filters, filterDebounceMs]);
 
   useEffect(() => {
     if (!syncConfig.enabled || !canAccessWindow()) return;
 
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
+    if (urlDebounceTimerRef.current) {
+      clearTimeout(urlDebounceTimerRef.current);
     }
 
-    debounceTimerRef.current = setTimeout(() => {
-      writeToUrl({ sort, page, pageSize, filter: filters }, syncConfig.prefix);
+    urlDebounceTimerRef.current = setTimeout(() => {
+      writeToUrl(
+        { sort, page, pageSize, filter: debouncedFilters },
+        syncConfig.prefix,
+      );
     }, syncConfig.debounceMs);
 
     return () => {
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current);
+      if (urlDebounceTimerRef.current) {
+        clearTimeout(urlDebounceTimerRef.current);
       }
     };
   }, [
     sort,
     page,
     pageSize,
-    filters,
+    debouncedFilters,
     syncConfig.enabled,
     syncConfig.prefix,
     syncConfig.debounceMs,
@@ -339,6 +667,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
       const urlState = readFromUrl(syncConfig.prefix);
       setSort(urlState.sort ?? defaultSort);
       setFilters(urlState.filter ?? defaultFilters);
+      setDebouncedFilters(urlState.filter ?? defaultFilters);
       setPage(urlState.page ?? 0);
       if (urlState.pageSize) setPageSizeState(urlState.pageSize);
     };
@@ -351,6 +680,11 @@ export function useBifrostTable<T = Record<string, unknown>>(
     if (!localStorageConfig?.key) return;
     writeSortToLocalStorage(localStorageConfig.key, sort);
   }, [sort, localStorageConfig?.key]);
+
+  useEffect(() => {
+    if (!localStorageConfig?.key || !localStorageConfig.persistFilters) return;
+    writeFiltersToLocalStorage(localStorageConfig.key, filters);
+  }, [filters, localStorageConfig?.key, localStorageConfig?.persistFilters]);
 
   const computedColumns = useMemo(
     () => columns.filter((c) => c.computed),
@@ -365,9 +699,14 @@ export function useBifrostTable<T = Record<string, unknown>>(
   const serverSort =
     !clientSortConfig.enabled && sort.length > 0 ? sort : undefined;
 
+  const serverFilter = useMemo(() => {
+    if (clientFilterConfig.enabled) return undefined;
+    return mergeFiltersForQuery(debouncedFilters, compoundFilter);
+  }, [debouncedFilters, compoundFilter, clientFilterConfig.enabled]);
+
   const queryResult = useBifrostQuery<T[]>(table, {
     fields,
-    filter: Object.keys(filters).length > 0 ? filters : undefined,
+    filter: serverFilter,
     sort: serverSort,
     pagination: { limit: pageSize, offset: page * pageSize },
     ...bifrostOptions,
@@ -376,6 +715,10 @@ export function useBifrostTable<T = Record<string, unknown>>(
   const shouldClientSort =
     clientSortConfig.enabled &&
     (queryResult.data ?? []).length <= clientSortConfig.threshold;
+
+  const shouldClientFilter =
+    clientFilterConfig.enabled &&
+    (queryResult.data ?? []).length <= clientFilterConfig.threshold;
 
   const dataWithComputed = useMemo(() => {
     const rawData = queryResult.data ?? [];
@@ -389,11 +732,28 @@ export function useBifrostTable<T = Record<string, unknown>>(
         return extended as T;
       });
     }
+    if (shouldClientFilter) {
+      processed = clientFilterRows(processed, debouncedFilters, compoundFilter);
+    }
     if (shouldClientSort && sort.length > 0) {
       processed = clientSortRows(processed, sort, columns);
     }
     return processed;
-  }, [queryResult.data, computedColumns, shouldClientSort, sort, columns]);
+  }, [
+    queryResult.data,
+    computedColumns,
+    shouldClientFilter,
+    debouncedFilters,
+    compoundFilter,
+    shouldClientSort,
+    sort,
+    columns,
+  ]);
+
+  const activeFilterCount = useMemo(
+    () => countActiveFilters(filters, compoundFilter),
+    [filters, compoundFilter],
+  );
 
   const computedAggregates = useMemo(() => {
     if (!aggregateConfigs) return {};
@@ -561,6 +921,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
 
   const clearFilters = useCallback(() => {
     setFilters({});
+    setCompoundFilterState(null);
     setPage(0);
   }, []);
 
@@ -568,6 +929,57 @@ export function useBifrostTable<T = Record<string, unknown>>(
     setFilters(newFilters);
     setPage(0);
   }, []);
+
+  const setCompoundFilter = useCallback((filter: CompoundFilter | null) => {
+    setCompoundFilterState(filter);
+    setPage(0);
+  }, []);
+
+  const savePreset = useCallback(
+    (name: string) => {
+      setPresets((prev) => {
+        const existing = prev.findIndex((p) => p.name === name);
+        const preset: FilterPreset = {
+          name,
+          filters: { ...filters },
+          compoundFilter: compoundFilter ?? undefined,
+        };
+        const updated =
+          existing >= 0
+            ? prev.map((p, i) => (i === existing ? preset : p))
+            : [...prev, preset];
+        if (localStorageConfig?.key) {
+          writePresetsToLocalStorage(localStorageConfig.key, updated);
+        }
+        return updated;
+      });
+    },
+    [filters, compoundFilter, localStorageConfig?.key],
+  );
+
+  const loadPreset = useCallback(
+    (name: string) => {
+      const preset = presets.find((p) => p.name === name);
+      if (!preset) return;
+      setFilters(preset.filters);
+      setCompoundFilterState(preset.compoundFilter ?? null);
+      setPage(0);
+    },
+    [presets],
+  );
+
+  const deletePreset = useCallback(
+    (name: string) => {
+      setPresets((prev) => {
+        const updated = prev.filter((p) => p.name !== name);
+        if (localStorageConfig?.key) {
+          writePresetsToLocalStorage(localStorageConfig.key, updated);
+        }
+        return updated;
+      });
+    },
+    [localStorageConfig?.key],
+  );
 
   const handleSetSorting = useCallback((newSort: SortOption[]) => {
     setSort(newSort);
@@ -633,9 +1045,16 @@ export function useBifrostTable<T = Record<string, unknown>>(
     },
     filters: {
       current: filters,
+      compoundFilter,
+      activeFilterCount,
       setFilters: handleSetFilters,
       setColumnFilter,
+      setCompoundFilter,
       clearFilters,
+      presets,
+      savePreset,
+      loadPreset,
+      deletePreset,
     },
     pagination: {
       page,

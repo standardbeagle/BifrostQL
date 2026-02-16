@@ -20,9 +20,17 @@ export interface FieldFilter {
   _ncontains?: string;
   _starts_with?: string;
   _ends_with?: string;
+  _between?: [string | number, string | number];
   _null?: boolean;
   _nnull?: boolean;
 }
+
+export interface CompoundFilter {
+  _and?: Array<TableFilter | CompoundFilter>;
+  _or?: Array<TableFilter | CompoundFilter>;
+}
+
+export type AdvancedFilter = TableFilter | CompoundFilter;
 
 export interface PaginationOptions {
   limit?: number;
@@ -35,7 +43,7 @@ export interface SortOption {
 }
 
 export interface QueryOptions {
-  filter?: TableFilter;
+  filter?: AdvancedFilter;
   sort?: SortOption[];
   pagination?: PaginationOptions;
   fields?: string[];

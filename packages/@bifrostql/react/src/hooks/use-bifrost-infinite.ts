@@ -69,13 +69,14 @@ export function useBifrostInfinite<TData = unknown, TPageParam = unknown>(
     TPageParam
   >({
     queryKey,
-    queryFn: ({ pageParam }) => {
+    queryFn: ({ pageParam, signal }) => {
       const variables = buildVariables(pageParam as TPageParam);
       return executeGraphQL<TData>(
         config.endpoint,
         config.headers ?? {},
         query,
         variables,
+        signal,
       );
     },
     enabled,

@@ -47,12 +47,13 @@ export function useBifrost<T = unknown>(
 
   const result = useQuery<T>({
     queryKey,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       executeGraphQL<T>(
         config.endpoint,
         config.headers ?? {},
         query,
         variables,
+        signal,
       ),
     enabled,
     retry,

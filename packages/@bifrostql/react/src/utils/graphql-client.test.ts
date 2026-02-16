@@ -179,4 +179,57 @@ describe('executeGraphQL', () => {
       executeGraphQL('http://localhost/graphql', {}, 'invalid query'),
     ).rejects.toThrow('Parse error');
   });
+
+  it('passes AbortSignal to fetch when provided', async () => {
+    globalThis.fetch = createFetchMock({ data: { users: [] } });
+    const controller = new AbortController();
+
+    await executeGraphQL(
+      'http://localhost/graphql',
+      {},
+      '{ users { id } }',
+      undefined,
+      controller.signal,
+    );
+
+    const [, options] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock
+      .calls[0];
+    expect(options.signal).toBe(controller.signal);
+  });
+
+  it('does not include signal when not provided', async () => {
+    globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+    await executeGraphQL('http://localhost/graphql', {}, '{ users { id } }');
+
+    const [, options] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock
+      .calls[0];
+    expect(options.signal).toBeUndefined();
+  });
+
+  it('rejects with AbortError when signal is aborted', async () => {
+    const controller = new AbortController();
+    globalThis.fetch = vi.fn().mockImplementation(
+      (_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => {
+            reject(
+              new DOMException('The operation was aborted.', 'AbortError'),
+            );
+          });
+        }),
+    );
+
+    const promise = executeGraphQL(
+      'http://localhost/graphql',
+      {},
+      '{ users { id } }',
+      undefined,
+      controller.signal,
+    );
+
+    controller.abort();
+
+    await expect(promise).rejects.toThrow('The operation was aborted.');
+  });
 });

@@ -354,4 +354,65 @@ describe('useBifrost', () => {
     const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(url).toBe(customEndpoint);
   });
+
+  it('passes AbortSignal to fetch for request cancellation', async () => {
+    globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+    const { result } = renderHook(() => useBifrost('{ users { id } }'), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const [, fetchOptions] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock
+      .calls[0];
+    expect(fetchOptions.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('aborts in-flight request on unmount', async () => {
+    let fetchResolve: ((value: unknown) => void) | undefined;
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementation((_url: string, init: RequestInit) => {
+        return new Promise((resolve, reject) => {
+          fetchResolve = resolve;
+          init.signal?.addEventListener('abort', () => {
+            reject(
+              new DOMException('The operation was aborted.', 'AbortError'),
+            );
+          });
+        });
+      });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+
+    function Wrapper({ children }: { children: ReactNode }) {
+      return (
+        <QueryClientProvider client={queryClient}>
+          <BifrostProvider config={{ endpoint: 'http://localhost/graphql' }}>
+            {children}
+          </BifrostProvider>
+        </QueryClientProvider>
+      );
+    }
+
+    const { unmount } = renderHook(() => useBifrost('{ users { id } }'), {
+      wrapper: Wrapper,
+    });
+
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(1));
+
+    const [, fetchOptions] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock
+      .calls[0];
+    const signal = fetchOptions.signal as AbortSignal;
+    expect(signal.aborted).toBe(false);
+
+    unmount();
+
+    expect(signal.aborted).toBe(true);
+
+    void fetchResolve;
+  });
 });

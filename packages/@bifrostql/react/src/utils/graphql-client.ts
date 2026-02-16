@@ -8,6 +8,7 @@ export async function executeGraphQL<T>(
   headers: Record<string, string>,
   query: string,
   variables?: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<T> {
   const body: Record<string, unknown> = { query };
   if (variables && Object.keys(variables).length > 0) {
@@ -21,6 +22,7 @@ export async function executeGraphQL<T>(
       ...headers,
     },
     body: JSON.stringify(body),
+    signal,
   });
 
   if (!response.ok) {

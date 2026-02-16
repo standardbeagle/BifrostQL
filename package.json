@@ -14,7 +14,8 @@
   "author": "",
   "license": "ISC",
   "workspaces": [
-    "examples/*"
+    "examples/*",
+    "packages/*"
   ],
   "dependencies": {
     "@standardbeagle/virtual-router": "^1.0.1",

@@ -136,17 +136,22 @@ namespace BifrostQL.Core.Schema
         private static StringBuilder GetInputAndArgumentTypes(IDbModel model, List<TableSchemaGenerator> tableGenerators, List<StoredProcedureSchemaGenerator> mutatingSpGenerators)
         {
             var builder = new StringBuilder();
-            builder.AppendLine("type databaseInput {");
-            foreach (var generator in tableGenerators)
-            {
-                builder.AppendLine(generator.GetInputFieldDefinition());
-            }
-            foreach (var generator in mutatingSpGenerators)
-            {
-                builder.AppendLine(generator.GetFieldDefinition());
-            }
 
-            builder.AppendLine("}");
+            // Only generate databaseInput type if there are mutations
+            if (tableGenerators.Count > 0 || mutatingSpGenerators.Count > 0)
+            {
+                builder.AppendLine("type databaseInput {");
+                foreach (var generator in tableGenerators)
+                {
+                    builder.AppendLine(generator.GetInputFieldDefinition());
+                }
+                foreach (var generator in mutatingSpGenerators)
+                {
+                    builder.AppendLine(generator.GetFieldDefinition());
+                }
+
+                builder.AppendLine("}");
+            }
 
             foreach (var generator in tableGenerators)
             {

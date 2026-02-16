@@ -18,7 +18,7 @@ public class SqliteFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetim
 
     public async Task InitializeAsync()
     {
-        _connectionString = "Data Source=:memory:";
+        _connectionString = "Data Source=bifrost_full_test;Mode=Memory;Cache=Shared";
         _keepAliveConnection = new SqliteConnection(_connectionString);
         await _keepAliveConnection.OpenAsync();
 

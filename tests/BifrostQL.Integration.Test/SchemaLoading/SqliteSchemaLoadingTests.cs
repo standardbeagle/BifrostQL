@@ -20,8 +20,8 @@ public class SqliteSchemaLoadingTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        // Use in-memory database that persists via keep-alive connection
-        _connectionString = "Data Source=:memory:";
+        // Use shared cache in-memory database so multiple connections access the same DB
+        _connectionString = "Data Source=bifrost_test;Mode=Memory;Cache=Shared";
         _keepAliveConnection = new SqliteConnection(_connectionString);
         await _keepAliveConnection.OpenAsync();
 

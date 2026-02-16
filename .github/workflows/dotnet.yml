@@ -60,5 +60,5 @@ jobs:
       - name: publish npm package
         working-directory: ./examples/edit-db
         env:
-          REPO_NUGET: ${{secrets.REPO_NUGET}}
+          NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
         run: npm publish

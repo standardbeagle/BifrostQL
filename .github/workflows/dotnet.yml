@@ -45,7 +45,7 @@ jobs:
       - name: publish Server to repo
         run: dotnet nuget push "src/BifrostQL.Server/bin/Release/*.nupkg" --source "github" -k ${{secrets.REPO_NUGET}} --skip-duplicate
       - name: Cache editor dependencies
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: ~/.npm
           key: npm-${{ hashFiles('./examples/edit-db/package-lock.json') }}

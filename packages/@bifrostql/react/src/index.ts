@@ -54,6 +54,14 @@ export type {
   UrlSyncConfig,
   UseBifrostTableOptions,
   UseBifrostTableResult,
+  EditorType,
+  CellValidator,
+  CellEditorProps,
+  CellError,
+  RowEditState,
+  EditingState,
+  RowUpdateFn,
+  BatchSaveFn,
 } from './hooks';
 export {
   buildGraphqlQuery,

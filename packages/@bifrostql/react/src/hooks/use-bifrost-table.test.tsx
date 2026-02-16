@@ -3701,4 +3701,1215 @@ describe('useBifrostTable', () => {
       });
     });
   });
+
+  describe('editing', () => {
+    const editableColumns: ColumnConfig[] = [
+      { field: 'id', header: 'ID', sortable: true, readOnly: true },
+      {
+        field: 'name',
+        header: 'Name',
+        sortable: true,
+        editable: true,
+        editorType: 'text',
+      },
+      {
+        field: 'email',
+        header: 'Email',
+        sortable: true,
+        editable: true,
+        editorType: 'text',
+      },
+      {
+        field: 'age',
+        header: 'Age',
+        editable: true,
+        editorType: 'number',
+        validate: (value) =>
+          typeof value === 'number' && value < 0
+            ? 'Age must be non-negative'
+            : null,
+      },
+      {
+        field: 'fullName',
+        header: 'Full Name',
+        computed: (row) => `${row.name} (${row.email})`,
+      },
+    ];
+
+    const mockUsers = [
+      { id: 1, name: 'Alice', email: 'alice@test.com', age: 30 },
+      { id: 2, name: 'Bob', email: 'bob@test.com', age: 25 },
+      { id: 3, name: 'Charlie', email: 'charlie@test.com', age: 35 },
+    ];
+
+    describe('editing state initialization', () => {
+      it('returns editing state with no active edits', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        expect(result.current.editing.editingCell).toBeNull();
+        expect(result.current.editing.isDirty).toBe(false);
+        expect(result.current.editing.dirtyRowCount).toBe(0);
+        expect(result.current.editing.dirtyRows.size).toBe(0);
+      });
+
+      it('identifies editable columns correctly', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        expect(result.current.editing.isColumnEditable('name')).toBe(true);
+        expect(result.current.editing.isColumnEditable('email')).toBe(true);
+        expect(result.current.editing.isColumnEditable('age')).toBe(true);
+        expect(result.current.editing.isColumnEditable('id')).toBe(false);
+        expect(result.current.editing.isColumnEditable('fullName')).toBe(false);
+      });
+
+      it('respects readOnly on columns', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const cols: ColumnConfig[] = [
+          { field: 'id', header: 'ID', readOnly: true },
+          { field: 'name', header: 'Name' },
+        ];
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: cols,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        expect(result.current.editing.isColumnEditable('id')).toBe(false);
+        expect(result.current.editing.isColumnEditable('name')).toBe(true);
+      });
+    });
+
+    describe('startEditing and cancelEditing', () => {
+      it('starts editing a cell', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.startEditing('1', 'name');
+        });
+
+        expect(result.current.editing.editingCell).toEqual({
+          rowKey: '1',
+          field: 'name',
+        });
+      });
+
+      it('does not start editing on a read-only column', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.startEditing('1', 'id');
+        });
+
+        expect(result.current.editing.editingCell).toBeNull();
+      });
+
+      it('does not start editing on a computed column', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.startEditing('1', 'fullName');
+        });
+
+        expect(result.current.editing.editingCell).toBeNull();
+      });
+
+      it('cancels editing', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.startEditing('1', 'name');
+        });
+        expect(result.current.editing.editingCell).not.toBeNull();
+
+        act(() => {
+          result.current.editing.cancelEditing();
+        });
+        expect(result.current.editing.editingCell).toBeNull();
+      });
+    });
+
+    describe('setCellValue and dirty state tracking', () => {
+      it('tracks cell value changes', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.startEditing('1', 'name');
+          result.current.editing.setCellValue('1', 'name', 'Alice Updated');
+        });
+
+        expect(result.current.editing.isDirty).toBe(true);
+        expect(result.current.editing.dirtyRowCount).toBe(1);
+        expect(result.current.editing.isCellDirty('1', 'name')).toBe(true);
+        expect(result.current.editing.isCellDirty('1', 'email')).toBe(false);
+        expect(result.current.editing.getCellValue('1', 'name')).toBe(
+          'Alice Updated',
+        );
+      });
+
+      it('removes dirty state when value reverts to original', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.setCellValue('1', 'name', 'Changed');
+        });
+        expect(result.current.editing.isDirty).toBe(true);
+
+        act(() => {
+          result.current.editing.setCellValue('1', 'name', 'Alice');
+        });
+        expect(result.current.editing.isDirty).toBe(false);
+        expect(result.current.editing.dirtyRowCount).toBe(0);
+      });
+
+      it('tracks multiple dirty cells in the same row', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.setCellValue('1', 'name', 'Alice Updated');
+          result.current.editing.setCellValue(
+            '1',
+            'email',
+            'newalice@test.com',
+          );
+        });
+
+        expect(result.current.editing.dirtyRowCount).toBe(1);
+        expect(result.current.editing.isCellDirty('1', 'name')).toBe(true);
+        expect(result.current.editing.isCellDirty('1', 'email')).toBe(true);
+        expect(result.current.editing.getRowChanges('1')).toEqual({
+          name: 'Alice Updated',
+          email: 'newalice@test.com',
+        });
+      });
+
+      it('tracks dirty rows across multiple rows', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.setCellValue('1', 'name', 'Alice Updated');
+          result.current.editing.setCellValue('2', 'name', 'Bob Updated');
+        });
+
+        expect(result.current.editing.dirtyRowCount).toBe(2);
+        expect(result.current.editing.isRowDirty('1')).toBe(true);
+        expect(result.current.editing.isRowDirty('2')).toBe(true);
+        expect(result.current.editing.isRowDirty('3')).toBe(false);
+      });
+
+      it('getCellValue returns original value for non-dirty cells', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        expect(result.current.editing.getCellValue('1', 'name')).toBe('Alice');
+        expect(result.current.editing.getCellValue('1', 'email')).toBe(
+          'alice@test.com',
+        );
+      });
+
+      it('ignores setCellValue on non-editable columns', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.setCellValue('1', 'id', 999);
+        });
+
+        expect(result.current.editing.isDirty).toBe(false);
+      });
+    });
+
+    describe('validation', () => {
+      it('validates cell values on commitCell', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.startEditing('1', 'age');
+          result.current.editing.setCellValue('1', 'age', -5);
+        });
+
+        await act(async () => {
+          await result.current.editing.commitCell();
+        });
+
+        expect(result.current.editing.getCellError('1', 'age')).toBe(
+          'Age must be non-negative',
+        );
+        // Should remain in editing mode when validation fails
+        expect(result.current.editing.editingCell).toEqual({
+          rowKey: '1',
+          field: 'age',
+        });
+      });
+
+      it('clears error on valid commitCell', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        // First set invalid value
+        act(() => {
+          result.current.editing.startEditing('1', 'age');
+          result.current.editing.setCellValue('1', 'age', -5);
+        });
+
+        await act(async () => {
+          await result.current.editing.commitCell();
+        });
+
+        expect(result.current.editing.getCellError('1', 'age')).toBe(
+          'Age must be non-negative',
+        );
+
+        // Now set valid value and commit
+        act(() => {
+          result.current.editing.setCellValue('1', 'age', 25);
+        });
+        act(() => {
+          result.current.editing.startEditing('1', 'age');
+        });
+
+        await act(async () => {
+          await result.current.editing.commitCell();
+        });
+
+        expect(result.current.editing.getCellError('1', 'age')).toBeNull();
+        expect(result.current.editing.editingCell).toBeNull();
+      });
+
+      it('supports async validators', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const asyncColumns: ColumnConfig[] = [
+          { field: 'id', header: 'ID', readOnly: true },
+          {
+            field: 'name',
+            header: 'Name',
+            editable: true,
+            validate: async (value) => {
+              await new Promise((r) => setTimeout(r, 10));
+              return value === 'taken' ? 'Name already taken' : null;
+            },
+          },
+        ];
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: asyncColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.startEditing('1', 'name');
+          result.current.editing.setCellValue('1', 'name', 'taken');
+        });
+
+        await act(async () => {
+          await result.current.editing.commitCell();
+        });
+
+        expect(result.current.editing.getCellError('1', 'name')).toBe(
+          'Name already taken',
+        );
+      });
+
+      it('validates all changed cells on saveRow', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const onRowUpdate = vi.fn();
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              onRowUpdate,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.setCellValue('1', 'age', -10);
+        });
+
+        let success = false;
+        await act(async () => {
+          success = await result.current.editing.saveRow('1');
+        });
+
+        expect(success).toBe(false);
+        expect(onRowUpdate).not.toHaveBeenCalled();
+        expect(result.current.editing.getCellError('1', 'age')).toBe(
+          'Age must be non-negative',
+        );
+      });
+    });
+
+    describe('saveRow', () => {
+      it('calls onRowUpdate with original row and changes', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const onRowUpdate = vi.fn().mockResolvedValue(undefined);
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              onRowUpdate,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.setCellValue('1', 'name', 'Alice Updated');
+        });
+
+        let success = false;
+        await act(async () => {
+          success = await result.current.editing.saveRow('1');
+        });
+
+        expect(success).toBe(true);
+        expect(onRowUpdate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            id: 1,
+            name: 'Alice',
+            email: 'alice@test.com',
+            age: 30,
+          }),
+          { name: 'Alice Updated' },
+        );
+      });
+
+      it('clears dirty state on successful save', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const onRowUpdate = vi.fn().mockResolvedValue(undefined);
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              onRowUpdate,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.setCellValue('1', 'name', 'Alice Updated');
+        });
+
+        expect(result.current.editing.isDirty).toBe(true);
+
+        await act(async () => {
+          await result.current.editing.saveRow('1');
+        });
+
+        expect(result.current.editing.isDirty).toBe(false);
+        expect(result.current.editing.isRowDirty('1')).toBe(false);
+      });
+
+      it('keeps dirty state on failed save', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const onRowUpdate = vi.fn().mockRejectedValue(new Error('Save failed'));
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              onRowUpdate,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.setCellValue('1', 'name', 'Alice Updated');
+        });
+
+        let success = false;
+        await act(async () => {
+          success = await result.current.editing.saveRow('1');
+        });
+
+        expect(success).toBe(false);
+        expect(result.current.editing.isDirty).toBe(true);
+        expect(result.current.editing.isRowDirty('1')).toBe(true);
+      });
+
+      it('returns true for row with no changes', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const onRowUpdate = vi.fn();
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              onRowUpdate,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        let success = false;
+        await act(async () => {
+          success = await result.current.editing.saveRow('1');
+        });
+
+        expect(success).toBe(true);
+        expect(onRowUpdate).not.toHaveBeenCalled();
+      });
+
+      it('returns false when onRowUpdate is not provided', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.setCellValue('1', 'name', 'New Name');
+        });
+
+        let success = false;
+        await act(async () => {
+          success = await result.current.editing.saveRow('1');
+        });
+
+        expect(success).toBe(false);
+      });
+    });
+
+    describe('batch save', () => {
+      it('saves all dirty rows via saveAllDirty', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const onRowUpdate = vi.fn().mockResolvedValue(undefined);
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              onRowUpdate,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.setCellValue('1', 'name', 'Alice Updated');
+          result.current.editing.setCellValue('2', 'name', 'Bob Updated');
+        });
+
+        let batchResult = { saved: 0, failed: 0 };
+        await act(async () => {
+          batchResult = await result.current.editing.saveAllDirty();
+        });
+
+        expect(batchResult.saved).toBe(2);
+        expect(batchResult.failed).toBe(0);
+        expect(onRowUpdate).toHaveBeenCalledTimes(2);
+        expect(result.current.editing.isDirty).toBe(false);
+      });
+
+      it('uses onBatchSave when provided', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const onBatchSave = vi.fn().mockResolvedValue(undefined);
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              onBatchSave,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.setCellValue('1', 'name', 'Alice Updated');
+          result.current.editing.setCellValue('2', 'name', 'Bob Updated');
+        });
+
+        let batchResult = { saved: 0, failed: 0 };
+        await act(async () => {
+          batchResult = await result.current.editing.saveAllDirty();
+        });
+
+        expect(batchResult.saved).toBe(2);
+        expect(batchResult.failed).toBe(0);
+        expect(onBatchSave).toHaveBeenCalledTimes(1);
+        expect(onBatchSave).toHaveBeenCalledWith(
+          expect.arrayContaining([
+            expect.objectContaining({
+              changes: { name: 'Alice Updated' },
+            }),
+            expect.objectContaining({
+              changes: { name: 'Bob Updated' },
+            }),
+          ]),
+        );
+      });
+
+      it('reports failed saves in batch result', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        let callCount = 0;
+        const onRowUpdate = vi.fn().mockImplementation(async () => {
+          callCount++;
+          if (callCount === 2) throw new Error('Failed');
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              onRowUpdate,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.setCellValue('1', 'name', 'Alice Updated');
+          result.current.editing.setCellValue('2', 'name', 'Bob Updated');
+        });
+
+        let batchResult = { saved: 0, failed: 0 };
+        await act(async () => {
+          batchResult = await result.current.editing.saveAllDirty();
+        });
+
+        expect(batchResult.saved).toBe(1);
+        expect(batchResult.failed).toBe(1);
+      });
+
+      it('returns zero counts when nothing is dirty', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        let batchResult = { saved: 0, failed: 0 };
+        await act(async () => {
+          batchResult = await result.current.editing.saveAllDirty();
+        });
+
+        expect(batchResult.saved).toBe(0);
+        expect(batchResult.failed).toBe(0);
+      });
+    });
+
+    describe('discard', () => {
+      it('discardRow clears dirty state for a single row', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.setCellValue('1', 'name', 'Alice Updated');
+          result.current.editing.setCellValue('2', 'name', 'Bob Updated');
+        });
+
+        expect(result.current.editing.dirtyRowCount).toBe(2);
+
+        act(() => {
+          result.current.editing.discardRow('1');
+        });
+
+        expect(result.current.editing.dirtyRowCount).toBe(1);
+        expect(result.current.editing.isRowDirty('1')).toBe(false);
+        expect(result.current.editing.isRowDirty('2')).toBe(true);
+      });
+
+      it('discardRow clears editing cell if it belongs to discarded row', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.startEditing('1', 'name');
+          result.current.editing.setCellValue('1', 'name', 'Changed');
+        });
+
+        expect(result.current.editing.editingCell).not.toBeNull();
+
+        act(() => {
+          result.current.editing.discardRow('1');
+        });
+
+        expect(result.current.editing.editingCell).toBeNull();
+      });
+
+      it('discardAll clears all dirty state', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.startEditing('1', 'name');
+          result.current.editing.setCellValue('1', 'name', 'Changed');
+          result.current.editing.setCellValue('2', 'email', 'new@test.com');
+        });
+
+        expect(result.current.editing.isDirty).toBe(true);
+
+        act(() => {
+          result.current.editing.discardAll();
+        });
+
+        expect(result.current.editing.isDirty).toBe(false);
+        expect(result.current.editing.dirtyRowCount).toBe(0);
+        expect(result.current.editing.editingCell).toBeNull();
+      });
+    });
+
+    describe('auto-save on blur', () => {
+      it('auto-saves when autoSave is true and commitCell is called', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const onRowUpdate = vi.fn().mockResolvedValue(undefined);
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              autoSave: true,
+              onRowUpdate,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.startEditing('1', 'name');
+          result.current.editing.setCellValue('1', 'name', 'Alice Updated');
+        });
+
+        await act(async () => {
+          await result.current.editing.commitCell();
+        });
+
+        expect(onRowUpdate).toHaveBeenCalledWith(
+          expect.objectContaining({ id: 1, name: 'Alice' }),
+          { name: 'Alice Updated' },
+        );
+      });
+
+      it('does not auto-save when autoSave is false', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const onRowUpdate = vi.fn().mockResolvedValue(undefined);
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              autoSave: false,
+              onRowUpdate,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.startEditing('1', 'name');
+          result.current.editing.setCellValue('1', 'name', 'Alice Updated');
+        });
+
+        await act(async () => {
+          await result.current.editing.commitCell();
+        });
+
+        expect(onRowUpdate).not.toHaveBeenCalled();
+        expect(result.current.editing.isDirty).toBe(true);
+      });
+    });
+
+    describe('commitCell', () => {
+      it('closes editing cell when no changes', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.editing.startEditing('1', 'name');
+        });
+
+        expect(result.current.editing.editingCell).not.toBeNull();
+
+        await act(async () => {
+          await result.current.editing.commitCell();
+        });
+
+        expect(result.current.editing.editingCell).toBeNull();
+      });
+
+      it('does nothing when no cell is being edited', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        await act(async () => {
+          await result.current.editing.commitCell();
+        });
+
+        expect(result.current.editing.editingCell).toBeNull();
+      });
+    });
+
+    describe('editable: false (default)', () => {
+      it('exposes editing state but no columns are editable', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        expect(result.current.editing).toBeDefined();
+        expect(result.current.editing.isColumnEditable('name')).toBe(false);
+        expect(result.current.editing.isColumnEditable('id')).toBe(false);
+      });
+
+      it('allows per-column editable even when table editable is false', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const cols: ColumnConfig[] = [
+          { field: 'id', header: 'ID' },
+          { field: 'name', header: 'Name', editable: true },
+          { field: 'email', header: 'Email' },
+        ];
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: cols,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        expect(result.current.editing.isColumnEditable('name')).toBe(true);
+        expect(result.current.editing.isColumnEditable('id')).toBe(false);
+        expect(result.current.editing.isColumnEditable('email')).toBe(false);
+      });
+    });
+
+    describe('getRowChanges', () => {
+      it('returns empty object for clean row', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: mockUsers },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        expect(result.current.editing.getRowChanges('1')).toEqual({});
+        expect(result.current.editing.getRowChanges('999')).toEqual({});
+      });
+    });
+  });
 });

@@ -96,7 +96,7 @@ ORDER BY table_schema, table_name;
                 columns[new TableRef((string)reader["table_catalog"], (string)reader["table_schema"], (string)reader["table_name"])]))
             .ToList();
 
-        return new SchemaData(columnConstraints, rawColumns, tables);
+        return new SchemaData(columnConstraints, rawColumns, tables.Cast<IDbTable>().ToList());
     }
 
     private static IEnumerable<T> GetDtos<T>(IDataReader reader, Func<IDataReader, T> getDto)

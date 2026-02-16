@@ -9,7 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Core.Resolvers
 {
-    public sealed class DbTableMutateResolver : IFieldResolver
+    public sealed class DbTableMutateResolver : IBifrostResolver, IFieldResolver
     {
         private readonly IDbTable _table;
 
@@ -18,15 +18,15 @@ namespace BifrostQL.Core.Resolvers
             _table = table;
         }
 
-        public async ValueTask<object?> ResolveAsync(IResolveFieldContext context)
+        public async ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
         {
-            var conFactory = (IDbConnFactory)(context.InputExtensions["connFactory"] ?? throw new InvalidDataException("connection factory is not configured"));
-            var model = (IDbModel)(context.InputExtensions["model"] ?? throw new InvalidDataException("database model is not configured"));
+            var bifrost = new BifrostContextAdapter(context);
+            var conFactory = bifrost.ConnFactory;
+            var model = bifrost.Model;
             var dialect = conFactory.Dialect;
             var table = _table;
             var modules = context.RequestServices!.GetRequiredService<IMutationModules>();
             var mutationTransformers = context.RequestServices!.GetRequiredService<IMutationTransformers>();
-            modules.OnSave(context);
 
             if (context.HasArgument("insert"))
             {
@@ -54,7 +54,14 @@ namespace BifrostQL.Core.Resolvers
             return null;
         }
 
-        private (Dictionary<string, object?> data, Dictionary<string, object?> keyData, Dictionary<string, object?> standardData) GetPropertyInfo(IResolveFieldContext context, IDbTable table, string parameterName)
+        ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
+        {
+            var modules = context.RequestServices!.GetRequiredService<IMutationModules>();
+            modules.OnSave(context);
+            return ResolveAsync(new BifrostFieldContextAdapter(context));
+        }
+
+        private (Dictionary<string, object?> data, Dictionary<string, object?> keyData, Dictionary<string, object?> standardData) GetPropertyInfo(IBifrostFieldContext context, IDbTable table, string parameterName)
         {
             var baseData = context.GetArgument<Dictionary<string, object?>>(parameterName) ?? new();
 
@@ -76,7 +83,7 @@ namespace BifrostQL.Core.Resolvers
             return (allData, keyData, standardData);
         }
 
-        private static Dictionary<string, object?>? ResolvePrimaryKeyArgument(IResolveFieldContext context, IDbTable table)
+        private static Dictionary<string, object?>? ResolvePrimaryKeyArgument(IBifrostFieldContext context, IDbTable table)
         {
             if (!context.HasArgument("_primaryKey"))
                 return null;
@@ -88,10 +95,10 @@ namespace BifrostQL.Core.Resolvers
             var keyColumns = table.KeyColumns.ToList();
 
             if (keyColumns.Count == 0)
-                throw new ExecutionError($"Table '{table.DbName}' has no primary key columns.");
+                throw new BifrostExecutionError($"Table '{table.DbName}' has no primary key columns.");
 
             if (pkValues.Count != keyColumns.Count)
-                throw new ExecutionError(
+                throw new BifrostExecutionError(
                     $"_primaryKey for '{table.DbName}' expects {keyColumns.Count} value(s) " +
                     $"({string.Join(", ", keyColumns.Select(c => c.GraphQlName))}) but received {pkValues.Count}.");
 
@@ -99,7 +106,7 @@ namespace BifrostQL.Core.Resolvers
                 .ToDictionary(x => x.ColumnName, x => x.Value);
         }
 
-        private async Task<object?> DeleteObject(IResolveFieldContext context, IMutationModules modules,
+        private async Task<object?> DeleteObject(IBifrostFieldContext context, IMutationModules modules,
             IMutationTransformers mutationTransformers, IDbTable table, IDbModel model,
             IDbConnFactory conFactory, ISqlDialect dialect)
         {
@@ -114,17 +121,17 @@ namespace BifrostQL.Core.Resolvers
                     data[kv.Key] = kv.Value;
             }
 
-            var userContext = context.UserContext as IDictionary<string, object?> ?? new Dictionary<string, object?>();
+            var userContext = context.UserContext;
             var transformContext = new MutationTransformContext { Model = model, UserContext = userContext };
             var transformResult = mutationTransformers.Transform(table, MutationType.Delete, data, transformContext);
 
             if (transformResult.Errors.Length > 0)
-                throw new ExecutionError(string.Join("; ", transformResult.Errors));
+                throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
             if (transformResult.MutationType == MutationType.Update)
             {
                 // Soft-delete: transformed to UPDATE
-                var moduleSql = modules.Delete(transformResult.Data, table, context.UserContext, model);
+                var moduleSql = modules.Delete(transformResult.Data, table, userContext, model);
                 var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
 
                 var keyData = transformResult.Data.Where(d => table.ColumnLookup.ContainsKey(d.Key) && table.ColumnLookup[d.Key].IsPrimaryKey)
@@ -139,14 +146,14 @@ namespace BifrostQL.Core.Resolvers
             }
 
             // Standard DELETE (no transformation)
-            var deleteModuleSql = modules.Delete(data, table, context.UserContext, model);
+            var deleteModuleSql = modules.Delete(data, table, userContext, model);
             var deleteTableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var deleteWhereClause = string.Join(" AND ", data.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause};";
             return await ExecuteNonQuery(conFactory, Join(deleteSql, deleteModuleSql), data);
         }
 
-        private async Task<object?> UpdateObject(IResolveFieldContext context, IDbTable table, IMutationModules modules, IDbModel model,
+        private async Task<object?> UpdateObject(IBifrostFieldContext context, IDbTable table, IMutationModules modules, IDbModel model,
             IDbConnFactory conFactory, ISqlDialect dialect, string parameterName = "update")
         {
             var propertyInfo = GetPropertyInfo(context, table, parameterName);
@@ -165,7 +172,7 @@ namespace BifrostQL.Core.Resolvers
             return propertyInfo.keyData.Values.First();
         }
 
-        private async Task<object?> InsertObject(IResolveFieldContext context, IDbTable table, IMutationModules modules, IDbModel model,
+        private async Task<object?> InsertObject(IBifrostFieldContext context, IDbTable table, IMutationModules modules, IDbModel model,
             IDbConnFactory conFactory, ISqlDialect dialect, string parameterName = "insert")
         {
             var data = context.GetArgument<Dictionary<string, object?>>(parameterName);
@@ -190,7 +197,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (Exception ex)
             {
-                throw new ExecutionError(ex.Message, ex);
+                throw new BifrostExecutionError(ex.Message, ex);
             }
         }
         private static async ValueTask<int> ExecuteNonQuery(IDbConnFactory connFactory, string sql, Dictionary<string, object?> data)
@@ -206,7 +213,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (Exception ex)
             {
-                throw new ExecutionError(ex.Message, ex);
+                throw new BifrostExecutionError(ex.Message, ex);
             }
         }
 

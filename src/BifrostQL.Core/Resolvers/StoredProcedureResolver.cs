@@ -6,7 +6,7 @@ using GraphQL.Resolvers;
 
 namespace BifrostQL.Core.Resolvers
 {
-    public sealed class StoredProcedureResolver : IFieldResolver
+    public sealed class StoredProcedureResolver : IBifrostResolver, IFieldResolver
     {
         private readonly DbStoredProcedure _proc;
 
@@ -15,10 +15,10 @@ namespace BifrostQL.Core.Resolvers
             _proc = proc;
         }
 
-        public async ValueTask<object?> ResolveAsync(IResolveFieldContext context)
+        public async ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
         {
-            var conFactory = (IDbConnFactory)(context.InputExtensions["connFactory"]
-                ?? throw new InvalidDataException("connection factory is not configured"));
+            var bifrost = new BifrostContextAdapter(context);
+            var conFactory = bifrost.ConnFactory;
 
             var input = context.HasArgument("input")
                 ? context.GetArgument<Dictionary<string, object?>>("input")
@@ -75,7 +75,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (Exception ex)
             {
-                throw new ExecutionError(ex.Message, ex);
+                throw new BifrostExecutionError(ex.Message, ex);
             }
         }
 
@@ -120,6 +120,11 @@ namespace BifrostQL.Core.Resolvers
             }
 
             return outputParams;
+        }
+
+        ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
+        {
+            return ResolveAsync(new BifrostFieldContextAdapter(context));
         }
 
         private static int GetDefaultSize(string dataType) => dataType switch

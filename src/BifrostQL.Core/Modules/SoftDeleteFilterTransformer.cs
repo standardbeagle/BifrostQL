@@ -1,6 +1,6 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
-using GraphQL;
+using BifrostQL.Core.Resolvers;
 
 namespace BifrostQL.Core.Modules;
 
@@ -48,7 +48,7 @@ public sealed class SoftDeleteFilterTransformer : IFilterTransformer
         if (!table.ColumnLookup.ContainsKey(columnName))
         {
             var fullTableName = $"{table.TableSchema}.{table.DbName}";
-            throw new ExecutionError(
+            throw new BifrostExecutionError(
                 $"Soft-delete column '{columnName}' not found in table '{fullTableName}'.");
         }
 

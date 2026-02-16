@@ -12,7 +12,7 @@ namespace BifrostQL.Core.Resolvers
     /// rows as key-value dictionaries with column metadata. Requires authentication and
     /// "generic-table: enabled" model metadata.
     /// </summary>
-    public sealed class GenericTableQueryResolver : IFieldResolver
+    public sealed class GenericTableQueryResolver : IBifrostResolver, IFieldResolver
     {
         private readonly IDbModel _model;
         private readonly GenericTableConfig _config;
@@ -23,13 +23,12 @@ namespace BifrostQL.Core.Resolvers
             _config = config;
         }
 
-        public async ValueTask<object?> ResolveAsync(IResolveFieldContext context)
+        public async ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
         {
-            var userContext = context.UserContext as IDictionary<string, object?> ?? new Dictionary<string, object?>();
-            ValidateAuthorization(userContext);
+            ValidateAuthorization(context.UserContext);
 
             var tableName = context.GetArgument<string>("name")
-                ?? throw new ExecutionError("The 'name' argument is required.");
+                ?? throw new BifrostExecutionError("The 'name' argument is required.");
 
             var limit = context.HasArgument("limit")
                 ? context.GetArgument<int>("limit")
@@ -49,28 +48,33 @@ namespace BifrostQL.Core.Resolvers
             var table = ResolveTable(tableName);
             var columnMetadata = ExtractColumnMetadata(table);
 
-            var connFactory = (IDbConnFactory)(context.InputExtensions["connFactory"]
-                ?? throw new InvalidDataException("connection factory is not configured"));
+            var bifrost = new BifrostContextAdapter(context);
+            var connFactory = bifrost.ConnFactory;
 
             return await ExecuteQueryAsync(connFactory, table, columnMetadata, limit, offset, filter);
+        }
+
+        ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
+        {
+            return ResolveAsync(new BifrostFieldContextAdapter(context));
         }
 
         public void ValidateAuthorization(IDictionary<string, object?> userContext)
         {
             if (!userContext.TryGetValue("user", out var userObj))
-                throw new ExecutionError("Authentication required to execute generic table queries.");
+                throw new BifrostExecutionError("Authentication required to execute generic table queries.");
 
             if (userObj is not ClaimsPrincipal principal)
-                throw new ExecutionError("Authentication required to execute generic table queries.");
+                throw new BifrostExecutionError("Authentication required to execute generic table queries.");
 
             if (!principal.IsInRole(_config.RequiredRole) && !HasRoleClaim(principal, _config.RequiredRole))
-                throw new ExecutionError($"User does not have the required role '{_config.RequiredRole}' to execute generic table queries.");
+                throw new BifrostExecutionError($"User does not have the required role '{_config.RequiredRole}' to execute generic table queries.");
         }
 
         public IDbTable ResolveTable(string tableName)
         {
             if (!_config.IsTableAllowed(tableName))
-                throw new ExecutionError($"Access to table '{tableName}' is not allowed.");
+                throw new BifrostExecutionError($"Access to table '{tableName}' is not allowed.");
 
             try
             {
@@ -78,7 +82,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (Exception ex) when (ex is ArgumentOutOfRangeException or KeyNotFoundException)
             {
-                throw new ExecutionError($"Table '{tableName}' does not exist.");
+                throw new BifrostExecutionError($"Table '{tableName}' does not exist.");
             }
         }
 
@@ -214,7 +218,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (DbException ex)
             {
-                throw new ExecutionError($"Generic table query error: {ex.Message}", ex);
+                throw new BifrostExecutionError($"Generic table query error: {ex.Message}", ex);
             }
         }
 

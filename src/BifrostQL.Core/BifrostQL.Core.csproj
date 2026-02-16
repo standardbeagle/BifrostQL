@@ -47,6 +47,9 @@
 	  <DebugType>embedded</DebugType>
 	</PropertyGroup>
 	<ItemGroup>
+		<InternalsVisibleTo Include="BifrostQL.Core.Test" />
+	</ItemGroup>
+	<ItemGroup>
 		<PackageReference Include="GraphQL.Server.All" Version="8.3.3" />
 		<PackageReference Include="GraphQL.Server.Ui.GraphiQL" Version="8.3.3" />
 		<PackageReference Include="Pluralize.NET.Core" Version="1.0.0" />

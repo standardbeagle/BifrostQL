@@ -1,7 +1,7 @@
 using System.Collections;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
-using GraphQL;
+using BifrostQL.Core.Resolvers;
 
 namespace BifrostQL.Core.Modules;
 
@@ -82,21 +82,21 @@ public sealed class AutoFilterTransformer : IFilterTransformer
         // Verify the column exists
         if (!table.ColumnLookup.ContainsKey(mapping.Column))
         {
-            throw new ExecutionError(
+            throw new BifrostExecutionError(
                 $"Auto-filter column '{mapping.Column}' not found in table '{fullTableName}'.");
         }
 
         // Get claim value from user context
         if (!context.UserContext.TryGetValue(mapping.Claim, out var claimValue))
         {
-            throw new ExecutionError(
+            throw new BifrostExecutionError(
                 $"Auto-filter claim '{mapping.Claim}' required but not found in user context " +
                 $"for column '{mapping.Column}' on table '{fullTableName}'.");
         }
 
         if (claimValue == null)
         {
-            throw new ExecutionError(
+            throw new BifrostExecutionError(
                 $"Auto-filter claim '{mapping.Claim}' cannot be null " +
                 $"for column '{mapping.Column}' on table '{fullTableName}'.");
         }
@@ -107,7 +107,7 @@ public sealed class AutoFilterTransformer : IFilterTransformer
             var values = ToObjectList(claimValue);
             if (values.Count == 0)
             {
-                throw new ExecutionError(
+                throw new BifrostExecutionError(
                     $"Auto-filter claim '{mapping.Claim}' cannot be empty " +
                     $"for column '{mapping.Column}' on table '{fullTableName}'.");
             }
@@ -154,7 +154,7 @@ public sealed class AutoFilterTransformer : IFilterTransformer
             var colonIndex = part.IndexOf(':');
             if (colonIndex <= 0 || colonIndex >= part.Length - 1)
             {
-                throw new ExecutionError(
+                throw new BifrostExecutionError(
                     $"Invalid auto-filter mapping '{part}' on table '{fullTableName}'. " +
                     $"Expected format 'column:claim'.");
             }
@@ -164,7 +164,7 @@ public sealed class AutoFilterTransformer : IFilterTransformer
 
             if (string.IsNullOrWhiteSpace(column) || string.IsNullOrWhiteSpace(claim))
             {
-                throw new ExecutionError(
+                throw new BifrostExecutionError(
                     $"Invalid auto-filter mapping '{part}' on table '{fullTableName}'. " +
                     $"Column and claim must not be empty.");
             }
@@ -174,7 +174,7 @@ public sealed class AutoFilterTransformer : IFilterTransformer
 
         if (results.Count == 0)
         {
-            throw new ExecutionError(
+            throw new BifrostExecutionError(
                 $"No valid auto-filter mappings found on table '{fullTableName}'.");
         }
 

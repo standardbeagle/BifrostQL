@@ -78,7 +78,7 @@ namespace BifrostQL.Core.QueryModel
 
             var action = () => TableFilter.FromPrimaryKey(values, keyColumns, "NoKeyTable");
 
-            action.Should().Throw<GraphQL.ExecutionError>()
+            action.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
                 .WithMessage("Table 'NoKeyTable' has no primary key columns.");
         }
 
@@ -94,7 +94,7 @@ namespace BifrostQL.Core.QueryModel
 
             var action = () => TableFilter.FromPrimaryKey(values, keyColumns, "TenantOrders");
 
-            action.Should().Throw<GraphQL.ExecutionError>()
+            action.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
                 .WithMessage("*expects 2 value(s)*received 1*");
         }
 
@@ -109,7 +109,7 @@ namespace BifrostQL.Core.QueryModel
 
             var action = () => TableFilter.FromPrimaryKey(values, keyColumns, "Users");
 
-            action.Should().Throw<GraphQL.ExecutionError>()
+            action.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
                 .WithMessage("*expects 1 value(s)*received 2*");
         }
 
@@ -125,7 +125,7 @@ namespace BifrostQL.Core.QueryModel
 
             var action = () => TableFilter.FromPrimaryKey(values, keyColumns, "RegionCodes");
 
-            action.Should().Throw<GraphQL.ExecutionError>()
+            action.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
                 .WithMessage("*Region, Code*");
         }
 
@@ -388,7 +388,7 @@ namespace BifrostQL.Core.QueryModel
 
             var action = () => field.ToSqlData(model);
 
-            action.Should().Throw<GraphQL.ExecutionError>()
+            action.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
                 .WithMessage("*expects 2 value(s)*received 1*");
         }
     }

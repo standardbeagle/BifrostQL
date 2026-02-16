@@ -6,7 +6,6 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
 using GraphQL;
-using GraphQL.Server;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using BifrostQL.Server;
@@ -80,7 +79,7 @@ namespace BifrostQL.Server
 
             app.IfFluent(useAuth, a => a.UseAuthentication().UseCookiePolicy());
             app.IfFluent(useAuth, a => a.UseUiAuth());
-            app.UseGraphQL<BifrostHttpMiddleware>(endpointPath);
+            app.Map(endpointPath, branch => branch.UseMiddleware<BifrostHttpMiddleware>());
             app.UseGraphQLGraphiQL(playgroundPath,
                 new GraphQL.Server.Ui.GraphiQL.GraphiQLOptions
                 {
@@ -120,7 +119,7 @@ namespace BifrostQL.Server
 
             foreach (var endpoint in options.Endpoints)
             {
-                app.UseGraphQL<BifrostHttpMiddleware>(endpoint.Path);
+                app.Map(endpoint.Path, branch => branch.UseMiddleware<BifrostHttpMiddleware>());
                 app.UseGraphQLGraphiQL(endpoint.PlaygroundPath,
                     new GraphQL.Server.Ui.GraphiQL.GraphiQLOptions
                     {
@@ -380,7 +379,6 @@ namespace BifrostQL.Server
                         options.SlowQueryThresholdMs = _loggingConfig?.GetValue("SlowQueryThresholdMs", 1000) ?? 1000;
                         options.LogSql = _loggingConfig?.GetValue("LogSql", false) ?? false;
                     })
-                    .IfFluent(isAuthEnabled, b => b.AddUserContextBuilder(context => new BifrostContext(context)))
             );
 
             if (isAuthEnabled && _jwtConfig is not null)
@@ -625,7 +623,7 @@ namespace BifrostQL.Server
 
             //JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 
-            var grapQlBuilder = services.AddGraphQL(b => b
+            services.AddGraphQL(b => b
                     .AddSystemTextJson()
                     .AddBifrostErrorLogging(options =>
                     {
@@ -639,7 +637,6 @@ namespace BifrostQL.Server
                         options.SlowQueryThresholdMs = loggingConfig?.GetValue("SlowQueryThresholdMs", 1000) ?? 1000;
                         options.LogSql = loggingConfig?.GetValue("LogSql", false) ?? false;
                     })
-                    .IfFluent(isAuthEnabled, b => b.AddUserContextBuilder(context => new BifrostContext(context)))
             );
 
             if (isAuthEnabled && _jwtConfig is not null)

@@ -4,29 +4,78 @@ using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
 using BifrostQL.Model;
 using GraphQL;
-using GraphQL.Server.Transports.AspNetCore;
+using GraphQL.Transport;
 using GraphQL.Types;
 
 namespace BifrostQL.Server
 {
     // ReSharper disable once ClassNeverInstantiated.Global
-    public class BifrostHttpMiddleware : GraphQLHttpMiddleware
+    public class BifrostHttpMiddleware
     {
+        private readonly RequestDelegate _next;
+        private readonly IGraphQLSerializer _serializer;
+        private readonly BifrostDocumentExecutor _executor;
+
         public BifrostHttpMiddleware(
             RequestDelegate next,
-            IGraphQLTextSerializer serializer,
-            IDocumentExecuter documentExecutor,
-            IServiceScopeFactory serviceScopeFactory,
-            IHostApplicationLifetime hostApplicationLifetime) :
-            base(next,
-                serializer,
-                new BifrostDocumentExecutor(documentExecutor),
-                serviceScopeFactory,
-                new GraphQLHttpMiddlewareOptions(),
-                hostApplicationLifetime)
+            IGraphQLSerializer serializer,
+            IDocumentExecuter documentExecutor)
         {
+            _next = next;
+            _serializer = serializer;
+            _executor = new BifrostDocumentExecutor(documentExecutor);
+        }
+
+        public async Task InvokeAsync(HttpContext context)
+        {
+            if (!IsGraphQLRequest(context.Request))
+            {
+                await _next(context);
+                return;
+            }
+
+            var request = await _serializer.ReadAsync<GraphQLRequest>(context.Request.Body, context.RequestAborted);
+            if (request == null)
+            {
+                context.Response.StatusCode = 400;
+                return;
+            }
+
+            var options = new ExecutionOptions
+            {
+                Query = request.Query,
+                Variables = request.Variables,
+                OperationName = request.OperationName,
+                Extensions = request.Extensions,
+                RequestServices = context.RequestServices,
+                CancellationToken = context.RequestAborted,
+                UserContext = BuildUserContext(context),
+            };
+
+            var result = await _executor.ExecuteAsync(options);
+
+            context.Response.ContentType = "application/json";
+            context.Response.StatusCode = 200;
+            await _serializer.WriteAsync(context.Response.Body, result, context.RequestAborted);
+        }
+
+        private static bool IsGraphQLRequest(HttpRequest request)
+        {
+            return string.Equals(request.Method, "POST", StringComparison.OrdinalIgnoreCase)
+                && request.ContentType != null
+                && request.ContentType.Contains("application/json", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static IDictionary<string, object?> BuildUserContext(HttpContext context)
+        {
+            var user = context.User;
+            if (user?.Identity?.IsAuthenticated == true)
+                return new BifrostContext(context);
+
+            return new Dictionary<string, object?>();
         }
     }
+
     public class BifrostDocumentExecutor : IDocumentExecuter
     {
         private readonly IDocumentExecuter _documentExecutor;

@@ -1,6 +1,5 @@
-﻿using System.Collections;
+using System.Collections;
 using BifrostQL.Core.QueryModel;
-using GraphQL;
 
 namespace BifrostQL.Core.Resolvers
 {
@@ -15,20 +14,20 @@ namespace BifrostQL.Core.Resolvers
             _tables = tableData;
         }
 
-        public ValueTask<object?> Get(int row, IResolveFieldContext context)
+        public ValueTask<object?> Get(int row, IBifrostFieldContext context)
         {
             var table = _tables[_tableSql.KeyName];
-            var name = context.FieldAst.Name.StringValue;
-            var alias = context.FieldAst.Alias?.Name?.StringValue;
+            var name = context.FieldName;
+            var alias = context.FieldAlias;
             var found = table.index.TryGetValue(alias ?? name, out var index);
             if (found)
                 return ValueTask.FromResult(DbConvert(table.data[row][index]));
             return GetDataForMissingColumn(context, table, row);
         }
-        public ValueTask<object?> GetDataForMissingColumn(IResolveFieldContext context, (IDictionary<string, int> index, IList<object?[]> data) table, int row)
+        public ValueTask<object?> GetDataForMissingColumn(IBifrostFieldContext context, (IDictionary<string, int> index, IList<object?[]> data) table, int row)
         {
-            string name = context.FieldAst.Name.StringValue;
-            string? alias = context.FieldAst.Alias?.Name?.StringValue;
+            string name = context.FieldName;
+            string? alias = context.FieldAlias;
 
             var join = _tableSql.GetJoin(alias, name);
             if (join != null)
@@ -41,24 +40,24 @@ namespace BifrostQL.Core.Resolvers
                 var valueFound = tableData.index.TryGetValue(aggregate.FinalColumnGraphQlName, out int valueIndex);
                 var keyFound = tableData.index.TryGetValue("srcId", out int keyIndex);
                 if (!valueFound || !keyFound)
-                    throw new ExecutionError($"Unable to find aggregate column: {name} on table: {_tableSql.Alias}:{_tableSql.GraphQlName}");
+                    throw new BifrostExecutionError($"Unable to find aggregate column: {name} on table: {_tableSql.Alias}:{_tableSql.GraphQlName}");
                 var parentKeyIndex = table.index[_tableSql.DbTable.KeyColumns.First().DbName];
                 var parentKeyValue = table.data[row][parentKeyIndex];
                 var value = tableData.data.FirstOrDefault(r => Equals(r[keyIndex], parentKeyValue))?[valueIndex];
                 return ValueTask.FromResult<object?>(value);
             }
-            throw new ExecutionError($"Unable to find queryField: {name} on table: {_tableSql.Alias}:{_tableSql.GraphQlName}");
+            throw new BifrostExecutionError($"Unable to find queryField: {name} on table: {_tableSql.Alias}:{_tableSql.GraphQlName}");
         }
 
         private ValueTask<object?> GetJoinResult((IDictionary<string, int> index, IList<object?[]> data) table, int row, TableJoin join)
         {
             var keyFound = table.index.TryGetValue(join.FromColumn, out int keyIndex);
             if (!keyFound)
-                throw new ExecutionError("join column not found.");
+                throw new BifrostExecutionError("join column not found.");
 
             var key = table.data[row][keyIndex];
             if (key == null)
-                throw new ExecutionError("key value is null");
+                throw new BifrostExecutionError("key value is null");
 
             var tableData = _tables[join.JoinName];
             if (join.QueryType == QueryType.Join)
@@ -70,7 +69,7 @@ namespace BifrostQL.Core.Resolvers
                 return ValueTask.FromResult<object?>(data == null ? null : new SingleRowLookup(data, tableData.index, this));
             }
 
-            throw new ExecutionError("unexpected Join type: " + join.JoinName);
+            throw new BifrostExecutionError("unexpected Join type: " + join.JoinName);
         }
 
         public IEnumerator<object?> GetEnumerator()
@@ -122,15 +121,15 @@ namespace BifrostQL.Core.Resolvers
     public class ReaderCurrent
     {
         private readonly int _index;
-        private readonly Func<int, IResolveFieldContext, ValueTask<object?>> _resolver;
+        private readonly Func<int, IBifrostFieldContext, ValueTask<object?>> _resolver;
 
-        public ReaderCurrent(int index, Func<int, IResolveFieldContext, ValueTask<object?>> resolver)
+        public ReaderCurrent(int index, Func<int, IBifrostFieldContext, ValueTask<object?>> resolver)
         {
             _index = index;
             _resolver = resolver;
         }
 
-        public ValueTask<object?> Get(IResolveFieldContext context)
+        public ValueTask<object?> Get(IBifrostFieldContext context)
         {
             return _resolver(_index, context);
         }
@@ -159,11 +158,11 @@ namespace BifrostQL.Core.Resolvers
         {
             return new SubTableEnumerator(this);
         }
-        public ValueTask<object?> Get(int row, IResolveFieldContext context)
+        public ValueTask<object?> Get(int row, IBifrostFieldContext context)
         {
-            var column = context.FieldAst.Name?.StringValue;
-            var alias = context.FieldAst.Alias?.Name?.StringValue;
-            var lookup = alias ?? column ?? throw new ExecutionError($"column name not defined");
+            var column = context.FieldName;
+            var alias = context.FieldAlias;
+            var lookup = alias ?? column ?? throw new BifrostExecutionError($"column name not defined");
             var found = _table.index.TryGetValue(lookup, out int index);
             if (!found)
             {
@@ -216,10 +215,10 @@ namespace BifrostQL.Core.Resolvers
             _root = root;
         }
 
-        public ValueTask<object?> Get(IResolveFieldContext context)
+        public ValueTask<object?> Get(IBifrostFieldContext context)
         {
-            var name = context.FieldAst.Name.StringValue;
-            var alias = context.FieldAst.Alias?.Name?.StringValue;
+            var name = context.FieldName;
+            var alias = context.FieldAlias;
             if (_index.TryGetValue(alias ?? name, out var index))
                 return ValueTask.FromResult(ReaderEnum.DbConvert(_row[index]));
             if (_index.TryGetValue(name, out var index2))

@@ -285,7 +285,7 @@ public sealed class GenericTableQueryTests
 
         var act = () => resolver.ResolveTable("Users");
 
-        act.Should().Throw<GraphQL.ExecutionError>().WithMessage("*not allowed*");
+        act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>().WithMessage("*not allowed*");
     }
 
     [Fact]
@@ -300,7 +300,7 @@ public sealed class GenericTableQueryTests
 
         var act = () => resolver.ResolveTable("NonExistent");
 
-        act.Should().Throw<GraphQL.ExecutionError>().WithMessage("*does not exist*");
+        act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>().WithMessage("*does not exist*");
     }
 
     [Fact]
@@ -317,7 +317,7 @@ public sealed class GenericTableQueryTests
 
         var act = () => resolver.ResolveTable("Users");
 
-        act.Should().Throw<GraphQL.ExecutionError>().WithMessage("*not allowed*");
+        act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>().WithMessage("*not allowed*");
     }
 
     #endregion
@@ -337,7 +337,7 @@ public sealed class GenericTableQueryTests
         var userContext = new Dictionary<string, object?>();
         var act = () => resolver.ValidateAuthorization(userContext);
 
-        act.Should().Throw<GraphQL.ExecutionError>().WithMessage("*Authentication required*");
+        act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>().WithMessage("*Authentication required*");
     }
 
     [Fact]
@@ -353,7 +353,7 @@ public sealed class GenericTableQueryTests
         var userContext = new Dictionary<string, object?> { ["user"] = "not-a-principal" };
         var act = () => resolver.ValidateAuthorization(userContext);
 
-        act.Should().Throw<GraphQL.ExecutionError>().WithMessage("*Authentication required*");
+        act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>().WithMessage("*Authentication required*");
     }
 
     [Fact]
@@ -372,7 +372,7 @@ public sealed class GenericTableQueryTests
 
         var act = () => resolver.ValidateAuthorization(userContext);
 
-        act.Should().Throw<GraphQL.ExecutionError>().WithMessage("*does not have the required role*");
+        act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>().WithMessage("*does not have the required role*");
     }
 
     [Fact]

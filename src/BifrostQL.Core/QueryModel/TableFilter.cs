@@ -1,5 +1,5 @@
 ﻿using BifrostQL.Core.Model;
-using GraphQL;
+using BifrostQL.Core.Resolvers;
 
 namespace BifrostQL.Core.QueryModel
 {
@@ -28,10 +28,10 @@ namespace BifrostQL.Core.QueryModel
             var valueList = values.ToList();
 
             if (keyColumnList.Count == 0)
-                throw new ExecutionError($"Table '{tableName}' has no primary key columns.");
+                throw new BifrostExecutionError($"Table '{tableName}' has no primary key columns.");
 
             if (valueList.Count != keyColumnList.Count)
-                throw new ExecutionError(
+                throw new BifrostExecutionError(
                     $"_primaryKey for '{tableName}' expects {keyColumnList.Count} value(s) " +
                     $"({string.Join(", ", keyColumnList.Select(c => c.GraphQlName))}) but received {valueList.Count}.");
 
@@ -54,7 +54,7 @@ namespace BifrostQL.Core.QueryModel
 
         public static TableFilter FromObject(object? value, string tableName)
         {
-            var dictValue = value as Dictionary<string, object?> ?? throw new ExecutionError($"Error filtering {tableName}, null filter value");
+            var dictValue = value as Dictionary<string, object?> ?? throw new BifrostExecutionError($"Error filtering {tableName}, null filter value");
 
             var filter = StackFilters(dictValue, tableName);
             if (filter.And.Count == 0 && filter.Or.Count == 0 && filter.Next == null)
@@ -64,10 +64,10 @@ namespace BifrostQL.Core.QueryModel
 
         private static TableFilter StackFilters(IDictionary<string, object?> filter, string? tableName)
         {
-            if (!filter.Any()) throw new ExecutionError($"Filter on {tableName} has no properties");
+            if (!filter.Any()) throw new BifrostExecutionError($"Filter on {tableName} has no properties");
 
             var kv = filter.FirstOrDefault();
-            if (string.IsNullOrWhiteSpace(kv.Key)) throw new ExecutionError($"Filter on {tableName} has empty property name");
+            if (string.IsNullOrWhiteSpace(kv.Key)) throw new BifrostExecutionError($"Filter on {tableName} has empty property name");
             return kv switch
             {
                 { Key: "and" } => new TableFilter
@@ -87,8 +87,8 @@ namespace BifrostQL.Core.QueryModel
                     TableName = tableName,
                     FilterType = FilterType.Join,
                 },
-                { Value: null, Key: null } => throw new ExecutionError($"Filter on {tableName} has null key and value."),
-                { Key: null } => throw new ExecutionError($"Filter on {tableName} has null key."),
+                { Value: null, Key: null } => throw new BifrostExecutionError($"Filter on {tableName} has null key and value."),
+                { Key: null } => throw new BifrostExecutionError($"Filter on {tableName} has null key."),
                 _ => new TableFilter
                 {
                     RelationName = kv.Key,
@@ -199,10 +199,10 @@ namespace BifrostQL.Core.QueryModel
                     var sql = filters.Length == 1 ? filters[0] : $"(({string.Join(") OR (", filters)}))";
                     return new ParameterizedSql(sql, results.SelectMany(r => r.Parameters).ToList());
                 }
-                throw new ExecutionError("Filter object missing all required fields.");
+                throw new BifrostExecutionError("Filter object missing all required fields.");
             }
 
-            var table = model.GetTableFromDbName(TableName ?? throw new ExecutionError("TableFilter with undefined TableName"));
+            var table = model.GetTableFromDbName(TableName ?? throw new BifrostExecutionError("TableFilter with undefined TableName"));
             if (Next.Next == null)
             {
                 var lookup = table.GraphQlLookup;

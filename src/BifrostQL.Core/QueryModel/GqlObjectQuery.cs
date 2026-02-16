@@ -1,6 +1,6 @@
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
-using GraphQL;
 
 namespace BifrostQL.Core.QueryModel
 {
@@ -155,7 +155,7 @@ namespace BifrostQL.Core.QueryModel
         /// </summary>
         /// <param name="dbModel"></param>
         /// <param name="basePath"></param>
-        /// <exception cref="ExecutionError"></exception>
+        /// <exception cref="BifrostExecutionError"></exception>
         public void ConnectLinks(IDbModel dbModel, string basePath = "")
         {
             foreach (var link in Links)
@@ -232,7 +232,7 @@ namespace BifrostQL.Core.QueryModel
                     Joins.Add(junctionJoin);
                     continue;
                 }
-                throw new ExecutionError($"Unable to find join {link.GraphQlName} on table {TableName}");
+                throw new BifrostExecutionError($"Unable to find join {link.GraphQlName} on table {TableName}");
             }
             foreach (var join in Joins)
             {

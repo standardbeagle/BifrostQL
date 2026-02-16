@@ -85,7 +85,7 @@ public class FilterTransformerTests
         var table = model.GetTableFromDbName("Orders");
         var context = CreateTransformContext(model); // No tenant_id in context
 
-        var ex = Assert.Throws<ExecutionError>(() => transformer.GetAdditionalFilter(table, context));
+        var ex = Assert.Throws<BifrostQL.Core.Resolvers.BifrostExecutionError>(() => transformer.GetAdditionalFilter(table, context));
         Assert.Contains("Tenant context required", ex.Message);
     }
 
@@ -107,7 +107,7 @@ public class FilterTransformerTests
             ["tenant_id"] = 42
         });
 
-        var ex = Assert.Throws<ExecutionError>(() => transformer.GetAdditionalFilter(table, context));
+        var ex = Assert.Throws<BifrostQL.Core.Resolvers.BifrostExecutionError>(() => transformer.GetAdditionalFilter(table, context));
         Assert.Contains("not found in table", ex.Message);
     }
 

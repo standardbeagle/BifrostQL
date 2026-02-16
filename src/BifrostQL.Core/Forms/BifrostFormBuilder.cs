@@ -102,7 +102,7 @@ namespace BifrostQL.Core.Forms
         {
             var sb = new StringBuilder();
             var hasErrors = fieldErrors != null && fieldErrors.Count > 0;
-            AppendFormGroup(sb, column, mode, value, hasErrors ? fieldErrors : null);
+            AppendFormGroup(sb, column, mode, value, hasErrors ? fieldErrors.ToList() : null);
             return sb.ToString();
         }
 

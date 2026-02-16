@@ -10,7 +10,7 @@ namespace BifrostQL.Core.Resolvers
     /// Resolves _rawQuery fields by executing parameterized SELECT queries against the database.
     /// Requires authentication and the "raw-sql: enabled" model metadata setting.
     /// </summary>
-    public sealed class RawSqlQueryResolver : IFieldResolver
+    public sealed class RawSqlQueryResolver : IBifrostResolver, IFieldResolver
     {
         public const string MetadataKey = "raw-sql";
         public const string MetadataEnabled = "enabled";
@@ -29,10 +29,9 @@ namespace BifrostQL.Core.Resolvers
             _model = model;
         }
 
-        public async ValueTask<object?> ResolveAsync(IResolveFieldContext context)
+        public async ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
         {
-            var userContext = context.UserContext as IDictionary<string, object?> ?? new Dictionary<string, object?>();
-            ValidateAuthorization(userContext);
+            ValidateAuthorization(context.UserContext);
 
             var sql = context.GetArgument<string>("sql");
             var paramsArg = context.HasArgument("params")
@@ -44,7 +43,7 @@ namespace BifrostQL.Core.Resolvers
 
             var validationResult = _validator.Validate(sql);
             if (!validationResult.IsValid)
-                throw new ExecutionError($"SQL validation failed: {validationResult.ErrorMessage}");
+                throw new BifrostExecutionError($"SQL validation failed: {validationResult.ErrorMessage}");
 
             var maxTimeout = GetConfiguredTimeout();
             if (timeout > maxTimeout)
@@ -54,10 +53,15 @@ namespace BifrostQL.Core.Resolvers
 
             var maxRows = GetConfiguredMaxRows();
 
-            var conFactory = (IDbConnFactory)(context.InputExtensions["connFactory"]
-                ?? throw new InvalidDataException("connection factory is not configured"));
+            var bifrost = new BifrostContextAdapter(context);
+            var conFactory = bifrost.ConnFactory;
 
             return await ExecuteQueryAsync(conFactory, sql, paramsArg, timeout, maxRows);
+        }
+
+        ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
+        {
+            return ResolveAsync(new BifrostFieldContextAdapter(context));
         }
 
         private void ValidateAuthorization(IDictionary<string, object?> userContext)
@@ -65,13 +69,13 @@ namespace BifrostQL.Core.Resolvers
             var requiredRole = _model.GetMetadataValue(RoleMetadataKey) ?? DefaultRequiredRole;
 
             if (!userContext.TryGetValue("user", out var userObj))
-                throw new ExecutionError("Authentication required to execute raw SQL queries.");
+                throw new BifrostExecutionError("Authentication required to execute raw SQL queries.");
 
             if (userObj is not ClaimsPrincipal principal)
-                throw new ExecutionError("Authentication required to execute raw SQL queries.");
+                throw new BifrostExecutionError("Authentication required to execute raw SQL queries.");
 
             if (!principal.IsInRole(requiredRole) && !HasRoleClaim(principal, requiredRole))
-                throw new ExecutionError($"User does not have the required role '{requiredRole}' to execute raw SQL queries.");
+                throw new BifrostExecutionError($"User does not have the required role '{requiredRole}' to execute raw SQL queries.");
         }
 
         private static bool HasRoleClaim(ClaimsPrincipal principal, string role)
@@ -134,7 +138,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (DbException ex)
             {
-                throw new ExecutionError($"SQL execution error: {ex.Message}", ex);
+                throw new BifrostExecutionError($"SQL execution error: {ex.Message}", ex);
             }
         }
     }

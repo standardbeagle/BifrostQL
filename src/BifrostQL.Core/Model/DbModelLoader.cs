@@ -35,7 +35,7 @@ namespace BifrostQL.Model
             var schemaData = await _connFactory.SchemaReader.ReadSchemaAsync(conn);
 
             return DbModel.FromTables(
-                schemaData.Tables,
+                schemaData.Tables.Cast<DbTable>().ToList(),
                 _metadataLoader,
                 Array.Empty<DbStoredProcedure>(),
                 Array.Empty<DbForeignKey>(),

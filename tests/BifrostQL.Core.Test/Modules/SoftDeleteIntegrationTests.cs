@@ -403,7 +403,7 @@ public class SoftDeleteIntegrationTests
         };
 
         var act = () => transformer.GetAdditionalFilter(table, context);
-        act.Should().Throw<GraphQL.ExecutionError>()
+        act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
             .WithMessage("*not found in table*");
     }
 

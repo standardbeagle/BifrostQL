@@ -7,7 +7,7 @@ using GraphQL.Types;
 
 namespace BifrostQL.Core.Resolvers
 {
-    public interface IDbTableResolver : IFieldResolver
+    public interface IDbTableResolver : IBifrostResolver, IFieldResolver
     {
 
     }
@@ -19,10 +19,16 @@ namespace BifrostQL.Core.Resolvers
         {
             _table = table;
         }
-        public ValueTask<object?> ResolveAsync(IResolveFieldContext context)
+
+        public ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
         {
-            var factory = (ISqlExecutionManager)(context.InputExtensions["tableReaderFactory"] ?? throw new InvalidDataException("tableReaderFactory not configured"));
-            return factory.ResolveAsync(context, _table);
+            var bifrost = new BifrostContextAdapter(context);
+            return bifrost.Executor.ResolveAsync(context, _table);
+        }
+
+        ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
+        {
+            return ResolveAsync(new BifrostFieldContextAdapter(context));
         }
     }
 

@@ -1,10 +1,5 @@
 ﻿using BifrostQL.Core.Model;
-using GraphQL;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
 
 namespace BifrostQL.Core.QueryModel
@@ -77,9 +72,9 @@ namespace BifrostQL.Core.QueryModel
             var queryType = GetQueryType(Name);
             if (queryType == QueryType.Aggregate)
             {
-                var agg = Arguments.FirstOrDefault(a => a.Name == "operation")?.Value?.ToString() ?? throw new ExecutionError("Aggregate query missing operation argument.");
+                var agg = Arguments.FirstOrDefault(a => a.Name == "operation")?.Value?.ToString() ?? throw new BifrostExecutionError("Aggregate query missing operation argument.");
                 var aggType = (AggregateOperationType)Enum.Parse(typeof(AggregateOperationType), agg, true);
-                var value = Arguments.FirstOrDefault(a => a.Name == "value")?.Value?.ToString() ?? throw new ExecutionError("Aggregate query missing value argument.");
+                var value = Arguments.FirstOrDefault(a => a.Name == "value")?.Value?.ToString() ?? throw new BifrostExecutionError("Aggregate query missing value argument.");
             }
 
             var result = new GqlObjectQuery
@@ -119,12 +114,12 @@ namespace BifrostQL.Core.QueryModel
             var onArg = Arguments.FirstOrDefault(a => a.Name == "on");
 
             if (onArg == null)
-                throw new ExecutionError($"join on table {parent.GraphQlName} missing on argument.");
+                throw new BifrostExecutionError($"join on table {parent.GraphQlName} missing on argument.");
 
-            var columns = (onArg.Value as IDictionary<string, object?>) ?? throw new ExecutionError($"While joining table {parent.GraphQlName}, unable to convert on value to object");
+            var columns = (onArg.Value as IDictionary<string, object?>) ?? throw new BifrostExecutionError($"While joining table {parent.GraphQlName}, unable to convert on value to object");
             if (columns.Keys.Count != 1)
                 throw new ArgumentException("on joins only support one column per table");
-            var relation = columns.Values.First() as IDictionary<string, object?> ?? throw new ExecutionError($"While joining table {parent.GraphQlName}, unable to convert on value to a string");
+            var relation = columns.Values.First() as IDictionary<string, object?> ?? throw new BifrostExecutionError($"While joining table {parent.GraphQlName}, unable to convert on value to a string");
             return new TableJoin
             {
                 Name = Name,
@@ -132,7 +127,7 @@ namespace BifrostQL.Core.QueryModel
                 FromTable = parent,
                 ConnectedTable = ToSqlData(model),
                 FromColumn = columns.Keys.First(),
-                ConnectedColumn = relation.Values?.First()?.ToString() ?? throw new ExecutionError($"While joining table {parent.GraphQlName}, unable to resolve join column {relation?.Keys?.FirstOrDefault()}"),
+                ConnectedColumn = relation.Values?.First()?.ToString() ?? throw new BifrostExecutionError($"While joining table {parent.GraphQlName}, unable to resolve join column {relation?.Keys?.FirstOrDefault()}"),
                 Operator = relation.Keys.First(),
                 QueryType = GetQueryType(Name),
             };
@@ -146,7 +141,7 @@ namespace BifrostQL.Core.QueryModel
 
         public GqlAggregateColumn ToAggregateSql(IDbTable dbTable)
         {
-            var agg = Arguments.FirstOrDefault(a => a.Name == "operation")?.Value?.ToString() ?? throw new ExecutionError("Aggregate query missing operation argument.");
+            var agg = Arguments.FirstOrDefault(a => a.Name == "operation")?.Value?.ToString() ?? throw new BifrostExecutionError("Aggregate query missing operation argument.");
             var aggType = (AggregateOperationType)Enum.Parse(typeof(AggregateOperationType), agg, true);
 
             var links = new List<(LinkDirection direction, TableLinkDto link)>();
@@ -155,7 +150,7 @@ namespace BifrostQL.Core.QueryModel
             while (value is IDictionary<string, object?> objVal)
             {
                 if (objVal.Keys.Count != 1)
-                    throw new ExecutionError("Aggregations only support one join per aggregation");
+                    throw new BifrostExecutionError("Aggregations only support one join per aggregation");
                 var linkName = objVal.Keys.First();
                 if (linkName == "column")
                 {
@@ -178,11 +173,11 @@ namespace BifrostQL.Core.QueryModel
                     matched = true;
                 }
                 if (!matched)
-                    throw new ExecutionError($"Unable to find link {linkName} on table {currentTable.GraphQlName}");
+                    throw new BifrostExecutionError($"Unable to find link {linkName} on table {currentTable.GraphQlName}");
 
                 value = objVal.Values.First();
             }
-            var aggColumn = value?.ToString() ?? throw new ExecutionError("Aggregate query value must be a column enum.");
+            var aggColumn = value?.ToString() ?? throw new BifrostExecutionError("Aggregate query value must be a column enum.");
 
 
 

@@ -2,7 +2,7 @@ using FluentAssertions;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.QueryModel.TestFixtures;
 using BifrostQL.Core.Model;
-using GraphQL;
+using BifrostQL.Core.Resolvers;
 using Xunit;
 
 namespace BifrostQL.Core.QueryModel;
@@ -246,7 +246,7 @@ public sealed class GqlObjectQueryJoinTest
 
         // Act & Assert
         Action act = () => query.ConnectLinks(dbModel);
-        act.Should().Throw<ExecutionError>()
+        act.Should().Throw<BifrostExecutionError>()
             .WithMessage("*Unable to find join*nonExistentLink*");
     }
 

@@ -82,7 +82,7 @@ SELECT [TABLE_CATALOG]
                 columns[new TableRef((string)reader["TABLE_CATALOG"], (string)reader["TABLE_SCHEMA"], (string)reader["TABLE_NAME"])]))
             .ToList();
 
-        return new SchemaData(columnConstraints, rawColumns, tables);
+        return new SchemaData(columnConstraints, rawColumns, tables.Cast<IDbTable>().ToList());
     }
 
     private static IEnumerable<T> GetDtos<T>(IDataReader reader, Func<IDataReader, T> getDto)

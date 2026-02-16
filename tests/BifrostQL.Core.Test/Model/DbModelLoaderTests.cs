@@ -25,7 +25,6 @@ public class DbModelLoaderTests
         mockConnFactory.GetConnection().Returns(mockConnection);
         mockConnFactory.SchemaReader.Returns(mockSchemaReader);
         mockSchemaReader.ReadSchemaAsync(mockConnection).Returns(schemaData);
-        mockMetadataLoader.BuildMetadataLoaders().Returns(new List<MetadataLoaderRule>());
 
         var loader = new DbModelLoader(mockConnFactory, mockMetadataLoader);
 
@@ -44,7 +43,6 @@ public class DbModelLoaderTests
         // Arrange
         var connectionString = "Server=localhost;Database=test;";
         var mockMetadataLoader = Substitute.For<IMetadataLoader>();
-        mockMetadataLoader.BuildMetadataLoaders().Returns(new List<MetadataLoaderRule>());
 
         // This constructor should internally create a DbConnFactory
         var loader = new DbModelLoader(connectionString, mockMetadataLoader);
@@ -79,7 +77,6 @@ public class DbModelLoaderTests
         mockConnFactory.GetConnection().Returns(mockConnection);
         mockConnFactory.SchemaReader.Returns(mockSchemaReader);
         mockSchemaReader.ReadSchemaAsync(mockConnection).Returns(schemaData);
-        mockMetadataLoader.BuildMetadataLoaders().Returns(new List<MetadataLoaderRule>());
 
         var loader = new DbModelLoader(mockConnFactory, mockMetadataLoader);
 

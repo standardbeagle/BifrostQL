@@ -2,7 +2,7 @@ using FluentAssertions;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.QueryModel.TestFixtures;
 using BifrostQL.Core.Model;
-using GraphQL;
+using BifrostQL.Core.Resolvers;
 using Xunit;
 
 namespace BifrostQL.Core.QueryModel;
@@ -49,7 +49,7 @@ public sealed class GqlObjectQueryEdgeCaseTest
 
         // Act & Assert
         Action act = () => TableFilter.FromObject(new Dictionary<string, object?>(), "Users");
-        act.Should().Throw<GraphQL.ExecutionError>()
+        act.Should().Throw<BifrostExecutionError>()
             .WithMessage("*has no properties*");
     }
 

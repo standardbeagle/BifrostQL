@@ -11,7 +11,7 @@ using BifrostQL.Core.Schema;
 
 namespace BifrostQL.Core.Resolvers
 {
-    public interface IDbSchemaResolver : IFieldResolver
+    public interface IDbSchemaResolver : IBifrostResolver, IFieldResolver
     {
 
     }
@@ -24,7 +24,7 @@ namespace BifrostQL.Core.Resolvers
             _dbModel = dbModel;
         }
 
-        public ValueTask<object?> ResolveAsync(IResolveFieldContext context)
+        public ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
         {
             var tableName = context.GetArgument<string?>("graphQlName");
             return ValueTask.FromResult<object?>(
@@ -85,6 +85,11 @@ namespace BifrostQL.Core.Resolvers
                     })
             );
         }
+        ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
+        {
+            return ResolveAsync(new BifrostFieldContextAdapter(context));
+        }
+
         static bool Equal(string? a, string? b) => string.Equals(a, b, StringComparison.InvariantCultureIgnoreCase);
     }
 }

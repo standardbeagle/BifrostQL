@@ -4,13 +4,13 @@ using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
 using GraphQL.Types;
-using GraphQL;
+using GraphQL.Validation;
 
 namespace BifrostQL.Core.Resolvers
 {
     public interface ISqlExecutionManager
     {
-        public ValueTask<object?> ResolveAsync(IResolveFieldContext context, IDbTable table);
+        public ValueTask<object?> ResolveAsync(IBifrostFieldContext context, IDbTable table);
     }
 
     public sealed class SqlExecutionManager : ISqlExecutionManager
@@ -33,29 +33,30 @@ namespace BifrostQL.Core.Resolvers
             _transformerService = transformerService;
             _observers = observers;
         }
-        public async ValueTask<object?> ResolveAsync(IResolveFieldContext context, IDbTable dbTable)
+        public async ValueTask<object?> ResolveAsync(IBifrostFieldContext context, IDbTable dbTable)
         {
-            if (context.SubFields == null)
+            if (!context.HasSubFields)
                 throw new ArgumentNullException(nameof(context) + ".SubFields");
 
-            var alias = context.FieldAst.Alias?.Name.StringValue;
-            var graphqlName = context.FieldAst.Name.StringValue;
+            var alias = context.FieldAlias;
+            var graphqlName = context.FieldName;
 
             _objectQueries ??= await GetAllObjectQueries(context);
             var table = _objectQueries.First(t => (alias != null && t.Alias == alias) || (alias == null && t.GraphQlName == graphqlName));
 
-            var userContext = context.UserContext as IDictionary<string, object?> ?? new Dictionary<string, object?>();
+            var userContext = context.UserContext;
 
             // Notify Parsed phase
             if (_observers is { Count: > 0 })
             {
+                var pathStr = string.Join(".", context.Path);
                 await _observers.NotifyAsync(QueryPhase.Parsed, new QueryObserverContext
                 {
                     Table = dbTable,
                     Model = _dbModel,
                     UserContext = userContext,
                     QueryType = table.QueryType,
-                    Path = context.Path.ToString() ?? graphqlName,
+                    Path = pathStr.Length > 0 ? pathStr : graphqlName,
                 });
             }
 
@@ -71,18 +72,20 @@ namespace BifrostQL.Core.Resolvers
             // Notify Transformed phase
             if (_observers is { Count: > 0 })
             {
+                var pathStr = string.Join(".", context.Path);
                 await _observers.NotifyAsync(QueryPhase.Transformed, new QueryObserverContext
                 {
                     Table = dbTable,
                     Model = _dbModel,
                     UserContext = userContext,
                     QueryType = table.QueryType,
-                    Path = context.Path.ToString() ?? graphqlName,
+                    Path = pathStr.Length > 0 ? pathStr : graphqlName,
                     Filter = table.Filter,
                 });
             }
 
-            var conFactory = (IDbConnFactory)(context.InputExtensions["connFactory"] ?? throw new InvalidDataException("connection factory is not configured"));
+            var bifrost = new BifrostContextAdapter(context);
+            var conFactory = bifrost.ConnFactory;
 
             var sw = Stopwatch.StartNew();
             var (data, sql) = LoadDataParameterized(table, conFactory);
@@ -91,6 +94,7 @@ namespace BifrostQL.Core.Resolvers
             // Notify AfterExecute phase with timing data
             if (_observers is { Count: > 0 })
             {
+                var pathStr = string.Join(".", context.Path);
                 var totalRows = data.Values.Sum(v => v.data.Count);
                 await _observers.NotifyAsync(QueryPhase.AfterExecute, new QueryObserverContext
                 {
@@ -98,7 +102,7 @@ namespace BifrostQL.Core.Resolvers
                     Model = _dbModel,
                     UserContext = userContext,
                     QueryType = table.QueryType,
-                    Path = context.Path.ToString() ?? graphqlName,
+                    Path = pathStr.Length > 0 ? pathStr : graphqlName,
                     Filter = table.Filter,
                     Sql = sql,
                     RowCount = totalRows,
@@ -121,11 +125,11 @@ namespace BifrostQL.Core.Resolvers
             return new ReaderEnum(table, data);
         }
 
-        private async Task<List<GqlObjectQuery>> GetAllObjectQueries(IResolveFieldContext context)
+        private async Task<List<GqlObjectQuery>> GetAllObjectQueries(IBifrostFieldContext context)
         {
             var visitor = new SqlVisitor();
-            var sqlContext = new SqlContext() { Variables = context.Variables };
-            await visitor.VisitAsync(context.Document, sqlContext);
+            var sqlContext = new SqlContext() { Variables = (Variables)context.Variables };
+            await visitor.VisitAsync((GraphQLParser.AST.GraphQLDocument)context.Document, sqlContext);
 
             var newTables = sqlContext.GetFinalQueries(_dbModel);
             return newTables;
@@ -186,7 +190,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (Exception ex)
             {
-                throw new ExecutionError(ex.Message, ex);
+                throw new BifrostExecutionError(ex.Message, ex);
             }
         }
     }

@@ -6,7 +6,6 @@ namespace BifrostQL.Core.Schema
     {
         protected override void PreConfigure(GraphQL.Types.Schema schema)
         {
-            schema.Directives.Register(new DbDirective());
             schema.RegisterType(new JsonScalarGraphType());
             base.PreConfigure(schema);
         }

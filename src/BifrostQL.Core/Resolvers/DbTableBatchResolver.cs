@@ -8,7 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Core.Resolvers
 {
-    public sealed class DbTableBatchResolver : IFieldResolver
+    public sealed class DbTableBatchResolver : IBifrostResolver, IFieldResolver
     {
         private const int DefaultMaxBatchSize = 100;
         private readonly IDbTable _table;
@@ -18,14 +18,14 @@ namespace BifrostQL.Core.Resolvers
             _table = table;
         }
 
-        public async ValueTask<object?> ResolveAsync(IResolveFieldContext context)
+        public async ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
         {
-            var conFactory = (IDbConnFactory)(context.InputExtensions["connFactory"] ?? throw new InvalidDataException("connection factory is not configured"));
-            var model = (IDbModel)(context.InputExtensions["model"] ?? throw new InvalidDataException("database model is not configured"));
+            var bifrost = new BifrostContextAdapter(context);
+            var conFactory = bifrost.ConnFactory;
+            var model = bifrost.Model;
             var dialect = conFactory.Dialect;
             var modules = context.RequestServices!.GetRequiredService<IMutationModules>();
             var mutationTransformers = context.RequestServices!.GetRequiredService<IMutationTransformers>();
-            modules.OnSave(context);
 
             var actions = context.GetArgument<List<Dictionary<string, object?>>>("actions");
             if (actions == null || actions.Count == 0)
@@ -33,9 +33,9 @@ namespace BifrostQL.Core.Resolvers
 
             var maxBatchSize = GetMaxBatchSize(_table);
             if (actions.Count > maxBatchSize)
-                throw new ExecutionError($"Batch size {actions.Count} exceeds maximum allowed size of {maxBatchSize}.");
+                throw new BifrostExecutionError($"Batch size {actions.Count} exceeds maximum allowed size of {maxBatchSize}.");
 
-            var userContext = context.UserContext as IDictionary<string, object?> ?? new Dictionary<string, object?>();
+            var userContext = context.UserContext;
             var transformContext = new MutationTransformContext { Model = model, UserContext = userContext };
 
             await using var conn = conFactory.GetConnection();
@@ -51,7 +51,7 @@ namespace BifrostQL.Core.Resolvers
                 await transaction.CommitAsync();
                 return totalAffected;
             }
-            catch (ExecutionError)
+            catch (BifrostExecutionError)
             {
                 await transaction.RollbackAsync();
                 throw;
@@ -59,8 +59,15 @@ namespace BifrostQL.Core.Resolvers
             catch (Exception ex)
             {
                 await transaction.RollbackAsync();
-                throw new ExecutionError(ex.Message, ex);
+                throw new BifrostExecutionError(ex.Message, ex);
             }
+        }
+
+        ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
+        {
+            var modules = context.RequestServices!.GetRequiredService<IMutationModules>();
+            modules.OnSave(context);
+            return ResolveAsync(new BifrostFieldContextAdapter(context));
         }
 
         private static int GetMaxBatchSize(IDbTable table)
@@ -174,7 +181,7 @@ namespace BifrostQL.Core.Resolvers
 
             var transformResult = mutationTransformers.Transform(table, MutationType.Delete, data, transformContext);
             if (transformResult.Errors.Length > 0)
-                throw new ExecutionError(string.Join("; ", transformResult.Errors));
+                throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
             if (transformResult.MutationType == MutationType.Update)
             {

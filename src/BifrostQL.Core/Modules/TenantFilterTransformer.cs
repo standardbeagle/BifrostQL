@@ -1,6 +1,6 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
-using GraphQL;
+using BifrostQL.Core.Resolvers;
 
 namespace BifrostQL.Core.Modules;
 
@@ -44,21 +44,21 @@ public sealed class TenantFilterTransformer : IFilterTransformer
         // Get tenant ID from user context - this is required for security
         if (!context.UserContext.TryGetValue(tenantContextKey, out var tenantId))
         {
-            throw new ExecutionError(
+            throw new BifrostExecutionError(
                 $"Tenant context required but not found. " +
                 $"Expected '{tenantContextKey}' in user context for table '{fullTableName}'.");
         }
 
         if (tenantId == null)
         {
-            throw new ExecutionError(
+            throw new BifrostExecutionError(
                 $"Tenant ID cannot be null for table '{fullTableName}'.");
         }
 
         // Verify the column exists
         if (!table.ColumnLookup.ContainsKey(columnName))
         {
-            throw new ExecutionError(
+            throw new BifrostExecutionError(
                 $"Tenant filter column '{columnName}' not found in table '{fullTableName}'.");
         }
 

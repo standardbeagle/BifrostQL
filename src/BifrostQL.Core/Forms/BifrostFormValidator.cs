@@ -60,6 +60,10 @@ namespace BifrostQL.Core.Forms
             if (mode == FormMode.Delete)
                 return !column.IsPrimaryKey;
 
+            // Skip primary keys during Insert/Update (they're typically auto-generated or set via WHERE clause)
+            if (mode != FormMode.Delete && column.IsPrimaryKey)
+                return true;
+
             return false;
         }
 

@@ -42,38 +42,27 @@ public sealed class SqliteSchemaReader : ISchemaReader
                 var columnName = (string)colReader["name"];
                 var dataType = (string)colReader["type"];
                 var notNull = ((long)colReader["notnull"]) == 1;
-                var defaultValue = colReader["dflt_value"] is DBNull ? null : colReader["dflt_value"]?.ToString();
                 var isPk = ((long)colReader["pk"]) > 0;
 
                 // SQLite AUTOINCREMENT is detected via INTEGER PRIMARY KEY
                 var isIdentity = isPk && dataType.Equals("INTEGER", StringComparison.OrdinalIgnoreCase);
+                var columnRef = new ColumnRef("main", "main", tableName, columnName);
 
-                var column = new ColumnDto(
-                    TableCatalog: "main",
-                    TableSchema: "main",
-                    TableName: tableName,
-                    ColumnName: columnName,
-                    OrdinalPosition: ordinal++,
-                    ColumnDefault: defaultValue,
-                    IsNullable: notNull ? "NO" : "YES",
-                    DataType: dataType,
-                    CharacterMaximumLength: null,
-                    CharacterOctetLength: null,
-                    NumericPrecision: null,
-                    NumericPrecisionRadix: null,
-                    NumericScale: null,
-                    DateTimePrecision: null,
-                    CharacterSetCatalog: null,
-                    CharacterSetSchema: null,
-                    CharacterSetName: null,
-                    CollationCatalog: null,
-                    CollationSchema: null,
-                    CollationName: null,
-                    DomainCatalog: null,
-                    DomainSchema: null,
-                    DomainName: null,
-                    IsIdentity: isIdentity
-                );
+                var column = new ColumnDto
+                {
+                    TableCatalog = "main",
+                    TableSchema = "main",
+                    TableName = tableName,
+                    ColumnName = columnName,
+                    GraphQlName = columnName.ToGraphQl("col"),
+                    NormalizedName = columnName,
+                    ColumnRef = columnRef,
+                    DataType = dataType,
+                    IsNullable = !notNull,
+                    OrdinalPosition = ordinal++,
+                    IsIdentity = isIdentity,
+                    IsPrimaryKey = isPk,
+                };
 
                 tableColumns.Add(column);
                 allColumns.Add(column);
@@ -81,20 +70,20 @@ public sealed class SqliteSchemaReader : ISchemaReader
                 // Add PRIMARY KEY constraint
                 if (isPk)
                 {
-                    var colRef = new ColumnRef("main", "main", tableName, columnName);
-                    if (!columnConstraints.ContainsKey(colRef))
-                        columnConstraints[colRef] = new List<ColumnConstraintDto>();
+                    if (!columnConstraints.ContainsKey(columnRef))
+                        columnConstraints[columnRef] = new List<ColumnConstraintDto>();
 
-                    columnConstraints[colRef].Add(new ColumnConstraintDto(
-                        TableCatalog: "main",
-                        TableSchema: "main",
-                        TableName: tableName,
-                        ColumnName: columnName,
-                        ConstraintCatalog: "main",
-                        ConstraintSchema: "main",
-                        ConstraintName: $"PK_{tableName}",
-                        ConstraintType: "PRIMARY KEY"
-                    ));
+                    columnConstraints[columnRef].Add(new ColumnConstraintDto
+                    {
+                        ConstraintCatalog = "main",
+                        ConstraintSchema = "main",
+                        ConstraintName = $"PK_{tableName}",
+                        TableCatalog = "main",
+                        TableSchema = "main",
+                        TableName = tableName,
+                        ColumnName = columnName,
+                        ConstraintType = "PRIMARY KEY",
+                    });
                 }
             }
 
@@ -112,25 +101,30 @@ public sealed class SqliteSchemaReader : ISchemaReader
                     columnConstraints[colRef] = new List<ColumnConstraintDto>();
 
                 var fkId = (long)fkReader["id"];
-                columnConstraints[colRef].Add(new ColumnConstraintDto(
-                    TableCatalog: "main",
-                    TableSchema: "main",
-                    TableName: tableName,
-                    ColumnName: columnName,
-                    ConstraintCatalog: "main",
-                    ConstraintSchema: "main",
-                    ConstraintName: $"FK_{tableName}_{fkId}",
-                    ConstraintType: "FOREIGN KEY"
-                ));
+                columnConstraints[colRef].Add(new ColumnConstraintDto
+                {
+                    ConstraintCatalog = "main",
+                    ConstraintSchema = "main",
+                    ConstraintName = $"FK_{tableName}_{fkId}",
+                    TableCatalog = "main",
+                    TableSchema = "main",
+                    TableName = tableName,
+                    ColumnName = columnName,
+                    ConstraintType = "FOREIGN KEY",
+                });
             }
 
-            var dbTable = new DbTable(
-                TableCatalog: "main",
-                TableSchema: "main",
-                TableName: tableName,
-                TableType: tableType == "view" ? "VIEW" : "BASE TABLE",
-                Columns: tableColumns.ToArray()
-            );
+            var graphQlName = tableName.ToGraphQl("tbl");
+            var dbTable = new DbTable
+            {
+                DbName = tableName,
+                GraphQlName = graphQlName,
+                NormalizedName = new Pluralize.NET.Core.Pluralizer().Singularize(tableName),
+                TableSchema = "main",
+                TableType = tableType == "view" ? "VIEW" : "BASE TABLE",
+                ColumnLookup = tableColumns.ToDictionary(c => c.ColumnName, StringComparer.OrdinalIgnoreCase),
+                GraphQlLookup = tableColumns.ToDictionary(c => c.GraphQlName, StringComparer.OrdinalIgnoreCase),
+            };
 
             tables.Add(dbTable);
         }

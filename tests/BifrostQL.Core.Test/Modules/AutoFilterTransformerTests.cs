@@ -147,7 +147,7 @@ public class AutoFilterTransformerTests
         var table = model.GetTableFromDbName("Orders");
         var context = CreateContext(model);
 
-        var ex = Assert.Throws<ExecutionError>(() => transformer.GetAdditionalFilter(table, context));
+        var ex = Assert.Throws<BifrostQL.Core.Resolvers.BifrostExecutionError>(() => transformer.GetAdditionalFilter(table, context));
         Assert.Contains("organization_id", ex.Message);
         Assert.Contains("required but not found", ex.Message);
     }
@@ -163,7 +163,7 @@ public class AutoFilterTransformerTests
             ["organization_id"] = null
         });
 
-        var ex = Assert.Throws<ExecutionError>(() => transformer.GetAdditionalFilter(table, context));
+        var ex = Assert.Throws<BifrostQL.Core.Resolvers.BifrostExecutionError>(() => transformer.GetAdditionalFilter(table, context));
         Assert.Contains("cannot be null", ex.Message);
     }
 
@@ -185,7 +185,7 @@ public class AutoFilterTransformerTests
             ["some_claim"] = 1
         });
 
-        var ex = Assert.Throws<ExecutionError>(() => transformer.GetAdditionalFilter(table, context));
+        var ex = Assert.Throws<BifrostQL.Core.Resolvers.BifrostExecutionError>(() => transformer.GetAdditionalFilter(table, context));
         Assert.Contains("not found in table", ex.Message);
     }
 
@@ -251,7 +251,7 @@ public class AutoFilterTransformerTests
             // Missing user_region
         });
 
-        var ex = Assert.Throws<ExecutionError>(() => transformer.GetAdditionalFilter(table, context));
+        var ex = Assert.Throws<BifrostQL.Core.Resolvers.BifrostExecutionError>(() => transformer.GetAdditionalFilter(table, context));
         Assert.Contains("user_region", ex.Message);
     }
 
@@ -290,7 +290,7 @@ public class AutoFilterTransformerTests
             ["organization_ids"] = Array.Empty<object>()
         });
 
-        var ex = Assert.Throws<ExecutionError>(() => transformer.GetAdditionalFilter(table, context));
+        var ex = Assert.Throws<BifrostQL.Core.Resolvers.BifrostExecutionError>(() => transformer.GetAdditionalFilter(table, context));
         Assert.Contains("cannot be empty", ex.Message);
     }
 
@@ -407,7 +407,7 @@ public class AutoFilterTransformerTests
             ["org_id_only"] = 1
         });
 
-        var ex = Assert.Throws<ExecutionError>(() => transformer.GetAdditionalFilter(table, context));
+        var ex = Assert.Throws<BifrostQL.Core.Resolvers.BifrostExecutionError>(() => transformer.GetAdditionalFilter(table, context));
         Assert.Contains("Expected format", ex.Message);
     }
 
@@ -426,7 +426,7 @@ public class AutoFilterTransformerTests
         var table = model.GetTableFromDbName("Orders");
         var context = CreateContext(model, new Dictionary<string, object?> { ["claim"] = 1 });
 
-        var ex = Assert.Throws<ExecutionError>(() => transformer.GetAdditionalFilter(table, context));
+        var ex = Assert.Throws<BifrostQL.Core.Resolvers.BifrostExecutionError>(() => transformer.GetAdditionalFilter(table, context));
         Assert.Contains("Expected format", ex.Message);
     }
 
@@ -445,7 +445,7 @@ public class AutoFilterTransformerTests
         var table = model.GetTableFromDbName("Orders");
         var context = CreateContext(model);
 
-        var ex = Assert.Throws<ExecutionError>(() => transformer.GetAdditionalFilter(table, context));
+        var ex = Assert.Throws<BifrostQL.Core.Resolvers.BifrostExecutionError>(() => transformer.GetAdditionalFilter(table, context));
         Assert.Contains("Expected format", ex.Message);
     }
 

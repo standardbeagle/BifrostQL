@@ -19,6 +19,15 @@ This directory contains BenchmarkDotNet performance tests comparing BifrostQL's 
 
 **Conclusion:** Protobuf provides 25-56% payload size reduction compared to JSON, with the largest savings for small payloads (single rows). At scale (100+ rows), protobuf consistently delivers ~25% bandwidth savings.
 
+### Throughput Comparison (Messages per Second)
+
+| Benchmark | Protobuf | JSON | **Protobuf Advantage** |
+|-----------|----------|------|------------------------|
+| Query roundtrip | 1.222 μs | 4.944 μs | **4.0x faster** ⚡ |
+| Result roundtrip (50 rows) | 7.026 μs | 10.731 μs | **1.5x faster** ⚡ |
+
+**Conclusion:** Protobuf delivers 4x faster query processing and 1.5x faster result processing. Combined with 25-56% size reduction, binary transport provides substantial performance improvements across both latency and bandwidth dimensions.
+
 ### Benchmark Categories
 
 1. **BifrostMessageBenchmarks.cs**

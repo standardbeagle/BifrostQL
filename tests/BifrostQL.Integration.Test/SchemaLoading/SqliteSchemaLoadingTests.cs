@@ -30,7 +30,7 @@ public class SqliteSchemaLoadingTests : IAsyncLifetime
 
         // Load schema using DbModelLoader
         var factory = new SqliteDbConnFactory(_connectionString);
-        var metadataLoader = new MetadataLoader();
+        var metadataLoader = new MetadataLoader(Array.Empty<string>());
         var loader = new DbModelLoader(factory, metadataLoader);
         _loadedModel = await loader.LoadAsync();
     }

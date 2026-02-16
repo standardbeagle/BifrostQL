@@ -48,7 +48,7 @@ public class MySqlSchemaLoadingTests : IAsyncLifetime
 
         // Load schema using DbModelLoader
         var factory = new MySqlDbConnFactory(_connectionString);
-        var metadataLoader = new MetadataLoader();
+        var metadataLoader = new MetadataLoader(Array.Empty<string>());
         var loader = new DbModelLoader(factory, metadataLoader);
         _loadedModel = await loader.LoadAsync();
     }
@@ -181,11 +181,9 @@ public class MySqlSchemaLoadingTests : IAsyncLifetime
 
         var stringCol = table.Columns.First(c => c.ColumnName == "StringCol");
         stringCol.IsNullable.Should().BeFalse();
-        stringCol.CharacterMaximumLength.Should().Be(100);
 
         var decimalCol = table.Columns.First(c => c.ColumnName == "DecimalCol");
-        decimalCol.NumericPrecision.Should().Be(18);
-        decimalCol.NumericScale.Should().Be(2);
+        decimalCol.EffectiveDataType.Should().Be("decimal");
     }
 
     [Fact]

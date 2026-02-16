@@ -27,13 +27,12 @@ public abstract class FullIntegrationTestBase
         await createSchema(Connection);
 
         // Load schema using DbModelLoader
-        var metadataLoader = new MetadataLoader();
+        var metadataLoader = new MetadataLoader(Array.Empty<string>());
         var loader = new DbModelLoader(connFactory, metadataLoader);
         Model = await loader.LoadAsync();
 
         // Build GraphQL schema from loaded model
-        var builder = new DbSchemaBuilder(Model);
-        GraphQLSchema = builder.Build();
+        GraphQLSchema = DbSchema.FromModel(Model);
 
         // Seed test data
         await seedData(Connection);

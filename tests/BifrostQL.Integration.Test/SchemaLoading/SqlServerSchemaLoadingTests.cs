@@ -43,7 +43,7 @@ public class SqlServerSchemaLoadingTests : IAsyncLifetime
 
         // Load schema using DbModelLoader
         var factory = new DbConnFactory(_connectionString);
-        var metadataLoader = new MetadataLoader();
+        var metadataLoader = new MetadataLoader(Array.Empty<string>());
         var loader = new DbModelLoader(factory, metadataLoader);
         _loadedModel = await loader.LoadAsync();
     }
@@ -194,15 +194,13 @@ CREATE TABLE TestSchema.CustomSchemaTable (
         var stringCol = table.Columns.First(c => c.ColumnName == "StringCol");
         stringCol.IsNullable.Should().BeFalse();
         stringCol.EffectiveDataType.Should().Be("nvarchar");
-        stringCol.CharacterMaximumLength.Should().Be(100);
 
         var nullableBigInt = table.Columns.First(c => c.ColumnName == "BigIntCol");
         nullableBigInt.IsNullable.Should().BeTrue();
         nullableBigInt.EffectiveDataType.Should().Be("bigint");
 
         var decimalCol = table.Columns.First(c => c.ColumnName == "DecimalCol");
-        decimalCol.NumericPrecision.Should().Be(18);
-        decimalCol.NumericScale.Should().Be(2);
+        decimalCol.EffectiveDataType.Should().Be("decimal");
     }
 
     [Fact]

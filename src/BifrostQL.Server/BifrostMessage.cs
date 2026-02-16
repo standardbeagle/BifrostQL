@@ -5,6 +5,8 @@ namespace BifrostQL.Server
     /// <summary>
     /// Message type for binary transport requests and responses.
     /// Chunk and ChunkAck are used for payloads exceeding the chunk threshold.
+    /// Resume and ResumeAck are used for reconnection and chunk retransmission.
+    /// ChunkNack requests retransmission of a specific chunk on checksum mismatch.
     /// </summary>
     public enum BifrostMessageType
     {
@@ -14,6 +16,9 @@ namespace BifrostQL.Server
         Error = 3,
         Chunk = 4,
         ChunkAck = 5,
+        Resume = 6,
+        ResumeAck = 7,
+        ChunkNack = 8,
     }
 
     /// <summary>
@@ -30,6 +35,7 @@ namespace BifrostQL.Server
     ///   field 9: chunk_offset (uint64, varint) - byte offset of this chunk in the full payload
     ///   field 10: total_bytes (uint64, varint) - total payload size before chunking
     ///   field 11: chunk_checksum (uint32, varint) - CRC32 of this chunk's payload
+    ///   field 12: last_sequence (uint32, varint) - last received chunk sequence (Resume messages)
     ///
     /// This uses Google.Protobuf's CodedOutputStream/CodedInputStream directly
     /// for maximum compatibility with any protobuf client library.
@@ -43,7 +49,7 @@ namespace BifrostQL.Server
         public uint RequestId { get; set; }
 
         /// <summary>
-        /// The message type (Query, Mutation, Result, Error, Chunk, ChunkAck).
+        /// The message type (Query, Mutation, Result, Error, Chunk, ChunkAck, Resume, ResumeAck, ChunkNack).
         /// </summary>
         public BifrostMessageType Type { get; set; }
 
@@ -95,6 +101,13 @@ namespace BifrostQL.Server
         /// </summary>
         public uint ChunkChecksum { get; set; }
 
+        /// <summary>
+        /// The last successfully received chunk sequence number. Set on Resume messages
+        /// so the server knows which chunks to retransmit.
+        /// A value of uint.MaxValue means no chunks were received (start from 0).
+        /// </summary>
+        public uint LastSequence { get; set; }
+
         // Protobuf field tags (field number << 3 | wire type)
         private const int RequestIdTag = (1 << 3) | 0;        // varint
         private const int TypeTag = (2 << 3) | 0;              // varint
@@ -107,6 +120,7 @@ namespace BifrostQL.Server
         private const int ChunkOffsetTag = (9 << 3) | 0;       // varint
         private const int TotalBytesTag = (10 << 3) | 0;       // varint
         private const int ChunkChecksumTag = (11 << 3) | 0;    // varint
+        private const int LastSequenceTag = (12 << 3) | 0;     // varint
 
         /// <summary>
         /// Serializes this message to protobuf wire format.
@@ -182,6 +196,12 @@ namespace BifrostQL.Server
                 output.WriteUInt32(ChunkChecksum);
             }
 
+            if (LastSequence != 0)
+            {
+                output.WriteTag(LastSequenceTag);
+                output.WriteUInt32(LastSequence);
+            }
+
             output.Flush();
             return memStream.ToArray();
         }
@@ -239,6 +259,9 @@ namespace BifrostQL.Server
                         break;
                     case ChunkChecksumTag:
                         msg.ChunkChecksum = input.ReadUInt32();
+                        break;
+                    case LastSequenceTag:
+                        msg.LastSequence = input.ReadUInt32();
                         break;
                     default:
                         input.SkipLastField();

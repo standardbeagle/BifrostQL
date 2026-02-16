@@ -26,13 +26,20 @@ namespace BifrostQL.Server
 
         private readonly int _chunkThreshold;
         private readonly int _ackWindow;
+        private readonly ChunkBuffer? _chunkBuffer;
 
         public ChunkSender(int chunkThreshold = DefaultChunkThreshold, int ackWindow = DefaultAckWindow)
+            : this(chunkThreshold, ackWindow, null)
+        {
+        }
+
+        public ChunkSender(int chunkThreshold, int ackWindow, ChunkBuffer? chunkBuffer)
         {
             if (chunkThreshold <= 0) throw new ArgumentOutOfRangeException(nameof(chunkThreshold));
             if (ackWindow <= 0) throw new ArgumentOutOfRangeException(nameof(ackWindow));
             _chunkThreshold = chunkThreshold;
             _ackWindow = ackWindow;
+            _chunkBuffer = chunkBuffer;
         }
 
         /// <summary>
@@ -84,7 +91,8 @@ namespace BifrostQL.Server
         /// <summary>
         /// Sends chunked messages over a WebSocket with backpressure. The sender tracks
         /// unacknowledged chunks and pauses when the window is full, waiting for ChunkAck
-        /// messages from the client before continuing.
+        /// messages from the client before continuing. If a ChunkBuffer is configured,
+        /// chunks are stored for potential retransmission on reconnect or checksum mismatch.
         /// </summary>
         /// <param name="webSocket">The WebSocket connection.</param>
         /// <param name="response">The response to send (will be chunked if above threshold).</param>
@@ -97,11 +105,28 @@ namespace BifrostQL.Server
             CancellationToken cancellationToken)
         {
             var chunks = SplitIntoChunks(response);
+            await SendChunksAsync(webSocket, chunks, 0, receiveBuffer, cancellationToken);
+        }
+
+        /// <summary>
+        /// Sends chunks starting from a given index, storing each in the chunk buffer
+        /// if one is configured. Used both for initial sends and resume retransmissions.
+        /// </summary>
+        internal async Task SendChunksAsync(
+            WebSocket webSocket,
+            IReadOnlyList<BifrostMessage> chunks,
+            int startIndex,
+            byte[] receiveBuffer,
+            CancellationToken cancellationToken)
+        {
             var unacked = 0;
 
-            for (var i = 0; i < chunks.Count; i++)
+            for (var i = startIndex; i < chunks.Count; i++)
             {
-                var chunkBytes = chunks[i].ToBytes();
+                var chunk = chunks[i];
+                _chunkBuffer?.Add(chunk.RequestId, chunk.ChunkSequence, chunk);
+
+                var chunkBytes = chunk.ToBytes();
                 await webSocket.SendAsync(
                     new ArraySegment<byte>(chunkBytes),
                     WebSocketMessageType.Binary,
@@ -115,13 +140,17 @@ namespace BifrostQL.Server
                 {
                     if (unacked >= _ackWindow)
                     {
-                        // Window full: must wait for at least one ACK
-                        var acksReceived = await WaitForAckAsync(webSocket, receiveBuffer, cancellationToken);
-                        unacked -= acksReceived;
+                        // Window full: must wait for at least one ACK or NACK
+                        var result = await WaitForAckAsync(webSocket, receiveBuffer, cancellationToken);
+                        if (result.acksReceived > 0)
+                            unacked -= result.acksReceived;
+                        if (result.nackSequence.HasValue)
+                        {
+                            await RetransmitChunkAsync(webSocket, chunk.RequestId, result.nackSequence.Value, cancellationToken);
+                        }
                     }
                     else
                     {
-                        // Under window: try non-blocking drain of any queued ACKs
                         break;
                     }
                 }
@@ -129,10 +158,10 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
-        /// Waits for a single ACK message from the client. Returns the number of ACKs
-        /// received (always 1 on success, but could be extended for batch ACKs).
+        /// Waits for a single ACK or NACK message from the client.
+        /// Returns the number of ACKs received and optionally a NACK sequence for retransmission.
         /// </summary>
-        private static async Task<int> WaitForAckAsync(
+        private static async Task<(int acksReceived, uint? nackSequence)> WaitForAckAsync(
             WebSocket webSocket,
             byte[] receiveBuffer,
             CancellationToken cancellationToken)
@@ -145,16 +174,41 @@ namespace BifrostQL.Server
                 throw new WebSocketException(WebSocketError.ConnectionClosedPrematurely);
 
             if (result.MessageType != WebSocketMessageType.Binary || result.Count == 0)
-                return 0;
+                return (0, null);
 
             var ackData = new byte[result.Count];
             Buffer.BlockCopy(receiveBuffer, 0, ackData, 0, result.Count);
             var ackMsg = BifrostMessage.FromBytes(ackData);
 
             if (ackMsg.Type == BifrostMessageType.ChunkAck)
-                return 1;
+                return (1, null);
 
-            return 0;
+            if (ackMsg.Type == BifrostMessageType.ChunkNack)
+                return (0, ackMsg.ChunkSequence);
+
+            return (0, null);
+        }
+
+        /// <summary>
+        /// Retransmits a specific chunk from the buffer. If the buffer does not contain
+        /// the chunk (expired or no buffer configured), this is a no-op.
+        /// </summary>
+        private async Task RetransmitChunkAsync(
+            WebSocket webSocket,
+            uint requestId,
+            uint sequence,
+            CancellationToken cancellationToken)
+        {
+            var chunk = _chunkBuffer?.TryGet(requestId, sequence);
+            if (chunk == null)
+                return;
+
+            var chunkBytes = chunk.ToBytes();
+            await webSocket.SendAsync(
+                new ArraySegment<byte>(chunkBytes),
+                WebSocketMessageType.Binary,
+                endOfMessage: true,
+                cancellationToken);
         }
 
         /// <summary>

@@ -124,10 +124,7 @@ function canAccessWindow(): boolean {
   return typeof window !== 'undefined';
 }
 
-function computeBuiltinAggregate(
-  fn: AggregateFn,
-  values: number[],
-): number {
+function computeBuiltinAggregate(fn: AggregateFn, values: number[]): number {
   if (values.length === 0) return 0;
   switch (fn) {
     case 'count':
@@ -183,11 +180,11 @@ export function useBifrostTable<T = Record<string, unknown>>(
   );
   const [selectedRows, setSelectedRows] = useState<T[]>([]);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
-  const [visibleColumns, setVisibleColumns] = useState<string[]>(
-    () => columns.map((c) => c.field),
+  const [visibleColumns, setVisibleColumns] = useState<string[]>(() =>
+    columns.map((c) => c.field),
   );
-  const [columnOrder, setColumnOrder] = useState<string[]>(
-    () => columns.map((c) => c.field),
+  const [columnOrder, setColumnOrder] = useState<string[]>(() =>
+    columns.map((c) => c.field),
   );
 
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout>>();
@@ -239,9 +236,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
   );
 
   const fields = useMemo(
-    () =>
-      fieldsProp ??
-      columns.filter((c) => !c.computed).map((c) => c.field),
+    () => fieldsProp ?? columns.filter((c) => !c.computed).map((c) => c.field),
     [fieldsProp, columns],
   );
 
@@ -270,11 +265,8 @@ export function useBifrostTable<T = Record<string, unknown>>(
     const result: Record<string, unknown> = {};
     for (const [key, config] of Object.entries(aggregateConfigs)) {
       if (typeof config.fn === 'function') {
-        const values = dataWithComputed.map(
-          (row) =>
-            config.field
-              ? (row as Record<string, unknown>)[config.field]
-              : row,
+        const values = dataWithComputed.map((row) =>
+          config.field ? (row as Record<string, unknown>)[config.field] : row,
         );
         result[key] = config.fn(values);
       } else {
@@ -326,9 +318,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
 
   const toggleColumn = useCallback((field: string) => {
     setVisibleColumns((prev) =>
-      prev.includes(field)
-        ? prev.filter((f) => f !== field)
-        : [...prev, field],
+      prev.includes(field) ? prev.filter((f) => f !== field) : [...prev, field],
     );
   }, []);
 

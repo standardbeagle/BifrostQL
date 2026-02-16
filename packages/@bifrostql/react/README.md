@@ -10,11 +10,11 @@ npm install @bifrostql/react @tanstack/react-query react react-dom
 
 ### Peer Dependencies
 
-| Package | Version |
-|---------|---------|
-| `react` | >= 18.0.0 |
-| `react-dom` | >= 18.0.0 |
-| `@tanstack/react-query` | >= 5.0.0 |
+| Package                 | Version   |
+| ----------------------- | --------- |
+| `react`                 | >= 18.0.0 |
+| `react-dom`             | >= 18.0.0 |
+| `@tanstack/react-query` | >= 5.0.0  |
 
 ## Quick Start
 
@@ -74,7 +74,9 @@ import { useBifrost } from '@bifrostql/react';
 
 const { data, isLoading, error, invalidate } = useBifrost<MyType>(
   '{ users { id name } }',
-  { /* variables */ },
+  {
+    /* variables */
+  },
   {
     enabled: true,
     staleTime: 5000,
@@ -97,21 +99,22 @@ Table-oriented query hook with built-in filter, sort, and pagination support.
 ```tsx
 import { useBifrostQuery } from '@bifrostql/react';
 
-const { data, isLoading, error, invalidate } = useBifrostQuery<User[]>('users', {
-  fields: ['id', 'name', 'email', 'created_at'],
-  filter: {
-    active: true,
-    age: { _gte: 18 },
-    role: { _in: ['admin', 'editor'] },
+const { data, isLoading, error, invalidate } = useBifrostQuery<User[]>(
+  'users',
+  {
+    fields: ['id', 'name', 'email', 'created_at'],
+    filter: {
+      active: true,
+      age: { _gte: 18 },
+      role: { _in: ['admin', 'editor'] },
+    },
+    sort: [{ field: 'name', direction: 'asc' }],
+    pagination: { limit: 50, offset: 0 },
+    // TanStack Query options
+    staleTime: 10000,
+    refetchOnWindowFocus: 'always',
   },
-  sort: [
-    { field: 'name', direction: 'asc' },
-  ],
-  pagination: { limit: 50, offset: 0 },
-  // TanStack Query options
-  staleTime: 10000,
-  refetchOnWindowFocus: 'always',
-});
+);
 ```
 
 **Filter operators:** `_eq`, `_neq`, `_gt`, `_gte`, `_lt`, `_lte`, `_in`, `_nin`, `_contains`, `_ncontains`, `_starts_with`, `_ends_with`, `_null`, `_nnull`
@@ -138,8 +141,8 @@ mutation.mutate({ detail: { name: 'Alice', email: 'alice@example.com' } });
 
 **Mutation builders:**
 
-| Builder | GraphQL Output |
-|---------|---------------|
+| Builder                        | GraphQL Output                                                      |
+| ------------------------------ | ------------------------------------------------------------------- |
 | `buildInsertMutation('users')` | `mutation Insert($detail: Insert_users) { users(insert: $detail) }` |
 | `buildUpdateMutation('users')` | `mutation Update($detail: Update_users) { users(update: $detail) }` |
 | `buildUpsertMutation('users')` | `mutation Upsert($detail: Upsert_users) { users(upsert: $detail) }` |
@@ -177,17 +180,18 @@ Real-time data via WebSocket (graphql-transport-ws protocol) or Server-Sent Even
 ```tsx
 import { useBifrostSubscription } from '@bifrostql/react';
 
-const { data, connectionState, isConnected, error } =
-  useBifrostSubscription<{ orderUpdated: Order }>({
-    subscription: 'subscription { orderUpdated { id status total } }',
-    variables: {},
-    transport: 'auto',         // 'websocket' | 'sse' | 'auto'
-    enabled: true,
-    reconnectAttempts: 5,
-    reconnectBaseDelay: 1000,   // exponential backoff, max 30s
-    onData: (data) => console.log('Update:', data),
-    onError: (error) => console.error('Error:', error),
-  });
+const { data, connectionState, isConnected, error } = useBifrostSubscription<{
+  orderUpdated: Order;
+}>({
+  subscription: 'subscription { orderUpdated { id status total } }',
+  variables: {},
+  transport: 'auto', // 'websocket' | 'sse' | 'auto'
+  enabled: true,
+  reconnectAttempts: 5,
+  reconnectBaseDelay: 1000, // exponential backoff, max 30s
+  onData: (data) => console.log('Update:', data),
+  onError: (error) => console.error('Error:', error),
+});
 ```
 
 **Connection states:** `connecting`, `connected`, `disconnected`, `error`
@@ -202,7 +206,7 @@ import { useBifrostDiff } from '@bifrostql/react';
 const { mutate, preview, setLastKnown } = useBifrostDiff({
   table: 'users',
   idField: 'id',
-  strategy: 'deep',  // 'shallow' | 'deep'
+  strategy: 'deep', // 'shallow' | 'deep'
   invalidateQueries: ['users'],
 });
 
@@ -241,7 +245,12 @@ mutate([
   { type: 'insert', table: 'users', data: { name: 'Bob' } },
   { type: 'update', table: 'users', id: 1, data: { name: 'Alice Updated' } },
   { type: 'delete', table: 'users', id: 99 },
-  { type: 'upsert', table: 'users', key: { email: 'bob@example.com' }, data: { name: 'Bob' } },
+  {
+    type: 'upsert',
+    table: 'users',
+    key: { email: 'bob@example.com' },
+    data: { name: 'Bob' },
+  },
 ]);
 ```
 
@@ -272,7 +281,7 @@ const table = useBifrostTable<User>({
   defaultFilters: {},
   multiSort: false,
   rowKey: 'id',
-  urlSync: true,  // or { enabled: true, prefix: 'users', debounceMs: 500 }
+  urlSync: true, // or { enabled: true, prefix: 'users', debounceMs: 500 }
   expandable: true,
   aggregates: {
     total: { fn: 'count' },
@@ -319,7 +328,7 @@ function UsersPage() {
     <BifrostTable
       query="users"
       columns={columns}
-      theme="modern"          // 'modern' | 'classic' | 'minimal' | 'dense'
+      theme="modern" // 'modern' | 'classic' | 'minimal' | 'dense'
       striped
       hoverable
       editable
@@ -434,23 +443,23 @@ const options = parseTableParams(searchParams);
 
 These are also exported from the main entry point for direct use.
 
-| Utility | Purpose |
-|---------|---------|
-| `buildGraphqlQuery(table, options)` | Build a GraphQL query string from table name and options |
-| `executeGraphQL(endpoint, headers, query, variables?)` | Execute a GraphQL request via `fetch` |
-| `buildMutation(table, type)` | Build a mutation string for any operation type |
-| `buildInsertMutation(table)` | Shorthand for insert mutations |
-| `buildUpdateMutation(table)` | Shorthand for update mutations |
-| `buildUpsertMutation(table)` | Shorthand for upsert mutations |
-| `buildDeleteMutation(table)` | Shorthand for delete mutations |
-| `diff(original, updated, strategy?)` | Compute changed fields between two objects |
-| `detectConflicts(base, current, incoming)` | Detect three-way merge conflicts |
-| `serializeSort(sort)` | Serialize sort state to a URL-safe string |
-| `parseSort(raw)` | Parse a serialized sort string |
-| `serializeFilter(filter)` | Serialize filter state to JSON |
-| `parseFilter(raw)` | Parse a serialized filter string |
-| `writeToUrl(state, prefix)` | Write table state to URL search parameters |
-| `readFromUrl(prefix)` | Read table state from URL search parameters |
+| Utility                                                | Purpose                                                  |
+| ------------------------------------------------------ | -------------------------------------------------------- |
+| `buildGraphqlQuery(table, options)`                    | Build a GraphQL query string from table name and options |
+| `executeGraphQL(endpoint, headers, query, variables?)` | Execute a GraphQL request via `fetch`                    |
+| `buildMutation(table, type)`                           | Build a mutation string for any operation type           |
+| `buildInsertMutation(table)`                           | Shorthand for insert mutations                           |
+| `buildUpdateMutation(table)`                           | Shorthand for update mutations                           |
+| `buildUpsertMutation(table)`                           | Shorthand for upsert mutations                           |
+| `buildDeleteMutation(table)`                           | Shorthand for delete mutations                           |
+| `diff(original, updated, strategy?)`                   | Compute changed fields between two objects               |
+| `detectConflicts(base, current, incoming)`             | Detect three-way merge conflicts                         |
+| `serializeSort(sort)`                                  | Serialize sort state to a URL-safe string                |
+| `parseSort(raw)`                                       | Parse a serialized sort string                           |
+| `serializeFilter(filter)`                              | Serialize filter state to JSON                           |
+| `parseFilter(raw)`                                     | Parse a serialized filter string                         |
+| `writeToUrl(state, prefix)`                            | Write table state to URL search parameters               |
+| `readFromUrl(prefix)`                                  | Read table state from URL search parameters              |
 
 ## API Reference
 

@@ -1352,8 +1352,7 @@ describe('useBifrostTable', () => {
       const aggregates: Record<string, AggregateConfig> = {
         product: {
           field: 'quantity',
-          fn: (values) =>
-            (values as number[]).reduce((a, b) => a * b, 1),
+          fn: (values) => (values as number[]).reduce((a, b) => a * b, 1),
         },
       };
 
@@ -1376,8 +1375,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { orders: mockOrders } });
 
       const { result } = renderHook(
-        () =>
-          useBifrostTable({ query: 'orders', columns: orderColumns }),
+        () => useBifrostTable({ query: 'orders', columns: orderColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -1590,9 +1588,7 @@ describe('useBifrostTable', () => {
       act(() => {
         result.current.columnManagement.toggleColumn('email');
       });
-      expect(result.current.columnManagement.visibleColumns).toContain(
-        'email',
-      );
+      expect(result.current.columnManagement.visibleColumns).toContain('email');
     });
 
     it('initializes columnOrder from column config', async () => {

@@ -4,8 +4,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { BifrostProvider } from '../components/bifrost-provider';
 import { useBifrostTable } from './use-bifrost-table';
-import type { ColumnConfig, AggregateConfig } from './use-bifrost-table';
-import type { UrlSyncConfig } from './use-bifrost-table';
+import type {
+  ColumnConfig,
+  AggregateConfig,
+  UrlSyncConfig,
+  CustomSortFn,
+} from './use-bifrost-table';
 
 function createFetchMock(response: unknown, ok = true, status = 200) {
   return vi.fn().mockResolvedValue({
@@ -1648,6 +1652,947 @@ describe('useBifrostTable', () => {
         'id',
         'name',
         'email',
+      ]);
+    });
+  });
+
+  describe('multi-column sort helpers', () => {
+    it('toggleSort with multi=true appends sort even when multiSort option is false', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            multiSort: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.sorting.toggleSort('name');
+      });
+      act(() => {
+        result.current.sorting.toggleSort('email', true);
+      });
+      expect(result.current.sorting.current).toEqual([
+        { field: 'name', direction: 'asc' },
+        { field: 'email', direction: 'asc' },
+      ]);
+    });
+
+    it('toggleSort with multi=false replaces sort even when multiSort option is true', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            multiSort: true,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.sorting.toggleSort('name');
+      });
+      act(() => {
+        result.current.sorting.toggleSort('email', false);
+      });
+      expect(result.current.sorting.current).toEqual([
+        { field: 'email', direction: 'asc' },
+      ]);
+    });
+
+    it('addSort appends a new field with specified direction', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.sorting.addSort('name', 'desc');
+      });
+      expect(result.current.sorting.current).toEqual([
+        { field: 'name', direction: 'desc' },
+      ]);
+    });
+
+    it('addSort replaces direction if field already sorted', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultSort: [{ field: 'name', direction: 'asc' }],
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.sorting.addSort('name', 'desc');
+      });
+      expect(result.current.sorting.current).toEqual([
+        { field: 'name', direction: 'desc' },
+      ]);
+    });
+
+    it('addSort ignores non-sortable columns', async () => {
+      const columns: ColumnConfig[] = [
+        { field: 'id', header: 'ID', sortable: false },
+        { field: 'name', header: 'Name', sortable: true },
+      ];
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.sorting.addSort('id', 'asc');
+      });
+      expect(result.current.sorting.current).toEqual([]);
+    });
+
+    it('addSort resets page to 0', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.pagination.setPage(3);
+      });
+      expect(result.current.pagination.page).toBe(3);
+
+      act(() => {
+        result.current.sorting.addSort('name', 'asc');
+      });
+      expect(result.current.pagination.page).toBe(0);
+    });
+
+    it('removeSort removes a specific field from sort', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultSort: [
+              { field: 'name', direction: 'asc' },
+              { field: 'email', direction: 'desc' },
+            ],
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.sorting.removeSort('name');
+      });
+      expect(result.current.sorting.current).toEqual([
+        { field: 'email', direction: 'desc' },
+      ]);
+    });
+
+    it('removeSort does nothing for non-existent field', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultSort: [{ field: 'name', direction: 'asc' }],
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.sorting.removeSort('nonexistent');
+      });
+      expect(result.current.sorting.current).toEqual([
+        { field: 'name', direction: 'asc' },
+      ]);
+    });
+
+    it('removeSort resets page to 0', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultSort: [{ field: 'name', direction: 'asc' }],
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.pagination.setPage(5);
+      });
+
+      act(() => {
+        result.current.sorting.removeSort('name');
+      });
+      expect(result.current.pagination.page).toBe(0);
+    });
+
+    it('clearSort removes all sorts', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultSort: [
+              { field: 'name', direction: 'asc' },
+              { field: 'email', direction: 'desc' },
+            ],
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.sorting.clearSort();
+      });
+      expect(result.current.sorting.current).toEqual([]);
+    });
+
+    it('clearSort resets page to 0', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultSort: [{ field: 'name', direction: 'asc' }],
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.pagination.setPage(2);
+      });
+
+      act(() => {
+        result.current.sorting.clearSort();
+      });
+      expect(result.current.pagination.page).toBe(0);
+    });
+  });
+
+  describe('sort indicators and priority', () => {
+    it('getSortIndicator returns up arrow for asc', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultSort: [{ field: 'name', direction: 'asc' }],
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      expect(result.current.sorting.getSortIndicator('name')).toBe('\u25B2');
+    });
+
+    it('getSortIndicator returns down arrow for desc', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultSort: [{ field: 'name', direction: 'desc' }],
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      expect(result.current.sorting.getSortIndicator('name')).toBe('\u25BC');
+    });
+
+    it('getSortIndicator returns empty string for unsorted field', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      expect(result.current.sorting.getSortIndicator('name')).toBe('');
+    });
+
+    it('getSortPriority returns 1-based index for sorted fields', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultSort: [
+              { field: 'name', direction: 'asc' },
+              { field: 'email', direction: 'desc' },
+            ],
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      expect(result.current.sorting.getSortPriority('name')).toBe(1);
+      expect(result.current.sorting.getSortPriority('email')).toBe(2);
+    });
+
+    it('getSortPriority returns -1 for unsorted fields', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultSort: [{ field: 'name', direction: 'asc' }],
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      expect(result.current.sorting.getSortPriority('email')).toBe(-1);
+      expect(result.current.sorting.getSortPriority('id')).toBe(-1);
+    });
+
+    it('indicators update when sort changes', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.sorting.getSortIndicator('name')).toBe('');
+      expect(result.current.sorting.getSortPriority('name')).toBe(-1);
+
+      act(() => {
+        result.current.sorting.toggleSort('name');
+      });
+
+      expect(result.current.sorting.getSortIndicator('name')).toBe('\u25B2');
+      expect(result.current.sorting.getSortPriority('name')).toBe(1);
+
+      act(() => {
+        result.current.sorting.toggleSort('name');
+      });
+
+      expect(result.current.sorting.getSortIndicator('name')).toBe('\u25BC');
+      expect(result.current.sorting.getSortPriority('name')).toBe(1);
+    });
+  });
+
+  describe('client-side sorting', () => {
+    const mockUsers = [
+      { id: 3, name: 'Charlie', email: 'charlie@test.com' },
+      { id: 1, name: 'Alice', email: 'alice@test.com' },
+      { id: 2, name: 'Bob', email: 'bob@test.com' },
+    ];
+
+    it('sorts data client-side when clientSideSort is true', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            clientSideSort: true,
+            defaultSort: [{ field: 'name', direction: 'asc' }],
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.data.map((r: Record<string, unknown>) => r.name)).toEqual([
+        'Alice',
+        'Bob',
+        'Charlie',
+      ]);
+    });
+
+    it('does not send sort to server when clientSideSort is enabled', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            clientSideSort: true,
+            defaultSort: [{ field: 'name', direction: 'asc' }],
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const [, fetchOptions] = (globalThis.fetch as ReturnType<typeof vi.fn>)
+        .mock.calls[0];
+      const body = JSON.parse(fetchOptions.body);
+      expect(body.query).not.toContain('sort:');
+    });
+
+    it('sorts descending client-side', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            clientSideSort: true,
+            defaultSort: [{ field: 'name', direction: 'desc' }],
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.data.map((r: Record<string, unknown>) => r.name)).toEqual([
+        'Charlie',
+        'Bob',
+        'Alice',
+      ]);
+    });
+
+    it('supports multi-column client-side sort', async () => {
+      const data = [
+        { id: 1, name: 'Alice', email: 'z@test.com' },
+        { id: 2, name: 'Alice', email: 'a@test.com' },
+        { id: 3, name: 'Bob', email: 'm@test.com' },
+      ];
+      globalThis.fetch = createFetchMock({ data: { users: data } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            clientSideSort: true,
+            multiSort: true,
+            defaultSort: [
+              { field: 'name', direction: 'asc' },
+              { field: 'email', direction: 'asc' },
+            ],
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.data.map((r: Record<string, unknown>) => r.email)).toEqual([
+        'a@test.com',
+        'z@test.com',
+        'm@test.com',
+      ]);
+    });
+
+    it('handles numeric sorting correctly', async () => {
+      const data = [
+        { id: 10, name: 'Ten', email: 'ten@test.com' },
+        { id: 2, name: 'Two', email: 'two@test.com' },
+        { id: 1, name: 'One', email: 'one@test.com' },
+      ];
+      globalThis.fetch = createFetchMock({ data: { users: data } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            clientSideSort: true,
+            defaultSort: [{ field: 'id', direction: 'asc' }],
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.data.map((r: Record<string, unknown>) => r.id)).toEqual([
+        1, 2, 10,
+      ]);
+    });
+
+    it('handles null values by sorting them last', async () => {
+      const data = [
+        { id: 1, name: null, email: 'a@test.com' },
+        { id: 2, name: 'Bob', email: 'b@test.com' },
+        { id: 3, name: 'Alice', email: 'c@test.com' },
+      ];
+      globalThis.fetch = createFetchMock({ data: { users: data } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            clientSideSort: true,
+            defaultSort: [{ field: 'name', direction: 'asc' }],
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.data.map((r: Record<string, unknown>) => r.name)).toEqual([
+        'Alice',
+        'Bob',
+        null,
+      ]);
+    });
+
+    it('respects threshold - skips client sort when data exceeds threshold', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            clientSideSort: { enabled: true, threshold: 2 },
+            defaultSort: [{ field: 'name', direction: 'asc' }],
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      // Data should NOT be sorted client-side since 3 > threshold of 2
+      expect(result.current.data.map((r: Record<string, unknown>) => r.name)).toEqual([
+        'Charlie',
+        'Alice',
+        'Bob',
+      ]);
+    });
+
+    it('applies client sort when data is within threshold', async () => {
+      const data = [
+        { id: 2, name: 'Bob', email: 'bob@test.com' },
+        { id: 1, name: 'Alice', email: 'alice@test.com' },
+      ];
+      globalThis.fetch = createFetchMock({ data: { users: data } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            clientSideSort: { enabled: true, threshold: 5 },
+            defaultSort: [{ field: 'name', direction: 'asc' }],
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.data.map((r: Record<string, unknown>) => r.name)).toEqual([
+        'Alice',
+        'Bob',
+      ]);
+    });
+
+    it('returns unsorted data when no sort is active', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            clientSideSort: true,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.data.map((r: Record<string, unknown>) => r.id)).toEqual([
+        3, 1, 2,
+      ]);
+    });
+  });
+
+  describe('custom sort functions', () => {
+    it('uses column customSort when provided', async () => {
+      const data = [
+        { id: 1, name: 'high', email: 'a@test.com' },
+        { id: 2, name: 'low', email: 'b@test.com' },
+        { id: 3, name: 'medium', email: 'c@test.com' },
+      ];
+      globalThis.fetch = createFetchMock({ data: { users: data } });
+
+      const priorityOrder: Record<string, number> = {
+        low: 0,
+        medium: 1,
+        high: 2,
+      };
+      const customSort: CustomSortFn = (a, b, direction) => {
+        const aVal = priorityOrder[a as string] ?? 0;
+        const bVal = priorityOrder[b as string] ?? 0;
+        return direction === 'asc' ? aVal - bVal : bVal - aVal;
+      };
+
+      const columns: ColumnConfig[] = [
+        { field: 'id', header: 'ID', sortable: true },
+        {
+          field: 'name',
+          header: 'Priority',
+          sortable: true,
+          customSort,
+        },
+        { field: 'email', header: 'Email', sortable: true },
+      ];
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns,
+            clientSideSort: true,
+            defaultSort: [{ field: 'name', direction: 'asc' }],
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.data.map((r: Record<string, unknown>) => r.name)).toEqual([
+        'low',
+        'medium',
+        'high',
+      ]);
+    });
+
+    it('custom sort respects desc direction', async () => {
+      const data = [
+        { id: 1, name: 'high', email: 'a@test.com' },
+        { id: 2, name: 'low', email: 'b@test.com' },
+        { id: 3, name: 'medium', email: 'c@test.com' },
+      ];
+      globalThis.fetch = createFetchMock({ data: { users: data } });
+
+      const priorityOrder: Record<string, number> = {
+        low: 0,
+        medium: 1,
+        high: 2,
+      };
+      const customSort: CustomSortFn = (a, b, direction) => {
+        const aVal = priorityOrder[a as string] ?? 0;
+        const bVal = priorityOrder[b as string] ?? 0;
+        return direction === 'asc' ? aVal - bVal : bVal - aVal;
+      };
+
+      const columns: ColumnConfig[] = [
+        { field: 'id', header: 'ID', sortable: true },
+        {
+          field: 'name',
+          header: 'Priority',
+          sortable: true,
+          customSort,
+        },
+        { field: 'email', header: 'Email', sortable: true },
+      ];
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns,
+            clientSideSort: true,
+            defaultSort: [{ field: 'name', direction: 'desc' }],
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.data.map((r: Record<string, unknown>) => r.name)).toEqual([
+        'high',
+        'medium',
+        'low',
+      ]);
+    });
+  });
+
+  describe('localStorage persistence', () => {
+    let getItemSpy: ReturnType<typeof vi.fn>;
+    let setItemSpy: ReturnType<typeof vi.fn>;
+    let removeItemSpy: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      getItemSpy = vi.fn().mockReturnValue(null);
+      setItemSpy = vi.fn();
+      removeItemSpy = vi.fn();
+      Object.defineProperty(window, 'localStorage', {
+        value: {
+          getItem: getItemSpy,
+          setItem: setItemSpy,
+          removeItem: removeItemSpy,
+        },
+        writable: true,
+        configurable: true,
+      });
+    });
+
+    it('reads sort state from localStorage on mount', async () => {
+      getItemSpy.mockReturnValue(
+        JSON.stringify([{ field: 'name', direction: 'desc' }]),
+      );
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            localStorage: { key: 'test-table-sort' },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      expect(result.current.sorting.current).toEqual([
+        { field: 'name', direction: 'desc' },
+      ]);
+    });
+
+    it('localStorage sort overrides defaultSort', async () => {
+      getItemSpy.mockReturnValue(
+        JSON.stringify([{ field: 'email', direction: 'asc' }]),
+      );
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultSort: [{ field: 'name', direction: 'desc' }],
+            localStorage: { key: 'test-table-sort' },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      expect(result.current.sorting.current).toEqual([
+        { field: 'email', direction: 'asc' },
+      ]);
+    });
+
+    it('URL state takes precedence over localStorage', async () => {
+      getItemSpy.mockReturnValue(
+        JSON.stringify([{ field: 'email', direction: 'asc' }]),
+      );
+      Object.defineProperty(window, 'location', {
+        writable: true,
+        configurable: true,
+        value: {
+          href: 'http://localhost/users?table_sort=id:desc',
+          search: '?table_sort=id:desc',
+        },
+      });
+
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            localStorage: { key: 'test-table-sort' },
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      expect(result.current.sorting.current).toEqual([
+        { field: 'id', direction: 'desc' },
+      ]);
+    });
+
+    it('writes sort state to localStorage when sort changes', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            localStorage: { key: 'test-table-sort' },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.sorting.toggleSort('name');
+      });
+
+      expect(setItemSpy).toHaveBeenCalledWith(
+        'test-table-sort',
+        JSON.stringify([{ field: 'name', direction: 'asc' }]),
+      );
+    });
+
+    it('removes localStorage entry when sort is cleared', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultSort: [{ field: 'name', direction: 'asc' }],
+            localStorage: { key: 'test-table-sort' },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.sorting.clearSort();
+      });
+
+      expect(removeItemSpy).toHaveBeenCalledWith('test-table-sort');
+    });
+
+    it('handles invalid JSON in localStorage gracefully', async () => {
+      getItemSpy.mockReturnValue('not-json');
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultSort: [{ field: 'name', direction: 'asc' }],
+            localStorage: { key: 'test-table-sort' },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      // Falls back to defaultSort since localStorage is invalid
+      expect(result.current.sorting.current).toEqual([
+        { field: 'name', direction: 'asc' },
+      ]);
+    });
+
+    it('handles non-array JSON in localStorage gracefully', async () => {
+      getItemSpy.mockReturnValue('{"not":"array"}');
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            defaultSort: [{ field: 'name', direction: 'asc' }],
+            localStorage: { key: 'test-table-sort' },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      expect(result.current.sorting.current).toEqual([
+        { field: 'name', direction: 'asc' },
+      ]);
+    });
+
+    it('does not use localStorage when config is not provided', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.sorting.toggleSort('name');
+      });
+
+      expect(setItemSpy).not.toHaveBeenCalled();
+    });
+
+    it('filters invalid sort entries from localStorage', async () => {
+      getItemSpy.mockReturnValue(
+        JSON.stringify([
+          { field: 'name', direction: 'asc' },
+          { field: 'bad', direction: 'invalid' },
+          { field: 'email', direction: 'desc' },
+        ]),
+      );
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            localStorage: { key: 'test-table-sort' },
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      expect(result.current.sorting.current).toEqual([
+        { field: 'name', direction: 'asc' },
+        { field: 'email', direction: 'desc' },
       ]);
     });
   });

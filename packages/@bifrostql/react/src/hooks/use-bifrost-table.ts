@@ -6,6 +6,14 @@ import type { SortOption, TableFilter } from '../types';
 
 export type AggregateFn = 'sum' | 'avg' | 'min' | 'max' | 'count';
 
+export type SortDirection = 'asc' | 'desc';
+
+export type CustomSortFn = (
+  a: unknown,
+  b: unknown,
+  direction: SortDirection,
+) => number;
+
 export interface AggregateConfig {
   field?: string;
   fn: AggregateFn | ((values: unknown[]) => unknown);
@@ -18,12 +26,22 @@ export interface ColumnConfig {
   sortable?: boolean;
   filterable?: boolean;
   computed?: (row: Record<string, unknown>) => unknown;
+  customSort?: CustomSortFn;
+}
+
+export interface LocalStorageConfig {
+  key: string;
 }
 
 export interface SortState {
   current: SortOption[];
   setSorting: (sort: SortOption[]) => void;
-  toggleSort: (field: string) => void;
+  toggleSort: (field: string, multi?: boolean) => void;
+  addSort: (field: string, direction: SortDirection) => void;
+  removeSort: (field: string) => void;
+  clearSort: () => void;
+  getSortIndicator: (field: string) => string;
+  getSortPriority: (field: string) => number;
 }
 
 export interface FilterState {
@@ -74,6 +92,11 @@ export interface UrlSyncConfig {
   debounceMs?: number;
 }
 
+export interface ClientSideSortConfig {
+  enabled: boolean;
+  threshold?: number;
+}
+
 export interface UseBifrostTableOptions extends UseBifrostOptions {
   query: string;
   columns: ColumnConfig[];
@@ -82,8 +105,10 @@ export interface UseBifrostTableOptions extends UseBifrostOptions {
   defaultSort?: SortOption[];
   defaultFilters?: TableFilter;
   multiSort?: boolean;
+  clientSideSort?: boolean | ClientSideSortConfig;
   rowKey?: string;
   urlSync?: boolean | UrlSyncConfig;
+  localStorage?: LocalStorageConfig;
   aggregates?: Record<string, AggregateConfig>;
   expandable?: boolean;
 }
@@ -124,6 +149,88 @@ function canAccessWindow(): boolean {
   return typeof window !== 'undefined';
 }
 
+function resolveClientSideSortConfig(
+  config: boolean | ClientSideSortConfig | undefined,
+): { enabled: boolean; threshold: number } {
+  if (config === true) return { enabled: true, threshold: Infinity };
+  if (config === false || config === undefined)
+    return { enabled: false, threshold: 0 };
+  return {
+    enabled: config.enabled,
+    threshold: config.threshold ?? Infinity,
+  };
+}
+
+function readSortFromLocalStorage(key: string): SortOption[] | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.filter(
+      (s: unknown): s is SortOption =>
+        typeof s === 'object' &&
+        s !== null &&
+        'field' in s &&
+        'direction' in s &&
+        ((s as SortOption).direction === 'asc' ||
+          (s as SortOption).direction === 'desc'),
+    );
+  } catch {
+    return null;
+  }
+}
+
+function writeSortToLocalStorage(key: string, sort: SortOption[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (sort.length === 0) {
+      window.localStorage.removeItem(key);
+    } else {
+      window.localStorage.setItem(key, JSON.stringify(sort));
+    }
+  } catch {
+    // localStorage may be unavailable (private browsing, quota exceeded)
+  }
+}
+
+function defaultCompare(a: unknown, b: unknown): number {
+  if (a === b) return 0;
+  if (a === null || a === undefined) return 1;
+  if (b === null || b === undefined) return -1;
+  if (typeof a === 'number' && typeof b === 'number') return a - b;
+  return String(a).localeCompare(String(b));
+}
+
+function clientSortRows<T>(
+  rows: T[],
+  sort: SortOption[],
+  columns: ColumnConfig[],
+): T[] {
+  if (sort.length === 0) return rows;
+  const sorted = [...rows];
+  const columnMap = new Map(columns.map((c) => [c.field, c]));
+
+  sorted.sort((a, b) => {
+    for (const s of sort) {
+      const col = columnMap.get(s.field);
+      const aVal = (a as Record<string, unknown>)[s.field];
+      const bVal = (b as Record<string, unknown>)[s.field];
+      let cmp: number;
+      if (col?.customSort) {
+        cmp = col.customSort(aVal, bVal, s.direction);
+      } else {
+        cmp = defaultCompare(aVal, bVal);
+        if (s.direction === 'desc') cmp = -cmp;
+      }
+      if (cmp !== 0) return cmp;
+    }
+    return 0;
+  });
+  return sorted;
+}
+
 function computeBuiltinAggregate(fn: AggregateFn, values: number[]): number {
   if (values.length === 0) return 0;
   switch (fn) {
@@ -151,14 +258,17 @@ export function useBifrostTable<T = Record<string, unknown>>(
     defaultSort = [],
     defaultFilters = {},
     multiSort = false,
+    clientSideSort: clientSideSortProp,
     rowKey = 'id',
     urlSync,
+    localStorage: localStorageConfig,
     aggregates: aggregateConfigs,
     expandable = false,
     ...bifrostOptions
   } = options;
 
   const syncConfig = resolveUrlSyncConfig(urlSync);
+  const clientSortConfig = resolveClientSideSortConfig(clientSideSortProp);
   const initialPageSize = paginationConfig?.pageSize ?? 25;
 
   const initialUrlState = useMemo(() => {
@@ -168,8 +278,15 @@ export function useBifrostTable<T = Record<string, unknown>>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const initialLocalStorageSort = useMemo(() => {
+    if (!localStorageConfig?.key) return null;
+    return readSortFromLocalStorage(localStorageConfig.key);
+    // Only read localStorage on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [sort, setSort] = useState<SortOption[]>(
-    initialUrlState?.sort ?? defaultSort,
+    initialUrlState?.sort ?? initialLocalStorageSort ?? defaultSort,
   );
   const [filters, setFilters] = useState<TableFilter>(
     initialUrlState?.filter ?? defaultFilters,
@@ -230,6 +347,11 @@ export function useBifrostTable<T = Record<string, unknown>>(
     return () => window.removeEventListener('popstate', handlePopState);
   }, [syncConfig.enabled, syncConfig.prefix, defaultSort, defaultFilters]);
 
+  useEffect(() => {
+    if (!localStorageConfig?.key) return;
+    writeSortToLocalStorage(localStorageConfig.key, sort);
+  }, [sort, localStorageConfig?.key]);
+
   const computedColumns = useMemo(
     () => columns.filter((c) => c.computed),
     [columns],
@@ -240,25 +362,38 @@ export function useBifrostTable<T = Record<string, unknown>>(
     [fieldsProp, columns],
   );
 
+  const serverSort =
+    !clientSortConfig.enabled && sort.length > 0 ? sort : undefined;
+
   const queryResult = useBifrostQuery<T[]>(table, {
     fields,
     filter: Object.keys(filters).length > 0 ? filters : undefined,
-    sort: sort.length > 0 ? sort : undefined,
+    sort: serverSort,
     pagination: { limit: pageSize, offset: page * pageSize },
     ...bifrostOptions,
   });
 
+  const shouldClientSort =
+    clientSortConfig.enabled &&
+    (queryResult.data ?? []).length <= clientSortConfig.threshold;
+
   const dataWithComputed = useMemo(() => {
     const rawData = queryResult.data ?? [];
-    if (computedColumns.length === 0) return rawData;
-    return rawData.map((row) => {
-      const extended = { ...(row as Record<string, unknown>) };
-      for (const col of computedColumns) {
-        extended[col.field] = col.computed!(extended);
-      }
-      return extended as T;
-    });
-  }, [queryResult.data, computedColumns]);
+    let processed = rawData;
+    if (computedColumns.length > 0) {
+      processed = rawData.map((row) => {
+        const extended = { ...(row as Record<string, unknown>) };
+        for (const col of computedColumns) {
+          extended[col.field] = col.computed!(extended);
+        }
+        return extended as T;
+      });
+    }
+    if (shouldClientSort && sort.length > 0) {
+      processed = clientSortRows(processed, sort, columns);
+    }
+    return processed;
+  }, [queryResult.data, computedColumns, shouldClientSort, sort, columns]);
 
   const computedAggregates = useMemo(() => {
     if (!aggregateConfigs) return {};
@@ -335,16 +470,18 @@ export function useBifrostTable<T = Record<string, unknown>>(
   }, []);
 
   const toggleSort = useCallback(
-    (field: string) => {
+    (field: string, multi?: boolean) => {
       const col = columns.find((c) => c.field === field);
       if (!col?.sortable) return;
+
+      const useMulti = multi ?? multiSort;
 
       setSort((prev) => {
         const existing = prev.find((s) => s.field === field);
 
         if (!existing) {
           const newSort: SortOption = { field, direction: 'asc' };
-          return multiSort ? [...prev, newSort] : [newSort];
+          return useMulti ? [...prev, newSort] : [newSort];
         }
 
         if (existing.direction === 'asc') {
@@ -359,6 +496,47 @@ export function useBifrostTable<T = Record<string, unknown>>(
       setPage(0);
     },
     [columns, multiSort],
+  );
+
+  const addSort = useCallback(
+    (field: string, direction: SortDirection) => {
+      const col = columns.find((c) => c.field === field);
+      if (!col?.sortable) return;
+
+      setSort((prev) => {
+        const filtered = prev.filter((s) => s.field !== field);
+        return [...filtered, { field, direction }];
+      });
+      setPage(0);
+    },
+    [columns],
+  );
+
+  const removeSort = useCallback((field: string) => {
+    setSort((prev) => prev.filter((s) => s.field !== field));
+    setPage(0);
+  }, []);
+
+  const clearSort = useCallback(() => {
+    setSort([]);
+    setPage(0);
+  }, []);
+
+  const getSortIndicator = useCallback(
+    (field: string): string => {
+      const entry = sort.find((s) => s.field === field);
+      if (!entry) return '';
+      return entry.direction === 'asc' ? '\u25B2' : '\u25BC';
+    },
+    [sort],
+  );
+
+  const getSortPriority = useCallback(
+    (field: string): number => {
+      const index = sort.findIndex((s) => s.field === field);
+      return index === -1 ? -1 : index + 1;
+    },
+    [sort],
   );
 
   const setColumnFilter = useCallback(
@@ -447,6 +625,11 @@ export function useBifrostTable<T = Record<string, unknown>>(
       current: sort,
       setSorting: handleSetSorting,
       toggleSort,
+      addSort,
+      removeSort,
+      clearSort,
+      getSortIndicator,
+      getSortPriority,
     },
     filters: {
       current: filters,

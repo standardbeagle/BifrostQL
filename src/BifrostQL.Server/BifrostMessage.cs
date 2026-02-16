@@ -4,6 +4,7 @@ namespace BifrostQL.Server
 {
     /// <summary>
     /// Message type for binary transport requests and responses.
+    /// Chunk and ChunkAck are used for payloads exceeding the chunk threshold.
     /// </summary>
     public enum BifrostMessageType
     {
@@ -11,6 +12,8 @@ namespace BifrostQL.Server
         Mutation = 1,
         Result = 2,
         Error = 3,
+        Chunk = 4,
+        ChunkAck = 5,
     }
 
     /// <summary>
@@ -22,6 +25,11 @@ namespace BifrostQL.Server
     ///   field 4: variables_json (string, length-delimited)
     ///   field 5: payload (bytes, length-delimited)
     ///   field 6: errors (repeated string, length-delimited)
+    ///   field 7: chunk_sequence (uint32, varint) - chunk index (0-based)
+    ///   field 8: chunk_total (uint32, varint) - total number of chunks
+    ///   field 9: chunk_offset (uint64, varint) - byte offset of this chunk in the full payload
+    ///   field 10: total_bytes (uint64, varint) - total payload size before chunking
+    ///   field 11: chunk_checksum (uint32, varint) - CRC32 of this chunk's payload
     ///
     /// This uses Google.Protobuf's CodedOutputStream/CodedInputStream directly
     /// for maximum compatibility with any protobuf client library.
@@ -35,7 +43,7 @@ namespace BifrostQL.Server
         public uint RequestId { get; set; }
 
         /// <summary>
-        /// The message type (Query, Mutation, Result, Error).
+        /// The message type (Query, Mutation, Result, Error, Chunk, ChunkAck).
         /// </summary>
         public BifrostMessageType Type { get; set; }
 
@@ -53,8 +61,7 @@ namespace BifrostQL.Server
 
         /// <summary>
         /// JSON-encoded response payload. Set on Result messages.
-        /// The response data is JSON-encoded because the shape varies per query.
-        /// Per-table typed protobuf responses are a future enhancement (proto schema generation).
+        /// For Chunk messages, contains the chunk data fragment.
         /// </summary>
         public byte[] Payload { get; set; } = Array.Empty<byte>();
 
@@ -63,13 +70,43 @@ namespace BifrostQL.Server
         /// </summary>
         public List<string> Errors { get; set; } = new();
 
+        /// <summary>
+        /// Zero-based chunk sequence number. Set on Chunk and ChunkAck messages.
+        /// </summary>
+        public uint ChunkSequence { get; set; }
+
+        /// <summary>
+        /// Total number of chunks in the transfer. Set on Chunk messages.
+        /// </summary>
+        public uint ChunkTotal { get; set; }
+
+        /// <summary>
+        /// Byte offset of this chunk within the full payload. Set on Chunk messages.
+        /// </summary>
+        public ulong ChunkOffset { get; set; }
+
+        /// <summary>
+        /// Total size of the full payload before chunking. Set on Chunk messages.
+        /// </summary>
+        public ulong TotalBytes { get; set; }
+
+        /// <summary>
+        /// CRC32 checksum of this chunk's Payload bytes. Set on Chunk messages.
+        /// </summary>
+        public uint ChunkChecksum { get; set; }
+
         // Protobuf field tags (field number << 3 | wire type)
-        private const int RequestIdTag = (1 << 3) | 0;   // varint
-        private const int TypeTag = (2 << 3) | 0;         // varint
-        private const int QueryTag = (3 << 3) | 2;        // length-delimited
-        private const int VariablesTag = (4 << 3) | 2;    // length-delimited
-        private const int PayloadTag = (5 << 3) | 2;      // length-delimited
-        private const int ErrorsTag = (6 << 3) | 2;       // length-delimited (repeated)
+        private const int RequestIdTag = (1 << 3) | 0;        // varint
+        private const int TypeTag = (2 << 3) | 0;              // varint
+        private const int QueryTag = (3 << 3) | 2;             // length-delimited
+        private const int VariablesTag = (4 << 3) | 2;         // length-delimited
+        private const int PayloadTag = (5 << 3) | 2;           // length-delimited
+        private const int ErrorsTag = (6 << 3) | 2;            // length-delimited (repeated)
+        private const int ChunkSequenceTag = (7 << 3) | 0;     // varint
+        private const int ChunkTotalTag = (8 << 3) | 0;        // varint
+        private const int ChunkOffsetTag = (9 << 3) | 0;       // varint
+        private const int TotalBytesTag = (10 << 3) | 0;       // varint
+        private const int ChunkChecksumTag = (11 << 3) | 0;    // varint
 
         /// <summary>
         /// Serializes this message to protobuf wire format.
@@ -115,6 +152,36 @@ namespace BifrostQL.Server
                 output.WriteString(error);
             }
 
+            if (ChunkSequence != 0)
+            {
+                output.WriteTag(ChunkSequenceTag);
+                output.WriteUInt32(ChunkSequence);
+            }
+
+            if (ChunkTotal != 0)
+            {
+                output.WriteTag(ChunkTotalTag);
+                output.WriteUInt32(ChunkTotal);
+            }
+
+            if (ChunkOffset != 0)
+            {
+                output.WriteTag(ChunkOffsetTag);
+                output.WriteUInt64(ChunkOffset);
+            }
+
+            if (TotalBytes != 0)
+            {
+                output.WriteTag(TotalBytesTag);
+                output.WriteUInt64(TotalBytes);
+            }
+
+            if (ChunkChecksum != 0)
+            {
+                output.WriteTag(ChunkChecksumTag);
+                output.WriteUInt32(ChunkChecksum);
+            }
+
             output.Flush();
             return memStream.ToArray();
         }
@@ -157,6 +224,21 @@ namespace BifrostQL.Server
                         break;
                     case ErrorsTag:
                         msg.Errors.Add(input.ReadString());
+                        break;
+                    case ChunkSequenceTag:
+                        msg.ChunkSequence = input.ReadUInt32();
+                        break;
+                    case ChunkTotalTag:
+                        msg.ChunkTotal = input.ReadUInt32();
+                        break;
+                    case ChunkOffsetTag:
+                        msg.ChunkOffset = input.ReadUInt64();
+                        break;
+                    case TotalBytesTag:
+                        msg.TotalBytes = input.ReadUInt64();
+                        break;
+                    case ChunkChecksumTag:
+                        msg.ChunkChecksum = input.ReadUInt32();
                         break;
                     default:
                         input.SkipLastField();

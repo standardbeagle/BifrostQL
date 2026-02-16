@@ -135,18 +135,24 @@ namespace BifrostQL.Server
         /// <summary>
         /// Maps the BifrostQL binary WebSocket endpoint at the specified path.
         /// Clients connect via WebSocket and exchange protobuf-encoded binary frames.
+        /// Large responses are automatically chunked with CRC32 integrity checksums
+        /// and backpressure via ACK windowing.
         /// Requires AddBifrostEngine() in service configuration and UseWebSockets() before this call.
         /// </summary>
         /// <param name="app">The application builder.</param>
         /// <param name="path">The WebSocket endpoint path (e.g., "/bifrost-ws").</param>
+        /// <param name="chunkThreshold">Payload size threshold for chunking (default 64 KB).</param>
+        /// <param name="ackWindow">Maximum unacknowledged chunks before backpressure pauses sending (default 8).</param>
         /// <returns>The application builder for chaining.</returns>
         public static IApplicationBuilder UseBifrostBinary(
             this IApplicationBuilder app,
-            string path = "/bifrost-ws")
+            string path = "/bifrost-ws",
+            int chunkThreshold = ChunkSender.DefaultChunkThreshold,
+            int ackWindow = ChunkSender.DefaultAckWindow)
         {
             var engine = app.ApplicationServices.GetRequiredService<IBifrostEngine>();
             app.Map(path, branch =>
-                branch.UseMiddleware<BifrostBinaryMiddleware>(engine, path));
+                branch.UseMiddleware<BifrostBinaryMiddleware>(engine, path, chunkThreshold, ackWindow));
             return app;
         }
 

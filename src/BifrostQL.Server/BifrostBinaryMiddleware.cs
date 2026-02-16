@@ -14,6 +14,10 @@ namespace BifrostQL.Server
     ///
     /// Supports connection multiplexing via request_id: multiple in-flight requests
     /// share a single WebSocket connection, with responses matched by request_id.
+    ///
+    /// Large responses exceeding the chunk threshold are automatically split into
+    /// Chunk messages with CRC32 integrity checksums and backpressure via ChunkAck.
+    /// Incoming chunked requests from clients are reassembled before execution.
     /// </summary>
     public sealed class BifrostBinaryMiddleware
     {
@@ -21,6 +25,7 @@ namespace BifrostQL.Server
         private readonly IBifrostEngine _engine;
         private readonly string _endpointPath;
         private readonly ILogger<BifrostBinaryMiddleware> _logger;
+        private readonly ChunkSender _chunkSender;
 
         /// <summary>
         /// Maximum binary frame size (4 MB). Messages larger than this are rejected.
@@ -32,11 +37,25 @@ namespace BifrostQL.Server
             IBifrostEngine engine,
             string endpointPath,
             ILogger<BifrostBinaryMiddleware> logger)
+            : this(next, engine, endpointPath, logger,
+                   ChunkSender.DefaultChunkThreshold,
+                   ChunkSender.DefaultAckWindow)
+        {
+        }
+
+        public BifrostBinaryMiddleware(
+            RequestDelegate next,
+            IBifrostEngine engine,
+            string endpointPath,
+            ILogger<BifrostBinaryMiddleware> logger,
+            int chunkThreshold,
+            int ackWindow)
         {
             _next = next;
             _engine = engine ?? throw new ArgumentNullException(nameof(engine));
             _endpointPath = endpointPath ?? throw new ArgumentNullException(nameof(endpointPath));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _chunkSender = new ChunkSender(chunkThreshold, ackWindow);
         }
 
         public async Task InvokeAsync(HttpContext context)
@@ -54,6 +73,7 @@ namespace BifrostQL.Server
         private async Task HandleConnectionAsync(WebSocket webSocket, HttpContext httpContext)
         {
             var buffer = new byte[MaxFrameSize];
+            var chunkReceiver = new ChunkReceiver();
 
             try
             {
@@ -66,7 +86,6 @@ namespace BifrostQL.Server
 
                     if (messageType != WebSocketMessageType.Binary)
                     {
-                        // Only binary frames supported; close with protocol error
                         await webSocket.CloseAsync(
                             WebSocketCloseStatus.InvalidMessageType,
                             "Only binary frames are supported",
@@ -74,10 +93,7 @@ namespace BifrostQL.Server
                         break;
                     }
 
-                    // Fire-and-forget for multiplexing: each request is independent.
-                    // In a production system this would use a bounded concurrency limiter,
-                    // but for Phase 1 basic transport, sequential processing is correct.
-                    await ProcessMessageAsync(messageBytes, webSocket, httpContext);
+                    await ProcessMessageAsync(messageBytes, webSocket, httpContext, buffer, chunkReceiver);
                 }
             }
             catch (WebSocketException ex) when (ex.WebSocketErrorCode == WebSocketError.ConnectionClosedPrematurely)
@@ -107,7 +123,12 @@ namespace BifrostQL.Server
             }
         }
 
-        private async Task ProcessMessageAsync(byte[] messageBytes, WebSocket webSocket, HttpContext httpContext)
+        private async Task ProcessMessageAsync(
+            byte[] messageBytes,
+            WebSocket webSocket,
+            HttpContext httpContext,
+            byte[] receiveBuffer,
+            ChunkReceiver chunkReceiver)
         {
             BifrostMessage request;
             try
@@ -126,8 +147,55 @@ namespace BifrostQL.Server
                 return;
             }
 
+            // Handle incoming chunk messages from client (large request reassembly).
+            // Client chunks carry fragments of a full serialized BifrostMessage;
+            // the assembled bytes are deserialized to recover the original Query/Mutation.
+            if (request.Type == BifrostMessageType.Chunk)
+            {
+                var ack = ChunkReceiver.CreateAck(request.RequestId, request.ChunkSequence);
+                await SendResponseAsync(webSocket, ack, httpContext.RequestAborted);
+
+                byte[]? assembledBytes;
+                try
+                {
+                    assembledBytes = chunkReceiver.AddChunk(request);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    _logger.LogWarning(ex, "Chunk reassembly failed for request {RequestId}", request.RequestId);
+                    var errorResponse = new BifrostMessage
+                    {
+                        RequestId = request.RequestId,
+                        Type = BifrostMessageType.Error,
+                        Errors = { "Chunk validation failed: " + ex.Message },
+                    };
+                    await SendResponseAsync(webSocket, errorResponse, httpContext.RequestAborted);
+                    return;
+                }
+
+                if (assembledBytes == null)
+                    return; // More chunks expected
+
+                request = BifrostMessage.FromBytes(assembledBytes);
+            }
+
+            // ChunkAck messages are only meaningful during SendChunkedAsync; ignore at top level
+            if (request.Type == BifrostMessageType.ChunkAck)
+                return;
+
             var response = await ExecuteRequestAsync(request, httpContext);
-            await SendResponseAsync(webSocket, response, httpContext.RequestAborted);
+
+            if (_chunkSender.RequiresChunking(response))
+            {
+                _logger.LogDebug(
+                    "Chunking response for request {RequestId}: {PayloadSize} bytes",
+                    response.RequestId, response.Payload.Length);
+                await _chunkSender.SendChunkedAsync(webSocket, response, receiveBuffer, httpContext.RequestAborted);
+            }
+            else
+            {
+                await SendResponseAsync(webSocket, response, httpContext.RequestAborted);
+            }
         }
 
         private async Task<BifrostMessage> ExecuteRequestAsync(BifrostMessage request, HttpContext httpContext)

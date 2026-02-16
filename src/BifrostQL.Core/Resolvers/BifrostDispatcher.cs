@@ -1,4 +1,5 @@
 using BifrostQL.Core.Model;
+using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Schema;
 using GraphQL;
 using GraphQL.Resolvers;
@@ -11,6 +12,10 @@ namespace BifrostQL.Core.Resolvers
     /// Universal resolver dispatcher that routes field resolution based on DbModel.
     /// Builds a resolver map from the model and attaches itself as the IFieldResolver
     /// on every field in the schema, delegating to the appropriate IBifrostResolver.
+    ///
+    /// Also serves as the entry point for protocol-agnostic IBifrostRequest processing.
+    /// Any frontend can produce IBifrostRequest intents and convert them to GqlObjectQuery
+    /// via <see cref="ToObjectQueries"/>, bypassing the GraphQL AST entirely.
     /// </summary>
     public sealed class BifrostDispatcher : IBifrostResolver, IFieldResolver
     {
@@ -21,6 +26,50 @@ namespace BifrostQL.Core.Resolvers
         {
             _model = model;
             _resolvers = BuildResolverMap(model);
+        }
+
+        /// <summary>
+        /// Converts protocol-agnostic request intents into GqlObjectQuery objects
+        /// suitable for the SQL generation pipeline. This is the bridge between
+        /// any IProtocolFrontend's parsed output and the existing SQL engine.
+        ///
+        /// When an IBifrostRequest has a pre-built Filter (e.g., from a non-GraphQL frontend),
+        /// it is merged into the generated GqlObjectQuery's filter chain.
+        /// </summary>
+        public IReadOnlyList<GqlObjectQuery> ToObjectQueries(IReadOnlyList<IBifrostRequest> requests)
+        {
+            var queries = new List<GqlObjectQuery>(requests.Count);
+            foreach (var request in requests)
+            {
+                var queryField = BifrostRequestAdapter.ToQueryField(request);
+                var query = queryField.ToSqlData(_model);
+                ApplyPreBuiltFilters(request, query);
+                queries.Add(query);
+            }
+            return queries;
+        }
+
+        /// <summary>
+        /// Applies pre-built filters from IBifrostRequest to the generated GqlObjectQuery.
+        /// This supports non-GraphQL frontends that construct TableFilter directly
+        /// instead of passing filter dictionaries through Arguments.
+        /// </summary>
+        private static void ApplyPreBuiltFilters(IBifrostRequest request, GqlObjectQuery query)
+        {
+            if (request.Filter == null) return;
+
+            if (query.Filter == null)
+            {
+                query.Filter = request.Filter;
+            }
+            else
+            {
+                query.Filter = new TableFilter
+                {
+                    And = new List<TableFilter> { query.Filter, request.Filter },
+                    FilterType = FilterType.And,
+                };
+            }
         }
 
         public ValueTask<object?> ResolveAsync(IBifrostFieldContext context)

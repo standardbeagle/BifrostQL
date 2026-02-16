@@ -1,5 +1,5 @@
 export { buildGraphqlQuery } from './query-builder';
-export { executeGraphQL } from './graphql-client';
+export { executeGraphQL, defaultRetryDelay } from './graphql-client';
 export {
   buildMutation,
   buildInsertMutation,

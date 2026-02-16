@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useContext, useCallback } from 'react';
 import { BifrostContext } from '../components/bifrost-provider';
-import { executeGraphQL } from '../utils/graphql-client';
+import { executeGraphQL, defaultRetryDelay } from '../utils/graphql-client';
 
 export interface UseBifrostOptions {
   enabled?: boolean;
@@ -11,10 +11,6 @@ export interface UseBifrostOptions {
   refetchOnWindowFocus?: boolean | 'always';
   retry?: number | false;
   retryDelay?: number;
-}
-
-function defaultRetryDelay(attempt: number, baseDelay: number): number {
-  return Math.min(baseDelay * 2 ** attempt, 30_000);
 }
 
 export function useBifrost<T = unknown>(

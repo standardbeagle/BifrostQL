@@ -2,7 +2,7 @@ import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import type { InfiniteData, QueryKey } from '@tanstack/react-query';
 import { useContext, useCallback } from 'react';
 import { BifrostContext } from '../components/bifrost-provider';
-import { executeGraphQL } from '../utils/graphql-client';
+import { executeGraphQL, defaultRetryDelay } from '../utils/graphql-client';
 
 export interface UseBifrostInfiniteOptions<TData, TPageParam> {
   enabled?: boolean;
@@ -21,10 +21,6 @@ export interface UseBifrostInfiniteOptions<TData, TPageParam> {
     allPages: TData[],
   ) => TPageParam | undefined | null;
   maxPages?: number;
-}
-
-function defaultRetryDelay(attempt: number, baseDelay: number): number {
-  return Math.min(baseDelay * 2 ** attempt, 30_000);
 }
 
 export function useBifrostInfinite<TData = unknown, TPageParam = unknown>(

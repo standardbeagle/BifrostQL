@@ -3,6 +3,10 @@ interface GraphQLResponse<T> {
   errors?: Array<{ message: string }>;
 }
 
+export function defaultRetryDelay(attempt: number, baseDelay: number): number {
+  return Math.min(baseDelay * 2 ** attempt, 30_000);
+}
+
 export async function executeGraphQL<T>(
   endpoint: string,
   headers: Record<string, string>,

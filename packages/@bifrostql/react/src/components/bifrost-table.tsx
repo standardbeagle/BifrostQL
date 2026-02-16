@@ -4,6 +4,7 @@ import { useBifrostTable } from '../hooks/use-bifrost-table';
 import type {
   ColumnConfig,
   PaginationConfig,
+  ChildQueryConfig,
   UseBifrostTableOptions,
 } from '../hooks/use-bifrost-table';
 import type { UseBifrostOptions } from '../hooks/use-bifrost';
@@ -28,6 +29,9 @@ export interface BifrostTableProps<
   hoverable?: boolean;
   editable?: boolean;
   exportable?: boolean;
+  expandable?: boolean;
+  childQuery?: ChildQueryConfig;
+  renderExpandedRow?: (row: T) => ReactNode;
   onRowClick?: (row: T) => void;
   rowActions?: RowAction<T>[];
   rowKey?: string;
@@ -106,6 +110,9 @@ export function BifrostTable<T = Record<string, unknown>>(
     hoverable = true,
     editable = false,
     exportable = false,
+    expandable = false,
+    childQuery,
+    renderExpandedRow,
     onRowClick,
     rowActions,
     rowKey = 'id',
@@ -135,6 +142,8 @@ export function BifrostTable<T = Record<string, unknown>>(
     multiSort,
     rowKey,
     urlSync,
+    expandable,
+    childQuery,
     ...bifrostOptions,
   });
 
@@ -145,10 +154,15 @@ export function BifrostTable<T = Record<string, unknown>>(
   } | null>(null);
   const [editValue, setEditValue] = useState('');
 
+  const baseColumns =
+    expandable
+      ? [{ field: '__expand', header: '', width: 40 } as ColumnConfig, ...columns]
+      : columns;
+
   const visibleColumns =
     rowActions && rowActions.length > 0
-      ? [...columns, { field: '__actions', header: 'Actions' } as ColumnConfig]
-      : columns;
+      ? [...baseColumns, { field: '__actions', header: 'Actions' } as ColumnConfig]
+      : baseColumns;
 
   const handleExport = useCallback(() => {
     exportToCsv(table.data, columns, query);
@@ -168,6 +182,24 @@ export function BifrostTable<T = Record<string, unknown>>(
     setEditValue('');
   }, []);
 
+  const handleExpandAll = useCallback(() => {
+    const allKeys = table.data.map((row) =>
+      String((row as Record<string, unknown>)[rowKey]),
+    );
+    table.expansion.expandAll(allKeys);
+    if (childQuery) {
+      for (const row of table.data) {
+        const rowRecord = row as Record<string, unknown>;
+        const k = String(rowRecord[rowKey]);
+        table.expansion.fetchChildData(k, rowRecord);
+      }
+    }
+  }, [table.data, table.expansion, rowKey, childQuery]);
+
+  const handleCollapseAll = useCallback(() => {
+    table.expansion.collapseAll();
+  }, [table.expansion]);
+
   if (table.error) {
     if (renderError) return <>{renderError(table.error)}</>;
     return (
@@ -178,25 +210,49 @@ export function BifrostTable<T = Record<string, unknown>>(
   }
 
   const showPagination = table.data.length > 0 || table.pagination.page > 0;
+  const showToolbar = (exportable && table.data.length > 0) || (expandable && table.data.length > 0);
 
   return (
     <div style={theme.container} data-testid="bifrost-table">
-      {exportable && table.data.length > 0 && (
+      {showToolbar && (
         <div
           style={{
             padding: '8px 16px',
             display: 'flex',
             justifyContent: 'flex-end',
+            gap: '8px',
           }}
         >
-          <button
-            type="button"
-            style={theme.actionButton}
-            onClick={handleExport}
-            data-testid="export-button"
-          >
-            Export CSV
-          </button>
+          {expandable && table.data.length > 0 && (
+            <>
+              <button
+                type="button"
+                style={theme.actionButton}
+                onClick={handleExpandAll}
+                data-testid="expand-all-button"
+              >
+                Expand All
+              </button>
+              <button
+                type="button"
+                style={theme.actionButton}
+                onClick={handleCollapseAll}
+                data-testid="collapse-all-button"
+              >
+                Collapse All
+              </button>
+            </>
+          )}
+          {exportable && table.data.length > 0 && (
+            <button
+              type="button"
+              style={theme.actionButton}
+              onClick={handleExport}
+              data-testid="export-button"
+            >
+              Export CSV
+            </button>
+          )}
         </div>
       )}
       <table style={theme.table} role="table">
@@ -207,7 +263,7 @@ export function BifrostTable<T = Record<string, unknown>>(
                 table.sorting.current,
                 col.field,
               );
-              const isSortable = col.sortable && col.field !== '__actions';
+              const isSortable = col.sortable && col.field !== '__actions' && col.field !== '__expand';
               return (
                 <th
                   key={col.field}
@@ -258,6 +314,7 @@ export function BifrostTable<T = Record<string, unknown>>(
               const key = String(rowRecord[rowKey] ?? rowIndex);
               const isHovered = hoverable && hoveredRowIndex === rowIndex;
               const isStriped = striped && rowIndex % 2 === 1;
+              const isExpanded = expandable && table.expansion.expandedRows.has(key);
 
               const rowStyle: CSSProperties = {
                 ...theme.bodyRow,
@@ -266,12 +323,35 @@ export function BifrostTable<T = Record<string, unknown>>(
                 ...(onRowClick ? { cursor: 'pointer' } : {}),
               };
 
-              return (
+              const handleExpandToggle = () => {
+                table.expansion.toggleExpand(key);
+                if (!table.expansion.expandedRows.has(key) && childQuery) {
+                  table.expansion.fetchChildData(key, rowRecord);
+                }
+              };
+
+              const handleRowKeyDown = expandable
+                ? (e: React.KeyboardEvent) => {
+                    if (e.key === 'ArrowRight' && !isExpanded) {
+                      e.preventDefault();
+                      handleExpandToggle();
+                    } else if (e.key === 'ArrowLeft' && isExpanded) {
+                      e.preventDefault();
+                      handleExpandToggle();
+                    }
+                  }
+                : undefined;
+
+              const rows: ReactNode[] = [];
+
+              rows.push(
                 <tr
                   key={key}
                   style={rowStyle}
                   role="row"
+                  tabIndex={expandable ? 0 : undefined}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
+                  onKeyDown={handleRowKeyDown}
                   onMouseEnter={
                     hoverable ? () => setHoveredRowIndex(rowIndex) : undefined
                   }
@@ -281,6 +361,30 @@ export function BifrostTable<T = Record<string, unknown>>(
                   data-testid={`table-row-${key}`}
                 >
                   {visibleColumns.map((col) => {
+                    if (col.field === '__expand') {
+                      return (
+                        <td
+                          key="__expand"
+                          style={theme.bodyCell}
+                          role="cell"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleExpandToggle();
+                          }}
+                        >
+                          <button
+                            type="button"
+                            style={theme.expandToggle}
+                            aria-expanded={isExpanded}
+                            aria-label={isExpanded ? 'Collapse row' : 'Expand row'}
+                            data-testid={`expand-toggle-${key}`}
+                          >
+                            {isExpanded ? '\u25BC' : '\u25B6'}
+                          </button>
+                        </td>
+                      );
+                    }
+
                     if (col.field === '__actions' && rowActions) {
                       return (
                         <td
@@ -349,8 +453,43 @@ export function BifrostTable<T = Record<string, unknown>>(
                       </td>
                     );
                   })}
-                </tr>
+                </tr>,
               );
+
+              if (isExpanded) {
+                const childData = table.expansion.getChildData(key);
+                rows.push(
+                  <tr
+                    key={`${key}-expanded`}
+                    style={theme.expandedRow}
+                    role="row"
+                    data-testid={`expanded-row-${key}`}
+                  >
+                    <td
+                      colSpan={visibleColumns.length}
+                      role="cell"
+                      style={theme.expandedRowContent}
+                    >
+                      {childData.loading ? (
+                        <div
+                          style={theme.childLoadingIndicator}
+                          data-testid={`child-loading-${key}`}
+                        >
+                          Loading...
+                        </div>
+                      ) : childData.error ? (
+                        <div role="alert" data-testid={`child-error-${key}`}>
+                          Error: {childData.error.message}
+                        </div>
+                      ) : renderExpandedRow ? (
+                        renderExpandedRow(row)
+                      ) : null}
+                    </td>
+                  </tr>,
+                );
+              }
+
+              return rows;
             })
           )}
         </tbody>

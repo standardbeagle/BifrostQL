@@ -62,6 +62,8 @@ export type {
   EditingState,
   RowUpdateFn,
   BatchSaveFn,
+  ChildQueryConfig,
+  ChildRowData,
 } from './hooks';
 export {
   buildGraphqlQuery,

@@ -20,6 +20,10 @@ export interface TableTheme {
   emptyContainer: CSSProperties;
   actionButton: CSSProperties;
   sortIndicator: CSSProperties;
+  expandToggle: CSSProperties;
+  expandedRow: CSSProperties;
+  expandedRowContent: CSSProperties;
+  childLoadingIndicator: CSSProperties;
 }
 
 const baseTheme: TableTheme = {
@@ -127,6 +131,26 @@ const baseTheme: TableTheme = {
     marginLeft: '4px',
     fontSize: '12px',
     color: '#9ca3af',
+  },
+  expandToggle: {
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    padding: '2px 6px',
+    fontSize: '14px',
+    color: '#6b7280',
+    lineHeight: 1,
+  },
+  expandedRow: {
+    backgroundColor: '#f9fafb',
+  },
+  expandedRowContent: {
+    padding: '12px 16px 12px 48px',
+  },
+  childLoadingIndicator: {
+    padding: '12px 16px 12px 48px',
+    color: '#6b7280',
+    fontSize: '13px',
   },
 };
 

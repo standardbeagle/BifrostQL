@@ -53,4 +53,6 @@ export type {
   EditingState,
   RowUpdateFn,
   BatchSaveFn,
+  ChildQueryConfig,
+  ChildRowData,
 } from './use-bifrost-table';

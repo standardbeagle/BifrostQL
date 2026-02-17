@@ -6,26 +6,72 @@ import { buildUpdateMutation } from '../utils/mutation-builder';
 import { diff, detectConflicts } from '../utils/diff-engine';
 import type { DiffStrategy, DiffResult } from '../utils/diff-engine';
 
+/** Options for the {@link useBifrostDiff} hook. */
 export interface UseBifrostDiffOptions {
+  /** The database table name to update. */
   table: string;
+  /** The primary key field name (used to identify the row). */
   idField: string;
+  /** Comparison strategy: `'shallow'` or `'deep'` (default). */
   strategy?: DiffStrategy;
+  /** Query keys to invalidate on success. */
   invalidateQueries?: string[];
+  /** Callback invoked when the mutation succeeds. */
   onSuccess?: (data: unknown) => void;
+  /** Callback invoked when the mutation fails. */
   onError?: (error: Error) => void;
 }
 
+/** Input for a diff-based mutation, providing original and updated row states. */
 export interface DiffMutationInput {
+  /** The row's primary key value. */
   id: string | number;
+  /** The original (baseline) row data fetched from the server. */
   original: Record<string, unknown>;
+  /** The locally modified row data. */
   updated: Record<string, unknown>;
 }
 
+/** Result of a diff preview, showing what would change and any conflicts. */
 export interface DiffMutationResult {
+  /** The computed diff between original and updated. */
   diff: DiffResult;
+  /** Field names where the server state conflicts with local changes. */
   conflicts: string[];
 }
 
+/**
+ * Hook for diff-based mutations that send only changed fields to the server.
+ *
+ * Computes the difference between original and updated row data, optionally
+ * detects three-way merge conflicts against a last-known server state, and
+ * submits only the changed fields as an update mutation.
+ *
+ * Returns a TanStack Query mutation plus:
+ * - `preview(input)` - Preview the diff and conflicts without submitting.
+ * - `setLastKnown(state)` - Store the last-known server state for conflict detection.
+ *
+ * Must be used within a {@link BifrostProvider}.
+ *
+ * @param options - Configuration including table name, ID field, and diff strategy.
+ * @returns Mutation result with `preview` and `setLastKnown` methods.
+ *
+ * @example
+ * ```tsx
+ * const { mutate, preview, setLastKnown } = useBifrostDiff({
+ *   table: 'users',
+ *   idField: 'id',
+ *   strategy: 'deep',
+ *   invalidateQueries: ['users'],
+ * });
+ *
+ * setLastKnown(serverRow);
+ * const { diff, conflicts } = preview({ id: 1, original: serverRow, updated: editedRow });
+ * if (conflicts.length === 0) {
+ *   mutate({ id: 1, original: serverRow, updated: editedRow });
+ * }
+ * ```
+ */
 export function useBifrostDiff(options: UseBifrostDiffOptions) {
   const config = useContext(BifrostContext);
   if (!config) {

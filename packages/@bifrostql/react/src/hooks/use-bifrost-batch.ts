@@ -5,31 +5,55 @@ import { executeGraphQL } from '../utils/graphql-client';
 import { buildMutation } from '../utils/mutation-builder';
 import type { MutationType } from '../utils/mutation-builder';
 
+/** A single operation in a batch mutation sequence. */
 export interface BatchOperation {
+  /** The mutation type to execute. */
   type: MutationType;
+  /** The database table name. */
   table: string;
+  /** Row data for insert, update, or upsert operations. */
   data?: Record<string, unknown>;
+  /** Row ID for update or delete operations. */
   id?: string | number;
+  /** Composite key for upsert operations. */
   key?: Record<string, unknown>;
 }
 
+/** Progress information for a running batch operation. */
 export interface BatchProgress {
+  /** Total number of operations in the batch. */
   total: number;
+  /** Number of operations completed successfully. */
   completed: number;
+  /** Number of operations that failed. */
   failed: number;
+  /** Zero-based index of the currently executing operation. */
   current: number;
 }
 
+/** The result of a completed batch execution. */
 export interface BatchResult {
+  /** Successfully completed operations with their original indices. */
   results: Array<{ index: number; data: unknown }>;
+  /** Failed operations with their original indices and errors. */
   errors: Array<{ index: number; error: Error }>;
 }
 
+/** Options for the {@link useBifrostBatch} hook. */
 export interface UseBifrostBatchOptions {
+  /**
+   * When `true`, the batch continues after individual failures.
+   * When `false` (default), a single failure aborts the entire batch
+   * and throws a {@link BatchError}.
+   */
   allowPartialSuccess?: boolean;
+  /** Query keys to invalidate on success. */
   invalidateQueries?: string[];
+  /** Callback invoked after each operation completes or fails. */
   onProgress?: (progress: BatchProgress) => void;
+  /** Callback invoked when the entire batch completes. */
   onSuccess?: (result: BatchResult) => void;
+  /** Callback invoked when the batch fails (only in strict mode). */
   onError?: (error: Error) => void;
 }
 
@@ -68,6 +92,33 @@ function sortByDependencyOrder(
   );
 }
 
+/**
+ * Hook for executing multiple mutations sequentially with progress tracking.
+ *
+ * Operations are automatically sorted by dependency order: inserts first,
+ * then upserts, updates, and finally deletes. This ensures referential
+ * integrity when operations depend on each other.
+ *
+ * Must be used within a {@link BifrostProvider}.
+ *
+ * @param options - Batch configuration including partial success mode and callbacks.
+ * @returns A TanStack Query mutation result with an additional `getProgress` method.
+ *
+ * @example
+ * ```tsx
+ * const { mutate, getProgress } = useBifrostBatch({
+ *   allowPartialSuccess: true,
+ *   invalidateQueries: ['users'],
+ *   onProgress: ({ completed, total }) => console.log(`${completed}/${total}`),
+ * });
+ *
+ * mutate([
+ *   { type: 'insert', table: 'users', data: { name: 'Bob' } },
+ *   { type: 'update', table: 'users', id: 1, data: { name: 'Alice Updated' } },
+ *   { type: 'delete', table: 'users', id: 99 },
+ * ]);
+ * ```
+ */
 export function useBifrostBatch(options: UseBifrostBatchOptions = {}) {
   const config = useContext(BifrostContext);
   if (!config) {
@@ -162,8 +213,16 @@ export function useBifrostBatch(options: UseBifrostBatchOptions = {}) {
   };
 }
 
+/**
+ * Error thrown when a batch operation fails in strict mode (`allowPartialSuccess: false`).
+ *
+ * Contains both the successful results and the errors accumulated before the failure,
+ * allowing the caller to inspect partial progress.
+ */
 export class BatchError extends Error {
+  /** Operations that completed successfully before the failure. */
   readonly results: BatchResult['results'];
+  /** Operations that failed, including the one that caused the abort. */
   readonly errors: BatchResult['errors'];
 
   constructor(

@@ -13,40 +13,62 @@ import type {
   CompoundFilter,
 } from '../types';
 
+/** Built-in aggregate functions for column summaries. */
 export type AggregateFn = 'sum' | 'avg' | 'min' | 'max' | 'count';
 
+/** Display format for aggregate values. */
 export type AggregateFormat = 'currency' | 'percentage' | 'number';
 
+/** Sort direction: ascending or descending. */
 export type SortDirection = 'asc' | 'desc';
 
+/**
+ * Custom comparator function for client-side sorting.
+ * Return a negative number if `a` should come before `b`, positive if after, zero if equal.
+ */
 export type CustomSortFn = (
   a: unknown,
   b: unknown,
   direction: SortDirection,
 ) => number;
 
+/** Configuration for a column aggregate (footer summary). */
 export interface AggregateConfig {
+  /** The field to aggregate (defaults to the column's own field). */
   field?: string;
+  /** Built-in function name or a custom reducer. */
   fn: AggregateFn | ((values: unknown[]) => unknown);
+  /** Display format for the computed value. */
   format?: AggregateFormat | ((value: unknown) => string);
 }
 
+/** Configuration for grouping rows by a field. */
 export interface GroupByConfig {
+  /** The field to group by. */
   field: string;
+  /** Aggregate configs to compute per group. */
   aggregates: Record<string, AggregateConfig>;
 }
 
+/** A computed aggregate value with its formatted display string. */
 export interface AggregateResult {
+  /** The raw aggregate value. */
   value: unknown;
+  /** The formatted string, or `null` if no formatter was configured. */
   formatted: string | null;
 }
 
+/** A group of rows sharing the same group key, with computed aggregates. */
 export interface GroupRow {
+  /** The value of the grouped field. */
   groupKey: unknown;
+  /** All rows in this group. */
   rows: Record<string, unknown>[];
+  /** Computed aggregates for this group. */
   aggregates: Record<string, AggregateResult>;
 }
 
+/** The type of inline cell editor to render. */
 export type EditorType =
   | 'text'
   | 'number'
@@ -55,11 +77,16 @@ export type EditorType =
   | 'checkbox'
   | 'textarea';
 
+/**
+ * Validation function for inline cell editing.
+ * Return `null` if valid, or a string error message if invalid.
+ */
 export type CellValidator = (
   value: unknown,
   row: Record<string, unknown>,
 ) => string | null | Promise<string | null>;
 
+/** Configuration for a single table column. */
 export interface ColumnConfig {
   field: string;
   header: string;
@@ -78,26 +105,41 @@ export interface ColumnConfig {
   editorComponent?: (props: CellEditorProps) => unknown;
 }
 
+/** Props passed to a custom cell editor component. */
 export interface CellEditorProps {
+  /** Current cell value. */
   value: unknown;
+  /** Update the cell value (does not commit). */
   onChange: (value: unknown) => void;
+  /** Commit the current value and close the editor. */
   onCommit: () => void;
+  /** Discard changes and close the editor. */
   onCancel: () => void;
+  /** The column configuration for this cell. */
   column: ColumnConfig;
+  /** The full row data. */
   row: Record<string, unknown>;
 }
 
+/** Configuration for persisting table state to `localStorage`. */
 export interface LocalStorageConfig {
+  /** Storage key prefix. */
   key: string;
+  /** Whether to persist filter state. Defaults to `false`. */
   persistFilters?: boolean;
 }
 
+/** A named filter preset that can be saved and loaded. */
 export interface FilterPreset {
+  /** Display name for the preset. */
   name: string;
+  /** Simple field filters. */
   filters: TableFilter;
+  /** Optional compound filter (AND/OR logic). */
   compoundFilter?: CompoundFilter;
 }
 
+/** Sorting state and actions returned by `useBifrostTable`. */
 export interface SortState {
   current: SortOption[];
   setSorting: (sort: SortOption[]) => void;
@@ -109,6 +151,7 @@ export interface SortState {
   getSortPriority: (field: string) => number;
 }
 
+/** Filter state and actions returned by `useBifrostTable`. */
 export interface FilterState {
   current: TableFilter;
   compoundFilter: CompoundFilter | null;
@@ -123,6 +166,7 @@ export interface FilterState {
   deletePreset: (name: string) => void;
 }
 
+/** Pagination state and actions returned by `useBifrostTable`. */
 export interface PaginationState {
   page: number;
   pageSize: number;
@@ -132,6 +176,7 @@ export interface PaginationState {
   previousPage: () => void;
 }
 
+/** Row selection state and actions returned by `useBifrostTable`. */
 export interface SelectionState<T = Record<string, unknown>> {
   selectedRows: T[];
   toggleRow: (row: T) => void;
@@ -139,6 +184,7 @@ export interface SelectionState<T = Record<string, unknown>> {
   clearSelection: () => void;
 }
 
+/** Configuration for fetching child/detail rows when a parent row is expanded. */
 export interface ChildQueryConfig {
   query: string;
   parentKeyField?: string;
@@ -146,12 +192,14 @@ export interface ChildQueryConfig {
   fields?: string[];
 }
 
+/** State of fetched child data for an expanded row. */
 export interface ChildRowData {
   data: unknown[] | null;
   loading: boolean;
   error: Error | null;
 }
 
+/** Row expansion state and actions returned by `useBifrostTable`. */
 export interface ExpansionState {
   expandedRows: Set<string>;
   toggleExpand: (rowId: string) => void;
@@ -164,8 +212,10 @@ export interface ExpansionState {
   clearChildCache: (rowId?: string) => void;
 }
 
+/** Position for pinning a column: `'left'`, `'right'`, or `null` (unpinned). */
 export type PinPosition = 'left' | 'right' | null;
 
+/** A saved column layout preset. */
 export interface ColumnPreset {
   name: string;
   visibleColumns: string[];
@@ -174,6 +224,7 @@ export interface ColumnPreset {
   pinnedColumns: Record<string, PinPosition>;
 }
 
+/** Feature flags for column management capabilities. */
 export interface ColumnManagementConfig {
   resizable?: boolean;
   reorderable?: boolean;
@@ -181,6 +232,7 @@ export interface ColumnManagementConfig {
   freezable?: boolean;
 }
 
+/** Supported export file formats. */
 export type ExportFormat = 'csv' | 'excel' | 'json';
 
 export type ExportFormatter = (
@@ -1108,6 +1160,36 @@ function mergeFiltersForQuery(
   return { _and: parts };
 }
 
+/**
+ * All-in-one headless table state management hook.
+ *
+ * Provides sorting, filtering, pagination, row selection, column management,
+ * URL synchronization, computed columns, aggregates, inline editing, export,
+ * accessibility (ARIA), responsive breakpoints, virtual scrolling, and
+ * performance optimizations.
+ *
+ * Internally uses {@link useBifrostQuery} for data fetching.
+ * Must be used within a {@link BifrostProvider}.
+ *
+ * @typeParam T - The row data type.
+ * @param options - Table configuration including query, columns, and feature flags.
+ * @returns A comprehensive state object with all table features.
+ *
+ * @example
+ * ```tsx
+ * const table = useBifrostTable<User>({
+ *   query: 'users',
+ *   columns: [
+ *     { field: 'id', header: 'ID', sortable: true },
+ *     { field: 'name', header: 'Name', sortable: true, filterable: true },
+ *   ],
+ *   fields: ['id', 'name', 'email'],
+ *   pagination: { pageSize: 25 },
+ *   defaultSort: [{ field: 'name', direction: 'asc' }],
+ *   urlSync: true,
+ * });
+ * ```
+ */
 export function useBifrostTable<T = Record<string, unknown>>(
   options: UseBifrostTableOptions,
 ): UseBifrostTableResult<T> {

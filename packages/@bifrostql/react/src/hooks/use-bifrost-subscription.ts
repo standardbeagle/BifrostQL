@@ -1,22 +1,47 @@
 import { useState, useEffect, useRef, useContext, useCallback } from 'react';
 import { BifrostContext } from '../components/bifrost-provider';
 
+/**
+ * The current state of a subscription connection.
+ * - `'connecting'` - Establishing the connection.
+ * - `'connected'` - Actively receiving data.
+ * - `'disconnected'` - Connection was closed (may auto-reconnect).
+ * - `'error'` - Connection failed (may auto-reconnect).
+ */
 export type ConnectionState =
   | 'connecting'
   | 'connected'
   | 'disconnected'
   | 'error';
 
+/**
+ * Transport protocol for subscriptions.
+ * - `'websocket'` - Uses the graphql-transport-ws WebSocket protocol.
+ * - `'sse'` - Uses Server-Sent Events.
+ * - `'auto'` - Selects WebSocket if available, otherwise falls back to SSE.
+ */
 export type SubscriptionTransport = 'websocket' | 'sse' | 'auto';
 
+/**
+ * Options for the {@link useBifrostSubscription} hook.
+ * @typeParam T - The expected subscription data type.
+ */
 export interface UseBifrostSubscriptionOptions<T = unknown> {
+  /** The GraphQL subscription query string. */
   subscription: string;
+  /** Optional GraphQL variables for the subscription. */
   variables?: Record<string, unknown>;
+  /** Transport protocol. Defaults to `'auto'`. */
   transport?: SubscriptionTransport;
+  /** Whether the subscription should connect. Defaults to `true`. */
   enabled?: boolean;
+  /** Callback invoked each time new data is received. */
   onData?: (data: T) => void;
+  /** Callback invoked on connection errors. */
   onError?: (error: Error) => void;
+  /** Maximum number of reconnection attempts. Defaults to `5`. */
   reconnectAttempts?: number;
+  /** Base delay in milliseconds for reconnection backoff. Defaults to `1000`. */
   reconnectBaseDelay?: number;
 }
 
@@ -202,6 +227,30 @@ function createSSEConnection<T>(
   };
 }
 
+/**
+ * Hook for real-time data via WebSocket or Server-Sent Events.
+ *
+ * Manages the connection lifecycle including automatic reconnection with
+ * exponential backoff (capped at 30 seconds). The reconnect counter resets
+ * on successful connection.
+ *
+ * Must be used within a {@link BifrostProvider}.
+ *
+ * @typeParam T - The expected subscription data type.
+ * @param options - Subscription configuration.
+ * @returns The latest data, connection state, and any error.
+ *
+ * @example
+ * ```tsx
+ * const { data, connectionState, isConnected, error } = useBifrostSubscription<{
+ *   orderUpdated: Order;
+ * }>({
+ *   subscription: 'subscription { orderUpdated { id status total } }',
+ *   transport: 'auto',
+ *   onData: (data) => console.log('Update:', data),
+ * });
+ * ```
+ */
 export function useBifrostSubscription<T = unknown>(
   options: UseBifrostSubscriptionOptions<T>,
 ): SubscriptionResult<T> {

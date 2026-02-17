@@ -3,10 +3,42 @@ interface GraphQLResponse<T> {
   errors?: Array<{ message: string }>;
 }
 
+/**
+ * Compute an exponential backoff delay for retry attempts, capped at 30 seconds.
+ *
+ * @param attempt - Zero-based retry attempt number.
+ * @param baseDelay - Base delay in milliseconds (doubled each attempt).
+ * @returns Delay in milliseconds.
+ */
 export function defaultRetryDelay(attempt: number, baseDelay: number): number {
   return Math.min(baseDelay * 2 ** attempt, 30_000);
 }
 
+/**
+ * Execute a GraphQL request against a BifrostQL endpoint via `fetch`.
+ *
+ * Handles bearer token injection, JSON serialization, and GraphQL error extraction.
+ * Throws on HTTP errors, GraphQL errors, or empty responses.
+ *
+ * @typeParam T - The expected shape of the `data` field in the GraphQL response.
+ * @param endpoint - The GraphQL endpoint URL.
+ * @param headers - Static HTTP headers to include.
+ * @param query - The GraphQL query or mutation string.
+ * @param variables - Optional GraphQL variables.
+ * @param signal - Optional `AbortSignal` for request cancellation.
+ * @param getToken - Optional async/sync function returning a bearer token.
+ * @returns The `data` field from the GraphQL response.
+ * @throws {Error} On HTTP failure, GraphQL errors, or missing response data.
+ *
+ * @example
+ * ```ts
+ * const data = await executeGraphQL<{ users: User[] }>(
+ *   'https://api.example.com/graphql',
+ *   {},
+ *   '{ users { id name } }',
+ * );
+ * ```
+ */
 export async function executeGraphQL<T>(
   endpoint: string,
   headers: Record<string, string>,

@@ -64,6 +64,27 @@ function buildPaginationArgs(limit?: number, offset?: number): string {
   return parts.join(', ');
 }
 
+/**
+ * Build a GraphQL query string for a BifrostQL table.
+ *
+ * Combines filter, sort, pagination, and field-selection options into a
+ * syntactically valid GraphQL query string. The result can be passed directly
+ * to {@link executeGraphQL} or {@link useBifrost}.
+ *
+ * @param table - The database table name to query.
+ * @param options - Filter, sort, pagination, and field-selection options.
+ * @returns A GraphQL query string.
+ *
+ * @example
+ * ```ts
+ * const query = buildGraphqlQuery('users', {
+ *   filter: { active: true },
+ *   sort: [{ field: 'name', direction: 'asc' }],
+ *   pagination: { limit: 25 },
+ *   fields: ['id', 'name', 'email'],
+ * });
+ * ```
+ */
 export function buildGraphqlQuery(
   table: string,
   options: QueryOptions = {},

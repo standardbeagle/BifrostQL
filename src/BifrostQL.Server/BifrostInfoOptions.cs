@@ -194,13 +194,15 @@ namespace BifrostQL.Server
 
         private static string DetectDatabaseType(IServiceProvider services)
         {
-            var options = services.GetService<BifrostSetupOptions>();
-            if (options != null)
-                return "SqlServer";
-
-            var multiOptions = services.GetService<BifrostMultiDbOptions>();
-            if (multiOptions != null)
-                return "SqlServer";
+            var cache = services.GetService<Core.Schema.PathCache<GraphQL.Inputs>>();
+            if (cache != null)
+            {
+                var firstValue = cache.GetFirstValue();
+                if (firstValue != null && firstValue.TryGetValue("connFactory", out var factoryObj) && factoryObj is Core.Model.IDbConnFactory factory)
+                {
+                    return factory.Dialect.GetType().Name.Replace("Dialect", "");
+                }
+            }
 
             return "Unknown";
         }

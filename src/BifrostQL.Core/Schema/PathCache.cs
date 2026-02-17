@@ -21,6 +21,16 @@ namespace BifrostQL.Core.Schema
         {
             return _schemas.TryGetValue(path, out var cache) ? cache.Value : throw new ArgumentOutOfRangeException(nameof(path), "Path cache not configured for path:" + path);
         }
+
+        /// <summary>
+        /// Returns the first cached value, or default if no loaders are registered.
+        /// Triggers lazy loading of the first entry if not yet loaded.
+        /// </summary>
+        public T? GetFirstValue()
+        {
+            var first = _schemas.Values.FirstOrDefault();
+            return first != null ? first.Value : default;
+        }
     }
 
     internal sealed class Cache<T>

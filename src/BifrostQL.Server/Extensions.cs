@@ -195,6 +195,12 @@ namespace BifrostQL.Server
         public bool DisableAuth { get; set; } = true;
 
         /// <summary>
+        /// Database provider/dialect for this endpoint (e.g., "sqlserver", "postgresql", "mysql", "sqlite").
+        /// When null, the provider is auto-detected from the connection string.
+        /// </summary>
+        public string? Provider { get; set; }
+
+        /// <summary>
         /// Additional metadata sources for this endpoint, merged in priority order.
         /// File metadata (from Metadata property) has lowest priority; later sources override.
         /// </summary>
@@ -325,6 +331,7 @@ namespace BifrostQL.Server
             foreach (var endpoint in _endpoints)
             {
                 var connStr = endpoint.ConnectionString;
+                var providerName = endpoint.Provider;
                 var metadataLoader = new MetadataLoader(endpoint.Metadata);
                 var metadataSources = endpoint.MetadataSources;
                 extensionsLoader.AddLoader(endpoint.Path, () =>
@@ -335,9 +342,12 @@ namespace BifrostQL.Server
                         var composite = new CompositeMetadataSource(metadataSources);
                         additionalMetadata = composite.LoadTableMetadataAsync().Result;
                     }
-                    var loader = new DbModelLoader(connStr, metadataLoader);
+                    var provider = string.IsNullOrWhiteSpace(providerName)
+                        ? (BifrostDbProvider?)null
+                        : DbConnFactoryResolver.ParseProviderName(providerName);
+                    var connFactory = DbConnFactoryResolver.Create(connStr, provider);
+                    var loader = new DbModelLoader(connFactory, metadataLoader);
                     var model = loader.LoadAsync(additionalMetadata).Result;
-                    var connFactory = new DbConnFactory(connStr);
                     var schema = DbSchema.FromModel(model);
                     return new Inputs(new Dictionary<string, object?>
                     {
@@ -451,6 +461,7 @@ namespace BifrostQL.Server
         private IConfigurationSection? _bifrostConfig;
         private IConfigurationSection? _jwtConfig;
         private string? _connectionString;
+        private string? _provider;
         private IReadOnlyCollection<IMutationModule> _modules = Array.Empty<IMutationModule>();
         private Func<IServiceProvider, IReadOnlyCollection<IMutationModule>>? _moduleLoader = null;
         private IReadOnlyCollection<IFilterTransformer> _filterTransformers = Array.Empty<IFilterTransformer>();
@@ -479,7 +490,8 @@ namespace BifrostQL.Server
             if (config.GetValue<bool>("BifrostQL:DisableAuth") == false && config.GetSection("JwtSettings").Exists() == false) throw new ArgumentOutOfRangeException(nameof(config), "GraphQL auth is enabled and JwtSettings is missing from config");
             return BindConfiguration(config.GetRequiredSection("BifrostQL"))
                     .BindJwtSettings(config.GetSection("JwtSettings"))
-                    .BindConnectionString(config.GetConnectionString("bifrost"), !string.IsNullOrWhiteSpace(_connectionString));
+                    .BindConnectionString(config.GetConnectionString("bifrost"), !string.IsNullOrWhiteSpace(_connectionString))
+                    .BindProvider(config.GetValue<string>("BifrostQL:Provider"), !string.IsNullOrWhiteSpace(_provider));
         }
 
         public BifrostSetupOptions BindConnectionString(string? connectionString, bool skip = false)
@@ -487,6 +499,17 @@ namespace BifrostQL.Server
             if (skip) return this;
 
             _connectionString = connectionString;
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the database provider/dialect (e.g., "sqlserver", "postgresql", "mysql", "sqlite").
+        /// When not set, the provider is auto-detected from the connection string.
+        /// </summary>
+        public BifrostSetupOptions BindProvider(string? provider, bool skip = false)
+        {
+            if (skip) return this;
+            _provider = provider;
             return this;
         }
 
@@ -588,9 +611,12 @@ namespace BifrostQL.Server
                     var composite = new CompositeMetadataSource(metadataSources);
                     additionalMetadata = composite.LoadTableMetadataAsync().Result;
                 }
-                var loader = new DbModelLoader(_connectionString, metadataLoader);
+                var provider = string.IsNullOrWhiteSpace(_provider)
+                    ? (BifrostDbProvider?)null
+                    : DbConnFactoryResolver.ParseProviderName(_provider);
+                var connFactory = DbConnFactoryResolver.Create(_connectionString, provider);
+                var loader = new DbModelLoader(connFactory, metadataLoader);
                 var model = loader.LoadAsync(additionalMetadata).Result;
-                var connFactory = new DbConnFactory(_connectionString);
                 var schema = DbSchema.FromModel(model);
                 return new Inputs(new Dictionary<string, object?>
                 {

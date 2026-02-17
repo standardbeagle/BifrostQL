@@ -33,7 +33,7 @@ public sealed class SqliteTypeMapper : ITypeMapper
     /// </remarks>
     public string GetGraphQlType(string dataType)
     {
-        var normalized = dataType.ToLowerInvariant().Trim();
+        var normalized = StripPrecision(dataType);
 
         // SQLite INTEGER PRIMARY KEY is the rowid alias and always an integer.
         // Other integer types follow SQLite affinity rules.
@@ -63,7 +63,7 @@ public sealed class SqliteTypeMapper : ITypeMapper
     /// </remarks>
     public string GetGraphQlInsertTypeName(string dataType, bool isNullable = false)
     {
-        var normalized = dataType.ToLowerInvariant().Trim();
+        var normalized = StripPrecision(dataType);
         if (normalized is "datetime" or "timestamp")
             return $"String{(isNullable ? "" : "!")}";
 
@@ -76,5 +76,12 @@ public sealed class SqliteTypeMapper : ITypeMapper
 
     /// <inheritdoc />
     public bool IsSupported(string dataType)
-        => KnownTypes.Contains(dataType.ToLowerInvariant().Trim());
+        => KnownTypes.Contains(StripPrecision(dataType));
+
+    private static string StripPrecision(string dataType)
+    {
+        var normalized = dataType.ToLowerInvariant().Trim();
+        var parenIdx = normalized.IndexOf('(');
+        return parenIdx >= 0 ? normalized.Substring(0, parenIdx).TrimEnd() : normalized;
+    }
 }

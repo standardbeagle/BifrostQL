@@ -62,8 +62,8 @@ namespace BifrostQL.Core.Model
                 ColumnRef = columnRef,
                 DataType = (string)reader["DATA_TYPE"],
                 IsNullable = ((string)reader["IS_NULLABLE"]) == "YES",
-                OrdinalPosition = (int)reader["ORDINAL_POSITION"],
-                IsIdentity = (int)reader["IS_IDENTITY"] == 1,
+                OrdinalPosition = Convert.ToInt32(reader["ORDINAL_POSITION"]),
+                IsIdentity = Convert.ToInt32(reader["IS_IDENTITY"]) == 1,
                 IsPrimaryKey = isPrimary,
             };
         }

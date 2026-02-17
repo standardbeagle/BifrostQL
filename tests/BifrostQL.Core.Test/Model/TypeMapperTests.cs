@@ -219,7 +219,7 @@ public class TypeMapperTests
         [InlineData("integer", "Int")]
         [InlineData("mediumint", "Int")]
         [InlineData("smallint", "Short")]
-        [InlineData("tinyint", "Byte")]
+        [InlineData("tinyint", "Boolean")]
         [InlineData("bigint", "BigInt")]
         [InlineData("decimal", "Decimal")]
         [InlineData("numeric", "Decimal")]

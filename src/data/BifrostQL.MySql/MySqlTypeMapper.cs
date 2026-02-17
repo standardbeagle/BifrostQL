@@ -27,9 +27,10 @@ public sealed class MySqlTypeMapper : ITypeMapper
 
     /// <inheritdoc />
     /// <remarks>
-    /// Type mapping: int/integer/mediumint->Int, smallint->Short, tinyint->Byte,
+    /// Type mapping: int/integer/mediumint->Int, smallint->Short,
+    /// tinyint/bit/boolean/bool->Boolean (MySqlConnector returns .NET Boolean for TINYINT(1) by default),
     /// bigint->BigInt, decimal/numeric->Decimal, float/double/real->Float,
-    /// bit/boolean/bool->Boolean, datetime/timestamp->DateTime, json->JSON.
+    /// datetime/timestamp->DateTime, json->JSON.
     /// All other types (varchar, text, enum, set, blob, etc.) map to String.
     /// </remarks>
     public string GetGraphQlType(string dataType)
@@ -38,11 +39,10 @@ public sealed class MySqlTypeMapper : ITypeMapper
         {
             "int" or "integer" or "mediumint" => "Int",
             "smallint" => "Short",
-            "tinyint" => "Byte",
+            "tinyint" or "bit" or "boolean" or "bool" => "Boolean",
             "bigint" => "BigInt",
             "decimal" or "numeric" => "Decimal",
             "float" or "double" or "real" => "Float",
-            "bit" or "boolean" or "bool" => "Boolean",
             "datetime" or "timestamp" => "DateTime",
             "json" => "JSON",
             _ => "String",

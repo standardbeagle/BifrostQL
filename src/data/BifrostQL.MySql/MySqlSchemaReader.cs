@@ -7,7 +7,7 @@ namespace BifrostQL.MySql;
 /// <summary>
 /// MySQL/MariaDB implementation of schema reader using information_schema views.
 /// Uses key_column_usage instead of constraint_column_usage (which MySQL lacks).
-/// Excludes system schemas (information_schema, mysql, performance_schema, sys).
+/// Scopes queries to the current database via DATABASE() function.
 /// Identity columns are detected via the 'auto_increment' extra flag.
 /// </summary>
 public sealed class MySqlSchemaReader : ISchemaReader
@@ -28,7 +28,7 @@ INNER JOIN information_schema.table_constraints tc ON
     tc.constraint_schema = ccu.constraint_schema AND
     tc.constraint_name = ccu.constraint_name AND
     tc.table_name = ccu.table_name
-WHERE ccu.table_schema NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys');
+WHERE ccu.table_schema = DATABASE();
 
 -- Columns
 SELECT
@@ -46,21 +46,18 @@ SELECT
     10 AS numeric_precision_radix,
     c.numeric_scale,
     c.datetime_precision,
-    c.character_set_catalog,
-    c.character_set_schema,
+    NULL AS character_set_catalog,
+    NULL AS character_set_schema,
     c.character_set_name,
-    c.collation_catalog,
-    c.collation_schema,
+    NULL AS collation_catalog,
+    NULL AS collation_schema,
     c.collation_name,
     NULL AS domain_catalog,
     NULL AS domain_schema,
     NULL AS domain_name,
-    CASE
-        WHEN c.extra = 'auto_increment' THEN 1
-        ELSE 0
-    END AS is_identity
+    CASE WHEN c.extra = 'auto_increment' THEN 1 ELSE 0 END AS is_identity
 FROM information_schema.columns c
-WHERE c.table_schema NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
+WHERE c.table_schema = DATABASE()
 ORDER BY c.table_schema, c.table_name, c.ordinal_position;
 
 -- Tables
@@ -70,7 +67,7 @@ SELECT
     table_name,
     table_type
 FROM information_schema.tables
-WHERE table_schema NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
+WHERE table_schema = DATABASE()
 ORDER BY table_schema, table_name;
 ";
 

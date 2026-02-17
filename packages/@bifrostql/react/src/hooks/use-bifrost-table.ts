@@ -164,11 +164,68 @@ export interface ExpansionState {
   clearChildCache: (rowId?: string) => void;
 }
 
+export type PinPosition = 'left' | 'right' | null;
+
+export interface ColumnPreset {
+  name: string;
+  visibleColumns: string[];
+  columnOrder: string[];
+  columnWidths: Record<string, number>;
+  pinnedColumns: Record<string, PinPosition>;
+}
+
+export interface ColumnManagementConfig {
+  resizable?: boolean;
+  reorderable?: boolean;
+  hideable?: boolean;
+  freezable?: boolean;
+}
+
+export type ExportFormat = 'csv' | 'excel' | 'json';
+
+export type ExportFormatter = (
+  value: unknown,
+  field: string,
+  row: Record<string, unknown>,
+) => string;
+
+export interface ExportConfig {
+  formats?: ExportFormat[];
+  filename?: string;
+  formatters?: Record<string, ExportFormatter>;
+}
+
 export interface ColumnManagementState {
   visibleColumns: string[];
   toggleColumn: (field: string) => void;
+  showColumn: (field: string) => void;
+  hideColumn: (field: string) => void;
+  showAllColumns: () => void;
   columnOrder: string[];
   reorderColumn: (from: number, to: number) => void;
+  columnWidths: Record<string, number>;
+  resizeColumn: (field: string, width: number) => void;
+  autoFitColumn: (field: string) => void;
+  autoFitAllColumns: () => void;
+  pinnedColumns: Record<string, PinPosition>;
+  pinColumn: (field: string, position: PinPosition) => void;
+  unpinColumn: (field: string) => void;
+  presets: ColumnPreset[];
+  savePreset: (name: string) => void;
+  loadPreset: (name: string) => void;
+  deletePreset: (name: string) => void;
+  resetColumns: () => void;
+}
+
+export interface ExportState {
+  exportCsv: (allPages?: boolean) => void;
+  exportExcel: (allPages?: boolean) => void;
+  exportJson: (allPages?: boolean) => void;
+  copyToClipboard: (allPages?: boolean) => Promise<void>;
+  downloadFile: (
+    format: ExportFormat,
+    allPages?: boolean,
+  ) => void;
 }
 
 export interface CellError {
@@ -259,6 +316,8 @@ export interface UseBifrostTableOptions extends UseBifrostOptions {
   autoSave?: boolean;
   onRowUpdate?: RowUpdateFn;
   onBatchSave?: BatchSaveFn;
+  columnManagement?: ColumnManagementConfig;
+  export?: ExportConfig;
 }
 
 export interface UseBifrostTableResult<T = Record<string, unknown>> {
@@ -274,6 +333,7 @@ export interface UseBifrostTableResult<T = Record<string, unknown>> {
   expansion: ExpansionState;
   columnManagement: ColumnManagementState;
   editing: EditingState;
+  export: ExportState;
   loading: boolean;
   error: Error | null;
   refetch: () => void;
@@ -420,6 +480,151 @@ function writePresetsToLocalStorage(
   } catch {
     // localStorage may be unavailable
   }
+}
+
+function readColumnPresetsFromLocalStorage(key: string): ColumnPreset[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(`${key}_columnPresets`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (p: unknown): p is ColumnPreset =>
+        typeof p === 'object' &&
+        p !== null &&
+        'name' in p &&
+        'visibleColumns' in p &&
+        'columnOrder' in p,
+    );
+  } catch {
+    return [];
+  }
+}
+
+function writeColumnPresetsToLocalStorage(
+  key: string,
+  presets: ColumnPreset[],
+): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (presets.length === 0) {
+      window.localStorage.removeItem(`${key}_columnPresets`);
+    } else {
+      window.localStorage.setItem(
+        `${key}_columnPresets`,
+        JSON.stringify(presets),
+      );
+    }
+  } catch {
+    // localStorage may be unavailable
+  }
+}
+
+function escapeCsvValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  const str = String(value);
+  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+function formatExportValue(
+  value: unknown,
+  field: string,
+  row: Record<string, unknown>,
+  formatters?: Record<string, ExportFormatter>,
+): string {
+  if (formatters?.[field]) {
+    return formatters[field](value, field, row);
+  }
+  if (value === null || value === undefined) return '';
+  return String(value);
+}
+
+function rowsToCsv(
+  rows: Record<string, unknown>[],
+  fields: string[],
+  headers: string[],
+  formatters?: Record<string, ExportFormatter>,
+): string {
+  const headerLine = headers.map(escapeCsvValue).join(',');
+  const dataLines = rows.map((row) =>
+    fields
+      .map((field) =>
+        escapeCsvValue(formatExportValue(row[field], field, row, formatters)),
+      )
+      .join(','),
+  );
+  return [headerLine, ...dataLines].join('\n');
+}
+
+function rowsToTsv(
+  rows: Record<string, unknown>[],
+  fields: string[],
+  headers: string[],
+  formatters?: Record<string, ExportFormatter>,
+): string {
+  const headerLine = headers.join('\t');
+  const dataLines = rows.map((row) =>
+    fields
+      .map((field) =>
+        formatExportValue(row[field], field, row, formatters).replace(/\t/g, ' '),
+      )
+      .join('\t'),
+  );
+  return [headerLine, ...dataLines].join('\n');
+}
+
+function rowsToJson(
+  rows: Record<string, unknown>[],
+  fields: string[],
+  formatters?: Record<string, ExportFormatter>,
+): string {
+  const filtered = rows.map((row) => {
+    const obj: Record<string, unknown> = {};
+    for (const field of fields) {
+      if (formatters?.[field]) {
+        obj[field] = formatters[field](row[field], field, row);
+      } else {
+        obj[field] = row[field];
+      }
+    }
+    return obj;
+  });
+  return JSON.stringify(filtered, null, 2);
+}
+
+function triggerDownload(content: string, filename: string, mimeType: string): void {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+const DEFAULT_COLUMN_WIDTH = 150;
+
+function estimateColumnWidth(
+  field: string,
+  header: string,
+  rows: Record<string, unknown>[],
+): number {
+  const headerLen = header.length;
+  let maxLen = headerLen;
+  const sampleSize = Math.min(rows.length, 100);
+  for (let i = 0; i < sampleSize; i++) {
+    const val = rows[i][field];
+    const len = val === null || val === undefined ? 0 : String(val).length;
+    if (len > maxLen) maxLen = len;
+  }
+  return Math.max(50, Math.min(maxLen * 9 + 16, 500));
 }
 
 function countActiveFilters(
@@ -751,6 +956,8 @@ export function useBifrostTable<T = Record<string, unknown>>(
     autoSave = false,
     onRowUpdate,
     onBatchSave,
+    columnManagement: columnManagementConfig,
+    export: exportConfig,
     ...bifrostOptions
   } = options;
 
@@ -816,12 +1023,34 @@ export function useBifrostTable<T = Record<string, unknown>>(
   );
   const childAbortRef = useRef<Map<string, AbortController>>(new Map());
   const bifrostConfig = useContext(BifrostContext);
+  const defaultColumnFields = useMemo(() => columns.map((c) => c.field), [columns]);
+  const defaultColumnWidths = useMemo(() => {
+    const widths: Record<string, number> = {};
+    for (const col of columns) {
+      widths[col.field] = col.width ?? DEFAULT_COLUMN_WIDTH;
+    }
+    return widths;
+  }, [columns]);
+
   const [visibleColumns, setVisibleColumns] = useState<string[]>(() =>
     columns.map((c) => c.field),
   );
   const [columnOrder, setColumnOrder] = useState<string[]>(() =>
     columns.map((c) => c.field),
   );
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(
+    () => ({ ...defaultColumnWidths }),
+  );
+  const [pinnedColumns, setPinnedColumns] = useState<Record<string, PinPosition>>(
+    () => ({}),
+  );
+  const initialColumnPresets = useMemo(() => {
+    if (!localStorageConfig?.key) return [];
+    return readColumnPresetsFromLocalStorage(localStorageConfig.key);
+    // Only read localStorage on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [columnPresets, setColumnPresets] = useState<ColumnPreset[]>(initialColumnPresets);
 
   const [editingCell, setEditingCell] = useState<{
     rowKey: string;
@@ -1163,6 +1392,20 @@ export function useBifrostTable<T = Record<string, unknown>>(
     );
   }, []);
 
+  const showColumn = useCallback((field: string) => {
+    setVisibleColumns((prev) =>
+      prev.includes(field) ? prev : [...prev, field],
+    );
+  }, []);
+
+  const hideColumn = useCallback((field: string) => {
+    setVisibleColumns((prev) => prev.filter((f) => f !== field));
+  }, []);
+
+  const showAllColumns = useCallback(() => {
+    setVisibleColumns([...defaultColumnFields]);
+  }, [defaultColumnFields]);
+
   const reorderColumn = useCallback((from: number, to: number) => {
     setColumnOrder((prev) => {
       if (from < 0 || from >= prev.length || to < 0 || to >= prev.length) {
@@ -1174,6 +1417,187 @@ export function useBifrostTable<T = Record<string, unknown>>(
       return next;
     });
   }, []);
+
+  const resizeColumn = useCallback((field: string, width: number) => {
+    const clamped = Math.max(30, width);
+    setColumnWidths((prev) => ({ ...prev, [field]: clamped }));
+  }, []);
+
+  const autoFitColumn = useCallback(
+    (field: string) => {
+      const col = columns.find((c) => c.field === field);
+      if (!col) return;
+      const rows = dataWithComputed as Record<string, unknown>[];
+      const width = estimateColumnWidth(field, col.header, rows);
+      setColumnWidths((prev) => ({ ...prev, [field]: width }));
+    },
+    [columns, dataWithComputed],
+  );
+
+  const autoFitAllColumns = useCallback(() => {
+    const rows = dataWithComputed as Record<string, unknown>[];
+    const widths: Record<string, number> = {};
+    for (const col of columns) {
+      widths[col.field] = estimateColumnWidth(col.field, col.header, rows);
+    }
+    setColumnWidths(widths);
+  }, [columns, dataWithComputed]);
+
+  const pinColumn = useCallback((field: string, position: PinPosition) => {
+    setPinnedColumns((prev) => {
+      if (position === null) {
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      }
+      return { ...prev, [field]: position };
+    });
+  }, []);
+
+  const unpinColumn = useCallback((field: string) => {
+    setPinnedColumns((prev) => {
+      if (!(field in prev)) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  }, []);
+
+  const saveColumnPreset = useCallback(
+    (name: string) => {
+      setColumnPresets((prev) => {
+        const preset: ColumnPreset = {
+          name,
+          visibleColumns: [...visibleColumns],
+          columnOrder: [...columnOrder],
+          columnWidths: { ...columnWidths },
+          pinnedColumns: { ...pinnedColumns },
+        };
+        const existing = prev.findIndex((p) => p.name === name);
+        const updated =
+          existing >= 0
+            ? prev.map((p, i) => (i === existing ? preset : p))
+            : [...prev, preset];
+        if (localStorageConfig?.key) {
+          writeColumnPresetsToLocalStorage(localStorageConfig.key, updated);
+        }
+        return updated;
+      });
+    },
+    [visibleColumns, columnOrder, columnWidths, pinnedColumns, localStorageConfig?.key],
+  );
+
+  const loadColumnPreset = useCallback(
+    (name: string) => {
+      const preset = columnPresets.find((p) => p.name === name);
+      if (!preset) return;
+      setVisibleColumns([...preset.visibleColumns]);
+      setColumnOrder([...preset.columnOrder]);
+      setColumnWidths({ ...preset.columnWidths });
+      setPinnedColumns({ ...preset.pinnedColumns });
+    },
+    [columnPresets],
+  );
+
+  const deleteColumnPreset = useCallback(
+    (name: string) => {
+      setColumnPresets((prev) => {
+        const updated = prev.filter((p) => p.name !== name);
+        if (localStorageConfig?.key) {
+          writeColumnPresetsToLocalStorage(localStorageConfig.key, updated);
+        }
+        return updated;
+      });
+    },
+    [localStorageConfig?.key],
+  );
+
+  const resetColumns = useCallback(() => {
+    setVisibleColumns([...defaultColumnFields]);
+    setColumnOrder([...defaultColumnFields]);
+    setColumnWidths({ ...defaultColumnWidths });
+    setPinnedColumns({});
+  }, [defaultColumnFields, defaultColumnWidths]);
+
+  const getExportFields = useCallback((): { fields: string[]; headers: string[] } => {
+    const orderedVisible = columnOrder.filter((f) => visibleColumns.includes(f));
+    const headers = orderedVisible.map((f) => {
+      const col = columns.find((c) => c.field === f);
+      return col?.header ?? f;
+    });
+    return { fields: orderedVisible, headers };
+  }, [columnOrder, visibleColumns, columns]);
+
+  const getExportRows = useCallback(
+    (allPages?: boolean): Record<string, unknown>[] => {
+      if (allPages) {
+        return dataWithComputed as Record<string, unknown>[];
+      }
+      return dataWithComputed as Record<string, unknown>[];
+    },
+    [dataWithComputed],
+  );
+
+  const exportCsv = useCallback(
+    (allPages?: boolean) => {
+      const { fields: exportFields, headers } = getExportFields();
+      const rows = getExportRows(allPages);
+      const csv = rowsToCsv(rows, exportFields, headers, exportConfig?.formatters);
+      const filename = `${exportConfig?.filename ?? table}-export.csv`;
+      triggerDownload(csv, filename, 'text/csv;charset=utf-8;');
+    },
+    [getExportFields, getExportRows, exportConfig, table],
+  );
+
+  const exportExcel = useCallback(
+    (allPages?: boolean) => {
+      const { fields: exportFields, headers } = getExportFields();
+      const rows = getExportRows(allPages);
+      const tsv = rowsToTsv(rows, exportFields, headers, exportConfig?.formatters);
+      const filename = `${exportConfig?.filename ?? table}-export.xls`;
+      triggerDownload(tsv, filename, 'application/vnd.ms-excel');
+    },
+    [getExportFields, getExportRows, exportConfig, table],
+  );
+
+  const exportJson = useCallback(
+    (allPages?: boolean) => {
+      const { fields: exportFields } = getExportFields();
+      const rows = getExportRows(allPages);
+      const json = rowsToJson(rows, exportFields, exportConfig?.formatters);
+      const filename = `${exportConfig?.filename ?? table}-export.json`;
+      triggerDownload(json, filename, 'application/json');
+    },
+    [getExportFields, getExportRows, exportConfig, table],
+  );
+
+  const copyToClipboard = useCallback(
+    async (allPages?: boolean): Promise<void> => {
+      if (typeof navigator === 'undefined' || !navigator.clipboard) return;
+      const { fields: exportFields, headers } = getExportFields();
+      const rows = getExportRows(allPages);
+      const tsv = rowsToTsv(rows, exportFields, headers, exportConfig?.formatters);
+      await navigator.clipboard.writeText(tsv);
+    },
+    [getExportFields, getExportRows, exportConfig],
+  );
+
+  const downloadFile = useCallback(
+    (format: ExportFormat, allPages?: boolean) => {
+      switch (format) {
+        case 'csv':
+          exportCsv(allPages);
+          break;
+        case 'excel':
+          exportExcel(allPages);
+          break;
+        case 'json':
+          exportJson(allPages);
+          break;
+      }
+    },
+    [exportCsv, exportExcel, exportJson],
+  );
 
   const toggleSort = useCallback(
     (field: string, multi?: boolean) => {
@@ -1785,8 +2209,23 @@ export function useBifrostTable<T = Record<string, unknown>>(
     columnManagement: {
       visibleColumns,
       toggleColumn,
+      showColumn,
+      hideColumn,
+      showAllColumns,
       columnOrder,
       reorderColumn,
+      columnWidths,
+      resizeColumn,
+      autoFitColumn,
+      autoFitAllColumns,
+      pinnedColumns,
+      pinColumn,
+      unpinColumn,
+      presets: columnPresets,
+      savePreset: saveColumnPreset,
+      loadPreset: loadColumnPreset,
+      deletePreset: deleteColumnPreset,
+      resetColumns,
     },
     editing: {
       editingCell,
@@ -1807,6 +2246,13 @@ export function useBifrostTable<T = Record<string, unknown>>(
       discardRow,
       discardAll,
       isColumnEditable,
+    },
+    export: {
+      exportCsv,
+      exportExcel,
+      exportJson,
+      copyToClipboard,
+      downloadFile,
     },
     loading: queryResult.isLoading,
     error: queryResult.error,

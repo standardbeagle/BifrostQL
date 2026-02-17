@@ -11,6 +11,9 @@ import type {
   UrlSyncConfig,
   CustomSortFn,
   FilterPreset,
+  ColumnPreset,
+  ExportFormatter,
+  PinPosition,
 } from './use-bifrost-table';
 
 function createFetchMock(response: unknown, ok = true, status = 200) {
@@ -41,6 +44,79 @@ function createWrapper(
       </QueryClientProvider>
     );
   };
+}
+
+interface MockBlob {
+  text: () => Promise<string>;
+}
+
+interface DownloadMock {
+  contents: string[];
+  blobs: MockBlob[];
+  links: HTMLAnchorElement[];
+  cleanup: () => void;
+}
+
+function setupDownloadMocks(): DownloadMock {
+  const contents: string[] = [];
+  const blobs: MockBlob[] = [];
+  const links: HTMLAnchorElement[] = [];
+
+  // Ensure URL methods exist in jsdom
+  if (!URL.createObjectURL) {
+    (URL as Record<string, unknown>).createObjectURL = () => '';
+  }
+  if (!URL.revokeObjectURL) {
+    (URL as Record<string, unknown>).revokeObjectURL = () => {};
+  }
+
+  // Intercept Blob constructor to capture string content directly,
+  // since jsdom doesn't support blob.text() or blob.arrayBuffer()
+  const OrigBlob = globalThis.Blob;
+  const origBlobCtor = globalThis.Blob;
+  vi.spyOn(URL, 'createObjectURL').mockImplementation(() => 'blob:mock');
+  globalThis.Blob = class extends OrigBlob {
+    constructor(parts?: BlobPart[], options?: BlobPropertyBag) {
+      super(parts, options);
+      if (parts) {
+        const text = parts.map((p) => (typeof p === 'string' ? p : '')).join('');
+        if (text) {
+          contents.push(text);
+          blobs.push({ text: () => Promise.resolve(text) });
+        }
+      }
+    }
+  } as typeof Blob;
+  vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+  vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+    const el = document.createElementNS(
+      'http://www.w3.org/1999/xhtml',
+      tag,
+    ) as HTMLAnchorElement;
+    if (tag === 'a') {
+      Object.defineProperty(el, 'click', { value: () => {} });
+      links.push(el);
+    }
+    return el;
+  });
+  vi.spyOn(document.body, 'appendChild').mockImplementation((el) => el);
+  vi.spyOn(document.body, 'removeChild').mockImplementation((el) => el);
+
+  return {
+    contents,
+    blobs,
+    links,
+    cleanup: () => {
+      globalThis.Blob = origBlobCtor;
+      vi.restoreAllMocks();
+    },
+  };
+}
+
+async function getDownloadContent(mock: DownloadMock, index = 0): Promise<string> {
+  // Wait for async blob reading to complete
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  return mock.contents[index] ?? '';
 }
 
 const defaultColumns: ColumnConfig[] = [
@@ -1655,6 +1731,912 @@ describe('useBifrostTable', () => {
         'name',
         'email',
       ]);
+    });
+  });
+
+  describe('column management - show/hide helpers', () => {
+    it('showColumn makes a hidden column visible', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.hideColumn('email');
+      });
+      expect(result.current.columnManagement.visibleColumns).not.toContain('email');
+
+      act(() => {
+        result.current.columnManagement.showColumn('email');
+      });
+      expect(result.current.columnManagement.visibleColumns).toContain('email');
+    });
+
+    it('hideColumn removes a column from visible list', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.hideColumn('name');
+      });
+      expect(result.current.columnManagement.visibleColumns).toEqual(['id', 'email']);
+    });
+
+    it('showColumn is idempotent for already visible column', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.showColumn('name');
+      });
+      const nameCount = result.current.columnManagement.visibleColumns.filter(
+        (f) => f === 'name',
+      ).length;
+      expect(nameCount).toBe(1);
+    });
+
+    it('showAllColumns restores all columns', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.hideColumn('name');
+        result.current.columnManagement.hideColumn('email');
+      });
+      expect(result.current.columnManagement.visibleColumns).toEqual(['id']);
+
+      act(() => {
+        result.current.columnManagement.showAllColumns();
+      });
+      expect(result.current.columnManagement.visibleColumns).toEqual([
+        'id',
+        'name',
+        'email',
+      ]);
+    });
+  });
+
+  describe('column management - resize', () => {
+    it('initializes columnWidths from column config', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      expect(result.current.columnManagement.columnWidths.id).toBe(80);
+      expect(result.current.columnManagement.columnWidths.name).toBe(150);
+      expect(result.current.columnManagement.columnWidths.email).toBe(150);
+    });
+
+    it('resizeColumn changes the width of a column', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.resizeColumn('name', 250);
+      });
+      expect(result.current.columnManagement.columnWidths.name).toBe(250);
+    });
+
+    it('resizeColumn clamps width to minimum of 30', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.resizeColumn('name', 10);
+      });
+      expect(result.current.columnManagement.columnWidths.name).toBe(30);
+    });
+
+    it('autoFitColumn estimates width from data', async () => {
+      const mockUsers = [
+        { id: 1, name: 'Alice', email: 'alice@example.com' },
+        { id: 2, name: 'Bob', email: 'bob@example.com' },
+      ];
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.columnManagement.autoFitColumn('email');
+      });
+
+      expect(result.current.columnManagement.columnWidths.email).toBeGreaterThan(50);
+    });
+
+    it('autoFitAllColumns estimates widths for all columns', async () => {
+      const mockUsers = [
+        { id: 1, name: 'Alice', email: 'alice@example.com' },
+      ];
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.columnManagement.autoFitAllColumns();
+      });
+
+      expect(result.current.columnManagement.columnWidths.id).toBeGreaterThanOrEqual(50);
+      expect(result.current.columnManagement.columnWidths.name).toBeGreaterThanOrEqual(50);
+      expect(result.current.columnManagement.columnWidths.email).toBeGreaterThanOrEqual(50);
+    });
+
+    it('autoFitColumn does nothing for unknown field', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      const before = { ...result.current.columnManagement.columnWidths };
+      act(() => {
+        result.current.columnManagement.autoFitColumn('nonexistent');
+      });
+      expect(result.current.columnManagement.columnWidths).toEqual(before);
+    });
+  });
+
+  describe('column management - pin/freeze', () => {
+    it('initializes with no pinned columns', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      expect(result.current.columnManagement.pinnedColumns).toEqual({});
+    });
+
+    it('pinColumn pins a column to the left', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.pinColumn('id', 'left');
+      });
+      expect(result.current.columnManagement.pinnedColumns.id).toBe('left');
+    });
+
+    it('pinColumn pins a column to the right', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.pinColumn('email', 'right');
+      });
+      expect(result.current.columnManagement.pinnedColumns.email).toBe('right');
+    });
+
+    it('pinColumn with null removes the pin', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.pinColumn('id', 'left');
+      });
+      expect(result.current.columnManagement.pinnedColumns.id).toBe('left');
+
+      act(() => {
+        result.current.columnManagement.pinColumn('id', null);
+      });
+      expect(result.current.columnManagement.pinnedColumns.id).toBeUndefined();
+    });
+
+    it('unpinColumn removes a pinned column', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.pinColumn('name', 'left');
+      });
+      expect(result.current.columnManagement.pinnedColumns.name).toBe('left');
+
+      act(() => {
+        result.current.columnManagement.unpinColumn('name');
+      });
+      expect(result.current.columnManagement.pinnedColumns.name).toBeUndefined();
+    });
+
+    it('unpinColumn is a no-op for unpinned column', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      const before = { ...result.current.columnManagement.pinnedColumns };
+      act(() => {
+        result.current.columnManagement.unpinColumn('name');
+      });
+      expect(result.current.columnManagement.pinnedColumns).toEqual(before);
+    });
+
+    it('supports pinning multiple columns to different sides', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.pinColumn('id', 'left');
+        result.current.columnManagement.pinColumn('email', 'right');
+      });
+      expect(result.current.columnManagement.pinnedColumns).toEqual({
+        id: 'left',
+        email: 'right',
+      });
+    });
+  });
+
+  describe('column management - presets', () => {
+    it('initializes with empty column presets', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      expect(result.current.columnManagement.presets).toEqual([]);
+    });
+
+    it('savePreset saves current column configuration', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.hideColumn('email');
+        result.current.columnManagement.resizeColumn('name', 300);
+        result.current.columnManagement.pinColumn('id', 'left');
+      });
+
+      act(() => {
+        result.current.columnManagement.savePreset('My Preset');
+      });
+
+      expect(result.current.columnManagement.presets).toHaveLength(1);
+      expect(result.current.columnManagement.presets[0].name).toBe('My Preset');
+      expect(result.current.columnManagement.presets[0].visibleColumns).toEqual([
+        'id',
+        'name',
+      ]);
+      expect(result.current.columnManagement.presets[0].columnWidths.name).toBe(300);
+      expect(result.current.columnManagement.presets[0].pinnedColumns.id).toBe('left');
+    });
+
+    it('loadPreset restores column configuration', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.hideColumn('email');
+        result.current.columnManagement.resizeColumn('name', 300);
+      });
+
+      act(() => {
+        result.current.columnManagement.savePreset('Saved');
+      });
+
+      // Reset to defaults
+      act(() => {
+        result.current.columnManagement.resetColumns();
+      });
+      expect(result.current.columnManagement.visibleColumns).toEqual([
+        'id',
+        'name',
+        'email',
+      ]);
+
+      // Load preset
+      act(() => {
+        result.current.columnManagement.loadPreset('Saved');
+      });
+      expect(result.current.columnManagement.visibleColumns).toEqual(['id', 'name']);
+      expect(result.current.columnManagement.columnWidths.name).toBe(300);
+    });
+
+    it('loadPreset does nothing for unknown preset name', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      const beforeVisible = [...result.current.columnManagement.visibleColumns];
+      act(() => {
+        result.current.columnManagement.loadPreset('does-not-exist');
+      });
+      expect(result.current.columnManagement.visibleColumns).toEqual(beforeVisible);
+    });
+
+    it('deletePreset removes a preset', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.savePreset('A');
+        result.current.columnManagement.savePreset('B');
+      });
+      expect(result.current.columnManagement.presets).toHaveLength(2);
+
+      act(() => {
+        result.current.columnManagement.deletePreset('A');
+      });
+      expect(result.current.columnManagement.presets).toHaveLength(1);
+      expect(result.current.columnManagement.presets[0].name).toBe('B');
+    });
+
+    it('savePreset overwrites existing preset with same name', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.savePreset('Config');
+      });
+
+      act(() => {
+        result.current.columnManagement.hideColumn('email');
+      });
+
+      act(() => {
+        result.current.columnManagement.savePreset('Config');
+      });
+
+      expect(result.current.columnManagement.presets).toHaveLength(1);
+      expect(result.current.columnManagement.presets[0].visibleColumns).not.toContain('email');
+    });
+
+    it('column presets persist to localStorage', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            localStorage: { key: 'test-col-presets' },
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.savePreset('Persisted');
+      });
+
+      const stored = window.localStorage.getItem('test-col-presets_columnPresets');
+      expect(stored).not.toBeNull();
+      const parsed = JSON.parse(stored!);
+      expect(parsed).toHaveLength(1);
+      expect(parsed[0].name).toBe('Persisted');
+
+      // Clean up
+      window.localStorage.removeItem('test-col-presets_columnPresets');
+    });
+
+    it('deletePreset removes from localStorage', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            localStorage: { key: 'test-del-preset' },
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.savePreset('ToDelete');
+      });
+      expect(
+        window.localStorage.getItem('test-del-preset_columnPresets'),
+      ).not.toBeNull();
+
+      act(() => {
+        result.current.columnManagement.deletePreset('ToDelete');
+      });
+      // When no presets remain, the key is removed
+      expect(
+        window.localStorage.getItem('test-del-preset_columnPresets'),
+      ).toBeNull();
+    });
+  });
+
+  describe('column management - resetColumns', () => {
+    it('resets visibility, order, widths, and pins to defaults', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.hideColumn('email');
+        result.current.columnManagement.reorderColumn(0, 2);
+        result.current.columnManagement.resizeColumn('name', 400);
+        result.current.columnManagement.pinColumn('id', 'left');
+      });
+
+      act(() => {
+        result.current.columnManagement.resetColumns();
+      });
+
+      expect(result.current.columnManagement.visibleColumns).toEqual([
+        'id',
+        'name',
+        'email',
+      ]);
+      expect(result.current.columnManagement.columnOrder).toEqual([
+        'id',
+        'name',
+        'email',
+      ]);
+      expect(result.current.columnManagement.columnWidths.id).toBe(80);
+      expect(result.current.columnManagement.columnWidths.name).toBe(150);
+      expect(result.current.columnManagement.pinnedColumns).toEqual({});
+    });
+  });
+
+  describe('export - CSV', () => {
+    it('exportCsv triggers a file download', async () => {
+      const mockUsers = [
+        { id: 1, name: 'Alice', email: 'alice@test.com' },
+        { id: 2, name: 'Bob', email: 'bob@test.com' },
+      ];
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const mock = setupDownloadMocks();
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.export.exportCsv();
+      });
+
+      expect(mock.blobs).toHaveLength(1);
+      expect(mock.links.some((l) => l.download.includes('.csv'))).toBe(true);
+
+      mock.cleanup();
+    });
+
+    it('exportCsv uses configured filename', async () => {
+      const mockUsers = [{ id: 1, name: 'Alice', email: 'a@b.com' }];
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const mock = setupDownloadMocks();
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            urlSync: false,
+            export: { filename: 'my-users' },
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.export.exportCsv();
+      });
+
+      expect(mock.links.some((l) => l.download === 'my-users-export.csv')).toBe(true);
+
+      mock.cleanup();
+    });
+
+    it('exportCsv only includes visible columns in order', async () => {
+      const mockUsers = [{ id: 1, name: 'Alice', email: 'a@b.com' }];
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const mock = setupDownloadMocks();
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.columnManagement.hideColumn('email');
+      });
+
+      act(() => {
+        result.current.export.exportCsv();
+      });
+
+      expect(mock.blobs).toHaveLength(1);
+      const text = await mock.blobs[0].text();
+      const header = text.split('\n')[0];
+      expect(header).toContain('ID');
+      expect(header).toContain('Name');
+      expect(header).not.toContain('Email');
+
+      mock.cleanup();
+    });
+
+    it('exportCsv escapes commas and quotes in values', async () => {
+      const mockUsers = [
+        { id: 1, name: 'Doe, Jane', email: 'jane@test.com' },
+        { id: 2, name: 'He said "hello"', email: 'hello@test.com' },
+      ];
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const mock = setupDownloadMocks();
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.export.exportCsv();
+      });
+
+      const text = await mock.blobs[0].text();
+      expect(text).toContain('"Doe, Jane"');
+      expect(text).toContain('"He said ""hello"""');
+
+      mock.cleanup();
+    });
+  });
+
+  describe('export - JSON', () => {
+    it('exportJson triggers a file download', async () => {
+      const mockUsers = [
+        { id: 1, name: 'Alice', email: 'alice@test.com' },
+      ];
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const mock = setupDownloadMocks();
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.export.exportJson();
+      });
+
+      expect(mock.blobs).toHaveLength(1);
+      const text = await mock.blobs[0].text();
+      const parsed = JSON.parse(text);
+      expect(parsed).toHaveLength(1);
+      expect(parsed[0].id).toBe(1);
+      expect(parsed[0].name).toBe('Alice');
+
+      mock.cleanup();
+    });
+
+    it('exportJson only includes visible columns', async () => {
+      const mockUsers = [
+        { id: 1, name: 'Alice', email: 'alice@test.com' },
+      ];
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const mock = setupDownloadMocks();
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.columnManagement.hideColumn('email');
+      });
+
+      act(() => {
+        result.current.export.exportJson();
+      });
+
+      const text = await mock.blobs[0].text();
+      const parsed = JSON.parse(text);
+      expect(parsed[0]).toHaveProperty('id');
+      expect(parsed[0]).toHaveProperty('name');
+      expect(parsed[0]).not.toHaveProperty('email');
+
+      mock.cleanup();
+    });
+  });
+
+  describe('export - Excel', () => {
+    it('exportExcel triggers a file download with .xls extension', async () => {
+      const mockUsers = [{ id: 1, name: 'Alice', email: 'a@b.com' }];
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const mock = setupDownloadMocks();
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.export.exportExcel();
+      });
+
+      expect(mock.links.some((l) => l.download.includes('.xls'))).toBe(true);
+
+      mock.cleanup();
+    });
+  });
+
+  describe('export - custom formatters', () => {
+    it('applies custom formatter to exported values', async () => {
+      const mockUsers = [
+        { id: 1, name: 'Alice', email: 'alice@test.com' },
+      ];
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const mock = setupDownloadMocks();
+
+      const formatters: Record<string, ExportFormatter> = {
+        name: (value) => `Name: ${value}`,
+      };
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            urlSync: false,
+            export: { formatters },
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.export.exportJson();
+      });
+
+      const text = await mock.blobs[0].text();
+      const parsed = JSON.parse(text);
+      expect(parsed[0].name).toBe('Name: Alice');
+
+      mock.cleanup();
+    });
+  });
+
+  describe('export - copyToClipboard', () => {
+    it('copies data to clipboard as TSV', async () => {
+      const mockUsers = [
+        { id: 1, name: 'Alice', email: 'alice@test.com' },
+      ];
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const writeTextSpy = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText: writeTextSpy },
+        writable: true,
+        configurable: true,
+      });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      await act(async () => {
+        await result.current.export.copyToClipboard();
+      });
+
+      expect(writeTextSpy).toHaveBeenCalledTimes(1);
+      const clipboardContent = writeTextSpy.mock.calls[0][0];
+      expect(clipboardContent).toContain('ID');
+      expect(clipboardContent).toContain('Name');
+      expect(clipboardContent).toContain('Email');
+      expect(clipboardContent).toContain('Alice');
+    });
+  });
+
+  describe('export - downloadFile', () => {
+    it('dispatches to correct format handler via downloadFile', async () => {
+      const mockUsers = [{ id: 1, name: 'Alice', email: 'a@b.com' }];
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const mock = setupDownloadMocks();
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.export.downloadFile('csv');
+      });
+      expect(mock.links.some((l) => l.download.includes('.csv'))).toBe(true);
+
+      act(() => {
+        result.current.export.downloadFile('json');
+      });
+      expect(mock.links.some((l) => l.download.includes('.json'))).toBe(true);
+
+      act(() => {
+        result.current.export.downloadFile('excel');
+      });
+      expect(mock.links.some((l) => l.download.includes('.xls'))).toBe(true);
+
+      mock.cleanup();
+    });
+  });
+
+  describe('export - handles null and undefined values', () => {
+    it('exports null values as empty strings in CSV', async () => {
+      const mockUsers = [
+        { id: 1, name: null, email: 'alice@test.com' },
+      ];
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+
+      const mock = setupDownloadMocks();
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            urlSync: false,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        result.current.export.exportCsv();
+      });
+
+      const text = await mock.blobs[0].text();
+      const lines = text.split('\n');
+      expect(lines[1]).toBe('1,,alice@test.com');
+
+      mock.cleanup();
     });
   });
 

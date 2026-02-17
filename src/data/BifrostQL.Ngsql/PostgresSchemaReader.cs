@@ -5,7 +5,9 @@ using BifrostQL.Core.Model;
 namespace BifrostQL.Ngsql;
 
 /// <summary>
-/// PostgreSQL implementation of schema reader using information_schema and pg_catalog.
+/// PostgreSQL implementation of schema reader using information_schema views.
+/// Excludes pg_catalog and information_schema system schemas.
+/// Identity columns are detected by checking if column_default starts with 'nextval('.
 /// </summary>
 public sealed class PostgresSchemaReader : ISchemaReader
 {
@@ -71,6 +73,7 @@ WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
 ORDER BY table_catalog, table_schema, table_name;
 ";
 
+    /// <inheritdoc />
     public async Task<SchemaData> ReadSchemaAsync(DbConnection connection)
     {
         var cmd = connection.CreateCommand();

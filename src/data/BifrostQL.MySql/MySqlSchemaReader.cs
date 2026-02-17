@@ -5,7 +5,10 @@ using BifrostQL.Core.Model;
 namespace BifrostQL.MySql;
 
 /// <summary>
-/// MySQL implementation of schema reader using information_schema.
+/// MySQL/MariaDB implementation of schema reader using information_schema views.
+/// Uses key_column_usage instead of constraint_column_usage (which MySQL lacks).
+/// Excludes system schemas (information_schema, mysql, performance_schema, sys).
+/// Identity columns are detected via the 'auto_increment' extra flag.
 /// </summary>
 public sealed class MySqlSchemaReader : ISchemaReader
 {
@@ -71,6 +74,7 @@ WHERE table_schema NOT IN ('information_schema', 'mysql', 'performance_schema', 
 ORDER BY table_schema, table_name;
 ";
 
+    /// <inheritdoc />
     public async Task<SchemaData> ReadSchemaAsync(DbConnection connection)
     {
         var cmd = connection.CreateCommand();

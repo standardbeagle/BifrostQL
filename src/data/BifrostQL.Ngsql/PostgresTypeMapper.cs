@@ -8,6 +8,7 @@ namespace BifrostQL.Ngsql;
 /// </summary>
 public sealed class PostgresTypeMapper : ITypeMapper
 {
+    /// <summary>Shared singleton instance.</summary>
     public static readonly PostgresTypeMapper Instance = new();
 
     private static readonly HashSet<string> KnownTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -34,6 +35,14 @@ public sealed class PostgresTypeMapper : ITypeMapper
         "array", "user-defined",
     };
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// Type mapping: integer/int/int4/serial->Int, smallint/int2/smallserial->Short,
+    /// bigint/int8/bigserial->BigInt, decimal/numeric->Decimal,
+    /// real/float4/double precision/float8->Float, boolean/bool->Boolean,
+    /// timestamp (without tz)->DateTime, timestamptz->DateTimeOffset,
+    /// json/jsonb->JSON. All other types (text, varchar, uuid, inet, etc.) map to String.
+    /// </remarks>
     public string GetGraphQlType(string dataType)
     {
         return dataType.ToLowerInvariant().Trim() switch
@@ -51,9 +60,14 @@ public sealed class PostgresTypeMapper : ITypeMapper
         };
     }
 
+    /// <inheritdoc />
     public string GetGraphQlTypeName(string dataType, bool isNullable = false)
         => $"{GetGraphQlType(dataType)}{(isNullable ? "" : "!")}";
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// Timestamp types are mapped to String for mutations to allow flexible date format input.
+    /// </remarks>
     public string GetGraphQlInsertTypeName(string dataType, bool isNullable = false)
     {
         var normalized = dataType.ToLowerInvariant().Trim();
@@ -64,9 +78,11 @@ public sealed class PostgresTypeMapper : ITypeMapper
         return $"{GetGraphQlType(dataType)}{(isNullable ? "" : "!")}";
     }
 
+    /// <inheritdoc />
     public string GetFilterInputTypeName(string dataType)
         => $"FilterType{GetGraphQlType(dataType)}Input";
 
+    /// <inheritdoc />
     public bool IsSupported(string dataType)
         => KnownTypes.Contains(dataType.ToLowerInvariant().Trim());
 }

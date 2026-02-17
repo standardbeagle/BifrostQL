@@ -8,6 +8,7 @@ namespace BifrostQL.MySql;
 /// </summary>
 public sealed class MySqlTypeMapper : ITypeMapper
 {
+    /// <summary>Shared singleton instance.</summary>
     public static readonly MySqlTypeMapper Instance = new();
 
     private static readonly HashSet<string> KnownTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -24,6 +25,13 @@ public sealed class MySqlTypeMapper : ITypeMapper
         "multipoint", "multilinestring", "multipolygon", "geometrycollection",
     };
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// Type mapping: int/integer/mediumint->Int, smallint->Short, tinyint->Byte,
+    /// bigint->BigInt, decimal/numeric->Decimal, float/double/real->Float,
+    /// bit/boolean/bool->Boolean, datetime/timestamp->DateTime, json->JSON.
+    /// All other types (varchar, text, enum, set, blob, etc.) map to String.
+    /// </remarks>
     public string GetGraphQlType(string dataType)
     {
         return dataType.ToLowerInvariant().Trim() switch
@@ -41,9 +49,15 @@ public sealed class MySqlTypeMapper : ITypeMapper
         };
     }
 
+    /// <inheritdoc />
     public string GetGraphQlTypeName(string dataType, bool isNullable = false)
         => $"{GetGraphQlType(dataType)}{(isNullable ? "" : "!")}";
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// DateTime types (datetime, timestamp) are mapped to String for mutations
+    /// to allow flexible date format input.
+    /// </remarks>
     public string GetGraphQlInsertTypeName(string dataType, bool isNullable = false)
     {
         var normalized = dataType.ToLowerInvariant().Trim();
@@ -53,9 +67,11 @@ public sealed class MySqlTypeMapper : ITypeMapper
         return $"{GetGraphQlType(dataType)}{(isNullable ? "" : "!")}";
     }
 
+    /// <inheritdoc />
     public string GetFilterInputTypeName(string dataType)
         => $"FilterType{GetGraphQlType(dataType)}Input";
 
+    /// <inheritdoc />
     public bool IsSupported(string dataType)
         => KnownTypes.Contains(dataType.ToLowerInvariant().Trim());
 }

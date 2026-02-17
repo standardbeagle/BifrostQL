@@ -2,15 +2,28 @@ using BifrostQL.Core.QueryModel;
 
 namespace BifrostQL.Sqlite;
 
+/// <summary>
+/// SQLite dialect implementation.
+/// Uses double-quote identifiers ("name"), LIMIT/OFFSET pagination,
+/// '||' for string concatenation, and last_insert_rowid() for last inserted identity.
+/// SQLite schemas are typically "main" and schema qualification is rarely needed.
+/// </summary>
 public sealed class SqliteDialect : ISqlDialect
 {
+    /// <summary>Shared singleton instance.</summary>
     public static readonly SqliteDialect Instance = new();
 
+    /// <inheritdoc />
     public string EscapeIdentifier(string identifier) => $"\"{identifier}\"";
 
+    /// <inheritdoc />
     public string TableReference(string? schema, string tableName) =>
         string.IsNullOrWhiteSpace(schema) ? $"\"{tableName}\"" : $"\"{schema}\".\"{tableName}\"";
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// SQLite uses LIMIT/OFFSET syntax. ORDER BY is not required for pagination.
+    /// </remarks>
     public string Pagination(IEnumerable<string>? sortColumns, int? offset, int? limit)
     {
         var result = sortColumns?.Any() == true
@@ -28,9 +41,13 @@ public sealed class SqliteDialect : ISqlDialect
         return result;
     }
 
+    /// <inheritdoc />
     public string ParameterPrefix => "@";
+
+    /// <inheritdoc />
     public string LastInsertedIdentity => "last_insert_rowid()";
 
+    /// <inheritdoc />
     public string LikePattern(string paramName, LikePatternType patternType) => patternType switch
     {
         LikePatternType.Contains => $"'%' || {paramName} || '%'",
@@ -39,6 +56,7 @@ public sealed class SqliteDialect : ISqlDialect
         _ => paramName
     };
 
+    /// <inheritdoc />
     public string GetOperator(string op) => op switch
     {
         "_eq" => "=",

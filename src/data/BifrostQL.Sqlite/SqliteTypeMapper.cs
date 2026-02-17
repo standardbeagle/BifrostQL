@@ -10,6 +10,7 @@ namespace BifrostQL.Sqlite;
 /// </summary>
 public sealed class SqliteTypeMapper : ITypeMapper
 {
+    /// <summary>Shared singleton instance.</summary>
     public static readonly SqliteTypeMapper Instance = new();
 
     private static readonly HashSet<string> KnownTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -23,6 +24,13 @@ public sealed class SqliteTypeMapper : ITypeMapper
         "json",
     };
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// Type mapping follows SQLite type affinity rules. INTEGER PRIMARY KEY is the rowid alias.
+    /// integer/int/mediumint->Int, smallint->Short, tinyint->Byte, bigint->BigInt,
+    /// real/double/float->Float, numeric/decimal->Decimal, boolean/bit->Boolean,
+    /// datetime/timestamp->DateTime, json->JSON. All other types map to String.
+    /// </remarks>
     public string GetGraphQlType(string dataType)
     {
         var normalized = dataType.ToLowerInvariant().Trim();
@@ -44,9 +52,15 @@ public sealed class SqliteTypeMapper : ITypeMapper
         };
     }
 
+    /// <inheritdoc />
     public string GetGraphQlTypeName(string dataType, bool isNullable = false)
         => $"{GetGraphQlType(dataType)}{(isNullable ? "" : "!")}";
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// DateTime types (datetime, timestamp) are mapped to String for mutations
+    /// to allow flexible date format input.
+    /// </remarks>
     public string GetGraphQlInsertTypeName(string dataType, bool isNullable = false)
     {
         var normalized = dataType.ToLowerInvariant().Trim();
@@ -56,9 +70,11 @@ public sealed class SqliteTypeMapper : ITypeMapper
         return $"{GetGraphQlType(dataType)}{(isNullable ? "" : "!")}";
     }
 
+    /// <inheritdoc />
     public string GetFilterInputTypeName(string dataType)
         => $"FilterType{GetGraphQlType(dataType)}Input";
 
+    /// <inheritdoc />
     public bool IsSupported(string dataType)
         => KnownTypes.Contains(dataType.ToLowerInvariant().Trim());
 }

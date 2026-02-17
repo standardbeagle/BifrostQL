@@ -5,11 +5,14 @@ using BifrostQL.Core.Model;
 namespace BifrostQL.Sqlite;
 
 /// <summary>
-/// SQLite implementation of schema reader using pragma statements.
-/// SQLite doesn't have information_schema, so we use PRAGMA commands.
+/// SQLite implementation of schema reader using PRAGMA commands.
+/// SQLite lacks information_schema, so table_info and foreign_key_list pragmas
+/// are used per-table. Identity columns are detected as INTEGER PRIMARY KEY
+/// (SQLite's rowid alias convention). All schema/catalog values use "main".
 /// </summary>
 public sealed class SqliteSchemaReader : ISchemaReader
 {
+    /// <inheritdoc />
     public async Task<SchemaData> ReadSchemaAsync(DbConnection connection)
     {
         var tables = new List<IDbTable>();

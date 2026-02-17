@@ -6,6 +6,8 @@ namespace BifrostQL.SqlServer;
 
 /// <summary>
 /// SQL Server implementation of schema reader using INFORMATION_SCHEMA views.
+/// Queries CONSTRAINT_COLUMN_USAGE, COLUMNS, and TABLES views in a single batch.
+/// Identity columns are detected via COLUMNPROPERTY(..., 'IsIdentity').
 /// </summary>
 public sealed class SqlServerSchemaReader : ISchemaReader
 {
@@ -57,6 +59,7 @@ SELECT [TABLE_CATALOG]
   ORDER BY [TABLE_CATALOG],[TABLE_SCHEMA],[TABLE_NAME];
 ";
 
+    /// <inheritdoc />
     public async Task<SchemaData> ReadSchemaAsync(DbConnection connection)
     {
         var cmd = connection.CreateCommand();

@@ -20,6 +20,7 @@ public sealed class SqlServerDbConnFactory : IDbConnFactory
 
     public ISqlDialect Dialect => SqlServerDialect.Instance;
     public ISchemaReader SchemaReader => new SqlServerSchemaReader();
+    public ITypeMapper TypeMapper => SqlServerTypeMapper.Instance;
 
     public DbConnection GetConnection()
     {

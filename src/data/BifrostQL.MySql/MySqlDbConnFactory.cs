@@ -20,6 +20,7 @@ public sealed class MySqlDbConnFactory : IDbConnFactory
 
     public ISqlDialect Dialect => MySqlDialect.Instance;
     public ISchemaReader SchemaReader => new MySqlSchemaReader();
+    public ITypeMapper TypeMapper => MySqlTypeMapper.Instance;
 
     public DbConnection GetConnection()
     {

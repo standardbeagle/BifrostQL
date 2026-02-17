@@ -9,6 +9,7 @@ namespace BifrostQL.Core.Model
         DbConnection GetConnection();
         ISqlDialect Dialect { get; }
         ISchemaReader SchemaReader { get; }
+        ITypeMapper TypeMapper { get; }
     }
 
     public class DbConnFactory : IDbConnFactory
@@ -21,6 +22,7 @@ namespace BifrostQL.Core.Model
 
         public ISqlDialect Dialect => SqlServerDialect.Instance;
         public ISchemaReader SchemaReader => new SqlServerSchemaReader();
+        public ITypeMapper TypeMapper => SqlServerTypeMapper.Instance;
 
         public DbConnection GetConnection()
         {

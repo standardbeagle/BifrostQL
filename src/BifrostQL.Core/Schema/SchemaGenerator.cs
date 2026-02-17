@@ -175,62 +175,31 @@ namespace BifrostQL.Core.Schema
             return builder;
         }
 
-        public static string GetGraphQlInsertTypeName(string dataType, bool isNullable = false)
-        {
-            if (dataType == "datetime2" || dataType == "datetime" || dataType == "datetimeoffset")
-                return $"String{(isNullable ? "" : "!")}";
+        /// <summary>
+        /// Default type mapper used when no dialect-specific mapper is available.
+        /// </summary>
+        internal static ITypeMapper DefaultTypeMapper => SqlServerTypeMapper.Instance;
 
-            return $"{GetSimpleGraphQlTypeName(dataType)}{(isNullable ? "" : "!")}";
-        }
+        public static string GetGraphQlInsertTypeName(string dataType, bool isNullable = false)
+            => GetGraphQlInsertTypeName(dataType, isNullable, DefaultTypeMapper);
+
+        public static string GetGraphQlInsertTypeName(string dataType, bool isNullable, ITypeMapper typeMapper)
+            => typeMapper.GetGraphQlInsertTypeName(dataType, isNullable);
 
         public static string GetGraphQlTypeName(string dataType, bool isNullable = false)
-        {
-            return $"{GetSimpleGraphQlTypeName(dataType)}{(isNullable ? "" : "!")}";
-        }
+            => GetGraphQlTypeName(dataType, isNullable, DefaultTypeMapper);
+
+        public static string GetGraphQlTypeName(string dataType, bool isNullable, ITypeMapper typeMapper)
+            => typeMapper.GetGraphQlTypeName(dataType, isNullable);
 
         public static string GetFilterInputTypeName(string dataType)
-        {
-            return $"FilterType{GetSimpleGraphQlTypeName(dataType)}Input";
-        }
+            => GetFilterInputTypeName(dataType, DefaultTypeMapper);
 
-        private static string GetSimpleGraphQlTypeName(string dataType)
-        {
-            switch (dataType)
-            {
-                case "int":
-                    return "Int";
-                case "smallint":
-                    return "Short";
-                case "tinyint":
-                    return "Byte";
-                case "decimal":
-                    return "Decimal";
-                case "bigint":
-                    return "BigInt";
-                case "float":
-                case "real":
-                    return "Float";
-                case "datetime":
-                case "datetime2":
-                    return "DateTime";
-                case "datetimeoffset":
-                    return "DateTimeOffset";
-                case "bit":
-                    return "Boolean";
-                case "json":
-                    return "JSON";
-                case "varchar":
-                case "nvarchar":
-                case "char":
-                case "nchar":
-                case "binary":
-                case "varbinary":
-                case "text":
-                case "ntext":
-                default:
-                    return "String";
-            }
-        }
+        public static string GetFilterInputTypeName(string dataType, ITypeMapper typeMapper)
+            => typeMapper.GetFilterInputTypeName(dataType);
+
+        internal static string GetSimpleGraphQlTypeName(string dataType)
+            => DefaultTypeMapper.GetGraphQlType(dataType);
 
         internal static string GetFilterType(string gqlType)
         {

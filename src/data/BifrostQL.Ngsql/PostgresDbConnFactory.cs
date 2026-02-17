@@ -20,6 +20,7 @@ public sealed class PostgresDbConnFactory : IDbConnFactory
 
     public ISqlDialect Dialect => PostgresDialect.Instance;
     public ISchemaReader SchemaReader => new PostgresSchemaReader();
+    public ITypeMapper TypeMapper => PostgresTypeMapper.Instance;
 
     public DbConnection GetConnection()
     {

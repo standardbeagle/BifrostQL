@@ -273,6 +273,96 @@ export type BatchSaveFn = (
   }>,
 ) => Promise<void>;
 
+export type Breakpoint = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+
+export type ColumnPriority = 1 | 2 | 3 | 4 | 5;
+
+export interface ResponsiveColumnConfig {
+  field: string;
+  priority: ColumnPriority;
+  minBreakpoint?: Breakpoint;
+}
+
+export interface BreakpointConfig {
+  xs: number;
+  sm: number;
+  md: number;
+  lg: number;
+  xl: number;
+}
+
+export interface CardViewRow<T = Record<string, unknown>> {
+  key: string;
+  data: T;
+  fields: Array<{ field: string; header: string; value: unknown }>;
+}
+
+export interface AriaTableProps {
+  role: 'grid';
+  'aria-label': string;
+  'aria-rowcount': number;
+  'aria-colcount': number;
+  'aria-multiselectable'?: boolean;
+}
+
+export interface AriaRowProps {
+  role: 'row';
+  'aria-rowindex': number;
+  'aria-selected'?: boolean;
+  'aria-expanded'?: boolean;
+  tabIndex?: number;
+}
+
+export interface AriaCellProps {
+  role: 'gridcell';
+  'aria-colindex': number;
+  'aria-readonly'?: boolean;
+  tabIndex?: number;
+}
+
+export interface AriaHeaderCellProps {
+  role: 'columnheader';
+  'aria-colindex': number;
+  'aria-sort'?: 'ascending' | 'descending' | 'none';
+  tabIndex?: number;
+}
+
+export interface AriaLiveRegionProps {
+  role: 'status';
+  'aria-live': 'polite';
+  'aria-atomic': boolean;
+}
+
+export interface FocusPosition {
+  rowIndex: number;
+  colIndex: number;
+}
+
+export interface KeyboardNavigationState {
+  focusedCell: FocusPosition | null;
+  setFocusedCell: (pos: FocusPosition | null) => void;
+  handleKeyDown: (e: { key: string; preventDefault: () => void; shiftKey?: boolean }) => void;
+}
+
+export interface AccessibilityState {
+  getTableProps: (label?: string) => AriaTableProps;
+  getRowProps: (rowIndex: number, rowKey?: string) => AriaRowProps;
+  getCellProps: (colIndex: number, field?: string) => AriaCellProps;
+  getHeaderCellProps: (colIndex: number, field?: string) => AriaHeaderCellProps;
+  getLiveRegionProps: () => AriaLiveRegionProps;
+  announcement: string;
+  keyboard: KeyboardNavigationState;
+}
+
+export interface ResponsiveState<T = Record<string, unknown>> {
+  currentBreakpoint: Breakpoint;
+  isMobile: boolean;
+  isTablet: boolean;
+  isDesktop: boolean;
+  responsiveVisibleColumns: string[];
+  cardViewData: CardViewRow<T>[];
+}
+
 export interface PaginationConfig {
   pageSize?: number;
   pageSizeOptions?: number[];
@@ -318,6 +408,9 @@ export interface UseBifrostTableOptions extends UseBifrostOptions {
   onBatchSave?: BatchSaveFn;
   columnManagement?: ColumnManagementConfig;
   export?: ExportConfig;
+  tableLabel?: string;
+  responsiveColumns?: ResponsiveColumnConfig[];
+  breakpoints?: Partial<BreakpointConfig>;
 }
 
 export interface UseBifrostTableResult<T = Record<string, unknown>> {
@@ -334,9 +427,50 @@ export interface UseBifrostTableResult<T = Record<string, unknown>> {
   columnManagement: ColumnManagementState;
   editing: EditingState;
   export: ExportState;
+  a11y: AccessibilityState;
+  responsive: ResponsiveState<T>;
   loading: boolean;
   error: Error | null;
   refetch: () => void;
+}
+
+const DEFAULT_BREAKPOINTS: BreakpointConfig = {
+  xs: 0,
+  sm: 640,
+  md: 768,
+  lg: 1024,
+  xl: 1280,
+};
+
+const BREAKPOINT_ORDER: Breakpoint[] = ['xs', 'sm', 'md', 'lg', 'xl'];
+
+function getBreakpointFromWidth(width: number, config: BreakpointConfig): Breakpoint {
+  if (width >= config.xl) return 'xl';
+  if (width >= config.lg) return 'lg';
+  if (width >= config.md) return 'md';
+  if (width >= config.sm) return 'sm';
+  return 'xs';
+}
+
+function getColumnsForBreakpoint(
+  allColumns: string[],
+  responsiveColumns: ResponsiveColumnConfig[] | undefined,
+  breakpoint: Breakpoint,
+): string[] {
+  if (!responsiveColumns || responsiveColumns.length === 0) return allColumns;
+
+  const breakpointIdx = BREAKPOINT_ORDER.indexOf(breakpoint);
+  const configMap = new Map(responsiveColumns.map((rc) => [rc.field, rc]));
+
+  return allColumns.filter((field) => {
+    const config = configMap.get(field);
+    if (!config) return true;
+    if (config.minBreakpoint) {
+      const minIdx = BREAKPOINT_ORDER.indexOf(config.minBreakpoint);
+      return breakpointIdx >= minIdx;
+    }
+    return true;
+  });
 }
 
 function resolveUrlSyncConfig(urlSync: boolean | UrlSyncConfig | undefined): {
@@ -958,6 +1092,9 @@ export function useBifrostTable<T = Record<string, unknown>>(
     onBatchSave,
     columnManagement: columnManagementConfig,
     export: exportConfig,
+    tableLabel,
+    responsiveColumns,
+    breakpoints: breakpointsProp,
     ...bifrostOptions
   } = options;
 
@@ -2152,6 +2289,277 @@ export function useBifrostTable<T = Record<string, unknown>>(
   const isDirty = dirtyRows.size > 0;
   const dirtyRowCount = dirtyRows.size;
 
+  // --- Accessibility ---
+  const [focusedCell, setFocusedCell] = useState<FocusPosition | null>(null);
+  const [announcement, setAnnouncement] = useState('');
+  const prevSortRef = useRef(sort);
+  const prevFilterCountRef = useRef(activeFilterCount);
+  const prevDataLenRef = useRef(0);
+
+  const resolvedBreakpoints = useMemo(
+    () => ({ ...DEFAULT_BREAKPOINTS, ...breakpointsProp }),
+    [breakpointsProp],
+  );
+
+  const [windowWidth, setWindowWidth] = useState<number>(() =>
+    canAccessWindow() ? window.innerWidth : 1024,
+  );
+
+  useEffect(() => {
+    if (!canAccessWindow()) return;
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const currentBreakpoint = useMemo(
+    () => getBreakpointFromWidth(windowWidth, resolvedBreakpoints),
+    [windowWidth, resolvedBreakpoints],
+  );
+
+  const isMobile = currentBreakpoint === 'xs' || currentBreakpoint === 'sm';
+  const isTablet = currentBreakpoint === 'md';
+  const isDesktop = currentBreakpoint === 'lg' || currentBreakpoint === 'xl';
+
+  // Screen reader announcements for data changes
+  useEffect(() => {
+    const dataLen = dataWithComputed.length;
+    if (dataLen !== prevDataLenRef.current) {
+      prevDataLenRef.current = dataLen;
+      setAnnouncement(`Table updated, ${dataLen} row${dataLen === 1 ? '' : 's'} displayed`);
+    }
+  }, [dataWithComputed.length]);
+
+  // Screen reader announcements for sort changes
+  useEffect(() => {
+    const prev = prevSortRef.current;
+    prevSortRef.current = sort;
+    if (prev === sort) return;
+    if (sort.length === 0 && prev.length > 0) {
+      setAnnouncement('Sort cleared');
+    } else if (sort.length > 0) {
+      const primary = sort[0];
+      const col = columns.find((c) => c.field === primary.field);
+      const label = col?.header ?? primary.field;
+      setAnnouncement(
+        `Sorted by ${label} ${primary.direction === 'asc' ? 'ascending' : 'descending'}`,
+      );
+    }
+  }, [sort, columns]);
+
+  // Screen reader announcements for filter changes
+  useEffect(() => {
+    const prev = prevFilterCountRef.current;
+    prevFilterCountRef.current = activeFilterCount;
+    if (prev === activeFilterCount) return;
+    if (activeFilterCount === 0 && prev > 0) {
+      setAnnouncement('Filters cleared');
+    } else if (activeFilterCount > 0) {
+      setAnnouncement(
+        `${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'} active`,
+      );
+    }
+  }, [activeFilterCount]);
+
+  const visibleColCount = visibleColumns.length;
+  const dataRowCount = dataWithComputed.length;
+
+  const getTableProps = useCallback(
+    (label?: string): AriaTableProps => ({
+      role: 'grid' as const,
+      'aria-label': label ?? tableLabel ?? `${table} data table`,
+      'aria-rowcount': dataRowCount + 1,
+      'aria-colcount': visibleColCount,
+      ...(selectedRows.length > 0 || columns.length > 0
+        ? { 'aria-multiselectable': true }
+        : {}),
+    }),
+    [tableLabel, table, dataRowCount, visibleColCount, selectedRows.length, columns.length],
+  );
+
+  const getRowProps = useCallback(
+    (rowIndex: number, rk?: string): AriaRowProps => {
+      const row = rk
+        ? dataWithComputed.find(
+            (r) => String((r as Record<string, unknown>)[rowKey]) === rk,
+          )
+        : undefined;
+      const isSelected = row
+        ? selectedRows.some(
+            (sr) =>
+              (sr as Record<string, unknown>)[rowKey] ===
+              (row as Record<string, unknown>)[rowKey],
+          )
+        : undefined;
+      const isExpanded = rk ? expandedRows.has(rk) : undefined;
+      return {
+        role: 'row' as const,
+        'aria-rowindex': rowIndex + 1,
+        ...(isSelected !== undefined ? { 'aria-selected': isSelected } : {}),
+        ...(isExpanded !== undefined ? { 'aria-expanded': isExpanded } : {}),
+        tabIndex: focusedCell?.rowIndex === rowIndex ? 0 : -1,
+      };
+    },
+    [dataWithComputed, rowKey, selectedRows, expandedRows, focusedCell],
+  );
+
+  const getCellProps = useCallback(
+    (colIndex: number, field?: string): AriaCellProps => {
+      const isReadOnly = field ? !editableColumnSet.has(field) : true;
+      return {
+        role: 'gridcell' as const,
+        'aria-colindex': colIndex + 1,
+        'aria-readonly': isReadOnly,
+        tabIndex:
+          focusedCell?.colIndex === colIndex ? 0 : -1,
+      };
+    },
+    [editableColumnSet, focusedCell],
+  );
+
+  const getHeaderCellProps = useCallback(
+    (colIndex: number, field?: string): AriaHeaderCellProps => {
+      let ariaSort: 'ascending' | 'descending' | 'none' = 'none';
+      if (field) {
+        const s = sort.find((so) => so.field === field);
+        if (s) ariaSort = s.direction === 'asc' ? 'ascending' : 'descending';
+      }
+      return {
+        role: 'columnheader' as const,
+        'aria-colindex': colIndex + 1,
+        'aria-sort': ariaSort,
+        tabIndex: focusedCell?.rowIndex === -1 && focusedCell?.colIndex === colIndex ? 0 : -1,
+      };
+    },
+    [sort, focusedCell],
+  );
+
+  const getLiveRegionProps = useCallback(
+    (): AriaLiveRegionProps => ({
+      role: 'status' as const,
+      'aria-live': 'polite' as const,
+      'aria-atomic': true,
+    }),
+    [],
+  );
+
+  const handleKeyDown = useCallback(
+    (e: { key: string; preventDefault: () => void; shiftKey?: boolean }) => {
+      if (!focusedCell) return;
+      const { rowIndex, colIndex } = focusedCell;
+      const maxRow = dataRowCount - 1;
+      const maxCol = visibleColCount - 1;
+
+      switch (e.key) {
+        case 'ArrowUp':
+          e.preventDefault();
+          if (rowIndex > -1) {
+            setFocusedCell({ rowIndex: rowIndex - 1, colIndex });
+          }
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          if (rowIndex < maxRow) {
+            setFocusedCell({ rowIndex: rowIndex + 1, colIndex });
+          }
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          if (colIndex > 0) {
+            setFocusedCell({ rowIndex, colIndex: colIndex - 1 });
+          }
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          if (colIndex < maxCol) {
+            setFocusedCell({ rowIndex, colIndex: colIndex + 1 });
+          }
+          break;
+        case 'Home':
+          e.preventDefault();
+          if (e.shiftKey) {
+            setFocusedCell({ rowIndex: -1, colIndex: 0 });
+          } else {
+            setFocusedCell({ rowIndex, colIndex: 0 });
+          }
+          break;
+        case 'End':
+          e.preventDefault();
+          if (e.shiftKey) {
+            setFocusedCell({ rowIndex: maxRow, colIndex: maxCol });
+          } else {
+            setFocusedCell({ rowIndex, colIndex: maxCol });
+          }
+          break;
+        case 'Enter': {
+          e.preventDefault();
+          if (rowIndex >= 0 && rowIndex <= maxRow) {
+            const visField = visibleColumns[colIndex];
+            if (visField && editableColumnSet.has(visField)) {
+              const row = dataWithComputed[rowIndex];
+              const rk = row
+                ? String((row as Record<string, unknown>)[rowKey])
+                : undefined;
+              if (rk) startEditing(rk, visField);
+            }
+          }
+          break;
+        }
+        case 'Escape':
+          e.preventDefault();
+          if (editingCell) {
+            cancelEditing();
+          } else {
+            setFocusedCell(null);
+          }
+          break;
+        case ' ':
+          e.preventDefault();
+          if (rowIndex >= 0 && rowIndex <= maxRow) {
+            const row = dataWithComputed[rowIndex];
+            if (row) toggleRow(row);
+          }
+          break;
+      }
+    },
+    [
+      focusedCell,
+      dataRowCount,
+      visibleColCount,
+      visibleColumns,
+      editableColumnSet,
+      dataWithComputed,
+      rowKey,
+      startEditing,
+      editingCell,
+      cancelEditing,
+      toggleRow,
+    ],
+  );
+
+  // --- Responsive ---
+  const responsiveVisibleColumns = useMemo(
+    () =>
+      getColumnsForBreakpoint(visibleColumns, responsiveColumns, currentBreakpoint),
+    [visibleColumns, responsiveColumns, currentBreakpoint],
+  );
+
+  const cardViewData = useMemo((): CardViewRow<T>[] => {
+    const colMap = new Map(columns.map((c) => [c.field, c]));
+    return dataWithComputed.map((row) => {
+      const rk = String((row as Record<string, unknown>)[rowKey]);
+      const fields = responsiveVisibleColumns.map((field) => {
+        const col = colMap.get(field);
+        return {
+          field,
+          header: col?.header ?? field,
+          value: (row as Record<string, unknown>)[field],
+        };
+      });
+      return { key: rk, data: row, fields };
+    });
+  }, [dataWithComputed, columns, rowKey, responsiveVisibleColumns]);
+
   return {
     data: dataWithComputed,
     columns,
@@ -2253,6 +2661,27 @@ export function useBifrostTable<T = Record<string, unknown>>(
       exportJson,
       copyToClipboard,
       downloadFile,
+    },
+    a11y: {
+      getTableProps,
+      getRowProps,
+      getCellProps,
+      getHeaderCellProps,
+      getLiveRegionProps,
+      announcement,
+      keyboard: {
+        focusedCell,
+        setFocusedCell,
+        handleKeyDown,
+      },
+    },
+    responsive: {
+      currentBreakpoint,
+      isMobile,
+      isTablet,
+      isDesktop,
+      responsiveVisibleColumns,
+      cardViewData,
     },
     loading: queryResult.isLoading,
     error: queryResult.error,

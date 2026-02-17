@@ -14,6 +14,7 @@ import type {
   ColumnPreset,
   ExportFormatter,
   PinPosition,
+  ResponsiveColumnConfig,
 } from './use-bifrost-table';
 
 function createFetchMock(response: unknown, ok = true, status = 200) {
@@ -6518,6 +6519,1461 @@ describe('useBifrostTable', () => {
 
       // Selection change should not trigger recomputation
       expect(computeFn.mock.calls.length).toBe(callCount);
+    });
+  });
+
+  describe('accessibility (a11y)', () => {
+    const defaultColumns: ColumnConfig[] = [
+      { field: 'id', header: 'ID', sortable: true },
+      { field: 'name', header: 'Name', sortable: true },
+      { field: 'email', header: 'Email' },
+    ];
+
+    describe('getTableProps', () => {
+      it('returns grid role and default label', async () => {
+        const mockData = [
+          { id: 1, name: 'Alice', email: 'alice@test.com' },
+          { id: 2, name: 'Bob', email: 'bob@test.com' },
+        ];
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        const props = result.current.a11y.getTableProps();
+        expect(props.role).toBe('grid');
+        expect(props['aria-label']).toBe('users data table');
+        expect(props['aria-rowcount']).toBe(3); // 2 data rows + 1 header
+        expect(props['aria-colcount']).toBe(3);
+      });
+
+      it('uses custom label from options', async () => {
+        const mockData = [{ id: 1, name: 'Alice', email: 'a@test.com' }];
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              tableLabel: 'User Directory',
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        const props = result.current.a11y.getTableProps();
+        expect(props['aria-label']).toBe('User Directory');
+      });
+
+      it('uses label override argument', async () => {
+        const mockData = [{ id: 1, name: 'Alice', email: 'a@test.com' }];
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              tableLabel: 'User Directory',
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        const props = result.current.a11y.getTableProps('Override Label');
+        expect(props['aria-label']).toBe('Override Label');
+      });
+
+      it('includes aria-multiselectable', async () => {
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        const props = result.current.a11y.getTableProps();
+        expect(props['aria-multiselectable']).toBe(true);
+      });
+    });
+
+    describe('getRowProps', () => {
+      it('returns row role and aria-rowindex', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: [{ id: 1, name: 'Alice', email: 'a@test.com' }] },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        const props = result.current.a11y.getRowProps(0);
+        expect(props.role).toBe('row');
+        expect(props['aria-rowindex']).toBe(1);
+      });
+
+      it('includes aria-selected for selected row', async () => {
+        const mockData = [
+          { id: 1, name: 'Alice', email: 'a@test.com' },
+          { id: 2, name: 'Bob', email: 'b@test.com' },
+        ];
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.selection.toggleRow(result.current.data[0]);
+        });
+
+        const row0Props = result.current.a11y.getRowProps(0, '1');
+        expect(row0Props['aria-selected']).toBe(true);
+
+        const row1Props = result.current.a11y.getRowProps(1, '2');
+        expect(row1Props['aria-selected']).toBe(false);
+      });
+
+      it('includes aria-expanded for expandable rows', async () => {
+        const mockData = [{ id: 1, name: 'Alice', email: 'a@test.com' }];
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              expandable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        const propsCollapsed = result.current.a11y.getRowProps(0, '1');
+        expect(propsCollapsed['aria-expanded']).toBe(false);
+
+        act(() => {
+          result.current.expansion.toggleExpand('1');
+        });
+
+        const propsExpanded = result.current.a11y.getRowProps(0, '1');
+        expect(propsExpanded['aria-expanded']).toBe(true);
+      });
+    });
+
+    describe('getCellProps', () => {
+      it('returns gridcell role and aria-colindex', async () => {
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        const props = result.current.a11y.getCellProps(0);
+        expect(props.role).toBe('gridcell');
+        expect(props['aria-colindex']).toBe(1);
+        expect(props['aria-readonly']).toBe(true);
+      });
+
+      it('marks editable cells as not readonly', async () => {
+        const editableColumns: ColumnConfig[] = [
+          { field: 'id', header: 'ID', readOnly: true },
+          { field: 'name', header: 'Name', editable: true },
+        ];
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        const nameProps = result.current.a11y.getCellProps(1, 'name');
+        expect(nameProps['aria-readonly']).toBe(false);
+
+        const idProps = result.current.a11y.getCellProps(0, 'id');
+        expect(idProps['aria-readonly']).toBe(true);
+      });
+    });
+
+    describe('getHeaderCellProps', () => {
+      it('returns columnheader role and sort state', async () => {
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              defaultSort: [{ field: 'name', direction: 'asc' }],
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        const nameProps = result.current.a11y.getHeaderCellProps(1, 'name');
+        expect(nameProps.role).toBe('columnheader');
+        expect(nameProps['aria-colindex']).toBe(2);
+        expect(nameProps['aria-sort']).toBe('ascending');
+
+        const idProps = result.current.a11y.getHeaderCellProps(0, 'id');
+        expect(idProps['aria-sort']).toBe('none');
+      });
+
+      it('reflects descending sort', async () => {
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              defaultSort: [{ field: 'name', direction: 'desc' }],
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        const props = result.current.a11y.getHeaderCellProps(1, 'name');
+        expect(props['aria-sort']).toBe('descending');
+      });
+    });
+
+    describe('getLiveRegionProps', () => {
+      it('returns polite live region props', async () => {
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        const props = result.current.a11y.getLiveRegionProps();
+        expect(props.role).toBe('status');
+        expect(props['aria-live']).toBe('polite');
+        expect(props['aria-atomic']).toBe(true);
+      });
+    });
+
+    describe('announcements', () => {
+      it('announces row count on data load', async () => {
+        const mockData = [
+          { id: 1, name: 'Alice', email: 'a@test.com' },
+          { id: 2, name: 'Bob', email: 'b@test.com' },
+          { id: 3, name: 'Carol', email: 'c@test.com' },
+        ];
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        await waitFor(() => {
+          expect(result.current.a11y.announcement).toBe(
+            'Table updated, 3 rows displayed',
+          );
+        });
+      });
+
+      it('announces singular row count', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: [{ id: 1, name: 'Alice', email: 'a@test.com' }] },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        await waitFor(() => {
+          expect(result.current.a11y.announcement).toBe(
+            'Table updated, 1 row displayed',
+          );
+        });
+      });
+
+      it('announces sort changes', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: [{ id: 1, name: 'Alice', email: 'a@test.com' }] },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.sorting.toggleSort('name');
+        });
+
+        await waitFor(() => {
+          expect(result.current.a11y.announcement).toBe(
+            'Sorted by Name ascending',
+          );
+        });
+      });
+
+      it('announces sort cleared', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: [{ id: 1, name: 'Alice', email: 'a@test.com' }] },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              defaultSort: [{ field: 'name', direction: 'asc' }],
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.sorting.clearSort();
+        });
+
+        await waitFor(() => {
+          expect(result.current.a11y.announcement).toBe('Sort cleared');
+        });
+      });
+
+      it('announces filter changes', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: [{ id: 1, name: 'Alice', email: 'a@test.com' }] },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              filterDebounceMs: 0,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.filters.setColumnFilter('name', { _eq: 'Alice' });
+        });
+
+        await waitFor(() => {
+          expect(result.current.a11y.announcement).toBe('1 filter active');
+        });
+      });
+
+      it('announces multiple filters', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: [{ id: 1, name: 'Alice', email: 'a@test.com' }] },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              filterDebounceMs: 0,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.filters.setFilters({
+            name: { _eq: 'Alice' },
+            email: { _contains: 'test' },
+          });
+        });
+
+        await waitFor(() => {
+          expect(result.current.a11y.announcement).toBe('2 filters active');
+        });
+      });
+
+      it('announces filters cleared', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: [{ id: 1, name: 'Alice', email: 'a@test.com' }] },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              defaultFilters: { name: { _eq: 'Alice' } },
+              filterDebounceMs: 0,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.filters.clearFilters();
+        });
+
+        await waitFor(() => {
+          expect(result.current.a11y.announcement).toBe('Filters cleared');
+        });
+      });
+    });
+
+    describe('keyboard navigation', () => {
+      it('starts with no focused cell', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: [{ id: 1, name: 'Alice', email: 'a@test.com' }] },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        expect(result.current.a11y.keyboard.focusedCell).toBeNull();
+      });
+
+      it('allows setting focused cell', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: [{ id: 1, name: 'Alice', email: 'a@test.com' }] },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 0 });
+        });
+
+        expect(result.current.a11y.keyboard.focusedCell).toEqual({
+          rowIndex: 0,
+          colIndex: 0,
+        });
+      });
+
+      it('moves down with ArrowDown', async () => {
+        const mockData = [
+          { id: 1, name: 'Alice', email: 'a@test.com' },
+          { id: 2, name: 'Bob', email: 'b@test.com' },
+        ];
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 0 });
+        });
+
+        act(() => {
+          result.current.a11y.keyboard.handleKeyDown({
+            key: 'ArrowDown',
+            preventDefault: vi.fn(),
+          });
+        });
+
+        expect(result.current.a11y.keyboard.focusedCell).toEqual({
+          rowIndex: 1,
+          colIndex: 0,
+        });
+      });
+
+      it('does not move past last row with ArrowDown', async () => {
+        const mockData = [{ id: 1, name: 'Alice', email: 'a@test.com' }];
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 0 });
+        });
+
+        act(() => {
+          result.current.a11y.keyboard.handleKeyDown({
+            key: 'ArrowDown',
+            preventDefault: vi.fn(),
+          });
+        });
+
+        expect(result.current.a11y.keyboard.focusedCell).toEqual({
+          rowIndex: 0,
+          colIndex: 0,
+        });
+      });
+
+      it('moves up with ArrowUp', async () => {
+        const mockData = [
+          { id: 1, name: 'Alice', email: 'a@test.com' },
+          { id: 2, name: 'Bob', email: 'b@test.com' },
+        ];
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 1, colIndex: 0 });
+        });
+
+        act(() => {
+          result.current.a11y.keyboard.handleKeyDown({
+            key: 'ArrowUp',
+            preventDefault: vi.fn(),
+          });
+        });
+
+        expect(result.current.a11y.keyboard.focusedCell).toEqual({
+          rowIndex: 0,
+          colIndex: 0,
+        });
+      });
+
+      it('moves to header row with ArrowUp from row 0', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: [{ id: 1, name: 'Alice', email: 'a@test.com' }] },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 1 });
+        });
+
+        act(() => {
+          result.current.a11y.keyboard.handleKeyDown({
+            key: 'ArrowUp',
+            preventDefault: vi.fn(),
+          });
+        });
+
+        expect(result.current.a11y.keyboard.focusedCell).toEqual({
+          rowIndex: -1,
+          colIndex: 1,
+        });
+      });
+
+      it('moves right with ArrowRight', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: [{ id: 1, name: 'Alice', email: 'a@test.com' }] },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 0 });
+        });
+
+        act(() => {
+          result.current.a11y.keyboard.handleKeyDown({
+            key: 'ArrowRight',
+            preventDefault: vi.fn(),
+          });
+        });
+
+        expect(result.current.a11y.keyboard.focusedCell).toEqual({
+          rowIndex: 0,
+          colIndex: 1,
+        });
+      });
+
+      it('does not move past last column with ArrowRight', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: [{ id: 1, name: 'Alice', email: 'a@test.com' }] },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 2 });
+        });
+
+        act(() => {
+          result.current.a11y.keyboard.handleKeyDown({
+            key: 'ArrowRight',
+            preventDefault: vi.fn(),
+          });
+        });
+
+        expect(result.current.a11y.keyboard.focusedCell).toEqual({
+          rowIndex: 0,
+          colIndex: 2,
+        });
+      });
+
+      it('moves left with ArrowLeft', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: [{ id: 1, name: 'Alice', email: 'a@test.com' }] },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 1 });
+        });
+
+        act(() => {
+          result.current.a11y.keyboard.handleKeyDown({
+            key: 'ArrowLeft',
+            preventDefault: vi.fn(),
+          });
+        });
+
+        expect(result.current.a11y.keyboard.focusedCell).toEqual({
+          rowIndex: 0,
+          colIndex: 0,
+        });
+      });
+
+      it('does not move past first column with ArrowLeft', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: [{ id: 1, name: 'Alice', email: 'a@test.com' }] },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 0 });
+        });
+
+        act(() => {
+          result.current.a11y.keyboard.handleKeyDown({
+            key: 'ArrowLeft',
+            preventDefault: vi.fn(),
+          });
+        });
+
+        expect(result.current.a11y.keyboard.focusedCell).toEqual({
+          rowIndex: 0,
+          colIndex: 0,
+        });
+      });
+
+      it('moves to first column with Home', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: [{ id: 1, name: 'Alice', email: 'a@test.com' }] },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 2 });
+        });
+
+        act(() => {
+          result.current.a11y.keyboard.handleKeyDown({
+            key: 'Home',
+            preventDefault: vi.fn(),
+          });
+        });
+
+        expect(result.current.a11y.keyboard.focusedCell).toEqual({
+          rowIndex: 0,
+          colIndex: 0,
+        });
+      });
+
+      it('moves to first cell with Shift+Home', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: [{ id: 1, name: 'Alice', email: 'a@test.com' }] },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 2 });
+        });
+
+        act(() => {
+          result.current.a11y.keyboard.handleKeyDown({
+            key: 'Home',
+            preventDefault: vi.fn(),
+            shiftKey: true,
+          });
+        });
+
+        expect(result.current.a11y.keyboard.focusedCell).toEqual({
+          rowIndex: -1,
+          colIndex: 0,
+        });
+      });
+
+      it('moves to last column with End', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: [{ id: 1, name: 'Alice', email: 'a@test.com' }] },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 0 });
+        });
+
+        act(() => {
+          result.current.a11y.keyboard.handleKeyDown({
+            key: 'End',
+            preventDefault: vi.fn(),
+          });
+        });
+
+        expect(result.current.a11y.keyboard.focusedCell).toEqual({
+          rowIndex: 0,
+          colIndex: 2,
+        });
+      });
+
+      it('moves to last cell with Shift+End', async () => {
+        const mockData = [
+          { id: 1, name: 'Alice', email: 'a@test.com' },
+          { id: 2, name: 'Bob', email: 'b@test.com' },
+        ];
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 0 });
+        });
+
+        act(() => {
+          result.current.a11y.keyboard.handleKeyDown({
+            key: 'End',
+            preventDefault: vi.fn(),
+            shiftKey: true,
+          });
+        });
+
+        expect(result.current.a11y.keyboard.focusedCell).toEqual({
+          rowIndex: 1,
+          colIndex: 2,
+        });
+      });
+
+      it('toggles row selection with Space', async () => {
+        const mockData = [
+          { id: 1, name: 'Alice', email: 'a@test.com' },
+          { id: 2, name: 'Bob', email: 'b@test.com' },
+        ];
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 0 });
+        });
+
+        act(() => {
+          result.current.a11y.keyboard.handleKeyDown({
+            key: ' ',
+            preventDefault: vi.fn(),
+          });
+        });
+
+        expect(result.current.selection.selectedRows).toHaveLength(1);
+        expect(
+          (result.current.selection.selectedRows[0] as Record<string, unknown>).id,
+        ).toBe(1);
+      });
+
+      it('clears focused cell with Escape when not editing', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: [{ id: 1, name: 'Alice', email: 'a@test.com' }] },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 0 });
+        });
+
+        expect(result.current.a11y.keyboard.focusedCell).not.toBeNull();
+
+        act(() => {
+          result.current.a11y.keyboard.handleKeyDown({
+            key: 'Escape',
+            preventDefault: vi.fn(),
+          });
+        });
+
+        expect(result.current.a11y.keyboard.focusedCell).toBeNull();
+      });
+
+      it('enters edit mode with Enter on editable cell', async () => {
+        const editableColumns: ColumnConfig[] = [
+          { field: 'id', header: 'ID' },
+          { field: 'name', header: 'Name', editable: true },
+        ];
+        const mockData = [{ id: 1, name: 'Alice' }];
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: editableColumns,
+              editable: true,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 1 });
+        });
+
+        act(() => {
+          result.current.a11y.keyboard.handleKeyDown({
+            key: 'Enter',
+            preventDefault: vi.fn(),
+          });
+        });
+
+        expect(result.current.editing.editingCell).toEqual({
+          rowKey: '1',
+          field: 'name',
+        });
+      });
+
+      it('does nothing on Enter for non-editable cell', async () => {
+        const mockData = [{ id: 1, name: 'Alice', email: 'a@test.com' }];
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 0 });
+        });
+
+        act(() => {
+          result.current.a11y.keyboard.handleKeyDown({
+            key: 'Enter',
+            preventDefault: vi.fn(),
+          });
+        });
+
+        expect(result.current.editing.editingCell).toBeNull();
+      });
+
+      it('does nothing when no cell is focused', async () => {
+        globalThis.fetch = createFetchMock({
+          data: { users: [{ id: 1, name: 'Alice', email: 'a@test.com' }] },
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        const preventDefault = vi.fn();
+        act(() => {
+          result.current.a11y.keyboard.handleKeyDown({
+            key: 'ArrowDown',
+            preventDefault,
+          });
+        });
+
+        expect(preventDefault).not.toHaveBeenCalled();
+        expect(result.current.a11y.keyboard.focusedCell).toBeNull();
+      });
+
+      it('tabIndex reflects focused cell in row props', async () => {
+        const mockData = [
+          { id: 1, name: 'Alice', email: 'a@test.com' },
+          { id: 2, name: 'Bob', email: 'b@test.com' },
+        ];
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 1, colIndex: 0 });
+        });
+
+        expect(result.current.a11y.getRowProps(0).tabIndex).toBe(-1);
+        expect(result.current.a11y.getRowProps(1).tabIndex).toBe(0);
+      });
+    });
+  });
+
+  describe('responsive', () => {
+    const defaultColumns: ColumnConfig[] = [
+      { field: 'id', header: 'ID' },
+      { field: 'name', header: 'Name' },
+      { field: 'email', header: 'Email' },
+      { field: 'phone', header: 'Phone' },
+    ];
+
+    describe('breakpoint detection', () => {
+      it('defaults to current window width breakpoint', async () => {
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        // jsdom defaults to 1024px inner width (or custom)
+        expect(['xs', 'sm', 'md', 'lg', 'xl']).toContain(
+          result.current.responsive.currentBreakpoint,
+        );
+      });
+
+      it('exposes isMobile, isTablet, isDesktop flags', async () => {
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        const { isMobile, isTablet, isDesktop } = result.current.responsive;
+        // Exactly one of these should match the current breakpoint group
+        const trueCount = [isMobile, isTablet, isDesktop].filter(Boolean).length;
+        expect(trueCount).toBe(1);
+      });
+    });
+
+    describe('responsive column hiding', () => {
+      it('shows all columns when no responsiveColumns configured', async () => {
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        expect(result.current.responsive.responsiveVisibleColumns).toEqual(
+          defaultColumns.map((c) => c.field),
+        );
+      });
+
+      it('hides columns below their minimum breakpoint', async () => {
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+        // Force a small window width to trigger xs breakpoint before rendering
+        Object.defineProperty(window, 'innerWidth', {
+          value: 400,
+          writable: true,
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              responsiveColumns: [
+                { field: 'email', priority: 3, minBreakpoint: 'md' },
+                { field: 'phone', priority: 4, minBreakpoint: 'lg' },
+              ],
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        // At xs, email (md+) and phone (lg+) should be hidden
+        expect(result.current.responsive.responsiveVisibleColumns).toContain('id');
+        expect(result.current.responsive.responsiveVisibleColumns).toContain('name');
+        expect(
+          result.current.responsive.responsiveVisibleColumns,
+        ).not.toContain('email');
+        expect(
+          result.current.responsive.responsiveVisibleColumns,
+        ).not.toContain('phone');
+
+        // Restore
+        Object.defineProperty(window, 'innerWidth', {
+          value: 1024,
+          writable: true,
+        });
+      });
+
+      it('shows columns at or above their minimum breakpoint', async () => {
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+        Object.defineProperty(window, 'innerWidth', {
+          value: 1100,
+          writable: true,
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              responsiveColumns: [
+                { field: 'email', priority: 3, minBreakpoint: 'md' },
+                { field: 'phone', priority: 4, minBreakpoint: 'lg' },
+              ],
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        // At lg (1024+), both should be visible
+        expect(result.current.responsive.responsiveVisibleColumns).toContain('email');
+        expect(result.current.responsive.responsiveVisibleColumns).toContain('phone');
+
+        // Restore
+        Object.defineProperty(window, 'innerWidth', {
+          value: 1024,
+          writable: true,
+        });
+      });
+    });
+
+    describe('card view data', () => {
+      it('generates card view data from rows', async () => {
+        const mockData = [
+          { id: 1, name: 'Alice', email: 'alice@test.com', phone: '555-0001' },
+          { id: 2, name: 'Bob', email: 'bob@test.com', phone: '555-0002' },
+        ];
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        const cards = result.current.responsive.cardViewData;
+        expect(cards).toHaveLength(2);
+        expect(cards[0].key).toBe('1');
+        expect(cards[0].fields).toHaveLength(4);
+        expect(cards[0].fields[0]).toEqual({
+          field: 'id',
+          header: 'ID',
+          value: 1,
+        });
+        expect(cards[0].fields[1]).toEqual({
+          field: 'name',
+          header: 'Name',
+          value: 'Alice',
+        });
+      });
+
+      it('uses only responsive visible columns for card fields', async () => {
+        const mockData = [
+          { id: 1, name: 'Alice', email: 'alice@test.com', phone: '555-0001' },
+        ];
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        Object.defineProperty(window, 'innerWidth', {
+          value: 400,
+          writable: true,
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              responsiveColumns: [
+                { field: 'email', priority: 3, minBreakpoint: 'md' },
+                { field: 'phone', priority: 4, minBreakpoint: 'lg' },
+              ],
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        const cards = result.current.responsive.cardViewData;
+        expect(cards).toHaveLength(1);
+        // At xs, only id and name should appear in card fields
+        const fieldNames = cards[0].fields.map((f) => f.field);
+        expect(fieldNames).toContain('id');
+        expect(fieldNames).toContain('name');
+        expect(fieldNames).not.toContain('email');
+        expect(fieldNames).not.toContain('phone');
+
+        // Restore
+        Object.defineProperty(window, 'innerWidth', {
+          value: 1024,
+          writable: true,
+        });
+      });
+
+      it('returns empty card view for empty data', async () => {
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        expect(result.current.responsive.cardViewData).toHaveLength(0);
+      });
+
+      it('card data includes original row data', async () => {
+        const mockData = [
+          { id: 1, name: 'Alice', email: 'alice@test.com', phone: '555-0001' },
+        ];
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        const card = result.current.responsive.cardViewData[0];
+        expect(card.data).toEqual(mockData[0]);
+      });
+    });
+
+    describe('custom breakpoints', () => {
+      it('accepts custom breakpoint values', async () => {
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+        // Set window to 800px before rendering
+        Object.defineProperty(window, 'innerWidth', {
+          value: 800,
+          writable: true,
+        });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              breakpoints: { md: 900 },
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        // With md at 900px and window at 800px, should be sm
+        expect(result.current.responsive.currentBreakpoint).toBe('sm');
+
+        // Restore
+        Object.defineProperty(window, 'innerWidth', {
+          value: 1024,
+          writable: true,
+        });
+      });
     });
   });
 });

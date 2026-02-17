@@ -13,18 +13,28 @@ export async function executeGraphQL<T>(
   query: string,
   variables?: Record<string, unknown>,
   signal?: AbortSignal,
+  getToken?: () => string | null | Promise<string | null>,
 ): Promise<T> {
   const body: Record<string, unknown> = { query };
   if (variables && Object.keys(variables).length > 0) {
     body.variables = variables;
   }
 
+  const mergedHeaders: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...headers,
+  };
+
+  if (getToken) {
+    const token = await getToken();
+    if (token) {
+      mergedHeaders['Authorization'] = `Bearer ${token}`;
+    }
+  }
+
   const response = await fetch(endpoint, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...headers,
-    },
+    headers: mergedHeaders,
     body: JSON.stringify(body),
     signal,
   });

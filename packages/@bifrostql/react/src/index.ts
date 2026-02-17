@@ -115,6 +115,7 @@ export type {
 } from './utils';
 export type {
   BifrostConfig,
+  BifrostDefaultQueryOptions,
   TableFilter,
   FieldFilter,
   CompoundFilter,

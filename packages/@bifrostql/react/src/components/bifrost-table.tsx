@@ -42,6 +42,9 @@ export interface BifrostTableProps<
   urlSync?: boolean | UseBifrostTableOptions['urlSync'];
   emptyMessage?: string;
   loadingMessage?: string;
+  renderHeader?: (columns: ColumnConfig[], sortState: SortOption[]) => ReactNode;
+  renderFooter?: (data: T[], pagination: { page: number; pageSize: number }) => ReactNode;
+  renderRow?: (row: T, rowIndex: number, defaultRow: ReactNode) => ReactNode;
   renderCell?: (value: unknown, row: T, column: ColumnConfig) => ReactNode;
   renderEmpty?: () => ReactNode;
   renderLoading?: () => ReactNode;
@@ -123,6 +126,9 @@ export function BifrostTable<T = Record<string, unknown>>(
     urlSync,
     emptyMessage = 'No data available',
     loadingMessage = 'Loading...',
+    renderHeader,
+    renderFooter,
+    renderRow,
     renderCell,
     renderEmpty,
     renderLoading,
@@ -257,45 +263,49 @@ export function BifrostTable<T = Record<string, unknown>>(
       )}
       <table style={theme.table} role="table">
         <thead>
-          <tr style={theme.headerRow} role="row">
-            {visibleColumns.map((col) => {
-              const sortDir = getSortDirection(
-                table.sorting.current,
-                col.field,
-              );
-              const isSortable = col.sortable && col.field !== '__actions' && col.field !== '__expand';
-              return (
-                <th
-                  key={col.field}
-                  style={{
-                    ...theme.headerCell,
-                    ...(col.width ? { width: col.width } : {}),
-                    ...(isSortable ? { cursor: 'pointer' } : {}),
-                  }}
-                  role="columnheader"
-                  aria-sort={
-                    sortDir === 'asc'
-                      ? 'ascending'
-                      : sortDir === 'desc'
-                        ? 'descending'
-                        : 'none'
-                  }
-                  onClick={
-                    isSortable
-                      ? () => table.sorting.toggleSort(col.field)
-                      : undefined
-                  }
-                >
-                  {col.header}
-                  {isSortable && (
-                    <span style={theme.sortIndicator}>
-                      <SortArrow direction={sortDir} />
-                    </span>
-                  )}
-                </th>
-              );
-            })}
-          </tr>
+          {renderHeader ? (
+            renderHeader(visibleColumns, table.sorting.current)
+          ) : (
+            <tr style={theme.headerRow} role="row">
+              {visibleColumns.map((col) => {
+                const sortDir = getSortDirection(
+                  table.sorting.current,
+                  col.field,
+                );
+                const isSortable = col.sortable && col.field !== '__actions' && col.field !== '__expand';
+                return (
+                  <th
+                    key={col.field}
+                    style={{
+                      ...theme.headerCell,
+                      ...(col.width ? { width: col.width } : {}),
+                      ...(isSortable ? { cursor: 'pointer' } : {}),
+                    }}
+                    role="columnheader"
+                    aria-sort={
+                      sortDir === 'asc'
+                        ? 'ascending'
+                        : sortDir === 'desc'
+                          ? 'descending'
+                          : 'none'
+                    }
+                    onClick={
+                      isSortable
+                        ? () => table.sorting.toggleSort(col.field)
+                        : undefined
+                    }
+                  >
+                    {col.header}
+                    {isSortable && (
+                      <span style={theme.sortIndicator}>
+                        <SortArrow direction={sortDir} />
+                      </span>
+                    )}
+                  </th>
+                );
+              })}
+            </tr>
+          )}
         </thead>
         <tbody>
           {table.data.length === 0 && !table.loading ? (
@@ -344,7 +354,7 @@ export function BifrostTable<T = Record<string, unknown>>(
 
               const rows: ReactNode[] = [];
 
-              rows.push(
+              const defaultRowElement = (
                 <tr
                   key={key}
                   style={rowStyle}
@@ -453,7 +463,13 @@ export function BifrostTable<T = Record<string, unknown>>(
                       </td>
                     );
                   })}
-                </tr>,
+                </tr>
+              );
+
+              rows.push(
+                renderRow
+                  ? renderRow(row, rowIndex, defaultRowElement)
+                  : defaultRowElement,
               );
 
               if (isExpanded) {
@@ -525,6 +541,14 @@ export function BifrostTable<T = Record<string, unknown>>(
           >
             Next
           </button>
+        </div>
+      )}
+      {renderFooter && (
+        <div data-testid="table-footer">
+          {renderFooter(table.data, {
+            page: table.pagination.page,
+            pageSize: table.pagination.pageSize,
+          })}
         </div>
       )}
       {table.loading && (

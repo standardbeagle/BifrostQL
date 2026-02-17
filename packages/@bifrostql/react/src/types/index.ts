@@ -1,6 +1,15 @@
+export interface BifrostDefaultQueryOptions {
+  retry?: number | false;
+  staleTime?: number;
+  gcTime?: number;
+}
+
 export interface BifrostConfig {
   endpoint: string;
   headers?: Record<string, string>;
+  getToken?: () => string | null | Promise<string | null>;
+  defaultQueryOptions?: BifrostDefaultQueryOptions;
+  onError?: (error: Error) => void;
 }
 
 export interface TableFilter {

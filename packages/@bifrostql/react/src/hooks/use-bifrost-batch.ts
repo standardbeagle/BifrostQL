@@ -115,6 +115,8 @@ export function useBifrostBatch(options: UseBifrostBatchOptions = {}) {
             config.headers ?? {},
             gql,
             variables,
+            undefined,
+            config.getToken,
           );
           results.push({ index: originalIndex, data });
           progressRef.current = {

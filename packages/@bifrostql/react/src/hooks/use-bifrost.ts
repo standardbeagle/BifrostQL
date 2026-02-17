@@ -50,6 +50,7 @@ export function useBifrost<T = unknown>(
         query,
         variables,
         signal,
+        config.getToken,
       ),
     enabled,
     retry,

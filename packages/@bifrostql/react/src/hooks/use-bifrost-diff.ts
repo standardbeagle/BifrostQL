@@ -61,9 +61,14 @@ export function useBifrostDiff(options: UseBifrostDiffOptions) {
       const detail = { [idField]: id, ...result.changed };
       const gql = buildUpdateMutation(table);
 
-      return executeGraphQL(config.endpoint, config.headers ?? {}, gql, {
-        detail,
-      });
+      return executeGraphQL(
+        config.endpoint,
+        config.headers ?? {},
+        gql,
+        { detail },
+        undefined,
+        config.getToken,
+      );
     },
     onSuccess: (data) => {
       if (options.invalidateQueries) {

@@ -73,6 +73,7 @@ export function useBifrostInfinite<TData = unknown, TPageParam = unknown>(
         query,
         variables,
         signal,
+        config.getToken,
       );
     },
     enabled,

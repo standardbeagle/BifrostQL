@@ -1486,6 +1486,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
         query,
         undefined,
         controller.signal,
+        bifrostConfig.getToken,
       )
         .then((data) => {
           const childData = data[childQuery.query] ?? [];

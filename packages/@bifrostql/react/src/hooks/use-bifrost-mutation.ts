@@ -27,6 +27,8 @@ export function useBifrostMutation<
         config.headers ?? {},
         mutation,
         variables,
+        undefined,
+        config.getToken,
       ),
     onSuccess: (data) => {
       if (options.invalidateQueries) {

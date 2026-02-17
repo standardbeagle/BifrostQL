@@ -10,6 +10,7 @@ import { useTableMutation } from "./hooks/useTableMutation";
 
 const booleanTypes = ["Boolean", "Boolean!"];
 const dateTypes = ["DateTime", "DateTime!"];
+const numericTypes = ["Int", "Int!", "Float", "Float!"];
 
 interface DataEditRouteParams {
     table?: string;
@@ -50,18 +51,23 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
 
     const mutation = useTableMutation(dataTable, editColumns, idColumns, editid);
 
+    const pkName = idColumns[0]?.name ?? dataTable.primaryKeys?.[0] ?? "id";
+    const pkColumn = idColumns[0] ?? dataTable.columns.find((c: Column) => c.name === pkName);
+    const pkParamType = pkColumn?.paramType?.replace("!", "") ?? "Int";
+    const isNumericPk = numericTypes.includes(pkParamType);
+
     const queryStr = useMemo(() =>
-        `query GetSingleEdit_${dataTable.name}($id: Int){
-            value: ${dataTable.name}(filter: {id: { _eq: $id}}) {
+        `query GetSingleEdit_${dataTable.name}($id: ${pkParamType}){
+            value: ${dataTable.name}(filter: {${pkName}: { _eq: $id}}) {
                 data { ${editColumns.map(({ column: c }) => c.name).join(" ")} }
             }
         }`,
-        [dataTable, editColumns]
+        [dataTable, editColumns, pkParamType, pkName]
     );
 
     const { isLoading, error, data } = useQuery({
         queryKey: ['editRecord', dataTable.name, editid],
-        queryFn: () => fetcher.query<{ value: { data: Record<string, unknown>[] } }>(queryStr, { id: +editid }),
+        queryFn: () => fetcher.query<{ value: { data: Record<string, unknown>[] } }>(queryStr, { id: isNumericPk ? +editid : editid }),
         enabled: !!dataTable && !isInsert,
     });
 

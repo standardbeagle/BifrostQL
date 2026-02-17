@@ -6,6 +6,8 @@ import { Table, Column, Join, Schema } from "../types/schema";
 import { TableColumn, SortOrder } from "react-data-table-component";
 import { useFetcher, GraphQLFetcher } from "../common/fetcher";
 
+const numericTypes = ["Int", "Int!", "Float", "Float!"];
+
 interface FilterResult {
     variables: Record<string, unknown>;
     param: string;
@@ -45,6 +47,16 @@ const toLocaleDate = (d: string): string => {
     return dd.toLocaleString();
 };
 
+const getRowPkValue = (row: RowData, table: Table): string => {
+    const pk = table.primaryKeys?.[0];
+    if (!pk) return String(row?.id ?? "");
+    return String(row?.[pk] ?? "");
+};
+
+const getJoinedRowPkValue = (row: RowData): string => {
+    return String(row?.id ?? "");
+};
+
 const getTableColumns = (table: Table, schema: Schema): TableColumn<RowData>[] => {
     if (!table || !schema) return [];
     const columns = table.columns
@@ -58,15 +70,15 @@ const getTableColumns = (table: Table, schema: Schema): TableColumn<RowData>[] =
             const singleJoin = table.singleJoins.find((j: Join) => j.sourceColumnNames?.[0] === c.name);
             if (singleJoin) {
                 const columnName = singleJoin.destinationTable;
-                const joinTable = schema.findTable(singleJoin.destinationTable);
+                const joinSchema = schema.findTable(singleJoin.destinationTable);
                 return {
-                    cell: (row: RowData) => (!!row && <Link to={"/" + joinTable?.name + "/" + (row?.[columnName] as RowData)?.id}>{(row?.[columnName] as RowData)?.label as string}</Link>),
+                    cell: (row: RowData) => (!!row && <Link to={"/" + joinSchema?.name + "/" + getJoinedRowPkValue(row?.[columnName] as RowData)}>{(row?.[columnName] as RowData)?.label as string}</Link>),
                     ...result
                 }
             }
             if ((c as ColumnWithJoin)?.joinTable) {
                 return {
-                    cell: (row: RowData) => (!!row && <Link to={"/" + c.name + "/" + (row?.[c.name] as RowData)?.id}>{c.name}</Link>),
+                    cell: (row: RowData) => (!!row && <Link to={"/" + c.name + "/" + getJoinedRowPkValue(row?.[c.name] as RowData)}>{c.name}</Link>),
                     ...result
                 }
             }
@@ -87,7 +99,7 @@ const getTableColumns = (table: Table, schema: Schema): TableColumn<RowData>[] =
             const joinTable = schema.findTable(j.destinationTable);
             return {
                 name: joinTable?.name,
-                cell: (row: RowData) => (!!row && <Link to={"/" + joinTable?.name + "/from/" + table.name + "/" + row?.id}>{joinTable?.name}</Link>),
+                cell: (row: RowData) => (!!row && <Link to={"/" + joinTable?.name + "/from/" + table.name + "/" + getRowPkValue(row, table)}>{joinTable?.name}</Link>),
                 reorder: false,
                 sortable: false,
                 sortField: j.sourceColumnNames?.[0],
@@ -99,16 +111,24 @@ const getTableColumns = (table: Table, schema: Schema): TableColumn<RowData>[] =
     return [{
         name: "edit",
         cell: (row: RowData) => (
-            <Link to={`/${table.graphQlName}/edit/${row?.id}`}>edit</Link>
+            <Link to={`/${table.graphQlName}/edit/${getRowPkValue(row, table)}`}>edit</Link>
         )
     }, ...columns, ...multiJoins];
 }
+
+const getPkType = (table: Table): string => {
+    const pkName = table.primaryKeys?.[0];
+    if (!pkName) return "Int";
+    const pkColumn = table.columns.find((c: Column) => c.name === pkName);
+    return pkColumn?.paramType?.replace("!", "") ?? "Int";
+};
 
 const buildQuery = (table: Table, schema: Schema, filterString: string, id?: string, tableFilter?: string): string | null => {
     if (!table || !schema?.data) return null;
     const tableSchema = schema.findTable(table.graphQlName);
     if (!tableSchema) return null;
     const primaryKey = tableSchema?.primaryKeys?.[0] ?? "id";
+    const pkType = getPkType(tableSchema);
     let { param, filterText } = getFilterObj(filterString);
 
     const dataColumns = table.columns
@@ -129,11 +149,11 @@ const buildQuery = (table: Table, schema: Schema, filterString: string, id?: str
         .join(' ');
 
     if (id && !tableFilter) {
-        param = ", $id: Int";
+        param = `, $id: ${pkType}`;
         filterText = `{ ${ primaryKey }: { _eq: $id}}`;
     }
     if (id && tableFilter) {
-        param = ", $id: Int" + param;
+        param = `, $id: ${pkType}` + param;
         if (filterText)
             filterText = `{and: [${filterText}, { ${tableFilter}: { ${ primaryKey }: { _eq: $id}}} ]}`;
         else
@@ -191,13 +211,15 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         [table, schema, filterString, id, filterTable]
     );
 
+    const pkType = table ? getPkType(table) : "Int";
+
     const queryVariables = useMemo(() => ({
         sort: appliedSort,
         limit,
         offset,
-        ...(!id ? {} : { id: +id }),
+        ...(!id ? {} : { id: numericTypes.includes(pkType) ? +id : id }),
         ...filterVariables,
-    }), [appliedSort, limit, offset, id, filterVariables]);
+    }), [appliedSort, limit, offset, id, pkType, filterVariables]);
 
     const { isLoading, error, data } = useQuery({
         queryKey: ['tableData', table?.name, queryVariables],

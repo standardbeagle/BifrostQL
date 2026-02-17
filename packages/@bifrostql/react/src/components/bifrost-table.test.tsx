@@ -31,7 +31,7 @@ import {
   getThemeTokens,
   themeToCssVariables,
 } from './table-theme';
-import type { ThemeName, AnyThemeName, DarkThemeName } from './table-theme';
+import type { ThemeName, DarkThemeName } from './table-theme';
 
 function createFetchMock(response: unknown, ok = true, status = 200) {
   return vi.fn().mockResolvedValue({

@@ -1133,7 +1133,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
     autoSave = false,
     onRowUpdate,
     onBatchSave,
-    columnManagement: columnManagementConfig,
+    columnManagement: _columnManagementConfig,
     export: exportConfig,
     tableLabel,
     responsiveColumns,
@@ -1562,8 +1562,9 @@ export function useBifrostTable<T = Record<string, unknown>>(
 
   // Abort in-flight child requests on unmount
   useEffect(() => {
+    const abortMap = childAbortRef.current;
     return () => {
-      for (const controller of childAbortRef.current.values()) {
+      for (const controller of abortMap.values()) {
         controller.abort();
       }
     };

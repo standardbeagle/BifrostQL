@@ -11,10 +11,7 @@ import type {
   UrlSyncConfig,
   CustomSortFn,
   FilterPreset,
-  ColumnPreset,
   ExportFormatter,
-  PinPosition,
-  ResponsiveColumnConfig,
 } from './use-bifrost-table';
 
 function createFetchMock(response: unknown, ok = true, status = 200) {
@@ -65,10 +62,10 @@ function setupDownloadMocks(): DownloadMock {
 
   // Ensure URL methods exist in jsdom
   if (!URL.createObjectURL) {
-    (URL as Record<string, unknown>).createObjectURL = () => '';
+    (URL as unknown as Record<string, unknown>).createObjectURL = () => '';
   }
   if (!URL.revokeObjectURL) {
-    (URL as Record<string, unknown>).revokeObjectURL = () => {};
+    (URL as unknown as Record<string, unknown>).revokeObjectURL = () => {};
   }
 
   // Intercept Blob constructor to capture string content directly,
@@ -112,12 +109,6 @@ function setupDownloadMocks(): DownloadMock {
       vi.restoreAllMocks();
     },
   };
-}
-
-async function getDownloadContent(mock: DownloadMock, index = 0): Promise<string> {
-  // Wait for async blob reading to complete
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  return mock.contents[index] ?? '';
 }
 
 const defaultColumns: ColumnConfig[] = [
@@ -3583,9 +3574,6 @@ describe('useBifrostTable', () => {
       );
 
       await waitFor(() => expect(result.current.loading).toBe(false));
-
-      const callCountBefore = (globalThis.fetch as ReturnType<typeof vi.fn>)
-        .mock.calls.length;
 
       act(() => {
         result.current.filters.setColumnFilter('name', { _contains: 'a' });

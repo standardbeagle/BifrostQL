@@ -1,0 +1,57 @@
+name: React Package
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/@bifrostql/react/**'
+      - '.github/workflows/react-package.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/@bifrostql/react/**'
+      - '.github/workflows/react-package.yml'
+
+defaults:
+  run:
+    working-directory: packages/@bifrostql/react
+
+jobs:
+  quality:
+    name: Lint, Typecheck & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: packages/@bifrostql/react/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test with coverage
+        run: npm run test:coverage
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: packages/@bifrostql/react/coverage/
+          retention-days: 14

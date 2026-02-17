@@ -1,6 +1,8 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Ngsql;
 using FluentAssertions;
+using GraphQL;
+using GraphQL.Execution;
 using Npgsql;
 using System.Text.Json;
 
@@ -9,6 +11,9 @@ namespace BifrostQL.Integration.Test.FullIntegration;
 /// <summary>
 /// Full integration tests for PostgreSQL with dynamically loaded schema.
 /// Only runs when BIFROST_TEST_POSTGRES env var is set.
+/// Covers: schema reading, queries with filters, pagination (LIMIT/OFFSET),
+/// joins across tables, mutations (INSERT/UPDATE/DELETE),
+/// LIKE patterns with || concatenation, and identity/sequence handling.
 /// </summary>
 [Collection("PostgresFullIntegration")]
 public class PostgresFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
@@ -70,23 +75,23 @@ public class PostgresFullIntegrationTests : FullIntegrationTestBase, IAsyncLifet
     {
         var ddl = @"
 CREATE TABLE categories (
-    category_id SERIAL PRIMARY KEY,
+    categoryid SERIAL PRIMARY KEY,
     name VARCHAR(50) NOT NULL,
     description VARCHAR(200) NULL
 );
 
 CREATE TABLE products (
-    product_id SERIAL PRIMARY KEY,
-    category_id INTEGER NOT NULL,
+    productid SERIAL PRIMARY KEY,
+    categoryid INTEGER NOT NULL,
     name VARCHAR(100) NOT NULL,
     price DECIMAL(10,2) NOT NULL,
     stock INTEGER NOT NULL DEFAULT 0,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    CONSTRAINT fk_products_categories FOREIGN KEY (category_id) REFERENCES categories(category_id)
+    isactive BOOLEAN NOT NULL DEFAULT TRUE,
+    CONSTRAINT fk_products_categories FOREIGN KEY (categoryid) REFERENCES categories(categoryid)
 );
 
 CREATE TABLE customers (
-    customer_id SERIAL PRIMARY KEY,
+    customerid SERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     email VARCHAR(100) NOT NULL,
     city VARCHAR(50) NULL,
@@ -94,22 +99,22 @@ CREATE TABLE customers (
 );
 
 CREATE TABLE orders (
-    order_id SERIAL PRIMARY KEY,
-    customer_id INTEGER NOT NULL,
-    order_date TIMESTAMP NOT NULL,
-    total_amount DECIMAL(10,2) NOT NULL,
+    orderid SERIAL PRIMARY KEY,
+    customerid INTEGER NOT NULL,
+    orderdate TIMESTAMP NOT NULL,
+    totalamount DECIMAL(10,2) NOT NULL,
     status VARCHAR(20) NOT NULL,
-    CONSTRAINT fk_orders_customers FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
+    CONSTRAINT fk_orders_customers FOREIGN KEY (customerid) REFERENCES customers(customerid)
 );
 
-CREATE TABLE order_items (
-    order_item_id SERIAL PRIMARY KEY,
-    order_id INTEGER NOT NULL,
-    product_id INTEGER NOT NULL,
+CREATE TABLE orderitems (
+    orderitemid SERIAL PRIMARY KEY,
+    orderid INTEGER NOT NULL,
+    productid INTEGER NOT NULL,
     quantity INTEGER NOT NULL,
-    unit_price DECIMAL(10,2) NOT NULL,
-    CONSTRAINT fk_order_items_orders FOREIGN KEY (order_id) REFERENCES orders(order_id),
-    CONSTRAINT fk_order_items_products FOREIGN KEY (product_id) REFERENCES products(product_id)
+    unitprice DECIMAL(10,2) NOT NULL,
+    CONSTRAINT fk_order_items_orders FOREIGN KEY (orderid) REFERENCES orders(orderid),
+    CONSTRAINT fk_order_items_products FOREIGN KEY (productid) REFERENCES products(productid)
 );
 ";
 
@@ -123,20 +128,26 @@ CREATE TABLE order_items (
         var seed = @"
 INSERT INTO categories (name, description) VALUES ('Electronics', 'Electronic devices');
 INSERT INTO categories (name, description) VALUES ('Books', 'Physical and digital books');
+INSERT INTO categories (name, description) VALUES ('Sports', 'Sporting goods');
 
-INSERT INTO products (category_id, name, price, stock, is_active) VALUES (1, 'Laptop', 999.99, 10, true);
-INSERT INTO products (category_id, name, price, stock, is_active) VALUES (1, 'Mouse', 29.99, 50, true);
-INSERT INTO products (category_id, name, price, stock, is_active) VALUES (2, 'Book', 49.99, 20, true);
+INSERT INTO products (categoryid, name, price, stock, isactive) VALUES (1, 'Laptop', 999.99, 10, true);
+INSERT INTO products (categoryid, name, price, stock, isactive) VALUES (1, 'Mouse', 29.99, 50, true);
+INSERT INTO products (categoryid, name, price, stock, isactive) VALUES (2, 'Clean Code', 49.99, 20, true);
+INSERT INTO products (categoryid, name, price, stock, isactive) VALUES (2, 'Design Patterns', 44.99, 15, true);
+INSERT INTO products (categoryid, name, price, stock, isactive) VALUES (3, 'Basketball', 24.99, 100, true);
 
 INSERT INTO customers (name, email, city, country) VALUES ('John Doe', 'john@example.com', 'New York', 'USA');
 INSERT INTO customers (name, email, city, country) VALUES ('Jane Smith', 'jane@example.com', 'London', 'UK');
+INSERT INTO customers (name, email, city, country) VALUES ('Bob Wilson', 'bob@example.com', NULL, 'Canada');
 
-INSERT INTO orders (customer_id, order_date, total_amount, status) VALUES (1, '2024-01-15', 1029.98, 'Delivered');
-INSERT INTO orders (customer_id, order_date, total_amount, status) VALUES (2, '2024-02-10', 49.99, 'Shipped');
+INSERT INTO orders (customerid, orderdate, totalamount, status) VALUES (1, '2024-01-15', 1029.98, 'Delivered');
+INSERT INTO orders (customerid, orderdate, totalamount, status) VALUES (2, '2024-02-10', 49.99, 'Shipped');
+INSERT INTO orders (customerid, orderdate, totalamount, status) VALUES (1, '2024-03-05', 29.99, 'Pending');
 
-INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES (1, 1, 1, 999.99);
-INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES (1, 2, 1, 29.99);
-INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES (2, 3, 1, 49.99);
+INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (1, 1, 1, 999.99);
+INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (1, 2, 1, 29.99);
+INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (2, 3, 1, 49.99);
+INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1, 29.99);
 ";
 
         var cmd = conn.CreateCommand();
@@ -144,34 +155,468 @@ INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES (2, 
         await cmd.ExecuteNonQueryAsync();
     }
 
-    [Fact]
-    public async Task Query_AllProducts_ShouldReturnAllProducts()
+    /// <summary>
+    /// Extracts the data list from a paged query result.
+    /// BifrostQL wraps top-level queries in _paged types with data/total/offset/limit.
+    /// result.Data is a RootExecutionNode; ToValue() converts to Dictionary hierarchy.
+    /// </summary>
+    private static List<Dictionary<string, JsonElement>> ExtractPagedData(ExecutionResult result, string tableName)
     {
-        var query = "query { products { productId name price } }";
-        var result = await ExecuteQueryAsync(query);
-
         result.Errors.Should().BeNullOrEmpty();
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)result.Data!)["products"]));
+        result.Data.Should().NotBeNull();
+        var root = (Dictionary<string, object?>)((RootExecutionNode)result.Data!).ToValue()!;
+        root.Should().ContainKey(tableName);
+        var json = JsonSerializer.Serialize(root[tableName]);
+        var paged = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json)!;
+        paged.Should().ContainKey("data");
+        var dataJson = paged["data"].GetRawText();
+        return JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(dataJson)!;
+    }
 
-        products.Should().HaveCount(3);
+    /// <summary>
+    /// Asserts a query has no errors and returns the root dictionary.
+    /// </summary>
+    private static Dictionary<string, object?> AssertSuccess(ExecutionResult result)
+    {
+        result.Errors.Should().BeNullOrEmpty();
+        result.Data.Should().NotBeNull();
+        return (Dictionary<string, object?>)((RootExecutionNode)result.Data!).ToValue()!;
+    }
+
+    private static string Str(JsonElement e) => e.ValueKind == JsonValueKind.Null ? null! : e.ToString();
+    private static double Dbl(JsonElement e) => e.GetDouble();
+    private static int Int(JsonElement e) => e.GetInt32();
+    private static bool Bool(JsonElement e) => e.GetBoolean();
+
+    // =============================================================
+    // Schema Reading
+    // =============================================================
+
+    [Fact]
+    public void Schema_ShouldLoadAllTables()
+    {
+        Model.Should().NotBeNull();
+        var tableNames = Model.Tables.Select(t => t.DbName).ToList();
+        tableNames.Should().Contain("categories");
+        tableNames.Should().Contain("products");
+        tableNames.Should().Contain("customers");
+        tableNames.Should().Contain("orders");
+        tableNames.Should().Contain("orderitems");
     }
 
     [Fact]
-    public async Task Query_ProductWithCategory_ShouldReturnJoinedData()
+    public void Schema_ShouldDetectColumns()
     {
-        var query = "query { products(filter: { productId: { _eq: 1 } }) { name category { name } } }";
-        var result = await ExecuteQueryAsync(query);
-
-        result.Errors.Should().BeNullOrEmpty();
+        var productsTable = Model.Tables.First(t => t.DbName == "products");
+        var columnNames = productsTable.Columns.Select(c => c.ColumnName).ToList();
+        columnNames.Should().Contain("productid");
+        columnNames.Should().Contain("categoryid");
+        columnNames.Should().Contain("name");
+        columnNames.Should().Contain("price");
+        columnNames.Should().Contain("stock");
+        columnNames.Should().Contain("isactive");
     }
+
+    [Fact]
+    public void Schema_ShouldDetectPrimaryKeys()
+    {
+        var productsTable = Model.Tables.First(t => t.DbName == "products");
+        var pkCol = productsTable.Columns.First(c => c.ColumnName == "productid");
+        pkCol.IsPrimaryKey.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Schema_IdentityColumns_ShouldBeDetectedViaNextval()
+    {
+        var productsTable = Model.Tables.First(t => t.DbName == "products");
+        var idCol = productsTable.Columns.First(c => c.ColumnName == "productid");
+        idCol.IsIdentity.Should().BeTrue("SERIAL columns should be detected as identity via nextval()");
+
+        var ordersTable = Model.Tables.First(t => t.DbName == "orders");
+        ordersTable.Columns.First(c => c.ColumnName == "orderid").IsIdentity.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Schema_ShouldDetectForeignKeyLinks()
+    {
+        var productsTable = Model.Tables.First(t => t.DbName == "products");
+        productsTable.SingleLinks.Should().NotBeEmpty("products has FK to categories");
+
+        var ordersTable = Model.Tables.First(t => t.DbName == "orders");
+        ordersTable.SingleLinks.Should().NotBeEmpty("orders has FK to customers");
+
+        var orderitemsTable = Model.Tables.First(t => t.DbName == "orderitems");
+        orderitemsTable.SingleLinks.Should().NotBeEmpty("orderitems has FK to orders and products");
+    }
+
+    [Fact]
+    public void Schema_ShouldDetectNullableColumns()
+    {
+        var customersTable = Model.Tables.First(t => t.DbName == "customers");
+        customersTable.Columns.First(c => c.ColumnName == "city").IsNullable.Should().BeTrue();
+        customersTable.Columns.First(c => c.ColumnName == "name").IsNullable.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Schema_TypeMapper_ShouldMapPostgresTypesCorrectly()
+    {
+        Model.TypeMapper.Should().BeOfType<PostgresTypeMapper>();
+        var productsTable = Model.Tables.First(t => t.DbName == "products");
+        var idCol = productsTable.Columns.First(c => c.ColumnName == "productid");
+        Model.TypeMapper.GetGraphQlType(idCol.EffectiveDataType).Should().Be("Int");
+    }
+
+    // =============================================================
+    // Queries - Basic SELECT
+    // =============================================================
+
+    [Fact]
+    public async Task Query_AllProducts_ShouldReturnAllRows()
+    {
+        var query = "query { products { data { productid name price } } }";
+        var products = ExtractPagedData(await ExecuteQueryAsync(query), "products");
+        products.Should().HaveCount(5);
+    }
+
+    [Fact]
+    public async Task Query_FilterByEquality_ShouldReturnMatchingRows()
+    {
+        var query = @"query { products(filter: { name: { _eq: ""Laptop"" } }) { data { productid name price } } }";
+        var products = ExtractPagedData(await ExecuteQueryAsync(query), "products");
+        products.Should().ContainSingle();
+        Str(products[0]["name"]).Should().Be("Laptop");
+    }
+
+    [Fact]
+    public async Task Query_FilterByIntEquality_ShouldWork()
+    {
+        var query = "query { products(filter: { productid: { _eq: 1 } }) { data { productid name } } }";
+        var products = ExtractPagedData(await ExecuteQueryAsync(query), "products");
+        products.Should().ContainSingle();
+        Int(products[0]["productid"]).Should().Be(1);
+        Str(products[0]["name"]).Should().Be("Laptop");
+    }
+
+    [Fact]
+    public async Task Query_FilterByLessThan_ShouldReturnCheapProducts()
+    {
+        var query = "query { products(filter: { price: { _lt: 50 } }) { data { name price } } }";
+        var products = ExtractPagedData(await ExecuteQueryAsync(query), "products");
+        products.Should().HaveCountGreaterThan(0);
+        products.All(p => Dbl(p["price"]) < 50).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Query_FilterByGreaterThan_ShouldReturnExpensiveProducts()
+    {
+        var query = "query { products(filter: { price: { _gt: 100 } }) { data { name price } } }";
+        var products = ExtractPagedData(await ExecuteQueryAsync(query), "products");
+        products.Should().ContainSingle();
+        Str(products[0]["name"]).Should().Be("Laptop");
+    }
+
+    [Fact]
+    public async Task Query_FilterByIn_ShouldReturnMatchingStatuses()
+    {
+        var query = @"query { orders(filter: { status: { _in: [""Delivered"", ""Shipped""] } }) { data { orderid status } } }";
+        var orders = ExtractPagedData(await ExecuteQueryAsync(query), "orders");
+        orders.Should().HaveCount(2);
+        orders.All(o =>
+        {
+            var status = Str(o["status"]);
+            return status == "Delivered" || status == "Shipped";
+        }).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Query_FilterByNullCity_ShouldReturnNullRows()
+    {
+        var query = "query { customers(filter: { city: { _eq: null } }) { data { name city } } }";
+        var customers = ExtractPagedData(await ExecuteQueryAsync(query), "customers");
+        customers.Should().ContainSingle();
+        Str(customers[0]["name"]).Should().Be("Bob Wilson");
+    }
+
+    [Fact]
+    public async Task Query_FilterByBoolean_ShouldWork()
+    {
+        var query = "query { products(filter: { isactive: { _eq: true } }) { data { name isactive } } }";
+        var products = ExtractPagedData(await ExecuteQueryAsync(query), "products");
+        products.Should().HaveCount(5);
+        products.All(p => Bool(p["isactive"])).Should().BeTrue();
+    }
+
+    // =============================================================
+    // LIKE Patterns with || Concatenation
+    // =============================================================
+
+    [Fact]
+    public async Task Query_FilterByContains_LikeWithConcatenation()
+    {
+        var query = @"query { products(filter: { name: { _contains: ""top"" } }) { data { name } } }";
+        var products = ExtractPagedData(await ExecuteQueryAsync(query), "products");
+        products.Should().ContainSingle();
+        Str(products[0]["name"]).Should().Be("Laptop");
+    }
+
+    [Fact]
+    public async Task Query_FilterByStartsWith_LikeWithConcatenation()
+    {
+        var query = @"query { products(filter: { name: { _starts_with: ""De"" } }) { data { name } } }";
+        var products = ExtractPagedData(await ExecuteQueryAsync(query), "products");
+        products.Should().ContainSingle();
+        Str(products[0]["name"]).Should().Be("Design Patterns");
+    }
+
+    [Fact]
+    public async Task Query_FilterByEndsWith_LikeWithConcatenation()
+    {
+        var query = @"query { products(filter: { name: { _ends_with: ""Code"" } }) { data { name } } }";
+        var products = ExtractPagedData(await ExecuteQueryAsync(query), "products");
+        products.Should().ContainSingle();
+        Str(products[0]["name"]).Should().Be("Clean Code");
+    }
+
+    // =============================================================
+    // Pagination - LIMIT/OFFSET
+    // =============================================================
+
+    [Fact]
+    public async Task Query_WithLimit_ShouldReturnLimitedRows()
+    {
+        var query = "query { products(sort: [productid_asc], limit: 2) { data { productid name } } }";
+        var products = ExtractPagedData(await ExecuteQueryAsync(query), "products");
+        products.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task Query_WithOffset_ShouldSkipRows()
+    {
+        var query = "query { products(sort: [productid_asc], offset: 2, limit: 2) { data { productid name } } }";
+        var products = ExtractPagedData(await ExecuteQueryAsync(query), "products");
+        products.Should().HaveCount(2);
+        Str(products[0]["name"]).Should().Be("Clean Code");
+    }
+
+    [Fact]
+    public async Task Query_PageThrough_ShouldCoverAllRows()
+    {
+        var page1 = ExtractPagedData(await ExecuteQueryAsync(
+            "query { products(sort: [productid_asc], offset: 0, limit: 3) { data { productid } } }"), "products");
+        var page2 = ExtractPagedData(await ExecuteQueryAsync(
+            "query { products(sort: [productid_asc], offset: 3, limit: 3) { data { productid } } }"), "products");
+
+        page1.Should().HaveCount(3);
+        page2.Should().HaveCount(2);
+
+        var allIds = page1.Concat(page2).Select(p => Int(p["productid"])).ToList();
+        allIds.Should().HaveCount(5);
+        allIds.Distinct().Should().HaveCount(5);
+    }
+
+    [Fact]
+    public async Task Query_OffsetBeyondData_ShouldReturnEmpty()
+    {
+        var query = "query { products(sort: [productid_asc], offset: 100, limit: 10) { data { productid } } }";
+        var products = ExtractPagedData(await ExecuteQueryAsync(query), "products");
+        products.Should().BeEmpty();
+    }
+
+    // =============================================================
+    // Sorting
+    // =============================================================
+
+    [Fact]
+    public async Task Query_SortByPriceAsc_ShouldReturnSorted()
+    {
+        var query = "query { products(sort: [price_asc]) { data { name price } } }";
+        var products = ExtractPagedData(await ExecuteQueryAsync(query), "products");
+        var prices = products.Select(p => Dbl(p["price"])).ToList();
+        prices.Should().BeInAscendingOrder();
+    }
+
+    [Fact]
+    public async Task Query_SortByNameDesc_ShouldReturnSorted()
+    {
+        var query = "query { products(sort: [name_desc]) { data { name } } }";
+        var products = ExtractPagedData(await ExecuteQueryAsync(query), "products");
+        var names = products.Select(p => Str(p["name"])).ToList();
+        names.Should().BeInDescendingOrder();
+    }
+
+    // =============================================================
+    // Joins Across Tables
+    // =============================================================
+
+    [Fact]
+    public async Task Query_ProductWithCategory_ManyToOne()
+    {
+        var query = "query { products(filter: { productid: { _eq: 1 } }) { data { name categories { name description } } } }";
+        var products = ExtractPagedData(await ExecuteQueryAsync(query), "products");
+        products.Should().ContainSingle();
+
+        var catJson = products[0]["categories"].GetRawText();
+        var category = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(catJson)!;
+        Str(category["name"]).Should().Be("Electronics");
+        Str(category["description"]).Should().Be("Electronic devices");
+    }
+
+    [Fact]
+    public async Task Query_CategoryWithProducts_OneToMany()
+    {
+        var query = "query { categories(filter: { categoryid: { _eq: 1 } }) { data { name products { name price } } } }";
+        var categories = ExtractPagedData(await ExecuteQueryAsync(query), "categories");
+        categories.Should().ContainSingle();
+
+        var prodsJson = categories[0]["products"].GetRawText();
+        var products = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(prodsJson)!;
+        products.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task Query_OrderWithNestedJoins_ThreeLevels()
+    {
+        var query = @"query {
+            orders(filter: { orderid: { _eq: 1 } }) {
+                data {
+                    orderdate
+                    customers { name email }
+                    orderitems {
+                        quantity
+                        products { name categories { name } }
+                    }
+                }
+            }
+        }";
+
+        var orders = ExtractPagedData(await ExecuteQueryAsync(query), "orders");
+        orders.Should().ContainSingle();
+
+        var custJson = orders[0]["customers"].GetRawText();
+        var customer = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(custJson)!;
+        Str(customer["name"]).Should().Be("John Doe");
+
+        var itemsJson = orders[0]["orderitems"].GetRawText();
+        var items = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(itemsJson)!;
+        items.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task Query_CustomerWithOrders_ShouldReturnMultipleOrders()
+    {
+        var query = "query { customers(filter: { customerid: { _eq: 1 } }) { data { name orders { status totalamount } } } }";
+        var customers = ExtractPagedData(await ExecuteQueryAsync(query), "customers");
+        customers.Should().ContainSingle();
+
+        var ordersJson = customers[0]["orders"].GetRawText();
+        var orders = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(ordersJson)!;
+        orders.Should().HaveCount(2);
+    }
+
+    // =============================================================
+    // Mutations - INSERT
+    // =============================================================
 
     [Fact]
     public async Task Mutation_InsertProduct_ShouldCreateRecord()
     {
-        var mutation = @"mutation { products(insert: { categoryId: 1, name: ""New"", price: 99.99, stock: 5 }) }";
+        var mutation = @"mutation { products(insert: { categoryid: 1, name: ""Keyboard"", price: 79.99, stock: 25, isactive: true }) }";
         var result = await ExecuteQueryAsync(mutation);
-
         result.Errors.Should().BeNullOrEmpty();
+
+        var verifyQuery = @"query { products(filter: { name: { _eq: ""Keyboard"" } }) { data { productid name price stock } } }";
+        var products = ExtractPagedData(await ExecuteQueryAsync(verifyQuery), "products");
+        products.Should().ContainSingle();
+        Str(products[0]["name"]).Should().Be("Keyboard");
+        Dbl(products[0]["price"]).Should().BeApproximately(79.99, 0.01);
+    }
+
+    [Fact]
+    public async Task Mutation_InsertProduct_SequenceIdentity_ShouldAutoIncrement()
+    {
+        var mutation1 = @"mutation { products(insert: { categoryid: 2, name: ""Book A"", price: 19.99, stock: 10, isactive: true }) }";
+        var mutation2 = @"mutation { products(insert: { categoryid: 2, name: ""Book B"", price: 29.99, stock: 5, isactive: true }) }";
+
+        var result1 = await ExecuteQueryAsync(mutation1);
+        result1.Errors.Should().BeNullOrEmpty();
+
+        var result2 = await ExecuteQueryAsync(mutation2);
+        result2.Errors.Should().BeNullOrEmpty();
+
+        var verifyQuery = @"query { products(filter: { name: { _starts_with: ""Book "" } }, sort: [productid_asc]) { data { productid name } } }";
+        var products = ExtractPagedData(await ExecuteQueryAsync(verifyQuery), "products");
+        products.Should().HaveCount(2);
+
+        var id1 = Int(products[0]["productid"]);
+        var id2 = Int(products[1]["productid"]);
+        id2.Should().BeGreaterThan(id1);
+    }
+
+    // =============================================================
+    // Mutations - UPDATE
+    // =============================================================
+
+    [Fact]
+    public async Task Mutation_UpdateProduct_ShouldModifyRecord()
+    {
+        var mutation = @"mutation { products(update: { productid: 1, categoryid: 1, name: ""Laptop"", price: 899.99, stock: 15, isactive: true }) }";
+        var result = await ExecuteQueryAsync(mutation);
+        result.Errors.Should().BeNullOrEmpty();
+
+        var verifyQuery = "query { products(filter: { productid: { _eq: 1 } }) { data { price stock } } }";
+        var products = ExtractPagedData(await ExecuteQueryAsync(verifyQuery), "products");
+
+        Dbl(products[0]["price"]).Should().BeApproximately(899.99, 0.01);
+        Int(products[0]["stock"]).Should().Be(15);
+    }
+
+    // =============================================================
+    // Mutations - DELETE
+    // =============================================================
+
+    [Fact]
+    public async Task Mutation_DeleteProduct_ShouldRemoveRecord()
+    {
+        var mutation = "mutation { products(delete: { productid: 5 }) }";
+        var result = await ExecuteQueryAsync(mutation);
+        result.Errors.Should().BeNullOrEmpty();
+
+        var verifyQuery = "query { products(filter: { productid: { _eq: 5 } }) { data { productid } } }";
+        var products = ExtractPagedData(await ExecuteQueryAsync(verifyQuery), "products");
+        products.Should().BeEmpty();
+    }
+
+    // =============================================================
+    // Combined: Filter + Sort + Paginate
+    // =============================================================
+
+    [Fact]
+    public async Task Query_FilterSortPaginate_Combined()
+    {
+        var query = @"query { products(
+            filter: { categoryid: { _eq: 1 } },
+            sort: [price_desc],
+            limit: 1,
+            offset: 0
+        ) { data { name price } } }";
+
+        var products = ExtractPagedData(await ExecuteQueryAsync(query), "products");
+        products.Should().ContainSingle();
+        Str(products[0]["name"]).Should().Be("Laptop");
+    }
+
+    [Fact]
+    public async Task Query_FilterSortPaginate_SecondPage()
+    {
+        var query = @"query { products(
+            filter: { categoryid: { _eq: 1 } },
+            sort: [price_desc],
+            limit: 1,
+            offset: 1
+        ) { data { name price } } }";
+
+        var products = ExtractPagedData(await ExecuteQueryAsync(query), "products");
+        products.Should().ContainSingle();
+        Str(products[0]["name"]).Should().Be("Mouse");
     }
 }

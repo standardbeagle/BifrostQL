@@ -34,12 +34,14 @@ namespace BifrostQL.Model
 
             var schemaData = await _connFactory.SchemaReader.ReadSchemaAsync(conn);
 
-            return DbModel.FromTables(
+            var model = DbModel.FromTables(
                 schemaData.Tables.Cast<DbTable>().ToList(),
                 _metadataLoader,
                 Array.Empty<DbStoredProcedure>(),
                 Array.Empty<DbForeignKey>(),
                 additionalMetadata);
+            model.TypeMapper = _connFactory.TypeMapper;
+            return model;
         }
     }
 }

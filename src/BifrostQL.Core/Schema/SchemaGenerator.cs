@@ -13,7 +13,8 @@ namespace BifrostQL.Core.Schema
         public static string SchemaTextFromModel(IDbModel model, bool includeDynamicJoins = true)
         {
             var builder = new StringBuilder();
-            var tableGenerators = model.Tables.Select(t => new TableSchemaGenerator(t)).ToList();
+            var typeMapper = model.TypeMapper;
+            var tableGenerators = model.Tables.Select(t => new TableSchemaGenerator(t, typeMapper)).ToList();
             var spGenerators = model.StoredProcedures.Select(p => new StoredProcedureSchemaGenerator(p)).ToList();
             var readOnlySpGenerators = model.StoredProcedures
                 .Where(p => p.IsReadOnly)
@@ -65,7 +66,7 @@ namespace BifrostQL.Core.Schema
             }
 
             //Define the filter types of all the columns in the database, needs to be specific to the connected database, and distinct because of GraphQL.
-            foreach (var gqlType in model.Tables.SelectMany(t => t.Columns).Select<ColumnDto, string>(c => GetSimpleGraphQlTypeName(c.EffectiveDataType)).Distinct())
+            foreach (var gqlType in model.Tables.SelectMany(t => t.Columns).Select<ColumnDto, string>(c => typeMapper.GetGraphQlType(c.EffectiveDataType)).Distinct())
             {
                 builder.AppendLine(GetFilterType(gqlType));
             }

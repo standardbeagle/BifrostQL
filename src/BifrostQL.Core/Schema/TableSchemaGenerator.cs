@@ -12,9 +12,16 @@ namespace BifrostQL.Core.Schema
     internal sealed class TableSchemaGenerator
     {
         private readonly IDbTable _table;
-        public TableSchemaGenerator(IDbTable table)
+        private readonly ITypeMapper _typeMapper;
+
+        public TableSchemaGenerator(IDbTable table) : this(table, SchemaGenerator.DefaultTypeMapper)
+        {
+        }
+
+        public TableSchemaGenerator(IDbTable table, ITypeMapper typeMapper)
         {
             _table = table;
+            _typeMapper = typeMapper;
         }
 
         public string GetTableFieldDefinition()
@@ -52,7 +59,7 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine($"type {_table.GraphQlName} {{");
             foreach (var column in _table.Columns)
             {
-                builder.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetGraphQlTypeName(column.EffectiveDataType, column.IsNullable)}");
+                builder.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetGraphQlTypeName(column.EffectiveDataType, column.IsNullable, _typeMapper)}");
             }
 
             builder.AppendLine($"_agg(operation: AggregateOperations! value: {_table.AggregateValueTypeName}!) : Float");
@@ -159,7 +166,7 @@ namespace BifrostQL.Core.Schema
                 //All columns except primary keys are nullable for delete
                 if (isDelete) isNullable = column.IsPrimaryKey == false;
 
-                result.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetGraphQlInsertTypeName(column.EffectiveDataType, isNullable)}");
+                result.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetGraphQlInsertTypeName(column.EffectiveDataType, isNullable, _typeMapper)}");
             }
             result.AppendLine("}");
             return result.ToString();
@@ -227,7 +234,7 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine($"input {_table.TableFilterTypeName} {{");
             foreach (var column in _table.Columns)
             {
-                builder.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetFilterInputTypeName(column.EffectiveDataType)}");
+                builder.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetFilterInputTypeName(column.EffectiveDataType, _typeMapper)}");
             }
             foreach (var link in _table.SingleLinks)
             {

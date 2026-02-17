@@ -21,7 +21,8 @@ namespace BifrostQL.Core.Schema
         public static string SchemaTextFromModel(IDbModel model, SchemaFieldConfig config, bool includeDynamicJoins = true)
         {
             var builder = new StringBuilder();
-            var allTableGenerators = model.Tables.Select(t => new TableSchemaGenerator(t)).ToList();
+            var typeMapper = model.TypeMapper;
+            var allTableGenerators = model.Tables.Select(t => new TableSchemaGenerator(t, typeMapper)).ToList();
             var spGenerators = model.StoredProcedures.Select(p => new StoredProcedureSchemaGenerator(p)).ToList();
             var readOnlySpGenerators = model.StoredProcedures
                 .Where(p => p.IsReadOnly)
@@ -44,7 +45,7 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine("type database {");
             foreach (var table in defaultTables)
             {
-                var gen = new TableSchemaGenerator(table);
+                var gen = new TableSchemaGenerator(table, typeMapper);
                 builder.AppendLine(gen.GetTableFieldDefinition());
             }
             foreach (var kvp in nonDefaultSchemas)
@@ -71,7 +72,7 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine($"type {schemaTypeName} {{");
                 foreach (var table in kvp.Value)
                 {
-                    var gen = new TableSchemaGenerator(table);
+                    var gen = new TableSchemaGenerator(table, typeMapper);
                     builder.AppendLine(gen.GetTableFieldDefinition());
                 }
                 builder.AppendLine("}");
@@ -101,7 +102,7 @@ namespace BifrostQL.Core.Schema
             }
 
             // Filter types for all columns in the database
-            foreach (var gqlType in model.Tables.SelectMany(t => t.Columns).Select(c => SchemaGenerator.GetGraphQlTypeName(c.EffectiveDataType).TrimEnd('!')).Distinct())
+            foreach (var gqlType in model.Tables.SelectMany(t => t.Columns).Select(c => typeMapper.GetGraphQlTypeName(c.EffectiveDataType).TrimEnd('!')).Distinct())
             {
                 builder.AppendLine(SchemaGenerator.GetFilterType(gqlType));
             }
@@ -122,10 +123,11 @@ namespace BifrostQL.Core.Schema
             var builder = new StringBuilder();
             var defaultTables = grouped.TryGetValue("", out var dt) ? dt : Array.Empty<IDbTable>();
 
+            var typeMapper = model.TypeMapper;
             builder.AppendLine("type databaseInput {");
             foreach (var table in defaultTables)
             {
-                var gen = new TableSchemaGenerator(table);
+                var gen = new TableSchemaGenerator(table, typeMapper);
                 builder.AppendLine(gen.GetInputFieldDefinition());
             }
             foreach (var kvp in nonDefaultSchemas)
@@ -147,7 +149,7 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine($"type {schemaMutTypeName} {{");
                 foreach (var table in kvp.Value)
                 {
-                    var gen = new TableSchemaGenerator(table);
+                    var gen = new TableSchemaGenerator(table, typeMapper);
                     builder.AppendLine(gen.GetInputFieldDefinition());
                 }
                 builder.AppendLine("}");

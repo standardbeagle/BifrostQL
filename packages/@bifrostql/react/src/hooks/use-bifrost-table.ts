@@ -273,6 +273,45 @@ export type BatchSaveFn = (
   }>,
 ) => Promise<void>;
 
+export interface VirtualScrollConfig {
+  enabled?: boolean;
+  rowHeight: number;
+  containerHeight: number;
+  overscan?: number;
+}
+
+export interface VisibleRange {
+  startIndex: number;
+  endIndex: number;
+  overscanStartIndex: number;
+  overscanEndIndex: number;
+}
+
+export interface VirtualScrollState {
+  enabled: boolean;
+  visibleRange: VisibleRange;
+  totalHeight: number;
+  offsetTop: number;
+  visibleRows: Record<string, unknown>[];
+  scrollToRow: (index: number) => void;
+  scrollToTop: () => void;
+  scrollToBottom: () => void;
+  onScroll: (scrollTop: number) => void;
+  scrollTop: number;
+  containerHeight: number;
+  rowHeight: number;
+  isVirtualized: boolean;
+}
+
+export interface PerformanceState {
+  debouncedSearch: string;
+  setSearch: (value: string) => void;
+  isSearchPending: boolean;
+  requestCount: number;
+  lastRequestTime: number | null;
+  isStale: boolean;
+}
+
 export type Breakpoint = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
 export type ColumnPriority = 1 | 2 | 3 | 4 | 5;
@@ -411,6 +450,8 @@ export interface UseBifrostTableOptions extends UseBifrostOptions {
   tableLabel?: string;
   responsiveColumns?: ResponsiveColumnConfig[];
   breakpoints?: Partial<BreakpointConfig>;
+  virtualScroll?: VirtualScrollConfig;
+  searchDebounceMs?: number;
 }
 
 export interface UseBifrostTableResult<T = Record<string, unknown>> {
@@ -429,6 +470,8 @@ export interface UseBifrostTableResult<T = Record<string, unknown>> {
   export: ExportState;
   a11y: AccessibilityState;
   responsive: ResponsiveState<T>;
+  virtualScroll: VirtualScrollState;
+  performance: PerformanceState;
   loading: boolean;
   error: Error | null;
   refetch: () => void;
@@ -1095,6 +1138,8 @@ export function useBifrostTable<T = Record<string, unknown>>(
     tableLabel,
     responsiveColumns,
     breakpoints: breakpointsProp,
+    virtualScroll: virtualScrollConfig,
+    searchDebounceMs = 300,
     ...bifrostOptions
   } = options;
 
@@ -2560,6 +2605,127 @@ export function useBifrostTable<T = Record<string, unknown>>(
     });
   }, [dataWithComputed, columns, rowKey, responsiveVisibleColumns]);
 
+  // --- Virtual Scrolling ---
+  const vsEnabled = virtualScrollConfig?.enabled ?? false;
+  const vsRowHeight = virtualScrollConfig?.rowHeight ?? 35;
+  const vsContainerHeight = virtualScrollConfig?.containerHeight ?? 400;
+  const vsOverscan = virtualScrollConfig?.overscan ?? 5;
+
+  const [vsScrollTop, setVsScrollTop] = useState(0);
+
+  const vsTotalHeight = useMemo(
+    () => dataWithComputed.length * vsRowHeight,
+    [dataWithComputed.length, vsRowHeight],
+  );
+
+  const vsVisibleRange = useMemo((): VisibleRange => {
+    if (!vsEnabled) {
+      return {
+        startIndex: 0,
+        endIndex: dataWithComputed.length - 1,
+        overscanStartIndex: 0,
+        overscanEndIndex: dataWithComputed.length - 1,
+      };
+    }
+    const totalRows = dataWithComputed.length;
+    if (totalRows === 0) {
+      return {
+        startIndex: 0,
+        endIndex: -1,
+        overscanStartIndex: 0,
+        overscanEndIndex: -1,
+      };
+    }
+    const startIndex = Math.floor(vsScrollTop / vsRowHeight);
+    const visibleCount = Math.ceil(vsContainerHeight / vsRowHeight);
+    const endIndex = Math.min(startIndex + visibleCount - 1, totalRows - 1);
+    const overscanStartIndex = Math.max(0, startIndex - vsOverscan);
+    const overscanEndIndex = Math.min(totalRows - 1, endIndex + vsOverscan);
+    return { startIndex, endIndex, overscanStartIndex, overscanEndIndex };
+  }, [vsEnabled, vsScrollTop, vsRowHeight, vsContainerHeight, vsOverscan, dataWithComputed.length]);
+
+  const vsOffsetTop = useMemo(
+    () => vsVisibleRange.overscanStartIndex * vsRowHeight,
+    [vsVisibleRange.overscanStartIndex, vsRowHeight],
+  );
+
+  const vsVisibleRows = useMemo(() => {
+    if (!vsEnabled) return dataWithComputed as Record<string, unknown>[];
+    const { overscanStartIndex, overscanEndIndex } = vsVisibleRange;
+    if (overscanEndIndex < 0) return [];
+    return (dataWithComputed as Record<string, unknown>[]).slice(
+      overscanStartIndex,
+      overscanEndIndex + 1,
+    );
+  }, [vsEnabled, vsVisibleRange, dataWithComputed]);
+
+  const vsOnScroll = useCallback(
+    (scrollTop: number) => {
+      const clamped = Math.max(0, scrollTop);
+      setVsScrollTop(clamped);
+    },
+    [],
+  );
+
+  const vsScrollToRow = useCallback(
+    (index: number) => {
+      const clamped = Math.max(0, Math.min(index, dataWithComputed.length - 1));
+      const targetScrollTop = clamped * vsRowHeight;
+      setVsScrollTop(targetScrollTop);
+    },
+    [dataWithComputed.length, vsRowHeight],
+  );
+
+  const vsScrollToTop = useCallback(() => {
+    setVsScrollTop(0);
+  }, []);
+
+  const vsScrollToBottom = useCallback(() => {
+    const maxScroll = Math.max(0, vsTotalHeight - vsContainerHeight);
+    setVsScrollTop(maxScroll);
+  }, [vsTotalHeight, vsContainerHeight]);
+
+  // --- Performance / Search Debouncing ---
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [isSearchPending, setIsSearchPending] = useState(false);
+  const searchDebounceTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const requestCountRef = useRef(0);
+  const lastRequestTimeRef = useRef<number | null>(null);
+
+  const setSearch = useCallback(
+    (value: string) => {
+      setIsSearchPending(true);
+
+      if (searchDebounceTimerRef.current) {
+        clearTimeout(searchDebounceTimerRef.current);
+      }
+
+      searchDebounceTimerRef.current = setTimeout(() => {
+        setDebouncedSearch(value);
+        setIsSearchPending(false);
+      }, searchDebounceMs);
+    },
+    [searchDebounceMs],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (searchDebounceTimerRef.current) {
+        clearTimeout(searchDebounceTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Track request metrics
+  useEffect(() => {
+    if (queryResult.isLoading) {
+      requestCountRef.current += 1;
+      lastRequestTimeRef.current = Date.now();
+    }
+  }, [queryResult.isLoading]);
+
+  const isStale = queryResult.isLoading && dataWithComputed.length > 0;
+
   return {
     data: dataWithComputed,
     columns,
@@ -2682,6 +2848,29 @@ export function useBifrostTable<T = Record<string, unknown>>(
       isDesktop,
       responsiveVisibleColumns,
       cardViewData,
+    },
+    virtualScroll: {
+      enabled: vsEnabled,
+      visibleRange: vsVisibleRange,
+      totalHeight: vsTotalHeight,
+      offsetTop: vsOffsetTop,
+      visibleRows: vsVisibleRows,
+      scrollToRow: vsScrollToRow,
+      scrollToTop: vsScrollToTop,
+      scrollToBottom: vsScrollToBottom,
+      onScroll: vsOnScroll,
+      scrollTop: vsScrollTop,
+      containerHeight: vsContainerHeight,
+      rowHeight: vsRowHeight,
+      isVirtualized: vsEnabled && dataWithComputed.length > 0,
+    },
+    performance: {
+      debouncedSearch,
+      setSearch,
+      isSearchPending,
+      requestCount: requestCountRef.current,
+      lastRequestTime: lastRequestTimeRef.current,
+      isStale,
     },
     loading: queryResult.isLoading,
     error: queryResult.error,

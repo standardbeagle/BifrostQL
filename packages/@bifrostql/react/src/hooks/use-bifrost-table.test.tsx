@@ -7976,4 +7976,898 @@ describe('useBifrostTable', () => {
       });
     });
   });
+
+  describe('virtual scrolling', () => {
+    const generateRows = (count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        id: i + 1,
+        name: `User ${i + 1}`,
+        email: `user${i + 1}@example.com`,
+      }));
+
+    describe('disabled by default', () => {
+      it('returns disabled virtual scroll state when not configured', async () => {
+        const mockData = generateRows(5);
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        expect(result.current.virtualScroll.enabled).toBe(false);
+        expect(result.current.virtualScroll.isVirtualized).toBe(false);
+      });
+
+      it('returns all rows as visibleRows when disabled', async () => {
+        const mockData = generateRows(10);
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        expect(result.current.virtualScroll.visibleRows).toHaveLength(10);
+      });
+
+      it('visible range covers all data when disabled', async () => {
+        const mockData = generateRows(5);
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        const range = result.current.virtualScroll.visibleRange;
+        expect(range.startIndex).toBe(0);
+        expect(range.endIndex).toBe(4);
+      });
+    });
+
+    describe('enabled with configuration', () => {
+      it('returns enabled virtual scroll state', async () => {
+        const mockData = generateRows(100);
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              virtualScroll: {
+                enabled: true,
+                rowHeight: 40,
+                containerHeight: 400,
+              },
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        expect(result.current.virtualScroll.enabled).toBe(true);
+        expect(result.current.virtualScroll.isVirtualized).toBe(true);
+        expect(result.current.virtualScroll.rowHeight).toBe(40);
+        expect(result.current.virtualScroll.containerHeight).toBe(400);
+      });
+
+      it('calculates totalHeight based on row count and row height', async () => {
+        const mockData = generateRows(100);
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              virtualScroll: {
+                enabled: true,
+                rowHeight: 40,
+                containerHeight: 400,
+              },
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        expect(result.current.virtualScroll.totalHeight).toBe(4000);
+      });
+
+      it('only renders visible rows plus overscan', async () => {
+        const mockData = generateRows(100);
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              virtualScroll: {
+                enabled: true,
+                rowHeight: 40,
+                containerHeight: 400,
+                overscan: 3,
+              },
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        // containerHeight=400, rowHeight=40 => 10 visible rows
+        // overscan=3, scrollTop=0 => rows 0-12 (10 visible + 3 after)
+        const range = result.current.virtualScroll.visibleRange;
+        expect(range.startIndex).toBe(0);
+        expect(range.endIndex).toBe(9);
+        expect(range.overscanStartIndex).toBe(0);
+        expect(range.overscanEndIndex).toBe(12);
+        expect(result.current.virtualScroll.visibleRows).toHaveLength(13);
+      });
+
+      it('uses default overscan of 5 when not specified', async () => {
+        const mockData = generateRows(100);
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              virtualScroll: {
+                enabled: true,
+                rowHeight: 40,
+                containerHeight: 400,
+              },
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        const range = result.current.virtualScroll.visibleRange;
+        // 10 visible + 5 overscan after = 15
+        expect(range.overscanEndIndex).toBe(14);
+        expect(result.current.virtualScroll.visibleRows).toHaveLength(15);
+      });
+    });
+
+    describe('scroll position tracking', () => {
+      it('starts with scrollTop at 0', async () => {
+        const mockData = generateRows(100);
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              virtualScroll: {
+                enabled: true,
+                rowHeight: 40,
+                containerHeight: 400,
+              },
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        expect(result.current.virtualScroll.scrollTop).toBe(0);
+      });
+
+      it('updates visible range when onScroll is called', async () => {
+        const mockData = generateRows(100);
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              virtualScroll: {
+                enabled: true,
+                rowHeight: 40,
+                containerHeight: 400,
+                overscan: 2,
+              },
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        // Scroll down 200px (5 rows down)
+        act(() => {
+          result.current.virtualScroll.onScroll(200);
+        });
+
+        expect(result.current.virtualScroll.scrollTop).toBe(200);
+        const range = result.current.virtualScroll.visibleRange;
+        expect(range.startIndex).toBe(5);
+        expect(range.endIndex).toBe(14);
+        expect(range.overscanStartIndex).toBe(3);
+        expect(range.overscanEndIndex).toBe(16);
+      });
+
+      it('calculates offsetTop for spacer element', async () => {
+        const mockData = generateRows(100);
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              virtualScroll: {
+                enabled: true,
+                rowHeight: 40,
+                containerHeight: 400,
+                overscan: 2,
+              },
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.virtualScroll.onScroll(200);
+        });
+
+        // overscanStartIndex=3 * rowHeight=40 = 120
+        expect(result.current.virtualScroll.offsetTop).toBe(120);
+      });
+
+      it('clamps scrollTop to non-negative', async () => {
+        const mockData = generateRows(100);
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              virtualScroll: {
+                enabled: true,
+                rowHeight: 40,
+                containerHeight: 400,
+              },
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.virtualScroll.onScroll(-100);
+        });
+
+        expect(result.current.virtualScroll.scrollTop).toBe(0);
+      });
+    });
+
+    describe('scroll navigation', () => {
+      it('scrollToRow sets scroll position for given row index', async () => {
+        const mockData = generateRows(100);
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              virtualScroll: {
+                enabled: true,
+                rowHeight: 40,
+                containerHeight: 400,
+                overscan: 2,
+              },
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.virtualScroll.scrollToRow(50);
+        });
+
+        expect(result.current.virtualScroll.scrollTop).toBe(2000);
+        expect(result.current.virtualScroll.visibleRange.startIndex).toBe(50);
+      });
+
+      it('scrollToRow clamps to valid range', async () => {
+        const mockData = generateRows(20);
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              virtualScroll: {
+                enabled: true,
+                rowHeight: 40,
+                containerHeight: 400,
+              },
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.virtualScroll.scrollToRow(999);
+        });
+
+        // Should clamp to last row (index 19)
+        expect(result.current.virtualScroll.scrollTop).toBe(19 * 40);
+      });
+
+      it('scrollToRow clamps negative index to 0', async () => {
+        const mockData = generateRows(20);
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              virtualScroll: {
+                enabled: true,
+                rowHeight: 40,
+                containerHeight: 400,
+              },
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.virtualScroll.scrollToRow(-5);
+        });
+
+        expect(result.current.virtualScroll.scrollTop).toBe(0);
+      });
+
+      it('scrollToTop sets scroll position to 0', async () => {
+        const mockData = generateRows(100);
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              virtualScroll: {
+                enabled: true,
+                rowHeight: 40,
+                containerHeight: 400,
+              },
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.virtualScroll.onScroll(1000);
+        });
+
+        expect(result.current.virtualScroll.scrollTop).toBe(1000);
+
+        act(() => {
+          result.current.virtualScroll.scrollToTop();
+        });
+
+        expect(result.current.virtualScroll.scrollTop).toBe(0);
+      });
+
+      it('scrollToBottom sets scroll to max position', async () => {
+        const mockData = generateRows(100);
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              virtualScroll: {
+                enabled: true,
+                rowHeight: 40,
+                containerHeight: 400,
+              },
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.virtualScroll.scrollToBottom();
+        });
+
+        // totalHeight=4000 - containerHeight=400 = 3600
+        expect(result.current.virtualScroll.scrollTop).toBe(3600);
+      });
+    });
+
+    describe('empty data', () => {
+      it('handles empty dataset gracefully', async () => {
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              virtualScroll: {
+                enabled: true,
+                rowHeight: 40,
+                containerHeight: 400,
+              },
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        expect(result.current.virtualScroll.totalHeight).toBe(0);
+        expect(result.current.virtualScroll.visibleRows).toHaveLength(0);
+        expect(result.current.virtualScroll.isVirtualized).toBe(false);
+        const range = result.current.virtualScroll.visibleRange;
+        expect(range.startIndex).toBe(0);
+        expect(range.endIndex).toBe(-1);
+      });
+    });
+
+    describe('large datasets', () => {
+      it('handles 10000+ rows efficiently', async () => {
+        const mockData = generateRows(10000);
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              virtualScroll: {
+                enabled: true,
+                rowHeight: 35,
+                containerHeight: 500,
+                overscan: 5,
+              },
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        expect(result.current.virtualScroll.totalHeight).toBe(350000);
+        // Only renders visible + overscan, not all 10000
+        const visibleCount = result.current.virtualScroll.visibleRows.length;
+        expect(visibleCount).toBeLessThan(30);
+        expect(visibleCount).toBeGreaterThan(0);
+      });
+
+      it('scrolls to middle of large dataset', async () => {
+        const mockData = generateRows(10000);
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              virtualScroll: {
+                enabled: true,
+                rowHeight: 35,
+                containerHeight: 500,
+                overscan: 3,
+              },
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.virtualScroll.scrollToRow(5000);
+        });
+
+        const range = result.current.virtualScroll.visibleRange;
+        expect(range.startIndex).toBe(5000);
+        // visibleRows should contain row with id 5001
+        const hasExpectedRow = result.current.virtualScroll.visibleRows.some(
+          (r) => r.id === 5001,
+        );
+        expect(hasExpectedRow).toBe(true);
+      });
+
+      it('scrolls to end of large dataset', async () => {
+        const mockData = generateRows(10000);
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              virtualScroll: {
+                enabled: true,
+                rowHeight: 35,
+                containerHeight: 500,
+              },
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.virtualScroll.scrollToBottom();
+        });
+
+        const range = result.current.virtualScroll.visibleRange;
+        expect(range.endIndex).toBe(9999);
+        // Last visible row should be the final row
+        const lastRow = result.current.virtualScroll.visibleRows[
+          result.current.virtualScroll.visibleRows.length - 1
+        ];
+        expect(lastRow.id).toBe(10000);
+      });
+    });
+
+    describe('scroll restoration', () => {
+      it('preserves scroll position across re-renders', async () => {
+        const mockData = generateRows(100);
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result, rerender } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              virtualScroll: {
+                enabled: true,
+                rowHeight: 40,
+                containerHeight: 400,
+              },
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        act(() => {
+          result.current.virtualScroll.onScroll(800);
+        });
+
+        expect(result.current.virtualScroll.scrollTop).toBe(800);
+
+        rerender();
+
+        expect(result.current.virtualScroll.scrollTop).toBe(800);
+      });
+    });
+  });
+
+  describe('performance', () => {
+    describe('search debouncing', () => {
+      it('exposes search state with empty default', async () => {
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        expect(result.current.performance.debouncedSearch).toBe('');
+        expect(result.current.performance.isSearchPending).toBe(false);
+      });
+
+      it('debounces search input', async () => {
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              searchDebounceMs: 300,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        // Now switch to fake timers for debounce testing
+        vi.useFakeTimers();
+
+        act(() => {
+          result.current.performance.setSearch('test');
+        });
+
+        // Immediately: debounced value should still be empty, pending should be true
+        expect(result.current.performance.debouncedSearch).toBe('');
+        expect(result.current.performance.isSearchPending).toBe(true);
+
+        // After debounce period
+        act(() => {
+          vi.advanceTimersByTime(300);
+        });
+
+        expect(result.current.performance.debouncedSearch).toBe('test');
+        expect(result.current.performance.isSearchPending).toBe(false);
+
+        vi.useRealTimers();
+      });
+
+      it('cancels previous debounce on rapid input', async () => {
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              searchDebounceMs: 300,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        vi.useFakeTimers();
+
+        act(() => {
+          result.current.performance.setSearch('t');
+        });
+
+        act(() => {
+          vi.advanceTimersByTime(100);
+        });
+
+        act(() => {
+          result.current.performance.setSearch('te');
+        });
+
+        act(() => {
+          vi.advanceTimersByTime(100);
+        });
+
+        act(() => {
+          result.current.performance.setSearch('tes');
+        });
+
+        // Only 200ms since last input - should not have resolved yet
+        act(() => {
+          vi.advanceTimersByTime(200);
+        });
+
+        expect(result.current.performance.debouncedSearch).toBe('');
+        expect(result.current.performance.isSearchPending).toBe(true);
+
+        // Complete the debounce
+        act(() => {
+          vi.advanceTimersByTime(100);
+        });
+
+        expect(result.current.performance.debouncedSearch).toBe('tes');
+        expect(result.current.performance.isSearchPending).toBe(false);
+
+        vi.useRealTimers();
+      });
+
+      it('uses custom searchDebounceMs', async () => {
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              searchDebounceMs: 500,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        vi.useFakeTimers();
+
+        act(() => {
+          result.current.performance.setSearch('query');
+        });
+
+        act(() => {
+          vi.advanceTimersByTime(300);
+        });
+
+        // Should still be pending at 300ms with 500ms debounce
+        expect(result.current.performance.debouncedSearch).toBe('');
+        expect(result.current.performance.isSearchPending).toBe(true);
+
+        act(() => {
+          vi.advanceTimersByTime(200);
+        });
+
+        expect(result.current.performance.debouncedSearch).toBe('query');
+        expect(result.current.performance.isSearchPending).toBe(false);
+
+        vi.useRealTimers();
+      });
+    });
+
+    describe('request tracking', () => {
+      it('tracks request count', async () => {
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        // At least one request was made
+        expect(result.current.performance.requestCount).toBeGreaterThanOrEqual(1);
+      });
+
+      it('tracks last request time', async () => {
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+        const before = Date.now();
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        const lastTime = result.current.performance.lastRequestTime;
+        expect(lastTime).not.toBeNull();
+        if (lastTime !== null) {
+          expect(lastTime).toBeGreaterThanOrEqual(before);
+        }
+      });
+
+      it('isStale is false when not loading', async () => {
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        expect(result.current.performance.isStale).toBe(false);
+      });
+    });
+
+    describe('memoization', () => {
+      it('virtualScroll functions maintain referential identity across renders', async () => {
+        const mockData = [{ id: 1, name: 'User 1', email: 'u1@e.com' }];
+        globalThis.fetch = createFetchMock({ data: { users: mockData } });
+
+        const { result, rerender } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+              virtualScroll: {
+                enabled: true,
+                rowHeight: 40,
+                containerHeight: 400,
+              },
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        const onScroll1 = result.current.virtualScroll.onScroll;
+        const scrollToTop1 = result.current.virtualScroll.scrollToTop;
+
+        rerender();
+
+        // onScroll should maintain identity (no deps change)
+        expect(result.current.virtualScroll.onScroll).toBe(onScroll1);
+        // scrollToTop should maintain identity (deps don't change)
+        expect(result.current.virtualScroll.scrollToTop).toBe(scrollToTop1);
+      });
+
+      it('performance.setSearch maintains referential identity', async () => {
+        globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+        const { result, rerender } = renderHook(
+          () =>
+            useBifrostTable({
+              query: 'users',
+              columns: defaultColumns,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        const setSearch1 = result.current.performance.setSearch;
+
+        rerender();
+
+        expect(result.current.performance.setSearch).toBe(setSearch1);
+      });
+    });
+  });
 });

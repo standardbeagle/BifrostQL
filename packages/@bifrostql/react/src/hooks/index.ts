@@ -80,4 +80,8 @@ export type {
   KeyboardNavigationState,
   AccessibilityState,
   ResponsiveState,
+  VirtualScrollConfig,
+  VirtualScrollState,
+  VisibleRange,
+  PerformanceState,
 } from './use-bifrost-table';

@@ -231,6 +231,7 @@ nav.sidebar {
 .value-grid {
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+	grid-auto-rows: 1fr;
 	gap: 1.5rem;
 	margin: 3rem 0;
 	text-align: left;

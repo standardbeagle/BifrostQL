@@ -261,11 +261,6 @@ nav.sidebar {
 	line-height: 1.5;
 }
 
-/* Override Starlight's .sl-markdown-content sibling margin on grid children */
-.value-grid > .value-card {
-	margin-top: 0;
-}
-
 /* === Tables === */
 .sl-markdown-content table {
 	width: 100%;

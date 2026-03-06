@@ -144,6 +144,18 @@ nav.sidebar {
 	padding: 3rem 0 2rem;
 }
 
+/* Left-align code blocks on the hero/splash page */
+.hero-container .sl-markdown-content pre,
+.hero-container pre,
+[data-template="splash"] .sl-markdown-content pre {
+	text-align: left;
+}
+
+/* Vertical rhythm for hero elements */
+.hero-container .prismatic-line {
+	margin: 2rem 0 2.5rem;
+}
+
 .hero-headline {
 	font-family: 'Instrument Serif', Georgia, serif;
 	font-size: 2.75rem;
@@ -195,21 +207,23 @@ nav.sidebar {
 /* === CTA Button === */
 .cta-button {
 	display: inline-block;
-	padding: 0.75rem 2rem;
-	background: var(--bifrost-link);
-	color: var(--bifrost-base-deepest);
+	padding: 0.875rem 2.5rem;
+	background: var(--bifrost-text-primary) !important;
+	color: var(--bifrost-base-deepest) !important;
 	font-family: 'Satoshi', sans-serif;
 	font-weight: 600;
 	font-size: 1rem;
 	border-radius: 8px;
-	text-decoration: none;
-	border: 2px solid var(--bifrost-link);
-	transition: background 0.15s ease, transform 0.15s ease;
+	text-decoration: none !important;
+	border: 2px solid var(--bifrost-text-primary);
+	transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+	margin-top: 1.5rem;
+	margin-bottom: 0.5rem;
 }
 
 .cta-button:hover {
-	background: transparent;
-	color: var(--bifrost-link);
+	background: transparent !important;
+	color: var(--bifrost-text-primary) !important;
 	transform: translateY(-1px);
 }
 

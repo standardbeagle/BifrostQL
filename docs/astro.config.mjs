@@ -11,6 +11,7 @@ export default defineConfig({
 			tagline: 'Zero-code GraphQL API for your existing database',
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/standardbeagle/BifrostQL' },
+				{ icon: 'open-book', label: 'Docs', href: '/BifrostQL/getting-started/' },
 			],
 			customCss: [
 				'./src/styles/custom.css',

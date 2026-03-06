@@ -1,0 +1,304 @@
+/* BifrostQL Documentation - "The Bridge" Design System */
+
+/* === Font Imports === */
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@import url('https://api.fontshare.com/v2/css?f[]=satoshi@400,500,600,700&display=swap');
+
+/* === Color Tokens === */
+:root {
+	--bifrost-base-deepest: #0f1117;
+	--bifrost-base-deep: #1a1d27;
+	--bifrost-base-mid: #252832;
+	--bifrost-base-elevated: #2e3140;
+	--bifrost-text-primary: #e8e6e3;
+	--bifrost-text-muted: #9ca3af;
+	--bifrost-link: #4d96ff;
+	--bifrost-gradient: linear-gradient(90deg, #ff6b6b, #ffd93d, #6bcb77, #4d96ff, #9b59b6);
+
+	/* Starlight CSS variable overrides */
+	--sl-color-white: #e8e6e3;
+	--sl-color-gray-1: #d1cfc9;
+	--sl-color-gray-2: #9ca3af;
+	--sl-color-gray-3: #6b7280;
+	--sl-color-gray-4: #3a3d4a;
+	--sl-color-gray-5: #252832;
+	--sl-color-gray-6: #1a1d27;
+	--sl-color-black: #0f1117;
+
+	--sl-color-accent-low: #1a2744;
+	--sl-color-accent: #4d96ff;
+	--sl-color-accent-high: #a3c9ff;
+
+	--sl-color-bg-nav: var(--bifrost-base-deep);
+	--sl-color-bg-sidebar: var(--bifrost-base-deep);
+	--sl-color-bg: var(--bifrost-base-deepest);
+	--sl-color-hairline-light: var(--bifrost-base-mid);
+	--sl-color-hairline: var(--bifrost-base-elevated);
+
+	--sl-color-text: var(--bifrost-text-primary);
+	--sl-color-text-accent: var(--bifrost-link);
+
+	--sl-font: 'Satoshi', -apple-system, BlinkMacSystemFont, sans-serif;
+	--sl-font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Code', monospace;
+
+	--sl-text-h1: 2.25rem;
+	--sl-text-h2: 1.75rem;
+	--sl-text-h3: 1.35rem;
+	--sl-text-h4: 1.1rem;
+
+	--sl-content-width: 52rem;
+	--sl-sidebar-width: 17rem;
+}
+
+/* === Typography === */
+h1, h2, h3, h4, h5, h6,
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+.sl-markdown-content h4 {
+	font-family: 'Instrument Serif', Georgia, serif;
+	font-weight: 400;
+	letter-spacing: -0.01em;
+	color: var(--bifrost-text-primary);
+}
+
+.sl-markdown-content h1 {
+	font-size: var(--sl-text-h1);
+	margin-top: 0;
+	padding-bottom: 0.5rem;
+	border-bottom: 2px solid transparent;
+	border-image: var(--bifrost-gradient) 1;
+}
+
+/* === Prismatic Gradient Line === */
+.prismatic-line {
+	height: 2px;
+	background: var(--bifrost-gradient);
+	background-size: 200% 100%;
+	border: none;
+	margin: 2rem 0;
+	border-radius: 1px;
+}
+
+.prismatic-line:hover {
+	animation: shimmer 2s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+	0% { background-position: 0% 50%; }
+	50% { background-position: 100% 50%; }
+	100% { background-position: 0% 50%; }
+}
+
+/* === Code Blocks === */
+.sl-markdown-content pre {
+	background: var(--bifrost-base-deep) !important;
+	border-left: 3px solid transparent;
+	border-image: var(--bifrost-gradient) 1;
+	border-radius: 0 6px 6px 0;
+	padding: 1.25rem 1.5rem;
+}
+
+.sl-markdown-content code:not(pre code) {
+	background: var(--bifrost-base-mid);
+	color: var(--bifrost-text-primary);
+	padding: 0.15em 0.4em;
+	border-radius: 4px;
+	font-size: 0.9em;
+}
+
+/* === Links === */
+.sl-markdown-content a {
+	color: var(--bifrost-link);
+	text-decoration: none;
+	transition: background-size 0.3s ease;
+	background-image: var(--bifrost-gradient);
+	background-size: 0% 2px;
+	background-position: 0 100%;
+	background-repeat: no-repeat;
+	padding-bottom: 1px;
+}
+
+.sl-markdown-content a:hover {
+	background-size: 100% 2px;
+}
+
+/* === Sidebar === */
+nav.sidebar {
+	background: var(--bifrost-base-deep);
+}
+
+.sidebar-content a[aria-current="page"] {
+	color: var(--bifrost-link);
+	font-weight: 600;
+}
+
+/* === Hero Page Styles === */
+.hero-container {
+	text-align: center;
+	padding: 3rem 0 2rem;
+}
+
+.hero-headline {
+	font-family: 'Instrument Serif', Georgia, serif;
+	font-size: 2.75rem;
+	line-height: 1.15;
+	color: var(--bifrost-text-primary);
+	max-width: 38rem;
+	margin: 0 auto 1.5rem;
+	font-weight: 400;
+}
+
+.hero-sub {
+	color: var(--bifrost-text-muted);
+	font-size: 1.15rem;
+	max-width: 32rem;
+	margin: 0 auto 2.5rem;
+	line-height: 1.6;
+}
+
+/* === Bridge Visualization === */
+.bridge-visual {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0;
+	margin: 2.5rem auto;
+	max-width: 36rem;
+	font-family: 'IBM Plex Mono', monospace;
+	font-size: 1rem;
+}
+
+.bridge-node {
+	background: var(--bifrost-base-mid);
+	padding: 0.75rem 1.5rem;
+	border-radius: 8px;
+	color: var(--bifrost-text-primary);
+	font-weight: 500;
+	white-space: nowrap;
+}
+
+.bridge-span {
+	flex: 1;
+	height: 3px;
+	background: var(--bifrost-gradient);
+	background-size: 200% 100%;
+	min-width: 4rem;
+	animation: shimmer 3s ease-in-out infinite;
+}
+
+/* === CTA Button === */
+.cta-button {
+	display: inline-block;
+	padding: 0.75rem 2rem;
+	background: var(--bifrost-base-deep);
+	color: var(--bifrost-text-primary);
+	font-family: 'Satoshi', sans-serif;
+	font-weight: 600;
+	font-size: 1rem;
+	border-radius: 8px;
+	text-decoration: none;
+	border: 2px solid transparent;
+	background-clip: padding-box;
+	position: relative;
+	transition: transform 0.15s ease;
+}
+
+.cta-button::before {
+	content: '';
+	position: absolute;
+	inset: -2px;
+	border-radius: 10px;
+	background: var(--bifrost-gradient);
+	z-index: -1;
+}
+
+.cta-button:hover {
+	transform: translateY(-1px);
+}
+
+/* === Value Props Grid === */
+.value-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+	gap: 1.5rem;
+	margin: 3rem 0;
+	text-align: left;
+}
+
+.value-card {
+	background: var(--bifrost-base-deep);
+	border: 1px solid var(--bifrost-base-mid);
+	border-radius: 8px;
+	padding: 1.5rem;
+}
+
+.value-card h3 {
+	font-family: 'Satoshi', sans-serif;
+	font-size: 1rem;
+	font-weight: 600;
+	margin: 0 0 0.5rem;
+	color: var(--bifrost-text-primary);
+}
+
+.value-card p {
+	color: var(--bifrost-text-muted);
+	font-size: 0.9rem;
+	margin: 0;
+	line-height: 1.5;
+}
+
+/* === Tables === */
+.sl-markdown-content table {
+	width: 100%;
+	border-collapse: collapse;
+}
+
+.sl-markdown-content th {
+	background: var(--bifrost-base-mid);
+	color: var(--bifrost-text-primary);
+	font-weight: 600;
+	text-align: left;
+	padding: 0.75rem 1rem;
+}
+
+.sl-markdown-content td {
+	padding: 0.6rem 1rem;
+	border-bottom: 1px solid var(--bifrost-base-mid);
+}
+
+/* === Fade-in Animation === */
+@keyframes fade-in-up {
+	from {
+		opacity: 0;
+		transform: translateY(12px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.hero-container > * {
+	animation: fade-in-up 0.6s ease-out both;
+}
+
+.hero-container > *:nth-child(1) { animation-delay: 0.1s; }
+.hero-container > *:nth-child(2) { animation-delay: 0.2s; }
+.hero-container > *:nth-child(3) { animation-delay: 0.3s; }
+.hero-container > *:nth-child(4) { animation-delay: 0.4s; }
+.hero-container > *:nth-child(5) { animation-delay: 0.5s; }
+.hero-container > *:nth-child(6) { animation-delay: 0.6s; }
+
+/* === Dark mode enforcement === */
+:root {
+	color-scheme: dark;
+}
+
+[data-theme='light'] {
+	color-scheme: dark;
+}
+
+starlight-theme-select {
+	display: none;
+}

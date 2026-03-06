@@ -1,0 +1,63 @@
+---
+title: BifrostQL
+description: Zero-code GraphQL API for your existing database.
+template: splash
+hero:
+  title: ""
+  tagline: ""
+---
+
+<div class="hero-container">
+
+<h1 class="hero-headline">Your database already has an API.<br/>You just haven't turned it on.</h1>
+
+<p class="hero-sub">
+BifrostQL reads your database schema and builds a complete GraphQL API. Queries, mutations, filtering, joins, pagination. No code generation. No mapping files. One connection string.
+</p>
+
+<div class="bridge-visual">
+	<span class="bridge-node">Database</span>
+	<span class="bridge-span"></span>
+	<span class="bridge-node">BifrostQL</span>
+	<span class="bridge-span"></span>
+	<span class="bridge-node">GraphQL API</span>
+</div>
+
+<hr class="prismatic-line" />
+
+```csharp
+// Program.cs -- that's the entire API
+var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddBifrostQL(o => o.BindStandardConfig(builder.Configuration));
+var app = builder.Build();
+app.UseBifrostQL();
+await app.RunAsync();
+```
+
+<a href="/BifrostQL/getting-started/" class="cta-button">Get Started</a>
+
+<div class="value-grid">
+
+<div class="value-card">
+<h3>Schema-driven</h3>
+<p>Add a table or column, restart, and the GraphQL field appears with the correct type. The database is the source of truth.</p>
+</div>
+
+<div class="value-card">
+<h3>Dynamic joins</h3>
+<p>Join any table to any other table in your query. Single-column key matches are automatic. Multi-column and explicit joins supported.</p>
+</div>
+
+<div class="value-card">
+<h3>Full mutations</h3>
+<p>Insert, update, upsert, delete -- generated from primary key metadata. BifrostQL matches input fields by name and does the right thing.</p>
+</div>
+
+<div class="value-card">
+<h3>Tenant-safe by default</h3>
+<p>Automatic WHERE clause injection per query. With tenant isolation enabled, queries physically cannot return another tenant's data.</p>
+</div>
+
+</div>
+
+</div>

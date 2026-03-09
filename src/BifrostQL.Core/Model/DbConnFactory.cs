@@ -103,6 +103,15 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
+        /// Returns the set of providers that have been explicitly registered via <see cref="Register"/>.
+        /// Does not include SQL Server's built-in fallback factory.
+        /// </summary>
+        public static IReadOnlyCollection<BifrostDbProvider> GetRegisteredProviders()
+        {
+            return _registry.Keys.ToArray();
+        }
+
+        /// <summary>
         /// Clears all registered factory creators. Intended for testing only.
         /// </summary>
         internal static void ClearRegistrations()

@@ -164,6 +164,13 @@ export interface WelcomePanelProps {
   onClearRecentConnections: () => void;
 }
 
+export interface QuickStartProps {
+  onLaunch: (schema: QuickStartSchema, dataSize: DataSize) => void;
+  onBack: () => void;
+  isLaunching: boolean;
+  launchProgress: string;
+}
+
 export interface TestDatabaseDialogProps {
   isOpen: boolean;
   onClose: () => void;

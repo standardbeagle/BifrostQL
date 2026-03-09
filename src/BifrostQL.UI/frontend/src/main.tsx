@@ -5,6 +5,7 @@ import {
   WelcomePanel,
   ConnectionForm,
   ProviderSelect,
+  QuickStart,
   ConnectionInfo,
   ConnectionState,
   Provider,
@@ -28,6 +29,8 @@ function App() {
   const [recentConnections, setRecentConnections] = useState<ConnectionInfo[]>(() => loadRecentConnections());
   const [connectionInfo, setConnectionInfo] = useState<ConnectionInfo | null>(null);
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
+  const [isLaunching, setIsLaunching] = useState(false);
+  const [launchProgress, setLaunchProgress] = useState('');
 
   const graphqlUri = `${window.location.origin}/graphql`;
 
@@ -116,10 +119,12 @@ function App() {
   const handleQuickStartLaunch = useCallback(async (schema: QuickStartSchema, dataSize: DataSize) => {
     try {
       setConnectionState('connecting');
+      setIsLaunching(true);
+      setLaunchProgress('Starting...');
 
       const response = await fetch(API_QUICKSTART, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
         body: JSON.stringify({ schema, dataSize }),
       });
 
@@ -128,27 +133,80 @@ function App() {
         throw new Error(result.error || 'Failed to create quickstart database');
       }
 
-      const result = await response.json();
+      const contentType = response.headers.get('content-type') ?? '';
+      if (contentType.includes('text/event-stream') && response.body) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let connectionString = '';
 
-      const info: ConnectionInfo = {
-        id: Date.now().toString(),
-        name: `QuickStart - ${schema}`,
-        connectionString: result.connectionString,
-        connectedAt: new Date().toISOString(),
-        server: 'localhost',
-        database: schema,
-        provider: 'sqlite',
-      };
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
 
-      setConnectionInfo(info);
-      const updated = [...recentConnections.filter((c) => c.connectionString !== result.connectionString), info];
-      setRecentConnections(updated.slice(0, 5));
-      saveRecentConnections(updated.slice(0, 5));
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
 
-      setCurrentView('editor');
-      setConnectionState('connected');
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const event = JSON.parse(line.slice(6));
+              if (event.message) setLaunchProgress(event.message);
+              if (event.connectionString) connectionString = event.connectionString;
+            } catch {
+              // skip malformed SSE data lines
+            }
+          }
+        }
+
+        if (connectionString) {
+          const info: ConnectionInfo = {
+            id: Date.now().toString(),
+            name: `QuickStart - ${schema}`,
+            connectionString,
+            connectedAt: new Date().toISOString(),
+            server: 'localhost',
+            database: schema,
+            provider: 'sqlite',
+          };
+
+          setConnectionInfo(info);
+          const updated = [...recentConnections.filter((c) => c.connectionString !== connectionString), info];
+          setRecentConnections(updated.slice(0, 5));
+          saveRecentConnections(updated.slice(0, 5));
+
+          setCurrentView('editor');
+          setConnectionState('connected');
+        } else {
+          throw new Error('No connection string received from server');
+        }
+      } else {
+        const result = await response.json();
+
+        const info: ConnectionInfo = {
+          id: Date.now().toString(),
+          name: `QuickStart - ${schema}`,
+          connectionString: result.connectionString,
+          connectedAt: new Date().toISOString(),
+          server: 'localhost',
+          database: schema,
+          provider: 'sqlite',
+        };
+
+        setConnectionInfo(info);
+        const updated = [...recentConnections.filter((c) => c.connectionString !== result.connectionString), info];
+        setRecentConnections(updated.slice(0, 5));
+        saveRecentConnections(updated.slice(0, 5));
+
+        setCurrentView('editor');
+        setConnectionState('connected');
+      }
     } catch {
       setConnectionState('error');
+    } finally {
+      setIsLaunching(false);
+      setLaunchProgress('');
     }
   }, [recentConnections]);
 
@@ -176,22 +234,12 @@ function App() {
   if (currentView === 'quickstart') {
     return (
       <div className="bifrost-connection-container">
-        <div style={{ padding: '2rem', textAlign: 'center' }}>
-          <h2>Quick Start</h2>
-          <p>Select a schema template to get started instantly.</p>
-          <button
-            className="bifrost-back-button"
-            onClick={() => handleQuickStartLaunch('blog', 'sample')}
-          >
-            Launch Blog (Sample)
-          </button>
-        </div>
-        <button
-          className="bifrost-back-button"
-          onClick={handleBack}
-        >
-          &larr; Back
-        </button>
+        <QuickStart
+          onLaunch={handleQuickStartLaunch}
+          onBack={handleBack}
+          isLaunching={isLaunching}
+          launchProgress={launchProgress}
+        />
       </div>
     );
   }

@@ -4,10 +4,10 @@ import Editor from '@standardbeagle/edit-db';
 import {
   WelcomePanel,
   ConnectionForm,
+  ProviderSelect,
   ConnectionInfo,
   ConnectionState,
   Provider,
-  PROVIDERS,
   QuickStartSchema,
   DataSize,
   saveRecentConnections,
@@ -23,7 +23,7 @@ const API_QUICKSTART = '/api/database/quickstart';
 type AppView = 'welcome' | 'quickstart' | 'provider-select' | 'connect' | 'editor';
 
 function App() {
-  const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
+  const [, setConnectionState] = useState<ConnectionState>('idle');
   const [currentView, setCurrentView] = useState<AppView>('welcome');
   const [recentConnections, setRecentConnections] = useState<ConnectionInfo[]>(() => loadRecentConnections());
   const [connectionInfo, setConnectionInfo] = useState<ConnectionInfo | null>(null);
@@ -199,54 +199,23 @@ function App() {
   if (currentView === 'provider-select') {
     return (
       <div className="bifrost-connection-container">
-        <div style={{ padding: '2rem', textAlign: 'center' }}>
-          <h2>Select Database Provider</h2>
-          <p>Choose your database type to configure the connection.</p>
-          <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap', marginTop: '1rem' }}>
-            {PROVIDERS.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => handleProviderSelect(p.id)}
-                style={{
-                  padding: '1rem',
-                  border: '1px solid var(--color-border, #334155)',
-                  borderRadius: '0.5rem',
-                  backgroundColor: 'var(--color-bg-secondary, #1e293b)',
-                  color: 'var(--color-text-primary, #e2e8f0)',
-                  cursor: 'pointer',
-                  minWidth: '120px',
-                }}
-              >
-                <div style={{ fontSize: '1.5rem', fontWeight: '700' }}>{p.icon}</div>
-                <div>{p.name}</div>
-              </button>
-            ))}
-          </div>
-        </div>
-        <button
-          className="bifrost-back-button"
-          onClick={handleBack}
-        >
-          &larr; Back
-        </button>
+        <ProviderSelect
+          onProviderSelect={handleProviderSelect}
+          onBack={handleBack}
+        />
       </div>
     );
   }
 
-  if (currentView === 'connect') {
+  if (currentView === 'connect' && selectedProvider) {
     return (
       <div className="bifrost-connection-container">
         <ConnectionForm
+          provider={selectedProvider}
           onConnect={handleConnect}
           onTestConnection={handleTestConnection}
-          initialState={connectionState}
+          onBack={handleBack}
         />
-        <button
-          className="bifrost-back-button"
-          onClick={handleBack}
-        >
-          &larr; Back
-        </button>
       </div>
     );
   }

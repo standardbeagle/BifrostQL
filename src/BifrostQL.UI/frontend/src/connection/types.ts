@@ -42,16 +42,54 @@ export enum AuthMethod {
 }
 
 /**
- * Connection form state
+ * SSL mode options for PostgreSQL
  */
-export interface ConnectionFormData {
+export type PostgresSslMode = 'Disable' | 'Allow' | 'Prefer' | 'Require' | 'VerifyCA' | 'VerifyFull';
+
+/**
+ * SSL mode options for MySQL
+ */
+export type MySqlSslMode = 'None' | 'Preferred' | 'Required';
+
+/**
+ * Per-provider connection form data
+ */
+export interface SqlServerFormData {
   server: string;
   database: string;
   authMethod: AuthMethod;
-  username?: string;
-  password?: string;
+  username: string;
+  password: string;
   trustServerCertificate: boolean;
 }
+
+export interface PostgresFormData {
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  password: string;
+  sslMode: PostgresSslMode;
+}
+
+export interface MySqlFormData {
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  password: string;
+  sslMode: MySqlSslMode;
+}
+
+export interface SqliteFormData {
+  filePath: string;
+  createNew: boolean;
+}
+
+/**
+ * Union of all provider form data
+ */
+export type ConnectionFormData = SqlServerFormData | PostgresFormData | MySqlFormData | SqliteFormData;
 
 /**
  * Connection state stored in localStorage
@@ -86,14 +124,10 @@ export interface TestDatabaseProgress {
 }
 
 /**
- * Connection form validation errors
+ * Connection form validation errors (keyed by field name)
  */
 export interface ConnectionFormErrors {
-  server?: string;
-  database?: string;
-  username?: string;
-  password?: string;
-  general?: string;
+  [field: string]: string | undefined;
 }
 
 /**
@@ -111,10 +145,15 @@ export type ConnectionState =
  * Component props
  */
 export interface ConnectionFormProps {
+  provider: Provider;
   onConnect: (connectionString: string, connectionName: string) => void;
   onTestConnection?: (connectionString: string) => Promise<boolean>;
-  isLoading?: boolean;
-  error?: string | null;
+  onBack: () => void;
+}
+
+export interface ProviderSelectProps {
+  onProviderSelect: (provider: Provider) => void;
+  onBack: () => void;
 }
 
 export interface WelcomePanelProps {

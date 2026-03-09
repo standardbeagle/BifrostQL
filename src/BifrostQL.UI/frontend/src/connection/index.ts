@@ -9,6 +9,7 @@
  */
 
 export { ConnectionForm } from './ConnectionForm';
+export { ProviderSelect } from './ProviderSelect';
 export { WelcomePanel } from './WelcomePanel';
 export { TestDatabaseDialog } from './TestDatabaseDialog';
 export * from './types';

@@ -147,25 +147,11 @@ function App() {
       {appState === 'connecting' && (
         <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <ConnectionForm
+            provider="sqlserver"
             onConnect={handleConnect}
             onTestConnection={handleTestConnection}
+            onBack={() => setAppState('welcome')}
           />
-          <button
-            onClick={() => setAppState('welcome')}
-            style={{
-              position: 'absolute',
-              top: '1rem',
-              left: '1rem',
-              padding: '0.5rem 1rem',
-              background: 'var(--color-bg-secondary, #1e293b)',
-              border: '1px solid var(--color-border, #334155)',
-              borderRadius: '0.5rem',
-              color: 'var(--color-text-primary, #e2e8f0)',
-              cursor: 'pointer',
-            }}
-          >
-            ← Back
-          </button>
         </div>
       )}
 

@@ -1,4 +1,39 @@
 /**
+ * Supported database providers
+ */
+export type Provider = 'sqlserver' | 'postgres' | 'mysql' | 'sqlite';
+
+/**
+ * Display information for a database provider
+ */
+export interface ProviderInfo {
+  id: Provider;
+  name: string;
+  icon: string;
+  description: string;
+}
+
+/**
+ * Provider display info for UI rendering
+ */
+export const PROVIDERS: ProviderInfo[] = [
+  { id: 'sqlserver', name: 'SQL Server', icon: 'S', description: 'Microsoft SQL Server' },
+  { id: 'postgres', name: 'PostgreSQL', icon: 'P', description: 'PostgreSQL database' },
+  { id: 'mysql', name: 'MySQL', icon: 'M', description: 'MySQL / MariaDB' },
+  { id: 'sqlite', name: 'SQLite', icon: 'L', description: 'SQLite file database' },
+];
+
+/**
+ * QuickStart schema templates
+ */
+export type QuickStartSchema = 'blog' | 'ecommerce' | 'crm' | 'classroom' | 'project-tracker';
+
+/**
+ * Data size options for quickstart
+ */
+export type DataSize = 'sample' | 'full';
+
+/**
  * Authentication methods for SQL Server connection
  */
 export enum AuthMethod {
@@ -28,6 +63,7 @@ export interface ConnectionInfo {
   connectedAt: string;
   server: string;
   database: string;
+  provider: Provider;
 }
 
 /**

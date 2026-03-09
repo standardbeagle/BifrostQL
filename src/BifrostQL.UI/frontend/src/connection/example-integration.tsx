@@ -55,6 +55,7 @@ function App() {
       connectedAt: new Date().toISOString(),
       server,
       database,
+      provider: 'sqlserver',
     };
 
     // Save to recent connections

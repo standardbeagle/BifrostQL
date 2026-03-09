@@ -1,6 +1,7 @@
 CREATE TABLE workspaces (
     workspace_id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
+    description TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -10,6 +11,8 @@ CREATE TABLE members (
     name TEXT NOT NULL,
     email TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'member',
+    avatar_url TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(workspace_id, email)
 );
 
@@ -18,29 +21,38 @@ CREATE TABLE projects (
     workspace_id INTEGER NOT NULL REFERENCES workspaces(workspace_id),
     name TEXT NOT NULL,
     description TEXT,
+    color TEXT NOT NULL DEFAULT '#4A90D9',
     status TEXT NOT NULL DEFAULT 'active',
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    owner_id INTEGER REFERENCES members(member_id) ON DELETE SET NULL,
+    due_date TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE sections (
     section_id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER NOT NULL REFERENCES projects(project_id),
     name TEXT NOT NULL,
-    sort_order INTEGER NOT NULL DEFAULT 0
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE tasks (
     task_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(project_id),
     section_id INTEGER NOT NULL REFERENCES sections(section_id),
     title TEXT NOT NULL,
     description TEXT,
     status TEXT NOT NULL DEFAULT 'todo',
-    priority TEXT NOT NULL DEFAULT 'medium',
+    priority TEXT NOT NULL DEFAULT 'none',
+    assignee_id INTEGER REFERENCES members(member_id) ON DELETE SET NULL,
+    parent_task_id INTEGER REFERENCES tasks(task_id) ON DELETE CASCADE,
     due_date TEXT,
+    start_date TEXT,
+    completed_at TEXT,
     sort_order INTEGER NOT NULL DEFAULT 0,
-    parent_task_id INTEGER REFERENCES tasks(task_id),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    completed_at TEXT
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE labels (
@@ -52,14 +64,16 @@ CREATE TABLE labels (
 
 CREATE TABLE task_labels (
     task_label_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id INTEGER NOT NULL REFERENCES tasks(task_id),
-    label_id INTEGER NOT NULL REFERENCES labels(label_id),
+    task_id INTEGER NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+    label_id INTEGER NOT NULL REFERENCES labels(label_id) ON DELETE CASCADE,
     UNIQUE(task_id, label_id)
 );
 
 CREATE TABLE task_assignments (
     task_assignment_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id INTEGER NOT NULL REFERENCES tasks(task_id),
-    member_id INTEGER NOT NULL REFERENCES members(member_id),
-    UNIQUE(task_id, member_id)
+    task_id INTEGER NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+    member_id INTEGER NOT NULL REFERENCES members(member_id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'responsible',
+    assigned_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(task_id, member_id, role)
 );

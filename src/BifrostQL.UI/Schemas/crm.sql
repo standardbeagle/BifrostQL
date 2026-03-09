@@ -1,10 +1,26 @@
+CREATE TABLE deal_stages (
+    deal_stage_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    display_order INTEGER NOT NULL DEFAULT 0,
+    probability REAL NOT NULL DEFAULT 0.0,
+    is_closed_won INTEGER NOT NULL DEFAULT 0,
+    is_closed_lost INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE companies (
     company_id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
+    domain TEXT,
     industry TEXT,
-    website TEXT,
-    parent_company_id INTEGER REFERENCES companies(company_id),
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    size TEXT,
+    phone TEXT,
+    address TEXT,
+    city TEXT,
+    state TEXT,
+    country TEXT,
+    parent_company_id INTEGER REFERENCES companies(company_id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE contacts (
@@ -13,26 +29,26 @@ CREATE TABLE contacts (
     last_name TEXT NOT NULL,
     email TEXT UNIQUE,
     phone TEXT,
-    company_id INTEGER REFERENCES companies(company_id),
-    job_title TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE deal_stages (
-    deal_stage_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    display_order INTEGER NOT NULL DEFAULT 0
+    title TEXT,
+    company_id INTEGER REFERENCES companies(company_id) ON DELETE SET NULL,
+    is_primary INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE deals (
     deal_id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
     value REAL,
-    contact_id INTEGER REFERENCES contacts(contact_id),
-    company_id INTEGER REFERENCES companies(company_id),
+    currency TEXT NOT NULL DEFAULT 'USD',
     deal_stage_id INTEGER NOT NULL REFERENCES deal_stages(deal_stage_id),
+    company_id INTEGER REFERENCES companies(company_id) ON DELETE SET NULL,
+    contact_id INTEGER REFERENCES contacts(contact_id) ON DELETE SET NULL,
     expected_close_date TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    actual_close_date TEXT,
+    probability REAL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE activities (
@@ -40,8 +56,10 @@ CREATE TABLE activities (
     type TEXT NOT NULL,
     subject TEXT NOT NULL,
     description TEXT,
-    contact_id INTEGER REFERENCES contacts(contact_id),
-    deal_id INTEGER REFERENCES deals(deal_id),
+    contact_id INTEGER REFERENCES contacts(contact_id) ON DELETE SET NULL,
+    deal_id INTEGER REFERENCES deals(deal_id) ON DELETE SET NULL,
+    company_id INTEGER REFERENCES companies(company_id) ON DELETE SET NULL,
+    due_date TEXT,
     completed_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -50,6 +68,7 @@ CREATE TABLE notes (
     note_id INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_type TEXT NOT NULL,
     entity_id INTEGER NOT NULL,
-    body TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_by TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

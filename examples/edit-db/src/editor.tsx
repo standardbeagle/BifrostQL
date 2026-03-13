@@ -4,6 +4,7 @@ import { MainFrame } from './main-frame';
 import { PathProvider } from './hooks/usePath';
 import { SchemaProvider } from './hooks/useSchema';
 import { GraphQLFetcher, HttpGraphQLFetcher, FetcherProvider } from './common/fetcher';
+import './globals.css';
 
 interface EditorProps {
     uri?: string;

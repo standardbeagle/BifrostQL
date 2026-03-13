@@ -13,12 +13,17 @@
     "ts": "tsc"
   },
   "dependencies": {
+    "@radix-ui/react-slot": "^1.2.4",
     "@tanstack/react-query": "^5.62.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.577.0",
     "react": "^18.3.1",
     "react-data-table-component": "^7.6.2",
     "react-dom": "^18.3.1",
     "redux-actions": "^3.0.0",
-    "styled-components": "^6.1.11"
+    "styled-components": "^6.1.11",
+    "tailwind-merge": "^3.5.0"
   },
   "devDependencies": {
     "@babel/core": "^7.24.6",
@@ -28,6 +33,7 @@
     "@storybook/addon-links": "^10.2.7",
     "@storybook/react": "^10.2.7",
     "@storybook/react-vite": "^10.2.7",
+    "@tailwindcss/vite": "^4.2.1",
     "@types/react": "^18.3.28",
     "@types/react-dom": "^18.3.7",
     "@types/redux-actions": "^2.6.5",
@@ -43,6 +49,7 @@
     "sass": "^1.97.3",
     "storybook": "^10.2.7",
     "stylelint": "^17.1.1",
+    "tailwindcss": "^4.2.1",
     "typescript": "^5.9.3",
     "vite": "^7.3.1",
     "vite-plugin-browser-sync": "^3.0.2",

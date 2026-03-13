@@ -1,3 +1,9 @@
 {
-  "claims": {}
+  "claims": {
+    "X6iN7JtOZPh5": {
+      "runner_instance_id": "beagle-ab-723152",
+      "runner_email": "andybrummer@standardbeagle.com",
+      "claimed_at": "2026-03-13T16:22:00.000Z"
+    }
+  }
 }

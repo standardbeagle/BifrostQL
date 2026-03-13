@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSchema } from './hooks/useSchema';
 import { useNavigate, useNavigation, useParams } from './hooks/usePath';
 import { Table, Column } from './types/schema';
+import { Button } from '@/components/ui/button';
 
 interface HeaderRouteParams {
     table?: string;
@@ -57,6 +58,7 @@ export function Header() {
                 <button onClick={filter}>filter</button>
                 <button onClick={() => navigate("/")}>clear</button>
                 { tableSchema?.isEditable &&  <button onClick={() => navigate(`edit/`)}>add</button>}
+            <Button variant="outline" size="sm">shadcn test</Button>
             </>}
         </header>
     )

@@ -40,7 +40,7 @@ namespace BifrostQL.Core.QueryModel
         public IEnumerable<GqlObjectColumn> FullColumnNames =>
             ScalarColumns.Where(c => c.GraphQlDbName.StartsWith("__") == false)
             .Concat(Joins.Select(j => new GqlObjectColumn(j.FromColumn)))
-            .DistinctBy(c => c.DbDbName, SqlNameComparer.Instance);
+            .DistinctBy(c => c.GraphQlDbName, SqlNameComparer.Instance);
 
         public void AddSqlParameterized(IDbModel dbModel, ISqlDialect dialect, IDictionary<string, ParameterizedSql> sqls, SqlParameterCollection parameters, QueryLink? queryLink = null)
         {

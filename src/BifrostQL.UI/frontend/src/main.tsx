@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import ReactDOM from 'react-dom/client';
 import Editor from '@standardbeagle/edit-db';
+import '@standardbeagle/edit-db/style.css';
 import {
   WelcomePanel,
   ConnectionForm,
@@ -19,7 +20,7 @@ import './app.css';
 
 // API endpoints
 const API_TEST_CONNECTION = '/api/connection/test';
-const API_QUICKSTART = '/api/database/quickstart';
+const API_QUICKSTART = '/api/database/create-quickstart';
 
 type AppView = 'welcome' | 'quickstart' | 'provider-select' | 'connect' | 'editor';
 
@@ -161,6 +162,13 @@ function App() {
         }
 
         if (connectionString) {
+          // Activate the connection on the backend so /graphql works
+          await fetch('/api/connection/set', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ connectionString, provider: 'sqlite' }),
+          });
+
           const info: ConnectionInfo = {
             id: Date.now().toString(),
             name: `QuickStart - ${schema}`,
@@ -183,6 +191,12 @@ function App() {
         }
       } else {
         const result = await response.json();
+
+        await fetch('/api/connection/set', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connectionString: result.connectionString, provider: 'sqlite' }),
+        });
 
         const info: ConnectionInfo = {
           id: Date.now().toString(),

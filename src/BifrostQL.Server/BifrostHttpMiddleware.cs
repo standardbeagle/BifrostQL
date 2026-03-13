@@ -92,8 +92,15 @@ namespace BifrostQL.Server
             var transformerService = options.RequestServices!.GetRequiredService<IQueryTransformerService>();
             var observers = options.RequestServices!.GetService<IQueryObservers>();
 
-            PathString path = context?.Request?.Path ?? throw new ArgumentNullException("path", "HttpContext.Request has a null path or Request is null");
-            var sharedExtensions = extensionsLoader.GetValue(path);
+            // Check if a connection string is configured before trying to load the schema
+            var setupOptions = options.RequestServices!.GetService<BifrostSetupOptions>();
+            if (setupOptions != null && !setupOptions.HasConnectionString)
+                return Task.FromResult(new ExecutionResult { Errors = new ExecutionErrors { new ExecutionError("No database connection configured. Set a connection string first.") } });
+
+            // app.Map() strips the matched prefix from Path and moves it to PathBase,
+            // so we need to check PathBase (where the endpoint path lives after routing)
+            // before falling back to Path or the first registered value.
+            var sharedExtensions = ResolveExtensions(extensionsLoader, context);
             var model = (IDbModel)(sharedExtensions["model"] ?? throw new InvalidDataException("dbSchema not configured"));
             options.Schema = (ISchema)(sharedExtensions["dbSchema"] ?? throw new InvalidDataException("dbSchema not configured"));
 
@@ -107,6 +114,25 @@ namespace BifrostQL.Server
             );
             var result = _documentExecutor.ExecuteAsync(options);
             return result;
+        }
+
+        private static Inputs ResolveExtensions(PathCache<Inputs> cache, HttpContext? context)
+        {
+            if (context?.Request == null)
+                throw new ArgumentNullException("context", "HttpContext.Request is null");
+
+            // When using app.Map(), the matched path moves to PathBase and Path becomes the remainder.
+            // Try PathBase first (where app.Map puts the endpoint path), then Path, then first registered.
+            var pathBase = context.Request.PathBase.Value;
+            if (!string.IsNullOrEmpty(pathBase) && cache.TryGetValue(pathBase, out var result))
+                return result!;
+
+            var path = context.Request.Path.Value;
+            if (!string.IsNullOrEmpty(path) && cache.TryGetValue(path, out result))
+                return result!;
+
+            return cache.GetFirstValue()
+                ?? throw new InvalidOperationException("No BifrostQL schemas are configured. Set a connection string first.");
         }
 
         public Inputs Combine(IReadOnlyDictionary<string, object?> input1, IReadOnlyDictionary<string, object?> input2)

@@ -26,4 +26,9 @@
     <EmbeddedResource Include="Schemas\*.sql" />
   </ItemGroup>
 
+  <!-- Ensure wwwroot is copied to output for desktop app (content root = binary dir) -->
+  <ItemGroup>
+    <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

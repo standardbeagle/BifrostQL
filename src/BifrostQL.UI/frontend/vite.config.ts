@@ -4,6 +4,9 @@ import path from 'node:path';
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    dedupe: ['react', 'react-dom', '@tanstack/react-query'],
+  },
   build: {
     outDir: path.resolve(__dirname, '../wwwroot'),
     emptyOutDir: true,

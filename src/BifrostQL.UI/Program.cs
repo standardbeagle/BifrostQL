@@ -46,9 +46,10 @@ var rootCommand = new RootCommand("BifrostQL UI - Desktop database explorer")
     headlessOption
 };
 
-// Shared connection state
+// Shared connection state — BifrostSetupOptions captures this by reference via the lambda closure
 string? currentConnectionString = null;
 BifrostDbProvider? currentProvider = null;
+BifrostSetupOptions? bifrostOptions = null;
 
 rootCommand.SetAction(async (parseResult, cancellationToken) =>
 {
@@ -65,8 +66,10 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     var serverUrl = $"http://{bindAddress}:{port}";
     var localUrl = $"http://localhost:{port}";
 
-    // Build and start the web server
-    var builder = WebApplication.CreateBuilder();
+    // Build and start the web server - set content root to the binary's directory
+    // so wwwroot is found regardless of the current working directory
+    var assemblyDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!;
+    var builder = WebApplication.CreateBuilder(new WebApplicationOptions { ContentRootPath = assemblyDir });
 
     builder.WebHost.UseUrls(serverUrl);
 
@@ -84,15 +87,13 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         ["BifrostQL:Playground"] = "/graphiql"
     });
 
-    // Add BifrostQL services if connection string is provided
-    if (!string.IsNullOrEmpty(connectionString))
+    // Always register BifrostQL services — connection string may be set later via API
+    builder.Services.AddBifrostQL(options =>
     {
-        builder.Services.AddBifrostQL(options =>
-        {
-            options.BindConnectionString(connectionString)
-                   .BindConfiguration(builder.Configuration.GetSection("BifrostQL"));
-        });
-    }
+        bifrostOptions = options;
+        options.BindConnectionString(connectionString)
+               .BindConfiguration(builder.Configuration.GetSection("BifrostQL"));
+    });
 
     builder.Services.AddCors();
     builder.Services.AddEndpointsApiExplorer();
@@ -159,7 +160,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         }
     });
 
-    // API endpoint to set the current connection (requires restart of GraphQL endpoint)
+    // API endpoint to set the current connection — rebinds BifrostQL and resets the schema cache
     app.MapPost("/api/connection/set", (ConnectionSetRequest request) =>
     {
         if (string.IsNullOrWhiteSpace(request.ConnectionString))
@@ -172,10 +173,16 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
             ? DbConnFactoryResolver.ParseProviderName(request.Provider)
             : DbConnFactoryResolver.DetectProvider(request.ConnectionString);
 
+        // Rebind the connection on the BifrostQL options and reset the PathCache
+        // so the next GraphQL request loads the new database schema
+        bifrostOptions?.BindConnectionString(request.ConnectionString);
+        bifrostOptions?.BindProvider(currentProvider.Value.ToString().ToLowerInvariant());
+        // Reset the cached schema so it reloads with the new connection
+        bifrostOptions?.ResetSchema(app.Services);
+
         return Results.Ok(new {
             success = true,
-            message = "Connection updated. Please refresh the application.",
-            needsRefresh = true,
+            message = "Connection updated.",
             provider = currentProvider.Value.ToString().ToLowerInvariant()
         });
     });
@@ -277,7 +284,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
             yield return SseEvent("Complete!", 100, "Database created successfully", connectionString: newConnectionString);
         }
 
-        return Results.Ok(StreamProgress());
+        return WriteSseStream(StreamProgress());
     });
 
     // POST /api/database/create-quickstart - Creates a SQLite quickstart database
@@ -376,7 +383,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
                 connectionString: sqliteConnectionString, provider: "sqlite");
         }
 
-        return Results.Ok(StreamProgress());
+        return WriteSseStream(StreamProgress());
     });
 
     // Health check endpoint
@@ -391,11 +398,8 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     app.UseDefaultFiles();
     app.UseStaticFiles();
 
-    // BifrostQL GraphQL endpoint (only if connection is set)
-    if (!string.IsNullOrEmpty(connectionString))
-    {
-        app.UseBifrostQL();
-    }
+    // BifrostQL GraphQL endpoint — always registered, connection set dynamically
+    app.UseBifrostQL();
 
     // Fallback to index.html for SPA routing
     app.MapFallbackToFile("index.html");
@@ -453,6 +457,20 @@ static string SseEvent(string stage, int percent, string message,
     if (connectionString != null) obj["connectionString"] = connectionString;
     if (provider != null) obj["provider"] = provider;
     return $"data: {JsonSerializer.Serialize(obj)}\n\n";
+}
+
+// Writes an IAsyncEnumerable of pre-formatted SSE strings as a text/event-stream response
+static IResult WriteSseStream(IAsyncEnumerable<string> events)
+{
+    return Results.Stream(async stream =>
+    {
+        await foreach (var evt in events)
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(evt);
+            await stream.WriteAsync(bytes);
+            await stream.FlushAsync();
+        }
+    }, contentType: "text/event-stream");
 }
 
 // Record types for API requests

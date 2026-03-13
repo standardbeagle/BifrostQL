@@ -47,7 +47,7 @@ namespace BifrostQL.Core.Resolvers
                             {
                                 dbName = c.DbName,
                                 graphQlName = c.GraphQlName,
-                                paramType = SchemaGenerator.GetGraphQlTypeName(c.EffectiveDataType, c.IsNullable),
+                                paramType = SchemaGenerator.GetGraphQlTypeName(c.EffectiveDataType, c.IsNullable, _dbModel.TypeMapper),
                                 dbType = c.DataType,
                                 isNullable = c.IsNullable,
                                 isPrimaryKey = c.IsPrimaryKey,

@@ -110,7 +110,7 @@ namespace BifrostQL.Core.Resolvers
             IMutationTransformers mutationTransformers, IDbTable table, IDbModel model,
             IDbConnFactory conFactory, ISqlDialect dialect)
         {
-            var data = context.GetArgument<Dictionary<string, object?>>("delete");
+            var data = context.GetArgument<Dictionary<string, object?>>("delete") ?? new();
             if (!data.Any())
                 return 0;
 
@@ -175,7 +175,7 @@ namespace BifrostQL.Core.Resolvers
         private async Task<object?> InsertObject(IBifrostFieldContext context, IDbTable table, IMutationModules modules, IDbModel model,
             IDbConnFactory conFactory, ISqlDialect dialect, string parameterName = "insert")
         {
-            var data = context.GetArgument<Dictionary<string, object?>>(parameterName);
+            var data = context.GetArgument<Dictionary<string, object?>>(parameterName) ?? new();
             var moduleSql = modules.Insert(data, table, context.UserContext, model);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var columns = string.Join(",", data.Keys.Select(k => dialect.EscapeIdentifier(k)));

@@ -48,6 +48,7 @@
 	</PropertyGroup>
 	<ItemGroup>
 		<InternalsVisibleTo Include="BifrostQL.Core.Test" />
+		<InternalsVisibleTo Include="BifrostQL.Sqlite" />
 	</ItemGroup>
 	<ItemGroup>
 		<PackageReference Include="GraphQL.Server.All" Version="8.3.3" />

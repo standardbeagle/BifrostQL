@@ -32,7 +32,11 @@ export function DataDataTable({ table, id, tableFilter }: DataDataTableParams): 
         return resetCounter.current % 2 === 1;
     }, [table.name]);
 
-    if (error) return <div>Error: {error.message}</div>;
+    if (error) return <div className="editdb-query-error" role="alert">
+        <span className="editdb-query-error__icon">⚠</span>
+        <span className="editdb-query-error__title">Query Failed</span>
+        <span className="editdb-query-error__detail">{error.message}</span>
+    </div>;
 
     return <DataTable
         columns={tableColumns}

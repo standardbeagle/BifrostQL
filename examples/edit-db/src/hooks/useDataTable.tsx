@@ -153,11 +153,17 @@ const buildQuery = (table: Table, schema: Schema, filterString: string, id?: str
         filterText = `{ ${ primaryKey }: { _eq: $id}}`;
     }
     if (id && tableFilter) {
-        param = `, $id: ${pkType}` + param;
+        // Multi-link navigation: /:table/from/:filterTable/:id
+        // Find the FK column on this table that points to the filterTable
+        const singleJoin = tableSchema.singleJoins.find((j: Join) => j.destinationTable === tableFilter);
+        const fkColumn = singleJoin?.sourceColumnNames?.[0] ?? primaryKey;
+        const filterSchema = schema.findTable(tableFilter);
+        const filterPkType = filterSchema ? getPkType(filterSchema) : pkType;
+        param = `, $id: ${filterPkType}` + param;
         if (filterText)
-            filterText = `{and: [${filterText}, { ${tableFilter}: { ${ primaryKey }: { _eq: $id}}} ]}`;
+            filterText = `{and: [${filterText}, { ${fkColumn}: { _eq: $id}} ]}`;
         else
-            filterText = `{ ${tableFilter}: { ${ primaryKey }: { _eq: $id}}}`;
+            filterText = `{ ${fkColumn}: { _eq: $id}}`;
     }
 
     if (filterText) filterText = `filter: ${filterText}`;

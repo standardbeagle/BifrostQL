@@ -1,0 +1,6 @@
+packages:
+  - examples/*
+  - packages/*
+  - packages/@bifrostql/*
+  - src/BifrostQL.UI/frontend
+  - tests/BifrostQL.UI.E2E

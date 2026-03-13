@@ -86,9 +86,11 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
 
     useEffect(() => {
         const dialog = dialogRef.current;
-        dialog?.showModal();
+        if (dialog && !dialog.open) {
+            dialog.showModal();
+        }
         return () => dialog?.close();
-    }, []);
+    }, [isLoading]);
 
     if (isLoading && !isInsert) return <div>Loading...</div>;
     if (error) return <div>Error: {(error as Error).message}</div>;

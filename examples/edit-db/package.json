@@ -47,13 +47,10 @@
     "eslint": "^8.55.0",
     "eslint-plugin-react-hooks": "^4.6.2",
     "eslint-plugin-react-refresh": "^0.4.7",
-    "sass": "^1.97.3",
     "storybook": "^10.2.7",
-    "stylelint": "^17.1.1",
     "tailwindcss": "^4.2.1",
     "typescript": "^5.9.3",
     "vite": "^7.3.1",
-    "vite-plugin-browser-sync": "^3.0.2",
     "vite-plugin-dts": "^4.5.4"
   },
   "peerDependencies": {

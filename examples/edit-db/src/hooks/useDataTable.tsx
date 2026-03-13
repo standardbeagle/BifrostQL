@@ -72,7 +72,16 @@ const getTableColumns = (table: Table, schema: Schema): TableColumn<RowData>[] =
                 const columnName = singleJoin.destinationTable;
                 const joinSchema = schema.findTable(singleJoin.destinationTable);
                 return {
-                    cell: (row: RowData) => (!!row && <Link to={"/" + joinSchema?.name + "/" + getJoinedRowPkValue(row?.[columnName] as RowData)}>{(row?.[columnName] as RowData)?.label as string}</Link>),
+                    cell: (row: RowData) => {
+                        if (!row) return null;
+                        const joined = row?.[columnName] as RowData | undefined;
+                        const rawId = row?.[c.name];
+                        const label = joined?.label as string;
+                        return <span className="editdb-fk-cell">
+                            <Link className="editdb-fk-cell__label" to={"/" + joinSchema?.name + "/" + getJoinedRowPkValue(joined as RowData)}>{label}</Link>
+                            <span className="editdb-fk-cell__id">{String(rawId ?? "")}</span>
+                        </span>;
+                    },
                     ...result
                 }
             }
@@ -208,9 +217,10 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     const [offset, setOffset] = useState(0);
     const [limit, setLimit] = useState(10);
 
+    const defaultSortColumn = table?.primaryKeys?.[0] ?? table?.columns.at(0)?.name;
     const appliedSort = sort
         ? [`${sort.columnName}_${sort.order}`]
-        : table ? [`${table.columns.at(0)?.name ?? 'id'}_asc`] : [];
+        : (table && defaultSortColumn) ? [`${defaultSortColumn}_asc`] : [];
 
     const query = useMemo(
         () => buildQuery(table!, schema, filterString, id, filterTable),
@@ -239,8 +249,9 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     );
 
     const handleSort = useCallback((column: DataTableColumn, sortDirection: SortOrder) => {
-        setSort({ columnName: column.sortField ?? 'id', order: sortDirection as 'asc' | 'desc' });
-    }, []);
+        const col = column.sortField ?? defaultSortColumn;
+        if (col) setSort({ columnName: col, order: sortDirection as 'asc' | 'desc' });
+    }, [defaultSortColumn]);
 
     const handlePage = useCallback((page: number) => {
         setOffset((page - 1) * limit);

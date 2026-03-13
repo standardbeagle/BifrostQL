@@ -182,6 +182,31 @@
     max-width: 400px;
 }
 
+/* FK cell: label + de-emphasized raw ID */
+.editdb-fk-cell {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+}
+
+.editdb-fk-cell__label {
+    text-decoration: none;
+    color: #2563eb;
+    font-weight: 500;
+
+    &:hover {
+        text-decoration: underline;
+        color: #1d4ed8;
+    }
+}
+
+.editdb-fk-cell__id {
+    font-size: 0.72em;
+    font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
+    color: #9ca3af;
+    letter-spacing: -0.02em;
+}
+
 .plain-link {
     text-decoration: none;
     color: #212529;

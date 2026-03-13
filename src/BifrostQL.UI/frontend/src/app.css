@@ -1,3 +1,69 @@
+/*
+ * BifrostQL.UI - Norse-Industrial Dark Theme
+ *
+ * Design tokens define the dark palette used by the desktop app.
+ * shadcn/Tailwind overrides map these tokens to --color-* variables
+ * so the embedded edit-db component renders in dark mode.
+ *
+ * edit-db standalone keeps its own light defaults from globals.css.
+ * These overrides only apply when edit-db is loaded inside BifrostQL.UI.
+ */
+
+:root {
+  /* Norse-Industrial Design Tokens */
+  --void: #0f172a;
+  --void-surface: #1e293b;
+  --void-elevated: #334155;
+  --void-highlight: #1e293b;
+  --void-border: #334155;
+  --void-border-hover: #475569;
+
+  --text-bright: #f8fafc;
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+
+  --accent-action: #3b82f6;
+  --accent-action-hover: #2563eb;
+  --accent-danger: #ef4444;
+  --accent-danger-hover: #dc2626;
+  --accent-warning: #f59e0b;
+  --accent-success: #22c55e;
+
+  --bifrost-gradient: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+
+  /* shadcn/Tailwind v4 Overrides (--color-* consumed by utility classes) */
+  --color-background: var(--void);
+  --color-foreground: var(--text-primary);
+
+  --color-card: var(--void-surface);
+  --color-card-foreground: var(--text-bright);
+
+  --color-popover: var(--void-surface);
+  --color-popover-foreground: var(--text-bright);
+
+  --color-primary: var(--accent-action);
+  --color-primary-foreground: var(--text-bright);
+
+  --color-secondary: var(--void-elevated);
+  --color-secondary-foreground: var(--text-primary);
+
+  --color-muted: var(--void-highlight);
+  --color-muted-foreground: var(--text-muted);
+
+  --color-accent: var(--void-elevated);
+  --color-accent-foreground: var(--text-bright);
+
+  --color-destructive: var(--accent-danger);
+  --color-destructive-foreground: var(--text-bright);
+
+  --color-border: var(--void-border);
+  --color-input: var(--void-border);
+  --color-ring: var(--accent-action);
+
+  --radius: 0.5rem;
+}
+
 .app-container {
   height: 100vh;
   width: 100vw;
@@ -6,19 +72,14 @@
   flex-direction: column;
 }
 
-/* Override any edit-db styles as needed */
-.editdb-frame-layout {
-  height: 100vh;
-}
-
 /* BifrostQL header when connected */
 .bifrost-header {
   display: flex;
   align-items: center;
   gap: 1rem;
   padding: 0.75rem 1.5rem;
-  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-  border-bottom: 1px solid #334155;
+  background: linear-gradient(135deg, var(--void-surface) 0%, var(--void) 100%);
+  border-bottom: 1px solid var(--void-border);
   flex-shrink: 0;
 }
 
@@ -26,22 +87,25 @@
   margin: 0;
   font-size: 1.25rem;
   font-weight: 600;
-  color: #f8fafc;
   letter-spacing: -0.025em;
+  background: var(--bifrost-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 .bifrost-database-info {
   padding: 0.25rem 0.75rem;
-  background: #334155;
+  background: var(--void-elevated);
   border-radius: 0.375rem;
   font-size: 0.875rem;
-  color: #94a3b8;
+  color: var(--text-secondary);
 }
 
 .bifrost-disconnect-button {
   margin-left: auto;
   padding: 0.5rem 1rem;
-  background: #dc2626;
+  background: var(--accent-danger-hover);
   color: white;
   border: none;
   border-radius: 0.375rem;
@@ -52,7 +116,7 @@
 }
 
 .bifrost-disconnect-button:hover {
-  background: #b91c1c;
+  background: var(--accent-danger);
 }
 
 /* Connection container */
@@ -63,14 +127,14 @@
   align-items: center;
   justify-content: center;
   padding: 2rem;
-  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  background: linear-gradient(135deg, var(--void) 0%, var(--void-surface) 100%);
 }
 
 .bifrost-back-button {
   margin-top: 2rem;
   padding: 0.75rem 1.5rem;
-  background: #475569;
-  color: #f8fafc;
+  background: var(--void-border-hover);
+  color: var(--text-bright);
   border: none;
   border-radius: 0.5rem;
   font-size: 0.875rem;
@@ -80,7 +144,7 @@
 }
 
 .bifrost-back-button:hover {
-  background: #64748b;
+  background: var(--text-muted);
   transform: translateY(-1px);
 }
 
@@ -92,5 +156,10 @@
   align-items: center;
   justify-content: center;
   padding: 2rem;
-  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  background: linear-gradient(135deg, var(--void) 0%, var(--void-surface) 100%);
+}
+
+*:focus-visible {
+  outline: 2px solid var(--accent-action);
+  outline-offset: 2px;
 }

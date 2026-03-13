@@ -33,7 +33,13 @@ namespace BifrostQL.Core.Resolvers
                     .Select(t =>
                     {
                         var labelColumnName = t.GetMetadataValue("label");
-                        var labelColumn = t.Columns.FirstOrDefault(c => Equal(c.DbName, labelColumnName)) ?? t.Columns.First();
+                        var labelColumn = t.Columns.FirstOrDefault(c => Equal(c.DbName, labelColumnName));
+                        if (labelColumn == null && t.KeyColumns.Any())
+                        {
+                            var detected = LookupTableDetector.DetectColumnRoles(t).LabelColumn;
+                            labelColumn = t.Columns.FirstOrDefault(c => Equal(c.ColumnName, detected));
+                        }
+                        labelColumn ??= t.Columns.First();
                         return new
                         {
                             Schema = t.TableSchema,
@@ -47,7 +53,7 @@ namespace BifrostQL.Core.Resolvers
                             {
                                 dbName = c.DbName,
                                 graphQlName = c.GraphQlName,
-                                paramType = SchemaGenerator.GetGraphQlTypeName(c.EffectiveDataType, c.IsNullable),
+                                paramType = SchemaGenerator.GetGraphQlTypeName(c.EffectiveDataType, c.IsNullable, _dbModel.TypeMapper),
                                 dbType = c.DataType,
                                 isNullable = c.IsNullable,
                                 isPrimaryKey = c.IsPrimaryKey,

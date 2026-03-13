@@ -66,7 +66,7 @@ public sealed class SqliteSchemaReader : ISchemaReader
                     TableName = tableName,
                     ColumnName = columnName,
                     GraphQlName = columnName.ToGraphQl("col"),
-                    NormalizedName = NormalizeColumn(columnName),
+                    NormalizedName = ColumnDto.NormalizeColumn(columnName),
                     ColumnRef = columnRef,
                     DataType = dataType,
                     IsNullable = isPk ? false : !notNull,
@@ -142,15 +142,4 @@ public sealed class SqliteSchemaReader : ISchemaReader
         return new SchemaData(columnConstraints, allColumns.ToArray(), tables);
     }
 
-    private static string NormalizeColumn(string column)
-    {
-        if (string.Equals("id", column, StringComparison.InvariantCultureIgnoreCase))
-            return "id";
-        if (column.EndsWith("id", StringComparison.InvariantCultureIgnoreCase))
-        {
-            var tableName = column.Substring(0, column.Length - 2);
-            return new Pluralize.NET.Core.Pluralizer().Singularize(tableName);
-        }
-        return column;
-    }
 }

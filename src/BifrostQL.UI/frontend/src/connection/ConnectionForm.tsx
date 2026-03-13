@@ -1,563 +1,429 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
-  ConnectionFormData,
+  Provider,
+  PROVIDERS,
   AuthMethod,
+  ConnectionFormProps,
   ConnectionFormErrors,
-  ConnectionState
+  ConnectionState,
+  SqlServerFormData,
+  PostgresFormData,
+  MySqlFormData,
+  SqliteFormData,
+  PostgresSslMode,
+  MySqlSslMode,
 } from './types';
 
-interface ConnectionFormProps {
-  onConnect: (connectionString: string, connectionName: string) => void;
-  onTestConnection?: (connectionString: string) => Promise<boolean>;
-  initialState?: ConnectionState;
+const POSTGRES_SSL_MODES: PostgresSslMode[] = ['Disable', 'Allow', 'Prefer', 'Require', 'VerifyCA', 'VerifyFull'];
+const MYSQL_SSL_MODES: MySqlSslMode[] = ['None', 'Preferred', 'Required'];
+
+function createDefaultFormData(provider: Provider) {
+  switch (provider) {
+    case 'sqlserver':
+      return { server: 'localhost', database: '', authMethod: AuthMethod.SqlServer, username: '', password: '', trustServerCertificate: true } satisfies SqlServerFormData;
+    case 'postgres':
+      return { host: 'localhost', port: 5432, database: '', username: '', password: '', sslMode: 'Prefer' as PostgresSslMode } satisfies PostgresFormData;
+    case 'mysql':
+      return { host: 'localhost', port: 3306, database: '', username: '', password: '', sslMode: 'Preferred' as MySqlSslMode } satisfies MySqlFormData;
+    case 'sqlite':
+      return { filePath: '', createNew: false } satisfies SqliteFormData;
+  }
 }
 
-const styles = {
-  container: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: '1.5rem',
-    padding: '2rem',
-    maxWidth: '500px',
-    width: '100%',
-    margin: '0 auto',
-  } as React.CSSProperties,
-  title: {
-    fontSize: '1.5rem',
-    fontWeight: '600',
-    margin: 0,
-    marginBottom: '0.5rem',
-    color: 'var(--color-text-primary, #e2e8f0)',
-  } as React.CSSProperties,
-  subtitle: {
-    fontSize: '0.875rem',
-    color: 'var(--color-text-secondary, #94a3b8)',
-    margin: 0,
-  } as React.CSSProperties,
-  formGroup: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: '0.5rem',
-  } as React.CSSProperties,
-  label: {
-    fontSize: '0.875rem',
-    fontWeight: '500',
-    color: 'var(--color-text-primary, #e2e8f0)',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '0.25rem',
-  } as React.CSSProperties,
-  required: {
-    color: 'var(--color-danger, #ef4444)',
-  } as React.CSSProperties,
-  input: {
-    padding: '0.75rem 1rem',
-    fontSize: '0.875rem',
-    border: '1px solid var(--color-border, #334155)',
-    borderRadius: '0.5rem',
-    backgroundColor: 'var(--color-bg-secondary, #1e293b)',
-    color: 'var(--color-text-primary, #e2e8f0)',
-    transition: 'border-color 0.2s, box-shadow 0.2s',
-    outline: 'none',
-  } as React.CSSProperties,
-  inputError: {
-    borderColor: 'var(--color-danger, #ef4444)',
-  } as React.CSSProperties,
-  inputFocus: {
-    borderColor: 'var(--color-primary, #3b82f6)',
-    boxShadow: '0 0 0 3px rgba(59, 130, 246, 0.1)',
-  } as React.CSSProperties,
-  errorText: {
-    fontSize: '0.75rem',
-    color: 'var(--color-danger, #ef4444)',
-    marginTop: '0.25rem',
-  } as React.CSSProperties,
-  radioGroup: {
-    display: 'flex',
-    gap: '1rem',
-    padding: '0.75rem',
-    border: '1px solid var(--color-border, #334155)',
-    borderRadius: '0.5rem',
-    backgroundColor: 'var(--color-bg-secondary, #1e293b)',
-  } as React.CSSProperties,
-  radioLabel: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '0.5rem',
-    fontSize: '0.875rem',
-    color: 'var(--color-text-primary, #e2e8f0)',
-    cursor: 'pointer',
-  } as React.CSSProperties,
-  checkbox: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '0.75rem',
-    padding: '0.75rem',
-    border: '1px solid var(--color-border, #334155)',
-    borderRadius: '0.5rem',
-    backgroundColor: 'var(--color-bg-secondary, #1e293b)',
-    cursor: 'pointer',
-  } as React.CSSProperties,
-  checkboxLabel: {
-    fontSize: '0.875rem',
-    color: 'var(--color-text-primary, #e2e8f0)',
-    cursor: 'pointer',
-    userSelect: 'none' as const,
-  } as React.CSSProperties,
-  buttonGroup: {
-    display: 'flex',
-    gap: '1rem',
-    marginTop: '1rem',
-  } as React.CSSProperties,
-  button: {
-    flex: 1,
-    padding: '0.875rem 1.5rem',
-    fontSize: '0.875rem',
-    fontWeight: '500',
-    border: 'none',
-    borderRadius: '0.5rem',
-    cursor: 'pointer',
-    transition: 'all 0.2s',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '0.5rem',
-  } as React.CSSProperties,
-  buttonPrimary: {
-    backgroundColor: 'var(--color-primary, #3b82f6)',
-    color: 'white',
-  } as React.CSSProperties,
-  buttonPrimaryHover: {
-    backgroundColor: 'var(--color-primary-hover, #2563eb)',
-  } as React.CSSProperties,
-  buttonSecondary: {
-    backgroundColor: 'var(--color-bg-tertiary, #334155)',
-    color: 'var(--color-text-primary, #e2e8f0)',
-    border: '1px solid var(--color-border, #475569)',
-  } as React.CSSProperties,
-  buttonSecondaryHover: {
-    backgroundColor: 'var(--color-bg-secondary, #475569)',
-  } as React.CSSProperties,
-  buttonDisabled: {
-    opacity: 0.5,
-    cursor: 'not-allowed',
-  } as React.CSSProperties,
-  alert: {
-    padding: '0.75rem 1rem',
-    borderRadius: '0.5rem',
-    fontSize: '0.875rem',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '0.5rem',
-  } as React.CSSProperties,
-  alertError: {
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-    color: 'var(--color-danger, #ef4444)',
-    border: '1px solid rgba(239, 68, 68, 0.2)',
-  } as React.CSSProperties,
-  alertSuccess: {
-    backgroundColor: 'rgba(34, 197, 94, 0.1)',
-    color: 'var(--color-success, #22c55e)',
-    border: '1px solid rgba(34, 197, 94, 0.2)',
-  } as React.CSSProperties,
-  spinner: {
-    width: '1rem',
-    height: '1rem',
-    border: '2px solid transparent',
-    borderTopColor: 'currentColor',
-    borderRadius: '50%',
-    animation: 'spin 0.8s linear infinite',
-  } as React.CSSProperties,
-};
-
-const injectKeyframes = () => {
-  if (typeof document === 'undefined') return;
-  const styleId = 'connection-form-styles';
-  if (!document.getElementById(styleId)) {
-    const style = document.createElement('style');
-    style.id = styleId;
-    style.textContent = `
-      @keyframes spin {
-        to { transform: rotate(360deg); }
+function buildConnectionString(provider: Provider, data: Record<string, any>): string {
+  switch (provider) {
+    case 'sqlserver': {
+      const d = data as SqlServerFormData;
+      const parts = [`Server=${d.server}`, `Database=${d.database}`];
+      if (d.authMethod === AuthMethod.SqlServer) {
+        parts.push(`User Id=${d.username}`, `Password=${d.password}`);
+      } else {
+        parts.push('Integrated Security=true');
       }
-    `;
-    document.head.appendChild(style);
-  }
-};
-
-const validateServer = (server: string): string | undefined => {
-  if (!server.trim()) {
-    return 'Server address is required';
-  }
-  if (server.trim().length > 255) {
-    return 'Server address is too long';
-  }
-  return undefined;
-};
-
-const validateDatabase = (database: string): string | undefined => {
-  if (!database.trim()) {
-    return 'Database name is required';
-  }
-  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(database.trim())) {
-    return 'Database name must start with a letter or underscore and contain only letters, numbers, and underscores';
-  }
-  if (database.trim().length > 128) {
-    return 'Database name is too long (max 128 characters)';
-  }
-  return undefined;
-};
-
-const validateUsername = (username: string | undefined, authMethod: AuthMethod): string | undefined => {
-  if (authMethod === AuthMethod.SqlServer) {
-    if (!username?.trim()) {
-      return 'Username is required for SQL Server Authentication';
+      if (d.trustServerCertificate) {
+        parts.push('TrustServerCertificate=True');
+      }
+      return parts.join(';');
     }
-    if (username.trim().length > 128) {
-      return 'Username is too long';
+    case 'postgres': {
+      const d = data as PostgresFormData;
+      return `Host=${d.host};Port=${d.port};Database=${d.database};Username=${d.username};Password=${d.password};SSL Mode=${d.sslMode}`;
+    }
+    case 'mysql': {
+      const d = data as MySqlFormData;
+      return `Server=${d.host};Port=${d.port};Database=${d.database};Uid=${d.username};Pwd=${d.password};SslMode=${d.sslMode}`;
+    }
+    case 'sqlite': {
+      const d = data as SqliteFormData;
+      return `Data Source=${d.filePath}`;
     }
   }
-  return undefined;
-};
+}
 
-const validatePassword = (password: string | undefined, authMethod: AuthMethod): string | undefined => {
-  if (authMethod === AuthMethod.SqlServer) {
-    if (!password) {
-      return 'Password is required for SQL Server Authentication';
+function buildConnectionName(provider: Provider, data: Record<string, any>): string {
+  switch (provider) {
+    case 'sqlserver': {
+      const d = data as SqlServerFormData;
+      return `${d.server}/${d.database}`;
+    }
+    case 'postgres':
+    case 'mysql': {
+      const d = data as PostgresFormData | MySqlFormData;
+      return `${d.host}:${d.port}/${d.database}`;
+    }
+    case 'sqlite': {
+      const d = data as SqliteFormData;
+      return d.filePath.split(/[/\\]/).pop() || d.filePath;
     }
   }
-  return undefined;
-};
+}
 
-const buildConnectionString = (data: ConnectionFormData): string => {
-  const parts: string[] = [
-    `Server=${data.server}`,
-    `Database=${data.database}`,
-  ];
+function validateFormData(provider: Provider, data: Record<string, any>): ConnectionFormErrors {
+  const errors: ConnectionFormErrors = {};
 
-  if (data.authMethod === AuthMethod.SqlServer) {
-    parts.push(`User Id=${data.username}`);
-    parts.push(`Password=${data.password}`);
-  } else {
-    parts.push('Trusted_Connection=Yes');
+  switch (provider) {
+    case 'sqlserver': {
+      const d = data as SqlServerFormData;
+      if (!d.server.trim()) errors.server = 'Server address is required';
+      if (!d.database.trim()) errors.database = 'Database name is required';
+      if (d.authMethod === AuthMethod.SqlServer) {
+        if (!d.username.trim()) errors.username = 'Username is required';
+        if (!d.password) errors.password = 'Password is required';
+      }
+      break;
+    }
+    case 'postgres': {
+      const d = data as PostgresFormData;
+      if (!d.host.trim()) errors.host = 'Host is required';
+      if (!d.database.trim()) errors.database = 'Database name is required';
+      if (!d.username.trim()) errors.username = 'Username is required';
+      if (!d.port || d.port < 1 || d.port > 65535) errors.port = 'Valid port required (1-65535)';
+      break;
+    }
+    case 'mysql': {
+      const d = data as MySqlFormData;
+      if (!d.host.trim()) errors.host = 'Host is required';
+      if (!d.database.trim()) errors.database = 'Database name is required';
+      if (!d.username.trim()) errors.username = 'Username is required';
+      if (!d.port || d.port < 1 || d.port > 65535) errors.port = 'Valid port required (1-65535)';
+      break;
+    }
+    case 'sqlite': {
+      const d = data as SqliteFormData;
+      if (!d.filePath.trim()) errors.filePath = 'File path is required';
+      break;
+    }
   }
 
-  if (data.trustServerCertificate) {
-    parts.push('TrustServerCertificate=True');
-  }
-
-  return parts.join(';');
-};
+  return errors;
+}
 
 export const ConnectionForm: React.FC<ConnectionFormProps> = ({
+  provider,
   onConnect,
   onTestConnection,
-  initialState = 'idle'
+  onBack,
 }) => {
-  injectKeyframes();
-
-  const [formData, setFormData] = useState<ConnectionFormData>({
-    server: 'localhost',
-    database: '',
-    authMethod: AuthMethod.SqlServer,
-    username: '',
-    password: '',
-    trustServerCertificate: true,
-  });
-
+  const providerInfo = PROVIDERS.find((p) => p.id === provider)!;
+  const [formData, setFormData] = useState<Record<string, any>>(() => createDefaultFormData(provider));
   const [errors, setErrors] = useState<ConnectionFormErrors>({});
   const [touched, setTouched] = useState<Set<string>>(new Set());
-  const [connectionState, setConnectionState] = useState<ConnectionState>(initialState);
+  const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [useRawString, setUseRawString] = useState(false);
+  const [rawConnectionString, setRawConnectionString] = useState('');
 
-  const validateField = useCallback((field: keyof ConnectionFormData, value: any): string | undefined => {
-    switch (field) {
-      case 'server':
-        return validateServer(value);
-      case 'database':
-        return validateDatabase(value);
-      case 'username':
-        return validateUsername(value, formData.authMethod);
-      case 'password':
-        return validatePassword(value, formData.authMethod);
-      default:
-        return undefined;
-    }
-  }, [formData.authMethod]);
+  const isDisabled = connectionState === 'connecting' || connectionState === 'testing';
 
-  const validateForm = useCallback((): boolean => {
-    const newErrors: ConnectionFormErrors = {
-      server: validateField('server', formData.server),
-      database: validateField('database', formData.database),
-      username: validateField('username', formData.username),
-      password: validateField('password', formData.password),
-    };
-
-    setErrors(newErrors);
-    return !Object.values(newErrors).some(error => error !== undefined);
-  }, [formData, validateField]);
-
-  const handleFieldChange = useCallback(<K extends keyof ConnectionFormData>(
-    field: K,
-    value: ConnectionFormData[K]
-  ) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+  const updateField = useCallback((field: string, value: unknown) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
     setTestResult(null);
-
     if (touched.has(field)) {
-      const error = validateField(field, value);
-      setErrors(prev => ({ ...prev, [field]: error }));
+      setErrors((prev) => {
+        const updated = { ...prev };
+        delete updated[field];
+        return updated;
+      });
     }
-  }, [touched, validateField]);
+  }, [touched]);
 
-  const handleFieldBlur = useCallback((field: keyof ConnectionFormData) => {
-    setTouched(prev => new Set(prev).add(field));
-    const error = validateField(field, formData[field]);
-    setErrors(prev => ({ ...prev, [field]: error }));
-  }, [formData, validateField]);
+  const handleBlur = useCallback((field: string) => {
+    setTouched((prev) => new Set(prev).add(field));
+    const fieldErrors = validateFormData(provider, formData);
+    setErrors((prev) => ({ ...prev, [field]: fieldErrors[field] }));
+  }, [provider, formData]);
+
+  const getConnectionString = useCallback((): string => {
+    if (useRawString) return rawConnectionString;
+    return buildConnectionString(provider, formData);
+  }, [useRawString, rawConnectionString, provider, formData]);
 
   const handleTestConnection = useCallback(async () => {
-    if (!validateForm()) {
-      return;
+    if (!useRawString) {
+      const fieldErrors = validateFormData(provider, formData);
+      if (Object.values(fieldErrors).some(Boolean)) {
+        setErrors(fieldErrors);
+        setTouched(new Set(Object.keys(fieldErrors)));
+        return;
+      }
     }
-
-    if (!onTestConnection) {
-      return;
-    }
+    if (!onTestConnection) return;
 
     setConnectionState('testing');
     setTestResult(null);
-
     try {
-      const connectionString = buildConnectionString(formData);
-      const success = await onTestConnection(connectionString);
+      const success = await onTestConnection(getConnectionString());
       setTestResult({
         success,
         message: success
-          ? 'Connection successful! You can now connect.'
-          : 'Connection failed. Please check your credentials and try again.'
+          ? 'Connection successful!'
+          : 'Connection failed. Check your settings and try again.',
       });
     } catch (error) {
       setTestResult({
         success: false,
-        message: error instanceof Error ? error.message : 'An unexpected error occurred'
+        message: error instanceof Error ? error.message : 'An unexpected error occurred',
       });
     } finally {
       setConnectionState('idle');
     }
-  }, [formData, validateForm, onTestConnection]);
+  }, [provider, formData, useRawString, onTestConnection, getConnectionString]);
 
   const handleConnect = useCallback(() => {
-    if (!validateForm()) {
-      return;
+    if (!useRawString) {
+      const fieldErrors = validateFormData(provider, formData);
+      if (Object.values(fieldErrors).some(Boolean)) {
+        setErrors(fieldErrors);
+        setTouched(new Set(Object.keys(fieldErrors)));
+        return;
+      }
     }
-
     setConnectionState('connecting');
-    const connectionString = buildConnectionString(formData);
-    const connectionName = `${formData.server}/${formData.database}`;
+    const connString = getConnectionString();
+    const connName = useRawString ? `${providerInfo.name} connection` : buildConnectionName(provider, formData);
+    onConnect(connString, connName);
+  }, [provider, formData, useRawString, getConnectionString, providerInfo, onConnect]);
 
-    onConnect(connectionString, connectionName);
-  }, [formData, validateForm, onConnect]);
+  const hasErrors = Object.values(errors).some(Boolean);
 
-  const isConnectingOrTesting = connectionState === 'connecting' || connectionState === 'testing';
-  const hasErrors = Object.values(errors).some(error => error !== undefined);
+  const renderField = (
+    id: string,
+    label: string,
+    type: string,
+    value: string | number,
+    required = true,
+    placeholder?: string,
+  ) => (
+    <div className="conn-form__group">
+      <label htmlFor={id} className="conn-form__label">
+        {label} {required && <span className="conn-form__required">*</span>}
+      </label>
+      <input
+        id={id}
+        type={type}
+        value={value}
+        onChange={(e) => updateField(id, type === 'number' ? Number(e.target.value) : e.target.value)}
+        onBlur={() => handleBlur(id)}
+        disabled={isDisabled}
+        placeholder={placeholder}
+        className={`conn-form__input ${errors[id] ? 'conn-form__input--error' : ''}`}
+        aria-required={required}
+        aria-invalid={!!errors[id]}
+      />
+      {errors[id] && <span className="conn-form__error" role="alert">{errors[id]}</span>}
+    </div>
+  );
 
-  const getInputStyle = (field: keyof ConnectionFormErrors): React.CSSProperties => {
-    const baseStyle = { ...styles.input };
-    if (errors[field]) {
-      return { ...baseStyle, ...styles.inputError };
+  const renderSelect = (id: string, label: string, value: string, options: string[]) => (
+    <div className="conn-form__group">
+      <label htmlFor={id} className="conn-form__label">{label}</label>
+      <select
+        id={id}
+        value={value}
+        onChange={(e) => updateField(id, e.target.value)}
+        disabled={isDisabled}
+        className="conn-form__select"
+      >
+        {options.map((opt) => (
+          <option key={opt} value={opt}>{opt}</option>
+        ))}
+      </select>
+    </div>
+  );
+
+  const renderProviderFields = () => {
+    const data = formData as Record<string, any>;
+
+    switch (provider) {
+      case 'sqlserver': {
+        const d = data as unknown as SqlServerFormData;
+        return (
+          <>
+            {renderField('server', 'Server Address', 'text', d.server, true, 'localhost')}
+            {renderField('database', 'Database Name', 'text', d.database, true, 'my_database')}
+
+            <fieldset className="conn-form__fieldset">
+              <legend className="conn-form__label">Authentication Method</legend>
+              <div className="conn-form__radio-group">
+                <label className="conn-form__radio-label">
+                  <input
+                    type="radio"
+                    name="authMethod"
+                    value={AuthMethod.SqlServer}
+                    checked={d.authMethod === AuthMethod.SqlServer}
+                    onChange={(e) => updateField('authMethod', e.target.value)}
+                    disabled={isDisabled}
+                  />
+                  SQL Server Authentication
+                </label>
+                <label className="conn-form__radio-label">
+                  <input
+                    type="radio"
+                    name="authMethod"
+                    value={AuthMethod.Windows}
+                    checked={d.authMethod === AuthMethod.Windows}
+                    onChange={(e) => updateField('authMethod', e.target.value)}
+                    disabled={isDisabled}
+                  />
+                  Windows Authentication
+                </label>
+              </div>
+            </fieldset>
+
+            {d.authMethod === AuthMethod.SqlServer && (
+              <>
+                {renderField('username', 'Username', 'text', d.username, true, 'sa')}
+                {renderField('password', 'Password', 'password', d.password, true)}
+              </>
+            )}
+
+            <label className="conn-form__checkbox">
+              <input
+                type="checkbox"
+                checked={d.trustServerCertificate}
+                onChange={(e) => updateField('trustServerCertificate', e.target.checked)}
+                disabled={isDisabled}
+              />
+              <span>Trust Server Certificate</span>
+            </label>
+          </>
+        );
+      }
+
+      case 'postgres': {
+        const d = data as unknown as PostgresFormData;
+        return (
+          <>
+            {renderField('host', 'Host', 'text', d.host, true, 'localhost')}
+            {renderField('port', 'Port', 'number', d.port, true, '5432')}
+            {renderField('database', 'Database Name', 'text', d.database, true, 'my_database')}
+            {renderField('username', 'Username', 'text', d.username, true, 'postgres')}
+            {renderField('password', 'Password', 'password', d.password, false)}
+            {renderSelect('sslMode', 'SSL Mode', d.sslMode, POSTGRES_SSL_MODES)}
+          </>
+        );
+      }
+
+      case 'mysql': {
+        const d = data as unknown as MySqlFormData;
+        return (
+          <>
+            {renderField('host', 'Host', 'text', d.host, true, 'localhost')}
+            {renderField('port', 'Port', 'number', d.port, true, '3306')}
+            {renderField('database', 'Database Name', 'text', d.database, true, 'my_database')}
+            {renderField('username', 'Username', 'text', d.username, true, 'root')}
+            {renderField('password', 'Password', 'password', d.password, false)}
+            {renderSelect('sslMode', 'SSL Mode', d.sslMode, MYSQL_SSL_MODES)}
+          </>
+        );
+      }
+
+      case 'sqlite': {
+        const d = data as unknown as SqliteFormData;
+        return (
+          <>
+            {renderField('filePath', 'Database File Path', 'text', d.filePath, true, '/path/to/database.db')}
+            <label className="conn-form__checkbox">
+              <input
+                type="checkbox"
+                checked={d.createNew}
+                onChange={(e) => updateField('createNew', e.target.checked)}
+                disabled={isDisabled}
+              />
+              <span>Create new database at this path</span>
+            </label>
+          </>
+        );
+      }
     }
-    return baseStyle;
   };
 
-  useEffect(() => {
-    if (formData.authMethod === AuthMethod.Windows) {
-      setErrors(prev => ({ ...prev, username: undefined, password: undefined }));
-    }
-  }, [formData.authMethod]);
-
   return (
-    <div style={styles.container} role="form" aria-label="Database connection form">
-      <div>
-        <h1 style={styles.title}>Connect to Database</h1>
-        <p style={styles.subtitle}>Enter your SQL Server connection details below</p>
+    <div className="conn-form" role="form" aria-label={`${providerInfo.name} connection form`}>
+      <button type="button" className="conn-form__back" onClick={onBack}>
+        &larr; Back
+      </button>
+
+      <div className="conn-form__header">
+        <span className="conn-form__provider-icon">{providerInfo.icon}</span>
+        <h2 className="conn-form__title">Connect to {providerInfo.name}</h2>
       </div>
 
       {testResult && (
         <div
-          style={{ ...styles.alert, ...(testResult.success ? styles.alertSuccess : styles.alertError) }}
+          className={`conn-form__alert ${testResult.success ? 'conn-form__alert--success' : 'conn-form__alert--error'}`}
           role="alert"
-          aria-live="polite"
         >
-          {testResult.success ? '✓' : '⚠'} {testResult.message}
+          {testResult.success ? '\u2713' : '\u26A0'} {testResult.message}
         </div>
       )}
 
-      <div style={styles.formGroup}>
-        <label htmlFor="server" style={styles.label}>
-          Server Address <span style={styles.required} aria-label="required">*</span>
-        </label>
-        <input
-          id="server"
-          type="text"
-          value={formData.server}
-          onChange={(e) => handleFieldChange('server', e.target.value)}
-          onBlur={() => handleFieldBlur('server')}
-          disabled={isConnectingOrTesting}
-          placeholder="localhost"
-          aria-required="true"
-          aria-invalid={!!errors.server}
-          aria-describedby={errors.server ? 'server-error' : undefined}
-          style={getInputStyle('server')}
-        />
-        {errors.server && (
-          <span id="server-error" style={styles.errorText} role="alert">
-            {errors.server}
-          </span>
-        )}
-      </div>
+      {!useRawString && renderProviderFields()}
 
-      <div style={styles.formGroup}>
-        <label htmlFor="database" style={styles.label}>
-          Database Name <span style={styles.required} aria-label="required">*</span>
-        </label>
-        <input
-          id="database"
-          type="text"
-          value={formData.database}
-          onChange={(e) => handleFieldChange('database', e.target.value)}
-          onBlur={() => handleFieldBlur('database')}
-          disabled={isConnectingOrTesting}
-          placeholder="my_database"
-          aria-required="true"
-          aria-invalid={!!errors.database}
-          aria-describedby={errors.database ? 'database-error' : undefined}
-          style={getInputStyle('database')}
-        />
-        {errors.database && (
-          <span id="database-error" style={styles.errorText} role="alert">
-            {errors.database}
-          </span>
-        )}
-      </div>
-
-      <fieldset style={{ border: 'none', padding: 0, margin: 0 }}>
-        <legend style={styles.label}>Authentication Method</legend>
-        <div style={styles.radioGroup} role="radiogroup" aria-label="Authentication method">
-          <label style={styles.radioLabel}>
-            <input
-              type="radio"
-              name="authMethod"
-              value={AuthMethod.SqlServer}
-              checked={formData.authMethod === AuthMethod.SqlServer}
-              onChange={(e) => handleFieldChange('authMethod', e.target.value as AuthMethod)}
-              disabled={isConnectingOrTesting}
-            />
-            SQL Server Authentication
-          </label>
-          <label style={styles.radioLabel}>
-            <input
-              type="radio"
-              name="authMethod"
-              value={AuthMethod.Windows}
-              checked={formData.authMethod === AuthMethod.Windows}
-              onChange={(e) => handleFieldChange('authMethod', e.target.value as AuthMethod)}
-              disabled={isConnectingOrTesting}
-            />
-            Windows Authentication
-          </label>
-        </div>
-      </fieldset>
-
-      {formData.authMethod === AuthMethod.SqlServer && (
-        <>
-          <div style={styles.formGroup}>
-            <label htmlFor="username" style={styles.label}>
-              Username <span style={styles.required} aria-label="required">*</span>
-            </label>
-            <input
-              id="username"
-              type="text"
-              value={formData.username}
-              onChange={(e) => handleFieldChange('username', e.target.value)}
-              onBlur={() => handleFieldBlur('username')}
-              disabled={isConnectingOrTesting}
-              placeholder="sa"
-              aria-required="true"
-              aria-invalid={!!errors.username}
-              aria-describedby={errors.username ? 'username-error' : undefined}
-              style={getInputStyle('username')}
-            />
-            {errors.username && (
-              <span id="username-error" style={styles.errorText} role="alert">
-                {errors.username}
-              </span>
-            )}
-          </div>
-
-          <div style={styles.formGroup}>
-            <label htmlFor="password" style={styles.label}>
-              Password <span style={styles.required} aria-label="required">*</span>
-            </label>
-            <input
-              id="password"
-              type="password"
-              value={formData.password}
-              onChange={(e) => handleFieldChange('password', e.target.value)}
-              onBlur={() => handleFieldBlur('password')}
-              disabled={isConnectingOrTesting}
-              placeholder="••••••••"
-              aria-required="true"
-              aria-invalid={!!errors.password}
-              aria-describedby={errors.password ? 'password-error' : undefined}
-              style={getInputStyle('password')}
-            />
-            {errors.password && (
-              <span id="password-error" style={styles.errorText} role="alert">
-                {errors.password}
-              </span>
-            )}
-          </div>
-        </>
-      )}
-
-      <label style={styles.checkbox}>
+      <label className="conn-form__checkbox conn-form__raw-toggle">
         <input
           type="checkbox"
-          checked={formData.trustServerCertificate}
-          onChange={(e) => handleFieldChange('trustServerCertificate', e.target.checked)}
-          disabled={isConnectingOrTesting}
+          checked={useRawString}
+          onChange={(e) => setUseRawString(e.target.checked)}
+          disabled={isDisabled}
         />
-        <span style={styles.checkboxLabel}>Trust Server Certificate</span>
+        <span>Use connection string</span>
       </label>
 
-      <div style={styles.buttonGroup}>
+      {useRawString && (
+        <div className="conn-form__group">
+          <label htmlFor="rawConnectionString" className="conn-form__label">Connection String</label>
+          <textarea
+            id="rawConnectionString"
+            value={rawConnectionString}
+            onChange={(e) => { setRawConnectionString(e.target.value); setTestResult(null); }}
+            disabled={isDisabled}
+            className="conn-form__textarea"
+            rows={3}
+            placeholder="Enter your full connection string..."
+          />
+        </div>
+      )}
+
+      <div className="conn-form__buttons">
         <button
           type="button"
           onClick={handleTestConnection}
-          disabled={isConnectingOrTesting || hasErrors || !onTestConnection}
-          style={{
-            ...styles.button,
-            ...styles.buttonSecondary,
-            ...(isConnectingOrTesting ? styles.buttonDisabled : {}),
-          }}
+          disabled={isDisabled || (!useRawString && hasErrors) || !onTestConnection}
+          className="conn-form__btn conn-form__btn--secondary"
           aria-busy={connectionState === 'testing'}
         >
-          {connectionState === 'testing' && <span style={styles.spinner} aria-hidden="true" />}
+          {connectionState === 'testing' && <span className="conn-form__spinner" aria-hidden="true" />}
           Test Connection
         </button>
         <button
           type="button"
           onClick={handleConnect}
-          disabled={isConnectingOrTesting || hasErrors}
-          style={{
-            ...styles.button,
-            ...styles.buttonPrimary,
-            ...(isConnectingOrTesting ? styles.buttonDisabled : {}),
-          }}
+          disabled={isDisabled || (!useRawString && hasErrors)}
+          className="conn-form__btn conn-form__btn--primary"
           aria-busy={connectionState === 'connecting'}
         >
-          {connectionState === 'connecting' && <span style={styles.spinner} aria-hidden="true" />}
+          {connectionState === 'connecting' && <span className="conn-form__spinner" aria-hidden="true" />}
           Connect
         </button>
       </div>

@@ -1,4 +1,39 @@
 /**
+ * Supported database providers
+ */
+export type Provider = 'sqlserver' | 'postgres' | 'mysql' | 'sqlite';
+
+/**
+ * Display information for a database provider
+ */
+export interface ProviderInfo {
+  id: Provider;
+  name: string;
+  icon: string;
+  description: string;
+}
+
+/**
+ * Provider display info for UI rendering
+ */
+export const PROVIDERS: ProviderInfo[] = [
+  { id: 'sqlserver', name: 'SQL Server', icon: 'S', description: 'Microsoft SQL Server' },
+  { id: 'postgres', name: 'PostgreSQL', icon: 'P', description: 'PostgreSQL database' },
+  { id: 'mysql', name: 'MySQL', icon: 'M', description: 'MySQL / MariaDB' },
+  { id: 'sqlite', name: 'SQLite', icon: 'L', description: 'SQLite file database' },
+];
+
+/**
+ * QuickStart schema templates
+ */
+export type QuickStartSchema = 'blog' | 'ecommerce' | 'crm' | 'classroom' | 'project-tracker';
+
+/**
+ * Data size options for quickstart
+ */
+export type DataSize = 'sample' | 'full';
+
+/**
  * Authentication methods for SQL Server connection
  */
 export enum AuthMethod {
@@ -7,16 +42,54 @@ export enum AuthMethod {
 }
 
 /**
- * Connection form state
+ * SSL mode options for PostgreSQL
  */
-export interface ConnectionFormData {
+export type PostgresSslMode = 'Disable' | 'Allow' | 'Prefer' | 'Require' | 'VerifyCA' | 'VerifyFull';
+
+/**
+ * SSL mode options for MySQL
+ */
+export type MySqlSslMode = 'None' | 'Preferred' | 'Required';
+
+/**
+ * Per-provider connection form data
+ */
+export interface SqlServerFormData {
   server: string;
   database: string;
   authMethod: AuthMethod;
-  username?: string;
-  password?: string;
+  username: string;
+  password: string;
   trustServerCertificate: boolean;
 }
+
+export interface PostgresFormData {
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  password: string;
+  sslMode: PostgresSslMode;
+}
+
+export interface MySqlFormData {
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  password: string;
+  sslMode: MySqlSslMode;
+}
+
+export interface SqliteFormData {
+  filePath: string;
+  createNew: boolean;
+}
+
+/**
+ * Union of all provider form data
+ */
+export type ConnectionFormData = SqlServerFormData | PostgresFormData | MySqlFormData | SqliteFormData;
 
 /**
  * Connection state stored in localStorage
@@ -28,6 +101,7 @@ export interface ConnectionInfo {
   connectedAt: string;
   server: string;
   database: string;
+  provider: Provider;
 }
 
 /**
@@ -50,14 +124,10 @@ export interface TestDatabaseProgress {
 }
 
 /**
- * Connection form validation errors
+ * Connection form validation errors (keyed by field name)
  */
 export interface ConnectionFormErrors {
-  server?: string;
-  database?: string;
-  username?: string;
-  password?: string;
-  general?: string;
+  [field: string]: string | undefined;
 }
 
 /**
@@ -75,10 +145,15 @@ export type ConnectionState =
  * Component props
  */
 export interface ConnectionFormProps {
+  provider: Provider;
   onConnect: (connectionString: string, connectionName: string) => void;
   onTestConnection?: (connectionString: string) => Promise<boolean>;
-  isLoading?: boolean;
-  error?: string | null;
+  onBack: () => void;
+}
+
+export interface ProviderSelectProps {
+  onProviderSelect: (provider: Provider) => void;
+  onBack: () => void;
 }
 
 export interface WelcomePanelProps {
@@ -87,6 +162,13 @@ export interface WelcomePanelProps {
   recentConnections: ConnectionInfo[];
   onSelectRecentConnection: (connection: ConnectionInfo) => void;
   onClearRecentConnections: () => void;
+}
+
+export interface QuickStartProps {
+  onLaunch: (schema: QuickStartSchema, dataSize: DataSize) => void;
+  onBack: () => void;
+  isLaunching: boolean;
+  launchProgress: string;
 }
 
 export interface TestDatabaseDialogProps {

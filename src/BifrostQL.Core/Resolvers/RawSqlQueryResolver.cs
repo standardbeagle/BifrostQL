@@ -33,7 +33,7 @@ namespace BifrostQL.Core.Resolvers
         {
             ValidateAuthorization(context.UserContext);
 
-            var sql = context.GetArgument<string>("sql");
+            var sql = context.GetArgument<string>("sql") ?? throw new BifrostExecutionError("SQL query argument is required");
             var paramsArg = context.HasArgument("params")
                 ? context.GetArgument<Dictionary<string, object?>>("params")
                 : null;

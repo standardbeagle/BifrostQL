@@ -594,10 +594,25 @@ namespace BifrostQL.Server
         public string EndpointPath => _bifrostConfig?.GetValue<string>("Path", "/graphql") ?? "/graphql";
         public string PlaygroundPath => _bifrostConfig?.GetValue<string>("Playground", "/") ?? "/";
 
+        /// <summary>
+        /// Resets the cached PathCache so the next GraphQL request reloads the schema
+        /// using the current connection string. Used for dynamic connection switching in UI mode.
+        /// </summary>
+        public void ResetSchema(IServiceProvider services)
+        {
+            var pathCache = services.GetService<PathCache<Inputs>>();
+            pathCache?.ResetAll();
+        }
+
+        /// <summary>
+        /// Whether a connection string has been configured.
+        /// When false, the PathCache loader will throw on first request (deferred connection mode).
+        /// </summary>
+        public bool HasConnectionString => !string.IsNullOrEmpty(_connectionString);
+
         public void ConfigureServices(IServiceCollection services)
         {
             if (_bifrostConfig == null) throw new InvalidOperationException("bifrostConfig not specified");
-            if (_connectionString == null) throw new InvalidOperationException("connectionString is empty");
 
             var path = EndpointPath;
             var metadataLoader = new MetadataLoader(_bifrostConfig, "Metadata");

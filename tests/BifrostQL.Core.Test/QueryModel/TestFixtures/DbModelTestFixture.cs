@@ -195,7 +195,7 @@ public sealed class DbModelTestFixture
             {
                 ColumnName = name,
                 GraphQlName = graphQlName ?? name,
-                NormalizedName = NormalizeColumn(name),
+                NormalizedName = ColumnDto.NormalizeColumn(name),
                 DataType = dataType,
                 IsPrimaryKey = isPrimaryKey,
                 IsNullable = isNullable,
@@ -203,17 +203,6 @@ public sealed class DbModelTestFixture
             return this;
         }
 
-        private static string NormalizeColumn(string column)
-        {
-            if (string.Equals("id", column, StringComparison.InvariantCultureIgnoreCase))
-                return "id";
-            if (column.EndsWith("id", StringComparison.InvariantCultureIgnoreCase))
-            {
-                var tableName = column.Substring(0, column.Length - 2);
-                return new Pluralizer().Singularize(tableName);
-            }
-            return column;
-        }
 
         public TableBuilder WithColumnMetadata(string columnName, string key, object? value)
         {

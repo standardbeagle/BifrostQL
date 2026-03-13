@@ -1,13 +1,24 @@
 using System.CommandLine;
+using System.Reflection;
 using System.Text;
-using BifrostQL.Server;
+using System.Text.Json;
 using BifrostQL.Core.Model;
-using Microsoft.Data.SqlClient;
+using BifrostQL.Server;
+using BifrostQL.MySql;
+using BifrostQL.Ngsql;
+using BifrostQL.Sqlite;
+using BifrostQL.SqlServer;
 using Photino.NET;
+
+// Register all dialect factories so DbConnFactoryResolver can route by provider
+DbConnFactoryResolver.Register(BifrostDbProvider.SqlServer, cs => new SqlServerDbConnFactory(cs));
+DbConnFactoryResolver.Register(BifrostDbProvider.PostgreSql, cs => new PostgresDbConnFactory(cs));
+DbConnFactoryResolver.Register(BifrostDbProvider.MySql, cs => new MySqlDbConnFactory(cs));
+DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
 
 var connectionStringArg = new Argument<string?>("connection")
 {
-    Description = "SQL Server connection string (e.g., 'Server=localhost;Database=mydb;User Id=sa;Password=xxx;TrustServerCertificate=True'). Optional - can be set via UI.",
+    Description = "Database connection string. Optional - can be set via UI.",
     Arity = ArgumentArity.ZeroOrOne
 };
 
@@ -35,8 +46,10 @@ var rootCommand = new RootCommand("BifrostQL UI - Desktop database explorer")
     headlessOption
 };
 
-// Shared connection string storage
+// Shared connection state — BifrostSetupOptions captures this by reference via the lambda closure
 string? currentConnectionString = null;
+BifrostDbProvider? currentProvider = null;
+BifrostSetupOptions? bifrostOptions = null;
 
 rootCommand.SetAction(async (parseResult, cancellationToken) =>
 {
@@ -46,13 +59,17 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     var headless = parseResult.GetValue(headlessOption);
 
     currentConnectionString = connectionString;
+    if (connectionString != null)
+        currentProvider = DbConnFactoryResolver.DetectProvider(connectionString);
 
     var bindAddress = expose ? "0.0.0.0" : "localhost";
     var serverUrl = $"http://{bindAddress}:{port}";
     var localUrl = $"http://localhost:{port}";
 
-    // Build and start the web server
-    var builder = WebApplication.CreateBuilder();
+    // Build and start the web server - set content root to the binary's directory
+    // so wwwroot is found regardless of the current working directory
+    var assemblyDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!;
+    var builder = WebApplication.CreateBuilder(new WebApplicationOptions { ContentRootPath = assemblyDir });
 
     builder.WebHost.UseUrls(serverUrl);
 
@@ -70,15 +87,13 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         ["BifrostQL:Playground"] = "/graphiql"
     });
 
-    // Add BifrostQL services if connection string is provided
-    if (!string.IsNullOrEmpty(connectionString))
+    // Always register BifrostQL services — connection string may be set later via API
+    builder.Services.AddBifrostQL(options =>
     {
-        builder.Services.AddBifrostQL(options =>
-        {
-            options.BindConnectionString(connectionString)
-                   .BindConfiguration(builder.Configuration.GetSection("BifrostQL"));
-        });
-    }
+        bifrostOptions = options;
+        options.BindConnectionString(connectionString)
+               .BindConfiguration(builder.Configuration.GetSection("BifrostQL"));
+    });
 
     builder.Services.AddCors();
     builder.Services.AddEndpointsApiExplorer();
@@ -91,6 +106,27 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         .AllowAnyHeader()
         .AllowAnyOrigin());
 
+    // GET /api/providers - Returns available database providers
+    app.MapGet("/api/providers", () =>
+    {
+        var registered = DbConnFactoryResolver.GetRegisteredProviders();
+        // SQL Server is always available via the built-in fallback
+        var providers = new HashSet<BifrostDbProvider>(registered) { BifrostDbProvider.SqlServer };
+        var result = providers.OrderBy(p => p).Select(p => new
+        {
+            id = p.ToString().ToLowerInvariant(),
+            name = p switch
+            {
+                BifrostDbProvider.SqlServer => "SQL Server",
+                BifrostDbProvider.PostgreSql => "PostgreSQL",
+                BifrostDbProvider.MySql => "MySQL",
+                BifrostDbProvider.Sqlite => "SQLite",
+                _ => p.ToString()
+            }
+        });
+        return Results.Ok(result);
+    });
+
     // API endpoint to test a connection string
     app.MapPost("/api/connection/test", async (ConnectionTestRequest request, CancellationToken ct) =>
     {
@@ -101,18 +137,18 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
 
         try
         {
-            await using var conn = new SqlConnection(request.ConnectionString);
+            var provider = request.Provider != null
+                ? DbConnFactoryResolver.ParseProviderName(request.Provider)
+                : DbConnFactoryResolver.DetectProvider(request.ConnectionString);
+            var factory = DbConnFactoryResolver.Create(request.ConnectionString, provider);
+            await using var conn = factory.GetConnection();
             await conn.OpenAsync(ct);
-
-            // Get database info
-            var database = conn.Database;
-            var server = conn.DataSource;
 
             return Results.Ok(new {
                 success = true,
-                message = $"Successfully connected to {database} on {server}",
-                database,
-                server
+                message = $"Successfully connected to {conn.Database} via {provider}",
+                database = conn.Database,
+                provider = provider.ToString().ToLowerInvariant()
             });
         }
         catch (Exception ex)
@@ -124,7 +160,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         }
     });
 
-    // API endpoint to set the current connection (requires restart of GraphQL endpoint)
+    // API endpoint to set the current connection — rebinds BifrostQL and resets the schema cache
     app.MapPost("/api/connection/set", (ConnectionSetRequest request) =>
     {
         if (string.IsNullOrWhiteSpace(request.ConnectionString))
@@ -133,38 +169,44 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         }
 
         currentConnectionString = request.ConnectionString;
+        currentProvider = request.Provider != null
+            ? DbConnFactoryResolver.ParseProviderName(request.Provider)
+            : DbConnFactoryResolver.DetectProvider(request.ConnectionString);
 
-        // Note: In a production app, you would reload the GraphQL schema here
-        // For now, we return success and the client will need to reconnect/refresh
+        // Rebind the connection on the BifrostQL options and reset the PathCache
+        // so the next GraphQL request loads the new database schema
+        bifrostOptions?.BindConnectionString(request.ConnectionString);
+        bifrostOptions?.BindProvider(currentProvider.Value.ToString().ToLowerInvariant());
+        // Reset the cached schema so it reloads with the new connection
+        bifrostOptions?.ResetSchema(app.Services);
+
         return Results.Ok(new {
             success = true,
-            message = "Connection updated. Please refresh the application.",
-            needsRefresh = true
+            message = "Connection updated.",
+            provider = currentProvider.Value.ToString().ToLowerInvariant()
         });
     });
 
-    // API endpoint to create a test database
+    // API endpoint to create a test database (SQL Server only - legacy)
     app.MapPost("/api/database/create", async (CreateDatabaseRequest request, CancellationToken ct) =>
     {
         async IAsyncEnumerable<string> StreamProgress()
         {
-            yield return $"data: {{\"stage\": \"Parsing connection string\", \"percent\": 5, \"message\": \"Extracting server details\"}}\n\n";
+            yield return SseEvent("Parsing connection string", 5, "Extracting server details");
 
-            // Parse the connection string to get server info
-            var builder = new SqlConnectionStringBuilder(request.ConnectionString ??
+            var connBuilder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(request.ConnectionString ??
                 "Server=localhost;Database=master;User Id=sa;Password=your_password;TrustServerCertificate=True");
-            var originalDatabase = builder.InitialCatalog;
-            builder.InitialCatalog = "master"; // Connect to master to create database
+            var originalDatabase = connBuilder.InitialCatalog;
+            connBuilder.InitialCatalog = "master";
 
-            yield return $"data: {{\"stage\": \"Connecting to server\", \"percent\": 10, \"message\": \"Establishing connection to master database\"}}\n\n";
+            yield return SseEvent("Connecting to server", 10, "Establishing connection to master database");
 
-            // Try to connect - handle connection errors separately
-            SqlConnection? conn = null;
+            Microsoft.Data.SqlClient.SqlConnection? conn = null;
             Exception? connectError = null;
 
             try
             {
-                conn = new SqlConnection(builder.ConnectionString);
+                conn = new Microsoft.Data.SqlClient.SqlConnection(connBuilder.ConnectionString);
                 await conn.OpenAsync(ct);
             }
             catch (Exception ex)
@@ -172,41 +214,35 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
                 connectError = ex;
             }
 
-            // Handle connection error (yield outside try-catch)
             if (connectError != null)
             {
-                yield return $"data: {{\"stage\": \"Error\", \"percent\": 0, \"message\": \"Failed to connect to SQL Server: {connectError.Message}\", \"error\": true}}\n\n";
+                yield return SseEvent("Error", 0, $"Failed to connect to SQL Server: {connectError.Message}", error: true);
                 yield break;
             }
 
-            // At this point, conn is not null
             await using var _conn = conn!;
 
-            // Generate database name based on template
             var dbName = request.Template switch
             {
                 "northwind" => "Northwind_Test",
                 "adventureworks-lite" => "AdventureWorksLite_Test",
                 "simple-blog" => "SimpleBlog_Test",
-                _ => "TestDB_" + Guid.NewGuid().ToString("N").Substring(0, 8)
+                _ => "TestDB_" + Guid.NewGuid().ToString("N")[..8]
             };
 
-            yield return $"data: {{\"stage\": \"Creating database\", \"percent\": 20, \"message\": \"Creating database {dbName}\"}}\n\n";
+            yield return SseEvent("Creating database", 20, $"Creating database {dbName}");
 
-            // Create database
-            await using (var cmd = new SqlCommand($"IF NOT EXISTS (SELECT name FROM sys.databases WHERE name = '{dbName}') BEGIN CREATE DATABASE [{dbName}] END", _conn))
+            await using (var cmd = new Microsoft.Data.SqlClient.SqlCommand($"IF NOT EXISTS (SELECT name FROM sys.databases WHERE name = '{dbName}') BEGIN CREATE DATABASE [{dbName}] END", _conn))
             {
                 await cmd.ExecuteNonQueryAsync(ct);
             }
 
-            yield return $"data: {{\"stage\": \"Creating tables\", \"percent\": 30, \"message\": \"Setting up database schema\"}}\n\n";
+            yield return SseEvent("Creating tables", 30, "Setting up database schema");
 
-            // Switch to the new database
-            builder.InitialCatalog = dbName;
-            await using var newConn = new SqlConnection(builder.ConnectionString);
+            connBuilder.InitialCatalog = dbName;
+            await using var newConn = new Microsoft.Data.SqlClient.SqlConnection(connBuilder.ConnectionString);
             await newConn.OpenAsync(ct);
 
-            // Create tables based on template
             var sql = request.Template switch
             {
                 "northwind" => TestDatabaseSchemas.GetNorthwindSchema(),
@@ -220,15 +256,14 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
             for (int i = 0; i < statements.Length; i++)
             {
                 var percent = 40 + (i * 50 / statements.Length);
-                yield return $"data: {{\"stage\": \"Creating schema\", \"percent\": {percent}, \"message\": \"Executing statement {i + 1} of {statements.Length}\"}}\n\n";
+                yield return SseEvent("Creating schema", percent, $"Executing statement {i + 1} of {statements.Length}");
 
-                await using var cmd = new SqlCommand(statements[i].Trim(), newConn);
+                await using var cmd = new Microsoft.Data.SqlClient.SqlCommand(statements[i].Trim(), newConn);
                 await cmd.ExecuteNonQueryAsync(ct);
             }
 
-            yield return $"data: {{\"stage\": \"Inserting sample data\", \"percent\": 90, \"message\": \"Adding sample records\"}}\n\n";
+            yield return SseEvent("Inserting sample data", 90, "Adding sample records");
 
-            // Insert sample data
             var dataSql = request.Template switch
             {
                 "northwind" => TestDatabaseSchemas.GetNorthwindData(),
@@ -240,34 +275,131 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
             var dataStatements = dataSql.Split(new[] { "GO" }, StringSplitOptions.RemoveEmptyEntries);
             for (int i = 0; i < dataStatements.Length; i++)
             {
-                await using var cmd = new SqlCommand(dataStatements[i].Trim(), newConn);
+                await using var cmd = new Microsoft.Data.SqlClient.SqlCommand(dataStatements[i].Trim(), newConn);
                 await cmd.ExecuteNonQueryAsync(ct);
             }
 
-            var newConnectionString = builder.ConnectionString;
+            var newConnectionString = connBuilder.ConnectionString;
 
-            yield return $"data: {{\"stage\": \"Complete!\", \"percent\": 100, \"message\": \"Database created successfully\", \"connectionString\": \"{newConnectionString}\"}}\n\n";
+            yield return SseEvent("Complete!", 100, "Database created successfully", connectionString: newConnectionString);
         }
 
-        return Results.Ok(StreamProgress());
+        return WriteSseStream(StreamProgress());
+    });
+
+    // POST /api/database/create-quickstart - Creates a SQLite quickstart database
+    app.MapPost("/api/database/create-quickstart", async (QuickstartRequest request, CancellationToken ct) =>
+    {
+        var validSchemas = new[] { "blog", "ecommerce", "crm", "classroom", "project-tracker" };
+        if (string.IsNullOrWhiteSpace(request.Schema) || !validSchemas.Contains(request.Schema))
+        {
+            return Results.BadRequest(new { error = $"Invalid schema. Must be one of: {string.Join(", ", validSchemas)}" });
+        }
+
+        var validSizes = new[] { "sample", "full" };
+        var dataSize = string.IsNullOrWhiteSpace(request.DataSize) ? "sample" : request.DataSize;
+        if (!validSizes.Contains(dataSize))
+        {
+            return Results.BadRequest(new { error = $"Invalid dataSize. Must be one of: {string.Join(", ", validSizes)}" });
+        }
+
+        async IAsyncEnumerable<string> StreamProgress()
+        {
+            var timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+            var fileName = $"bifrost-{request.Schema}-{timestamp}.db";
+            var dbPath = Path.Combine(Path.GetTempPath(), fileName);
+            var sqliteConnectionString = $"Data Source={dbPath}";
+
+            yield return SseEvent("Creating database", 10, $"Creating SQLite database: {fileName}");
+
+            var factory = DbConnFactoryResolver.Create(sqliteConnectionString, BifrostDbProvider.Sqlite);
+
+            yield return SseEvent("Loading schema", 20, $"Reading {request.Schema} schema definition");
+
+            var ddlSql = QuickstartSchemas.LoadSchemaSql(request.Schema);
+            if (ddlSql == null)
+            {
+                yield return SseEvent("Error", 0, $"Schema '{request.Schema}' not found in embedded resources", error: true);
+                yield break;
+            }
+
+            yield return SseEvent("Creating tables", 30, "Executing DDL statements");
+
+            // Execute DDL - yields not allowed in try-catch, so run all statements then report
+            var ddlStatements = ddlSql.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
+
+            Exception? ddlError = null;
+            try
+            {
+                await QuickstartSchemas.ExecuteStatementsAsync(factory, ddlStatements, ct);
+            }
+            catch (Exception ex)
+            {
+                ddlError = ex;
+            }
+
+            if (ddlError != null)
+            {
+                yield return SseEvent("Error", 0, $"Failed to create schema: {ddlError.Message}", error: true);
+                yield break;
+            }
+
+            yield return SseEvent("Schema created", 70, $"Created {ddlStatements.Length} tables");
+
+            yield return SseEvent("Loading seed data", 75, $"Loading {dataSize} dataset");
+
+            var seedSql = QuickstartSchemas.LoadSeedSql(request.Schema, dataSize);
+
+            if (seedSql != null)
+            {
+                var seedStatements = seedSql.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
+
+                Exception? seedError = null;
+                try
+                {
+                    await QuickstartSchemas.ExecuteStatementsAsync(factory, seedStatements, ct);
+                }
+                catch (Exception ex)
+                {
+                    seedError = ex;
+                }
+
+                if (seedError != null)
+                {
+                    yield return SseEvent("Error", 0, $"Failed to insert seed data: {seedError.Message}", error: true);
+                    yield break;
+                }
+
+                yield return SseEvent("Data loaded", 95, $"Inserted {seedStatements.Length} data batches");
+            }
+            else
+            {
+                yield return SseEvent("Seed data", 90, "No seed data available for this schema/size combination (DDL only)");
+            }
+
+            yield return SseEvent("Complete!", 100, "Quickstart database created successfully",
+                connectionString: sqliteConnectionString, provider: "sqlite");
+        }
+
+        return WriteSseStream(StreamProgress());
     });
 
     // Health check endpoint
     app.MapGet("/api/health", () => Results.Ok(new
     {
         status = "ok",
-        connected = !string.IsNullOrEmpty(currentConnectionString)
+        connected = !string.IsNullOrEmpty(currentConnectionString),
+        provider = currentProvider?.ToString().ToLowerInvariant()
     }));
 
     // Serve static files from wwwroot
     app.UseDefaultFiles();
     app.UseStaticFiles();
 
-    // BifrostQL GraphQL endpoint (only if connection is set)
-    if (!string.IsNullOrEmpty(connectionString))
-    {
-        app.UseBifrostQL();
-    }
+    // BifrostQL GraphQL endpoint — always registered, connection set dynamically
+    app.UseBifrostQL();
 
     // Fallback to index.html for SPA routing
     app.MapFallbackToFile("index.html");
@@ -311,12 +443,83 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
 
 return await rootCommand.Parse(args).InvokeAsync();
 
-// Record types for API requests
-record ConnectionTestRequest(string ConnectionString);
-record ConnectionSetRequest(string ConnectionString);
-record CreateDatabaseRequest(string Template, string? ConnectionString);
+// Helper to format SSE event JSON consistently
+static string SseEvent(string stage, int percent, string message,
+    bool error = false, string? connectionString = null, string? provider = null)
+{
+    var obj = new Dictionary<string, object>
+    {
+        ["stage"] = stage,
+        ["percent"] = percent,
+        ["message"] = message
+    };
+    if (error) obj["error"] = true;
+    if (connectionString != null) obj["connectionString"] = connectionString;
+    if (provider != null) obj["provider"] = provider;
+    return $"data: {JsonSerializer.Serialize(obj)}\n\n";
+}
 
-// SQL Schema generation methods
+// Writes an IAsyncEnumerable of pre-formatted SSE strings as a text/event-stream response
+static IResult WriteSseStream(IAsyncEnumerable<string> events)
+{
+    return Results.Stream(async stream =>
+    {
+        await foreach (var evt in events)
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(evt);
+            await stream.WriteAsync(bytes);
+            await stream.FlushAsync();
+        }
+    }, contentType: "text/event-stream");
+}
+
+// Record types for API requests
+record ConnectionTestRequest(string ConnectionString, string? Provider = null);
+record ConnectionSetRequest(string ConnectionString, string? Provider = null);
+record CreateDatabaseRequest(string Template, string? ConnectionString);
+record QuickstartRequest(string Schema, string? DataSize = "sample");
+
+// Embedded resource loader for quickstart schemas
+public static class QuickstartSchemas
+{
+    private static readonly Assembly ResourceAssembly = typeof(QuickstartSchemas).Assembly;
+
+    public static string? LoadSchemaSql(string schemaName)
+    {
+        return LoadEmbeddedResource($"BifrostQL.UI.Schemas.{schemaName}.sql");
+    }
+
+    public static string? LoadSeedSql(string schemaName, string dataSize)
+    {
+        return LoadEmbeddedResource($"BifrostQL.UI.Schemas.{schemaName}-seed-{dataSize}.sql");
+    }
+
+    public static async Task ExecuteStatementsAsync(IDbConnFactory factory, string[] statements, CancellationToken ct)
+    {
+        await using var conn = factory.GetConnection();
+        await conn.OpenAsync(ct);
+        await using var pragmaCmd = conn.CreateCommand();
+        pragmaCmd.CommandText = "PRAGMA foreign_keys = ON;";
+        await pragmaCmd.ExecuteNonQueryAsync(ct);
+
+        foreach (var statement in statements)
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = statement;
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+    }
+
+    private static string? LoadEmbeddedResource(string resourceName)
+    {
+        using var stream = ResourceAssembly.GetManifestResourceStream(resourceName);
+        if (stream == null) return null;
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        return reader.ReadToEnd();
+    }
+}
+
+// SQL Schema generation methods (legacy - SQL Server test databases)
 public static class TestDatabaseSchemas
 {
     public static string GetNorthwindSchema() => @"

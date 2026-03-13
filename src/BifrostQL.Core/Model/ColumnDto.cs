@@ -29,7 +29,7 @@ namespace BifrostQL.Core.Model
         public bool IsPrimaryKey { get; init; } = false;
         public IDictionary<string, object?> Metadata { get; init; } = new Dictionary<string, object?>();
         public string? GetMetadataValue(string property) => Metadata.TryGetValue(property, out var v) ? v?.ToString() : null;
-        public bool GetMetadataBool(string property, bool defaultValue) => (Metadata.TryGetValue(property, out var v) && v?.ToString() == null) ? defaultValue : v?.ToString() == "true";
+        public bool GetMetadataBool(string property, bool defaultValue) => (!Metadata.TryGetValue(property, out var v) || v?.ToString() == null) ? defaultValue : v.ToString() == "true";
         public bool CompareMetadata(string property, string value)
         {
             if (!Metadata.TryGetValue(property, out var v)) return false;
@@ -68,13 +68,13 @@ namespace BifrostQL.Core.Model
             };
         }
 
-        private static string NormalizeColumn(string column)
+        internal static string NormalizeColumn(string column)
         {
             if (string.Equals("id", column, StringComparison.InvariantCultureIgnoreCase))
                 return "id";
             if (column.EndsWith("id", StringComparison.InvariantCultureIgnoreCase))
             {
-                var tableName = column.Substring(0, column.Length - 2);
+                var tableName = column.Substring(0, column.Length - 2).TrimEnd('_', '-');
                 return DbModel.Pluralizer.Singularize(tableName);
             }
             return column;

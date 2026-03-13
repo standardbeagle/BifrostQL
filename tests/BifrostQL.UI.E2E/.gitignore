@@ -1,0 +1,6 @@
+node_modules/
+.server-url
+.server-pid
+test-results/
+playwright-report/
+.claude/

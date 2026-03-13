@@ -12,11 +12,23 @@
   <ItemGroup>
     <PackageReference Include="Photino.NET" Version="4.0.16" />
     <PackageReference Include="System.CommandLine" Version="2.0.2" />
-    <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.4" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\BifrostQL.Server\BifrostQL.Server.csproj" />
+    <ProjectReference Include="..\data\BifrostQL.SqlServer\BifrostQL.SqlServer.csproj" />
+    <ProjectReference Include="..\data\BifrostQL.Ngsql\BifrostQL.Ngsql.csproj" />
+    <ProjectReference Include="..\data\BifrostQL.MySql\BifrostQL.MySql.csproj" />
+    <ProjectReference Include="..\data\BifrostQL.Sqlite\BifrostQL.Sqlite.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Schemas\*.sql" />
+  </ItemGroup>
+
+  <!-- Ensure wwwroot is copied to output for desktop app (content root = binary dir) -->
+  <ItemGroup>
+    <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

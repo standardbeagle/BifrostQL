@@ -1,7 +1,7 @@
 {
   "name": "@standardbeagle/edit-db",
   "private": false,
-  "version": "0.3.79",
+  "version": "0.3.80",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -62,6 +62,7 @@
   "main": "./dist/editor.umd.cjs",
   "module": "./dist/editor.es.js",
   "types": "./dist/index.d.ts",
+  "style": "./dist/edit-db.css",
   "exports": {
     ".": {
       "import": {
@@ -72,6 +73,7 @@
         "types": "./dist/index.d.ts",
         "default": "./dist/editor.umd.cjs"
       }
-    }
+    },
+    "./style.css": "./dist/edit-db.css"
   }
 }

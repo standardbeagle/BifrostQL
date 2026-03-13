@@ -110,7 +110,8 @@ namespace BifrostQL.Core.Resolvers
                 });
             }
 
-            var count = data.First(kv => kv.Key == (table.KeyName + "=>count")).Value.data[0][0] as int?;
+            var countObj = data.First(kv => kv.Key == (table.KeyName + "=>count")).Value.data[0][0];
+            var count = countObj != null ? (int?)Convert.ToInt32(countObj) : null;
 
             if (table.IncludeResult)
             {
@@ -177,7 +178,7 @@ namespace BifrostQL.Core.Resolvers
                     while (reader.Read())
                     {
                         var row = new object?[reader.FieldCount];
-                        reader.GetValues(row);
+                        reader.GetValues(row!);
                         result.Add(row);
                     }
 

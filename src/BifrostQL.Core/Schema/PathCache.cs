@@ -22,6 +22,17 @@ namespace BifrostQL.Core.Schema
             return _schemas.TryGetValue(path, out var cache) ? cache.Value : throw new ArgumentOutOfRangeException(nameof(path), "Path cache not configured for path:" + path);
         }
 
+        public bool TryGetValue(string path, out T? value)
+        {
+            if (_schemas.TryGetValue(path, out var cache))
+            {
+                value = cache.Value;
+                return true;
+            }
+            value = default;
+            return false;
+        }
+
         /// <summary>
         /// Returns the first cached value, or default if no loaders are registered.
         /// Triggers lazy loading of the first entry if not yet loaded.
@@ -30,6 +41,24 @@ namespace BifrostQL.Core.Schema
         {
             var first = _schemas.Values.FirstOrDefault();
             return first != null ? first.Value : default;
+        }
+
+        /// <summary>
+        /// Clears the cached value for a path so the loader re-executes on next access.
+        /// </summary>
+        public void Reset(string path)
+        {
+            if (_schemas.TryGetValue(path, out var cache))
+                cache.Reset();
+        }
+
+        /// <summary>
+        /// Clears all cached values so loaders re-execute on next access.
+        /// </summary>
+        public void ResetAll()
+        {
+            foreach (var cache in _schemas.Values)
+                cache.Reset();
         }
     }
 
@@ -43,5 +72,7 @@ namespace BifrostQL.Core.Schema
         }
 
         public T Value => _schema ??= _loader();
+
+        public void Reset() => _schema = default;
     }
 }

@@ -34,7 +34,7 @@ namespace BifrostQL.Core.Model
         public IDictionary<string, object?> Metadata { get; init; } = null!;
         public ITypeMapper TypeMapper { get; set; } = SqlServerTypeMapper.Instance;
         public string? GetMetadataValue(string property) => Metadata.TryGetValue(property, out var v) ? v?.ToString() : null;
-        public bool GetMetadataBool(string property, bool defaultValue) => (Metadata.TryGetValue(property, out var v) && v?.ToString() == null) ? defaultValue : v?.ToString() == "true";
+        public bool GetMetadataBool(string property, bool defaultValue) => (!Metadata.TryGetValue(property, out var v) || v?.ToString() == null) ? defaultValue : v.ToString() == "true";
         public bool CompareMetadata(string property, string value)
         {
             if (!Metadata.TryGetValue(property, out var v)) return false;

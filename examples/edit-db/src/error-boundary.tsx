@@ -1,4 +1,7 @@
 import { Component, ErrorInfo, ReactNode } from 'react';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
+import { AlertCircle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 interface ErrorBoundaryProps {
     children: ReactNode;
@@ -24,11 +27,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
     componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
         const { onError, section } = this.props;
-
-        // Log error with context
         console.error(`Error in ${section ?? 'component'}:`, error, errorInfo);
-
-        // Call optional error handler
         onError?.(error, errorInfo);
     }
 
@@ -46,21 +45,24 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             }
 
             return (
-                <div className="editdb-error-boundary">
-                    <div className="editdb-error-boundary__content">
-                        <h3 className="editdb-error-boundary__title">
+                <div className="flex items-center justify-center p-5 min-h-[100px]">
+                    <Alert variant="destructive" className="max-w-[400px]">
+                        <AlertCircle className="size-4" />
+                        <AlertTitle>
                             Something went wrong{section ? ` in ${section}` : ''}
-                        </h3>
-                        <p className="editdb-error-boundary__message">
-                            {error?.message ?? 'An unexpected error occurred'}
-                        </p>
-                        <button
-                            className="editdb-error-boundary__retry"
-                            onClick={this.handleRetry}
-                        >
-                            Try Again
-                        </button>
-                    </div>
+                        </AlertTitle>
+                        <AlertDescription className="mt-2">
+                            <p>{error?.message ?? 'An unexpected error occurred'}</p>
+                            <Button
+                                variant="destructive"
+                                size="sm"
+                                className="mt-3"
+                                onClick={this.handleRetry}
+                            >
+                                Try Again
+                            </Button>
+                        </AlertDescription>
+                    </Alert>
                 </div>
             );
         }

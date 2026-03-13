@@ -3,12 +3,18 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Link } from './hooks/usePath';
 import { useSchema } from './hooks/useSchema';
 import { Table as SchemaTable } from './types/schema';
+import { Loader2 } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 const columns: ColumnDef<SchemaTable, unknown>[] = [
     {
         id: 'table',
         header: 'Table',
-        cell: ({ row }) => <Link to={`/${row.original.name}`} className="plain-link">{row.original.label}</Link>,
+        cell: ({ row }) => (
+            <Link to={`/${row.original.name}`} className="no-underline text-foreground hover:text-primary">
+                {row.original.label}
+            </Link>
+        ),
     }
 ];
 
@@ -21,8 +27,17 @@ export function TableList() {
         getCoreRowModel: getCoreRowModel(),
     });
 
-    if (loading) return <div>Loading...</div>;
-    if (error) return <div>Error: {error.message}</div>;
+    if (loading) return (
+        <div className="flex items-center justify-center gap-2 p-4">
+            <Loader2 className="size-4 animate-spin text-muted-foreground" />
+            <span className="text-sm text-muted-foreground">Loading...</span>
+        </div>
+    );
+    if (error) return (
+        <Alert variant="destructive" className="m-2">
+            <AlertDescription>Error: {error.message}</AlertDescription>
+        </Alert>
+    );
 
     return (
         <div>

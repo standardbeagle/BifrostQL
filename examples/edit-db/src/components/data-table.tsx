@@ -83,7 +83,7 @@ export function DataTable<TData>({
     });
 
     return (
-        <div className="editdb-data-table-wrapper">
+        <div className="w-full">
             <div className="flex items-center justify-end py-2 px-1">
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>

@@ -1,12 +1,32 @@
 import { useQuery } from "@tanstack/react-query";
-import { FormEvent, ReactElement, useEffect, useMemo, useRef } from "react";
+import { ReactElement, useMemo } from "react";
+import { useForm } from "@tanstack/react-form";
 import { useSchema } from "./hooks/useSchema";
 import { Link, useParams, useNavigate } from "./hooks/usePath";
-import './data-edit.scss';
 import { Schema, Table, Column, Join } from "./types/schema";
 import { TableRefValue, useTableRef } from "./hooks/useTableRef";
 import { useFetcher } from "./common/fetcher";
 import { useTableMutation } from "./hooks/useTableMutation";
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+    DialogDescription,
+    DialogFooter,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { LoaderCircle } from "lucide-react";
 
 const booleanTypes = ["Boolean", "Boolean!"];
 const dateTypes = ["DateTime", "DateTime!"];
@@ -22,8 +42,6 @@ interface ColumnJoin {
     column: Column;
     join?: Join;
 }
-
-type DetailRecord = Record<string, string | number | boolean | undefined>;
 
 function useTable(schema: Schema, tableName: string) {
     return useMemo(() => {
@@ -45,9 +63,6 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
     const [dataTable, editColumns, idColumns] = useTable(schema, table);
     const labelColumn = dataTable.labelColumn;
     const label = dataTable.label;
-
-    const dialogRef = useRef<HTMLDialogElement>(null);
-    const detailRef = useRef<DetailRecord>({});
 
     const mutation = useTableMutation(dataTable, editColumns, idColumns, editid);
 
@@ -73,62 +88,79 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
 
     const value = useMemo(() => data?.value?.data?.at(0) ?? {}, [data]);
 
-    // Initialize detailRef from loaded data
-    useEffect(() => {
-        detailRef.current = Object.fromEntries(editColumns.map(({ column: c }: ColumnJoin) => {
+    const defaultValues = useMemo(() => {
+        const values: Record<string, unknown> = {};
+        for (const { column: c } of editColumns) {
             if (dateTypes.some(t => t === c.paramType)) {
                 const dateValue = (value[c.name] as string)?.split("T")?.[0];
-                return [c.name, dateValue === '0001-01-01' ? '' : dateValue];
+                values[c.name] = dateValue === '0001-01-01' ? '' : (dateValue ?? '');
+            } else if (booleanTypes.some(t => t === c.paramType)) {
+                values[c.name] = !!value[c.name];
+            } else {
+                values[c.name] = value[c.name] ?? '';
             }
-            return [c.name, value[c.name] as string | number | boolean | undefined];
-        }));
-    }, [value, editColumns]);
+        }
+        return values;
+    }, [value, editColumns, isInsert]);
 
-    useEffect(() => {
-        const dialog = dialogRef.current;
-        dialog?.showModal();
-        return () => dialog?.close();
-    }, []);
+    const form = useForm({
+        defaultValues,
+        onSubmit: async ({ value: formValues }) => {
+            const mutate = isInsert ? mutation.insert : mutation.update;
+            await mutate({ ...formValues });
+            navigate('../..');
+        },
+    });
 
     if (isLoading && !isInsert) return <div>Loading...</div>;
     if (error) return <div>Error: {(error as Error).message}</div>;
-    if (mutation.error) return <div>Error: {mutation.error.message}</div>;
-
-    const onSubmit = (_event: FormEvent<HTMLFormElement>) => {
-        const mutate = isInsert ? mutation.insert : mutation.update;
-        mutate({ ...detailRef.current }).then(() => {
-            navigate('../..');
-        });
-    }
 
     const labelIdValue = (value?.[labelColumn] as string | number | undefined) ?? editid;
 
-    const editFields: EditFieldDef[] = editColumns.map(({ column: ec, join }: ColumnJoin) => ({
-        paramType: ec.paramType,
-        isReadOnly: ec.isReadOnly,
-        name: ec.name,
-        required: ec.isNullable ? {} : { required: true },
-        value: detailRef.current[ec.name] ?? (isInsert ? undefined : value[ec.name] as string | number | boolean | undefined),
-        join
-    }));
-
-    return <dialog className="editdb-dialog-edit" ref={dialogRef}>
-        <form method="dialog" onSubmit={onSubmit}>
-            {idColumns.map((c: Column) =>
-                <input key={c.name} type="hidden" name={c.name} defaultValue={editid} />
-            )}
-            <h3 className="editdb-dialog-edit__heading">{label}:{labelIdValue}</h3>
-            <EditFields fields={editFields} detailRef={detailRef} />
-            <div className="button-row">
-                <Link className="editdb-dialog-edit__cancel" to="../..">Cancel</Link>
-                <button
-                    type="submit"
-                    className={`editdb-dialog-edit__submit ${mutation.isPending ? 'editdb-dialog-edit__submit--loading' : ''}`}
-                    disabled={mutation.isPending}
-                >Save</button>
-            </div>
-        </form>
-    </dialog>;
+    return (
+        <Dialog open onOpenChange={(open) => { if (!open) navigate('../..'); }}>
+            <DialogContent className="sm:max-w-lg">
+                <DialogHeader>
+                    <DialogTitle>{label}:{labelIdValue}</DialogTitle>
+                    <DialogDescription className="sr-only">
+                        {isInsert ? "Create" : "Edit"} {label} record
+                    </DialogDescription>
+                </DialogHeader>
+                {mutation.error && (
+                    <p className="text-sm text-destructive">{mutation.error.message}</p>
+                )}
+                <form
+                    onSubmit={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        form.handleSubmit();
+                    }}
+                    className="grid gap-4"
+                >
+                    {editColumns.map(({ column: ec, join }: ColumnJoin) => (
+                        <EditField
+                            key={ec.name}
+                            column={ec}
+                            join={join}
+                            form={form}
+                            schema={schema}
+                        />
+                    ))}
+                    <DialogFooter>
+                        <Button variant="outline" asChild>
+                            <Link to="../..">Cancel</Link>
+                        </Button>
+                        <Button type="submit" disabled={mutation.isPending}>
+                            {mutation.isPending && (
+                                <LoaderCircle className="animate-spin" />
+                            )}
+                            Save
+                        </Button>
+                    </DialogFooter>
+                </form>
+            </DialogContent>
+        </Dialog>
+    );
 }
 
 export function DataEdit(): ReactElement {
@@ -142,81 +174,136 @@ export function DataEdit(): ReactElement {
     return <DataEditDetail table={table} schema={schema} editid={editid ?? ''} />
 }
 
-function EditFields({ fields, detailRef }: { fields: EditFieldDef[], detailRef: React.MutableRefObject<DetailRecord> }): JSX.Element {
-    return (
-        <ul className="editdb-dialog-edit__input-list">
-            {fields.map((field: EditFieldDef) => <EditField key={field.name} field={field} detailRef={detailRef} />)}
-        </ul>
-    );
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyFieldApi = any;
+
+interface EditFieldProps {
+    column: Column;
+    join?: Join;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    form: any;
+    schema: Schema;
 }
 
-function EditField({ field, detailRef }: { field: EditFieldDef, detailRef: React.MutableRefObject<DetailRecord> }): JSX.Element {
-    let InputComponent = DefaultInput;
+function EditField({ column, join, form, schema }: EditFieldProps) {
+    const name = column.name;
+    const isRequired = !column.isNullable;
+    const isBoolean = booleanTypes.some(t => t === column.paramType);
+    const isDate = dateTypes.some(t => t === column.paramType);
 
-    if (field.join) {
-        InputComponent = ParentInput;
-    } else if (booleanTypes.some(t => t === field.paramType)) {
-        InputComponent = BooleanInput;
-    } else if (dateTypes.some(t => t === field.paramType)) {
-        InputComponent = DateTimeInput;
+    if (join) {
+        return <ParentField column={column} join={join} form={form} schema={schema} isRequired={isRequired} />;
+    }
+
+    if (isBoolean) {
+        return (
+            <form.Field
+                name={name}
+                children={(field: AnyFieldApi) => (
+                    <div className="flex items-center gap-3">
+                        <Checkbox
+                            id={name}
+                            checked={!!field.state.value}
+                            onCheckedChange={(checked) => field.handleChange(!!checked)}
+                            onBlur={field.handleBlur}
+                            aria-invalid={field.state.meta.errors.length > 0}
+                        />
+                        <Label htmlFor={name}>{column.label}</Label>
+                        <FieldErrors errors={field.state.meta.errors} />
+                    </div>
+                )}
+            />
+        );
     }
 
     return (
-        <li className="editdb-dialog-edit__input-item">
-            <label>{field.name}</label>
-            <InputComponent field={field} detailRef={detailRef} />
-        </li>
-    );
-}
-
-function BooleanInput({ field, detailRef }: { field: EditFieldDef, detailRef: React.MutableRefObject<DetailRecord> }): JSX.Element {
-    return (
-        <input
-            type="checkbox"
-            defaultChecked={field.value as boolean}
-            onChange={event => { detailRef.current[field.name] = event.target.checked; }}
+        <form.Field
+            name={name}
+            validators={isRequired ? {
+                onSubmit: ({ value }: { value: unknown }) => {
+                    if (value === undefined || value === null || value === '') {
+                        return `${column.label} is required`;
+                    }
+                    return undefined;
+                },
+            } : undefined}
+            children={(field: AnyFieldApi) => (
+                <div className="grid gap-2">
+                    <Label htmlFor={name}>{column.label}</Label>
+                    <Input
+                        id={name}
+                        type={isDate ? "date" : numericTypes.some(t => t === column.paramType) ? "number" : "text"}
+                        value={(field.state.value as string | number) ?? ''}
+                        onChange={(e) => field.handleChange(e.target.value)}
+                        onBlur={field.handleBlur}
+                        required={isRequired}
+                        aria-invalid={field.state.meta.errors.length > 0}
+                    />
+                    <FieldErrors errors={field.state.meta.errors} />
+                </div>
+            )}
         />
     );
 }
 
-function DefaultInput({ field, detailRef }: { field: EditFieldDef, detailRef: React.MutableRefObject<DetailRecord> }): JSX.Element {
+interface ParentFieldProps {
+    column: Column;
+    join: Join;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    form: any;
+    schema: Schema;
+    isRequired: boolean;
+}
+
+function ParentField({ column, join, form, schema, isRequired }: ParentFieldProps) {
+    const name = column.name;
+    const parentData = useTableRef(schema, join.destinationTable, join.destinationColumnNames[0]);
+
     return (
-        <input
-            type="text"
-            defaultValue={field.value as string}
-            {...field.required}
-            onChange={event => { detailRef.current[field.name] = event.target.value; }}
+        <form.Field
+            name={name}
+            validators={isRequired ? {
+                onSubmit: ({ value }: { value: unknown }) => {
+                    if (value === undefined || value === null || value === '') {
+                        return `${column.label} is required`;
+                    }
+                    return undefined;
+                },
+            } : undefined}
+            children={(field: AnyFieldApi) => (
+                <div className="grid gap-2">
+                    <Label htmlFor={name}>{column.label}</Label>
+                    <Select
+                        value={String(field.state.value ?? '')}
+                        onValueChange={(val) => field.handleChange(val)}
+                    >
+                        <SelectTrigger id={name} className="w-full" aria-invalid={field.state.meta.errors.length > 0}>
+                            <SelectValue placeholder={`Select ${column.label}`} />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {parentData.data.map((row: TableRefValue) => (
+                                <SelectItem key={row.key} value={String(row.key)}>
+                                    {row.label}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                    <FieldErrors errors={field.state.meta.errors} />
+                </div>
+            )}
         />
     );
 }
 
-function DateTimeInput({ field, detailRef }: { field: EditFieldDef, detailRef: React.MutableRefObject<DetailRecord> }): JSX.Element {
+function FieldErrors({ errors }: { errors: unknown[] }) {
+    if (errors.length === 0) return null;
     return (
-        <input
-            type="date"
-            defaultValue={field.value as string}
-            {...field.required}
-            onChange={event => { detailRef.current[field.name] = event.target.value; }}
-        />
+        <>
+            {errors.map((error, i) => (
+                <p key={i} className="text-sm text-destructive">
+                    {String(error)}
+                </p>
+            ))}
+        </>
     );
-}
-
-function ParentInput({ field, detailRef }: { field: EditFieldDef, detailRef: React.MutableRefObject<DetailRecord> }): JSX.Element {
-    const schema = useSchema();
-    const parentData = useTableRef(schema, field.join!.destinationTable, field.join!.destinationColumnNames[0]);
-    return (<select
-        defaultValue={field.value as string}
-        onChange={event => { detailRef.current[field.name] = event.target.value; }}
-    >
-        {parentData.data.map((row: TableRefValue) => <option key={row.key} value={row.key}>{row.label}</option>)}
-    </select>);
-}
-
-interface EditFieldDef {
-    paramType: string;
-    name: string;
-    isReadOnly: boolean;
-    required: { required?: boolean };
-    value: string | number | boolean | undefined;
-    join?: Join;
 }

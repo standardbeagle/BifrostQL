@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import {
     ColumnDef,
+    ColumnFiltersState,
     SortingState,
     VisibilityState,
     flexRender,
@@ -31,8 +32,10 @@ interface DataTableProps<TData> {
     pageIndex: number;
     pageSize: number;
     sorting: SortingState;
+    columnFilters: ColumnFiltersState;
     loading?: boolean;
     onSortingChange: (sorting: SortingState) => void;
+    onColumnFiltersChange: (filters: ColumnFiltersState) => void;
     onPageIndexChange: (pageIndex: number) => void;
     onPageSizeChange: (pageSize: number) => void;
 }
@@ -57,8 +60,10 @@ export function DataTable<TData>({
     pageIndex,
     pageSize,
     sorting,
+    columnFilters,
     loading,
     onSortingChange,
+    onColumnFiltersChange,
     onPageIndexChange,
     onPageSizeChange,
 }: DataTableProps<TData>) {
@@ -78,6 +83,7 @@ export function DataTable<TData>({
         pageCount,
         state: {
             sorting,
+            columnFilters,
             pagination: { pageIndex, pageSize },
             columnVisibility,
         },
@@ -95,9 +101,14 @@ export function DataTable<TData>({
                 onPageIndexChange(next.pageIndex);
             }
         },
+        onColumnFiltersChange: (updater) => {
+            const next = typeof updater === 'function' ? updater(columnFilters) : updater;
+            onColumnFiltersChange(next);
+        },
         onColumnVisibilityChange: setColumnVisibility,
         getCoreRowModel: getCoreRowModel(),
         manualSorting: true,
+        manualFiltering: true,
         manualPagination: true,
     });
 

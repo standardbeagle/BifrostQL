@@ -12,6 +12,7 @@ export function DataDataTable({ table, id, tableFilter }: DataDataTableParams): 
     const {
         columns,
         sorting,
+        columnFilters,
         pageIndex,
         pageSize,
         pageCount,
@@ -19,6 +20,7 @@ export function DataDataTable({ table, id, tableFilter }: DataDataTableParams): 
         loading,
         error,
         onSortingChange,
+        onColumnFiltersChange,
         onPageIndexChange,
         onPageSizeChange,
     } = useDataTable(table, id, tableFilter);
@@ -33,8 +35,10 @@ export function DataDataTable({ table, id, tableFilter }: DataDataTableParams): 
             pageIndex={pageIndex}
             pageSize={pageSize}
             sorting={sorting}
+            columnFilters={columnFilters}
             loading={loading}
             onSortingChange={onSortingChange}
+            onColumnFiltersChange={onColumnFiltersChange}
             onPageIndexChange={onPageIndexChange}
             onPageSizeChange={onPageSizeChange}
         />

@@ -15,6 +15,7 @@ import {
 import { TextFilter } from '@/components/filters/text-filter';
 import { NumberFilter } from '@/components/filters/number-filter';
 import { DateFilter } from '@/components/filters/date-filter';
+import { BooleanFilter } from '@/components/filters/boolean-filter';
 
 function getBaseParamType<TData, TValue>(column: Column<TData, TValue>): string {
     const paramType = (column.columnDef.meta as { paramType?: string })?.paramType ?? '';
@@ -32,6 +33,10 @@ function isNumericColumn<TData, TValue>(column: Column<TData, TValue>): boolean 
 
 function isDateColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
     return getBaseParamType(column) === 'DateTime';
+}
+
+function isBooleanColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
+    return getBaseParamType(column) === 'Boolean';
 }
 
 interface DataTableColumnHeaderProps<TData, TValue> {
@@ -52,6 +57,7 @@ export function DataTableColumnHeader<TData, TValue>({
     const showTextFilter = isStringColumn(column);
     const showNumericFilter = isNumericColumn(column);
     const showDateFilter = isDateColumn(column);
+    const showBooleanFilter = isBooleanColumn(column);
 
     return (
         <DropdownMenu>
@@ -139,6 +145,23 @@ export function DataTableColumnHeader<TData, TValue>({
                             </DropdownMenuSubTrigger>
                             <DropdownMenuSubContent>
                                 <DateFilter column={column} />
+                            </DropdownMenuSubContent>
+                        </DropdownMenuSub>
+                    </>
+                )}
+                {showBooleanFilter && (
+                    <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuSub>
+                            <DropdownMenuSubTrigger>
+                                <Filter className={cn(
+                                    'size-3.5',
+                                    hasFilter ? 'text-primary' : 'text-muted-foreground'
+                                )} />
+                                Filter
+                            </DropdownMenuSubTrigger>
+                            <DropdownMenuSubContent>
+                                <BooleanFilter column={column} />
                             </DropdownMenuSubContent>
                         </DropdownMenuSub>
                     </>

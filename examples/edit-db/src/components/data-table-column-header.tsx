@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { TextFilter } from '@/components/filters/text-filter';
 import { NumberFilter } from '@/components/filters/number-filter';
+import { DateFilter } from '@/components/filters/date-filter';
 
 function getBaseParamType<TData, TValue>(column: Column<TData, TValue>): string {
     const paramType = (column.columnDef.meta as { paramType?: string })?.paramType ?? '';
@@ -27,6 +28,10 @@ function isStringColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
 function isNumericColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
     const base = getBaseParamType(column);
     return base === 'Int' || base === 'Float';
+}
+
+function isDateColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
+    return getBaseParamType(column) === 'DateTime';
 }
 
 interface DataTableColumnHeaderProps<TData, TValue> {
@@ -46,6 +51,7 @@ export function DataTableColumnHeader<TData, TValue>({
     const hasFilter = column.getFilterValue() !== undefined;
     const showTextFilter = isStringColumn(column);
     const showNumericFilter = isNumericColumn(column);
+    const showDateFilter = isDateColumn(column);
 
     return (
         <DropdownMenu>
@@ -116,6 +122,23 @@ export function DataTableColumnHeader<TData, TValue>({
                             </DropdownMenuSubTrigger>
                             <DropdownMenuSubContent>
                                 <NumberFilter column={column} />
+                            </DropdownMenuSubContent>
+                        </DropdownMenuSub>
+                    </>
+                )}
+                {showDateFilter && (
+                    <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuSub>
+                            <DropdownMenuSubTrigger>
+                                <Filter className={cn(
+                                    'size-3.5',
+                                    hasFilter ? 'text-primary' : 'text-muted-foreground'
+                                )} />
+                                Filter
+                            </DropdownMenuSubTrigger>
+                            <DropdownMenuSubContent>
+                                <DateFilter column={column} />
                             </DropdownMenuSubContent>
                         </DropdownMenuSub>
                     </>

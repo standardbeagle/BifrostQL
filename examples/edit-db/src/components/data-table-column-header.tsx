@@ -13,11 +13,20 @@ import {
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { TextFilter } from '@/components/filters/text-filter';
+import { NumberFilter } from '@/components/filters/number-filter';
+
+function getBaseParamType<TData, TValue>(column: Column<TData, TValue>): string {
+    const paramType = (column.columnDef.meta as { paramType?: string })?.paramType ?? '';
+    return paramType.replace('!', '');
+}
 
 function isStringColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
-    const paramType = (column.columnDef.meta as { paramType?: string })?.paramType ?? '';
-    const baseType = paramType.replace('!', '');
-    return baseType === 'String';
+    return getBaseParamType(column) === 'String';
+}
+
+function isNumericColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
+    const base = getBaseParamType(column);
+    return base === 'Int' || base === 'Float';
 }
 
 interface DataTableColumnHeaderProps<TData, TValue> {
@@ -36,6 +45,7 @@ export function DataTableColumnHeader<TData, TValue>({
     const sorted = column.getIsSorted();
     const hasFilter = column.getFilterValue() !== undefined;
     const showTextFilter = isStringColumn(column);
+    const showNumericFilter = isNumericColumn(column);
 
     return (
         <DropdownMenu>
@@ -89,6 +99,23 @@ export function DataTableColumnHeader<TData, TValue>({
                             </DropdownMenuSubTrigger>
                             <DropdownMenuSubContent>
                                 <TextFilter column={column} />
+                            </DropdownMenuSubContent>
+                        </DropdownMenuSub>
+                    </>
+                )}
+                {showNumericFilter && (
+                    <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuSub>
+                            <DropdownMenuSubTrigger>
+                                <Filter className={cn(
+                                    'size-3.5',
+                                    hasFilter ? 'text-primary' : 'text-muted-foreground'
+                                )} />
+                                Filter
+                            </DropdownMenuSubTrigger>
+                            <DropdownMenuSubContent>
+                                <NumberFilter column={column} />
                             </DropdownMenuSubContent>
                         </DropdownMenuSub>
                     </>

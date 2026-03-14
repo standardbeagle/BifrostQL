@@ -11,7 +11,7 @@ const columns: ColumnDef<SchemaTable, unknown>[] = [
         id: 'table',
         header: 'Table',
         cell: ({ row }) => (
-            <Link to={`/${row.original.name}`} className="no-underline text-foreground hover:text-primary">
+            <Link to={`/${row.original.name}`} className="block no-underline text-foreground hover:text-primary py-1 px-1 text-sm font-medium">
                 {row.original.label}
             </Link>
         ),

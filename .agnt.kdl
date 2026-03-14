@@ -13,10 +13,15 @@ scripts {
         autostart true
     }
 
+    // edit-db library watch build (rebuilds dist/ on source changes)
+    lib {
+        run "cd examples/edit-db && npx vite build --watch --mode production"
+        autostart true
+    }
+
     // Frontend dev server (Vite on port 5173, proxies /graphql to backend:5000)
     dev {
-        run "pnpm dev"
-        cwd "src/BifrostQL.UI/frontend"
+        run "cd src/BifrostQL.UI/frontend && pnpm dev"
         autostart true
         // Vite outputs: "Local: http://localhost:5173/"
         url-matchers "Local:\\s+{url}"

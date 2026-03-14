@@ -14,7 +14,7 @@ function Layout() {
     const [sidebarOpen, setSidebarOpen] = useState(true);
 
     return (
-        <div className={`grid min-h-screen ${sidebarOpen ? 'grid-cols-[minmax(150px,min-content)_1fr]' : 'grid-cols-[0px_1fr]'} items-start md:grid-cols-[minmax(150px,min-content)_1fr] transition-[grid-template-columns] duration-200`}>
+        <div className={`grid min-h-screen grid-rows-[auto_1fr] ${sidebarOpen ? 'grid-cols-[minmax(150px,min-content)_1fr]' : 'grid-cols-[0px_1fr]'} md:grid-cols-[minmax(150px,min-content)_1fr] transition-[grid-template-columns] duration-200`}>
             <div className="col-span-full sticky top-0 z-50 bg-background border-b border-border flex items-center">
                 <Button
                     variant="ghost"
@@ -34,12 +34,12 @@ function Layout() {
                     </ErrorBoundary>
                 </div>
             </div>
-            <div className={`border-r border-border overflow-y-auto max-h-[calc(100vh-3.5rem)] sticky top-14 ${sidebarOpen ? '' : 'hidden'} md:block`}>
+            <nav aria-label="Tables" className={`border-r border-border overflow-y-auto max-h-[calc(100vh-3.5rem)] sticky top-14 ${sidebarOpen ? '' : 'hidden'} md:block`}>
                 <ErrorBoundary section="Table List">
                     <TableList />
                 </ErrorBoundary>
-            </div>
-            <div className="grid justify-items-center items-stretch overflow-x-auto p-2.5">
+            </nav>
+            <main className="flex flex-col overflow-x-auto px-4 py-2">
                 <ErrorBoundary section="Data Panel">
                     <Routes>
                         <Route path='/:table/from/:filterTable/:id/edit/:editid' element={<DataPanel />} />
@@ -59,7 +59,7 @@ function Layout() {
                         <Route path='/:table/edit' element={<DataEdit />} />
                     </Routes>
                 </ErrorBoundary>
-            </div>
+            </main>
         </div>
     );
 }

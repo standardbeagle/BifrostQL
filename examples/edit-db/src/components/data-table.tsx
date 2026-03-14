@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
     ColumnDef,
     SortingState,
@@ -38,6 +38,17 @@ interface DataTableProps<TData> {
 }
 
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100];
+const ROW_HEIGHT_ESTIMATE = 41;
+const CHROME_HEIGHT = 160;
+
+function getScreenPageSize(): number {
+    const available = window.innerHeight - CHROME_HEIGHT;
+    const rows = Math.floor(available / ROW_HEIGHT_ESTIMATE);
+    const clamped = Math.max(5, rows);
+    return PAGE_SIZE_OPTIONS.reduce((prev, curr) =>
+        Math.abs(curr - clamped) < Math.abs(prev - clamped) ? curr : prev
+    );
+}
 
 export function DataTable<TData>({
     columns,
@@ -52,6 +63,14 @@ export function DataTable<TData>({
     onPageSizeChange,
 }: DataTableProps<TData>) {
     const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+    const [initialized, setInitialized] = useState(false);
+
+    useEffect(() => {
+        if (!initialized) {
+            onPageSizeChange(getScreenPageSize());
+            setInitialized(true);
+        }
+    }, [initialized, onPageSizeChange]);
 
     const table = useReactTable({
         data,
@@ -83,7 +102,7 @@ export function DataTable<TData>({
     });
 
     return (
-        <div className="w-full">
+        <div className="flex flex-col w-full min-h-0 flex-1">
             <div className="flex items-center justify-end py-2 px-1">
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -106,57 +125,60 @@ export function DataTable<TData>({
                     </DropdownMenuContent>
                 </DropdownMenu>
             </div>
-            <Table>
-                <TableHeader>
-                    {table.getHeaderGroups().map((headerGroup) => (
-                        <TableRow key={headerGroup.id}>
-                            {headerGroup.headers.map((header) => (
-                                <TableHead
-                                    key={header.id}
-                                    className={header.column.getCanSort() ? 'cursor-pointer select-none' : ''}
-                                    onClick={header.column.getToggleSortingHandler()}
-                                >
-                                    {header.isPlaceholder
-                                        ? null
-                                        : flexRender(header.column.columnDef.header, header.getContext())}
-                                    {header.column.getIsSorted() === 'asc' ? ' \u25B2' : ''}
-                                    {header.column.getIsSorted() === 'desc' ? ' \u25BC' : ''}
-                                </TableHead>
-                            ))}
-                        </TableRow>
-                    ))}
-                </TableHeader>
-                <TableBody>
-                    {loading ? (
-                        <TableRow>
-                            <TableCell colSpan={columns.length} className="h-24 text-center">
-                                Loading...
-                            </TableCell>
-                        </TableRow>
-                    ) : table.getRowModel().rows.length === 0 ? (
-                        <TableRow>
-                            <TableCell colSpan={columns.length} className="h-24 text-center">
-                                No results.
-                            </TableCell>
-                        </TableRow>
-                    ) : (
-                        table.getRowModel().rows.map((row) => (
-                            <TableRow key={row.id}>
-                                {row.getVisibleCells().map((cell) => (
-                                    <TableCell key={cell.id}>
-                                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                                    </TableCell>
+            <div className="flex-1">
+                <Table>
+                    <TableHeader>
+                        {table.getHeaderGroups().map((headerGroup) => (
+                            <TableRow key={headerGroup.id}>
+                                {headerGroup.headers.map((header) => (
+                                    <TableHead
+                                        key={header.id}
+                                        className={header.column.getCanSort() ? 'cursor-pointer select-none' : ''}
+                                        onClick={header.column.getToggleSortingHandler()}
+                                    >
+                                        {header.isPlaceholder
+                                            ? null
+                                            : flexRender(header.column.columnDef.header, header.getContext())}
+                                        {header.column.getIsSorted() === 'asc' ? ' \u25B2' : ''}
+                                        {header.column.getIsSorted() === 'desc' ? ' \u25BC' : ''}
+                                    </TableHead>
                                 ))}
                             </TableRow>
-                        ))
-                    )}
-                </TableBody>
-            </Table>
-            <div className="flex items-center justify-between px-2 py-4">
+                        ))}
+                    </TableHeader>
+                    <TableBody>
+                        {loading ? (
+                            <TableRow>
+                                <TableCell colSpan={columns.length} className="h-24 text-center">
+                                    Loading...
+                                </TableCell>
+                            </TableRow>
+                        ) : table.getRowModel().rows.length === 0 ? (
+                            <TableRow>
+                                <TableCell colSpan={columns.length} className="h-24 text-center">
+                                    No results.
+                                </TableCell>
+                            </TableRow>
+                        ) : (
+                            table.getRowModel().rows.map((row) => (
+                                <TableRow key={row.id}>
+                                    {row.getVisibleCells().map((cell) => (
+                                        <TableCell key={cell.id}>
+                                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                                        </TableCell>
+                                    ))}
+                                </TableRow>
+                            ))
+                        )}
+                    </TableBody>
+                </Table>
+            </div>
+            <div className="flex items-center justify-between px-4 py-3 border-t border-border mt-auto">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <span>Rows per page</span>
                     <select
-                        className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                        aria-label="Rows per page"
+                        className="h-8 rounded-md border border-input bg-background text-foreground px-2 text-sm"
                         value={pageSize}
                         onChange={(e) => onPageSizeChange(Number(e.target.value))}
                     >

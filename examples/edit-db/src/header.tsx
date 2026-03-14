@@ -62,7 +62,7 @@ export function Header() {
         </Alert>
     );
     return (
-        <header className="flex flex-wrap items-center gap-2 p-2.5">
+        <header className="flex flex-wrap items-center gap-3 px-4 py-2.5">
             <Button
                 variant="ghost"
                 size="sm"
@@ -72,12 +72,12 @@ export function Header() {
             >
                 &lsaquo;
             </Button>
-            <h3 className="text-sm font-semibold whitespace-nowrap">
+            <h2 className="text-sm font-semibold whitespace-nowrap">
                 Table: {tableSchema?.dbName ?? tableData?.table ?? "(Select)"}
-            </h3>
+            </h2>
             {options && <>
                 <Select value={column} onValueChange={setColumn}>
-                    <SelectTrigger size="sm" className="w-auto min-w-[100px]">
+                    <SelectTrigger size="sm" className="w-auto min-w-[140px]">
                         <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -91,7 +91,7 @@ export function Header() {
                     value={searchVal}
                     onChange={(event) => setSearchVal(event.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && filter()}
-                    className="min-w-[120px] max-w-[300px] flex-1 h-8"
+                    className="min-w-[200px] max-w-[400px] flex-1 h-8"
                     placeholder="Search..."
                 />
                 <Button variant="secondary" size="sm" onClick={filter}>Filter</Button>

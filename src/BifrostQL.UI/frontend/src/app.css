@@ -2,11 +2,9 @@
  * BifrostQL.UI - Norse-Industrial Dark Theme
  *
  * Design tokens define the dark palette used by the desktop app.
- * shadcn/Tailwind overrides map these tokens to --color-* variables
- * so the embedded edit-db component renders in dark mode.
- *
- * edit-db standalone keeps its own light defaults from globals.css.
- * These overrides only apply when edit-db is loaded inside BifrostQL.UI.
+ * shadcn/Tailwind CSS variables are overridden here so the embedded
+ * edit-db component renders in dark mode. edit-db's built CSS already
+ * includes all Tailwind utilities — no Tailwind plugin needed here.
  */
 
 :root {
@@ -21,7 +19,7 @@
   --text-bright: #f8fafc;
   --text-primary: #e2e8f0;
   --text-secondary: #94a3b8;
-  --text-muted: #64748b;
+  --text-muted: #8b9bb5;
 
   --accent-action: #3b82f6;
   --accent-action-hover: #2563eb;
@@ -32,35 +30,26 @@
 
   --bifrost-gradient: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
 
-  /* shadcn/Tailwind v4 Overrides (--color-* consumed by utility classes) */
+  /* shadcn/Tailwind v4 overrides — remap to Norse-Industrial tokens */
   --color-background: var(--void);
   --color-foreground: var(--text-primary);
-
   --color-card: var(--void-surface);
   --color-card-foreground: var(--text-bright);
-
   --color-popover: var(--void-surface);
   --color-popover-foreground: var(--text-bright);
-
   --color-primary: var(--accent-action);
   --color-primary-foreground: var(--text-bright);
-
   --color-secondary: var(--void-elevated);
   --color-secondary-foreground: var(--text-primary);
-
   --color-muted: var(--void-highlight);
   --color-muted-foreground: var(--text-muted);
-
   --color-accent: var(--void-elevated);
   --color-accent-foreground: var(--text-bright);
-
   --color-destructive: var(--accent-danger);
   --color-destructive-foreground: var(--text-bright);
-
   --color-border: var(--void-border);
   --color-input: var(--void-border);
   --color-ring: var(--accent-action);
-
   --radius: 0.5rem;
 }
 

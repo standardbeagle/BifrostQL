@@ -62,7 +62,7 @@ const getTableColumns = (table: Table, schema: Schema): ColumnDef<RowData, unkno
             enableSorting: false,
             enableHiding: false,
             cell: ({ row }) => (
-                <Link to={`/${table.graphQlName}/edit/${getRowPkValue(row.original, table)}`}>edit</Link>
+                <Link to={`/${table.graphQlName}/edit/${getRowPkValue(row.original, table)}`} className="text-primary hover:text-primary/80 hover:underline text-sm font-medium">edit</Link>
             ),
         }]
         : [];
@@ -84,7 +84,7 @@ const getTableColumns = (table: Table, schema: Schema): ColumnDef<RowData, unkno
                         const joined = row.original[columnName] as RowData | undefined;
                         if (!joined) return null;
                         return (
-                            <Link to={"/" + joinSchema?.name + "/" + getJoinedRowPkValue(joined)}>
+                            <Link to={"/" + joinSchema?.name + "/" + getJoinedRowPkValue(joined)} className="text-primary hover:text-primary/80 hover:underline">
                                 {joined?.label as string}
                             </Link>
                         );
@@ -103,7 +103,7 @@ const getTableColumns = (table: Table, schema: Schema): ColumnDef<RowData, unkno
                         const joined = row.original[c.name] as RowData | undefined;
                         if (!joined) return null;
                         return (
-                            <Link to={"/" + c.name + "/" + getJoinedRowPkValue(joined)}>
+                            <Link to={"/" + c.name + "/" + getJoinedRowPkValue(joined)} className="text-primary hover:text-primary/80 hover:underline">
                                 {c.name}
                             </Link>
                         );
@@ -139,7 +139,7 @@ const getTableColumns = (table: Table, schema: Schema): ColumnDef<RowData, unkno
                 enableSorting: false,
                 enableHiding: true,
                 cell: ({ row }) => (
-                    <Link to={"/" + joinTable?.name + "/from/" + table.name + "/" + getRowPkValue(row.original, table)}>
+                    <Link to={"/" + joinTable?.name + "/from/" + table.name + "/" + getRowPkValue(row.original, table)} className="text-primary hover:text-primary/80 hover:underline">
                         {joinTable?.name}
                     </Link>
                 ),

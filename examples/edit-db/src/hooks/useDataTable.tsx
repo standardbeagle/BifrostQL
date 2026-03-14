@@ -6,6 +6,7 @@ import { Table, Column, Join, Schema } from "../types/schema";
 import { ColumnDef, ColumnFiltersState, SortingState } from "@tanstack/react-table";
 import { useFetcher } from "../common/fetcher";
 import { DataTableColumnHeader } from "../components/data-table-column-header";
+import { FkCellPopover } from "../components/fk-cell-popover";
 
 const numericTypes = ["Int", "Int!", "Float", "Float!"];
 
@@ -176,10 +177,13 @@ const getTableColumns = (table: Table, schema: Schema): ColumnDef<RowData, unkno
                     cell: ({ row }) => {
                         const joined = row.original[columnName] as RowData | undefined;
                         if (!joined) return null;
+                        const joinedPk = getJoinedRowPkValue(joined);
                         return (
-                            <Link to={"/" + joinSchema?.name + "/" + getJoinedRowPkValue(joined)} className="text-primary hover:text-primary/80 hover:underline">
-                                {joined?.label as string}
-                            </Link>
+                            <FkCellPopover tableName={singleJoin.destinationTable} recordId={joinedPk}>
+                                <Link to={"/" + joinSchema?.name + "/" + joinedPk} className="text-primary hover:text-primary/80 hover:underline">
+                                    {joined?.label as string}
+                                </Link>
+                            </FkCellPopover>
                         );
                     },
                 };

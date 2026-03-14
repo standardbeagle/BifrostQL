@@ -27,6 +27,8 @@ import {
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { LoaderCircle } from "lucide-react";
+import { ContentEditor } from "@/components/content-editor";
+import { isBinaryDbType, isLongTextDbType } from "@/lib/content-detect";
 
 const booleanTypes = ["Boolean", "Boolean!"];
 const dateTypes = ["DateTime", "DateTime!"];
@@ -190,6 +192,7 @@ function EditField({ column, join, form, schema }: EditFieldProps) {
     const isRequired = !column.isNullable;
     const isBoolean = booleanTypes.some(t => t === column.paramType);
     const isDate = dateTypes.some(t => t === column.paramType);
+    const isContentField = isBinaryDbType(column.dbType) || isLongTextDbType(column.dbType);
 
     if (join) {
         return <ParentField column={column} join={join} form={form} schema={schema} isRequired={isRequired} />;
@@ -211,6 +214,37 @@ function EditField({ column, join, form, schema }: EditFieldProps) {
                         <Label htmlFor={name}>{column.label}</Label>
                         <FieldErrors errors={field.state.meta.errors} />
                     </div>
+                )}
+            />
+        );
+    }
+
+    if (isContentField) {
+        return (
+            <form.Field
+                name={name}
+                validators={isRequired ? {
+                    onSubmit: ({ value }: { value: unknown }) => {
+                        if (value === undefined || value === null || value === '') {
+                            return `${column.label} is required`;
+                        }
+                        return undefined;
+                    },
+                } : undefined}
+                children={(field: AnyFieldApi) => (
+                    <>
+                        <ContentEditor
+                            name={name}
+                            label={column.label}
+                            value={String(field.state.value ?? '')}
+                            dbType={column.dbType}
+                            onChange={(val) => field.handleChange(val)}
+                            onBlur={field.handleBlur}
+                            required={isRequired}
+                            invalid={field.state.meta.errors.length > 0}
+                        />
+                        <FieldErrors errors={field.state.meta.errors} />
+                    </>
                 )}
             />
         );

@@ -43,6 +43,7 @@ query dbSchema {
       dbName
       graphQlName
       paramType
+      dbType
       isPrimaryKey
       isIdentity
       isNullable

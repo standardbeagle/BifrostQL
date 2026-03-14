@@ -13,6 +13,7 @@ interface DbColumnItem {
     graphQlName: string;
     dbName: string;
     paramType: string;
+    dbType: string;
     isPrimaryKey: boolean;
     isIdentity: boolean;
     isNullable: boolean;

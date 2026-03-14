@@ -7,6 +7,10 @@ import { ColumnDef, ColumnFiltersState, SortingState } from "@tanstack/react-tab
 import { useFetcher } from "../common/fetcher";
 import { DataTableColumnHeader } from "../components/data-table-column-header";
 import { FkCellPopover } from "../components/fk-cell-popover";
+import { Pencil } from "lucide-react";
+import { Button } from "../components/ui/button";
+import { ContentViewer } from "../components/content-viewer";
+import { isLongTextDbType, isBinaryDbType } from "../lib/content-detect";
 
 const numericTypes = ["Int", "Int!", "Float", "Float!"];
 
@@ -154,7 +158,11 @@ const getTableColumns = (table: Table, schema: Schema): ColumnDef<RowData, unkno
             enableSorting: false,
             enableHiding: false,
             cell: ({ row }) => (
-                <Link to={`/${table.graphQlName}/edit/${getRowPkValue(row.original, table)}`} className="text-primary hover:text-primary/80 hover:underline text-sm font-medium">edit</Link>
+                <Button variant="ghost" size="icon-sm" asChild>
+                    <Link to={`/${table.graphQlName}/edit/${getRowPkValue(row.original, table)}`} aria-label="Edit row">
+                        <Pencil className="size-3.5" />
+                    </Link>
+                </Button>
             ),
         }]
         : [];
@@ -214,7 +222,20 @@ const getTableColumns = (table: Table, schema: Schema): ColumnDef<RowData, unkno
                     accessorFn: (row) => toLocaleDate(row?.[c.name] as string),
                     header: ({ column }) => <DataTableColumnHeader column={column} title={c.label} />,
                     enableSorting: true,
-                    meta: { sortField: c.name, paramType: c.paramType, filterOperators: operators },
+                    meta: { sortField: c.name, paramType: c.paramType, dbType: c.dbType, filterOperators: operators },
+                };
+            }
+
+            const useContentViewer = isLongTextDbType(c.dbType) || isBinaryDbType(c.dbType);
+
+            if (useContentViewer) {
+                return {
+                    id: c.name,
+                    accessorFn: (row) => (c.name ? String(row?.[c.name] ?? "") : ""),
+                    header: ({ column }) => <DataTableColumnHeader column={column} title={c.label} />,
+                    enableSorting: true,
+                    meta: { sortField: c.name, paramType: c.paramType, dbType: c.dbType, filterOperators: operators },
+                    cell: ({ row }) => <ContentViewer value={row.original[c.name]} dbType={c.dbType} />,
                 };
             }
 
@@ -223,7 +244,7 @@ const getTableColumns = (table: Table, schema: Schema): ColumnDef<RowData, unkno
                 accessorFn: (row) => (c.name ? String(row?.[c.name] ?? "") : ""),
                 header: ({ column }) => <DataTableColumnHeader column={column} title={c.label} />,
                 enableSorting: true,
-                meta: { sortField: c.name, paramType: c.paramType, filterOperators: operators },
+                meta: { sortField: c.name, paramType: c.paramType, dbType: c.dbType, filterOperators: operators },
             };
         });
 
@@ -333,6 +354,7 @@ interface UseDataTableResult {
     columns: ColumnDef<RowData, unknown>[];
     sorting: SortingState;
     columnFilters: ColumnFiltersState;
+    rowIdField: string;
     pageIndex: number;
     pageSize: number;
     pageCount: number;
@@ -435,10 +457,13 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         setPageIndex(0);
     }, []);
 
+    const rowIdField = table?.primaryKeys?.[0] ?? 'id';
+
     return {
         columns,
         sorting,
         columnFilters,
+        rowIdField,
         pageIndex,
         pageSize,
         pageCount,

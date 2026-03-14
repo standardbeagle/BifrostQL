@@ -23,6 +23,7 @@ export interface Column {
   name: string;
   label: string;
   paramType: string;
+  dbType: string;
   isPrimaryKey: boolean;
   isIdentity: boolean;
   isNullable: boolean;

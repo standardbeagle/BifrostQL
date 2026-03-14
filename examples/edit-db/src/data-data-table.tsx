@@ -3,16 +3,19 @@ import { DataTable } from './components/data-table';
 import { Table } from './types/schema';
 
 interface DataDataTableParams {
-    table: Table,
-    id?: string,
-    tableFilter?: string
+    table: Table;
+    id?: string;
+    tableFilter?: string;
+    selectedRowId?: string | null;
+    onRowSelect?: (rowId: string | null) => void;
 }
 
-export function DataDataTable({ table, id, tableFilter }: DataDataTableParams): JSX.Element {
+export function DataDataTable({ table, id, tableFilter, selectedRowId, onRowSelect }: DataDataTableParams): JSX.Element {
     const {
         columns,
         sorting,
         columnFilters,
+        rowIdField,
         pageIndex,
         pageSize,
         pageCount,
@@ -37,6 +40,9 @@ export function DataDataTable({ table, id, tableFilter }: DataDataTableParams): 
             sorting={sorting}
             columnFilters={columnFilters}
             loading={loading}
+            rowIdField={rowIdField}
+            selectedRowId={selectedRowId}
+            onRowSelect={onRowSelect}
             onSortingChange={onSortingChange}
             onColumnFiltersChange={onColumnFiltersChange}
             onPageIndexChange={onPageIndexChange}

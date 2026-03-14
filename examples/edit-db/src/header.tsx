@@ -11,7 +11,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select';
-import { Loader2 } from 'lucide-react';
+import { ChevronLeft, Filter, Plus, Search, X, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
 interface HeaderRouteParams {
@@ -62,43 +62,59 @@ export function Header() {
         </Alert>
     );
     return (
-        <header className="flex flex-wrap items-center gap-3 px-4 py-2.5">
+        <header className="flex flex-wrap items-center gap-2 px-4 py-2">
             <Button
                 variant="ghost"
-                size="sm"
+                size="icon-sm"
                 onClick={() => hasBack && back()}
                 disabled={!hasBack}
-                className="px-2"
+                aria-label="Go back"
             >
-                &lsaquo;
+                <ChevronLeft className="size-4" />
             </Button>
-            <h2 className="text-sm font-semibold whitespace-nowrap">
-                Table: {tableSchema?.dbName ?? tableData?.table ?? "(Select)"}
+            <h2 className="text-sm font-semibold whitespace-nowrap mr-1">
+                {tableSchema?.dbName ?? tableData?.table ?? "(Select)"}
             </h2>
             {options && <>
-                <Select value={column} onValueChange={setColumn}>
-                    <SelectTrigger size="sm" className="w-auto min-w-[140px]">
-                        <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                        {options.map((c: ColumnOption) => (
-                            <SelectItem key={c.key} value={c.value}>{c.label}</SelectItem>
-                        ))}
-                    </SelectContent>
-                </Select>
-                <Input
-                    type="search"
-                    value={searchVal}
-                    onChange={(event) => setSearchVal(event.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && filter()}
-                    className="min-w-[200px] max-w-[400px] flex-1 h-8"
-                    placeholder="Search..."
-                />
-                <Button variant="secondary" size="sm" onClick={filter}>Filter</Button>
-                <Button variant="outline" size="sm" onClick={() => navigate("/")}>Clear</Button>
-                {tableSchema?.isEditable && (
-                    <Button variant="default" size="sm" onClick={() => navigate(`edit/`)}>Add</Button>
-                )}
+                <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                    <Select value={column} onValueChange={setColumn}>
+                        <SelectTrigger size="sm" className="w-auto min-w-[140px] shrink-0">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {options.map((c: ColumnOption) => (
+                                <SelectItem key={c.key} value={c.value}>{c.label}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                    <div className="relative flex-1 min-w-[180px] max-w-[400px]">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
+                        <Input
+                            type="search"
+                            value={searchVal}
+                            onChange={(event) => setSearchVal(event.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && filter()}
+                            className="h-8 pl-8"
+                            placeholder="Search..."
+                        />
+                    </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                    <Button variant="secondary" size="sm" onClick={filter}>
+                        <Filter className="size-3.5" />
+                        Filter
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => navigate("/")}>
+                        <X className="size-3.5" />
+                        Clear
+                    </Button>
+                    {tableSchema?.isEditable && (
+                        <Button variant="default" size="sm" onClick={() => navigate(`edit/`)}>
+                            <Plus className="size-3.5" />
+                            Add
+                        </Button>
+                    )}
+                </div>
             </>}
         </header>
     )

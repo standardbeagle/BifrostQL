@@ -18,12 +18,26 @@ import {
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
+import {
     DropdownMenu,
     DropdownMenuCheckboxItem,
     DropdownMenuContent,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { ChevronDown } from 'lucide-react';
+import {
+    ChevronDown,
+    ChevronLeft,
+    ChevronRight,
+    ChevronsLeft,
+    ChevronsRight,
+    Columns3,
+} from 'lucide-react';
 
 interface DataTableProps<TData> {
     columns: ColumnDef<TData, unknown>[];
@@ -34,6 +48,9 @@ interface DataTableProps<TData> {
     sorting: SortingState;
     columnFilters: ColumnFiltersState;
     loading?: boolean;
+    rowIdField?: string;
+    selectedRowId?: string | null;
+    onRowSelect?: (rowId: string | null) => void;
     onSortingChange: (sorting: SortingState) => void;
     onColumnFiltersChange: (filters: ColumnFiltersState) => void;
     onPageIndexChange: (pageIndex: number) => void;
@@ -62,6 +79,9 @@ export function DataTable<TData>({
     sorting,
     columnFilters,
     loading,
+    rowIdField = 'id',
+    selectedRowId,
+    onRowSelect,
     onSortingChange,
     onColumnFiltersChange,
     onPageIndexChange,
@@ -117,8 +137,10 @@ export function DataTable<TData>({
             <div className="flex items-center justify-end py-2 px-1">
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                        <Button variant="outline" size="sm" className="ml-auto">
-                            Columns <ChevronDown className="ml-2 size-4" />
+                        <Button variant="outline" size="sm">
+                            <Columns3 className="size-3.5" />
+                            Columns
+                            <ChevronDown className="size-3.5" />
                         </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
@@ -165,15 +187,24 @@ export function DataTable<TData>({
                                 </TableCell>
                             </TableRow>
                         ) : (
-                            table.getRowModel().rows.map((row) => (
-                                <TableRow key={row.id}>
-                                    {row.getVisibleCells().map((cell) => (
-                                        <TableCell key={cell.id}>
-                                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                                        </TableCell>
-                                    ))}
-                                </TableRow>
-                            ))
+                            table.getRowModel().rows.map((row) => {
+                                const rowPk = (row.original as Record<string, unknown>)?.[rowIdField] ?? row.id;
+                                const isSelected = selectedRowId != null && String(rowPk) === selectedRowId;
+                                return (
+                                    <TableRow
+                                        key={row.id}
+                                        data-state={isSelected ? 'selected' : undefined}
+                                        className={onRowSelect ? 'cursor-pointer' : undefined}
+                                        onClick={onRowSelect ? () => onRowSelect(isSelected ? null : String(rowPk)) : undefined}
+                                    >
+                                        {row.getVisibleCells().map((cell) => (
+                                            <TableCell key={cell.id}>
+                                                {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                                            </TableCell>
+                                        ))}
+                                    </TableRow>
+                                );
+                            })
                         )}
                     </TableBody>
                 </Table>
@@ -181,52 +212,61 @@ export function DataTable<TData>({
             <div className="flex items-center justify-between px-4 py-3 border-t border-border mt-auto">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <span>Rows per page</span>
-                    <select
-                        aria-label="Rows per page"
-                        className="h-8 rounded-md border border-input bg-background text-foreground px-2 text-sm"
-                        value={pageSize}
-                        onChange={(e) => onPageSizeChange(Number(e.target.value))}
+                    <Select
+                        value={String(pageSize)}
+                        onValueChange={(val) => onPageSizeChange(Number(val))}
                     >
-                        {PAGE_SIZE_OPTIONS.map((size) => (
-                            <option key={size} value={size}>{size}</option>
-                        ))}
-                    </select>
+                        <SelectTrigger size="sm" className="w-auto h-8" aria-label="Rows per page">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {PAGE_SIZE_OPTIONS.map((size) => (
+                                <SelectItem key={size} value={String(size)}>
+                                    {size}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
                 </div>
-                <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground">
+                <div className="flex items-center gap-1.5">
+                    <span className="text-sm text-muted-foreground mr-2">
                         Page {pageIndex + 1} of {pageCount || 1}
                     </span>
                     <Button
                         variant="outline"
-                        size="sm"
+                        size="icon-sm"
                         onClick={() => onPageIndexChange(0)}
                         disabled={pageIndex === 0}
+                        aria-label="First page"
                     >
-                        {'<<'}
+                        <ChevronsLeft className="size-4" />
                     </Button>
                     <Button
                         variant="outline"
-                        size="sm"
+                        size="icon-sm"
                         onClick={() => onPageIndexChange(pageIndex - 1)}
                         disabled={!table.getCanPreviousPage()}
+                        aria-label="Previous page"
                     >
-                        {'<'}
+                        <ChevronLeft className="size-4" />
                     </Button>
                     <Button
                         variant="outline"
-                        size="sm"
+                        size="icon-sm"
                         onClick={() => onPageIndexChange(pageIndex + 1)}
                         disabled={!table.getCanNextPage()}
+                        aria-label="Next page"
                     >
-                        {'>'}
+                        <ChevronRight className="size-4" />
                     </Button>
                     <Button
                         variant="outline"
-                        size="sm"
+                        size="icon-sm"
                         onClick={() => onPageIndexChange(pageCount - 1)}
                         disabled={pageIndex >= pageCount - 1}
+                        aria-label="Last page"
                     >
-                        {'>>'}
+                        <ChevronsRight className="size-4" />
                     </Button>
                 </div>
             </div>

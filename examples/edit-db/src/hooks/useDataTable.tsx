@@ -5,6 +5,7 @@ import { useSchema } from "./useSchema";
 import { Table, Column, Join, Schema } from "../types/schema";
 import { ColumnDef, SortingState } from "@tanstack/react-table";
 import { useFetcher } from "../common/fetcher";
+import { DataTableColumnHeader } from "../components/data-table-column-header";
 
 const numericTypes = ["Int", "Int!", "Float", "Float!"];
 
@@ -77,7 +78,7 @@ const getTableColumns = (table: Table, schema: Schema): ColumnDef<RowData, unkno
                 return {
                     id: c.name,
                     accessorKey: c.name,
-                    header: c.label,
+                    header: ({ column }) => <DataTableColumnHeader column={column} title={c.label} />,
                     enableSorting: true,
                     meta: { sortField: c.name },
                     cell: ({ row }) => {
@@ -96,7 +97,7 @@ const getTableColumns = (table: Table, schema: Schema): ColumnDef<RowData, unkno
                 return {
                     id: c.name,
                     accessorKey: c.name,
-                    header: c.label,
+                    header: ({ column }) => <DataTableColumnHeader column={column} title={c.label} />,
                     enableSorting: true,
                     meta: { sortField: c.name },
                     cell: ({ row }) => {
@@ -115,7 +116,7 @@ const getTableColumns = (table: Table, schema: Schema): ColumnDef<RowData, unkno
                 return {
                     id: c.name,
                     accessorFn: (row) => toLocaleDate(row?.[c.name] as string),
-                    header: c.label,
+                    header: ({ column }) => <DataTableColumnHeader column={column} title={c.label} />,
                     enableSorting: true,
                     meta: { sortField: c.name },
                 };
@@ -124,7 +125,7 @@ const getTableColumns = (table: Table, schema: Schema): ColumnDef<RowData, unkno
             return {
                 id: c.name,
                 accessorFn: (row) => (c.name ? String(row?.[c.name] ?? "") : ""),
-                header: c.label,
+                header: ({ column }) => <DataTableColumnHeader column={column} title={c.label} />,
                 enableSorting: true,
                 meta: { sortField: c.name },
             };

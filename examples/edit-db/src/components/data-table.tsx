@@ -131,16 +131,10 @@ export function DataTable<TData>({
                         {table.getHeaderGroups().map((headerGroup) => (
                             <TableRow key={headerGroup.id}>
                                 {headerGroup.headers.map((header) => (
-                                    <TableHead
-                                        key={header.id}
-                                        className={header.column.getCanSort() ? 'cursor-pointer select-none' : ''}
-                                        onClick={header.column.getToggleSortingHandler()}
-                                    >
+                                    <TableHead key={header.id}>
                                         {header.isPlaceholder
                                             ? null
                                             : flexRender(header.column.columnDef.header, header.getContext())}
-                                        {header.column.getIsSorted() === 'asc' ? ' \u25B2' : ''}
-                                        {header.column.getIsSorted() === 'desc' ? ' \u25BC' : ''}
                                     </TableHead>
                                 ))}
                             </TableRow>

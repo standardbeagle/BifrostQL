@@ -16,6 +16,7 @@ import { TextFilter } from '@/components/filters/text-filter';
 import { NumberFilter } from '@/components/filters/number-filter';
 import { DateFilter } from '@/components/filters/date-filter';
 import { BooleanFilter } from '@/components/filters/boolean-filter';
+import { FkFilter } from '@/components/filters/fk-filter';
 
 function getBaseParamType<TData, TValue>(column: Column<TData, TValue>): string {
     const paramType = (column.columnDef.meta as { paramType?: string })?.paramType ?? '';
@@ -39,6 +40,12 @@ function isBooleanColumn<TData, TValue>(column: Column<TData, TValue>): boolean 
     return getBaseParamType(column) === 'Boolean';
 }
 
+function getFkMeta<TData, TValue>(column: Column<TData, TValue>): { joinTable: string; joinLabelColumn: string } | null {
+    const meta = column.columnDef.meta as { joinTable?: string; joinLabelColumn?: string } | undefined;
+    if (meta?.joinTable) return { joinTable: meta.joinTable, joinLabelColumn: meta.joinLabelColumn ?? 'id' };
+    return null;
+}
+
 interface DataTableColumnHeaderProps<TData, TValue> {
     column: Column<TData, TValue>;
     title: string;
@@ -54,10 +61,11 @@ export function DataTableColumnHeader<TData, TValue>({
 
     const sorted = column.getIsSorted();
     const hasFilter = column.getFilterValue() !== undefined;
-    const showTextFilter = isStringColumn(column);
-    const showNumericFilter = isNumericColumn(column);
-    const showDateFilter = isDateColumn(column);
-    const showBooleanFilter = isBooleanColumn(column);
+    const fkMeta = getFkMeta(column);
+    const showTextFilter = !fkMeta && isStringColumn(column);
+    const showNumericFilter = !fkMeta && isNumericColumn(column);
+    const showDateFilter = !fkMeta && isDateColumn(column);
+    const showBooleanFilter = !fkMeta && isBooleanColumn(column);
 
     return (
         <DropdownMenu>
@@ -162,6 +170,23 @@ export function DataTableColumnHeader<TData, TValue>({
                             </DropdownMenuSubTrigger>
                             <DropdownMenuSubContent>
                                 <BooleanFilter column={column} />
+                            </DropdownMenuSubContent>
+                        </DropdownMenuSub>
+                    </>
+                )}
+                {fkMeta && (
+                    <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuSub>
+                            <DropdownMenuSubTrigger>
+                                <Filter className={cn(
+                                    'size-3.5',
+                                    hasFilter ? 'text-primary' : 'text-muted-foreground'
+                                )} />
+                                Filter
+                            </DropdownMenuSubTrigger>
+                            <DropdownMenuSubContent>
+                                <FkFilter column={column} joinTable={fkMeta.joinTable} joinLabelColumn={fkMeta.joinLabelColumn} />
                             </DropdownMenuSubContent>
                         </DropdownMenuSub>
                     </>

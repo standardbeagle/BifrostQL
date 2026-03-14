@@ -166,12 +166,13 @@ const getTableColumns = (table: Table, schema: Schema): ColumnDef<RowData, unkno
             if (singleJoin) {
                 const columnName = singleJoin.destinationTable;
                 const joinSchema = schema.findTable(singleJoin.destinationTable);
+                const joinLabelColumn = joinSchema?.labelColumn ?? 'id';
                 return {
                     id: c.name,
                     accessorKey: c.name,
                     header: ({ column }) => <DataTableColumnHeader column={column} title={c.label} />,
                     enableSorting: true,
-                    meta: { sortField: c.name, paramType: c.paramType, filterOperators: operators },
+                    meta: { sortField: c.name, paramType: c.paramType, filterOperators: operators, joinTable: singleJoin.destinationTable, joinLabelColumn },
                     cell: ({ row }) => {
                         const joined = row.original[columnName] as RowData | undefined;
                         if (!joined) return null;

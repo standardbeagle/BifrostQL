@@ -170,6 +170,78 @@
   background: var(--void);
 }
 
+/* Connection error banner */
+.bifrost-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  max-width: 480px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 6px;
+  color: #fca5a5;
+  font-size: 0.8125rem;
+}
+
+.bifrost-error-banner__message {
+  flex: 1;
+}
+
+.bifrost-error-banner__dismiss {
+  background: none;
+  border: none;
+  color: #fca5a5;
+  font-size: 1.125rem;
+  cursor: pointer;
+  padding: 0 0.25rem;
+  line-height: 1;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+
+.bifrost-error-banner__dismiss:hover {
+  opacity: 1;
+}
+
+/* Connecting overlay for reconnect */
+.bifrost-connecting-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.8);
+  z-index: 50;
+}
+
+.bifrost-connecting-overlay__content {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  background: var(--void-surface);
+  border: 1px solid var(--void-border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 0.875rem;
+}
+
+@keyframes bifrost-spin {
+  to { transform: rotate(360deg); }
+}
+
+.bifrost-connecting-spinner {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid var(--void-border);
+  border-top-color: var(--accent-action);
+  border-radius: 50%;
+  animation: bifrost-spin 0.6s linear infinite;
+}
+
 *:focus-visible {
   outline: 2px solid var(--accent-action);
   outline-offset: 2px;

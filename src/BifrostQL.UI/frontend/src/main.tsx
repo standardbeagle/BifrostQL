@@ -25,19 +25,22 @@ const API_QUICKSTART = '/api/database/create-quickstart';
 type AppView = 'welcome' | 'quickstart' | 'provider-select' | 'connect' | 'editor';
 
 function App() {
-  const [, setConnectionState] = useState<ConnectionState>('idle');
+  const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<AppView>('welcome');
   const [recentConnections, setRecentConnections] = useState<ConnectionInfo[]>(() => loadRecentConnections());
   const [connectionInfo, setConnectionInfo] = useState<ConnectionInfo | null>(null);
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
   const [isLaunching, setIsLaunching] = useState(false);
   const [launchProgress, setLaunchProgress] = useState('');
+  const [editorKey, setEditorKey] = useState(0);
 
   const graphqlUri = `${window.location.origin}/graphql`;
 
   const handleTestConnection = useCallback(async (connectionString: string): Promise<boolean> => {
     try {
       setConnectionState('testing');
+      setConnectionError(null);
       const response = await fetch(API_TEST_CONNECTION, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -48,7 +51,8 @@ function App() {
         throw new Error(result.error || 'Connection test failed');
       }
       return result.success;
-    } catch {
+    } catch (err) {
+      setConnectionError(err instanceof Error ? err.message : 'Connection test failed');
       return false;
     } finally {
       setConnectionState('idle');
@@ -58,6 +62,7 @@ function App() {
   const handleConnect = useCallback(async (connectionString: string, connectionName: string) => {
     try {
       setConnectionState('connecting');
+      setConnectionError(null);
 
       const response = await fetch(API_TEST_CONNECTION, {
         method: 'POST',
@@ -78,7 +83,8 @@ function App() {
       });
 
       if (!updateResponse.ok) {
-        throw new Error('Failed to update connection');
+        const updateResult = await updateResponse.json().catch(() => ({}));
+        throw new Error(updateResult.error || 'Failed to update connection');
       }
 
       const info: ConnectionInfo = {
@@ -96,10 +102,12 @@ function App() {
       setRecentConnections(updated.slice(0, 5));
       saveRecentConnections(updated.slice(0, 5));
 
+      setEditorKey((k) => k + 1);
       setCurrentView('editor');
       setConnectionState('connected');
-    } catch {
+    } catch (err) {
       setConnectionState('error');
+      setConnectionError(err instanceof Error ? err.message : 'Connection failed');
     }
   }, [recentConnections, selectedProvider]);
 
@@ -120,6 +128,7 @@ function App() {
   const handleQuickStartLaunch = useCallback(async (schema: QuickStartSchema, dataSize: DataSize) => {
     try {
       setConnectionState('connecting');
+      setConnectionError(null);
       setIsLaunching(true);
       setLaunchProgress('Starting...');
 
@@ -184,6 +193,7 @@ function App() {
           setRecentConnections(updated.slice(0, 5));
           saveRecentConnections(updated.slice(0, 5));
 
+          setEditorKey((k) => k + 1);
           setCurrentView('editor');
           setConnectionState('connected');
         } else {
@@ -213,11 +223,13 @@ function App() {
         setRecentConnections(updated.slice(0, 5));
         saveRecentConnections(updated.slice(0, 5));
 
+        setEditorKey((k) => k + 1);
         setCurrentView('editor');
         setConnectionState('connected');
       }
-    } catch {
+    } catch (err) {
       setConnectionState('error');
+      setConnectionError(err instanceof Error ? err.message : 'Failed to create quickstart database');
     } finally {
       setIsLaunching(false);
       setLaunchProgress('');
@@ -238,6 +250,7 @@ function App() {
         setCurrentView('welcome');
         setConnectionInfo(null);
         setConnectionState('idle');
+        setConnectionError(null);
         setSelectedProvider(null);
         break;
       default:
@@ -272,6 +285,26 @@ function App() {
   if (currentView === 'connect' && selectedProvider) {
     return (
       <div className="bifrost-connection-container">
+        {connectionState === 'connecting' && (
+          <div className="bifrost-connecting-overlay">
+            <div className="bifrost-connecting-overlay__content">
+              <span className="bifrost-connecting-spinner" aria-hidden="true" />
+              Connecting...
+            </div>
+          </div>
+        )}
+        {connectionState === 'error' && connectionError && (
+          <div className="bifrost-error-banner" role="alert" style={{ marginBottom: '1rem', maxWidth: '480px' }}>
+            <span className="bifrost-error-banner__message">{connectionError}</span>
+            <button
+              className="bifrost-error-banner__dismiss"
+              onClick={() => { setConnectionState('idle'); setConnectionError(null); }}
+              aria-label="Dismiss error"
+            >
+              &times;
+            </button>
+          </div>
+        )}
         <ConnectionForm
           provider={selectedProvider}
           onConnect={handleConnect}
@@ -296,6 +329,7 @@ function App() {
           </button>
         </div>
         <Editor
+          key={editorKey}
           uri={graphqlUri}
           onLocate={(location) => {
             window.history.pushState(null, '', location);
@@ -308,8 +342,28 @@ function App() {
   // Welcome view (default)
   return (
     <div className="bifrost-welcome-container">
+      {connectionState === 'connecting' && (
+        <div className="bifrost-connecting-overlay">
+          <div className="bifrost-connecting-overlay__content">
+            <span className="bifrost-connecting-spinner" aria-hidden="true" />
+            Connecting...
+          </div>
+        </div>
+      )}
+      {connectionState === 'error' && connectionError && (
+        <div className="bifrost-error-banner" role="alert">
+          <span className="bifrost-error-banner__message">{connectionError}</span>
+          <button
+            className="bifrost-error-banner__dismiss"
+            onClick={() => { setConnectionState('idle'); setConnectionError(null); }}
+            aria-label="Dismiss error"
+          >
+            &times;
+          </button>
+        </div>
+      )}
       <WelcomePanel
-        onConnectClick={() => setCurrentView('provider-select')}
+        onConnectClick={() => { setConnectionError(null); setCurrentView('provider-select'); }}
         onCreateTestDatabase={handleTryItNow}
         recentConnections={recentConnections}
         onSelectRecentConnection={handleSelectRecentConnection}

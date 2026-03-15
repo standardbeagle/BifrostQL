@@ -1,36 +1,29 @@
+@import "tailwindcss/preflight" layer(base);
 @import "tailwindcss/theme" layer(theme);
 @import "tailwindcss/utilities" layer(utilities);
 
 @custom-variant dark (&:is(.dark *));
 
-@theme {
-  --color-background: hsl(0 0% 100%);
-  --color-foreground: hsl(222.2 84% 4.9%);
-
-  --color-card: hsl(0 0% 100%);
-  --color-card-foreground: hsl(222.2 84% 4.9%);
-
-  --color-popover: hsl(0 0% 100%);
-  --color-popover-foreground: hsl(222.2 84% 4.9%);
-
-  --color-primary: hsl(222.2 47.4% 11.2%);
-  --color-primary-foreground: hsl(210 40% 98%);
-
-  --color-secondary: hsl(210 40% 96.1%);
-  --color-secondary-foreground: hsl(222.2 47.4% 11.2%);
-
-  --color-muted: hsl(210 40% 96.1%);
-  --color-muted-foreground: hsl(215.4 16.3% 46.9%);
-
-  --color-accent: hsl(210 40% 96.1%);
-  --color-accent-foreground: hsl(222.2 47.4% 11.2%);
-
-  --color-destructive: hsl(0 84.2% 60.2%);
-  --color-destructive-foreground: hsl(210 40% 98%);
-
-  --color-border: hsl(214.3 31.8% 91.4%);
-  --color-input: hsl(214.3 31.8% 91.4%);
-  --color-ring: hsl(222.2 84% 4.9%);
+@theme inline {
+  --color-background: var(--ui-background);
+  --color-foreground: var(--ui-foreground);
+  --color-card: var(--ui-card);
+  --color-card-foreground: var(--ui-card-foreground);
+  --color-popover: var(--ui-popover);
+  --color-popover-foreground: var(--ui-popover-foreground);
+  --color-primary: var(--ui-primary);
+  --color-primary-foreground: var(--ui-primary-foreground);
+  --color-secondary: var(--ui-secondary);
+  --color-secondary-foreground: var(--ui-secondary-foreground);
+  --color-muted: var(--ui-muted);
+  --color-muted-foreground: var(--ui-muted-foreground);
+  --color-accent: var(--ui-accent);
+  --color-accent-foreground: var(--ui-accent-foreground);
+  --color-destructive: var(--ui-destructive);
+  --color-destructive-foreground: var(--ui-destructive-foreground);
+  --color-border: var(--ui-border);
+  --color-input: var(--ui-input);
+  --color-ring: var(--ui-ring);
 
   --radius-sm: 0.25rem;
   --radius-md: calc(var(--radius) - 2px);
@@ -39,3 +32,48 @@
   --radius: 0.5rem;
 }
 
+/* Light mode defaults */
+:root {
+  --ui-background: hsl(0 0% 100%);
+  --ui-foreground: hsl(222.2 84% 4.9%);
+  --ui-card: hsl(0 0% 100%);
+  --ui-card-foreground: hsl(222.2 84% 4.9%);
+  --ui-popover: hsl(0 0% 100%);
+  --ui-popover-foreground: hsl(222.2 84% 4.9%);
+  --ui-primary: hsl(222.2 47.4% 11.2%);
+  --ui-primary-foreground: hsl(210 40% 98%);
+  --ui-secondary: hsl(210 40% 96.1%);
+  --ui-secondary-foreground: hsl(222.2 47.4% 11.2%);
+  --ui-muted: hsl(210 40% 96.1%);
+  --ui-muted-foreground: hsl(215.4 16.3% 46.9%);
+  --ui-accent: hsl(210 40% 96.1%);
+  --ui-accent-foreground: hsl(222.2 47.4% 11.2%);
+  --ui-destructive: hsl(0 84.2% 60.2%);
+  --ui-destructive-foreground: hsl(210 40% 98%);
+  --ui-border: hsl(214.3 31.8% 91.4%);
+  --ui-input: hsl(214.3 31.8% 91.4%);
+  --ui-ring: hsl(222.2 84% 4.9%);
+}
+
+/* Dark mode overrides */
+.dark {
+  --ui-background: hsl(222.2 84% 4.9%);
+  --ui-foreground: hsl(210 40% 98%);
+  --ui-card: hsl(222.2 84% 4.9%);
+  --ui-card-foreground: hsl(210 40% 98%);
+  --ui-popover: hsl(224 71% 8%);
+  --ui-popover-foreground: hsl(210 40% 98%);
+  --ui-primary: hsl(210 40% 98%);
+  --ui-primary-foreground: hsl(222.2 47.4% 11.2%);
+  --ui-secondary: hsl(217.2 32.6% 17.5%);
+  --ui-secondary-foreground: hsl(210 40% 98%);
+  --ui-muted: hsl(217.2 32.6% 17.5%);
+  --ui-muted-foreground: hsl(215 20.2% 65.1%);
+  --ui-accent: hsl(217.2 32.6% 17.5%);
+  --ui-accent-foreground: hsl(210 40% 98%);
+  --ui-destructive: hsl(0 62.8% 30.6%);
+  --ui-destructive-foreground: hsl(210 40% 98%);
+  --ui-border: hsl(217.2 32.6% 17.5%);
+  --ui-input: hsl(217.2 32.6% 17.5%);
+  --ui-ring: hsl(212.7 26.8% 83.9%);
+}

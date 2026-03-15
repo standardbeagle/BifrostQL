@@ -13,8 +13,19 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/graphql': 'http://localhost:5000',
-      '/api': 'http://localhost:5000',
+      '/graphql': {
+        target: 'http://localhost:5000',
+        // Suppress noisy ECONNREFUSED errors during backend startup
+        configure: (proxy) => {
+          proxy.on('error', () => {});
+        },
+      },
+      '/api': {
+        target: 'http://localhost:5000',
+        configure: (proxy) => {
+          proxy.on('error', () => {});
+        },
+      },
     },
   },
 });

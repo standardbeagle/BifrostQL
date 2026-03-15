@@ -62,23 +62,26 @@ export function Header() {
         </Alert>
     );
     return (
-        <header className="flex flex-wrap items-center gap-2 px-4 py-2">
-            <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={() => hasBack && back()}
-                disabled={!hasBack}
-                aria-label="Go back"
-            >
-                <ChevronLeft className="size-4" />
-            </Button>
-            <h2 className="text-sm font-semibold whitespace-nowrap mr-1">
-                {tableSchema?.dbName ?? tableData?.table ?? "(Select)"}
-            </h2>
+        <header className="flex items-center gap-3 px-3 py-1.5 min-h-[2.5rem]">
+            <div className="flex items-center gap-1.5 shrink-0">
+                <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => hasBack && back()}
+                    disabled={!hasBack}
+                    aria-label="Go back"
+                    title="Go back"
+                >
+                    <ChevronLeft className="size-4" />
+                </Button>
+                <h2 className="text-sm font-semibold whitespace-nowrap">
+                    {tableSchema?.dbName ?? tableData?.table ?? "(Select)"}
+                </h2>
+            </div>
             {options && <>
-                <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                <div className="flex items-center border border-border rounded-md overflow-hidden flex-1 min-w-0 max-w-[520px]">
                     <Select value={column} onValueChange={setColumn}>
-                        <SelectTrigger size="sm" className="w-auto min-w-[140px] shrink-0">
+                        <SelectTrigger size="sm" className="w-auto min-w-[120px] shrink-0 border-0 rounded-none border-r border-border h-8 text-xs">
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -87,29 +90,29 @@ export function Header() {
                             ))}
                         </SelectContent>
                     </Select>
-                    <div className="relative flex-1 min-w-[180px] max-w-[400px]">
+                    <div className="relative flex-1 min-w-[140px]">
                         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
                         <Input
                             type="search"
                             value={searchVal}
                             onChange={(event) => setSearchVal(event.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && filter()}
-                            className="h-8 pl-8"
+                            className="h-8 pl-8 border-0 rounded-none focus-visible:ring-0 focus-visible:ring-offset-0"
                             placeholder="Search..."
                         />
                     </div>
-                </div>
-                <div className="flex items-center gap-1.5">
-                    <Button variant="secondary" size="sm" onClick={filter}>
+                    <Button variant="ghost" size="sm" onClick={filter} className="shrink-0 rounded-none border-l border-border h-8 px-2.5 text-xs">
                         <Filter className="size-3.5" />
                         Filter
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => navigate("/")}>
+                </div>
+                <div className="flex items-center gap-1.5 ml-auto shrink-0">
+                    <Button variant="ghost" size="sm" onClick={() => navigate("/")} className="text-muted-foreground text-xs h-8">
                         <X className="size-3.5" />
                         Clear
                     </Button>
                     {tableSchema?.isEditable && (
-                        <Button variant="default" size="sm" onClick={() => navigate(`edit/`)}>
+                        <Button variant="default" size="sm" onClick={() => navigate(`edit/`)} className="h-8 text-xs">
                             <Plus className="size-3.5" />
                             Add
                         </Button>

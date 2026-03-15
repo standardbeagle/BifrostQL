@@ -38,6 +38,12 @@ export function TableList() {
             <AlertDescription>Error: {error.message}</AlertDescription>
         </Alert>
     );
+    if (data.length === 0) return (
+        <div className="p-4 text-center text-sm text-muted-foreground">
+            <p className="font-medium">No tables found</p>
+            <p className="mt-1">The database may be empty or the connection may have failed.</p>
+        </div>
+    );
 
     return (
         <div>

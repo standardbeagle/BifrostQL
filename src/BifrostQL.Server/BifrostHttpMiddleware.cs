@@ -52,7 +52,22 @@ namespace BifrostQL.Server
                 UserContext = BuildUserContext(context),
             };
 
-            var result = await _executor.ExecuteAsync(options);
+            ExecutionResult result;
+            try
+            {
+                result = await _executor.ExecuteAsync(options);
+            }
+            catch (Exception ex)
+            {
+                var innerMessage = ex.InnerException?.Message ?? ex.Message;
+                result = new ExecutionResult
+                {
+                    Errors = new ExecutionErrors
+                    {
+                        new ExecutionError($"Server error: {innerMessage}")
+                    }
+                };
+            }
 
             context.Response.ContentType = "application/json";
             context.Response.StatusCode = 200;
@@ -100,7 +115,23 @@ namespace BifrostQL.Server
             // app.Map() strips the matched prefix from Path and moves it to PathBase,
             // so we need to check PathBase (where the endpoint path lives after routing)
             // before falling back to Path or the first registered value.
-            var sharedExtensions = ResolveExtensions(extensionsLoader, context);
+            Inputs sharedExtensions;
+            try
+            {
+                sharedExtensions = ResolveExtensions(extensionsLoader, context);
+            }
+            catch (Exception ex)
+            {
+                // Surface connection/schema errors as GraphQL errors instead of 500
+                var innerMessage = ex.InnerException?.Message ?? ex.Message;
+                return Task.FromResult(new ExecutionResult
+                {
+                    Errors = new ExecutionErrors
+                    {
+                        new ExecutionError($"Database connection failed: {innerMessage}")
+                    }
+                });
+            }
             var model = (IDbModel)(sharedExtensions["model"] ?? throw new InvalidDataException("dbSchema not configured"));
             options.Schema = (ISchema)(sharedExtensions["dbSchema"] ?? throw new InvalidDataException("dbSchema not configured"));
 

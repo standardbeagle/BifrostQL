@@ -32,6 +32,7 @@ export function DetailPanel({ parentTable, selectedRowId }: DetailPanelProps) {
                     size="icon-sm"
                     onClick={() => setCollapsed(!collapsed)}
                     aria-label={collapsed ? 'Expand detail panel' : 'Collapse detail panel'}
+                    title={collapsed ? 'Expand detail panel' : 'Collapse detail panel'}
                 >
                     {collapsed ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
                 </Button>

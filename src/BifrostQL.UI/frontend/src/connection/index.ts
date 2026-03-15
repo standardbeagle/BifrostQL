@@ -22,4 +22,4 @@ export {
   saveRecentConnections,
   loadRecentConnections,
   MAX_RECENT_CONNECTIONS,
-} from './WelcomePanel';
+} from './recent-connections';

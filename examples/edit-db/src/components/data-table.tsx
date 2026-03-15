@@ -238,6 +238,7 @@ export function DataTable<TData>({
                         onClick={() => onPageIndexChange(0)}
                         disabled={pageIndex === 0}
                         aria-label="First page"
+                        title="First page"
                     >
                         <ChevronsLeft className="size-4" />
                     </Button>
@@ -247,6 +248,7 @@ export function DataTable<TData>({
                         onClick={() => onPageIndexChange(pageIndex - 1)}
                         disabled={!table.getCanPreviousPage()}
                         aria-label="Previous page"
+                        title="Previous page"
                     >
                         <ChevronLeft className="size-4" />
                     </Button>
@@ -256,6 +258,7 @@ export function DataTable<TData>({
                         onClick={() => onPageIndexChange(pageIndex + 1)}
                         disabled={!table.getCanNextPage()}
                         aria-label="Next page"
+                        title="Next page"
                     >
                         <ChevronRight className="size-4" />
                     </Button>
@@ -265,6 +268,7 @@ export function DataTable<TData>({
                         onClick={() => onPageIndexChange(pageCount - 1)}
                         disabled={pageIndex >= pageCount - 1}
                         aria-label="Last page"
+                        title="Last page"
                     >
                         <ChevronsRight className="size-4" />
                     </Button>

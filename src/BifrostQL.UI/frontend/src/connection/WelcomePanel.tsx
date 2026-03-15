@@ -1,31 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ConnectionInfo, PROVIDERS } from './types';
-
-const RECENT_CONNECTIONS_KEY = 'bifrostql_recent_connections';
-const MAX_RECENT_CONNECTIONS = 5;
-
-const saveRecentConnections = (connections: ConnectionInfo[]): void => {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(RECENT_CONNECTIONS_KEY, JSON.stringify(connections));
-  } catch (error) {
-    console.warn('Failed to save recent connections:', error);
-  }
-};
-
-const loadRecentConnections = (): ConnectionInfo[] => {
-  if (typeof window === 'undefined') return [];
-  try {
-    const stored = localStorage.getItem(RECENT_CONNECTIONS_KEY);
-    if (stored) {
-      const connections = JSON.parse(stored) as ConnectionInfo[];
-      return connections.slice(0, MAX_RECENT_CONNECTIONS);
-    }
-  } catch (error) {
-    console.warn('Failed to load recent connections:', error);
-  }
-  return [];
-};
+import { saveRecentConnections, loadRecentConnections } from './recent-connections';
 
 const formatDate = (dateString: string): string => {
   const date = new Date(dateString);
@@ -149,24 +124,28 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({
             <h2 className="welcome-recent__header">Recent Connections</h2>
             <div className="welcome-recent__list">
               {recentConnections.map((connection) => (
-                <button
+                <div
                   key={connection.id}
-                  type="button"
                   className={`welcome-recent__item${hoveredId === `recent-${connection.id}` ? ' welcome-recent__item--hover' : ''}`}
-                  onClick={() => handleSelectRecent(connection)}
                   onMouseEnter={() => setHoveredId(`recent-${connection.id}`)}
                   onMouseLeave={() => setHoveredId(null)}
-                  aria-label={`Connect to ${connection.name}`}
                 >
-                  <span className="welcome-recent__provider-badge">
-                    {getProviderIcon(connection.provider)}
-                  </span>
-                  <div className="welcome-recent__info">
-                    <span className="welcome-recent__name">{connection.name}</span>
-                    <span className="welcome-recent__meta">
-                      {getProviderName(connection.provider)} &middot; {connection.server} &middot; {formatDate(connection.connectedAt)}
+                  <button
+                    type="button"
+                    className="welcome-recent__connect"
+                    onClick={() => handleSelectRecent(connection)}
+                    aria-label={`Connect to ${connection.name}`}
+                  >
+                    <span className="welcome-recent__provider-badge">
+                      {getProviderIcon(connection.provider)}
                     </span>
-                  </div>
+                    <div className="welcome-recent__info">
+                      <span className="welcome-recent__name">{connection.name}</span>
+                      <span className="welcome-recent__meta">
+                        {getProviderName(connection.provider)} &middot; {connection.server} &middot; {formatDate(connection.connectedAt)}
+                      </span>
+                    </div>
+                  </button>
                   <button
                     type="button"
                     className="welcome-recent__delete"
@@ -175,7 +154,7 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({
                   >
                     &times;
                   </button>
-                </button>
+                </div>
               ))}
             </div>
           </div>
@@ -200,5 +179,3 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({
 };
 
 export default WelcomePanel;
-
-export { saveRecentConnections, loadRecentConnections, MAX_RECENT_CONNECTIONS };

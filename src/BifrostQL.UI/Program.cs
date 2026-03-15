@@ -28,11 +28,6 @@ var portOption = new Option<int>("--port", "-p")
     DefaultValueFactory = _ => 5000
 };
 
-var exposeOption = new Option<bool>("--expose", "-e")
-{
-    Description = "Expose the API to the network (binds to 0.0.0.0 instead of localhost)"
-};
-
 var headlessOption = new Option<bool>("--headless", "-H")
 {
     Description = "Run in headless mode (server only, no UI window)"
@@ -42,7 +37,6 @@ var rootCommand = new RootCommand("BifrostQL UI - Desktop database explorer")
 {
     connectionStringArg,
     portOption,
-    exposeOption,
     headlessOption
 };
 
@@ -55,15 +49,13 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
 {
     var connectionString = parseResult.GetValue(connectionStringArg);
     var port = parseResult.GetValue(portOption);
-    var expose = parseResult.GetValue(exposeOption);
     var headless = parseResult.GetValue(headlessOption);
 
     currentConnectionString = connectionString;
     if (connectionString != null)
         currentProvider = DbConnFactoryResolver.DetectProvider(connectionString);
 
-    var bindAddress = expose ? "0.0.0.0" : "127.0.0.1";
-    var serverUrl = $"http://{bindAddress}:{port}";
+    var serverUrl = $"http://0.0.0.0:{port}";
     var localUrl = $"http://localhost:{port}";
 
     // Build and start the web server - set content root to the binary's directory

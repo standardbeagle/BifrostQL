@@ -1,46 +1,41 @@
-// bifrostui - Cross-platform desktop database explorer using Photino.NET
-// Strict KDL parsing: typos/unknown fields will cause clear errors
+// .agnt.kdl - BifrostQL UI development configuration
+//
+// Three services orchestrated via dev-ui.sh:
+//   1. edit-db library watch build (vite --watch)
+//   2. .NET backend (dotnet watch, port 5000)
+//   3. Vite frontend dev server (port 5173, proxies /api + /graphql to backend)
 
 project {
     name "bifrostui"
-    type "dotnet-photino"
+    type "dotnet-vite"
 }
 
 scripts {
-    // Backend dev server (headless mode on port 5000) with hot-reload
-    backend {
-        run "dotnet watch run --project src/BifrostQL.UI/BifrostQL.UI.csproj -- --headless --port 5000"
-        autostart true
-    }
-
-    // edit-db library watch build (rebuilds dist/ on source changes)
-    lib {
-        run "cd examples/edit-db && npx vite build --watch --mode production"
-        autostart true
-    }
-
-    // Frontend dev server (Vite on port 5173, proxies /graphql to backend:5000)
     dev {
-        run "cd src/BifrostQL.UI/frontend && pnpm dev"
+        run "bash dev-ui.sh"
         autostart true
-        // Vite outputs: "Local: http://localhost:5173/"
+        url-matchers "Frontend:\\s+{url}"
+    }
+    dev-lib {
+        command "npx"
+        args "vite" "build" "--watch" "--mode" "production"
+        cwd "examples/edit-db"
+    }
+    dev-backend {
+        run "dotnet watch run --no-hot-reload --project src/BifrostQL.UI/BifrostQL.UI.csproj -- --headless --port 5000"
+        url-matchers "Now listening on {url}"
+    }
+    dev-frontend {
+        run "pnpm dev"
+        cwd "src/BifrostQL.UI/frontend"
         url-matchers "Local:\\s+{url}"
-    }
-
-    // Build commands (not auto-started)
-    build {
-        run "dotnet build BifrostQL.sln"
-    }
-
-    test {
-        run "dotnet test BifrostQL.sln"
     }
 }
 
-// Proxy for browser debugging - linked to dev script
 proxies {
     dev {
         script "dev"
+        fallback-port 5173
     }
 }
 
@@ -49,4 +44,10 @@ hooks {
         toast true
         indicator true
     }
+}
+
+toast {
+    duration 4000
+    position "bottom-right"
+    max-visible 3
 }

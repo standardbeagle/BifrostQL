@@ -251,8 +251,10 @@ const combineRoutes = (base: string, child: string): string => {
 }
 
 const matchPath = (route: string, path: string): PathMatch => {
-    const routeSegments = route.split('/');
+    let routeSegments = route.split('/');
     let pathSegments = path.split('/');
+    if (routeSegments.at(-1) === "")
+        routeSegments = routeSegments.slice(0, -1);
     if (pathSegments.at(-1) === "")
         pathSegments = pathSegments.slice(0, -1);
     if (routeSegments.length > pathSegments.length)

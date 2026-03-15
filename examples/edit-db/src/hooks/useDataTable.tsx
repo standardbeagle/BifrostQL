@@ -159,7 +159,7 @@ const getTableColumns = (table: Table, schema: Schema): ColumnDef<RowData, unkno
             enableHiding: false,
             cell: ({ row }) => (
                 <Button variant="ghost" size="icon-sm" asChild>
-                    <Link to={`/${table.graphQlName}/edit/${getRowPkValue(row.original, table)}`} aria-label="Edit row">
+                    <Link to={`/${table.graphQlName}/edit/${getRowPkValue(row.original, table)}`} aria-label="Edit row" title="Edit row">
                         <Pencil className="size-3.5" />
                     </Link>
                 </Button>

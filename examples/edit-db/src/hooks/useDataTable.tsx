@@ -281,6 +281,7 @@ const buildQuery = (
     columnFilters: ColumnFiltersState,
     id?: string,
     tableFilter?: string,
+    filterColumn?: string,
 ): string | null => {
     if (!table || !schema?.data) return null;
     const tableSchema = schema.findTable(table.graphQlName);
@@ -323,16 +324,32 @@ const buildQuery = (
         })
         .join(' ');
 
-    if (id && !tableFilter) {
+    if (id && !tableFilter && !filterColumn) {
         param = `, $id: ${pkType}`;
         filterText = `{ ${ primaryKey }: { _eq: $id}}`;
-    }
-    if (id && tableFilter) {
-        param = `, $id: ${pkType}` + param;
-        if (filterText)
-            filterText = `{and: [${filterText}, { ${tableFilter}: { ${ primaryKey }: { _eq: $id}}} ]}`;
-        else
-            filterText = `{ ${tableFilter}: { ${ primaryKey }: { _eq: $id}}}`;
+    } else if (id && (filterColumn || tableFilter)) {
+        // filterColumn: explicit FK column on the child table (from join metadata)
+        // tableFilter: parent table name (from URL routes like /submissions/from/assignments/6)
+        const fkColumn = filterColumn
+            ?? tableSchema.singleJoins.find((j: Join) => j.destinationTable === tableFilter)?.sourceColumnNames?.[0];
+        const fkCol = table.columns.find((c: Column) => c.name === fkColumn);
+        const idType = fkCol ? getGraphQlType(fkCol.paramType) : "Int";
+        param = `, $id: ${idType}` + param;
+        if (fkColumn) {
+            // Direct FK filter — no JOIN needed
+            if (filterText)
+                filterText = `{and: [${filterText}, { ${fkColumn}: { _eq: $id}} ]}`;
+            else
+                filterText = `{ ${fkColumn}: { _eq: $id}}`;
+        } else {
+            // Fallback: nested filter through join (requires JOIN support)
+            const parentTable = schema.findTable(tableFilter!);
+            const parentPk = parentTable?.primaryKeys?.[0] ?? "id";
+            if (filterText)
+                filterText = `{and: [${filterText}, { ${tableFilter}: { ${ parentPk }: { _eq: $id}}} ]}`;
+            else
+                filterText = `{ ${tableFilter}: { ${ parentPk }: { _eq: $id}}}`;
+        }
     }
 
     if (filterText) filterText = `filter: ${filterText}`;
@@ -367,7 +384,7 @@ interface UseDataTableResult {
     onPageSizeChange: (pageSize: number) => void;
 }
 
-export function useDataTable(table: Table | null, id?: string, filterTable?: string): UseDataTableResult {
+export function useDataTable(table: Table | null, id?: string, filterTable?: string, filterColumn?: string): UseDataTableResult {
     const { search } = useSearchParams();
     const navigate = useNavigate();
     const filterString = search.get('filter') ?? '';
@@ -390,8 +407,8 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     }, [sorting, table]);
 
     const query = useMemo(
-        () => buildQuery(table!, schema, filterString, columnFilters, id, filterTable),
-        [table, schema, filterString, columnFilters, id, filterTable]
+        () => buildQuery(table!, schema, filterString, columnFilters, id, filterTable, filterColumn),
+        [table, schema, filterString, columnFilters, id, filterTable, filterColumn]
     );
 
     const cfVariables = useMemo(

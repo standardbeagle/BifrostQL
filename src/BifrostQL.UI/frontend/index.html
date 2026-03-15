@@ -5,15 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>BifrostQL - Database Explorer</title>
   <style>
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
+    /* Sizing and colors only — Tailwind preflight (in edit-db) handles
+       box-sizing, margin, and padding resets via @layer base.
+       Unlayered rules here would override ALL layered utilities. */
     html, body, #root {
       height: 100%;
       width: 100%;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
     }
     body {
       background-color: #0f172a;

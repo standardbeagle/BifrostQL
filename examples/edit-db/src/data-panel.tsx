@@ -36,7 +36,7 @@ export function DataPanel() {
 
     return (
         <div className="flex flex-col flex-1 min-h-0">
-            <div className={hasMultiJoins && selectedRowId ? 'flex-1 min-h-0 max-h-[50%]' : 'flex-1 min-h-0'}>
+            <div className={hasMultiJoins && selectedRowId ? 'flex-1 min-h-0 max-h-[50%] overflow-hidden flex flex-col' : 'flex-1 min-h-0 overflow-hidden flex flex-col'}>
                 <DataDataTable
                     table={table}
                     id={id}
@@ -46,7 +46,7 @@ export function DataPanel() {
                 />
             </div>
             {hasMultiJoins && selectedRowId && (
-                <div className="flex-1 min-h-0 overflow-auto">
+                <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                     <DetailPanel
                         parentTable={table}
                         selectedRowId={selectedRowId}

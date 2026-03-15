@@ -6,11 +6,12 @@ interface DataDataTableParams {
     table: Table;
     id?: string;
     tableFilter?: string;
+    filterColumn?: string;
     selectedRowId?: string | null;
     onRowSelect?: (rowId: string | null) => void;
 }
 
-export function DataDataTable({ table, id, tableFilter, selectedRowId, onRowSelect }: DataDataTableParams): JSX.Element {
+export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRowId, onRowSelect }: DataDataTableParams): JSX.Element {
     const {
         columns,
         sorting,
@@ -26,7 +27,7 @@ export function DataDataTable({ table, id, tableFilter, selectedRowId, onRowSele
         onColumnFiltersChange,
         onPageIndexChange,
         onPageSizeChange,
-    } = useDataTable(table, id, tableFilter);
+    } = useDataTable(table, id, tableFilter, filterColumn);
 
     if (error) return <div>Error: {error.message}</div>;
 

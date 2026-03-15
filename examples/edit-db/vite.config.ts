@@ -16,6 +16,10 @@ export default defineConfig({
     'import.meta.NODE_ENV': '"production"' //Hack for crazy output from react
   },
   build: {
+    watch: {
+      // WSL2 inotify is unreliable — use polling for file change detection
+      chokidar: { usePolling: true, interval: 500 },
+    },
     lib: {
       entry: path.resolve(__dirname, 'src/index.ts'),
       name: 'editor',

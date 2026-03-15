@@ -25,7 +25,7 @@ export function DetailPanel({ parentTable, selectedRowId }: DetailPanelProps) {
     if (!childTable) return null;
 
     return (
-        <div className="border-t-2 border-primary/20 flex flex-col min-h-0">
+        <div className="border-t-2 border-primary/20 flex flex-col min-h-0 flex-1 overflow-hidden">
             <div className="flex items-center gap-1 px-2 py-1 bg-muted/30 border-b border-border shrink-0">
                 <Button
                     variant="ghost"
@@ -59,12 +59,12 @@ export function DetailPanel({ parentTable, selectedRowId }: DetailPanelProps) {
                 </div>
             </div>
             {!collapsed && (
-                <div className="flex-1 min-h-0 overflow-auto">
+                <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                     <DataDataTable
                         key={`${activeJoin.destinationTable}-${selectedRowId}`}
                         table={childTable}
                         id={selectedRowId}
-                        tableFilter={parentTable.name}
+                        filterColumn={activeJoin.destinationColumnNames[0]}
                     />
                 </div>
             )}

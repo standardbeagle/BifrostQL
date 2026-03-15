@@ -62,8 +62,8 @@ export function Header() {
         </Alert>
     );
     return (
-        <header className="flex items-center gap-3 px-3 py-1.5 min-h-[2.5rem]">
-            <div className="flex items-center gap-1.5 shrink-0">
+        <header className="grid grid-cols-[auto_1fr_auto] items-center gap-3 px-3 py-1.5 min-h-[2.5rem]">
+            <div className="flex items-center gap-1.5">
                 <Button
                     variant="ghost"
                     size="icon-sm"
@@ -78,8 +78,8 @@ export function Header() {
                     {tableSchema?.dbName ?? tableData?.table ?? "(Select)"}
                 </h2>
             </div>
-            {options && <>
-                <div className="flex items-center border border-border rounded-md overflow-hidden flex-1 min-w-0 max-w-[520px]">
+            {options ? <>
+                <div className="flex items-center border border-border rounded-md overflow-hidden">
                     <Select value={column} onValueChange={setColumn}>
                         <SelectTrigger size="sm" className="w-auto min-w-[120px] shrink-0 border-0 rounded-none border-r border-border h-8 text-xs">
                             <SelectValue />
@@ -90,35 +90,36 @@ export function Header() {
                             ))}
                         </SelectContent>
                     </Select>
-                    <div className="relative flex-1 min-w-[140px]">
-                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
+                    <div className="relative flex-1 min-w-[180px]">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
                         <Input
                             type="search"
                             value={searchVal}
                             onChange={(event) => setSearchVal(event.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && filter()}
-                            className="h-8 pl-8 border-0 rounded-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                            className="h-8 border-0 rounded-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                            style={{ paddingLeft: '2.25rem' }}
                             placeholder="Search..."
                         />
                     </div>
-                    <Button variant="ghost" size="sm" onClick={filter} className="shrink-0 rounded-none border-l border-border h-8 px-2.5 text-xs">
+                    <Button variant="ghost" size="sm" onClick={filter} className="shrink-0 rounded-none border-l border-border h-8 px-3 text-xs">
                         <Filter className="size-3.5" />
                         Filter
                     </Button>
                 </div>
-                <div className="flex items-center gap-1.5 ml-auto shrink-0">
-                    <Button variant="ghost" size="sm" onClick={() => navigate("/")} className="text-muted-foreground text-xs h-8">
+                <div className="flex items-center gap-px border border-border rounded-md overflow-hidden">
+                    <Button variant="ghost" size="sm" onClick={() => navigate("/")} className="text-muted-foreground text-xs h-8 px-3 rounded-none">
                         <X className="size-3.5" />
                         Clear
                     </Button>
                     {tableSchema?.isEditable && (
-                        <Button variant="default" size="sm" onClick={() => navigate(`edit/`)} className="h-8 text-xs">
+                        <Button variant="default" size="sm" onClick={() => navigate(`edit/`)} className="h-8 text-xs px-4 rounded-none">
                             <Plus className="size-3.5" />
                             Add
                         </Button>
                     )}
                 </div>
-            </>}
+            </> : <div className="col-span-2" />}
         </header>
     )
 }

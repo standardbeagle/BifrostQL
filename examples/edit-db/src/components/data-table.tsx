@@ -134,7 +134,7 @@ export function DataTable<TData>({
 
     return (
         <div className="flex flex-col w-full min-h-0 flex-1">
-            <div className="flex items-center justify-end py-2 px-1">
+            <div className="flex items-center justify-end py-1.5 px-3">
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                         <Button variant="outline" size="sm">
@@ -158,7 +158,7 @@ export function DataTable<TData>({
                     </DropdownMenuContent>
                 </DropdownMenu>
             </div>
-            <div className="flex-1">
+            <div className="flex-1 overflow-y-auto min-h-0">
                 <Table>
                     <TableHeader>
                         {table.getHeaderGroups().map((headerGroup) => (
@@ -209,7 +209,7 @@ export function DataTable<TData>({
                     </TableBody>
                 </Table>
             </div>
-            <div className="flex items-center justify-between px-4 py-3 border-t border-border mt-auto">
+            <div className="flex items-center justify-between px-3 py-2 border-t border-border mt-auto">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <span>Rows per page</span>
                     <Select

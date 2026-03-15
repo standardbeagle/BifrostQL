@@ -50,6 +50,7 @@ export function DataPanel() {
                     <DetailPanel
                         parentTable={table}
                         selectedRowId={selectedRowId}
+                        onClose={() => setSelectedRowId(null)}
                     />
                 </div>
             )}

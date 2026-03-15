@@ -4,14 +4,15 @@ import { useSchema } from '../hooks/useSchema';
 import { DataDataTable } from '../data-data-table';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, X } from 'lucide-react';
 
 interface DetailPanelProps {
     parentTable: Table;
     selectedRowId: string;
+    onClose?: () => void;
 }
 
-export function DetailPanel({ parentTable, selectedRowId }: DetailPanelProps) {
+export function DetailPanel({ parentTable, selectedRowId, onClose }: DetailPanelProps) {
     const schema = useSchema();
     const joins = parentTable.multiJoins;
     const [activeTab, setActiveTab] = useState<string>(joins[0]?.destinationTable ?? '');
@@ -57,6 +58,18 @@ export function DetailPanel({ parentTable, selectedRowId }: DetailPanelProps) {
                         );
                     })}
                 </div>
+                {onClose && (
+                    <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={onClose}
+                        className="ml-auto shrink-0"
+                        aria-label="Close detail panel"
+                        title="Close detail panel"
+                    >
+                        <X className="size-3.5" />
+                    </Button>
+                )}
             </div>
             {!collapsed && (
                 <div className="flex-1 min-h-0 overflow-hidden flex flex-col">

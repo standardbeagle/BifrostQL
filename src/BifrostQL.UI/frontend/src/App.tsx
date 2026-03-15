@@ -108,7 +108,8 @@ export default function App() {
     }
   }, []);
 
-  const handleConnect = useCallback(async (connectionString: string, connectionName: string) => {
+  const handleConnect = useCallback(async (connectionString: string, connectionName: string, provider?: Provider) => {
+    const resolvedProvider = provider ?? selectedProvider ?? 'sqlserver';
     try {
       setConnectionState('connecting');
       setErrorMessage(null);
@@ -128,7 +129,7 @@ export default function App() {
       const updateResponse = await fetch('/api/connection/set', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connectionString }),
+        body: JSON.stringify({ connectionString, provider: resolvedProvider }),
       });
 
       if (!updateResponse.ok) {
@@ -143,7 +144,7 @@ export default function App() {
         connectedAt: new Date().toISOString(),
         server: connectionName,
         database: connectionName,
-        provider: selectedProvider ?? 'sqlserver',
+        provider: resolvedProvider,
       };
 
       setConnectionInfo(info);
@@ -165,8 +166,9 @@ export default function App() {
   }, [recentConnections, selectedProvider]);
 
   const handleSelectRecentConnection = useCallback((connection: ConnectionInfo) => {
-    setSelectedProvider(connection.provider ?? 'sqlserver');
-    handleConnect(connection.connectionString, connection.name);
+    const provider = connection.provider ?? 'sqlserver';
+    setSelectedProvider(provider);
+    handleConnect(connection.connectionString, connection.name, provider);
   }, [handleConnect]);
 
   const handleTryItNow = useCallback(() => {

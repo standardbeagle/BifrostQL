@@ -246,3 +246,60 @@
   outline: 2px solid var(--accent-action);
   outline-offset: 2px;
 }
+
+/* Error banner — fixed top, impossible to miss */
+.bifrost-error-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1.25rem;
+  background: rgba(239, 68, 68, 0.15);
+  border-bottom: 2px solid var(--accent-danger, #ef4444);
+  color: #fca5a5;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+  animation: error-slide-in 300ms ease-out;
+}
+
+@keyframes error-slide-in {
+  from { transform: translateY(-100%); }
+}
+
+.bifrost-error-banner__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent-danger, #ef4444);
+  color: white;
+  font-weight: 700;
+  font-size: 0.875rem;
+  flex-shrink: 0;
+}
+
+.bifrost-error-banner__message {
+  flex: 1;
+}
+
+.bifrost-error-banner__dismiss {
+  background: none;
+  border: none;
+  color: #fca5a5;
+  font-size: 1.25rem;
+  cursor: pointer;
+  padding: 0.25rem;
+  line-height: 1;
+  opacity: 0.7;
+  transition: opacity 150ms;
+}
+
+.bifrost-error-banner__dismiss:hover {
+  opacity: 1;
+}

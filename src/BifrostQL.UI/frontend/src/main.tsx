@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import Editor from '@standardbeagle/edit-db';
 import '@standardbeagle/edit-db/style.css';
@@ -25,8 +25,8 @@ const API_QUICKSTART = '/api/database/create-quickstart';
 type AppView = 'welcome' | 'quickstart' | 'provider-select' | 'connect' | 'editor';
 
 function App() {
-  const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
-  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [_connectionState, setConnectionState] = useState<ConnectionState>('idle');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<AppView>('welcome');
   const [recentConnections, setRecentConnections] = useState<ConnectionInfo[]>(() => loadRecentConnections());
   const [connectionInfo, setConnectionInfo] = useState<ConnectionInfo | null>(null);
@@ -35,12 +35,24 @@ function App() {
   const [launchProgress, setLaunchProgress] = useState('');
   const [editorKey, setEditorKey] = useState(0);
 
+  // Health check on mount — surface backend unavailability immediately
+  useEffect(() => {
+    fetch('/api/health')
+      .then((r) => {
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+      })
+      .catch(() => {
+        setErrorMessage('Backend server is not reachable. The BifrostQL server may have crashed or failed to start.');
+        setConnectionState('error');
+      });
+  }, []);
+
   const graphqlUri = `${window.location.origin}/graphql`;
 
   const handleTestConnection = useCallback(async (connectionString: string): Promise<boolean> => {
     try {
       setConnectionState('testing');
-      setConnectionError(null);
+      setErrorMessage(null);
       const response = await fetch(API_TEST_CONNECTION, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -52,7 +64,10 @@ function App() {
       }
       return result.success;
     } catch (err) {
-      setConnectionError(err instanceof Error ? err.message : 'Connection test failed');
+      const msg = err instanceof Error ? err.message : 'Connection test failed';
+      setErrorMessage(msg.includes('Failed to fetch')
+        ? 'Cannot reach the backend server. It may have crashed or failed to start.'
+        : msg);
       return false;
     } finally {
       setConnectionState('idle');
@@ -62,7 +77,7 @@ function App() {
   const handleConnect = useCallback(async (connectionString: string, connectionName: string) => {
     try {
       setConnectionState('connecting');
-      setConnectionError(null);
+      setErrorMessage(null);
 
       const response = await fetch(API_TEST_CONNECTION, {
         method: 'POST',
@@ -107,7 +122,10 @@ function App() {
       setConnectionState('connected');
     } catch (err) {
       setConnectionState('error');
-      setConnectionError(err instanceof Error ? err.message : 'Connection failed');
+      const msg = err instanceof Error ? err.message : 'Connection failed';
+      setErrorMessage(msg.includes('Failed to fetch')
+        ? 'Cannot reach the backend server. It may have crashed or failed to start.'
+        : msg);
     }
   }, [recentConnections, selectedProvider]);
 
@@ -128,7 +146,7 @@ function App() {
   const handleQuickStartLaunch = useCallback(async (schema: QuickStartSchema, dataSize: DataSize) => {
     try {
       setConnectionState('connecting');
-      setConnectionError(null);
+      setErrorMessage(null);
       setIsLaunching(true);
       setLaunchProgress('Starting...');
 
@@ -229,7 +247,10 @@ function App() {
       }
     } catch (err) {
       setConnectionState('error');
-      setConnectionError(err instanceof Error ? err.message : 'Failed to create quickstart database');
+      const msg = err instanceof Error ? err.message : 'Failed to create quickstart database';
+      setErrorMessage(msg.includes('Failed to fetch')
+        ? 'Cannot reach the backend server. It may have crashed or failed to start.'
+        : msg);
     } finally {
       setIsLaunching(false);
       setLaunchProgress('');
@@ -237,6 +258,7 @@ function App() {
   }, [recentConnections]);
 
   const handleBack = useCallback(() => {
+    setErrorMessage(null);
     switch (currentView) {
       case 'quickstart':
       case 'provider-select':
@@ -250,7 +272,7 @@ function App() {
         setCurrentView('welcome');
         setConnectionInfo(null);
         setConnectionState('idle');
-        setConnectionError(null);
+        setErrorMessage(null);
         setSelectedProvider(null);
         break;
       default:
@@ -258,9 +280,24 @@ function App() {
     }
   }, [currentView]);
 
+  const errorBanner = errorMessage && (
+    <div className="bifrost-error-banner" role="alert">
+      <span className="bifrost-error-banner__icon">!</span>
+      <span className="bifrost-error-banner__message">{errorMessage}</span>
+      <button
+        className="bifrost-error-banner__dismiss"
+        onClick={() => { setErrorMessage(null); setConnectionState('idle'); }}
+        aria-label="Dismiss error"
+      >
+        &times;
+      </button>
+    </div>
+  );
+
   if (currentView === 'quickstart') {
     return (
       <div className="bifrost-connection-container">
+        {errorBanner}
         <QuickStart
           onLaunch={handleQuickStartLaunch}
           onBack={handleBack}
@@ -274,6 +311,7 @@ function App() {
   if (currentView === 'provider-select') {
     return (
       <div className="bifrost-connection-container">
+        {errorBanner}
         <ProviderSelect
           onProviderSelect={handleProviderSelect}
           onBack={handleBack}
@@ -285,26 +323,7 @@ function App() {
   if (currentView === 'connect' && selectedProvider) {
     return (
       <div className="bifrost-connection-container">
-        {connectionState === 'connecting' && (
-          <div className="bifrost-connecting-overlay">
-            <div className="bifrost-connecting-overlay__content">
-              <span className="bifrost-connecting-spinner" aria-hidden="true" />
-              Connecting...
-            </div>
-          </div>
-        )}
-        {connectionState === 'error' && connectionError && (
-          <div className="bifrost-error-banner" role="alert" style={{ marginBottom: '1rem', maxWidth: '480px' }}>
-            <span className="bifrost-error-banner__message">{connectionError}</span>
-            <button
-              className="bifrost-error-banner__dismiss"
-              onClick={() => { setConnectionState('idle'); setConnectionError(null); }}
-              aria-label="Dismiss error"
-            >
-              &times;
-            </button>
-          </div>
-        )}
+        {errorBanner}
         <ConnectionForm
           provider={selectedProvider}
           onConnect={handleConnect}
@@ -342,28 +361,9 @@ function App() {
   // Welcome view (default)
   return (
     <div className="bifrost-welcome-container">
-      {connectionState === 'connecting' && (
-        <div className="bifrost-connecting-overlay">
-          <div className="bifrost-connecting-overlay__content">
-            <span className="bifrost-connecting-spinner" aria-hidden="true" />
-            Connecting...
-          </div>
-        </div>
-      )}
-      {connectionState === 'error' && connectionError && (
-        <div className="bifrost-error-banner" role="alert">
-          <span className="bifrost-error-banner__message">{connectionError}</span>
-          <button
-            className="bifrost-error-banner__dismiss"
-            onClick={() => { setConnectionState('idle'); setConnectionError(null); }}
-            aria-label="Dismiss error"
-          >
-            &times;
-          </button>
-        </div>
-      )}
+      {errorBanner}
       <WelcomePanel
-        onConnectClick={() => { setConnectionError(null); setCurrentView('provider-select'); }}
+        onConnectClick={() => { setErrorMessage(null); setCurrentView('provider-select'); }}
         onCreateTestDatabase={handleTryItNow}
         recentConnections={recentConnections}
         onSelectRecentConnection={handleSelectRecentConnection}

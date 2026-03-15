@@ -369,6 +369,9 @@ FodyWeavers.xsd
 # Claude Code
 .claude/
 
+# agnt audit artifacts (screenshots, reports)
+.agnt/audit/
+
 # Symlinks to local binaries
 bifrostui
 /wwwroot

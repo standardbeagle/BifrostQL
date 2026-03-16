@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "./usePath";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useSchema } from "./useSchema";
 import { Table, Column, Join, Schema } from "../types/schema";
 import { ColumnDef, ColumnFiltersState, SortingState } from "@tanstack/react-table";
@@ -398,10 +398,23 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     const [pageIndex, setPageIndex] = useState(0);
     const [pageSize, setPageSize] = useState(10);
 
+    // Reset sort, filters, and pagination when the table changes
+    const tableRef = useRef(table);
+    if (table && table !== tableRef.current) {
+        tableRef.current = table;
+        if (sorting.length > 0) setSorting([]);
+        if (columnFilters.length > 0) setColumnFilters([]);
+        if (pageIndex !== 0) setPageIndex(0);
+    }
+
     const appliedSort = useMemo(() => {
-        if (sorting.length > 0) {
+        if (sorting.length > 0 && table) {
             const col = sorting[0];
-            return [`${col.id}_${col.desc ? 'desc' : 'asc'}`];
+            // Validate that the sort column exists on the current table
+            const columnExists = table.columns.some((c) => c.name === col.id);
+            if (columnExists) {
+                return [`${col.id}_${col.desc ? 'desc' : 'asc'}`];
+            }
         }
         return table ? [`${table.columns.at(0)?.name ?? 'id'}_asc`] : [];
     }, [sorting, table]);

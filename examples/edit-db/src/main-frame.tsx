@@ -83,7 +83,7 @@ function SchemaGate({ children }: { children: React.ReactNode }) {
 
     if (loading) {
         return (
-            <div className="flex items-center justify-center h-screen gap-3 text-muted-foreground">
+            <div className="flex items-center justify-center flex-1 gap-3 text-muted-foreground">
                 <Loader2 className="size-6 animate-spin" />
                 <span className="text-sm">Connecting to database...</span>
             </div>
@@ -92,7 +92,7 @@ function SchemaGate({ children }: { children: React.ReactNode }) {
 
     if (error) {
         return (
-            <div className="flex items-center justify-center h-screen">
+            <div className="flex items-center justify-center flex-1">
                 <Alert variant="destructive" className="max-w-lg">
                     <AlertCircle className="size-4" />
                     <AlertTitle>Database Connection Error</AlertTitle>
@@ -122,7 +122,7 @@ function Layout() {
 
     return (
         <SchemaGate>
-            <div className={`grid h-screen grid-rows-[auto_1fr] ${sidebarOpen ? 'grid-cols-[minmax(150px,min-content)_1fr]' : 'grid-cols-[0px_1fr]'} md:grid-cols-[minmax(150px,min-content)_1fr] transition-[grid-template-columns] duration-200`}>
+            <div className={`grid h-full flex-1 min-h-0 grid-rows-[auto_1fr] ${sidebarOpen ? 'grid-cols-[minmax(150px,min-content)_1fr]' : 'grid-cols-[0px_1fr]'} md:grid-cols-[minmax(150px,min-content)_1fr] transition-[grid-template-columns] duration-200`}>
                 <div className="col-span-full sticky top-0 z-50 bg-background border-b border-border flex items-center">
                     <Button
                         variant="ghost"
@@ -144,12 +144,12 @@ function Layout() {
                         </ErrorBoundary>
                     </div>
                 </div>
-                <nav aria-label="Tables" className={`border-r border-border overflow-y-auto max-h-[calc(100vh-3.5rem)] sticky top-14 ${sidebarOpen ? '' : 'hidden'} md:block`}>
+                <nav aria-label="Tables" className={`border-r border-border overflow-y-auto sticky top-14 ${sidebarOpen ? '' : 'hidden'} md:block`}>
                     <ErrorBoundary section="Table List">
                         <TableList />
                     </ErrorBoundary>
                 </nav>
-                <main className="flex flex-col overflow-hidden px-3 py-1.5">
+                <main className="flex flex-col overflow-hidden min-h-0 px-3 py-1.5">
                     <ErrorBoundary section="Data Panel">
                         <Suspense fallback={<LoadingFallback />}>
                             <Routes>

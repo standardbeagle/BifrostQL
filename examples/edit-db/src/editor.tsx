@@ -41,7 +41,7 @@ export function Editor({
             <FetcherProvider value={resolvedFetcher}>
                 <PathProvider path={uiPath || "/"}>
                     <SchemaProvider>
-                        <div><MainFrame onLocate={onLocate} /></div>
+                        <MainFrame onLocate={onLocate} />
                     </SchemaProvider>
                 </PathProvider>
             </FetcherProvider>

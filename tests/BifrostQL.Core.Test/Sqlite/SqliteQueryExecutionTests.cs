@@ -275,6 +275,113 @@ public sealed class SqliteQueryExecutionTests : IAsyncLifetime
         count.Should().Be(3); // Alpha (10), Beta (25.50), Epsilon (15)
     }
 
+    [Fact]
+    public async Task Filter_NContains_ExcludesPattern()
+    {
+        var op = _dialect.GetOperator("_ncontains");
+        var pattern = _dialect.LikePattern("@search", Core.QueryModel.LikePatternType.Contains);
+        var sql = $"SELECT * FROM {_dialect.EscapeIdentifier("Products")} " +
+                  $"WHERE {_dialect.EscapeIdentifier("Name")} {op} {pattern}";
+
+        await using var cmd = new SqliteCommand(sql, _connection);
+        cmd.Parameters.AddWithValue("@search", "eta");
+        var count = await CountRowsFromReaderAsync(cmd);
+        // Total 10 products minus those containing "eta" (Beta, Zeta, Eta, Theta)
+        count.Should().BeGreaterThan(0);
+        count.Should().BeLessThan(10);
+    }
+
+    [Fact]
+    public async Task Filter_NStartsWith_ExcludesPattern()
+    {
+        var op = _dialect.GetOperator("_nstarts_with");
+        var pattern = _dialect.LikePattern("@search", Core.QueryModel.LikePatternType.StartsWith);
+        var sql = $"SELECT * FROM {_dialect.EscapeIdentifier("Products")} " +
+                  $"WHERE {_dialect.EscapeIdentifier("Name")} {op} {pattern}";
+
+        await using var cmd = new SqliteCommand(sql, _connection);
+        cmd.Parameters.AddWithValue("@search", "Ep");
+        var count = await CountRowsFromReaderAsync(cmd);
+        count.Should().Be(9); // All except Epsilon
+    }
+
+    [Fact]
+    public async Task Filter_NEndsWith_ExcludesPattern()
+    {
+        var op = _dialect.GetOperator("_nends_with");
+        var pattern = _dialect.LikePattern("@search", Core.QueryModel.LikePatternType.EndsWith);
+        var sql = $"SELECT * FROM {_dialect.EscapeIdentifier("Products")} " +
+                  $"WHERE {_dialect.EscapeIdentifier("Name")} {op} {pattern}";
+
+        await using var cmd = new SqliteCommand(sql, _connection);
+        cmd.Parameters.AddWithValue("@search", "ta");
+        var count = await CountRowsFromReaderAsync(cmd);
+        // Total 10 minus those ending in "ta" (Beta, Zeta, Eta, Iota)
+        count.Should().BeGreaterThan(0);
+        count.Should().BeLessThan(10);
+    }
+
+    [Fact]
+    public async Task Filter_NotBetween_ExcludesRange()
+    {
+        var sql = $"SELECT * FROM {_dialect.EscapeIdentifier("Products")} " +
+                  $"WHERE {_dialect.EscapeIdentifier("Price")} NOT BETWEEN @lo AND @hi";
+
+        await using var cmd = new SqliteCommand(sql, _connection);
+        cmd.Parameters.AddWithValue("@lo", 10.0);
+        cmd.Parameters.AddWithValue("@hi", 30.0);
+        var count = await CountRowsFromReaderAsync(cmd);
+        // 10 total minus 3 in range (Alpha=10, Beta=25.50, Epsilon=15) = 7
+        count.Should().Be(7);
+    }
+
+    [Fact]
+    public async Task Filter_Contains_And_NContains_AreComplementary()
+    {
+        var containsOp = _dialect.GetOperator("_contains");
+        var ncontainsOp = _dialect.GetOperator("_ncontains");
+        var pattern = _dialect.LikePattern("@search", Core.QueryModel.LikePatternType.Contains);
+
+        await using var containsCmd = new SqliteCommand(
+            $"SELECT COUNT(*) FROM {_dialect.EscapeIdentifier("Products")} WHERE {_dialect.EscapeIdentifier("Name")} {containsOp} {pattern}",
+            _connection);
+        containsCmd.Parameters.AddWithValue("@search", "eta");
+        var containsCount = (long)(await containsCmd.ExecuteScalarAsync())!;
+
+        await using var ncontainsCmd = new SqliteCommand(
+            $"SELECT COUNT(*) FROM {_dialect.EscapeIdentifier("Products")} WHERE {_dialect.EscapeIdentifier("Name")} {ncontainsOp} {pattern}",
+            _connection);
+        ncontainsCmd.Parameters.AddWithValue("@search", "eta");
+        var ncontainsCount = (long)(await ncontainsCmd.ExecuteScalarAsync())!;
+
+        (containsCount + ncontainsCount).Should().Be(10, "LIKE and NOT LIKE must be complementary");
+    }
+
+    [Fact]
+    public async Task Filter_OperatorsProduceDifferentResults()
+    {
+        // Verify that _eq, _gt, _gte, _lt, _lte all produce different results for the same value
+        var counts = new Dictionary<string, int>();
+        foreach (var (opName, sqlOp) in new[] { ("_eq", "="), ("_gt", ">"), ("_gte", ">="), ("_lt", "<"), ("_lte", "<=") })
+        {
+            var actualOp = _dialect.GetOperator(opName);
+            actualOp.Should().Be(sqlOp, $"GetOperator(\"{opName}\") must return \"{sqlOp}\"");
+
+            var sql = $"SELECT COUNT(*) FROM {_dialect.EscapeIdentifier("Products")} " +
+                      $"WHERE {_dialect.EscapeIdentifier("Price")} {actualOp} @price";
+            await using var cmd = new SqliteCommand(sql, _connection);
+            cmd.Parameters.AddWithValue("@price", 25.50); // Beta's price
+            counts[opName] = (int)(long)(await cmd.ExecuteScalarAsync())!;
+        }
+
+        counts["_eq"].Should().Be(1, "_eq should match exactly one product at 25.50");
+        counts["_gt"].Should().BeGreaterThan(0, "some products cost more than 25.50");
+        counts["_lt"].Should().BeGreaterThan(0, "some products cost less than 25.50");
+        counts["_gte"].Should().Be(counts["_gt"] + counts["_eq"], "_gte = _gt + _eq");
+        counts["_lte"].Should().Be(counts["_lt"] + counts["_eq"], "_lte = _lt + _eq");
+        (counts["_lt"] + counts["_eq"] + counts["_gt"]).Should().Be(10, "all operators should cover all rows");
+    }
+
     #endregion
 
     #region Insert with AUTOINCREMENT

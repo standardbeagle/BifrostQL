@@ -429,7 +429,7 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     }), [appliedSort, pageSize, offset, id, pkType, filterVariables, cfVariables]);
 
     const { isLoading, error, data } = useQuery({
-        queryKey: ['tableData', table?.name, queryVariables],
+        queryKey: ['tableData', table?.name, query, queryVariables],
         queryFn: () => fetcher.query<QueryData>(query!, queryVariables),
         enabled: !!query && !!table && appliedSort.length > 0,
     });

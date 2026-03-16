@@ -149,7 +149,7 @@ function Layout() {
                         <TableList />
                     </ErrorBoundary>
                 </nav>
-                <main className="flex flex-col overflow-hidden min-h-0 px-3 py-1.5">
+                <main className="flex flex-col overflow-hidden min-h-0 px-1 py-0.5">
                     <ErrorBoundary section="Data Panel">
                         <Suspense fallback={<LoadingFallback />}>
                             <Routes>

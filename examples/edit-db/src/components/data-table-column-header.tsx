@@ -74,7 +74,7 @@ export function DataTableColumnHeader<TData, TValue>({
                     variant="ghost"
                     size="sm"
                     className={cn(
-                        '-ml-3 h-8 data-[state=open]:bg-accent',
+                        '-ml-2 h-7 text-xs data-[state=open]:bg-accent',
                         sorted && 'text-foreground'
                     )}
                 >

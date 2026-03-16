@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
     ColumnDef,
     ColumnFiltersState,
@@ -63,17 +63,8 @@ interface DataTableProps<TData> {
 }
 
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100];
-const ROW_HEIGHT_ESTIMATE = 41;
-const CHROME_HEIGHT = 160;
-
-function getScreenPageSize(): number {
-    const available = window.innerHeight - CHROME_HEIGHT;
-    const rows = Math.floor(available / ROW_HEIGHT_ESTIMATE);
-    const clamped = Math.max(5, rows);
-    return PAGE_SIZE_OPTIONS.reduce((prev, curr) =>
-        Math.abs(curr - clamped) < Math.abs(prev - clamped) ? curr : prev
-    );
-}
+const FIT_SENTINEL = -1;
+const ROW_HEIGHT_FALLBACK = 32;
 
 export function DataTable<TData>({
     columns,
@@ -96,14 +87,32 @@ export function DataTable<TData>({
 }: DataTableProps<TData>) {
     const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
     const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-    const [initialized, setInitialized] = useState(false);
+    const [fitMode, setFitMode] = useState(true);
+    const scrollRef = useRef<HTMLDivElement>(null);
 
+    // Measure actual row height from rendered rows, fall back to estimate
+    const getRowHeight = useCallback(() => {
+        const row = scrollRef.current?.querySelector('tbody tr');
+        return row?.getBoundingClientRect().height || ROW_HEIGHT_FALLBACK;
+    }, []);
+
+    const computeFitSize = useCallback(() => {
+        const el = scrollRef.current;
+        if (!el) return 10;
+        const rowH = getRowHeight();
+        return Math.max(5, Math.floor(el.clientHeight / rowH));
+    }, [getRowHeight]);
+
+    // Apply fit on mount and resize
     useEffect(() => {
-        if (!initialized) {
-            onPageSizeChange(getScreenPageSize());
-            setInitialized(true);
-        }
-    }, [initialized, onPageSizeChange]);
+        if (!fitMode) return;
+        const apply = () => onPageSizeChange(computeFitSize());
+        // Defer to let layout settle
+        const raf = requestAnimationFrame(apply);
+        const onResize = () => onPageSizeChange(computeFitSize());
+        window.addEventListener('resize', onResize);
+        return () => { cancelAnimationFrame(raf); window.removeEventListener('resize', onResize); };
+    }, [fitMode, computeFitSize, onPageSizeChange]);
 
     // Clear selection when data/page changes
     useEffect(() => {
@@ -188,11 +197,11 @@ export function DataTable<TData>({
 
     return (
         <div className="flex flex-col w-full min-h-0 flex-1">
-            <div className="flex items-center justify-between py-1.5 px-3">
+            <div className="flex items-center justify-between py-1 px-2">
                 <div className="flex items-center gap-2">
                     {selectedCount > 0 && onDeleteSelected && (
                         <>
-                            <span className="text-sm text-muted-foreground">
+                            <span className="text-xs text-muted-foreground">
                                 {selectedCount} selected
                             </span>
                             <Button
@@ -230,7 +239,7 @@ export function DataTable<TData>({
                     </DropdownMenuContent>
                 </DropdownMenu>
             </div>
-            <div className="flex-1 overflow-y-auto min-h-0">
+            <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0">
                 <Table>
                     <TableHeader>
                         {table.getHeaderGroups().map((headerGroup) => (
@@ -281,17 +290,27 @@ export function DataTable<TData>({
                     </TableBody>
                 </Table>
             </div>
-            <div className="flex items-center justify-between px-3 py-2 border-t border-border mt-auto shrink-0">
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <div className="flex items-center justify-between px-2 py-1.5 border-t border-border mt-auto shrink-0">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <span>Rows per page</span>
                     <Select
-                        value={String(pageSize)}
-                        onValueChange={(val) => onPageSizeChange(Number(val))}
+                        value={fitMode ? String(FIT_SENTINEL) : String(pageSize)}
+                        onValueChange={(val) => {
+                            const n = Number(val);
+                            if (n === FIT_SENTINEL) {
+                                setFitMode(true);
+                                onPageSizeChange(computeFitSize());
+                            } else {
+                                setFitMode(false);
+                                onPageSizeChange(n);
+                            }
+                        }}
                     >
-                        <SelectTrigger size="sm" className="w-auto h-8" aria-label="Rows per page">
-                            <SelectValue />
+                        <SelectTrigger size="sm" className="w-auto h-7 text-xs" aria-label="Rows per page">
+                            <SelectValue>{fitMode ? 'Fit' : pageSize}</SelectValue>
                         </SelectTrigger>
                         <SelectContent>
+                            <SelectItem value={String(FIT_SENTINEL)}>Fit</SelectItem>
                             {PAGE_SIZE_OPTIONS.map((size) => (
                                 <SelectItem key={size} value={String(size)}>
                                     {size}
@@ -301,7 +320,7 @@ export function DataTable<TData>({
                     </Select>
                 </div>
                 <div className="flex items-center gap-1.5">
-                    <span className="text-sm text-muted-foreground mr-2">
+                    <span className="text-xs text-muted-foreground mr-2">
                         Page {pageIndex + 1} of {pageCount || 1}
                     </span>
                     <Button

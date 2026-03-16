@@ -372,6 +372,10 @@ FodyWeavers.xsd
 # agnt audit artifacts (screenshots, reports)
 .agnt/audit/
 
+# Example project build artifacts
+examples/bifrost-react/dist/
+examples/bifrost-react/coverage/
+
 # Symlinks to local binaries
 bifrostui
 /wwwroot

@@ -149,7 +149,7 @@ function deserializeColumnFilters(raw: string): ColumnFiltersState {
     }
 }
 
-const getTableColumns = (table: Table, schema: Schema, onDeleteRow?: (pk: string) => void): ColumnDef<RowData, unknown>[] => {
+const getTableColumns = (table: Table, schema: Schema, onDeleteRow?: (pk: string) => void, onExpandContent?: (rowIndex: number, columnName: string) => void): ColumnDef<RowData, unknown>[] => {
     if (!table || !schema) return [];
 
     const actionsColumn: ColumnDef<RowData, unknown>[] = table.isEditable !== false
@@ -260,7 +260,13 @@ const getTableColumns = (table: Table, schema: Schema, onDeleteRow?: (pk: string
                     header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
                     enableSorting: true,
                     meta: { sortField: c.name, paramType: c.paramType, dbType: c.dbType, filterOperators: operators },
-                    cell: ({ row }) => <ContentViewer value={row.original[c.name]} dbType={c.dbType} />,
+                    cell: ({ row }) => (
+                        <ContentViewer
+                            value={row.original[c.name]}
+                            dbType={c.dbType}
+                            onExpand={onExpandContent ? () => onExpandContent(row.index, c.name) : undefined}
+                        />
+                    ),
                 };
             }
 
@@ -409,7 +415,7 @@ interface UseDataTableResult {
     onPageSizeChange: (pageSize: number) => void;
 }
 
-export function useDataTable(table: Table | null, id?: string, filterTable?: string, filterColumn?: string, onDeleteRow?: (pk: string) => void): UseDataTableResult {
+export function useDataTable(table: Table | null, id?: string, filterTable?: string, filterColumn?: string, onDeleteRow?: (pk: string) => void, onExpandContent?: (rowIndex: number, columnName: string) => void): UseDataTableResult {
     const { search } = useSearchParams();
     const navigate = useNavigate();
     const filterString = search.get('filter') ?? '';
@@ -473,8 +479,8 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     });
 
     const columns = useMemo(
-        () => table ? getTableColumns(table, schema, onDeleteRow) : [],
-        [table, schema, onDeleteRow]
+        () => table ? getTableColumns(table, schema, onDeleteRow, onExpandContent) : [],
+        [table, schema, onDeleteRow, onExpandContent]
     );
 
     const tableData = data?.[table?.name ?? ''];

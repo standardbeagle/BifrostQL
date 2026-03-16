@@ -69,6 +69,7 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
             <DataTable
                 columns={columns}
                 data={rows}
+                tableName={table.name}
                 pageCount={pageCount}
                 pageIndex={pageIndex}
                 pageSize={pageSize}

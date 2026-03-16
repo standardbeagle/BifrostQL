@@ -158,6 +158,8 @@ const getTableColumns = (table: Table, schema: Schema, onDeleteRow?: (pk: string
             header: '',
             enableSorting: false,
             enableHiding: false,
+            enableResizing: false,
+            size: 40,
             cell: ({ row }) => {
                 const pk = getRowPkValue(row.original, table);
                 return (
@@ -202,7 +204,7 @@ const getTableColumns = (table: Table, schema: Schema, onDeleteRow?: (pk: string
                 return {
                     id: c.name,
                     accessorKey: c.name,
-                    header: ({ column }) => <DataTableColumnHeader column={column} title={c.label} />,
+                    header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
                     enableSorting: true,
                     meta: { sortField: c.name, paramType: c.paramType, filterOperators: operators, joinTable: singleJoin.destinationTable, joinLabelColumn },
                     cell: ({ row }) => {
@@ -224,7 +226,7 @@ const getTableColumns = (table: Table, schema: Schema, onDeleteRow?: (pk: string
                 return {
                     id: c.name,
                     accessorKey: c.name,
-                    header: ({ column }) => <DataTableColumnHeader column={column} title={c.label} />,
+                    header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
                     enableSorting: true,
                     meta: { sortField: c.name, paramType: c.paramType, filterOperators: operators },
                     cell: ({ row }) => {
@@ -243,7 +245,7 @@ const getTableColumns = (table: Table, schema: Schema, onDeleteRow?: (pk: string
                 return {
                     id: c.name,
                     accessorFn: (row) => toLocaleDate(row?.[c.name] as string),
-                    header: ({ column }) => <DataTableColumnHeader column={column} title={c.label} />,
+                    header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
                     enableSorting: true,
                     meta: { sortField: c.name, paramType: c.paramType, dbType: c.dbType, filterOperators: operators },
                 };
@@ -255,7 +257,7 @@ const getTableColumns = (table: Table, schema: Schema, onDeleteRow?: (pk: string
                 return {
                     id: c.name,
                     accessorFn: (row) => (c.name ? String(row?.[c.name] ?? "") : ""),
-                    header: ({ column }) => <DataTableColumnHeader column={column} title={c.label} />,
+                    header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
                     enableSorting: true,
                     meta: { sortField: c.name, paramType: c.paramType, dbType: c.dbType, filterOperators: operators },
                     cell: ({ row }) => <ContentViewer value={row.original[c.name]} dbType={c.dbType} />,
@@ -265,7 +267,7 @@ const getTableColumns = (table: Table, schema: Schema, onDeleteRow?: (pk: string
             return {
                 id: c.name,
                 accessorFn: (row) => (c.name ? String(row?.[c.name] ?? "") : ""),
-                header: ({ column }) => <DataTableColumnHeader column={column} title={c.label} />,
+                header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
                 enableSorting: true,
                 meta: { sortField: c.name, paramType: c.paramType, dbType: c.dbType, filterOperators: operators },
             };

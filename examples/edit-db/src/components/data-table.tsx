@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
     ColumnDef,
     ColumnFiltersState,
+    ColumnSizingState,
     RowSelectionState,
     SortingState,
     VisibilityState,
@@ -42,9 +43,37 @@ import {
     Trash2,
 } from 'lucide-react';
 
+const COL_MIN_WIDTH = 60;
+const COL_MAX_AUTO_WIDTH = 450;
+const COL_DEFAULT_WIDTH = 150;
+const COL_SIZING_STORAGE_PREFIX = 'bifrost-col-sizes:';
+
+function loadColumnSizing(tableName: string): ColumnSizingState {
+    try {
+        const raw = localStorage.getItem(COL_SIZING_STORAGE_PREFIX + tableName);
+        if (!raw) return {};
+        return JSON.parse(raw) as ColumnSizingState;
+    } catch {
+        return {};
+    }
+}
+
+function saveColumnSizing(tableName: string, sizing: ColumnSizingState): void {
+    try {
+        if (Object.keys(sizing).length === 0) {
+            localStorage.removeItem(COL_SIZING_STORAGE_PREFIX + tableName);
+        } else {
+            localStorage.setItem(COL_SIZING_STORAGE_PREFIX + tableName, JSON.stringify(sizing));
+        }
+    } catch {
+        // storage full or unavailable
+    }
+}
+
 interface DataTableProps<TData> {
     columns: ColumnDef<TData, unknown>[];
     data: TData[];
+    tableName?: string;
     pageCount: number;
     pageIndex: number;
     pageSize: number;
@@ -69,6 +98,7 @@ const ROW_HEIGHT_FALLBACK = 32;
 export function DataTable<TData>({
     columns,
     data,
+    tableName,
     pageCount,
     pageIndex,
     pageSize,
@@ -87,8 +117,43 @@ export function DataTable<TData>({
 }: DataTableProps<TData>) {
     const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
     const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+    const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(() =>
+        tableName ? loadColumnSizing(tableName) : {},
+    );
     const [fitMode, setFitMode] = useState(true);
     const scrollRef = useRef<HTMLDivElement>(null);
+
+    // Persist column sizing to localStorage when it changes
+    useEffect(() => {
+        if (tableName) saveColumnSizing(tableName, columnSizing);
+    }, [tableName, columnSizing]);
+
+    // Reset persisted sizing when table changes
+    const tableNameRef = useRef(tableName);
+    if (tableName && tableName !== tableNameRef.current) {
+        tableNameRef.current = tableName;
+        const restored = loadColumnSizing(tableName);
+        setColumnSizing(restored);
+    }
+
+    const handleAutoSizeColumn = useCallback((columnId: string) => {
+        const container = scrollRef.current;
+        if (!container) return;
+        const cells = container.querySelectorAll(
+            `[data-col-id="${columnId}"]`,
+        );
+        let maxWidth = COL_MIN_WIDTH;
+        cells.forEach((cell) => {
+            const width = cell.scrollWidth + 4;
+            if (width > maxWidth) maxWidth = width;
+        });
+        const clamped = Math.min(maxWidth, COL_MAX_AUTO_WIDTH);
+        setColumnSizing((prev) => ({ ...prev, [columnId]: clamped }));
+    }, []);
+
+    const handleResetColumnWidths = useCallback(() => {
+        setColumnSizing({});
+    }, []);
 
     // Measure actual row height from rendered rows, fall back to estimate
     const getRowHeight = useCallback(() => {
@@ -142,6 +207,8 @@ export function DataTable<TData>({
             ),
             enableSorting: false,
             enableHiding: false,
+            enableResizing: false,
+            size: 32,
         });
     }
 
@@ -158,7 +225,16 @@ export function DataTable<TData>({
             pagination: { pageIndex, pageSize },
             columnVisibility,
             rowSelection,
+            columnSizing,
         },
+        defaultColumn: {
+            minSize: COL_MIN_WIDTH,
+            size: COL_DEFAULT_WIDTH,
+        },
+        columnResizeMode: 'onChange',
+        enableColumnResizing: true,
+        onColumnSizingChange: setColumnSizing,
+        meta: { onResetColumnWidths: handleResetColumnWidths },
         onSortingChange: (updater) => {
             const next = typeof updater === 'function' ? updater(sorting) : updater;
             onSortingChange(next);
@@ -239,16 +315,33 @@ export function DataTable<TData>({
                     </DropdownMenuContent>
                 </DropdownMenu>
             </div>
-            <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0">
-                <Table>
+            <div ref={scrollRef} className="flex-1 overflow-auto min-h-0">
+                <Table style={{ width: table.getTotalSize() }}>
                     <TableHeader>
                         {table.getHeaderGroups().map((headerGroup) => (
                             <TableRow key={headerGroup.id}>
                                 {headerGroup.headers.map((header) => (
-                                    <TableHead key={header.id}>
+                                    <TableHead
+                                        key={header.id}
+                                        data-col-id={header.column.id}
+                                        className="relative"
+                                        style={{ width: header.getSize() }}
+                                    >
                                         {header.isPlaceholder
                                             ? null
                                             : flexRender(header.column.columnDef.header, header.getContext())}
+                                        {header.column.getCanResize() && (
+                                            <div
+                                                onMouseDown={header.getResizeHandler()}
+                                                onTouchStart={header.getResizeHandler()}
+                                                onDoubleClick={() => handleAutoSizeColumn(header.column.id)}
+                                                className={`absolute top-0 right-0 w-1 h-full cursor-col-resize select-none touch-none opacity-0 hover:opacity-100 transition-opacity ${
+                                                    header.column.getIsResizing()
+                                                        ? 'bg-primary opacity-100'
+                                                        : 'bg-border hover:bg-muted-foreground'
+                                                }`}
+                                            />
+                                        )}
                                     </TableHead>
                                 ))}
                             </TableRow>
@@ -279,7 +372,11 @@ export function DataTable<TData>({
                                         onClick={onRowSelect ? () => onRowSelect(isSelected ? null : String(rowPk)) : undefined}
                                     >
                                         {row.getVisibleCells().map((cell) => (
-                                            <TableCell key={cell.id}>
+                                            <TableCell
+                                                key={cell.id}
+                                                data-col-id={cell.column.id}
+                                                style={{ width: cell.column.getSize() }}
+                                            >
                                                 {flexRender(cell.column.columnDef.cell, cell.getContext())}
                                             </TableCell>
                                         ))}

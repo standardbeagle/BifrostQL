@@ -1,5 +1,5 @@
-import { Column } from '@tanstack/react-table';
-import { ArrowDown, ArrowUp, ArrowUpDown, EyeOff, Filter } from 'lucide-react';
+import { Column, Table } from '@tanstack/react-table';
+import { ArrowDown, ArrowUp, ArrowUpDown, EyeOff, Filter, RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
@@ -48,13 +48,16 @@ function getFkMeta<TData, TValue>(column: Column<TData, TValue>): { joinTable: s
 
 interface DataTableColumnHeaderProps<TData, TValue> {
     column: Column<TData, TValue>;
+    table: Table<TData>;
     title: string;
 }
 
 export function DataTableColumnHeader<TData, TValue>({
     column,
+    table: tableInstance,
     title,
 }: DataTableColumnHeaderProps<TData, TValue>) {
+    const onResetColumnWidths = (tableInstance.options.meta as { onResetColumnWidths?: () => void } | undefined)?.onResetColumnWidths;
     if (!column.getCanSort()) {
         return <span>{title}</span>;
     }
@@ -197,6 +200,15 @@ export function DataTableColumnHeader<TData, TValue>({
                         <DropdownMenuItem onClick={() => column.toggleVisibility(false)}>
                             <EyeOff className="size-3.5 text-muted-foreground" />
                             Hide
+                        </DropdownMenuItem>
+                    </>
+                )}
+                {onResetColumnWidths && (
+                    <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={onResetColumnWidths}>
+                            <RotateCcw className="size-3.5 text-muted-foreground" />
+                            Reset column widths
                         </DropdownMenuItem>
                     </>
                 )}

@@ -7,8 +7,9 @@ import { ColumnDef, ColumnFiltersState, SortingState } from "@tanstack/react-tab
 import { useFetcher } from "../common/fetcher";
 import { DataTableColumnHeader } from "../components/data-table-column-header";
 import { FkCellPopover } from "../components/fk-cell-popover";
-import { Pencil } from "lucide-react";
+import { MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { Button } from "../components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { ContentViewer } from "../components/content-viewer";
 import { isLongTextDbType, isBinaryDbType } from "../lib/content-detect";
 
@@ -148,22 +149,44 @@ function deserializeColumnFilters(raw: string): ColumnFiltersState {
     }
 }
 
-const getTableColumns = (table: Table, schema: Schema): ColumnDef<RowData, unknown>[] => {
+const getTableColumns = (table: Table, schema: Schema, onDeleteRow?: (pk: string) => void): ColumnDef<RowData, unknown>[] => {
     if (!table || !schema) return [];
 
-    const editColumn: ColumnDef<RowData, unknown>[] = table.isEditable !== false
+    const actionsColumn: ColumnDef<RowData, unknown>[] = table.isEditable !== false
         ? [{
-            id: 'edit',
-            header: 'Edit',
+            id: '_actions',
+            header: '',
             enableSorting: false,
             enableHiding: false,
-            cell: ({ row }) => (
-                <Button variant="ghost" size="icon-sm" asChild>
-                    <Link to={`/${table.graphQlName}/edit/${getRowPkValue(row.original, table)}`} aria-label="Edit row" title="Edit row">
-                        <Pencil className="size-3.5" />
-                    </Link>
-                </Button>
-            ),
+            cell: ({ row }) => {
+                const pk = getRowPkValue(row.original, table);
+                return (
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon-sm" aria-label="Row actions" onClick={(e) => e.stopPropagation()}>
+                                <MoreHorizontal className="size-4" />
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                            <DropdownMenuItem asChild>
+                                <Link to={`/${table.graphQlName}/edit/${pk}`}>
+                                    <Pencil className="size-3.5" />
+                                    Edit
+                                </Link>
+                            </DropdownMenuItem>
+                            {onDeleteRow && (
+                                <DropdownMenuItem
+                                    className="text-destructive focus:text-destructive"
+                                    onClick={(e) => { e.stopPropagation(); onDeleteRow(pk); }}
+                                >
+                                    <Trash2 className="size-3.5" />
+                                    Delete
+                                </DropdownMenuItem>
+                            )}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                );
+            },
         }]
         : [];
 
@@ -264,7 +287,7 @@ const getTableColumns = (table: Table, schema: Schema): ColumnDef<RowData, unkno
             };
         });
 
-    return [...editColumn, ...dataColumns, ...multiJoinColumns];
+    return [...dataColumns, ...multiJoinColumns, ...actionsColumn];
 }
 
 const getPkType = (table: Table): string => {
@@ -384,7 +407,7 @@ interface UseDataTableResult {
     onPageSizeChange: (pageSize: number) => void;
 }
 
-export function useDataTable(table: Table | null, id?: string, filterTable?: string, filterColumn?: string): UseDataTableResult {
+export function useDataTable(table: Table | null, id?: string, filterTable?: string, filterColumn?: string, onDeleteRow?: (pk: string) => void): UseDataTableResult {
     const { search } = useSearchParams();
     const navigate = useNavigate();
     const filterString = search.get('filter') ?? '';
@@ -448,8 +471,8 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     });
 
     const columns = useMemo(
-        () => table ? getTableColumns(table, schema) : [],
-        [table, schema]
+        () => table ? getTableColumns(table, schema, onDeleteRow) : [],
+        [table, schema, onDeleteRow]
     );
 
     const tableData = data?.[table?.name ?? ''];

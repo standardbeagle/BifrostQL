@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
     ColumnDef,
     ColumnFiltersState,
+    RowSelectionState,
     SortingState,
     VisibilityState,
     flexRender,
@@ -17,6 +18,7 @@ import {
     TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
     Select,
     SelectContent,
@@ -37,6 +39,7 @@ import {
     ChevronsLeft,
     ChevronsRight,
     Columns3,
+    Trash2,
 } from 'lucide-react';
 
 interface DataTableProps<TData> {
@@ -48,6 +51,7 @@ interface DataTableProps<TData> {
     sorting: SortingState;
     columnFilters: ColumnFiltersState;
     loading?: boolean;
+    selectable?: boolean;
     rowIdField?: string;
     selectedRowId?: string | null;
     onRowSelect?: (rowId: string | null) => void;
@@ -55,6 +59,7 @@ interface DataTableProps<TData> {
     onColumnFiltersChange: (filters: ColumnFiltersState) => void;
     onPageIndexChange: (pageIndex: number) => void;
     onPageSizeChange: (pageSize: number) => void;
+    onDeleteSelected?: (pks: string[]) => void;
 }
 
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100];
@@ -79,6 +84,7 @@ export function DataTable<TData>({
     sorting,
     columnFilters,
     loading,
+    selectable = false,
     rowIdField = 'id',
     selectedRowId,
     onRowSelect,
@@ -86,8 +92,10 @@ export function DataTable<TData>({
     onColumnFiltersChange,
     onPageIndexChange,
     onPageSizeChange,
+    onDeleteSelected,
 }: DataTableProps<TData>) {
     const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+    const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
     const [initialized, setInitialized] = useState(false);
 
     useEffect(() => {
@@ -97,15 +105,50 @@ export function DataTable<TData>({
         }
     }, [initialized, onPageSizeChange]);
 
+    // Clear selection when data/page changes
+    useEffect(() => {
+        setRowSelection({});
+    }, [data, pageIndex]);
+
+    // Build columns with optional select and delete columns
+    const allColumns: ColumnDef<TData, unknown>[] = [];
+
+    if (selectable) {
+        allColumns.push({
+            id: '_select',
+            header: ({ table: t }) => (
+                <Checkbox
+                    checked={t.getIsAllPageRowsSelected() || (t.getIsSomePageRowsSelected() && 'indeterminate')}
+                    onCheckedChange={(value) => t.toggleAllPageRowsSelected(!!value)}
+                    aria-label="Select all"
+                />
+            ),
+            cell: ({ row }) => (
+                <Checkbox
+                    checked={row.getIsSelected()}
+                    onCheckedChange={(value) => row.toggleSelected(!!value)}
+                    onClick={(e) => e.stopPropagation()}
+                    aria-label="Select row"
+                />
+            ),
+            enableSorting: false,
+            enableHiding: false,
+        });
+    }
+
+    allColumns.push(...columns);
+
     const table = useReactTable({
         data,
-        columns,
+        columns: allColumns,
         pageCount,
+        getRowId: (row) => String((row as Record<string, unknown>)?.[rowIdField] ?? ''),
         state: {
             sorting,
             columnFilters,
             pagination: { pageIndex, pageSize },
             columnVisibility,
+            rowSelection,
         },
         onSortingChange: (updater) => {
             const next = typeof updater === 'function' ? updater(sorting) : updater;
@@ -126,15 +169,44 @@ export function DataTable<TData>({
             onColumnFiltersChange(next);
         },
         onColumnVisibilityChange: setColumnVisibility,
+        onRowSelectionChange: setRowSelection,
+        enableRowSelection: selectable,
         getCoreRowModel: getCoreRowModel(),
         manualSorting: true,
         manualFiltering: true,
         manualPagination: true,
     });
 
+    const selectedCount = Object.keys(rowSelection).length;
+
+    const handleDeleteSelected = useCallback(() => {
+        const selectedPks = Object.keys(rowSelection);
+        if (selectedPks.length > 0 && onDeleteSelected) {
+            onDeleteSelected(selectedPks);
+        }
+    }, [rowSelection, onDeleteSelected]);
+
     return (
         <div className="flex flex-col w-full min-h-0 flex-1">
-            <div className="flex items-center justify-end py-1.5 px-3">
+            <div className="flex items-center justify-between py-1.5 px-3">
+                <div className="flex items-center gap-2">
+                    {selectedCount > 0 && onDeleteSelected && (
+                        <>
+                            <span className="text-sm text-muted-foreground">
+                                {selectedCount} selected
+                            </span>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={handleDeleteSelected}
+                                className="text-destructive hover:text-destructive"
+                            >
+                                <Trash2 className="size-3.5" />
+                                Delete
+                            </Button>
+                        </>
+                    )}
+                </div>
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                         <Button variant="outline" size="sm">
@@ -176,13 +248,13 @@ export function DataTable<TData>({
                     <TableBody>
                         {loading ? (
                             <TableRow>
-                                <TableCell colSpan={columns.length} className="h-24 text-center">
+                                <TableCell colSpan={allColumns.length} className="h-24 text-center">
                                     Loading...
                                 </TableCell>
                             </TableRow>
                         ) : table.getRowModel().rows.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={columns.length} className="h-24 text-center">
+                                <TableCell colSpan={allColumns.length} className="h-24 text-center">
                                     No results.
                                 </TableCell>
                             </TableRow>
@@ -193,7 +265,7 @@ export function DataTable<TData>({
                                 return (
                                     <TableRow
                                         key={row.id}
-                                        data-state={isSelected ? 'selected' : undefined}
+                                        data-state={isSelected ? 'selected' : row.getIsSelected() ? 'selected' : undefined}
                                         className={onRowSelect ? 'cursor-pointer' : undefined}
                                         onClick={onRowSelect ? () => onRowSelect(isSelected ? null : String(rowPk)) : undefined}
                                     >
@@ -209,7 +281,7 @@ export function DataTable<TData>({
                     </TableBody>
                 </Table>
             </div>
-            <div className="flex items-center justify-between px-3 py-2 border-t border-border mt-auto">
+            <div className="flex items-center justify-between px-3 py-2 border-t border-border mt-auto shrink-0">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <span>Rows per page</span>
                     <Select

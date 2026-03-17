@@ -48,6 +48,9 @@ public sealed class SqliteDialect : ISqlDialect
     public string LastInsertedIdentity => "last_insert_rowid()";
 
     /// <inheritdoc />
+    public string ReturningIdentityClause => " RETURNING rowid AS ID";
+
+    /// <inheritdoc />
     public string LikePattern(string paramName, LikePatternType patternType) => patternType switch
     {
         LikePatternType.Contains => $"'%' || {paramName} || '%'",

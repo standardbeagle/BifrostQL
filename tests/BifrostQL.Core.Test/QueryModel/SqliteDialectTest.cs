@@ -762,6 +762,66 @@ public sealed class SqliteDialectTest
 
     #endregion
 
+    #region ReturningIdentityClause Tests
+
+    [Fact]
+    public void ReturningIdentityClause_ReturnsReturningRowid()
+    {
+        // Act
+        var result = _sut.ReturningIdentityClause;
+
+        // Assert
+        result.Should().Be(" RETURNING rowid AS ID");
+    }
+
+    [Fact]
+    public void ReturningIdentityClause_SqlServerDialect_ReturnsNull()
+    {
+        // The default interface property returns null for dialects that don't override it
+        ISqlDialect dialect = SqlServerDialect.Instance;
+
+        // Act
+        var result = dialect.ReturningIdentityClause;
+
+        // Assert
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public void BuildingInsertQuery_WithReturning_GeneratesValidSql()
+    {
+        // Arrange
+        var dialect = SqliteDialect.Instance;
+        var table = dialect.TableReference(null, "Users");
+        var returning = dialect.ReturningIdentityClause;
+
+        // Act
+        var sql = $"INSERT INTO {table} (\"Name\") VALUES (@Name){returning};";
+
+        // Assert
+        sql.Should().Be("INSERT INTO \"Users\" (\"Name\") VALUES (@Name) RETURNING rowid AS ID;");
+    }
+
+    [Fact]
+    public void BuildingUpsertQuery_WithReturning_GeneratesValidSql()
+    {
+        // Arrange
+        var dialect = SqliteDialect.Instance;
+        var tableRef = dialect.TableReference(null, "Users");
+        var upsertSql = dialect.UpsertSql(tableRef, new List<string> { "Id" }, new List<string> { "Id", "Name" }, new List<string> { "Name" });
+        var returning = dialect.ReturningIdentityClause;
+
+        // Act
+        var sql = upsertSql!.TrimEnd(';') + returning + ";";
+
+        // Assert
+        sql.Should().Be(
+            "INSERT INTO \"Users\"(\"Id\",\"Name\") VALUES(@Id,@Name) " +
+            "ON CONFLICT(\"Id\") DO UPDATE SET \"Name\"=excluded.\"Name\" RETURNING rowid AS ID;");
+    }
+
+    #endregion
+
     #region SQLite-Specific Behavior Tests
 
     [Fact]

@@ -82,6 +82,18 @@ public interface ISqlDialect
     string GetOperator(string op);
 
     /// <summary>
+    /// Generates a SQL clause that returns the identity value from a mutation statement
+    /// using the dialect's native RETURNING syntax (e.g., SQLite's <c>RETURNING rowid AS ID</c>).
+    /// Returns null if the dialect does not support RETURNING, in which case the caller
+    /// should fall back to a separate <c>SELECT LastInsertedIdentity</c> statement.
+    /// </summary>
+    /// <returns>
+    /// A SQL fragment to append to INSERT/UPSERT statements (e.g., " RETURNING rowid AS ID"),
+    /// or null if not supported.
+    /// </returns>
+    string? ReturningIdentityClause => null;
+
+    /// <summary>
     /// Generates an atomic upsert SQL statement that inserts a row or updates it if a
     /// conflict occurs on the specified key columns. Returns null if the dialect does not
     /// support native upsert syntax, in which case the caller should fall back to

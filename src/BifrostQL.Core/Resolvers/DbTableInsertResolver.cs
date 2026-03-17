@@ -55,7 +55,11 @@ namespace BifrostQL.Core.Resolvers
                 if (upsertSql != null)
                 {
                     var moduleSql = modules.Insert(propertyInfo.data, table, context.UserContext, model);
-                    return HandleDecimals(await ExecuteScalar(conFactory, Join(upsertSql + $"SELECT {dialect.LastInsertedIdentity} ID;", moduleSql), propertyInfo.data));
+                    var returning = dialect.ReturningIdentityClause;
+                    var identitySql = returning != null
+                        ? upsertSql.TrimEnd(';') + returning + ";"
+                        : upsertSql + $"SELECT {dialect.LastInsertedIdentity} ID;";
+                    return HandleDecimals(await ExecuteScalar(conFactory, Join(identitySql, moduleSql), propertyInfo.data));
                 }
 
                 if (propertyInfo.keyData.Any())
@@ -192,7 +196,10 @@ namespace BifrostQL.Core.Resolvers
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var columns = string.Join(",", data.Keys.Select(k => dialect.EscapeIdentifier(k)));
             var values = string.Join(",", data.Keys.Select(k => $"@{k}"));
-            var sql = $"INSERT INTO {tableRef}({columns}) VALUES({values});SELECT {dialect.LastInsertedIdentity} ID;";
+            var returning = dialect.ReturningIdentityClause;
+            var sql = returning != null
+                ? $"INSERT INTO {tableRef}({columns}) VALUES({values}){returning};"
+                : $"INSERT INTO {tableRef}({columns}) VALUES({values});SELECT {dialect.LastInsertedIdentity} ID;";
             return HandleDecimals(await ExecuteScalar(conFactory, Join(sql, moduleSql), data));
         }
 

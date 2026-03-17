@@ -532,6 +532,50 @@ public sealed class SqliteSchemaReaderTests : IAsyncLifetime
 
     #endregion
 
+    #region STRICT Tables
+
+    [Fact]
+    public async Task ReadSchema_StrictTable_AllTypesReadCorrectly()
+    {
+        await using var conn = new SqliteConnection("Data Source=:memory:");
+        await conn.OpenAsync();
+
+        await using var cmd = new SqliteCommand(
+            @"CREATE TABLE StrictTypes (
+                Id INTEGER PRIMARY KEY,
+                Name TEXT NOT NULL,
+                Score REAL,
+                Data BLOB,
+                Flexible ANY
+            ) STRICT", conn);
+        await cmd.ExecuteNonQueryAsync();
+
+        var schema = await _reader.ReadSchemaAsync(conn);
+        var table = schema.Tables.First(t => t.DbName == "StrictTypes");
+
+        table.ColumnLookup.Should().HaveCount(5);
+        table.ColumnLookup["Id"].DataType.Should().Be("INTEGER");
+        table.ColumnLookup["Id"].IsIdentity.Should().BeTrue();
+        table.ColumnLookup["Name"].DataType.Should().Be("TEXT");
+        table.ColumnLookup["Name"].IsNullable.Should().BeFalse();
+        table.ColumnLookup["Score"].DataType.Should().Be("REAL");
+        table.ColumnLookup["Score"].IsNullable.Should().BeTrue();
+        table.ColumnLookup["Data"].DataType.Should().Be("BLOB");
+        table.ColumnLookup["Flexible"].DataType.Should().Be("ANY");
+    }
+
+    [Fact]
+    public async Task ReadSchema_StrictTable_AnyTypeIsSupportedByMapper()
+    {
+        var mapper = SqliteTypeMapper.Instance;
+
+        mapper.IsSupported("ANY").Should().BeTrue("ANY is a valid STRICT table type");
+        mapper.GetGraphQlType("ANY").Should().Be("String",
+            "ANY type should map to String since it can hold any value");
+    }
+
+    #endregion
+
     #region Empty Database
 
     [Fact]

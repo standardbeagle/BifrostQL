@@ -18,7 +18,7 @@ public sealed class SqliteTypeMapper : ITypeMapper
         "integer", "int", "tinyint", "smallint", "mediumint", "bigint",
         "real", "double", "float", "numeric", "decimal",
         "text", "varchar", "char", "clob", "nvarchar", "nchar",
-        "blob", "none",
+        "blob", "none", "any",
         "boolean", "bit",
         "date", "datetime", "timestamp",
         "json",

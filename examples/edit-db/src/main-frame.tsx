@@ -5,6 +5,7 @@ import { Route, Routes, usePath } from './hooks/usePath';
 import { Header } from './header';
 import { DataEdit } from './data-edit';
 import { ErrorBoundary } from './error-boundary';
+import { ColumnNavProvider } from './hooks/useColumnNav';
 import { Button } from '@/components/ui/button';
 import { PanelLeft, Database, Table2, MousePointerClick, Loader2 } from 'lucide-react';
 import { useSchema } from './hooks/useSchema';
@@ -122,6 +123,7 @@ function Layout() {
 
     return (
         <SchemaGate>
+        <ColumnNavProvider>
             <div className={`grid h-full flex-1 min-h-0 grid-rows-[auto_1fr] ${sidebarOpen ? 'grid-cols-[minmax(150px,min-content)_1fr]' : 'grid-cols-[0px_1fr]'} md:grid-cols-[minmax(150px,min-content)_1fr] transition-[grid-template-columns] duration-200`}>
                 <div className="col-span-full sticky top-0 z-50 bg-background border-b border-border flex items-center">
                     <Button
@@ -175,6 +177,7 @@ function Layout() {
                     </ErrorBoundary>
                 </main>
             </div>
+        </ColumnNavProvider>
         </SchemaGate>
     );
 }

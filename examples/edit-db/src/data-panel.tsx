@@ -1,8 +1,9 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { DataDataTable } from './data-data-table';
 import { DetailPanel } from './components/detail-panel';
 import { useParams } from './hooks/usePath';
 import { useSchema } from './hooks/useSchema';
+import { useColumnNavRegister } from './hooks/useColumnNav';
 import { Table } from './types/schema';
 import { Loader2, X } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -26,6 +27,10 @@ export function DataPanel() {
     const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
     const [openColumns, setOpenColumns] = useState<ColumnPanel[]>([]);
 
+    const { register, unregister } = useColumnNavRegister();
+    const mainRef = useRef<HTMLDivElement>(null);
+    const columnRefsMap = useRef<Map<number, HTMLElement | null>>(new Map());
+
     const table = useMemo(() => data ? getTable(data, tableName) : undefined, [data, tableName]);
     const hasMultiJoins = (table?.multiJoins?.length ?? 0) > 0;
 
@@ -36,6 +41,21 @@ export function DataPanel() {
     const handleCloseColumn = useCallback((index: number) => {
         setOpenColumns((prev) => prev.filter((_, i) => i !== index));
     }, []);
+
+    useEffect(() => {
+        const refs = columnRefsMap.current;
+        refs.set(0, mainRef.current);
+        for (const key of refs.keys()) {
+            if (key > openColumns.length) refs.delete(key);
+        }
+        register({
+            mainTable: tableName,
+            columns: openColumns,
+            columnRefs: refs,
+            onClose: handleCloseColumn,
+        });
+        return () => unregister();
+    }, [tableName, openColumns, register, unregister, handleCloseColumn]);
 
     if (!tableName) return <div className="p-5 text-center text-muted-foreground">Table missing</div>;
     if (loading) return (
@@ -53,7 +73,7 @@ export function DataPanel() {
 
     return (
         <div className="flex flex-1 min-h-0 gap-0.5">
-            <div className="flex flex-col flex-1 min-h-0 min-w-0">
+            <div ref={mainRef} className="flex flex-col flex-1 min-h-0 min-w-0">
                 <div className={hasMultiJoins && selectedRowId ? 'flex-1 min-h-0 max-h-[50%] overflow-hidden flex flex-col' : 'flex-1 min-h-0 overflow-hidden flex flex-col'}>
                     <DataDataTable
                         table={table}
@@ -80,20 +100,21 @@ export function DataPanel() {
                     key={`${col.tableName}-${col.filterId ?? index}`}
                     panel={col}
                     onClose={() => handleCloseColumn(index)}
+                    onRef={(el) => { columnRefsMap.current.set(index + 1, el); }}
                 />
             ))}
         </div>
     );
 }
 
-function SideColumn({ panel, onClose }: { panel: ColumnPanel; onClose: () => void }) {
+function SideColumn({ panel, onClose, onRef }: { panel: ColumnPanel; onClose: () => void; onRef?: (el: HTMLDivElement | null) => void }) {
     const { data } = useSchema();
     const table = useMemo(() => data ? getTable(data, panel.tableName) : undefined, [data, panel.tableName]);
 
     if (!table) return null;
 
     return (
-        <div className="flex flex-col flex-1 min-h-0 min-w-0 border-l border-border">
+        <div ref={onRef} className="flex flex-col flex-1 min-h-0 min-w-0 border-l border-border">
             <div className="flex items-center gap-1 px-2 py-1 bg-muted/30 border-b border-border shrink-0">
                 <span className="text-xs font-medium truncate flex-1">{table.label}</span>
                 <Button

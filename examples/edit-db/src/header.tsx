@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSchema } from './hooks/useSchema';
+import { useColumnNav } from './hooks/useColumnNav';
 import { useNavigate, useNavigation, useParams } from './hooks/usePath';
 import { Table, Column } from './types/schema';
 import { Button } from '@/components/ui/button';
@@ -13,6 +14,7 @@ import {
 } from '@/components/ui/select';
 import { ChevronLeft, Filter, Plus, Search, X, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { humanizeName } from './lib/humanize';
 
 interface HeaderRouteParams {
     table?: string;
@@ -28,10 +30,12 @@ interface ColumnOption {
 export function Header() {
     const tableData = useParams<HeaderRouteParams>();
     const { loading, error, data: schema } = useSchema();
+    const { mainTable, columns, focusedIndex, focusColumn, closeColumn } = useColumnNav();
     const [searchVal, setSearchVal] = useState("");
     const navigate = useNavigate();
     const { back, hasBack } = useNavigation();
     const tableName = tableData?.table;
+    const hasOpenColumns = columns.length > 0;
     const tableSchema = useMemo(() => schema?.find((t: Table) => t.graphQlName === tableName), [schema, tableName]);
     const options: ColumnOption[] | undefined = useMemo(
         () => tableSchema?.columns?.map((c: Column) => ({ key: c.name, value: `${c.name},${c.paramType}`, label: c.label })),
@@ -63,7 +67,7 @@ export function Header() {
     );
     return (
         <header className="grid grid-cols-[auto_1fr_auto] items-center gap-3 px-3 py-1.5 min-h-[2.5rem]">
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 overflow-x-auto">
                 <Button
                     variant="ghost"
                     size="icon-sm"
@@ -71,12 +75,57 @@ export function Header() {
                     disabled={!hasBack}
                     aria-label="Go back"
                     title="Go back"
+                    className="shrink-0"
                 >
                     <ChevronLeft className="size-4" />
                 </Button>
-                <h2 className="text-sm font-semibold whitespace-nowrap">
-                    {tableSchema?.dbName ?? tableData?.table ?? "(Select)"}
-                </h2>
+                {hasOpenColumns ? (
+                    <div className="flex items-center gap-1 overflow-x-auto">
+                        <button
+                            type="button"
+                            onClick={() => focusColumn(0)}
+                            className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap transition-colors ${
+                                focusedIndex === 0
+                                    ? 'bg-primary text-primary-foreground'
+                                    : 'bg-muted/50 text-muted-foreground hover:bg-muted'
+                            }`}
+                        >
+                            {tableSchema?.label ?? humanizeName(tableData?.table ?? '')}
+                        </button>
+                        {columns.map((col, i) => {
+                            const colTable = schema?.find((t: Table) => t.graphQlName === col.panel.tableName);
+                            const colLabel = colTable?.label ?? humanizeName(col.panel.tableName);
+                            return (
+                                <button
+                                    type="button"
+                                    key={`${col.panel.tableName}-${col.panel.filterId ?? i}`}
+                                    onClick={() => focusColumn(i + 1)}
+                                    className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap transition-colors ${
+                                        focusedIndex === i + 1
+                                            ? 'bg-primary text-primary-foreground'
+                                            : 'bg-muted/50 text-muted-foreground hover:bg-muted'
+                                    }`}
+                                >
+                                    {colLabel}
+                                    <span
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={(e) => { e.stopPropagation(); closeColumn(i + 1); }}
+                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); closeColumn(i + 1); } }}
+                                        className="ml-0.5 rounded-sm hover:bg-background/50 p-px"
+                                        aria-label={`Close ${colLabel}`}
+                                    >
+                                        <X className="size-3" />
+                                    </span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                ) : (
+                    <h2 className="text-sm font-semibold whitespace-nowrap">
+                        {tableSchema?.dbName ?? tableData?.table ?? "(Select)"}
+                    </h2>
+                )}
             </div>
             {options ? <>
                 <div className="flex items-center border border-border rounded-md overflow-hidden">

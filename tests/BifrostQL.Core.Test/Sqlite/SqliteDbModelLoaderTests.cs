@@ -39,6 +39,14 @@ public sealed class SqliteDbModelLoaderTests : IAsyncLifetime
 
     private static async Task CreateSchemaAsync(SqliteConnection conn)
     {
+        // Drop in reverse FK order to avoid constraint issues on shared in-memory DBs
+        var drops = new[] { "Reviews", "Books", "Genres", "Authors" };
+        foreach (var table in drops)
+        {
+            await using var drop = new SqliteCommand($"DROP TABLE IF EXISTS {table}", conn);
+            await drop.ExecuteNonQueryAsync();
+        }
+
         var statements = new[]
         {
             @"CREATE TABLE Authors (

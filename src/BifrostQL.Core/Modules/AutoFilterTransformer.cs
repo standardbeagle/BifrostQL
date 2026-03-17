@@ -24,11 +24,13 @@ namespace BifrostQL.Core.Modules;
 ///
 /// Array claim values produce IN filters instead of equality filters.
 /// </summary>
-public sealed class AutoFilterTransformer : IFilterTransformer
+public sealed class AutoFilterTransformer : IFilterTransformer, IModuleNamed
 {
     public const string MetadataKey = "auto-filter";
     public const string BypassRoleMetadataKey = "auto-filter-bypass-role";
     public const string RolesContextKey = "roles";
+
+    public string ModuleName => "auto-filter";
 
     // Security: runs at priority 1, right after tenant filter (priority 0)
     public int Priority => 1;

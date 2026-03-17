@@ -16,11 +16,13 @@ namespace BifrostQL.Core.Modules;
 /// The key used to look up the tenant in UserContext can be configured:
 ///   "BifrostQL:Metadata { tenant-context-key: org_id }"
 /// </summary>
-public sealed class TenantFilterTransformer : IFilterTransformer
+public sealed class TenantFilterTransformer : IFilterTransformer, IModuleNamed
 {
     public const string MetadataKey = "tenant-filter";
     public const string TenantContextKeyMetadata = "tenant-context-key";
     public const string DefaultTenantContextKey = "tenant_id";
+
+    public string ModuleName => "tenant-filter";
 
     // Security: Tenant filtering runs first (innermost)
     public int Priority => 0;

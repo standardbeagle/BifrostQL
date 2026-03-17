@@ -224,6 +224,7 @@ namespace BifrostQL.Server
         private IReadOnlyCollection<IQueryObserver> _queryObservers = Array.Empty<IQueryObserver>();
         private Func<IServiceProvider, IReadOnlyCollection<IQueryObserver>>? _queryObserverLoader;
         private IConfigurationSection? _loggingConfig;
+        private readonly BifrostProfileRegistry _profileRegistry = new();
 
         /// <summary>
         /// The configured endpoints. Available after configuration is complete.
@@ -322,6 +323,37 @@ namespace BifrostQL.Server
             return this;
         }
 
+        /// <summary>
+        /// Adds a named configuration profile that controls which modules are active.
+        /// </summary>
+        public BifrostMultiDbOptions AddProfile(BifrostProfile profile)
+        {
+            _profileRegistry.Add(profile);
+            return this;
+        }
+
+        /// <summary>
+        /// Binds profiles from a configuration section (e.g., "BifrostQL:Profiles").
+        /// Each child section is a profile name with "modules" array and optional "requireRole".
+        /// </summary>
+        public BifrostMultiDbOptions BindProfiles(IConfigurationSection? section)
+        {
+            if (section == null || !section.Exists())
+                return this;
+
+            foreach (var child in section.GetChildren())
+            {
+                var modules = child.GetSection("modules").Get<string[]>();
+                _profileRegistry.Add(new BifrostProfile
+                {
+                    Name = child.Key,
+                    Modules = modules,
+                    RequireRole = child.GetValue<string>("requireRole"),
+                });
+            }
+            return this;
+        }
+
         internal void ConfigureServices(IServiceCollection services)
         {
             if (_endpoints.Count == 0)
@@ -361,6 +393,9 @@ namespace BifrostQL.Server
             services.AddSingleton(this);
             services.AddSingleton(extensionsLoader);
             services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
+
+            if (_profileRegistry.HasProfiles)
+                services.AddSingleton(_profileRegistry);
 
             if (_moduleLoader != null)
                 services.AddSingleton<IMutationModules>(sp => new ModulesWrap { Modules = _moduleLoader(sp) });
@@ -471,6 +506,7 @@ namespace BifrostQL.Server
         private IReadOnlyCollection<IQueryObserver> _queryObservers = Array.Empty<IQueryObserver>();
         private Func<IServiceProvider, IReadOnlyCollection<IQueryObserver>>? _queryObserverLoader = null;
         private IReadOnlyList<IMetadataSource> _metadataSources = Array.Empty<IMetadataSource>();
+        private readonly BifrostProfileRegistry _profileRegistry = new();
 
         /// <summary>
         /// Adds additional metadata sources that are merged in priority order on top of file-based metadata.
@@ -491,7 +527,8 @@ namespace BifrostQL.Server
             return BindConfiguration(config.GetRequiredSection("BifrostQL"))
                     .BindJwtSettings(config.GetSection("JwtSettings"))
                     .BindConnectionString(config.GetConnectionString("bifrost"), !string.IsNullOrWhiteSpace(_connectionString))
-                    .BindProvider(config.GetValue<string>("BifrostQL:Provider"), !string.IsNullOrWhiteSpace(_provider));
+                    .BindProvider(config.GetValue<string>("BifrostQL:Provider"), !string.IsNullOrWhiteSpace(_provider))
+                    .BindProfiles(config.GetSection("BifrostQL:Profiles"));
         }
 
         public BifrostSetupOptions BindConnectionString(string? connectionString, bool skip = false)
@@ -590,6 +627,37 @@ namespace BifrostQL.Server
             return this;
         }
 
+        /// <summary>
+        /// Adds a named configuration profile that controls which modules are active.
+        /// </summary>
+        public BifrostSetupOptions AddProfile(BifrostProfile profile)
+        {
+            _profileRegistry.Add(profile);
+            return this;
+        }
+
+        /// <summary>
+        /// Binds profiles from a configuration section (e.g., "BifrostQL:Profiles").
+        /// Each child section is a profile name with "modules" array and optional "requireRole".
+        /// </summary>
+        public BifrostSetupOptions BindProfiles(IConfigurationSection? section)
+        {
+            if (section == null || !section.Exists())
+                return this;
+
+            foreach (var child in section.GetChildren())
+            {
+                var modules = child.GetSection("modules").Get<string[]>();
+                _profileRegistry.Add(new BifrostProfile
+                {
+                    Name = child.Key,
+                    Modules = modules,
+                    RequireRole = child.GetValue<string>("requireRole"),
+                });
+            }
+            return this;
+        }
+
         public bool IsUsingAuth => _bifrostConfig is not null && !_bifrostConfig.GetValue<bool>("DisableAuth", true);
         public string EndpointPath => _bifrostConfig?.GetValue<string>("Path", "/graphql") ?? "/graphql";
         public string PlaygroundPath => _bifrostConfig?.GetValue<string>("Playground", "/") ?? "/";
@@ -644,6 +712,10 @@ namespace BifrostQL.Server
             services.AddSingleton(this);
             services.AddSingleton(extensionsLoader);
             services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
+
+            if (_profileRegistry.HasProfiles)
+                services.AddSingleton(_profileRegistry);
+
             services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = _modules });
             if (_moduleLoader != null)
                 services.AddSingleton<IMutationModules>((sp => new ModulesWrap { Modules = _moduleLoader(sp) }));

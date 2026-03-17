@@ -112,6 +112,12 @@ namespace BifrostQL.Server
             if (setupOptions != null && !setupOptions.HasConnectionString)
                 return Task.FromResult(new ExecutionResult { Errors = new ExecutionErrors { new ExecutionError("No database connection configured. Set a connection string first.") } });
 
+            // Resolve profile if configured
+            var profileRegistry = options.RequestServices!.GetService<BifrostProfileRegistry>();
+            var profileResult = ResolveProfile(profileRegistry, context);
+            if (profileResult.Error != null)
+                return Task.FromResult(new ExecutionResult { Errors = new ExecutionErrors { profileResult.Error } });
+
             // app.Map() strips the matched prefix from Path and moves it to PathBase,
             // so we need to check PathBase (where the endpoint path lives after routing)
             // before falling back to Path or the first registered value.
@@ -139,12 +145,86 @@ namespace BifrostQL.Server
             if (options.UserContext is IDictionary<string, object?> userContext && !userContext.ContainsKey("_correlationId"))
                 userContext["_correlationId"] = context?.TraceIdentifier ?? Guid.NewGuid().ToString("N");
 
+            // Apply profile filtering to transformers and observers
+            var activeProfile = profileResult.Profile;
+            if (activeProfile != null)
+            {
+                var filterTransformers = options.RequestServices!.GetRequiredService<IFilterTransformers>();
+                var filteredTransformers = BifrostProfileRegistry.FilterBy(filterTransformers, activeProfile);
+                transformerService = new QueryTransformerService(filteredTransformers);
+                observers = observers != null ? BifrostProfileRegistry.FilterBy(observers, activeProfile) : null;
+
+                // Store profile in UserContext so mutation resolvers can filter their modules
+                if (options.UserContext is IDictionary<string, object?> uc)
+                    uc[BifrostProfile.UserContextKey] = activeProfile;
+            }
+
             options.Extensions = Combine(
                 sharedExtensions,
                 new Dictionary<string, object?> { { "tableReaderFactory", new SqlExecutionManager(model, options.Schema, transformerService, observers) } }
             );
             var result = _documentExecutor.ExecuteAsync(options);
             return result;
+        }
+
+        private static ProfileResolution ResolveProfile(BifrostProfileRegistry? registry, HttpContext? context)
+        {
+            if (registry == null || !registry.HasProfiles || context == null)
+                return new ProfileResolution();
+
+            var profileName = ResolveProfileName(context);
+            if (profileName == null || string.Equals(profileName, "default", StringComparison.OrdinalIgnoreCase))
+                return new ProfileResolution();
+
+            var profile = registry.Get(profileName);
+            if (profile == null)
+                return new ProfileResolution { Error = new ExecutionError($"Unknown profile '{profileName}'.") };
+
+            if (profile.RequireRole != null)
+            {
+                var user = context.User;
+                if (user?.Identity?.IsAuthenticated != true)
+                    return new ProfileResolution { Error = new ExecutionError($"Profile '{profileName}' requires authentication.") };
+
+                if (!user.IsInRole(profile.RequireRole))
+                    return new ProfileResolution { Error = new ExecutionError($"Profile '{profileName}' requires role '{profile.RequireRole}'.") };
+            }
+
+            return new ProfileResolution { Profile = profile };
+        }
+
+        private static string? ResolveProfileName(HttpContext context)
+        {
+            // Priority: Header > Query parameter > Path segment
+            if (context.Request.Headers.TryGetValue("X-BifrostQL-Profile", out var headerValue)
+                && !string.IsNullOrWhiteSpace(headerValue))
+            {
+                return headerValue.ToString().Trim();
+            }
+
+            if (context.Request.Query.TryGetValue("profile", out var queryValue)
+                && !string.IsNullOrWhiteSpace(queryValue))
+            {
+                return queryValue.ToString().Trim();
+            }
+
+            // Check for path segment after the mapped endpoint path.
+            // After app.Map(), Path contains the remainder (e.g., "/direct" if mapped at "/graphql").
+            var path = context.Request.Path.Value;
+            if (!string.IsNullOrEmpty(path) && path.Length > 1)
+            {
+                var segment = path.TrimStart('/');
+                if (!string.IsNullOrEmpty(segment) && !segment.Contains('/'))
+                    return segment;
+            }
+
+            return null;
+        }
+
+        private readonly struct ProfileResolution
+        {
+            public BifrostProfile? Profile { get; init; }
+            public ExecutionError? Error { get; init; }
         }
 
         private static Inputs ResolveExtensions(PathCache<Inputs> cache, HttpContext? context)

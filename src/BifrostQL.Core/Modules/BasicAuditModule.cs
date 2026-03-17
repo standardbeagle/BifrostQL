@@ -35,8 +35,10 @@ namespace BifrostQL.Core.Modules
     ///   "dbo.*.updated_at { populate: updated-on }"
     ///   "dbo.*.updated_by_user_id { populate: updated-by }"
     /// </summary>
-    public class BasicAuditModule : IMutationModule
+    public class BasicAuditModule : IMutationModule, IModuleNamed
     {
+        public string ModuleName => "audit";
+
         public BasicAuditModule()
         {
         }

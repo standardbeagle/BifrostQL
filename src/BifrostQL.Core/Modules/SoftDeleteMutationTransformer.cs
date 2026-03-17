@@ -22,11 +22,13 @@ namespace BifrostQL.Core.Modules;
 /// Additional metadata options:
 ///   "dbo.users { soft-delete: deleted_at; soft-delete-by: deleted_by_user_id }"
 /// </summary>
-public sealed class SoftDeleteMutationTransformer : IMutationTransformer
+public sealed class SoftDeleteMutationTransformer : IMutationTransformer, IModuleNamed
 {
     public const string MetadataKey = "soft-delete";
     public const string DeletedByMetadataKey = "soft-delete-by";
     public const string UserIdContextKey = "user_id";
+
+    public string ModuleName => "soft-delete";
 
     public int Priority => 100;
 

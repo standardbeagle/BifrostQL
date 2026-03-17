@@ -18,10 +18,12 @@ namespace BifrostQL.Core.Modules;
 /// Or per-table:
 ///   UserContext["include_deleted:dbo.users"] = true
 /// </summary>
-public sealed class SoftDeleteFilterTransformer : IFilterTransformer
+public sealed class SoftDeleteFilterTransformer : IFilterTransformer, IModuleNamed
 {
     public const string MetadataKey = "soft-delete";
     public const string IncludeDeletedKey = "include_deleted";
+
+    public string ModuleName => "soft-delete";
 
     // Soft-delete runs after security filters
     public int Priority => 100;

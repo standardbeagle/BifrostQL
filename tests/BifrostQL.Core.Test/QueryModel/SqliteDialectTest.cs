@@ -624,6 +624,124 @@ public sealed class SqliteDialectTest
 
     #endregion
 
+    #region UpsertSql Tests
+
+    [Fact]
+    public void UpsertSql_SingleKey_GeneratesOnConflictDoUpdate()
+    {
+        // Arrange
+        var tableRef = _sut.TableReference(null, "Users");
+        var keyColumns = new List<string> { "Id" };
+        var allColumns = new List<string> { "Id", "Name", "Email" };
+        var updateColumns = new List<string> { "Name", "Email" };
+
+        // Act
+        var result = _sut.UpsertSql(tableRef, keyColumns, allColumns, updateColumns);
+
+        // Assert
+        result.Should().Be(
+            "INSERT INTO \"Users\"(\"Id\",\"Name\",\"Email\") VALUES(@Id,@Name,@Email) " +
+            "ON CONFLICT(\"Id\") DO UPDATE SET \"Name\"=excluded.\"Name\",\"Email\"=excluded.\"Email\";");
+    }
+
+    [Fact]
+    public void UpsertSql_CompositeKey_GeneratesOnConflictWithMultipleColumns()
+    {
+        // Arrange
+        var tableRef = _sut.TableReference(null, "OrderItems");
+        var keyColumns = new List<string> { "OrderId", "ProductId" };
+        var allColumns = new List<string> { "OrderId", "ProductId", "Quantity", "Price" };
+        var updateColumns = new List<string> { "Quantity", "Price" };
+
+        // Act
+        var result = _sut.UpsertSql(tableRef, keyColumns, allColumns, updateColumns);
+
+        // Assert
+        result.Should().Be(
+            "INSERT INTO \"OrderItems\"(\"OrderId\",\"ProductId\",\"Quantity\",\"Price\") VALUES(@OrderId,@ProductId,@Quantity,@Price) " +
+            "ON CONFLICT(\"OrderId\",\"ProductId\") DO UPDATE SET \"Quantity\"=excluded.\"Quantity\",\"Price\"=excluded.\"Price\";");
+    }
+
+    [Fact]
+    public void UpsertSql_NoUpdateColumns_GeneratesDoNothing()
+    {
+        // Arrange
+        var tableRef = _sut.TableReference(null, "Tags");
+        var keyColumns = new List<string> { "Id" };
+        var allColumns = new List<string> { "Id" };
+        var updateColumns = new List<string>();
+
+        // Act
+        var result = _sut.UpsertSql(tableRef, keyColumns, allColumns, updateColumns);
+
+        // Assert
+        result.Should().Be("INSERT INTO \"Tags\"(\"Id\") VALUES(@Id) ON CONFLICT(\"Id\") DO NOTHING;");
+    }
+
+    [Fact]
+    public void UpsertSql_EmptyKeyColumns_ReturnsNull()
+    {
+        // Arrange
+        var tableRef = _sut.TableReference(null, "Users");
+        var keyColumns = new List<string>();
+        var allColumns = new List<string> { "Name" };
+        var updateColumns = new List<string> { "Name" };
+
+        // Act
+        var result = _sut.UpsertSql(tableRef, keyColumns, allColumns, updateColumns);
+
+        // Assert
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public void UpsertSql_EmptyAllColumns_ReturnsNull()
+    {
+        // Arrange
+        var tableRef = _sut.TableReference(null, "Users");
+        var keyColumns = new List<string> { "Id" };
+        var allColumns = new List<string>();
+        var updateColumns = new List<string>();
+
+        // Act
+        var result = _sut.UpsertSql(tableRef, keyColumns, allColumns, updateColumns);
+
+        // Assert
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public void UpsertSql_WithSchema_IncludesSchemaInTableRef()
+    {
+        // Arrange
+        var tableRef = _sut.TableReference("main", "Users");
+        var keyColumns = new List<string> { "Id" };
+        var allColumns = new List<string> { "Id", "Name" };
+        var updateColumns = new List<string> { "Name" };
+
+        // Act
+        var result = _sut.UpsertSql(tableRef, keyColumns, allColumns, updateColumns);
+
+        // Assert
+        result.Should().StartWith("INSERT INTO \"main\".\"Users\"(");
+    }
+
+    #endregion
+
+    #region UpsertSql Default Interface Tests
+
+    [Fact]
+    public void UpsertSql_SqlServerDialect_ReturnsNull()
+    {
+        // The default interface method returns null for dialects that don't override it
+        ISqlDialect dialect = SqlServerDialect.Instance;
+        var result = dialect.UpsertSql("\"Users\"", new List<string> { "Id" }, new List<string> { "Id", "Name" }, new List<string> { "Name" });
+
+        result.Should().BeNull();
+    }
+
+    #endregion
+
     #region ISqlDialect Interface Compliance Tests
 
     [Fact]

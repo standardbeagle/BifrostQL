@@ -80,4 +80,20 @@ public interface ISqlDialect
     /// <param name="op">The Directus-style operator (e.g., "_eq", "_contains").</param>
     /// <returns>The corresponding SQL operator string.</returns>
     string GetOperator(string op);
+
+    /// <summary>
+    /// Generates an atomic upsert SQL statement that inserts a row or updates it if a
+    /// conflict occurs on the specified key columns. Returns null if the dialect does not
+    /// support native upsert syntax, in which case the caller should fall back to
+    /// application-level insert-or-update logic.
+    /// </summary>
+    /// <param name="tableRef">The escaped, optionally schema-qualified table reference.</param>
+    /// <param name="keyColumns">Primary key or unique constraint column names (unescaped).</param>
+    /// <param name="allColumns">All column names being written (unescaped), including keys.</param>
+    /// <param name="updateColumns">Non-key column names to update on conflict (unescaped).</param>
+    /// <returns>
+    /// A parameterized SQL string using @columnName parameters, or null if not supported.
+    /// </returns>
+    string? UpsertSql(string tableRef, IReadOnlyList<string> keyColumns, IReadOnlyList<string> allColumns, IReadOnlyList<string> updateColumns)
+        => null;
 }

@@ -225,10 +225,22 @@ namespace BifrostQL.Core.Resolvers
             if (data.Count == 0) return 0;
 
             var caseData = new Dictionary<string, object?>(data, StringComparer.OrdinalIgnoreCase);
-            var keyData = caseData.Where(d => table.ColumnLookup[d.Key].IsPrimaryKey)
-                .ToDictionary(kv => kv.Key, kv => kv.Value);
+            var keyColumns = caseData.Keys.Where(k => table.ColumnLookup[k].IsPrimaryKey).ToList();
+            var updateColumns = caseData.Keys.Where(k => !table.ColumnLookup[k].IsPrimaryKey).ToList();
+            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+            var upsertSql = dialect.UpsertSql(tableRef, keyColumns, caseData.Keys.ToList(), updateColumns);
 
-            if (keyData.Any())
+            if (upsertSql != null)
+            {
+                var moduleSql = modules.Insert(caseData, table, userContext, model);
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = Join(upsertSql, moduleSql);
+                cmd.Transaction = transaction;
+                AddParameters(cmd, caseData);
+                return await cmd.ExecuteNonQueryAsync();
+            }
+
+            if (keyColumns.Count > 0)
                 return await ExecuteUpdate(data, table, modules, model, dialect, conn, transaction, userContext);
 
             return await ExecuteInsert(data, table, modules, model, dialect, conn, transaction, userContext);

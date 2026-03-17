@@ -46,6 +46,18 @@ namespace BifrostQL.Core.Resolvers
                 var propertyInfo = GetPropertyInfo(context, _table, "upsert");
                 if (!propertyInfo.data.Any())
                     return 0;
+
+                var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+                var keyColumns = propertyInfo.keyData.Keys.ToList();
+                var updateColumns = propertyInfo.standardData.Keys.ToList();
+                var upsertSql = dialect.UpsertSql(tableRef, keyColumns, propertyInfo.data.Keys.ToList(), updateColumns);
+
+                if (upsertSql != null)
+                {
+                    var moduleSql = modules.Insert(propertyInfo.data, table, context.UserContext, model);
+                    return HandleDecimals(await ExecuteScalar(conFactory, Join(upsertSql + $"SELECT {dialect.LastInsertedIdentity} ID;", moduleSql), propertyInfo.data));
+                }
+
                 if (propertyInfo.keyData.Any())
                     return await UpdateObject(context, table, modules, model, conFactory, dialect, "upsert");
 

@@ -284,12 +284,12 @@ const getTableColumns = (table: Table, schema: Schema, onDeleteRow?: (pk: string
             const joinTable = schema.findTable(j.destinationTable);
             return {
                 id: `join_${j.destinationTable}`,
-                header: joinTable?.name ?? j.destinationTable,
+                header: joinTable?.label ?? j.destinationTable,
                 enableSorting: false,
                 enableHiding: true,
                 cell: ({ row }) => (
                     <Link to={"/" + joinTable?.name + "/from/" + table.name + "/" + getRowPkValue(row.original, table)} className="text-primary hover:text-primary/80 hover:underline">
-                        {joinTable?.name}
+                        {joinTable?.label ?? joinTable?.name}
                     </Link>
                 ),
             };

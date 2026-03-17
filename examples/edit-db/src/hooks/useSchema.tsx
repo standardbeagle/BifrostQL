@@ -3,6 +3,7 @@ import { GET_DB_SCHEMA } from "../common/schema";
 import { createContext, useContext, useMemo, ReactNode } from "react";
 import { Schema, Table, Column, TableMetadata } from '../types/schema';
 import { useFetcher } from "../common/fetcher";
+import { humanizeName } from "../lib/humanize";
 
 interface MetadataItem {
     key: string;
@@ -67,12 +68,12 @@ function useSchemaLoader(): Schema {
         const tables = dbData._dbSchema.map((s: DbSchemaItem): Table => ({
             ...s,
             name: s.graphQlName,
-            label: s.dbName,
+            label: humanizeName(s.dbName),
             metadata: parseMetadata(s.metadata),
             columns: s.columns.map((c: DbColumnItem): Column => ({
                 ...c,
                 name: c.graphQlName,
-                label: c.dbName,
+                label: humanizeName(c.dbName),
                 metadata: parseMetadata(c.metadata),
             }))
         }));

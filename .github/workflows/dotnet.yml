@@ -42,21 +42,25 @@ jobs:
         run: dotnet nuget push "src/BifrostQL.Core/bin/Release/*.nupkg" --source "github" -k ${{secrets.REPO_NUGET}} --skip-duplicate
       - name: publish Server to repo
         run: dotnet nuget push "src/BifrostQL.Server/bin/Release/*.nupkg" --source "github" -k ${{secrets.REPO_NUGET}} --skip-duplicate
-      - name: Cache editor dependencies
-        uses: actions/cache@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
         with:
-          path: ~/.npm
-          key: npm-${{ hashFiles('./examples/edit-db/package-lock.json') }}
-          restore-keys: npm-
+          version: 9
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: examples/edit-db/pnpm-lock.yaml
       - name: set editor version
         working-directory: ./examples/edit-db
         run: npm version 0.3.${{ github.run_number }}
       - name: install editor
         working-directory: ./examples/edit-db
-        run: npm ci 
+        run: pnpm install --frozen-lockfile
       - name: build editor
         working-directory: ./examples/edit-db
-        run: npm run build
+        run: pnpm run build
       - name: publish npm package
         working-directory: ./examples/edit-db
         run: |

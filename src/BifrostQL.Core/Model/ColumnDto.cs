@@ -26,6 +26,7 @@ namespace BifrostQL.Core.Model
         public bool IsNullable { get; init; }
         public int OrdinalPosition { get; init; }
         public bool IsIdentity { get; init; } = false;
+        public bool IsComputed { get; init; } = false;
         public bool IsPrimaryKey { get; init; } = false;
         public IDictionary<string, object?> Metadata { get; init; } = new Dictionary<string, object?>();
         public string? GetMetadataValue(string property) => Metadata.TryGetValue(property, out var v) ? v?.ToString() : null;
@@ -38,7 +39,7 @@ namespace BifrostQL.Core.Model
 
         public override string ToString()
         {
-            return $"[{TableSchema}].[{TableName}].[{ColumnName}]({DataType} {(IsNullable ? "NULL" : "NOT NULL")}){{{(IsIdentity ? "id " : "")}{(IsPrimaryKey ? "PK " : "")}}}";
+            return $"[{TableSchema}].[{TableName}].[{ColumnName}]({DataType} {(IsNullable ? "NULL" : "NOT NULL")}){{{(IsIdentity ? "id " : "")}{(IsPrimaryKey ? "PK " : "")}{(IsComputed ? "computed " : "")}}}";
         }
 
         public static ColumnDto FromReader(IDataReader reader, Dictionary<ColumnRef, List<ColumnConstraintDto>> constraints)

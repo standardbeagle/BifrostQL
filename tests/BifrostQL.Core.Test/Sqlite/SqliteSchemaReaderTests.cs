@@ -459,6 +459,79 @@ public sealed class SqliteSchemaReaderTests : IAsyncLifetime
 
     #endregion
 
+    #region Generated / Computed Columns
+
+    [Fact]
+    public async Task ReadSchema_StoredGeneratedColumn_IsComputed()
+    {
+        await using var conn = new SqliteConnection("Data Source=:memory:");
+        await conn.OpenAsync();
+
+        await using var cmd = new SqliteCommand(
+            @"CREATE TABLE WithGenerated (
+                Id INTEGER PRIMARY KEY,
+                Width REAL NOT NULL,
+                Height REAL NOT NULL,
+                Area REAL GENERATED ALWAYS AS (Width * Height) STORED
+            )", conn);
+        await cmd.ExecuteNonQueryAsync();
+
+        var schema = await _reader.ReadSchemaAsync(conn);
+        var table = schema.Tables.First(t => t.DbName == "WithGenerated");
+
+        table.ColumnLookup["Area"].IsComputed.Should().BeTrue(
+            "STORED generated column should be marked as computed");
+        table.ColumnLookup["Width"].IsComputed.Should().BeFalse(
+            "Normal columns should not be marked as computed");
+    }
+
+    [Fact]
+    public async Task ReadSchema_VirtualGeneratedColumn_IsComputed()
+    {
+        await using var conn = new SqliteConnection("Data Source=:memory:");
+        await conn.OpenAsync();
+
+        await using var cmd = new SqliteCommand(
+            @"CREATE TABLE WithVirtual (
+                Id INTEGER PRIMARY KEY,
+                FirstName TEXT NOT NULL,
+                LastName TEXT NOT NULL,
+                FullName TEXT GENERATED ALWAYS AS (FirstName || ' ' || LastName) VIRTUAL
+            )", conn);
+        await cmd.ExecuteNonQueryAsync();
+
+        var schema = await _reader.ReadSchemaAsync(conn);
+        var table = schema.Tables.First(t => t.DbName == "WithVirtual");
+
+        table.ColumnLookup["FullName"].IsComputed.Should().BeTrue(
+            "VIRTUAL generated column should be marked as computed");
+    }
+
+    [Fact]
+    public async Task ReadSchema_GeneratedColumns_StillAppearInSchema()
+    {
+        await using var conn = new SqliteConnection("Data Source=:memory:");
+        await conn.OpenAsync();
+
+        await using var cmd = new SqliteCommand(
+            @"CREATE TABLE GenVisible (
+                Id INTEGER PRIMARY KEY,
+                A INTEGER NOT NULL,
+                B INTEGER NOT NULL,
+                Sum INTEGER GENERATED ALWAYS AS (A + B) STORED
+            )", conn);
+        await cmd.ExecuteNonQueryAsync();
+
+        var schema = await _reader.ReadSchemaAsync(conn);
+        var table = schema.Tables.First(t => t.DbName == "GenVisible");
+
+        table.ColumnLookup.Should().ContainKey("Sum",
+            "Generated columns should still appear in the schema for queries");
+        table.ColumnLookup.Should().HaveCount(4);
+    }
+
+    #endregion
+
     #region Empty Database
 
     [Fact]

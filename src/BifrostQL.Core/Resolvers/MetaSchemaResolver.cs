@@ -58,7 +58,7 @@ namespace BifrostQL.Core.Resolvers
                                 isNullable = c.IsNullable,
                                 isPrimaryKey = c.IsPrimaryKey,
                                 isIdentity = c.IsIdentity,
-                                isReadOnly = c.IsPrimaryKey || c.IsIdentity ||
+                                isReadOnly = c.IsPrimaryKey || c.IsIdentity || c.IsComputed ||
                                              c.CompareMetadata("populate", "created-on") ||
                                              c.CompareMetadata("populate", "created-by") ||
                                              c.CompareMetadata("populate", "updated-on") ||

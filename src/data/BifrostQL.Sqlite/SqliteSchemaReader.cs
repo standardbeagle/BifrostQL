@@ -34,18 +34,24 @@ public sealed class SqliteSchemaReader : ISchemaReader
         foreach (var (tableName, tableType) in tableNames)
         {
             var columnsCmd = connection.CreateCommand();
-            columnsCmd.CommandText = $"PRAGMA table_info({tableName})";
+            columnsCmd.CommandText = $"PRAGMA table_xinfo({tableName})";
 
             await using var colReader = await columnsCmd.ExecuteReaderAsync();
-            var rawCols = new List<(string name, string type, bool notNull, bool isPk)>();
+            var rawCols = new List<(string name, string type, bool notNull, bool isPk, bool isComputed)>();
 
             while (await colReader.ReadAsync())
             {
+                var hidden = (long)colReader["hidden"];
+                // hidden: 0=normal, 1=hidden rowid, 2=virtual generated, 3=stored generated
+                if (hidden == 1)
+                    continue;
+
                 rawCols.Add((
                     (string)colReader["name"],
                     (string)colReader["type"],
                     ((long)colReader["notnull"]) == 1,
-                    ((long)colReader["pk"]) > 0
+                    ((long)colReader["pk"]) > 0,
+                    hidden is 2 or 3
                 ));
             }
 
@@ -54,7 +60,7 @@ public sealed class SqliteSchemaReader : ISchemaReader
             var tableColumns = new List<ColumnDto>();
             var ordinal = 1;
 
-            foreach (var (columnName, dataType, notNull, isPk) in rawCols)
+            foreach (var (columnName, dataType, notNull, isPk, isComputed) in rawCols)
             {
                 var isIdentity = pkCount == 1 && isPk && dataType.Equals("INTEGER", StringComparison.OrdinalIgnoreCase);
                 var columnRef = new ColumnRef("main", "main", tableName, columnName);
@@ -72,6 +78,7 @@ public sealed class SqliteSchemaReader : ISchemaReader
                     IsNullable = isPk ? false : !notNull,
                     OrdinalPosition = ordinal++,
                     IsIdentity = isIdentity,
+                    IsComputed = isComputed,
                     IsPrimaryKey = isPk,
                 };
 

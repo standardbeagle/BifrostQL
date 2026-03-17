@@ -147,6 +147,8 @@ namespace BifrostQL.Core.Schema
             {
                 if (identityType == IdentityType.None && column.IsIdentity)
                     continue;
+                if (column.IsComputed)
+                    continue;
 
                 var isNullable = column.IsNullable;
                 if (column.CompareMetadata("populate", "created-on") || column.CompareMetadata("populate", "created-by") ||

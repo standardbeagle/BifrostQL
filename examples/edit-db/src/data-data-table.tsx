@@ -5,6 +5,7 @@ import { DataTable } from './components/data-table';
 import { ConfirmDialog } from './components/confirm-dialog';
 import { ContentPanel, type ContentPanelTarget } from './components/content-panel';
 import { Table, Column } from './types/schema';
+import { ColumnPanel } from './data-panel';
 
 interface DataDataTableParams {
     table: Table;
@@ -13,9 +14,10 @@ interface DataDataTableParams {
     filterColumn?: string;
     selectedRowId?: string | null;
     onRowSelect?: (rowId: string | null) => void;
+    onOpenColumn?: (panel: ColumnPanel) => void;
 }
 
-export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRowId, onRowSelect }: DataDataTableParams): JSX.Element {
+export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRowId, onRowSelect, onOpenColumn }: DataDataTableParams): JSX.Element {
     const deleteMutation = useDeleteMutation(table);
 
     // Delete confirmation state
@@ -54,7 +56,7 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
         onColumnFiltersChange,
         onPageIndexChange,
         onPageSizeChange,
-    } = useDataTable(table, id, tableFilter, filterColumn, table.isEditable !== false ? handleDeleteRow : undefined, handleExpandContent);
+    } = useDataTable(table, id, tableFilter, filterColumn, table.isEditable !== false ? handleDeleteRow : undefined, handleExpandContent, onOpenColumn);
 
     const handleConfirmDelete = useCallback(async () => {
         if (!deleteTarget) return;

@@ -4,15 +4,17 @@ import { useSchema } from '../hooks/useSchema';
 import { DataDataTable } from '../data-data-table';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { ChevronDown, ChevronUp, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, PanelRight, X } from 'lucide-react';
+import type { ColumnPanel } from '../data-panel';
 
 interface DetailPanelProps {
     parentTable: Table;
     selectedRowId: string;
     onClose?: () => void;
+    onOpenColumn?: (panel: ColumnPanel) => void;
 }
 
-export function DetailPanel({ parentTable, selectedRowId, onClose }: DetailPanelProps) {
+export function DetailPanel({ parentTable, selectedRowId, onClose, onOpenColumn }: DetailPanelProps) {
     const schema = useSchema();
     const joins = parentTable.multiJoins;
     const [activeTab, setActiveTab] = useState<string>(joins[0]?.destinationTable ?? '');
@@ -43,18 +45,36 @@ export function DetailPanel({ parentTable, selectedRowId, onClose }: DetailPanel
                         const table = schema.findTable(j.destinationTable);
                         const label = table?.label ?? j.destinationTable;
                         return (
-                            <Button
-                                key={j.destinationTable}
-                                variant={activeTab === j.destinationTable ? 'secondary' : 'ghost'}
-                                size="sm"
-                                className={cn(
-                                    'text-xs h-7 px-2.5',
-                                    activeTab === j.destinationTable && 'font-semibold'
+                            <span key={j.destinationTable} className="group/tab inline-flex items-center">
+                                <Button
+                                    variant={activeTab === j.destinationTable ? 'secondary' : 'ghost'}
+                                    size="sm"
+                                    className={cn(
+                                        'text-xs h-7 px-2.5',
+                                        activeTab === j.destinationTable && 'font-semibold'
+                                    )}
+                                    onClick={() => setActiveTab(j.destinationTable)}
+                                >
+                                    {label}
+                                </Button>
+                                {onOpenColumn && (
+                                    <Button
+                                        variant="ghost"
+                                        size="icon-sm"
+                                        className="opacity-0 group-hover/tab:opacity-100 size-5 shrink-0"
+                                        onClick={() => onOpenColumn({
+                                            tableName: j.destinationTable,
+                                            filterTable: parentTable.name,
+                                            filterId: selectedRowId,
+                                            filterColumn: j.destinationColumnNames[0],
+                                        })}
+                                        aria-label="Open in side column"
+                                        title="Open in side column"
+                                    >
+                                        <PanelRight className="size-3" />
+                                    </Button>
                                 )}
-                                onClick={() => setActiveTab(j.destinationTable)}
-                            >
-                                {label}
-                            </Button>
+                            </span>
                         );
                     })}
                 </div>

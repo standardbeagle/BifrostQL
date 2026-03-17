@@ -7,7 +7,8 @@ import { ColumnDef, ColumnFiltersState, SortingState } from "@tanstack/react-tab
 import { useFetcher } from "../common/fetcher";
 import { DataTableColumnHeader } from "../components/data-table-column-header";
 import { FkCellPopover } from "../components/fk-cell-popover";
-import { MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { MoreHorizontal, Pencil, Trash2, PanelRight } from "lucide-react";
+import type { ColumnPanel } from "../data-panel";
 import { Button } from "../components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { ContentViewer } from "../components/content-viewer";
@@ -149,7 +150,7 @@ function deserializeColumnFilters(raw: string): ColumnFiltersState {
     }
 }
 
-const getTableColumns = (table: Table, schema: Schema, onDeleteRow?: (pk: string) => void, onExpandContent?: (rowIndex: number, columnName: string) => void): ColumnDef<RowData, unknown>[] => {
+const getTableColumns = (table: Table, schema: Schema, onDeleteRow?: (pk: string) => void, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: ColumnPanel) => void): ColumnDef<RowData, unknown>[] => {
     if (!table || !schema) return [];
 
     const actionsColumn: ColumnDef<RowData, unknown>[] = table.isEditable !== false
@@ -212,11 +213,31 @@ const getTableColumns = (table: Table, schema: Schema, onDeleteRow?: (pk: string
                         if (!joined) return null;
                         const joinedPk = getJoinedRowPkValue(joined);
                         return (
-                            <FkCellPopover tableName={singleJoin.destinationTable} recordId={joinedPk}>
-                                <Link to={"/" + joinSchema?.name + "/" + joinedPk} className="text-primary hover:text-primary/80 hover:underline">
-                                    {joined?.label as string}
-                                </Link>
-                            </FkCellPopover>
+                            <span className="group/fk inline-flex items-center gap-0.5">
+                                <FkCellPopover tableName={singleJoin.destinationTable} recordId={joinedPk}>
+                                    <Link to={"/" + joinSchema?.name + "/" + joinedPk} className="text-primary hover:text-primary/80 hover:underline">
+                                        {joined?.label as string}
+                                    </Link>
+                                </FkCellPopover>
+                                {onOpenColumn && (
+                                    <Button
+                                        variant="ghost"
+                                        size="icon-sm"
+                                        className="opacity-0 group-hover/fk:opacity-100 size-5 shrink-0"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onOpenColumn({
+                                                tableName: singleJoin.destinationTable,
+                                                filterId: joinedPk,
+                                            });
+                                        }}
+                                        aria-label="Open in side column"
+                                        title="Open in side column"
+                                    >
+                                        <PanelRight className="size-3" />
+                                    </Button>
+                                )}
+                            </span>
                         );
                     },
                 };
@@ -287,11 +308,36 @@ const getTableColumns = (table: Table, schema: Schema, onDeleteRow?: (pk: string
                 header: joinTable?.label ?? j.destinationTable,
                 enableSorting: false,
                 enableHiding: true,
-                cell: ({ row }) => (
-                    <Link to={"/" + joinTable?.name + "/from/" + table.name + "/" + getRowPkValue(row.original, table)} className="text-primary hover:text-primary/80 hover:underline">
-                        {joinTable?.label ?? joinTable?.name}
-                    </Link>
-                ),
+                cell: ({ row }) => {
+                    const parentPk = getRowPkValue(row.original, table);
+                    return (
+                        <span className="group/fk inline-flex items-center gap-0.5">
+                            <Link to={"/" + joinTable?.name + "/from/" + table.name + "/" + parentPk} className="text-primary hover:text-primary/80 hover:underline">
+                                {joinTable?.label ?? joinTable?.name}
+                            </Link>
+                            {onOpenColumn && (
+                                <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    className="opacity-0 group-hover/fk:opacity-100 size-5 shrink-0"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onOpenColumn({
+                                            tableName: j.destinationTable,
+                                            filterTable: table.name,
+                                            filterId: parentPk,
+                                            filterColumn: j.destinationColumnNames[0],
+                                        });
+                                    }}
+                                    aria-label="Open in side column"
+                                    title="Open in side column"
+                                >
+                                    <PanelRight className="size-3" />
+                                </Button>
+                            )}
+                        </span>
+                    );
+                },
             };
         });
 
@@ -415,7 +461,7 @@ interface UseDataTableResult {
     onPageSizeChange: (pageSize: number) => void;
 }
 
-export function useDataTable(table: Table | null, id?: string, filterTable?: string, filterColumn?: string, onDeleteRow?: (pk: string) => void, onExpandContent?: (rowIndex: number, columnName: string) => void): UseDataTableResult {
+export function useDataTable(table: Table | null, id?: string, filterTable?: string, filterColumn?: string, onDeleteRow?: (pk: string) => void, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: ColumnPanel) => void): UseDataTableResult {
     const { search } = useSearchParams();
     const navigate = useNavigate();
     const filterString = search.get('filter') ?? '';
@@ -479,8 +525,8 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     });
 
     const columns = useMemo(
-        () => table ? getTableColumns(table, schema, onDeleteRow, onExpandContent) : [],
-        [table, schema, onDeleteRow, onExpandContent]
+        () => table ? getTableColumns(table, schema, onDeleteRow, onExpandContent, onOpenColumn) : [],
+        [table, schema, onDeleteRow, onExpandContent, onOpenColumn]
     );
 
     const tableData = data?.[table?.name ?? ''];

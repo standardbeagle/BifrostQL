@@ -282,7 +282,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     // POST /api/database/create-quickstart - Creates a SQLite quickstart database
     app.MapPost("/api/database/create-quickstart", async (QuickstartRequest request, CancellationToken ct) =>
     {
-        var validSchemas = new[] { "blog", "ecommerce", "crm", "classroom", "project-tracker" };
+        var validSchemas = new[] { "blog", "ecommerce", "crm", "classroom", "project-tracker", "sqlite-advanced" };
         if (string.IsNullOrWhiteSpace(request.Schema) || !validSchemas.Contains(request.Schema))
         {
             return Results.BadRequest(new { error = $"Invalid schema. Must be one of: {string.Join(", ", validSchemas)}" });

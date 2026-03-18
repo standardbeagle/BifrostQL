@@ -262,6 +262,7 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
     const multiJoinColumns: ColumnDef<RowData, unknown>[] = table.multiJoins
         .map((j: Join): ColumnDef<RowData, unknown> => {
             const joinTable = schema.findTable(j.destinationTable);
+            const labelCol = joinTable?.labelColumn ?? 'id';
             return {
                 id: `join_${j.destinationTable}`,
                 header: joinTable?.label ?? j.destinationTable,
@@ -269,10 +270,18 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                 enableHiding: true,
                 cell: ({ row }) => {
                     const parentPk = getRowPkValue(row.original, table);
+                    const children = (row.original[j.destinationTable] as RowData[] | undefined) ?? [];
+                    const count = children.length;
+                    const titles = children.slice(0, 10).map(c => String(c[labelCol] ?? '')).filter(Boolean);
+                    const titleText = titles.join('\n') + (count > 10 ? `\n… and ${count - 10} more` : '');
                     return (
                         <span className="group/fk inline-flex items-center gap-0.5">
-                            <Link to={"/" + joinTable?.name + "/from/" + table.name + "/" + parentPk} className="text-primary hover:text-primary/80 hover:underline">
-                                {joinTable?.label ?? joinTable?.name}
+                            <Link
+                                to={"/" + joinTable?.name + "/from/" + table.name + "/" + parentPk}
+                                className="text-primary hover:text-primary/80 hover:underline"
+                                title={titleText}
+                            >
+                                {count > 0 ? `${count}` : '—'}
                             </Link>
                             {onOpenColumn && (
                                 <Button
@@ -388,8 +397,20 @@ const buildQuery = (
         }
     }
 
+    // Add multi-join child queries (fetch label column for count + titles)
+    const multiJoinFields = tableSchema.multiJoins
+        .map((j: Join) => {
+            const joinSchema = schema.findTable(j.destinationTable);
+            const labelCol = joinSchema?.labelColumn ?? 'id';
+            const pkCol = joinSchema?.primaryKeys?.[0] ?? 'id';
+            return `${j.destinationTable} { ${pkCol} ${labelCol !== pkCol ? labelCol : ''} }`;
+        })
+        .join(' ');
+
+    const allFields = multiJoinFields ? `${dataColumns} ${multiJoinFields}` : dataColumns;
+
     if (filterText) filterText = `filter: ${filterText}`;
-    return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${table.name}(sort: $sort limit: $limit offset: $offset ${filterText}) { total offset limit data {${dataColumns}}}}`;
+    return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${table.name}(sort: $sort limit: $limit offset: $offset ${filterText}) { total offset limit data {${allFields}}}}`;
 }
 
 interface TableQueryData {

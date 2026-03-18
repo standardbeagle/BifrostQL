@@ -17,6 +17,8 @@ import {
     TableHead,
     TableHeader,
     TableRow,
+    TABLE_HEADER_HEIGHT,
+    TABLE_ROW_HEIGHT,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -93,7 +95,6 @@ interface DataTableProps<TData> {
 
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100];
 const FIT_SENTINEL = -1;
-const ROW_HEIGHT_FALLBACK = 32;
 
 export function DataTable<TData>({
     columns,
@@ -155,28 +156,29 @@ export function DataTable<TData>({
         setColumnSizing({});
     }, []);
 
-    // Measure actual row height from rendered rows, fall back to estimate
-    const getRowHeight = useCallback(() => {
-        const row = scrollRef.current?.querySelector('tbody tr');
-        return row?.getBoundingClientRect().height || ROW_HEIGHT_FALLBACK;
-    }, []);
+    const lastFitSize = useRef(0);
 
     const computeFitSize = useCallback(() => {
         const el = scrollRef.current;
         if (!el) return 10;
-        const rowH = getRowHeight();
-        return Math.max(5, Math.floor(el.clientHeight / rowH));
-    }, [getRowHeight]);
+        return Math.max(5, Math.floor((el.clientHeight - TABLE_HEADER_HEIGHT) / TABLE_ROW_HEIGHT));
+    }, []);
 
-    // Apply fit on mount and resize
+    // Apply fit on mount and when the container resizes
     useEffect(() => {
         if (!fitMode) return;
-        const apply = () => onPageSizeChange(computeFitSize());
-        // Defer to let layout settle
+        const el = scrollRef.current;
+        if (!el) return;
+        const apply = () => {
+            const size = computeFitSize();
+            if (size === lastFitSize.current) return;
+            lastFitSize.current = size;
+            onPageSizeChange(size);
+        };
         const raf = requestAnimationFrame(apply);
-        const onResize = () => onPageSizeChange(computeFitSize());
-        window.addEventListener('resize', onResize);
-        return () => { cancelAnimationFrame(raf); window.removeEventListener('resize', onResize); };
+        const ro = new ResizeObserver(() => requestAnimationFrame(apply));
+        ro.observe(el);
+        return () => { cancelAnimationFrame(raf); ro.disconnect(); };
     }, [fitMode, computeFitSize, onPageSizeChange]);
 
     // Clear selection when data/page changes

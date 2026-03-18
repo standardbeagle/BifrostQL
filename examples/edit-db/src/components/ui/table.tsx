@@ -2,11 +2,19 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
+/**
+ * Table dimension constants — single source of truth for row sizing.
+ * These drive both the CSS (via inline style) and the fit-to-container calculation.
+ * Change these to adjust data density across the entire app.
+ */
+export const TABLE_ROW_HEIGHT = 40;
+export const TABLE_HEADER_HEIGHT = 32;
+
 function Table({ className, ...props }: React.ComponentProps<"table">) {
   return (
     <div
       data-slot="table-container"
-      className="relative w-full overflow-x-auto"
+      className="relative w-full h-full overflow-x-auto"
     >
       <table
         data-slot="table"
@@ -50,7 +58,7 @@ function TableFooter({ className, ...props }: React.ComponentProps<"tfoot">) {
   )
 }
 
-function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
+function TableRow({ className, style, ...props }: React.ComponentProps<"tr">) {
   return (
     <tr
       data-slot="table-row"
@@ -58,19 +66,21 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
         "border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted",
         className
       )}
+      style={{ height: TABLE_ROW_HEIGHT, ...style }}
       {...props}
     />
   )
 }
 
-function TableHead({ className, ...props }: React.ComponentProps<"th">) {
+function TableHead({ className, style, ...props }: React.ComponentProps<"th">) {
   return (
     <th
       data-slot="table-head"
       className={cn(
-        "h-8 px-2 text-left align-middle font-medium whitespace-nowrap text-muted-foreground text-xs [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+        "px-2 text-left align-middle font-medium whitespace-nowrap text-muted-foreground text-xs [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
         className
       )}
+      style={{ height: TABLE_HEADER_HEIGHT, ...style }}
       {...props}
     />
   )

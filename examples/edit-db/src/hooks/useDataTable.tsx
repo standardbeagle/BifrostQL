@@ -473,7 +473,7 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     const [sorting, setSorting] = useState<SortingState>([]);
     const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(() => deserializeColumnFilters(cfParam));
     const [pageIndex, setPageIndex] = useState(0);
-    const [pageSize, setPageSize] = useState(10);
+    const [pageSize, setPageSize] = useState(50);
 
     // Reset sort, filters, and pagination when the table changes
     const tableRef = useRef(table);

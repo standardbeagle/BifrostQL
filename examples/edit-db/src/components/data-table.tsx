@@ -122,6 +122,21 @@ export function DataTable<TData>({
     onDeleteSelected,
 }: DataTableProps<TData>) {
     const [hoveredRow, setHoveredRow] = useState<{ pk: string; el: HTMLElement } | null>(null);
+    const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const hoverRow = useCallback((pk: string, el: HTMLElement) => {
+        if (dismissTimer.current) { clearTimeout(dismissTimer.current); dismissTimer.current = null; }
+        setHoveredRow({ pk, el });
+    }, []);
+
+    const scheduleDismiss = useCallback(() => {
+        if (dismissTimer.current) clearTimeout(dismissTimer.current);
+        dismissTimer.current = setTimeout(() => setHoveredRow(null), 150);
+    }, []);
+
+    const cancelDismiss = useCallback(() => {
+        if (dismissTimer.current) { clearTimeout(dismissTimer.current); dismissTimer.current = null; }
+    }, []);
     const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
     const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
     const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(() =>
@@ -379,8 +394,8 @@ export function DataTable<TData>({
                                         data-state={isSelected ? 'selected' : row.getIsSelected() ? 'selected' : undefined}
                                         className={onRowSelect ? 'cursor-pointer group/row' : 'group/row'}
                                         onClick={onRowSelect ? () => onRowSelect(isSelected ? null : pkStr) : undefined}
-                                        onMouseEnter={(e) => setHoveredRow({ pk: pkStr, el: e.currentTarget })}
-                                        onMouseLeave={() => setHoveredRow(null)}
+                                        onMouseEnter={(e) => hoverRow(pkStr, e.currentTarget)}
+                                        onMouseLeave={scheduleDismiss}
                                     >
                                         {row.getVisibleCells().map((cell) => (
                                             <TableCell
@@ -402,7 +417,8 @@ export function DataTable<TData>({
                         anchorEl={hoveredRow.el}
                         onEdit={() => onEditRow!(hoveredRow.pk)}
                         onDelete={onDeleteRow ? () => onDeleteRow(hoveredRow.pk) : undefined}
-                        onDismiss={() => setHoveredRow(null)}
+                        onMouseEnter={cancelDismiss}
+                        onDismiss={scheduleDismiss}
                     />
                 )}
             </div>

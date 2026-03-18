@@ -44,6 +44,7 @@ import {
     Columns3,
     Trash2,
 } from 'lucide-react';
+import { RowActions } from './row-actions';
 
 const COL_MIN_WIDTH = 60;
 const COL_MAX_AUTO_WIDTH = 450;
@@ -90,6 +91,8 @@ interface DataTableProps<TData> {
     onColumnFiltersChange: (filters: ColumnFiltersState) => void;
     onPageIndexChange: (pageIndex: number) => void;
     onPageSizeChange: (pageSize: number) => void;
+    onEditRow?: (pk: string) => void;
+    onDeleteRow?: (pk: string) => void;
     onDeleteSelected?: (pks: string[]) => void;
 }
 
@@ -114,8 +117,11 @@ export function DataTable<TData>({
     onColumnFiltersChange,
     onPageIndexChange,
     onPageSizeChange,
+    onEditRow,
+    onDeleteRow,
     onDeleteSelected,
 }: DataTableProps<TData>) {
+    const [hoveredRowId, setHoveredRowId] = useState<string | null>(null);
     const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
     const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
     const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(() =>
@@ -365,13 +371,17 @@ export function DataTable<TData>({
                         ) : (
                             table.getRowModel().rows.map((row) => {
                                 const rowPk = (row.original as Record<string, unknown>)?.[rowIdField] ?? row.id;
-                                const isSelected = selectedRowId != null && String(rowPk) === selectedRowId;
+                                const pkStr = String(rowPk);
+                                const isSelected = selectedRowId != null && pkStr === selectedRowId;
+                                const showActions = (onEditRow || onDeleteRow) && hoveredRowId === pkStr;
                                 return (
                                     <TableRow
                                         key={row.id}
                                         data-state={isSelected ? 'selected' : row.getIsSelected() ? 'selected' : undefined}
-                                        className={onRowSelect ? 'cursor-pointer' : undefined}
-                                        onClick={onRowSelect ? () => onRowSelect(isSelected ? null : String(rowPk)) : undefined}
+                                        className={onRowSelect ? 'cursor-pointer group/row' : 'group/row'}
+                                        onClick={onRowSelect ? () => onRowSelect(isSelected ? null : pkStr) : undefined}
+                                        onMouseEnter={() => setHoveredRowId(pkStr)}
+                                        onMouseLeave={() => setHoveredRowId(null)}
                                     >
                                         {row.getVisibleCells().map((cell) => (
                                             <TableCell
@@ -382,6 +392,14 @@ export function DataTable<TData>({
                                                 {flexRender(cell.column.columnDef.cell, cell.getContext())}
                                             </TableCell>
                                         ))}
+                                        {showActions && (
+                                            <td className="relative p-0 w-0 border-0">
+                                                <RowActions
+                                                    onEdit={() => onEditRow!(pkStr)}
+                                                    onDelete={onDeleteRow ? () => onDeleteRow(pkStr) : undefined}
+                                                />
+                                            </td>
+                                        )}
                                     </TableRow>
                                 );
                             })

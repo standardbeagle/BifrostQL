@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useDataTable } from './hooks/useDataTable';
 import { useDeleteMutation } from './hooks/useDeleteMutation';
+import { useNavigate } from './hooks/usePath';
 import { DataTable } from './components/data-table';
 import { ConfirmDialog } from './components/confirm-dialog';
 import { ContentPanel, type ContentPanelTarget } from './components/content-panel';
@@ -19,6 +20,7 @@ interface DataDataTableParams {
 
 export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRowId, onRowSelect, onOpenColumn }: DataDataTableParams): JSX.Element {
     const deleteMutation = useDeleteMutation(table);
+    const navigate = useNavigate();
 
     // Delete confirmation state
     const [deleteTarget, setDeleteTarget] = useState<{ type: 'single'; pk: string } | { type: 'batch'; pks: string[] } | null>(null);
@@ -26,6 +28,10 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
     // Content panel state
     const [panelColumn, setPanelColumn] = useState<string | null>(null);
     const [panelRowIndex, setPanelRowIndex] = useState<number>(0);
+
+    const handleEditRow = useCallback((pk: string) => {
+        navigate(`/${table.graphQlName}/edit/${pk}`);
+    }, [table.graphQlName, navigate]);
 
     const handleDeleteRow = useCallback((pk: string) => {
         setDeleteTarget({ type: 'single', pk });
@@ -123,6 +129,8 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
                 onColumnFiltersChange={onColumnFiltersChange}
                 onPageIndexChange={onPageIndexChange}
                 onPageSizeChange={onPageSizeChange}
+                onEditRow={table.isEditable !== false ? handleEditRow : undefined}
+                onDeleteRow={table.isEditable !== false ? handleDeleteRow : undefined}
                 onDeleteSelected={table.isEditable !== false ? handleDeleteSelected : undefined}
             />
             <ConfirmDialog

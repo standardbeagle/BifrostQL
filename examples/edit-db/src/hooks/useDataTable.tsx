@@ -7,10 +7,9 @@ import { ColumnDef, ColumnFiltersState, SortingState } from "@tanstack/react-tab
 import { useFetcher } from "../common/fetcher";
 import { DataTableColumnHeader } from "../components/data-table-column-header";
 import { FkCellPopover } from "../components/fk-cell-popover";
-import { MoreHorizontal, Pencil, Trash2, PanelRight } from "lucide-react";
+import { PanelRight } from "lucide-react";
 import type { ColumnPanel } from "../data-panel";
 import { Button } from "../components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { ContentViewer } from "../components/content-viewer";
 import { isLongTextDbType, isBinaryDbType } from "../lib/content-detect";
 
@@ -150,48 +149,8 @@ function deserializeColumnFilters(raw: string): ColumnFiltersState {
     }
 }
 
-const getTableColumns = (table: Table, schema: Schema, onDeleteRow?: (pk: string) => void, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: ColumnPanel) => void): ColumnDef<RowData, unknown>[] => {
+const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: ColumnPanel) => void): ColumnDef<RowData, unknown>[] => {
     if (!table || !schema) return [];
-
-    const actionsColumn: ColumnDef<RowData, unknown>[] = table.isEditable !== false
-        ? [{
-            id: '_actions',
-            header: '',
-            enableSorting: false,
-            enableHiding: false,
-            enableResizing: false,
-            size: 40,
-            cell: ({ row }) => {
-                const pk = getRowPkValue(row.original, table);
-                return (
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon-sm" aria-label="Row actions" onClick={(e) => e.stopPropagation()}>
-                                <MoreHorizontal className="size-4" />
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                            <DropdownMenuItem asChild>
-                                <Link to={`/${table.graphQlName}/edit/${pk}`}>
-                                    <Pencil className="size-3.5" />
-                                    Edit
-                                </Link>
-                            </DropdownMenuItem>
-                            {onDeleteRow && (
-                                <DropdownMenuItem
-                                    className="text-destructive focus:text-destructive"
-                                    onClick={(e) => { e.stopPropagation(); onDeleteRow(pk); }}
-                                >
-                                    <Trash2 className="size-3.5" />
-                                    Delete
-                                </DropdownMenuItem>
-                            )}
-                        </DropdownMenuContent>
-                    </DropdownMenu>
-                );
-            },
-        }]
-        : [];
 
     const dataColumns: ColumnDef<RowData, unknown>[] = table.columns
         .map((c: Column): ColumnDef<RowData, unknown> => {
@@ -341,7 +300,7 @@ const getTableColumns = (table: Table, schema: Schema, onDeleteRow?: (pk: string
             };
         });
 
-    return [...dataColumns, ...multiJoinColumns, ...actionsColumn];
+    return [...dataColumns, ...multiJoinColumns];
 }
 
 const getPkType = (table: Table): string => {
@@ -525,8 +484,8 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     });
 
     const columns = useMemo(
-        () => table ? getTableColumns(table, schema, onDeleteRow, onExpandContent, onOpenColumn) : [],
-        [table, schema, onDeleteRow, onExpandContent, onOpenColumn]
+        () => table ? getTableColumns(table, schema, onExpandContent, onOpenColumn) : [],
+        [table, schema, onExpandContent, onOpenColumn]
     );
 
     const tableData = data?.[table?.name ?? ''];

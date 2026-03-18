@@ -30,7 +30,7 @@ export function RowActions({ onEdit, onDelete }: RowActionsProps) {
         <div
             ref={ref}
             className={`
-                absolute right-1 z-20 flex items-center gap-0.5
+                absolute left-1 z-20 flex items-center gap-0.5
                 rounded-md border border-border bg-popover px-1 py-0.5
                 shadow-md
                 ${above ? 'bottom-full mb-0.5' : 'top-full mt-0.5'}

@@ -11,7 +11,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "bash dev-ui.sh",
     "dev:ui": "bash dev-ui.sh",
-    "dev:lib": "cd examples/edit-db && npx vite build --watch --mode production",
+    "dev:lib": "cd examples/edit-db && npx vite build --watch",
     "dev:backend": "dotnet watch run --no-hot-reload --project src/BifrostQL.UI/BifrostQL.UI.csproj -- --headless --port 5000",
     "dev:frontend": "cd src/BifrostQL.UI/frontend && pnpm dev"
   },

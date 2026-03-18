@@ -68,7 +68,7 @@ kill_port "$PORT"
 # Step 1: Build edit-db in watch mode (background)
 echo "[dev-ui] Starting edit-db build (watch mode)..."
 cd "$SCRIPT_DIR/examples/edit-db"
-pnpm vite build --watch --mode production &
+pnpm vite build --watch &
 PIDS+=($!)
 cd "$SCRIPT_DIR"
 

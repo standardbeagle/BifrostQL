@@ -1,64 +1,76 @@
-import { useRef, useState, useLayoutEffect } from 'react';
+import { useRef, useEffect } from 'react';
 import { Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface RowActionsProps {
+    anchorEl: HTMLElement;
     onEdit: () => void;
     onDelete?: () => void;
+    onDismiss: () => void;
 }
 
 /**
- * Floating row action toolbar. Renders as an absolutely positioned bar
- * that appears on row hover, below the row by default, flipping above
- * when there isn't enough room below.
- *
- * Must be placed inside a `position: relative` container (the TableRow wrapper).
+ * Floating row action toolbar using the Popover API.
+ * Anchored to the row element, positioned below-left with automatic
+ * flip to above when near the viewport bottom.
  */
-export function RowActions({ onEdit, onDelete }: RowActionsProps) {
+export function RowActions({ anchorEl, onEdit, onDelete, onDismiss }: RowActionsProps) {
     const ref = useRef<HTMLDivElement>(null);
-    const [above, setAbove] = useState(false);
 
-    useLayoutEffect(() => {
+    useEffect(() => {
         const el = ref.current;
         if (!el) return;
-        const rect = el.getBoundingClientRect();
-        // Flip above if the toolbar would go off the bottom of the viewport
-        setAbove(rect.bottom > window.innerHeight);
-    });
+        // Position relative to the anchor row
+        const update = () => {
+            const rowRect = anchorEl.getBoundingClientRect();
+            const popH = el.offsetHeight;
+            const spaceBelow = window.innerHeight - rowRect.bottom;
+            const above = spaceBelow < popH + 4;
+            el.style.top = above
+                ? `${rowRect.top - popH - 2}px`
+                : `${rowRect.bottom + 2}px`;
+            el.style.left = `${rowRect.left + 4}px`;
+        };
+        update();
+        // Show the popover
+        el.showPopover();
+        return () => { try { el.hidePopover(); } catch { /* already hidden */ } };
+    }, [anchorEl]);
 
     return (
         <div
             ref={ref}
-            className={`
-                absolute left-1 z-20 flex items-center gap-0.5
-                rounded-md border border-border bg-popover px-1 py-0.5
-                shadow-md
-                ${above ? 'bottom-full mb-0.5' : 'top-full mt-0.5'}
-            `}
+            // @ts-expect-error popover attribute not yet in React types
+            popover="manual"
+            className="flex items-center gap-0.5 rounded-md border border-border bg-popover px-1 py-0.5 shadow-md m-0 p-0"
+            style={{ position: 'fixed' }}
             onClick={(e) => e.stopPropagation()}
+            onMouseLeave={onDismiss}
         >
-            <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={onEdit}
-                aria-label="Edit row"
-                title="Edit"
-                className="size-6"
-            >
-                <Pencil className="size-3.5" />
-            </Button>
-            {onDelete && (
+            <div className="flex items-center gap-0.5 px-1 py-0.5">
                 <Button
                     variant="ghost"
                     size="icon-sm"
-                    onClick={onDelete}
-                    aria-label="Delete row"
-                    title="Delete"
-                    className="size-6 text-destructive hover:text-destructive"
+                    onClick={onEdit}
+                    aria-label="Edit row"
+                    title="Edit"
+                    className="size-6"
                 >
-                    <Trash2 className="size-3.5" />
+                    <Pencil className="size-3.5" />
                 </Button>
-            )}
+                {onDelete && (
+                    <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={onDelete}
+                        aria-label="Delete row"
+                        title="Delete"
+                        className="size-6 text-destructive hover:text-destructive"
+                    >
+                        <Trash2 className="size-3.5" />
+                    </Button>
+                )}
+            </div>
         </div>
     );
 }

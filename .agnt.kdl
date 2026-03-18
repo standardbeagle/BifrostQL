@@ -1,9 +1,12 @@
 // .agnt.kdl - BifrostQL UI development configuration
 //
-// Three services orchestrated via dev-ui.sh:
-//   1. edit-db library watch build (vite --watch)
-//   2. .NET backend (dotnet watch, port 5000)
+// Three services:
+//   1. edit-db library watch build (vite build --watch, produces dist/)
+//   2. .NET backend (dotnet watch, port 5000, headless)
 //   3. Vite frontend dev server (port 5173, proxies /api + /graphql to backend)
+//
+// The frontend vite config has a watch-workspace-lib plugin that monitors
+// edit-db's dist/ and triggers full reload on rebuild.
 
 project {
     name "bifrostui"
@@ -11,30 +14,28 @@ project {
 }
 
 scripts {
-    dev {
-        run "bash dev-ui.sh"
-        autostart true
-        url-matchers "Frontend:\\s+{url}"
-    }
     dev-lib {
-        command "npx"
-        args "vite" "build" "--watch" "--mode" "production"
+        run "pnpm vite build --watch"
         cwd "examples/edit-db"
+        autostart true
     }
     dev-backend {
         run "dotnet watch run --no-hot-reload --project src/BifrostQL.UI/BifrostQL.UI.csproj -- --headless --port 5000"
+        autostart true
         url-matchers "Now listening on {url}"
     }
     dev-frontend {
         run "pnpm dev"
         cwd "src/BifrostQL.UI/frontend"
+        autostart true
+        depends-on "dev-backend"
         url-matchers "Local:\\s+{url}"
     }
 }
 
 proxies {
     dev {
-        script "dev"
+        script "dev-frontend"
         fallback-port 5173
     }
 }

@@ -5,17 +5,19 @@ import dts from 'vite-plugin-dts';
 import tailwindcss from '@tailwindcss/vite';
 
 // https://vitejs.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [tailwindcss(), react(), dts({ insertTypesEntry: true })],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
     },
   },
-  define: { 
+  define: {
     'import.meta.NODE_ENV': '"production"' //Hack for crazy output from react
   },
   build: {
+    minify: mode === 'production',
+    sourcemap: mode !== 'production',
     watch: {
       // WSL2 inotify is unreliable — use polling for file change detection
       chokidar: { usePolling: true, interval: 500 },
@@ -37,4 +39,4 @@ export default defineConfig({
       },
     },
   }
-})
+}))

@@ -121,7 +121,7 @@ export function DataTable<TData>({
     onDeleteRow,
     onDeleteSelected,
 }: DataTableProps<TData>) {
-    const [hoveredRowId, setHoveredRowId] = useState<string | null>(null);
+    const [hoveredRow, setHoveredRow] = useState<{ pk: string; el: HTMLElement } | null>(null);
     const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
     const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
     const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(() =>
@@ -373,15 +373,14 @@ export function DataTable<TData>({
                                 const rowPk = (row.original as Record<string, unknown>)?.[rowIdField] ?? row.id;
                                 const pkStr = String(rowPk);
                                 const isSelected = selectedRowId != null && pkStr === selectedRowId;
-                                const showActions = (onEditRow || onDeleteRow) && hoveredRowId === pkStr;
                                 return (
                                     <TableRow
                                         key={row.id}
                                         data-state={isSelected ? 'selected' : row.getIsSelected() ? 'selected' : undefined}
                                         className={onRowSelect ? 'cursor-pointer group/row' : 'group/row'}
                                         onClick={onRowSelect ? () => onRowSelect(isSelected ? null : pkStr) : undefined}
-                                        onMouseEnter={() => setHoveredRowId(pkStr)}
-                                        onMouseLeave={() => setHoveredRowId(null)}
+                                        onMouseEnter={(e) => setHoveredRow({ pk: pkStr, el: e.currentTarget })}
+                                        onMouseLeave={() => setHoveredRow(null)}
                                     >
                                         {row.getVisibleCells().map((cell) => (
                                             <TableCell
@@ -392,20 +391,20 @@ export function DataTable<TData>({
                                                 {flexRender(cell.column.columnDef.cell, cell.getContext())}
                                             </TableCell>
                                         ))}
-                                        {showActions && (
-                                            <td className="relative p-0 w-0 border-0">
-                                                <RowActions
-                                                    onEdit={() => onEditRow!(pkStr)}
-                                                    onDelete={onDeleteRow ? () => onDeleteRow(pkStr) : undefined}
-                                                />
-                                            </td>
-                                        )}
                                     </TableRow>
                                 );
                             })
                         )}
                     </TableBody>
                 </Table>
+                {hoveredRow && (onEditRow || onDeleteRow) && (
+                    <RowActions
+                        anchorEl={hoveredRow.el}
+                        onEdit={() => onEditRow!(hoveredRow.pk)}
+                        onDelete={onDeleteRow ? () => onDeleteRow(hoveredRow.pk) : undefined}
+                        onDismiss={() => setHoveredRow(null)}
+                    />
+                )}
             </div>
             <div className="flex items-center justify-between px-2 py-1.5 border-t border-border mt-auto shrink-0">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">

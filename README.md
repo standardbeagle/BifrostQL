@@ -2,6 +2,8 @@
 
 **Zero-config GraphQL API for your existing database. One connection string. Full API.**
 
+[Documentation](https://standardbeagle.github.io/BifrostQL/) | [GitHub](https://github.com/standardbeagle/BifrostQL) | [NuGet](https://www.nuget.org/packages/BifrostQL.Server)
+
 ```csharp
 // Program.cs - that's it
 var builder = WebApplication.CreateBuilder(args);
@@ -26,6 +28,7 @@ That's a complete GraphQL API. Every table, every column, every relationship. Qu
 ## What It Does
 
 - **Reads your database schema, builds a GraphQL API.** Add a table or column, restart, and the field appears with the correct type and validation. No code generation. No mapping files.
+- **Solves the N+1 problem.** BifrostQL generates one SQL query per table in the request, not one per row. All queries are sent in a single database round-trip and read back as multiple result sets. See [How BifrostQL solves N+1](#how-bifrostql-solves-n1) below.
 - **Dynamic joins via `__join` fields.** Join any table to any other table directly in your GraphQL query. No configuration required for single-column key matches. Multi-column and explicit joins supported.
 - **Directus-style filtering and pagination.** Filter on any field with operators like `_eq`, `_contains`, `_gt`, `_in`. Pagination via `limit`/`offset`. Sorting via enum fields.
 - **Full mutation support.** Insert, update, upsert, and delete -- generated from primary key metadata. BifrostQL matches your input fields by name and does the right thing.
@@ -185,6 +188,46 @@ mutation {
   }
 }
 ```
+
+## How BifrostQL Solves N+1
+
+Most GraphQL servers hit the database once per field resolver. A query that fetches 50 orders with their customers triggers 1 query for orders + 50 queries for customers -- the classic N+1 problem. DataLoader batching reduces this but still requires careful implementation per relationship.
+
+BifrostQL takes a different approach: **one query per table, regardless of row count**.
+
+When BifrostQL receives a GraphQL request, it:
+
+1. **Parses the full query tree** into a `GqlObjectQuery` structure before executing anything
+2. **Generates one SQL statement per table** referenced in the query. Joins use correlated subqueries to scope child rows to their parents.
+3. **Sends all statements in a single database round-trip** as a concatenated batch (`SELECT ...; SELECT ...; SELECT ...`)
+4. **Reads all result sets** from a single `ExecuteReader` call and assembles the response in memory
+
+For example, this query:
+
+```graphql
+{
+  orders(limit: 50) {
+    data {
+      orderId
+      total
+      __join {
+        customers { data { name email } }
+        order_items { data { productId quantity } }
+      }
+    }
+  }
+}
+```
+
+Generates exactly **3 SQL queries** -- one for `orders`, one for `customers`, one for `order_items` -- sent as a single batch. Not 50. Not 101. Three.
+
+| Approach | Queries for 50 orders + customers + items |
+|----------|------------------------------------------|
+| Naive resolvers | 1 + 50 + 50 = **101** |
+| DataLoader batching | 1 + 1 + 1 = **3** (but requires manual setup per relationship) |
+| BifrostQL | **3** (automatic, zero configuration) |
+
+This holds regardless of nesting depth. A four-level deep join across orders → customers → addresses → cities still produces exactly four queries in one round-trip.
 
 ## Authentication
 

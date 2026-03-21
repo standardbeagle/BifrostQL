@@ -29,6 +29,7 @@ export default defineConfig({
 					label: 'Core Concepts',
 					items: [
 						{ label: 'Schema Generation', slug: 'concepts/schema-generation' },
+						{ label: 'Solving N+1 Queries', slug: 'concepts/n-plus-one' },
 					],
 				},
 				{

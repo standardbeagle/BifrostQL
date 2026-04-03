@@ -2,7 +2,7 @@
 export type ContentKind = 'json' | 'xml' | 'php-serialized' | 'binary' | 'longtext' | 'text';
 
 const binaryDbTypes = new Set(['binary', 'varbinary', 'image', 'blob', 'tinyblob', 'mediumblob', 'longblob', 'bytea']);
-const longTextDbTypes = new Set(['text', 'ntext', 'varchar', 'nvarchar', 'xml']);
+const longTextDbTypes = new Set(['text', 'ntext', 'xml']);
 
 /** Check if a dbType is a binary/blob type */
 export function isBinaryDbType(dbType: string): boolean {

@@ -6,7 +6,7 @@ namespace BifrostQL.Ngsql;
 
 /// <summary>
 /// PostgreSQL implementation of schema reader using information_schema views.
-/// Excludes pg_catalog and information_schema system schemas.
+/// Excludes pg_catalog, information_schema, and ag_catalog (Apache AGE extension) system schemas.
 /// Identity columns are detected by checking if column_default starts with 'nextval('.
 /// </summary>
 public sealed class PostgresSchemaReader : ISchemaReader
@@ -27,7 +27,7 @@ INNER JOIN information_schema.table_constraints tc ON
     tc.constraint_catalog = ccu.constraint_catalog AND
     tc.constraint_schema = ccu.constraint_schema AND
     tc.constraint_name = ccu.constraint_name
-WHERE ccu.table_schema NOT IN ('pg_catalog', 'information_schema');
+WHERE ccu.table_schema NOT IN ('pg_catalog', 'information_schema', 'ag_catalog');
 
 -- Columns
 SELECT
@@ -59,7 +59,7 @@ SELECT
         ELSE 0
     END AS is_identity
 FROM information_schema.columns c
-WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema')
+WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema', 'ag_catalog')
 ORDER BY c.table_catalog, c.table_schema, c.table_name, c.ordinal_position;
 
 -- Tables
@@ -69,7 +69,7 @@ SELECT
     table_name,
     table_type
 FROM information_schema.tables
-WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+WHERE table_schema NOT IN ('pg_catalog', 'information_schema', 'ag_catalog')
 ORDER BY table_catalog, table_schema, table_name;
 ";
 

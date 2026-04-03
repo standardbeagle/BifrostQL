@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useFetcher } from "../common/fetcher";
 import { Table, Column } from "../types/schema";
 
-const numericTypes = ["Int", "Int!", "Float", "Float!"];
+const numericTypes = ["Int", "Int!", "Float", "Float!", "BigInt", "BigInt!"];
 const booleanTypes = ["Boolean", "Boolean!"];
 
 interface ColumnJoin {
@@ -29,7 +29,7 @@ function coerceDetail(
     }
     if (!isInsert) {
         for (const col of idColumns) {
-            coerced[col.name] = col.paramType.startsWith("Int") ? +(editId ?? 0) : editId;
+            coerced[col.name] = numericTypes.some(t => t === col.paramType) ? +(editId ?? 0) : editId;
         }
     }
     return coerced;

@@ -8,6 +8,7 @@ using BifrostQL.MySql;
 using BifrostQL.Ngsql;
 using BifrostQL.Sqlite;
 using BifrostQL.SqlServer;
+using BifrostQL.UI.Vault;
 using Photino.NET;
 
 // Register all dialect factories so DbConnFactoryResolver can route by provider
@@ -33,23 +34,35 @@ var headlessOption = new Option<bool>("--headless", "-H")
     Description = "Run in headless mode (server only, no UI window)"
 };
 
+var vaultPathOption = new Option<string?>("--vault", "-V")
+{
+    Description = "Path to encrypted vault file (default: ~/.config/bifrost/vault.json.enc)"
+};
+
 var rootCommand = new RootCommand("BifrostQL UI - Desktop database explorer")
 {
     connectionStringArg,
     portOption,
-    headlessOption
+    headlessOption,
+    vaultPathOption
 };
+
+// Vault CLI subcommands (vault add/list/remove/export)
+rootCommand.Add(VaultCommands.CreateVaultCommand(vaultPathOption));
 
 // Shared connection state — BifrostSetupOptions captures this by reference via the lambda closure
 string? currentConnectionString = null;
 BifrostDbProvider? currentProvider = null;
 BifrostSetupOptions? bifrostOptions = null;
+string? activeVaultPath = null;
+var sshTunnel = new BifrostQL.UI.SshTunnelManager();
 
 rootCommand.SetAction(async (parseResult, cancellationToken) =>
 {
     var connectionString = parseResult.GetValue(connectionStringArg);
     var port = parseResult.GetValue(portOption);
     var headless = parseResult.GetValue(headlessOption);
+    activeVaultPath = parseResult.GetValue(vaultPathOption);
 
     currentConnectionString = connectionString;
     if (connectionString != null)
@@ -149,6 +162,39 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
                 success = false,
                 error = ex.Message
             });
+        }
+    });
+
+    // POST /api/databases - Lists available databases on the server
+    app.MapPost("/api/databases", async (ListDatabasesRequest request, CancellationToken ct) =>
+    {
+        if (string.IsNullOrWhiteSpace(request.ConnectionString))
+            return Results.BadRequest(new { error = "Connection string is required", databases = Array.Empty<string>() });
+
+        try
+        {
+            var provider = request.Provider != null
+                ? DbConnFactoryResolver.ParseProviderName(request.Provider)
+                : DbConnFactoryResolver.DetectProvider(request.ConnectionString);
+
+            if (provider == BifrostDbProvider.Sqlite)
+                return Results.Ok(new { databases = Array.Empty<string>() });
+
+            // Peer/ident auth for PostgreSQL — shell out to psql since the .NET process
+            // may not be running as the correct OS user for peer authentication
+            if (request.PeerAuth && provider == BifrostDbProvider.PostgreSql)
+            {
+                var databases = await ListDatabasesViaPsqlAsync(request.ConnectionString, request.PsqlUser, ct);
+                return Results.Ok(new { databases });
+            }
+
+            var factory = DbConnFactoryResolver.Create(request.ConnectionString, provider);
+            var databases2 = await factory.ListDatabasesAsync(ct);
+            return Results.Ok(new { databases = databases2 });
+        }
+        catch (Exception ex)
+        {
+            return Results.BadRequest(new { error = ex.Message, databases = Array.Empty<string>() });
         }
     });
 
@@ -386,6 +432,135 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         provider = currentProvider?.ToString().ToLowerInvariant()
     }));
 
+    // POST /api/ssh/connect — Start an SSH tunnel
+    app.MapPost("/api/ssh/connect", async (SshConnectRequest request, CancellationToken ct) =>
+    {
+        try
+        {
+            var config = new BifrostQL.UI.SshTunnelConfig(
+                request.SshHost, request.SshPort, request.SshUsername,
+                request.IdentityFile, request.RemoteHost, request.RemotePort);
+            var localPort = await sshTunnel.StartAsync(config, ct);
+            return Results.Ok(new { success = true, localPort });
+        }
+        catch (Exception ex)
+        {
+            return Results.BadRequest(new { success = false, error = ex.Message });
+        }
+    });
+
+    // POST /api/ssh/disconnect — Stop the SSH tunnel
+    app.MapPost("/api/ssh/disconnect", async () =>
+    {
+        await sshTunnel.StopAsync();
+        return Results.Ok(new { success = true });
+    });
+
+    // GET /api/ssh/status — Check tunnel status
+    app.MapGet("/api/ssh/status", () => Results.Ok(sshTunnel.GetStatus()));
+
+    // POST /api/ssh/wp-discover — Discover WordPress DB credentials via wp-cli over SSH
+    app.MapPost("/api/ssh/wp-discover", async (WpDiscoverRequest request, CancellationToken ct) =>
+    {
+        try
+        {
+            var sshConfig = new BifrostQL.UI.SshTunnelConfig(
+                request.SshHost, request.SshPort, request.SshUsername,
+                request.IdentityFile, "localhost", 3306);
+            var wpConfig = new BifrostQL.UI.WpDiscoverConfig(request.WpPath, request.WpRoot);
+            var creds = await sshTunnel.DiscoverWordPressAsync(sshConfig, wpConfig, ct);
+            return Results.Ok(new
+            {
+                success = true,
+                dbName = creds.DbName,
+                dbUser = creds.DbUser,
+                dbPassword = creds.DbPassword,
+                dbHost = creds.DbHost,
+            });
+        }
+        catch (Exception ex)
+        {
+            return Results.BadRequest(new { success = false, error = ex.Message });
+        }
+    });
+
+    // GET /api/vault/servers — List saved servers (metadata only, no passwords)
+    app.MapGet("/api/vault/servers", () =>
+    {
+        try
+        {
+            var servers = VaultServerProvider.LoadServers(activeVaultPath);
+            var result = servers.Select(s => new
+            {
+                name = s.Server.Name,
+                provider = s.Server.Provider,
+                host = s.Server.Host,
+                port = s.Server.Port,
+                database = s.Server.Database,
+                tags = s.Server.Tags,
+                hasSsh = s.Server.Ssh is not null,
+                hasPassword = !string.IsNullOrEmpty(s.Server.Password),
+                source = s.Source,
+            });
+            return Results.Ok(result);
+        }
+        catch
+        {
+            return Results.Ok(Array.Empty<object>());
+        }
+    });
+
+    // POST /api/vault/connect — Connect using a vault server by name (credentials stay server-side)
+    app.MapPost("/api/vault/connect", async (VaultConnectRequest request, CancellationToken ct) =>
+    {
+        try
+        {
+            var servers = VaultServerProvider.LoadServers(activeVaultPath);
+            var match = servers.FirstOrDefault(s => s.Server.Name.Equals(request.Name, StringComparison.OrdinalIgnoreCase));
+            if (match.Server is null)
+                return Results.NotFound(new { success = false, error = $"Server '{request.Name}' not found" });
+
+            var server = match.Server;
+            var connStr = VaultServerProvider.BuildConnectionString(server);
+
+            // If SSH config present, start tunnel and rewrite connection string
+            if (server.Ssh is not null)
+            {
+                var remoteHost = server.Host;
+                var remotePort = server.Port;
+                var sshConfig = new BifrostQL.UI.SshTunnelConfig(
+                    server.Ssh.Host, server.Ssh.Port, server.Ssh.Username,
+                    server.Ssh.IdentityFile, remoteHost, remotePort);
+                var localPort = await sshTunnel.StartAsync(sshConfig, ct);
+
+                // Rewrite to tunnel through localhost
+                var tunneled = server with { Host = "127.0.0.1", Port = localPort };
+                connStr = VaultServerProvider.BuildConnectionString(tunneled);
+            }
+
+            var provider = DbConnFactoryResolver.ParseProviderName(server.Provider);
+            currentConnectionString = connStr;
+            currentProvider = provider;
+
+            bifrostOptions?.BindConnectionString(connStr);
+            bifrostOptions?.BindProvider(provider.ToString().ToLowerInvariant());
+            bifrostOptions?.ResetSchema(app.Services);
+
+            return Results.Ok(new
+            {
+                success = true,
+                provider = server.Provider,
+                server = server.Host,
+                database = server.Database ?? "",
+                name = server.Name,
+            });
+        }
+        catch (Exception ex)
+        {
+            return Results.BadRequest(new { success = false, error = ex.Message });
+        }
+    });
+
     // Serve static files from wwwroot
     app.UseDefaultFiles();
     app.UseStaticFiles();
@@ -413,6 +588,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     {
         Console.WriteLine("Running in headless mode. Press Ctrl+C to stop.");
         await serverTask;
+        sshTunnel.Dispose();
     }
     else
     {
@@ -426,7 +602,8 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
 
         window.WaitForClose();
 
-        // Shutdown the server when window closes
+        // Shutdown the server and SSH tunnel when window closes
+        sshTunnel.Dispose();
         await app.StopAsync();
     }
 
@@ -434,6 +611,69 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
 });
 
 return await rootCommand.Parse(args).InvokeAsync();
+
+// Lists PostgreSQL databases by shelling out to psql via sudo -u <user>.
+// Used for peer/ident auth where the .NET process runs as a different OS user.
+static async Task<string[]> ListDatabasesViaPsqlAsync(string connectionString, string? psqlUser, CancellationToken ct)
+{
+    // Parse host/port from connection string for psql args
+    var kvs = connectionString.Split(';', StringSplitOptions.RemoveEmptyEntries)
+        .Select(p => p.Split('=', 2))
+        .Where(p => p.Length == 2)
+        .ToDictionary(p => p[0].Trim(), p => p[1].Trim(), StringComparer.OrdinalIgnoreCase);
+    kvs.TryGetValue("host", out var host);
+    kvs.TryGetValue("port", out var port);
+
+    // Build psql args: output database names only, no headers, no alignment
+    var psqlArgs = new List<string> { "-t", "-A", "-c",
+        "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname" };
+    // For peer auth, only pass -h if it's a socket path (starts with /).
+    // Passing -h localhost forces TCP which bypasses peer auth.
+    if (!string.IsNullOrWhiteSpace(host) && host.StartsWith('/'))
+    {
+        psqlArgs.AddRange(new[] { "-h", host });
+    }
+    if (!string.IsNullOrWhiteSpace(port) && port != "5432")
+    {
+        psqlArgs.AddRange(new[] { "-p", port });
+    }
+
+    var psi = new System.Diagnostics.ProcessStartInfo();
+    if (!string.IsNullOrWhiteSpace(psqlUser))
+    {
+        // Use sudo -u <user> psql for peer auth as a different OS user
+        psi.FileName = "sudo";
+        psi.ArgumentList.Add("-u");
+        psi.ArgumentList.Add(psqlUser);
+        psi.ArgumentList.Add("psql");
+    }
+    else
+    {
+        psi.FileName = "psql";
+    }
+    foreach (var arg in psqlArgs)
+        psi.ArgumentList.Add(arg);
+
+    psi.RedirectStandardOutput = true;
+    psi.RedirectStandardError = true;
+    psi.UseShellExecute = false;
+    psi.CreateNoWindow = true;
+
+    using var proc = System.Diagnostics.Process.Start(psi)
+        ?? throw new InvalidOperationException("Failed to start psql");
+
+    var stdout = await proc.StandardOutput.ReadToEndAsync(ct);
+    var stderr = await proc.StandardError.ReadToEndAsync(ct);
+    await proc.WaitForExitAsync(ct);
+
+    if (proc.ExitCode != 0)
+    {
+        var msg = string.IsNullOrWhiteSpace(stderr) ? $"psql exited with code {proc.ExitCode}" : stderr.Trim();
+        throw new InvalidOperationException($"psql failed: {msg}");
+    }
+
+    return stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+}
 
 // Helper to format SSE event JSON consistently
 static string SseEvent(string stage, int percent, string message,
@@ -468,6 +708,12 @@ static IResult WriteSseStream(IAsyncEnumerable<string> events)
 // Record types for API requests
 record ConnectionTestRequest(string ConnectionString, string? Provider = null);
 record ConnectionSetRequest(string ConnectionString, string? Provider = null);
+record ListDatabasesRequest(string ConnectionString, string? Provider = null, bool PeerAuth = false, string? PsqlUser = null);
+record SshConnectRequest(string SshHost, int SshPort, string SshUsername,
+    string? IdentityFile, string RemoteHost, int RemotePort);
+record WpDiscoverRequest(string SshHost, int SshPort, string SshUsername,
+    string? IdentityFile, string? WpPath, string? WpRoot);
+record VaultConnectRequest(string Name);
 record CreateDatabaseRequest(string Template, string? ConnectionString);
 record QuickstartRequest(string Schema, string? DataSize = "sample");
 

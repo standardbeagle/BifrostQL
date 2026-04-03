@@ -13,7 +13,10 @@ import {
   DataSize,
   saveRecentConnections,
   loadRecentConnections,
+  fetchVaultServers,
+  connectVaultServer,
 } from './connection';
+import type { VaultServer } from './connection/types';
 import { saveSession, loadSession } from './connection/session';
 import './connection/connection.css';
 import './app.css';
@@ -35,20 +38,36 @@ export default function App() {
   const [isLaunching, setIsLaunching] = useState(false);
   const [launchProgress, setLaunchProgress] = useState('');
   const [editorKey, setEditorKey] = useState(0);
+  const [vaultServers, setVaultServers] = useState<VaultServer[]>([]);
+
+  // Load vault servers on mount
+  useEffect(() => {
+    fetchVaultServers().then(setVaultServers);
+  }, []);
 
   // Restore backend connection if we have a saved session (survives page reloads)
   useEffect(() => {
     if (!restored) return;
-    fetch('/api/connection/set', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        connectionString: restored.connectionString,
-        provider: restored.provider,
-      }),
-    }).catch(() => {
-      // Backend may not be ready yet — health check will handle recovery
-    });
+    if (restored.vaultServerName) {
+      fetch('/api/vault/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: restored.vaultServerName }),
+      }).catch(() => {
+        // Backend may not be ready yet — health check will handle recovery
+      });
+    } else {
+      fetch('/api/connection/set', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connectionString: restored.connectionString,
+          provider: restored.provider,
+        }),
+      }).catch(() => {
+        // Backend may not be ready yet — health check will handle recovery
+      });
+    }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Periodic health check — detects backend restarts and auto-recovers
@@ -170,6 +189,40 @@ export default function App() {
     setSelectedProvider(provider);
     handleConnect(connection.connectionString, connection.name, provider);
   }, [handleConnect]);
+
+  const handleConnectVaultServer = useCallback(async (name: string) => {
+    try {
+      setConnectionState('connecting');
+      setErrorMessage(null);
+      const result = await connectVaultServer(name);
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to connect');
+      }
+
+      const info: ConnectionInfo = {
+        id: Date.now().toString(),
+        name: result.name ?? name,
+        connectionString: '', // Vault connections don't expose the connection string
+        connectedAt: new Date().toISOString(),
+        server: result.server ?? '',
+        database: result.database ?? '',
+        provider: (result.provider as Provider) ?? 'postgres',
+        vaultServerName: name,
+      };
+
+      setConnectionInfo(info);
+      saveSession(info);
+      setEditorKey((k) => k + 1);
+      setCurrentView('editor');
+      setConnectionState('connected');
+    } catch (err) {
+      setConnectionState('error');
+      const msg = err instanceof Error ? err.message : 'Connection failed';
+      setErrorMessage(msg.includes('Failed to fetch')
+        ? 'Cannot reach the backend server.'
+        : msg);
+    }
+  }, []);
 
   const handleTryItNow = useCallback(() => {
     setCurrentView('quickstart');
@@ -307,6 +360,7 @@ export default function App() {
         setSelectedProvider(null);
         break;
       case 'editor':
+        fetch('/api/ssh/disconnect', { method: 'POST' }).catch(() => {});
         setCurrentView('welcome');
         setConnectionInfo(null);
         saveSession(null);
@@ -417,6 +471,8 @@ export default function App() {
           setRecentConnections([]);
           saveRecentConnections([]);
         }}
+        vaultServers={vaultServers}
+        onConnectVaultServer={handleConnectVaultServer}
       />
     </div>
   );

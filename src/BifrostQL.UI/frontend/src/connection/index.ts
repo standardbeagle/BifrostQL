@@ -23,3 +23,11 @@ export {
   loadRecentConnections,
   MAX_RECENT_CONNECTIONS,
 } from './recent-connections';
+
+/**
+ * Vault server API client
+ */
+export {
+  fetchVaultServers,
+  connectVaultServer,
+} from './vault-servers';

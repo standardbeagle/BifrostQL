@@ -534,6 +534,51 @@ input[type="checkbox"]:focus-visible {
   background: rgba(255, 107, 107, 0.1);
 }
 
+/* ── Vault servers section ── */
+
+.welcome-vault {
+  width: 100%;
+  max-width: 580px;
+  margin-top: var(--sp-6);
+}
+
+.welcome-vault__badge {
+  display: inline-block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.5625rem;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: 6px;
+  background: rgba(139, 92, 246, 0.15);
+  color: var(--accent-secondary);
+  vertical-align: middle;
+  letter-spacing: 0.03em;
+}
+
+.welcome-vault__badge--env {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+
+.welcome-vault__tags {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: var(--sp-2);
+}
+
+.welcome-vault__tag {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.5625rem;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
    PROVIDER SELECT
    ═══════════════════════════════════════════════════════════════════════ */
@@ -925,6 +970,88 @@ input[type="checkbox"]:focus-visible {
 .conn-form__btn--secondary:hover:not(:disabled) {
   background: var(--void-border-hover);
   border-color: var(--void-border-hover);
+}
+
+.conn-form__database-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.conn-form__database-row .conn-form__input,
+.conn-form__database-row .conn-form__select {
+  flex: 1;
+}
+
+.conn-form__btn--icon {
+  padding: 0 0.75rem;
+  min-width: 2.5rem;
+  flex-shrink: 0;
+  background: var(--void-surface);
+  border: 1px solid var(--void-border);
+  border-radius: var(--radius-md, 6px);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 1.1rem;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.conn-form__btn--icon:hover:not(:disabled) {
+  background: var(--void-border-hover, #3a3a4a);
+  border-color: var(--void-border-hover);
+}
+
+.conn-form__btn--icon:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.conn-form__link-btn {
+  background: none;
+  border: none;
+  color: var(--prismatic-blue, #4a90d9);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0.25rem 0;
+  text-decoration: underline;
+}
+
+.conn-form__link-btn:hover {
+  color: var(--prismatic-cyan, #6dd5ed);
+}
+
+/* ── SSH Tunnel Section ── */
+
+.conn-form__ssh-section {
+  border: 1px solid var(--void-border, #2a2a3a);
+  border-radius: var(--radius-md, 6px);
+  padding: var(--sp-4, 1rem);
+  margin: var(--sp-3, 0.75rem) 0;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.conn-form__ssh-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3, 0.75rem);
+  margin-top: var(--sp-3, 0.75rem);
+}
+
+.conn-form__row {
+  display: flex;
+  gap: var(--sp-3, 0.75rem);
+}
+
+.conn-form__group--half {
+  flex: 1;
+}
+
+.conn-form__wp-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3, 0.75rem);
+  padding-top: var(--sp-3, 0.75rem);
+  border-top: 1px solid var(--void-border, #2a2a3a);
 }
 
 @keyframes conn-spin {

@@ -42,6 +42,14 @@ export enum AuthMethod {
 }
 
 /**
+ * Authentication methods for PostgreSQL connection
+ */
+export enum PostgresAuthMethod {
+  Password = 'password',
+  Peer = 'peer'
+}
+
+/**
  * SSL mode options for PostgreSQL
  */
 export type PostgresSslMode = 'Disable' | 'Allow' | 'Prefer' | 'Require' | 'VerifyCA' | 'VerifyFull';
@@ -67,6 +75,7 @@ export interface PostgresFormData {
   host: string;
   port: number;
   database: string;
+  authMethod: PostgresAuthMethod;
   username: string;
   password: string;
   sslMode: PostgresSslMode;
@@ -92,6 +101,26 @@ export interface SqliteFormData {
 export type ConnectionFormData = SqlServerFormData | PostgresFormData | MySqlFormData | SqliteFormData;
 
 /**
+ * SSH tunnel configuration
+ */
+export interface SshConfig {
+  enabled: boolean;
+  sshHost: string;
+  sshPort: number;
+  sshUsername: string;
+  identityFile: string;
+}
+
+/**
+ * WordPress WP-CLI discovery configuration
+ */
+export interface WpConfig {
+  enabled: boolean;
+  wpPath: string;
+  wpRoot: string;
+}
+
+/**
  * Connection state stored in localStorage
  */
 export interface ConnectionInfo {
@@ -102,6 +131,9 @@ export interface ConnectionInfo {
   server: string;
   database: string;
   provider: Provider;
+  ssh?: SshConfig;
+  /** Set when connected via the credential vault — used to restore the connection after a backend restart */
+  vaultServerName?: string;
 }
 
 /**
@@ -156,12 +188,29 @@ export interface ProviderSelectProps {
   onBack: () => void;
 }
 
+/**
+ * A server from the encrypted credential vault (metadata only, no passwords)
+ */
+export interface VaultServer {
+  name: string;
+  provider: Provider;
+  host: string;
+  port: number;
+  database?: string;
+  tags: string[];
+  hasSsh: boolean;
+  hasPassword: boolean;
+  source: 'vault' | 'env';
+}
+
 export interface WelcomePanelProps {
   onConnectClick: () => void;
   onCreateTestDatabase: () => void;
   recentConnections: ConnectionInfo[];
   onSelectRecentConnection: (connection: ConnectionInfo) => void;
   onClearRecentConnections: () => void;
+  vaultServers?: VaultServer[];
+  onConnectVaultServer?: (name: string) => void;
 }
 
 export interface QuickStartProps {

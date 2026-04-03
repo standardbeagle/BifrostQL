@@ -37,4 +37,21 @@ public sealed class PostgresDbConnFactory : IDbConnFactory
     {
         return new NpgsqlConnection(_connectionString);
     }
+
+    /// <inheritdoc />
+    public async Task<string[]> ListDatabasesAsync(CancellationToken cancellationToken = default)
+    {
+        var builder = new NpgsqlConnectionStringBuilder(_connectionString) { Database = "postgres" };
+        await using var conn = new NpgsqlConnection(builder.ConnectionString);
+        await conn.OpenAsync(cancellationToken);
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname";
+
+        var databases = new List<string>();
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            databases.Add(reader.GetString(0));
+        return databases.ToArray();
+    }
 }

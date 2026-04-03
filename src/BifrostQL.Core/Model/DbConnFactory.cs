@@ -47,6 +47,14 @@ namespace BifrostQL.Core.Model
         /// The type mapper for converting database-specific data types to GraphQL types.
         /// </summary>
         ITypeMapper TypeMapper { get; }
+
+        /// <summary>
+        /// Lists the databases available on the server.
+        /// Returns an empty array for providers that don't support enumeration (e.g., SQLite).
+        /// The implementation connects to a system database to enumerate available databases.
+        /// </summary>
+        Task<string[]> ListDatabasesAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult(Array.Empty<string>());
     }
 
     /// <summary>

@@ -118,10 +118,10 @@ The number of SQL statements scales with the number of **tables** in the query, 
 | **DataLoader** | Any (JS, .NET, etc.) | Batch keys per resolver tick | One DataLoader per relationship | 1 per nesting level | Manual wiring; still multiple round-trips for deep queries |
 | **Hasura** | Haskell / Docker | Compile full GraphQL AST to single SQL with JOINs | Zero (schema-driven) | 1 | PostgreSQL-centric; complex queries produce deeply nested JOINs |
 | **PostGraphile** | Node.js | Look-ahead (V4) / Grafast planning (V5) | Zero (schema-driven) | 1 | PostgreSQL-only; V5 is a significant rewrite |
-| **Join Monster** | Node.js | Schema annotations generate SQL JOINs from AST | Medium — annotate every type | 1 | JS-only; large JOINs risk memory issues; community-maintained |
+| **Join Monster** | Node.js | Schema annotations generate SQL JOINs from AST | Medium — annotate every type | 1-2 | JS-only; large JOINs risk memory issues; community-maintained |
 | **Prisma** | Node.js | Internal DataLoader + optional join strategy | Low-Medium — use `include()` | 1-2 | Tied to Prisma ORM; join strategy is newer |
 | **Hot Chocolate** | .NET | DataLoader + Projections | Medium — register DataLoaders | 1 per nesting level | DataLoaders and projections don't fully integrate ([#6191](https://github.com/ChilliCream/graphql-platform/issues/6191)) |
-| **BifrostQL** | .NET | Query-per-table, single round-trip batch | **Zero** — reads DB schema | **1** | SQL Server, PostgreSQL, MySQL; .NET ecosystem |
+| **BifrostQL** | .NET | Query-per-table, single round-trip batch | **Zero** — reads DB schema | **1**\* | SQL Server, PostgreSQL, MySQL, SQLite\*; .NET ecosystem |
 
 ### BifrostQL vs DataLoader
 
@@ -157,3 +157,5 @@ BifrostQL's strategy works best when:
 - **You're in the .NET ecosystem** and want a library, not a separate service
 
 For extremely wide queries that touch dozens of tables in a single request, the number of SQL statements grows linearly. In practice, real application queries rarely exceed 5-6 joined tables, making this a non-issue.
+
+\* **SQLite limitation**: SQLite's ADO.NET provider doesn't support multiple result sets from a single `ExecuteReader` call. For SQLite, BifrostQL executes each statement in a separate round-trip, making it equivalent to DataLoader's per-level approach. The N+1 problem is still eliminated (one query per table, not per row), but deep queries incur multiple round-trips.

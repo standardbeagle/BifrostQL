@@ -1,4 +1,5 @@
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Model.AppSchema;
 using BifrostQL.Model;
 using Pluralize.NET.Core;
 
@@ -14,6 +15,7 @@ public sealed class DbModelTestFixture
     private readonly List<(string childTable, string childColumn, string parentTable, string parentColumn, string linkName)> _singleLinks = new();
     private readonly List<(string parentTable, string parentColumn, string childTable, string childColumn, string linkName)> _multiLinks = new();
     private readonly List<DbForeignKey> _foreignKeys = new();
+    private readonly List<EavConfig> _eavConfigs = new();
     private readonly Dictionary<string, object?> _modelMetadata = new();
 
     public static DbModelTestFixture Create() => new();
@@ -21,6 +23,12 @@ public sealed class DbModelTestFixture
     public DbModelTestFixture WithModelMetadata(string key, object? value)
     {
         _modelMetadata[key] = value;
+        return this;
+    }
+
+    public DbModelTestFixture WithEavConfig(string metaTable, string parentTable, string fkColumn, string keyColumn, string valueColumn)
+    {
+        _eavConfigs.Add(new EavConfig(metaTable, parentTable, fkColumn, keyColumn, valueColumn));
         return this;
     }
 
@@ -145,7 +153,10 @@ public sealed class DbModelTestFixture
             parent.MultiLinks[linkName] = link;
         }
 
-        return new TestDbModel(_tables, _modelMetadata);
+        var model = new TestDbModel(_tables, _modelMetadata);
+        if (_eavConfigs.Count > 0)
+            model.EavConfigs = _eavConfigs;
+        return model;
     }
 
     private IDbModel BuildWithForeignKeys()
@@ -251,6 +262,7 @@ public sealed class DbModelTestFixture
 
         public IReadOnlyCollection<IDbTable> Tables { get; }
         public IReadOnlyCollection<DbStoredProcedure> StoredProcedures { get; } = Array.Empty<DbStoredProcedure>();
+        public IReadOnlyList<EavConfig> EavConfigs { get; set; } = Array.Empty<EavConfig>();
         public IDictionary<string, object?> Metadata { get; init; }
 
         public string? GetMetadataValue(string property) =>

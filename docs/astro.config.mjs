@@ -30,6 +30,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Schema Generation', slug: 'concepts/schema-generation' },
 						{ label: 'Solving N+1 Queries', slug: 'concepts/n-plus-one' },
+						{ label: 'App Schema Detection', slug: 'concepts/app-schema-detection' },
 					],
 				},
 				{
@@ -41,6 +42,7 @@ export default defineConfig({
 						{ label: 'Module System', slug: 'guides/modules' },
 						{ label: 'Authentication', slug: 'guides/authentication' },
 					{ label: 'Desktop App', slug: 'guides/desktop-app' },
+						{ label: 'WordPress', slug: 'guides/wordpress' },
 					],
 				},
 				{

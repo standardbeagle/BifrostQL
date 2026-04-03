@@ -15,18 +15,20 @@ project {
 
 scripts {
     dev-lib {
-        run "pnpm vite build --watch"
+        run "npx vite build --watch"
         cwd "examples/edit-db"
         autostart true
     }
     dev-backend {
         run "dotnet watch run --no-hot-reload --project src/BifrostQL.UI/BifrostQL.UI.csproj -- --headless --port 5000"
+        ports 5000
         autostart true
         url-matchers "Now listening on {url}"
     }
     dev-frontend {
-        run "pnpm dev"
+        run "npx vite"
         cwd "src/BifrostQL.UI/frontend"
+        ports 5173
         autostart true
         depends-on "dev-backend"
         url-matchers "Local:\\s+{url}"

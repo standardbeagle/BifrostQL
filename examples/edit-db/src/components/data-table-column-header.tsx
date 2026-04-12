@@ -42,9 +42,13 @@ function isBooleanColumn<TData, TValue>(column: Column<TData, TValue>): boolean 
     return getBaseParamType(column) === 'Boolean';
 }
 
-function getFkMeta<TData, TValue>(column: Column<TData, TValue>): { joinTable: string; joinLabelColumn: string } | null {
-    const meta = column.columnDef.meta as { joinTable?: string; joinLabelColumn?: string } | undefined;
-    if (meta?.joinTable) return { joinTable: meta.joinTable, joinLabelColumn: meta.joinLabelColumn ?? 'id' };
+function getFkMeta<TData, TValue>(column: Column<TData, TValue>): { joinTable: string; joinLabelColumn: string; isSelfReference: boolean } | null {
+    const meta = column.columnDef.meta as { joinTable?: string; joinLabelColumn?: string; isSelfReference?: boolean } | undefined;
+    if (meta?.joinTable) return {
+        joinTable: meta.joinTable,
+        joinLabelColumn: meta.joinLabelColumn ?? 'id',
+        isSelfReference: meta.isSelfReference === true,
+    };
     return null;
 }
 
@@ -87,7 +91,7 @@ function getTypeIcon(col: ColumnSchema) {
 
 interface ColumnMetadataTooltipProps {
     column: ColumnSchema;
-    fkMeta: { joinTable: string; joinLabelColumn: string } | null;
+    fkMeta: { joinTable: string; joinLabelColumn: string; isSelfReference: boolean } | null;
 }
 
 function ColumnMetadataTooltip({ column, fkMeta }: ColumnMetadataTooltipProps) {
@@ -134,6 +138,9 @@ function ColumnMetadataTooltip({ column, fkMeta }: ColumnMetadataTooltipProps) {
                         <dd className="text-foreground text-primary flex items-center gap-1">
                             <Link2 className="size-3" />
                             {fkMeta.joinTable}
+                            {fkMeta.isSelfReference && (
+                                <span className="ml-1 px-1 rounded bg-primary/10 text-[10px] font-medium">self-ref</span>
+                            )}
                         </dd>
                     </>
                 )}

@@ -180,12 +180,18 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                 const columnName = singleJoin.destinationTable;
                 const joinSchema = schema.findTable(singleJoin.destinationTable);
                 const joinLabelColumn = joinSchema?.labelColumn ?? 'id';
+                // Self-referential FK: column points back at the same table
+                // (e.g. categories.parent_id -> categories.id). Label it clearly
+                // so users know the FK means "parent" rather than an unrelated
+                // join.
+                const isSelfReference = singleJoin.destinationTable === table.name;
+                const headerTitle = isSelfReference ? `Parent ${c.label}` : c.label;
                 return {
                     id: c.name,
                     accessorKey: c.name,
-                    header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
+                    header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={headerTitle} />,
                     enableSorting: true,
-                    meta: { sortField: c.name, paramType: c.paramType, filterOperators: operators, joinTable: singleJoin.destinationTable, joinLabelColumn, column: c },
+                    meta: { sortField: c.name, paramType: c.paramType, filterOperators: operators, joinTable: singleJoin.destinationTable, joinLabelColumn, column: c, isSelfReference },
                     cell: ({ row }) => {
                         const joined = row.original[columnName] as RowData | undefined;
                         if (!joined) return null;
@@ -282,9 +288,16 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
         .map((j: Join): ColumnDef<RowData, unknown> => {
             const joinTable = schema.findTable(j.destinationTable);
             const labelCol = joinTable?.labelColumn ?? 'id';
+            // Self-referential multi-join (e.g. child categories pointing back
+            // at the same categories table) — prefix with "Child" so the user
+            // can tell it apart from the "Parent" single-join column.
+            const isSelfReference = j.destinationTable === table.name;
+            const headerLabel = isSelfReference
+                ? `Child ${joinTable?.label ?? j.destinationTable}`
+                : joinTable?.label ?? j.destinationTable;
             return {
                 id: `join_${j.destinationTable}`,
-                header: joinTable?.label ?? j.destinationTable,
+                header: headerLabel,
                 enableSorting: false,
                 enableHiding: true,
                 cell: ({ row }) => {

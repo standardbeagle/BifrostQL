@@ -19,6 +19,19 @@ When a match is found:
 
 The detected configuration is applied before schema generation, so the GraphQL API reflects the optimized structure from the first request.
 
+## Confidence-based detection
+
+Each detector returns a confidence score from 0.0 to 1.0 based on how well the database matches the expected schema:
+
+| Score | Confidence Level | Description |
+|-------|-----------------|-------------|
+| 0.0-0.49 | Insufficient | Result discarded, not a match |
+| 0.50-0.69 | Moderate | Basic signature tables found |
+| 0.70-0.89 | High | Signature + supporting tables found |
+| 0.90-1.0 | Very High | Comprehensive match |
+
+BifrostQL runs all enabled detectors and selects the result with the highest confidence above the minimum threshold (default: 0.5).
+
 ## Prefix-aware linking
 
 Most applications use a consistent table prefix. WordPress uses `wp_` by default, but supports custom prefixes. Multisite WordPress installations use multiple prefixes (`wp_`, `wp_2_`, `wp_3_`).
@@ -71,17 +84,61 @@ After detection runs, the result is available as read-only metadata:
 
 ```
 detected-app: wordpress
+detection-confidence: 0.85
 ```
 
-This can be inspected for diagnostics but cannot be set manually — use `app-schema` to force a specific detector.
+These can be inspected for diagnostics but cannot be set manually — use `app-schema` to force a specific detector.
 
 ## Supported applications
 
 | Application | Status | Detector tables | Features |
 |-------------|--------|----------------|----------|
 | **WordPress** | Built-in | `{prefix}users`, `{prefix}posts`, `{prefix}options` | FK injection, table hiding, EAV flattening, PHP deserialization |
+| **Drupal** | Built-in | `node`, `node_field_data`, `users_field_data` | FK injection, table hiding, cache table exclusion |
 
-The detection framework is extensible. New detectors can be added for Drupal, Laravel, Magento, or any application with a recognizable table naming pattern.
+The detection framework is extensible. New detectors can be added for Laravel, Magento, or any application with a recognizable table naming pattern.
+
+## Creating custom detectors
+
+You can create custom detectors for your own applications by implementing the `IAppSchemaDetector` interface:
+
+```csharp
+public sealed class MyAppDetector : IAppSchemaDetector
+{
+    public string AppName => "myapp";
+
+    public bool IsEnabled(IDictionary<string, object?> dbMetadata)
+    {
+        // Check if detection is disabled
+        if (dbMetadata.TryGetValue("auto-detect-app", out var val)
+            && string.Equals(val?.ToString(), "disabled", StringComparison.OrdinalIgnoreCase))
+            return false;
+        return true;
+    }
+
+    public DetectionResult? Detect(IReadOnlyList<IDbTable> tables, IReadOnlyCollection<string> existingSchemas)
+    {
+        // Look for signature tables
+        var tableNames = new HashSet<string>(tables.Select(t => t.DbName), StringComparer.OrdinalIgnoreCase);
+        
+        if (!tableNames.Contains("myapp_users") || 
+            !tableNames.Contains("myapp_orders"))
+            return null;
+
+        // Build detection result with metadata and foreign keys
+        var result = new AppSchemaResult(
+            AppName,
+            prefixGroups,
+            additionalMetadata,
+            explicitForeignKeys
+        );
+
+        return DetectionResult.Create(AppName, confidence, result);
+    }
+}
+```
+
+See the [Creating Custom Detectors](/docs/creating-custom-detectors) guide for complete documentation.
 
 ## Disabling detection
 
@@ -92,3 +149,10 @@ auto-detect-app: disabled
 ```
 
 This leaves all tables visible with standard auto-linking behavior — no injected FKs, no hidden tables, no EAV flattening.
+
+## See also
+
+- [WordPress Database Guide](/docs/guides/wordpress) — Working with WordPress databases
+- [WordPress Schema Bundle](/docs/wordpress-schema-bundle) — WordPress-specific bundle documentation
+- [Creating Custom Detectors](/docs/creating-custom-detectors) — Build your own detectors
+- [App Schema Detection Framework](/docs/app-schema-detection) — Framework architecture and API reference

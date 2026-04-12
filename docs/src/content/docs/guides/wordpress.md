@@ -231,3 +231,10 @@ auto-detect-app: disabled
 ### Custom prefixes
 
 No special configuration needed. BifrostQL detects any prefix, not just `wp_`. If your WordPress installation uses `mysite_` as the prefix, detection works the same way — it finds `mysite_users`, `mysite_posts`, and `mysite_options`, then applies the configuration with `mysite_` as the prefix.
+
+## See also
+
+- [Application Schema Detection](/docs/concepts/app-schema-detection) — How auto-detection works
+- [App Schema Detection Framework](/docs/app-schema-detection) — Framework architecture and API
+- [Creating Custom Detectors](/docs/creating-custom-detectors) — Build your own detectors
+- [WordPress Schema Bundle](/docs/wordpress-schema-bundle) — Complete bundle documentation

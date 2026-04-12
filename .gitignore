@@ -369,6 +369,10 @@ FodyWeavers.xsd
 # Claude Code
 .claude/
 
+# DartAI loop runtime state
+.dartai/
+.dartai-locks.json
+
 # agnt audit artifacts (screenshots, reports)
 .agnt/audit/
 

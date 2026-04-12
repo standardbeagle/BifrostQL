@@ -17,27 +17,28 @@ public sealed class GqlObjectQueryEdgeCaseTest
     #region Empty/Null Edge Cases
 
     [Fact]
-    public void AddSqlParameterized_EmptyColumnsList_GeneratesValidSql()
+    public void AddSqlParameterized_EmptyColumnsList_SkipsDataQuery()
     {
-        // Arrange
+        // When a paged selection asks only for meta fields like `total` with no
+        // `data { ... }` children, there are no columns to select — emitting
+        // `SELECT  FROM Users` produced a "near FROM" syntax error on every
+        // dialect. The data query is now skipped entirely in that case.
         var dbModel = StandardTestFixtures.SimpleUsers();
         var usersTable = dbModel.GetTableFromDbName("Users");
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(usersTable)
+            .IncludeResult()
             // No columns added
             .Build();
 
         var sqls = new Dictionary<string, ParameterizedSql>();
         var parameters = new SqlParameterCollection();
 
-        // Act
         query.AddSqlParameterized(dbModel, Dialect, sqls, parameters);
 
-        // Assert - should generate SELECT with no columns
-        sqls.Should().ContainKey("Users");
-        var sql = sqls["Users"];
-        sql.Sql.Should().Contain("SELECT");
-        sql.Sql.Should().Contain("FROM [Users]");
+        sqls.Should().NotContainKey("Users");
+        sqls.Should().ContainKey("Users=>count");
+        sqls["Users=>count"].Sql.Should().Contain("SELECT COUNT(*) FROM [Users]");
     }
 
     [Fact]

@@ -187,7 +187,7 @@ public class EavModuleTests
         var result = detector.Detect(tables, Array.Empty<string>());
 
         result.Should().NotBeNull();
-        var meta = result!.AdditionalMetadata;
+        var meta = result!.SchemaResult.AdditionalMetadata;
 
         meta.Should().ContainKey("dbo.wp_postmeta");
         meta["dbo.wp_postmeta"]["eav-parent"].Should().Be("wp_posts");
@@ -205,7 +205,7 @@ public class EavModuleTests
         var result = detector.Detect(tables, Array.Empty<string>());
 
         result.Should().NotBeNull();
-        var meta = result!.AdditionalMetadata;
+        var meta = result!.SchemaResult.AdditionalMetadata;
 
         meta.Should().ContainKey("dbo.wp_usermeta");
         meta["dbo.wp_usermeta"]["eav-parent"].Should().Be("wp_users");
@@ -223,7 +223,7 @@ public class EavModuleTests
         var result = detector.Detect(tables, Array.Empty<string>());
 
         result.Should().NotBeNull();
-        var meta = result!.AdditionalMetadata;
+        var meta = result!.SchemaResult.AdditionalMetadata;
 
         meta.Should().ContainKey("dbo.wp_termmeta");
         meta["dbo.wp_termmeta"]["eav-parent"].Should().Be("wp_terms");
@@ -241,7 +241,7 @@ public class EavModuleTests
         var result = detector.Detect(tables, Array.Empty<string>());
 
         result.Should().NotBeNull();
-        var meta = result!.AdditionalMetadata;
+        var meta = result!.SchemaResult.AdditionalMetadata;
 
         meta.Should().ContainKey("dbo.wp_commentmeta");
         meta["dbo.wp_commentmeta"]["eav-parent"].Should().Be("wp_comments");
@@ -265,7 +265,7 @@ public class EavModuleTests
         var result = detector.Detect(tables, Array.Empty<string>());
 
         result.Should().NotBeNull();
-        var meta = result!.AdditionalMetadata;
+        var meta = result!.SchemaResult.AdditionalMetadata;
 
         meta["dbo.blog_postmeta"]["eav-parent"].Should().Be("blog_posts");
         meta["dbo.blog_usermeta"]["eav-parent"].Should().Be("blog_users");
@@ -283,9 +283,9 @@ public class EavModuleTests
         var result = detector.Detect(tables, Array.Empty<string>());
 
         result.Should().NotBeNull();
-        result!.AdditionalMetadata.Keys.Should().NotContain(k => k.Contains("eav-parent"));
+        result!.SchemaResult.AdditionalMetadata.Keys.Should().NotContain(k => k.Contains("eav-parent"));
         // No table should have eav-parent in its metadata values
-        foreach (var kvp in result.AdditionalMetadata)
+        foreach (var kvp in result.SchemaResult.AdditionalMetadata)
         {
             kvp.Value.Should().NotContainKey("eav-parent");
         }
@@ -300,7 +300,7 @@ public class EavModuleTests
         var result = detector.Detect(tables, Array.Empty<string>());
 
         result.Should().NotBeNull();
-        var meta = result!.AdditionalMetadata;
+        var meta = result!.SchemaResult.AdditionalMetadata;
 
         // postmeta should have both label AND eav metadata
         meta["dbo.wp_postmeta"].Should().ContainKey("label");
@@ -406,6 +406,89 @@ public class EavModuleTests
 
         postsGenerator.GetTableTypeDefinition(model, false).Should().Contain("_meta: String");
         usersGenerator.GetTableTypeDefinition(model, false).Should().Contain("_meta: String");
+    }
+
+    #endregion
+
+    #region Serialized PHP Column Integration
+
+    [Fact]
+    public void WordPressDetector_AppliesSerializedPhpColumnMetadata()
+    {
+        // Create tables with meta_value columns that should be marked as php_serialized
+        var postmetaColumns = new Dictionary<string, ColumnDto>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["meta_id"] = new() { ColumnName = "meta_id", GraphQlName = "meta_id", DataType = "int", IsPrimaryKey = true, Metadata = new Dictionary<string, object?>() },
+            ["post_id"] = new() { ColumnName = "post_id", GraphQlName = "post_id", DataType = "int", Metadata = new Dictionary<string, object?>() },
+            ["meta_key"] = new() { ColumnName = "meta_key", GraphQlName = "meta_key", DataType = "nvarchar", Metadata = new Dictionary<string, object?>() },
+            ["meta_value"] = new() { ColumnName = "meta_value", GraphQlName = "meta_value", DataType = "longtext", Metadata = new Dictionary<string, object?>() }
+        };
+        var optionsColumns = new Dictionary<string, ColumnDto>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["option_id"] = new() { ColumnName = "option_id", GraphQlName = "option_id", DataType = "int", IsPrimaryKey = true, Metadata = new Dictionary<string, object?>() },
+            ["option_name"] = new() { ColumnName = "option_name", GraphQlName = "option_name", DataType = "nvarchar", Metadata = new Dictionary<string, object?>() },
+            ["option_value"] = new() { ColumnName = "option_value", GraphQlName = "option_value", DataType = "longtext", Metadata = new Dictionary<string, object?>() }
+        };
+        var postsColumns = new Dictionary<string, ColumnDto>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["ID"] = new() { ColumnName = "ID", GraphQlName = "ID", DataType = "int", IsPrimaryKey = true, Metadata = new Dictionary<string, object?>() },
+            ["post_title"] = new() { ColumnName = "post_title", GraphQlName = "post_title", DataType = "nvarchar", Metadata = new Dictionary<string, object?>() }
+        };
+        var usersColumns = new Dictionary<string, ColumnDto>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["ID"] = new() { ColumnName = "ID", GraphQlName = "ID", DataType = "int", IsPrimaryKey = true, Metadata = new Dictionary<string, object?>() }
+        };
+
+        var tables = new List<DbTable>
+        {
+            new()
+            {
+                DbName = "wp_posts",
+                GraphQlName = "wp_posts",
+                NormalizedName = "wp_posts",
+                TableSchema = "dbo",
+                ColumnLookup = postsColumns,
+                GraphQlLookup = postsColumns.Values.ToDictionary(c => c.GraphQlName, c => c),
+            },
+            new()
+            {
+                DbName = "wp_postmeta",
+                GraphQlName = "wp_postmeta",
+                NormalizedName = "wp_postmeta",
+                TableSchema = "dbo",
+                ColumnLookup = postmetaColumns,
+                GraphQlLookup = postmetaColumns.Values.ToDictionary(c => c.GraphQlName, c => c),
+            },
+            new()
+            {
+                DbName = "wp_users",
+                GraphQlName = "wp_users",
+                NormalizedName = "wp_users",
+                TableSchema = "dbo",
+                ColumnLookup = usersColumns,
+                GraphQlLookup = usersColumns.Values.ToDictionary(c => c.GraphQlName, c => c),
+            },
+            new()
+            {
+                DbName = "wp_options",
+                GraphQlName = "wp_options",
+                NormalizedName = "wp_options",
+                TableSchema = "dbo",
+                ColumnLookup = optionsColumns,
+                GraphQlLookup = optionsColumns.Values.ToDictionary(c => c.GraphQlName, c => c),
+            },
+        };
+
+        var detector = new WordPressDetector();
+        var result = detector.Detect(tables, Array.Empty<string>());
+
+        result.Should().NotBeNull();
+        result!.SchemaResult.ColumnMetadata.Should().ContainKey("dbo.wp_postmeta.meta_value");
+        result.SchemaResult.ColumnMetadata["dbo.wp_postmeta.meta_value"]["type"].Should().Be("php_serialized");
+        result.SchemaResult.ColumnMetadata["dbo.wp_postmeta.meta_value"]["format"].Should().Be("php");
+
+        result.SchemaResult.ColumnMetadata.Should().ContainKey("dbo.wp_options.option_value");
+        result.SchemaResult.ColumnMetadata["dbo.wp_options.option_value"]["type"].Should().Be("php_serialized");
     }
 
     #endregion

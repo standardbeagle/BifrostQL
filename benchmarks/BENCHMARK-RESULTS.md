@@ -51,6 +51,14 @@ This directory contains BenchmarkDotNet performance tests comparing BifrostQL's 
    - Batch size: 1000 operations
    - Compares protobuf vs JSON throughput
 
+5. **BulkOperationBenchmarks.cs** (NEW)
+   - Bulk insert performance (1K, 10K, 100K rows)
+   - Bulk update performance (10%, 50%, 100% of rows)
+   - Bulk delete performance (10%, 50%, 100% of rows)
+   - Raw ADO.NET vs individual INSERTs vs multi-row INSERT
+   - Memory allocation analysis
+   - Based on UkrGuru's MassSqlDemo approach
+
 ## Running Benchmarks
 
 ### Full Benchmark Suite
@@ -85,6 +93,9 @@ dotnet run -c Release -- --filter '*ChunkingBenchmarks*'
 
 # Throughput only
 dotnet run -c Release -- --filter '*ThroughputBenchmarks*'
+
+# Bulk operation benchmarks
+dotnet run -c Release -- --filter '*BulkOperationBenchmarks*'
 ```
 
 ## Benchmark Configuration
@@ -111,13 +122,36 @@ Lower values are better for all metrics except throughput (higher = better).
 
 ```
 benchmarks/BifrostQL.Benchmarks/
-├── BifrostMessageBenchmarks.cs  # Core serialization benchmarks
-├── PayloadSizeBenchmarks.cs     # Size comparison
-├── ChunkingBenchmarks.cs        # Chunking overhead
-├── ThroughputBenchmarks.cs      # Messages per second
-├── Program.cs                   # Entry point with --sizes flag
-└── BifrostQL.Benchmarks.csproj  # BenchmarkDotNet project
+├── BifrostMessageBenchmarks.cs   # Core serialization benchmarks
+├── PayloadSizeBenchmarks.cs      # Size comparison
+├── ChunkingBenchmarks.cs         # Chunking overhead
+├── ThroughputBenchmarks.cs       # Messages per second
+├── BulkOperationBenchmarks.cs    # Bulk SQL operation benchmarks
+├── BulkOperationContext.cs       # Database context for bulk benchmarks
+├── Program.cs                    # Entry point with --sizes flag
+└── BifrostQL.Benchmarks.csproj   # BenchmarkDotNet project
 ```
+
+## Bulk Operation Benchmarks
+
+See [BULK-OPERATION-BENCHMARKS.md](./BULK-OPERATION-BENCHMARKS.md) for detailed documentation on bulk SQL operation benchmarks.
+
+### Quick Reference
+
+| Benchmark Type | Description |
+|----------------|-------------|
+| Insert 1K/10K/100K | Bulk insert at different scales |
+| Update 10%/50%/100% | Bulk update with different percentages |
+| Delete 10%/50%/100% | Bulk delete with different percentages |
+| Throughput | Rows per second metrics |
+| Memory | Allocation analysis |
+
+### Key Findings
+
+- **Raw ADO.NET** with prepared statements provides the baseline (~10ms for 1K rows)
+- **Individual INSERTs** are ~2.5x slower than raw ADO.NET (~25ms for 1K rows)
+- **Multi-row INSERT** has higher parsing overhead for SQLite (~160ms for 1K rows)
+- BifrostQL's current batch approach (individual statements) provides good performance balance
 
 ## Next Steps
 
@@ -128,3 +162,4 @@ Future benchmarks to consider:
 3. **Multi-protocol:** GraphQL JSON vs OData JSON vs Protobuf binary
 4. **Concurrency:** Parallel request throughput
 5. **Memory pressure:** Large result sets (10K+ rows) with GC impact
+6. **BifrostQL batch resolver:** Direct comparison with raw SQL benchmarks

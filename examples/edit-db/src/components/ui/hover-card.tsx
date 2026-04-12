@@ -3,27 +3,30 @@ import { HoverCard as HoverCardPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
 
-function HoverCard({
-  ...props
-}: React.ComponentProps<typeof HoverCardPrimitive.Root>) {
+const HoverCard = React.forwardRef<
+  React.ElementRef<typeof HoverCardPrimitive.Root>,
+  React.ComponentPropsWithoutRef<typeof HoverCardPrimitive.Root>
+>(({ ...props }, ref) => {
   return <HoverCardPrimitive.Root data-slot="hover-card" {...props} />
-}
+})
+HoverCard.displayName = "HoverCard"
 
-function HoverCardTrigger({
-  ...props
-}: React.ComponentProps<typeof HoverCardPrimitive.Trigger>) {
+const HoverCardTrigger = React.forwardRef<
+  React.ElementRef<typeof HoverCardPrimitive.Trigger>,
+  React.ComponentPropsWithoutRef<typeof HoverCardPrimitive.Trigger>
+>(({ ...props }, ref) => {
   return <HoverCardPrimitive.Trigger data-slot="hover-card-trigger" {...props} />
-}
+})
+HoverCardTrigger.displayName = "HoverCardTrigger"
 
-function HoverCardContent({
-  className,
-  align = "center",
-  sideOffset = 4,
-  ...props
-}: React.ComponentProps<typeof HoverCardPrimitive.Content>) {
+const HoverCardContent = React.forwardRef<
+  React.ElementRef<typeof HoverCardPrimitive.Content>,
+  React.ComponentPropsWithoutRef<typeof HoverCardPrimitive.Content>
+>(({ className, align = "center", sideOffset = 4, ...props }, ref) => {
   return (
     <HoverCardPrimitive.Portal>
       <HoverCardPrimitive.Content
+        ref={ref}
         data-slot="hover-card-content"
         align={align}
         sideOffset={sideOffset}
@@ -35,6 +38,7 @@ function HoverCardContent({
       />
     </HoverCardPrimitive.Portal>
   )
-}
+})
+HoverCardContent.displayName = "HoverCardContent"
 
 export { HoverCard, HoverCardTrigger, HoverCardContent }

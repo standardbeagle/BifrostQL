@@ -24,7 +24,7 @@ export interface ColumnFilterResult {
 }
 
 interface RowData {
-    id?: number | string;
+    id?: number | string | null;
     [key: string]: unknown;
 }
 

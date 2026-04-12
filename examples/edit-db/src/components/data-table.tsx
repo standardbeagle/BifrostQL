@@ -73,32 +73,85 @@ function saveColumnSizing(tableName: string, sizing: ColumnSizingState): void {
     }
 }
 
+/**
+ * Props for the DataTable component.
+ * @interface DataTableProps
+ * @template TData - The type of data rows displayed in the table
+ */
 interface DataTableProps<TData> {
+    /** Column definitions for the table */
     columns: ColumnDef<TData, unknown>[];
+    /** Data rows to display */
     data: TData[];
+    /** Table name for persisting column sizing to localStorage */
     tableName?: string;
+    /** Total number of pages */
     pageCount: number;
+    /** Current page index (0-based) */
     pageIndex: number;
+    /** Number of rows per page */
     pageSize: number;
+    /** Current sorting state */
     sorting: SortingState;
+    /** Active column filters */
     columnFilters: ColumnFiltersState;
+    /** Whether data is currently loading */
     loading?: boolean;
+    /** Enable row selection checkboxes */
     selectable?: boolean;
+    /** Field name used as the row identifier */
     rowIdField?: string;
+    /** Currently selected row ID */
     selectedRowId?: string | null;
+    /** Callback when a row is selected */
     onRowSelect?: (rowId: string | null) => void;
+    /** Callback when sorting changes */
     onSortingChange: (sorting: SortingState) => void;
+    /** Callback when column filters change */
     onColumnFiltersChange: (filters: ColumnFiltersState) => void;
+    /** Callback when page index changes */
     onPageIndexChange: (pageIndex: number) => void;
+    /** Callback when page size changes */
     onPageSizeChange: (pageSize: number) => void;
+    /** Callback when edit action is triggered for a row */
     onEditRow?: (pk: string) => void;
+    /** Callback when delete action is triggered for a row */
     onDeleteRow?: (pk: string) => void;
+    /** Callback when deleting multiple selected rows */
     onDeleteSelected?: (pks: string[]) => void;
 }
 
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100];
 const FIT_SENTINEL = -1;
 
+/**
+ * DataTable component - A comprehensive data table with sorting, filtering,
+ * pagination, and column resizing capabilities.
+ * 
+ * Built on top of TanStack Table (@tanstack/react-table) with a Tailwind CSS
+ * interface. Supports row selection, inline actions, and persistent column sizing.
+ * 
+ * @example
+ * ```tsx
+ * <DataTable
+ *   columns={columns}
+ *   data={rows}
+ *   pageCount={10}
+ *   pageIndex={0}
+ *   pageSize={20}
+ *   sorting={[{ id: 'name', desc: false }]}
+ *   columnFilters={[]}
+ *   onSortingChange={setSorting}
+ *   onColumnFiltersChange={setFilters}
+ *   onPageIndexChange={setPageIndex}
+ *   onPageSizeChange={setPageSize}
+ * />
+ * ```
+ * 
+ * @template TData - The type of data rows
+ * @param props - DataTable configuration props
+ * @returns React element containing the data table interface
+ */
 export function DataTable<TData>({
     columns,
     data,

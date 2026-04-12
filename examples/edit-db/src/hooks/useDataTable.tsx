@@ -7,9 +7,10 @@ import { ColumnDef, ColumnFiltersState, SortingState } from "@tanstack/react-tab
 import { useFetcher } from "../common/fetcher";
 import { DataTableColumnHeader } from "../components/data-table-column-header";
 import { FkCellPopover } from "../components/fk-cell-popover";
-import { PanelRight } from "lucide-react";
+import { PanelRight, List } from "lucide-react";
 import type { ColumnPanel } from "../data-panel";
 import { Button } from "../components/ui/button";
+import { HoverCard, HoverCardTrigger, HoverCardContent } from "../components/ui/hover-card";
 import { ContentViewer } from "../components/content-viewer";
 import { isLongTextDbType, isBinaryDbType } from "../lib/content-detect";
 
@@ -31,8 +32,14 @@ interface ColumnWithJoin extends Column {
     joinLabelColumn?: string;
 }
 
+/**
+ * Value structure for column filters.
+ * @interface ColumnFilterValue
+ */
 export interface ColumnFilterValue {
+    /** Filter operator (e.g., "_eq", "_contains", "_gt") */
     operator: string;
+    /** Value to filter by */
     value: unknown;
 }
 
@@ -44,6 +51,18 @@ const columnFilterOperators: Record<string, string[]> = {
     DateTime: ["_eq", "_neq", "_gt", "_gte", "_lt", "_lte", "_between", "_null"],
 };
 
+/**
+ * Get available filter operators for a given parameter type.
+ * 
+ * @param paramType - GraphQL parameter type (e.g., "String", "Int!")
+ * @returns Array of supported filter operator strings
+ * 
+ * @example
+ * ```typescript
+ * const operators = getFilterOperators("String");
+ * // Returns: ["_eq", "_neq", "_contains", "_starts_with", "_ends_with", "_null"]
+ * ```
+ */
 export function getFilterOperators(paramType: string): string[] {
     const baseType = paramType.replace("!", "");
     return columnFilterOperators[baseType] ?? columnFilterOperators.String;
@@ -166,7 +185,7 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                     accessorKey: c.name,
                     header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
                     enableSorting: true,
-                    meta: { sortField: c.name, paramType: c.paramType, filterOperators: operators, joinTable: singleJoin.destinationTable, joinLabelColumn },
+                    meta: { sortField: c.name, paramType: c.paramType, filterOperators: operators, joinTable: singleJoin.destinationTable, joinLabelColumn, column: c },
                     cell: ({ row }) => {
                         const joined = row.original[columnName] as RowData | undefined;
                         if (!joined) return null;
@@ -208,7 +227,7 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                     accessorKey: c.name,
                     header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
                     enableSorting: true,
-                    meta: { sortField: c.name, paramType: c.paramType, filterOperators: operators },
+                    meta: { sortField: c.name, paramType: c.paramType, filterOperators: operators, column: c },
                     cell: ({ row }) => {
                         const joined = row.original[c.name] as RowData | undefined;
                         if (!joined) return null;
@@ -227,7 +246,7 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                     accessorFn: (row) => toLocaleDate(row?.[c.name] as string),
                     header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
                     enableSorting: true,
-                    meta: { sortField: c.name, paramType: c.paramType, dbType: c.dbType, filterOperators: operators },
+                    meta: { sortField: c.name, paramType: c.paramType, dbType: c.dbType, filterOperators: operators, column: c },
                 };
             }
 
@@ -239,7 +258,7 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                     accessorFn: (row) => (c.name ? String(row?.[c.name] ?? "") : ""),
                     header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
                     enableSorting: true,
-                    meta: { sortField: c.name, paramType: c.paramType, dbType: c.dbType, filterOperators: operators },
+                    meta: { sortField: c.name, paramType: c.paramType, dbType: c.dbType, filterOperators: operators, column: c },
                     cell: ({ row }) => (
                         <ContentViewer
                             value={row.original[c.name]}
@@ -255,7 +274,7 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                 accessorFn: (row) => (c.name ? String(row?.[c.name] ?? "") : ""),
                 header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
                 enableSorting: true,
-                meta: { sortField: c.name, paramType: c.paramType, dbType: c.dbType, filterOperators: operators },
+                meta: { sortField: c.name, paramType: c.paramType, dbType: c.dbType, filterOperators: operators, column: c },
             };
         });
 
@@ -272,22 +291,45 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                     const parentPk = getRowPkValue(row.original, table);
                     const children = (row.original[j.destinationTable] as RowData[] | undefined) ?? [];
                     const count = children.length;
+                    if (count === 0) {
+                        return <span className="text-muted-foreground">—</span>;
+                    }
                     const titles = children.slice(0, 10).map(c => String(c[labelCol] ?? '')).filter(Boolean);
-                    const titleText = titles.join('\n') + (count > 10 ? `\n… and ${count - 10} more` : '');
+                    const joinLabel = joinTable?.label ?? j.destinationTable;
                     return (
-                        <span className="group/fk inline-flex items-center gap-0.5">
-                            <Link
-                                to={"/" + joinTable?.name + "/from/" + table.name + "/" + parentPk}
-                                className="text-primary hover:text-primary/80 hover:underline"
-                                title={titleText}
-                            >
-                                {count > 0 ? `${count}` : '—'}
-                            </Link>
+                        <span className="group/fk inline-flex items-center gap-1">
+                            <HoverCard openDelay={300} closeDelay={100}>
+                                <HoverCardTrigger asChild>
+                                    <Link
+                                        to={"/" + joinTable?.name + "/from/" + table.name + "/" + parentPk}
+                                        className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs font-medium text-primary hover:bg-muted hover:border-primary/40 transition-colors"
+                                    >
+                                        <List className="size-3" />
+                                        {count}
+                                    </Link>
+                                </HoverCardTrigger>
+                                <HoverCardContent align="start" sideOffset={6} className="w-auto max-w-xs p-3">
+                                    <div className="flex items-center gap-2 border-b pb-2 mb-2">
+                                        <List className="size-3.5 text-primary" />
+                                        <span className="text-xs font-semibold text-foreground">
+                                            {count} {joinLabel}
+                                        </span>
+                                    </div>
+                                    <ul className="space-y-0.5 text-xs text-foreground">
+                                        {titles.map((t, i) => (
+                                            <li key={i} className="truncate">{t}</li>
+                                        ))}
+                                        {count > 10 && (
+                                            <li className="text-muted-foreground italic">… and {count - 10} more</li>
+                                        )}
+                                    </ul>
+                                </HoverCardContent>
+                            </HoverCard>
                             {onOpenColumn && (
                                 <Button
                                     variant="ghost"
                                     size="icon-sm"
-                                    className="opacity-0 group-hover/fk:opacity-100 size-5 shrink-0"
+                                    className="opacity-40 group-hover/fk:opacity-100 size-5 shrink-0 transition-opacity"
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         onOpenColumn({
@@ -424,23 +466,70 @@ interface QueryData {
     [tableName: string]: TableQueryData;
 }
 
+/**
+ * Return type for the useDataTable hook.
+ * @interface UseDataTableResult
+ */
 interface UseDataTableResult {
+    /** Column definitions for the table */
     columns: ColumnDef<RowData, unknown>[];
+    /** Current sorting state */
     sorting: SortingState;
+    /** Active column filters */
     columnFilters: ColumnFiltersState;
+    /** Field name used as the row identifier */
     rowIdField: string;
+    /** Current page index (0-based) */
     pageIndex: number;
+    /** Number of rows per page */
     pageSize: number;
+    /** Total number of pages */
     pageCount: number;
+    /** Current page data rows */
     rows: RowData[];
+    /** Whether data is currently loading */
     loading: boolean;
+    /** Error object if the query failed */
     error: Error | null;
+    /** Update sorting state */
     onSortingChange: (sorting: SortingState) => void;
+    /** Update column filters */
     onColumnFiltersChange: (filters: ColumnFiltersState) => void;
+    /** Update page index */
     onPageIndexChange: (pageIndex: number) => void;
+    /** Update page size */
     onPageSizeChange: (pageSize: number) => void;
 }
 
+/**
+ * Hook for managing data table state including sorting, filtering, and pagination.
+ * 
+ * Automatically builds GraphQL queries based on table schema and current state,
+ * handles data fetching via React Query, and provides column definitions with
+ * proper rendering for foreign keys, dates, and content fields.
+ * 
+ * @example
+ * ```tsx
+ * const {
+ *   columns,
+ *   rows,
+ *   loading,
+ *   pageIndex,
+ *   pageCount,
+ *   onSortingChange,
+ *   onPageIndexChange,
+ * } = useDataTable(table, recordId, parentTable);
+ * ```
+ * 
+ * @param table - Table schema definition
+ * @param id - Optional record ID for filtering to a specific row
+ * @param filterTable - Optional parent table name for relationship filtering
+ * @param filterColumn - Optional column name for explicit FK filtering
+ * @param onDeleteRow - Callback when a row delete action is triggered
+ * @param onExpandContent - Callback when content expansion is requested
+ * @param onOpenColumn - Callback when opening a side panel column
+ * @returns Data table state and control functions
+ */
 export function useDataTable(table: Table | null, id?: string, filterTable?: string, filterColumn?: string, onDeleteRow?: (pk: string) => void, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: ColumnPanel) => void): UseDataTableResult {
     const { search } = useSearchParams();
     const navigate = useNavigate();

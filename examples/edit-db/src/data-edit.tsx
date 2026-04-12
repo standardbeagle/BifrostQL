@@ -229,6 +229,20 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
     );
 }
 
+/**
+ * DataEdit component - Form interface for creating and editing database records.
+ * 
+ * Automatically generates form fields from table schema metadata, including
+ * validation rules, foreign key dropdowns, and content editors for large fields.
+ * 
+ * @example
+ * ```tsx
+ * // Used within the router context
+ * <Route path="/:table/edit/:editid" element={<DataEdit />} />
+ * ```
+ * 
+ * @returns React element containing the edit form dialog
+ */
 export function DataEdit(): ReactElement {
     const { table, editid } = useParams<DataEditRouteParams>();
     const schema = useSchema();
@@ -251,14 +265,173 @@ interface EditFieldProps {
     schema?: Schema;
 }
 
+function CharacterCounter({ current, max }: { current: number; max: number }) {
+    const remaining = max - current;
+    const isNearLimit = remaining <= 10 && remaining > 0;
+    const isAtLimit = remaining <= 0;
+    
+    return (
+        <div className="text-xs text-right mt-0.5" aria-live="polite">
+            <span 
+                className={
+                    isAtLimit 
+                        ? "text-destructive font-medium" 
+                        : isNearLimit 
+                            ? "text-amber-500" 
+                            : "text-muted-foreground"
+                }
+            >
+                {current}/{max}
+            </span>
+        </div>
+    );
+}
+
+function RangeHint({ min, max, step }: { min?: number | null; max?: number | null; step?: number | null }) {
+    if (min === undefined && max === undefined) return null;
+    
+    let hint = '';
+    if (min !== undefined && min !== null && max !== undefined && max !== null) {
+        hint = `Range: ${min} to ${max}`;
+    } else if (min !== undefined && min !== null) {
+        hint = `Min: ${min}`;
+    } else if (max !== undefined && max !== null) {
+        hint = `Max: ${max}`;
+    }
+    
+    if (step !== undefined && step !== null && step !== 1) {
+        hint += ` (step: ${step})`;
+    }
+    
+    return (
+        <div className="text-xs text-muted-foreground mt-0.5" aria-live="polite">
+            {hint}
+        </div>
+    );
+}
+
 function EditField({ column, join, form, schema }: EditFieldProps) {
     const name = column.name;
     const isRequired = !column.isNullable;
     const isDate = dateTypes.some(t => t === column.paramType);
+    const isNumeric = numericTypes.some(t => t === column.paramType);
+    const showCharCounter = column.maxLength && column.maxLength > 0 && !isDate && !isNumeric;
+
+    // Use enum values if available
+    if (column.enumValues && column.enumValues.length > 0) {
+        return (
+            <EnumField
+                column={column}
+                form={form}
+                isRequired={isRequired}
+            />
+        );
+    }
 
     if (join && schema) {
         return <ParentField column={column} join={join} form={form} schema={schema} isRequired={isRequired} />;
     }
+
+    // Determine input type based on schema metadata or paramType
+    const inputType = column.inputType || (isDate ? "date" : isNumeric ? "number" : "text");
+
+    // Build validators based on schema constraints
+    const validators = {
+        onSubmit: ({ value }: { value: unknown }) => {
+            // Required validation
+            if (isRequired && (value === undefined || value === null || value === '')) {
+                return `${column.label} is required`;
+            }
+
+            // Pattern validation
+            if (column.pattern && value && typeof value === 'string') {
+                const regex = new RegExp(column.pattern);
+                if (!regex.test(value)) {
+                    return column.patternMessage || `${column.label} format is invalid`;
+                }
+            }
+
+            // Min length validation
+            if (column.minLength && value && typeof value === 'string' && value.length < column.minLength) {
+                return `${column.label} must be at least ${column.minLength} characters`;
+            }
+
+            // Max length validation (also checked by input, but validate here too)
+            if (column.maxLength && value && typeof value === 'string' && value.length > column.maxLength) {
+                return `${column.label} must be at most ${column.maxLength} characters`;
+            }
+
+            // Numeric min/max validation
+            if (isNumeric && value !== '' && value !== undefined && value !== null) {
+                const numValue = Number(value);
+                if (!isNaN(numValue)) {
+                    if (column.min !== undefined && column.min !== null && numValue < column.min) {
+                        return `${column.label} must be at least ${column.min}`;
+                    }
+                    if (column.max !== undefined && column.max !== null && numValue > column.max) {
+                        return `${column.label} must be at most ${column.max}`;
+                    }
+                }
+            }
+
+            return undefined;
+        },
+    };
+
+    return (
+        <form.Field
+            name={name}
+            validators={validators}
+            children={(field: AnyFieldApi) => (
+                <div className="grid gap-1">
+                    <Label htmlFor={name} className="text-xs text-muted-foreground">
+                        {column.label}
+                        {isRequired && <span className="text-destructive ml-0.5">*</span>}
+                    </Label>
+                    <Input
+                        id={name}
+                        type={inputType}
+                        value={(field.state.value as string | number) ?? ''}
+                        onChange={(e) => field.handleChange(e.target.value)}
+                        onBlur={field.handleBlur}
+                        required={isRequired}
+                        maxLength={column.maxLength}
+                        minLength={column.minLength}
+                        min={column.min}
+                        max={column.max}
+                        step={column.step}
+                        pattern={column.pattern}
+                        title={column.patternMessage}
+                        aria-invalid={field.state.meta.errors.length > 0}
+                        className="h-8 text-sm"
+                    />
+                    {showCharCounter && (
+                        <CharacterCounter 
+                            current={String(field.state.value ?? '').length} 
+                            max={column.maxLength!} 
+                        />
+                    )}
+                    {isNumeric && (column.min !== undefined || column.max !== undefined) && (
+                        <RangeHint min={column.min} max={column.max} step={column.step} />
+                    )}
+                    <FieldErrors errors={field.state.meta.errors} />
+                </div>
+            )}
+        />
+    );
+}
+
+interface EnumFieldProps {
+    column: Column;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    form: any;
+    isRequired: boolean;
+}
+
+function EnumField({ column, form, isRequired }: EnumFieldProps) {
+    const name = column.name;
+    const enumValues = column.enumValues || [];
+    const enumLabels = column.enumLabels || enumValues;
 
     return (
         <form.Field
@@ -277,16 +450,21 @@ function EditField({ column, join, form, schema }: EditFieldProps) {
                         {column.label}
                         {isRequired && <span className="text-destructive ml-0.5">*</span>}
                     </Label>
-                    <Input
-                        id={name}
-                        type={isDate ? "date" : numericTypes.some(t => t === column.paramType) ? "number" : "text"}
-                        value={(field.state.value as string | number) ?? ''}
-                        onChange={(e) => field.handleChange(e.target.value)}
-                        onBlur={field.handleBlur}
-                        required={isRequired}
-                        aria-invalid={field.state.meta.errors.length > 0}
-                        className="h-8 text-sm"
-                    />
+                    <Select
+                        value={String(field.state.value ?? '')}
+                        onValueChange={(val) => field.handleChange(val)}
+                    >
+                        <SelectTrigger id={name} className="w-full h-8 text-sm" aria-invalid={field.state.meta.errors.length > 0}>
+                            <SelectValue placeholder={`Select ${column.label}`} />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {enumValues.map((value, index) => (
+                                <SelectItem key={value} value={value}>
+                                    {enumLabels[index] || value}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
                     <FieldErrors errors={field.state.meta.errors} />
                 </div>
             )}

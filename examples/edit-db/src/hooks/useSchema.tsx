@@ -20,6 +20,17 @@ interface DbColumnItem {
     isNullable: boolean;
     isReadOnly: boolean;
     metadata: MetadataItem[];
+    maxLength?: number;
+    minLength?: number;
+    min?: number;
+    max?: number;
+    step?: number;
+    pattern?: string;
+    patternMessage?: string;
+    inputType?: string;
+    defaultValue?: string;
+    enumValues?: string[];
+    enumLabels?: string[];
 }
 
 interface DbSchemaItem {
@@ -40,6 +51,17 @@ interface DbSchemaResponse {
 
 const SchemaContext = createContext<Schema>({loading: true, error: null, data: [], findTable: () => undefined});
 
+/**
+ * Provider component for database schema context.
+ * Fetches schema via GraphQL and makes it available to child components.
+ * 
+ * @example
+ * ```tsx
+ * <SchemaProvider>
+ *   <YourApp />
+ * </SchemaProvider>
+ * ```
+ */
 export const SchemaProvider = ({ children }: { children: ReactNode }) => {
     const value = useSchemaLoader();
     return (<SchemaContext.Provider value={value}>
@@ -47,6 +69,20 @@ export const SchemaProvider = ({ children }: { children: ReactNode }) => {
     </SchemaContext.Provider>);
 };
 
+/**
+ * Hook to access the database schema context.
+ * 
+ * Returns schema loading state, error information, table definitions,
+ * and a utility function to find tables by name.
+ * 
+ * @example
+ * ```tsx
+ * const { loading, error, data, findTable } = useSchema();
+ * const userTable = findTable('users');
+ * ```
+ * 
+ * @returns Schema context value with tables and metadata
+ */
 export function useSchema() {
     return useContext(SchemaContext);
 }
@@ -75,6 +111,7 @@ function useSchemaLoader(): Schema {
                 name: c.graphQlName,
                 label: humanizeName(c.dbName),
                 metadata: parseMetadata(c.metadata),
+                inputType: parseInputType(c.inputType),
             }))
         }));
 
@@ -102,6 +139,18 @@ function parseTableType(lookup: string): TableMetadata['type'] {
             id: lookupMatch.groups.id,
             label: lookupMatch.groups.label
         };
+    }
+    return undefined;
+}
+
+const validInputTypes = ['text', 'email', 'url', 'tel', 'date', 'datetime-local', 'number', 'password', 'search'] as const;
+
+type ValidInputType = typeof validInputTypes[number];
+
+function parseInputType(inputType: string | undefined): ValidInputType | undefined {
+    if (!inputType) return undefined;
+    if (validInputTypes.includes(inputType as ValidInputType)) {
+        return inputType as ValidInputType;
     }
     return undefined;
 }

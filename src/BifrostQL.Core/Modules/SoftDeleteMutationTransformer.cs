@@ -1,6 +1,5 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
-using GraphQL;
 
 namespace BifrostQL.Core.Modules;
 
@@ -22,89 +21,47 @@ namespace BifrostQL.Core.Modules;
 /// Additional metadata options:
 ///   "dbo.users { soft-delete: deleted_at; soft-delete-by: deleted_by_user_id }"
 /// </summary>
-public sealed class SoftDeleteMutationTransformer : IMutationTransformer, IModuleNamed
+public sealed class SoftDeleteMutationTransformer : SoftDeleteMutationTransformerBase
 {
     public const string MetadataKey = "soft-delete";
     public const string DeletedByMetadataKey = "soft-delete-by";
     public const string UserIdContextKey = "user_id";
 
-    public string ModuleName => "soft-delete";
-
-    public int Priority => 100;
-
-    public bool AppliesTo(IDbTable table, MutationType mutationType, MutationTransformContext context)
+    public SoftDeleteMutationTransformer() : base(MetadataKey, priority: 100)
     {
-        // Only applies to DELETE and UPDATE operations on soft-delete tables
-        if (mutationType == MutationType.Insert)
-            return false;
-
-        return table.Metadata.TryGetValue(MetadataKey, out var val) && val != null;
     }
 
-    public MutationTransformResult Transform(
+    public override string ModuleName => "soft-delete";
+
+    protected override MutationTransformResult TransformDelete(
         IDbTable table,
-        MutationType mutationType,
         Dictionary<string, object?> data,
-        MutationTransformContext context)
+        MutationTransformContext context,
+        string columnName,
+        TableFilter softDeleteFilter)
     {
-        var deletedAtColumn = table.Metadata[MetadataKey]?.ToString();
-        if (string.IsNullOrWhiteSpace(deletedAtColumn))
+        // Convert DELETE to UPDATE, set deleted_at
+        var transformedData = new Dictionary<string, object?>(data)
         {
-            return new MutationTransformResult
-            {
-                MutationType = mutationType,
-                Data = data
-            };
-        }
+            [columnName] = DateTimeOffset.UtcNow
+        };
 
-        // Verify column exists
-        if (!table.ColumnLookup.ContainsKey(deletedAtColumn))
+        // Optionally set deleted_by
+        if (table.Metadata.TryGetValue(DeletedByMetadataKey, out var deletedByCol) &&
+            deletedByCol is string deletedByColumn &&
+            !string.IsNullOrWhiteSpace(deletedByColumn) &&
+            table.ColumnLookup.ContainsKey(deletedByColumn))
         {
-            var fullTableName = $"{table.TableSchema}.{table.DbName}";
-            return new MutationTransformResult
+            if (context.UserContext.TryGetValue(UserIdContextKey, out var userId))
             {
-                MutationType = mutationType,
-                Data = data,
-                Errors = new[] { $"Soft-delete column '{deletedAtColumn}' not found in table '{fullTableName}'." }
-            };
-        }
-
-        // For both UPDATE and DELETE, ensure we only affect non-deleted records
-        var softDeleteFilter = TableFilterFactory.IsNull(table.DbName, deletedAtColumn);
-
-        if (mutationType == MutationType.Delete)
-        {
-            // Convert DELETE to UPDATE, set deleted_at
-            var transformedData = new Dictionary<string, object?>(data)
-            {
-                [deletedAtColumn] = DateTimeOffset.UtcNow
-            };
-
-            // Optionally set deleted_by
-            if (table.Metadata.TryGetValue(DeletedByMetadataKey, out var deletedByCol) &&
-                deletedByCol is string deletedByColumn &&
-                !string.IsNullOrWhiteSpace(deletedByColumn) &&
-                table.ColumnLookup.ContainsKey(deletedByColumn))
-            {
-                if (context.UserContext.TryGetValue(UserIdContextKey, out var userId))
-                {
-                    transformedData[deletedByColumn] = userId;
-                }
+                transformedData[deletedByColumn] = userId;
             }
-
-            return new MutationTransformResult
-            {
-                MutationType = MutationType.Update,
-                Data = transformedData,
-                AdditionalFilter = softDeleteFilter
-            };
         }
 
-        // For UPDATE, just add the filter to prevent updating deleted records
         return new MutationTransformResult
         {
-            MutationType = mutationType,
-            Data = data,
+            MutationType = MutationType.Update,
+            Data = transformedData,
             AdditionalFilter = softDeleteFilter
         };
     }

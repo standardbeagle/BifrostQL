@@ -2,7 +2,7 @@ namespace BifrostQL.Core.Model.AppSchema;
 
 /// <summary>
 /// Orchestrates application schema detection. Runs registered detectors
-/// and applies the first matching result.
+/// and selects the result with the highest confidence score.
 /// </summary>
 public sealed class AppSchemaDetectionService
 {
@@ -17,11 +17,18 @@ public sealed class AppSchemaDetectionService
     public static AppSchemaDetectionService Default { get; } = new(new IAppSchemaDetector[]
     {
         new WordPressDetector(),
+        new DrupalDetector(),
     });
 
     /// <summary>
+    /// Minimum confidence threshold for a detection result to be considered valid.
+    /// Results below this threshold are discarded.
+    /// </summary>
+    public double MinimumConfidenceThreshold { get; init; } = 0.5;
+
+    /// <summary>
     /// Run detection against tables using database metadata for configuration.
-    /// Returns null if no app schema is detected.
+    /// Returns null if no app schema is detected with sufficient confidence.
     /// </summary>
     public AppSchemaResult? Detect(
         IReadOnlyList<IDbTable> tables,
@@ -46,13 +53,61 @@ public sealed class AppSchemaDetectionService
             if (specific == null)
                 return null;
 
-            var result = specific.Detect(tables, schemas);
-            if (result != null)
-                dbMetadata["detected-app"] = result.AppName;
-            return result;
+            var forcedResult = specific.Detect(tables, schemas);
+            if (forcedResult != null && forcedResult.Confidence >= MinimumConfidenceThreshold)
+            {
+                dbMetadata["detected-app"] = forcedResult.AppName;
+                dbMetadata["detection-confidence"] = forcedResult.Confidence;
+                return forcedResult.SchemaResult;
+            }
+            return null;
         }
 
-        // Run all enabled detectors; first match wins
+        // Run all enabled detectors and collect results with confidence scores
+        var results = new List<DetectionResult>();
+        foreach (var detector in _detectors)
+        {
+            if (!detector.IsEnabled(dbMetadata))
+                continue;
+
+            var result = detector.Detect(tables, schemas);
+            if (result != null && result.Confidence >= MinimumConfidenceThreshold)
+            {
+                results.Add(result);
+            }
+        }
+
+        // Select the result with the highest confidence
+        var bestResult = results.OrderByDescending(r => r.Confidence).FirstOrDefault();
+        if (bestResult != null)
+        {
+            dbMetadata["detected-app"] = bestResult.AppName;
+            dbMetadata["detection-confidence"] = bestResult.Confidence;
+            return bestResult.SchemaResult;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Run detection and return detailed results for all detectors.
+    /// Useful for debugging and diagnostics.
+    /// </summary>
+    public IReadOnlyList<DetectionResult> DetectAll(
+        IReadOnlyList<IDbTable> tables,
+        IDictionary<string, object?> dbMetadata,
+        IReadOnlyCollection<string>? existingSchemas = null)
+    {
+        var schemas = existingSchemas ?? Array.Empty<string>();
+        var results = new List<DetectionResult>();
+
+        // If auto-detect is explicitly disabled, return empty
+        if (dbMetadata.TryGetValue("auto-detect-app", out var autoDetect) &&
+            string.Equals(autoDetect?.ToString(), "disabled", StringComparison.OrdinalIgnoreCase))
+        {
+            return results;
+        }
+
         foreach (var detector in _detectors)
         {
             if (!detector.IsEnabled(dbMetadata))
@@ -61,11 +116,10 @@ public sealed class AppSchemaDetectionService
             var result = detector.Detect(tables, schemas);
             if (result != null)
             {
-                dbMetadata["detected-app"] = result.AppName;
-                return result;
+                results.Add(result);
             }
         }
 
-        return null;
+        return results.OrderByDescending(r => r.Confidence).ToList();
     }
 }

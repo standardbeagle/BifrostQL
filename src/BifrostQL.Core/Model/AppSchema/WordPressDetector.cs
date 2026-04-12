@@ -11,6 +11,13 @@ public sealed class WordPressDetector : IAppSchemaDetector
     /// <summary>Signature tables (base names without prefix) — ALL must be present for detection.</summary>
     private static readonly string[] SignatureTables = { "users", "posts", "options" };
 
+    /// <summary>Additional tables that strengthen confidence when present.</summary>
+    private static readonly string[] SupportingTables =
+    {
+        "postmeta", "usermeta", "comments", "commentmeta",
+        "terms", "termmeta", "term_taxonomy", "term_relationships"
+    };
+
     /// <summary>Action scheduler tables that should be hidden by default.</summary>
     private static readonly string[] HiddenTablePatterns =
     {
@@ -61,6 +68,19 @@ public sealed class WordPressDetector : IAppSchemaDetector
         new("term_relationships", "term_taxonomy_id", "term_taxonomy", "term_taxonomy_id"),
     };
 
+    /// <summary>
+    /// Columns that typically contain serialized PHP data in WordPress.
+    /// Format: (TableBaseName, ColumnName)
+    /// </summary>
+    private static readonly (string TableBase, string ColumnName)[] SerializedPhpColumns =
+    {
+        ("postmeta", "meta_value"),
+        ("usermeta", "meta_value"),
+        ("termmeta", "meta_value"),
+        ("commentmeta", "meta_value"),
+        ("options", "option_value"),
+    };
+
     public bool IsEnabled(IDictionary<string, object?> dbMetadata)
     {
         if (dbMetadata.TryGetValue("auto-detect-app", out var val)
@@ -69,12 +89,14 @@ public sealed class WordPressDetector : IAppSchemaDetector
         return true;
     }
 
-    public AppSchemaResult? Detect(IReadOnlyList<IDbTable> tables, IReadOnlyCollection<string> existingSchemas)
+    public DetectionResult? Detect(IReadOnlyList<IDbTable> tables, IReadOnlyCollection<string> existingSchemas)
     {
-        var tableDbNames = new HashSet<string>(tables.Select(t => t.DbName), StringComparer.OrdinalIgnoreCase);
+        var tableDbNames = new HashSet<string>(tables.Select(t => t.DbName), StringComparer.Ordinal);
 
-        // Find valid prefixes: for each candidate prefix, all signature tables must exist
+        // Find valid prefixes using case-sensitive matching, then merge case-variant prefixes
+        // that would produce conflicting GraphQL group names
         var validPrefixes = FindValidPrefixes(tableDbNames);
+        validPrefixes = MergeCaseVariantPrefixes(validPrefixes, tableDbNames);
         if (validPrefixes.Count == 0)
             return null;
 
@@ -90,22 +112,36 @@ public sealed class WordPressDetector : IAppSchemaDetector
         var prefixGroups = new List<PrefixGroup>();
         var additionalMetadata = new Dictionary<string, IDictionary<string, object?>>();
         var explicitForeignKeys = new List<SyntheticForeignKey>();
+        var columnMetadata = new Dictionary<string, IDictionary<string, object?>>(StringComparer.OrdinalIgnoreCase);
 
         // Build table schema lookup for metadata key generation
-        var tableSchemaLookup = tables.ToDictionary(t => t.DbName, t => t.TableSchema, StringComparer.OrdinalIgnoreCase);
+        var tableSchemaLookup = tables.ToDictionary(t => t.DbName, t => t.TableSchema, StringComparer.Ordinal);
+
+        // Track total tables and supporting tables found for confidence calculation
+        var totalTablesFound = 0;
+        var supportingTablesFound = 0;
 
         foreach (var prefix in validPrefixes)
         {
-            var groupName = GroupNameFromPrefix(prefix);
-
-            // Collect all tables belonging to this prefix
-            var groupTableNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            // Collect all tables belonging to this prefix using case-sensitive matching
+            // so that wp_posts and wP_posts are correctly separated
+            var groupTableNames = new HashSet<string>(StringComparer.Ordinal);
             foreach (var dbName in tableDbNames)
             {
-                if (dbName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                if (dbName.StartsWith(prefix, StringComparison.Ordinal))
                     groupTableNames.Add(dbName);
             }
 
+            totalTablesFound += groupTableNames.Count;
+
+            // Count supporting tables for confidence calculation
+            foreach (var supportingTable in SupportingTables)
+            {
+                if (groupTableNames.Contains(prefix + supportingTable))
+                    supportingTablesFound++;
+            }
+
+            var groupName = GroupNameFromPrefix(prefix);
             prefixGroups.Add(new PrefixGroup(prefix, groupName, groupTableNames));
 
             // Resolve FKs: expand base names to prefixed names, only if both tables exist
@@ -159,23 +195,85 @@ public sealed class WordPressDetector : IAppSchemaDetector
                     metaDict = new Dictionary<string, object?>();
                     additionalMetadata[metadataKey] = metaDict;
                 }
-                metaDict["eav-parent"] = parentFull;
-                metaDict["eav-fk"] = fk;
-                metaDict["eav-key"] = keyCol;
-                metaDict["eav-value"] = valueCol;
+                metaDict[MetadataKeys.Eav.Parent] = parentFull;
+                metaDict[MetadataKeys.Eav.ForeignKey] = fk;
+                metaDict[MetadataKeys.Eav.Key] = keyCol;
+                metaDict[MetadataKeys.Eav.Value] = valueCol;
+            }
+
+            // Inject column metadata: serialized PHP columns
+            foreach (var (tableBase, columnName) in SerializedPhpColumns)
+            {
+                var fullTableName = prefix + tableBase;
+                if (!groupTableNames.Contains(fullTableName))
+                    continue;
+
+                var schema = tableSchemaLookup.GetValueOrDefault(fullTableName, "");
+                // Check if the column actually exists in the table
+                var table = tables.FirstOrDefault(t =>
+                    string.Equals(t.DbName, fullTableName, StringComparison.Ordinal));
+                if (table == null)
+                    continue;
+
+                var columnExists = table.Columns.Any(c =>
+                    string.Equals(c.ColumnName, columnName, StringComparison.OrdinalIgnoreCase));
+                if (!columnExists)
+                    continue;
+
+                var columnKey = string.IsNullOrEmpty(schema)
+                    ? $"{fullTableName}.{columnName}"
+                    : $"{schema}.{fullTableName}.{columnName}";
+                columnMetadata[columnKey] = new Dictionary<string, object?>
+                {
+                    ["type"] = "php_serialized",
+                    ["format"] = "php"
+                };
             }
         }
 
-        return new AppSchemaResult(AppName, prefixGroups, additionalMetadata, explicitForeignKeys);
+        var schemaResult = new AppSchemaResult(AppName, prefixGroups, additionalMetadata, explicitForeignKeys)
+        {
+            ColumnMetadata = columnMetadata
+        };
+
+        // Calculate confidence score based on supporting tables found
+        var confidence = CalculateConfidence(supportingTablesFound, validPrefixes.Count);
+
+        return DetectionResult.Create(AppName, confidence, schemaResult);
+    }
+
+    /// <summary>
+    /// Calculate confidence score based on supporting tables found.
+    /// Base confidence of 0.6 for signature tables, increases with supporting tables.
+    /// </summary>
+    private static double CalculateConfidence(int supportingTablesFound, int prefixCount)
+    {
+        // Base confidence for having all signature tables
+        const double baseConfidence = 0.6;
+
+        // Maximum additional confidence from supporting tables
+        const double maxAdditionalConfidence = 0.35;
+
+        // Normalize supporting tables by prefix count
+        var normalizedSupportingTables = supportingTablesFound / (double)prefixCount;
+
+        // Calculate additional confidence based on ratio of supporting tables found
+        var supportingRatio = normalizedSupportingTables / SupportingTables.Length;
+        var additionalConfidence = supportingRatio * maxAdditionalConfidence;
+
+        // Small bonus for multiple prefixes (multisite detection)
+        var multisiteBonus = prefixCount > 1 ? 0.05 : 0.0;
+
+        return Math.Min(baseConfidence + additionalConfidence + multisiteBonus, 1.0);
     }
 
     /// <summary>
     /// Find all prefixes where every signature table exists with that prefix.
-    /// For each table name, try to extract a prefix by checking if it ends with a signature table base name.
+    /// Uses case-sensitive matching so that wp_ and wP_ are treated as distinct prefixes.
     /// </summary>
     private static List<string> FindValidPrefixes(HashSet<string> tableDbNames)
     {
-        var candidatePrefixes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var candidatePrefixes = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var name in tableDbNames)
         {
@@ -185,18 +283,50 @@ public sealed class WordPressDetector : IAppSchemaDetector
                     && name.EndsWith(sig, StringComparison.OrdinalIgnoreCase)
                     && name[name.Length - sig.Length - 1] == '_')
                 {
-                    // prefix includes the trailing underscore before the signature base name
                     var prefix = name[..(name.Length - sig.Length)];
                     candidatePrefixes.Add(prefix);
                 }
             }
         }
 
-        // Validate: all signature tables must exist for this prefix
+        // Validate: all signature tables must exist for this prefix (case-sensitive)
         return candidatePrefixes
             .Where(prefix => SignatureTables.All(
                 sig => tableDbNames.Contains(prefix + sig)))
             .ToList();
+    }
+
+    /// <summary>
+    /// Merge case-variant prefixes that would produce conflicting GraphQL group names.
+    /// For example, wp_ and wP_ both produce group name "wp" (case-insensitive),
+    /// so they are merged under the prefix that matches the most tables.
+    /// </summary>
+    private static List<string> MergeCaseVariantPrefixes(List<string> prefixes, HashSet<string> tableDbNames)
+    {
+        if (prefixes.Count <= 1)
+            return prefixes;
+
+        // Group prefixes by their case-insensitive group name
+        var groups = prefixes.GroupBy(p => GroupNameFromPrefix(p), StringComparer.OrdinalIgnoreCase);
+
+        var merged = new List<string>();
+        foreach (var group in groups)
+        {
+            var variants = group.ToList();
+            if (variants.Count == 1)
+            {
+                merged.Add(variants[0]);
+                continue;
+            }
+
+            // Pick the prefix with the most matching tables
+            var best = variants
+                .OrderByDescending(prefix => tableDbNames.Count(t => t.StartsWith(prefix, StringComparison.Ordinal)))
+                .First();
+            merged.Add(best);
+        }
+
+        return merged;
     }
 
     private static string GroupNameFromPrefix(string prefix) =>

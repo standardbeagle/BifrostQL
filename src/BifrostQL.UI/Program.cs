@@ -84,6 +84,11 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         serverOptions.Limits.MaxRequestHeadersTotalSize = 131072;
     });
 
+    // Configure logging to show detailed errors
+    builder.Logging.SetMinimumLevel(LogLevel.Information);
+    builder.Logging.AddConsole();
+    builder.Logging.AddDebug();
+
     // Add in-memory configuration for BifrostQL
     builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
     {
@@ -533,8 +538,61 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
                     server.Ssh.IdentityFile, remoteHost, remotePort);
                 var localPort = await sshTunnel.StartAsync(sshConfig, ct);
 
-                // Rewrite to tunnel through localhost
-                var tunneled = server with { Host = "127.0.0.1", Port = localPort };
+                // Auto-discover WordPress credentials via WP-CLI if username is empty
+                string? dbUser = null, dbPassword = null, dbName = null;
+                if (string.IsNullOrWhiteSpace(server.Username))
+                {
+                    try
+                    {
+                        // Try common WordPress paths for WP Engine and similar hosts
+                        var wpRoots = new[] { "~/public_html", "~/public_html/austinsymphony", ".", "/var/www/html", "~/www", "~/htdocs" };
+                        var creds = new BifrostQL.UI.WpCredentials("", "", "", "");
+                        Exception? lastError = null;
+                        var found = false;
+                        
+                        foreach (var wpRoot in wpRoots)
+                        {
+                            try
+                            {
+                                var wpConfig = new BifrostQL.UI.WpDiscoverConfig("wp", wpRoot);
+                                creds = await sshTunnel.DiscoverWordPressAsync(sshConfig, wpConfig, ct);
+                                if (!string.IsNullOrWhiteSpace(creds.DbUser))
+                                {
+                                    found = true;
+                                    break; // Success!
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                lastError = ex;
+                                // Try next path
+                            }
+                        }
+                        
+                        if (!found || string.IsNullOrWhiteSpace(creds.DbUser))
+                        {
+                            throw lastError ?? new InvalidOperationException("Could not find WordPress installation via WP-CLI");
+                        }
+                        
+                        dbUser = creds.DbUser;
+                        dbPassword = creds.DbPassword;
+                        dbName = creds.DbName;
+                    }
+                    catch (Exception wpEx)
+                    {
+                        return Results.BadRequest(new { success = false, error = $"Failed to auto-discover WordPress credentials: {wpEx.Message}" });
+                    }
+                }
+
+                // Rewrite to tunnel through localhost with discovered credentials
+                var tunneled = server with 
+                { 
+                    Host = "127.0.0.1", 
+                    Port = localPort,
+                    Username = dbUser ?? server.Username,
+                    Password = dbPassword ?? server.Password,
+                    Database = dbName ?? server.Database
+                };
                 connStr = VaultServerProvider.BuildConnectionString(tunneled);
             }
 
@@ -557,7 +615,16 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         }
         catch (Exception ex)
         {
-            return Results.BadRequest(new { success = false, error = ex.Message });
+            // Get logger and log full exception details
+            var logger = app.Services.GetRequiredService<ILogger<Program>>();
+            logger.LogError(ex, "Vault connect failed for '{ServerName}'", request.Name);
+            
+            var errorDetails = $"{ex.Message}\n\nStack trace:\n{ex.StackTrace}";
+            if (ex.InnerException != null)
+            {
+                errorDetails += $"\n\nInner exception: {ex.InnerException.Message}\n{ex.InnerException.StackTrace}";
+            }
+            return Results.BadRequest(new { success = false, error = ex.Message, details = errorDetails });
         }
     });
 

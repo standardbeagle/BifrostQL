@@ -173,9 +173,28 @@ public sealed class SshTunnelManager : IDisposable
     {
         // wp config list --format=json returns:
         // [{"name":"DB_NAME","value":"wp_db"},{"name":"DB_USER","value":"root"}, ...]
-        var entries = JsonSerializer.Deserialize<JsonElement>(json);
+        
+        // Trim whitespace and check for empty output
+        var trimmed = json?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(trimmed))
+            throw new InvalidOperationException("WP-CLI returned empty output");
+        
+        // Check if output starts with [ (expected JSON array)
+        if (!trimmed.StartsWith("["))
+            throw new InvalidOperationException($"WP-CLI returned non-JSON output: {trimmed[..Math.Min(100, trimmed.Length)]}");
+        
+        JsonElement entries;
+        try
+        {
+            entries = JsonSerializer.Deserialize<JsonElement>(trimmed);
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidOperationException($"Failed to parse WP-CLI JSON output: {ex.Message}. Output: {trimmed[..Math.Min(200, trimmed.Length)]}");
+        }
+        
         if (entries.ValueKind != JsonValueKind.Array)
-            throw new InvalidOperationException("Unexpected wp-cli output format");
+            throw new InvalidOperationException("Unexpected wp-cli output format: expected JSON array");
 
         string? dbName = null, dbUser = null, dbPassword = null, dbHost = null;
 

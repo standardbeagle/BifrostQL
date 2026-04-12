@@ -44,25 +44,31 @@ namespace BifrostQL.Core.QueryModel
 
         public void AddSqlParameterized(IDbModel dbModel, ISqlDialect dialect, IDictionary<string, ParameterizedSql> sqls, SqlParameterCollection parameters, QueryLink? queryLink = null)
         {
-            var columnSql = string.Join(",", FullColumnNames.Select(n => $"{dialect.EscapeIdentifier(n.DbDbName)} {dialect.EscapeIdentifier(n.GraphQlDbName)}"));
+            var fullColumns = FullColumnNames.ToList();
             var tableRef = dialect.TableReference(SchemaName, TableName);
-            var cmdText = $"SELECT {columnSql} FROM {tableRef}";
 
             var filter = GetFilterSqlParameterized(dbModel, dialect, parameters);
-            var sortCols = Sort.Any() ? Sort.Select(s => s switch
-            {
-                { } when s.EndsWith("_asc") => dialect.EscapeIdentifier(s[..^4]) + " asc",
-                { } when s.EndsWith("_desc") => dialect.EscapeIdentifier(s[..^5]) + " desc",
-                _ => throw new NotSupportedException()
-            }) : null;
-            var pagination = dialect.Pagination(sortCols, Offset, Limit);
-
-            var baseSql = new ParameterizedSql(cmdText, Array.Empty<SqlParameterInfo>())
-                .Append(filter)
-                .Append(pagination);
-
             var sqlKeyName = queryLink == null ? KeyName : queryLink.Join.JoinName;
-            sqls[sqlKeyName] = baseSql;
+
+            if (fullColumns.Count > 0)
+            {
+                var columnSql = string.Join(",", fullColumns.Select(n => $"{dialect.EscapeIdentifier(n.DbDbName)} {dialect.EscapeIdentifier(n.GraphQlDbName)}"));
+                var cmdText = $"SELECT {columnSql} FROM {tableRef}";
+
+                var sortCols = Sort.Any() ? Sort.Select(s => s switch
+                {
+                    { } when s.EndsWith("_asc") => dialect.EscapeIdentifier(s[..^4]) + " asc",
+                    { } when s.EndsWith("_desc") => dialect.EscapeIdentifier(s[..^5]) + " desc",
+                    _ => throw new NotSupportedException()
+                }) : null;
+                var pagination = dialect.Pagination(sortCols, Offset, Limit);
+
+                var baseSql = new ParameterizedSql(cmdText, Array.Empty<SqlParameterInfo>())
+                    .Append(filter)
+                    .Append(pagination);
+
+                sqls[sqlKeyName] = baseSql;
+            }
 
             if (IncludeResult)
             {

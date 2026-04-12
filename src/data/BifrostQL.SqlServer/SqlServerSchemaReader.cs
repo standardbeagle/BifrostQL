@@ -24,7 +24,25 @@ SELECT CCU.[TABLE_CATALOG]
   INNER JOIN [INFORMATION_SCHEMA].[TABLE_CONSTRAINTS] TC ON
 	TC.CONSTRAINT_CATALOG = CCU.CONSTRAINT_CATALOG AND
 	TC.CONSTRAINT_SCHEMA = CCU.CONSTRAINT_SCHEMA AND
-	TC.CONSTRAINT_NAME = CCU.CONSTRAINT_NAME;
+	TC.CONSTRAINT_NAME = CCU.CONSTRAINT_NAME
+UNION ALL
+-- Unique constraints from unique indexes
+SELECT 
+    DB_NAME() AS TABLE_CATALOG,
+    SCHEMA_NAME(t.schema_id) AS TABLE_SCHEMA,
+    t.name AS TABLE_NAME,
+    c.name AS COLUMN_NAME,
+    DB_NAME() AS CONSTRAINT_CATALOG,
+    SCHEMA_NAME(t.schema_id) AS CONSTRAINT_SCHEMA,
+    i.name AS CONSTRAINT_NAME,
+    'UNIQUE' AS CONSTRAINT_TYPE
+FROM sys.indexes i
+INNER JOIN sys.tables t ON i.object_id = t.object_id
+INNER JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+INNER JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+WHERE i.is_unique = 1
+  AND i.is_primary_key = 0
+  AND t.is_ms_shipped = 0;
 SELECT [TABLE_CATALOG]
       ,[TABLE_SCHEMA]
       ,[TABLE_NAME]
@@ -76,7 +94,7 @@ SELECT [TABLE_CATALOG]
         var rawColumns = GetDtos(reader, r => ColumnDto.FromReader(r, columnConstraints)).ToArray();
         var columns = rawColumns
             .GroupBy(c => new TableRef(c.TableCatalog, c.TableSchema, c.TableName))
-            .ToDictionary(g => g.Key, g => g.ToArray());
+            .ToDictionary(g => g.Key, g => ColumnDto.DeduplicateGraphQlNames(g).ToArray());
 
         await reader.NextResultAsync();
 

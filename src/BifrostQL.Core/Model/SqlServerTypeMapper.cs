@@ -1,3 +1,5 @@
+using BifrostQL.Core.Utils;
+
 namespace BifrostQL.Core.Model;
 
 /// <summary>
@@ -34,7 +36,7 @@ public sealed class SqlServerTypeMapper : ITypeMapper
     /// </remarks>
     public string GetGraphQlType(string dataType)
     {
-        return dataType.ToLowerInvariant().Trim() switch
+        return StringNormalizer.NormalizeType(dataType) switch
         {
             "int" => "Int",
             "smallint" => "Short",
@@ -61,7 +63,7 @@ public sealed class SqlServerTypeMapper : ITypeMapper
     /// </remarks>
     public string GetGraphQlInsertTypeName(string dataType, bool isNullable = false)
     {
-        var normalized = dataType.ToLowerInvariant().Trim();
+        var normalized = StringNormalizer.NormalizeType(dataType);
         if (normalized is "datetime2" or "datetime" or "datetimeoffset")
             return $"String{(isNullable ? "" : "!")}";
 
@@ -74,5 +76,5 @@ public sealed class SqlServerTypeMapper : ITypeMapper
 
     /// <inheritdoc />
     public bool IsSupported(string dataType)
-        => KnownTypes.Contains(dataType.ToLowerInvariant().Trim());
+        => KnownTypes.Contains(StringNormalizer.NormalizeType(dataType));
 }

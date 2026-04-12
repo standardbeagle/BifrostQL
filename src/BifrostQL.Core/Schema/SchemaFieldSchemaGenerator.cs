@@ -104,10 +104,10 @@ namespace BifrostQL.Core.Schema
             // Filter types for all columns in the database
             foreach (var gqlType in model.Tables.SelectMany(t => t.Columns).Select(c => typeMapper.GetGraphQlTypeName(c.EffectiveDataType).TrimEnd('!')).Distinct())
             {
-                builder.AppendLine(SchemaGenerator.GetFilterType(gqlType));
+                builder.AppendLine(FilterTypeGenerator.Generate(gqlType));
             }
 
-            builder.AppendLine(SchemaGenerator.GetMetadataSchemaTypes());
+            builder.AppendLine(MetadataSchemaGenerator.Generate());
 
             return builder.ToString();
         }

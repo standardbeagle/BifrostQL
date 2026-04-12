@@ -195,8 +195,8 @@ namespace BifrostQL.Core.Forms
                 return;
             }
 
-            // Check for binary column (file upload)
-            if (TypeMapper.IsBinaryType(column.EffectiveDataType))
+            // Check for file column (binary type or file metadata)
+            if (FileUploadHandler.IsFileColumn(column, metadata))
             {
                 sb.Append($"<label for=\"{Encode(columnId)}\">{Encode(FormatLabel(column.ColumnName))}</label>");
                 sb.Append(FileUploadHandler.GenerateFileInput(column, metadata, hasCurrentValue: value != null));
@@ -358,7 +358,7 @@ namespace BifrostQL.Core.Forms
             {
                 if (!ShouldInclude(column, mode))
                     continue;
-                if (TypeMapper.IsBinaryType(column.EffectiveDataType))
+                if (FileUploadHandler.IsFileColumn(column))
                     return true;
             }
             return false;

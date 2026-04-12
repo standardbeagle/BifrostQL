@@ -42,6 +42,10 @@ namespace BifrostQL.Core.Schema
             {
                 builder.AppendLine("_table(name: String!, limit: Int, offset: Int, filter: JSON): GenericTableResult!");
             }
+            if (FileStorageSchemaExtensions.IsFileStorageEnabled(model))
+            {
+                builder.Append(FileStorageSchemaExtensions.GetFileStorageQueryFields());
+            }
             builder.AppendLine("}");
 
             foreach (var generator in tableGenerators)
@@ -68,70 +72,23 @@ namespace BifrostQL.Core.Schema
             //Define the filter types of all the columns in the database, needs to be specific to the connected database, and distinct because of GraphQL.
             foreach (var gqlType in model.Tables.SelectMany(t => t.Columns).Select<ColumnDto, string>(c => typeMapper.GetGraphQlType(c.EffectiveDataType)).Distinct())
             {
-                builder.AppendLine(GetFilterType(gqlType));
+                builder.AppendLine(FilterTypeGenerator.Generate(gqlType));
             }
 
-            builder.AppendLine(GetMetadataSchemaTypes());
+            builder.AppendLine(MetadataSchemaGenerator.Generate());
 
             if (IsGenericTableEnabled(model))
             {
                 builder.AppendLine(GetGenericTableTypes());
             }
 
+            if (FileStorageSchemaExtensions.IsFileStorageEnabled(model))
+            {
+                builder.AppendLine(FileStorageSchemaExtensions.GetFileStorageTypeDefinitions());
+            }
+
             return builder.ToString();
 
-        }
-
-        internal static string GetMetadataSchemaTypes()
-        {
-            var sb = new StringBuilder();
-
-            sb.AppendLine("type dbTableSchema {");
-            sb.AppendLine("schema: String!");
-            sb.AppendLine("dbName: String!");
-            sb.AppendLine("graphQlName: String!");
-            sb.AppendLine("primaryKeys: [String!]");
-            sb.AppendLine("labelColumn: String!");
-            sb.AppendLine("isEditable: Boolean!");
-            sb.AppendLine("metadata: [dbMetadataSchema!]!");
-            sb.AppendLine("multiJoins: [dbJoinSchema!]!");
-            sb.AppendLine("singleJoins: [dbJoinSchema!]!");
-            sb.AppendLine("columns: [dbColumnSchema!]!");
-            sb.AppendLine("}");
-
-            sb.AppendLine("type dbJoinSchema {");
-            sb.AppendLine("name: String!");
-            sb.AppendLine("sourceColumnNames: [String!]!");
-            sb.AppendLine("destinationTable: String!");
-            sb.AppendLine("destinationColumnNames: [String!]!");
-            sb.AppendLine("metadata: [dbMetadataSchema!]!");
-            sb.AppendLine("}");
-
-            sb.AppendLine("type dbColumnSchema {");
-            sb.AppendLine("dbName: String!");
-            sb.AppendLine("graphQlName: String!");
-            sb.AppendLine("paramType: String!");
-            sb.AppendLine("dbType: String!");
-            sb.AppendLine("isNullable: Boolean!");
-            sb.AppendLine("isReadOnly: Boolean!");
-            sb.AppendLine("isPrimaryKey: Boolean!");
-            sb.AppendLine("isIdentity: Boolean!");
-            sb.AppendLine("isCreatedOnColumn: Boolean!");
-            sb.AppendLine("isCreatedByColumn: Boolean!");
-            sb.AppendLine("isUpdatedOnColumn: Boolean!");
-            sb.AppendLine("isUpdatedByColumn: Boolean!");
-            sb.AppendLine("isDeletedOnColumn: Boolean!");
-            sb.AppendLine("isDeletedColumn: Boolean!");
-            sb.AppendLine("metadata: [dbMetadataSchema!]!");
-            sb.AppendLine("}");
-
-            sb.AppendLine("type dbMetadataSchema { key: String! value: String! }");
-
-            sb.AppendLine("enum AggregateOperations {");
-            sb.AppendLine(string.Join(',', Enum.GetNames(typeof(AggregateOperationType))));
-            sb.AppendLine("}");
-
-            return sb.ToString();
         }
 
         private static StringBuilder GetInputAndArgumentTypes(IDbModel model, List<TableSchemaGenerator> tableGenerators, List<StoredProcedureSchemaGenerator> mutatingSpGenerators)
@@ -150,7 +107,10 @@ namespace BifrostQL.Core.Schema
                 {
                     builder.AppendLine(generator.GetFieldDefinition());
                 }
-
+                if (FileStorageSchemaExtensions.IsFileStorageEnabled(model))
+                {
+                    builder.Append(FileStorageSchemaExtensions.GetFileStorageMutationFields());
+                }
                 builder.AppendLine("}");
             }
 
@@ -201,49 +161,6 @@ namespace BifrostQL.Core.Schema
 
         internal static string GetSimpleGraphQlTypeName(string dataType)
             => DefaultTypeMapper.GetGraphQlType(dataType);
-
-        internal static string GetFilterType(string gqlType)
-        {
-            var result = new StringBuilder();
-            var name = $"FilterType{gqlType}Input";
-            var filters = new (string fieldName, string type)[] {
-                ("_eq", gqlType),
-                ("_neq", gqlType),
-                ("_gt", gqlType),
-                ("_gte", gqlType),
-                ("_lt", gqlType),
-                ("_lte", gqlType),
-                ("_in", $"[{gqlType}]"),
-                ("_nin", $"[{gqlType}]"),
-                ("_between", $"[{gqlType}]"),
-                ("_nbetween", $"[{gqlType}]"),
-            };
-            var stringFilters = new (string fieldName, string type)[] {
-                ("_contains", gqlType),
-                ("_ncontains", gqlType),
-                ("_starts_with", gqlType),
-                ("_nstarts_with", gqlType),
-                ("_ends_with", gqlType),
-                ("_nends_with", gqlType),
-                ("_like", gqlType),
-                ("_nlike", gqlType),
-            };
-
-            result.AppendLine($"input {name} {{");
-            foreach (var (fieldName, type) in filters)
-            {
-                result.AppendLine($"\t{fieldName} : {type}");
-            }
-            if (gqlType == "String")
-            {
-                foreach (var (fieldName, type) in stringFilters)
-                {
-                    result.AppendLine($"\t{fieldName} : {type}");
-                }
-            }
-            result.AppendLine("}");
-            return result.ToString();
-        }
 
         internal static bool IsRawSqlEnabled(IDbModel model)
         {

@@ -1,21 +1,23 @@
 using System.Data;
-using System.Data.Common;
 using BifrostQL.Core.Model;
-using GraphQL;
-using GraphQL.Resolvers;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.Core.Resolvers
 {
-    public sealed class StoredProcedureResolver : IBifrostResolver, IFieldResolver
+    /// <summary>
+    /// Resolver for stored procedure execution.
+    /// Handles input/output parameters and multiple result sets.
+    /// </summary>
+    public sealed class StoredProcedureResolver : DatabaseResolverBase
     {
         private readonly DbStoredProcedure _proc;
 
         public StoredProcedureResolver(DbStoredProcedure proc)
         {
-            _proc = proc;
+            _proc = proc ?? throw new ArgumentNullException(nameof(proc));
         }
 
-        public async ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
+        public override async ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
         {
             var bifrost = new BifrostContextAdapter(context);
             var conFactory = bifrost.ConnFactory;
@@ -79,7 +81,7 @@ namespace BifrostQL.Core.Resolvers
             }
         }
 
-        private void AddInputParameters(DbCommand cmd, Dictionary<string, object?>? input)
+        private void AddInputParameters(System.Data.Common.DbCommand cmd, Dictionary<string, object?>? input)
         {
             foreach (var param in _proc.InputParameters)
             {
@@ -96,17 +98,16 @@ namespace BifrostQL.Core.Resolvers
             }
         }
 
-        private List<(string paramName, DbParameter dbParam)> AddOutputParameters(DbCommand cmd)
+        private List<(string paramName, System.Data.Common.DbParameter dbParam)> AddOutputParameters(System.Data.Common.DbCommand cmd)
         {
-            var outputParams = new List<(string, DbParameter)>();
+            var outputParams = new List<(string, System.Data.Common.DbParameter)>();
 
             foreach (var param in _proc.OutputParameters)
             {
                 if (param.Direction == ParameterDirection.InputOutput)
                 {
-                    // Already added to cmd in AddInputParameters, but track for output collection
                     var existing = cmd.Parameters[$"@{param.DbName}"];
-                    outputParams.Add((param.GraphQlName, (DbParameter)existing!));
+                    outputParams.Add((param.GraphQlName, (System.Data.Common.DbParameter)existing!));
                     continue;
                 }
 
@@ -122,16 +123,15 @@ namespace BifrostQL.Core.Resolvers
             return outputParams;
         }
 
-        ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
+        private static int GetDefaultSize(string dataType)
         {
-            return ResolveAsync(new BifrostFieldContextAdapter(context));
+            var normalized = StringNormalizer.NormalizeType(dataType);
+            return normalized switch
+            {
+                "nvarchar" or "varchar" or "nchar" or "char" or "ntext" or "text" => 4000,
+                "varbinary" or "binary" => 8000,
+                _ => 0,
+            };
         }
-
-        private static int GetDefaultSize(string dataType) => dataType switch
-        {
-            "nvarchar" or "varchar" or "nchar" or "char" or "ntext" or "text" => 4000,
-            "varbinary" or "binary" => 8000,
-            _ => 0,
-        };
     }
 }

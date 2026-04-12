@@ -1,6 +1,7 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Schema;
+using BifrostQL.Core.Storage;
 using GraphQL;
 using GraphQL.Resolvers;
 using GraphQL.Types;
@@ -154,6 +155,13 @@ namespace BifrostQL.Core.Resolvers
                     genericColumnType.FieldFor(fieldName).Resolver = this;
             }
 
+            if (FileStorageSchemaExtensions.IsFileStorageEnabled(_model))
+            {
+                query.FieldFor("_fileDownload").Resolver = this;
+                mut.FieldFor("_fileUpload").Resolver = this;
+                mut.FieldFor("_fileDelete").Resolver = this;
+            }
+
             foreach (var proc in _model.StoredProcedures)
             {
                 if (proc.IsReadOnly)
@@ -193,6 +201,14 @@ namespace BifrostQL.Core.Resolvers
             {
                 var config = GenericTableConfig.FromModel(model);
                 map[(queryType, "_table")] = new GenericTableQueryResolver(model, config);
+            }
+
+            if (FileStorageSchemaExtensions.IsFileStorageEnabled(model))
+            {
+                var fileStorageService = new Storage.FileStorageService();
+                map[(queryType, "_fileDownload")] = new FileDownloadResolver(fileStorageService);
+                map[(mutationType, "_fileUpload")] = new FileUploadResolver(fileStorageService);
+                map[(mutationType, "_fileDelete")] = new FileDeleteResolver(fileStorageService);
             }
 
             foreach (var proc in model.StoredProcedures)

@@ -13,6 +13,11 @@ import {
   type StreamChunk,
   type StreamingClientInternals,
 } from "./streaming.js";
+import {
+  ExponentialBackoff,
+  ReconnectController,
+  type BackoffPolicy,
+} from "./reconnect.js";
 
 export {
   ChunkReassembler,
@@ -30,6 +35,23 @@ export {
   MAX_QUEUE_SIZE,
   type StreamChunk,
 } from "./streaming.js";
+
+export {
+  ExponentialBackoff,
+  ReconnectController,
+  type BackoffPolicy,
+  type ExponentialBackoffOptions,
+  type ReconnectControllerOptions,
+  type ReconnectAttemptFn,
+  type ReconnectState,
+} from "./reconnect.js";
+
+/**
+ * Sentinel value for `lastSequence` on a Resume frame meaning "no chunks
+ * received yet, retransmit from sequence 0". Mirrors `uint.MaxValue` on the
+ * server's `BifrostMessage.LastSequence` (see ChunkBuffer.GetChunksAfter).
+ */
+export const RESUME_NO_CHUNKS_RECEIVED = 0xffffffff;
 
 /**
  * Minimal WebSocket interface consumed by BifrostBinaryClient.
@@ -81,6 +103,7 @@ export const enum BifrostMessageType {
  *   field  9: chunk_offset    (uint64, varint)
  *   field 10: total_bytes     (uint64, varint)
  *   field 11: chunk_checksum  (uint32, varint)
+ *   field 12: last_sequence   (uint32, varint) — Resume only
  */
 export interface BifrostMessage {
   requestId: number;
@@ -95,6 +118,13 @@ export interface BifrostMessage {
    * frame is "chunked" when chunkInfo.total > 0.
    */
   chunkInfo: ChunkInfo;
+  /**
+   * Last received chunk sequence on Resume frames. The sentinel
+   * `RESUME_NO_CHUNKS_RECEIVED` (0xFFFFFFFF) means no chunks were received yet;
+   * the server retransmits from sequence 0. On non-Resume frames this stays 0
+   * and is omitted from the wire format.
+   */
+  lastSequence: number;
 }
 
 export function encodeMessage(msg: BifrostMessage): Uint8Array {
@@ -143,6 +173,9 @@ export function encodeMessage(msg: BifrostMessage): Uint8Array {
       .tag(CHUNK_FIELD.ChunkChecksum, WireType.Varint)
       .uint32(msg.chunkInfo.checksum);
   }
+  if (msg.lastSequence !== 0) {
+    writer.tag(CHUNK_FIELD.LastSequence, WireType.Varint).uint32(msg.lastSequence);
+  }
 
   return writer.finish();
 }
@@ -157,6 +190,7 @@ export function decodeMessage(data: Uint8Array): BifrostMessage {
     payload: new Uint8Array(0),
     errors: [],
     chunkInfo: emptyChunkInfo(),
+    lastSequence: 0,
   };
 
   while (reader.pos < reader.len) {
@@ -194,6 +228,9 @@ export function decodeMessage(data: Uint8Array): BifrostMessage {
         break;
       case CHUNK_FIELD.ChunkChecksum:
         msg.chunkInfo.checksum = reader.uint32();
+        break;
+      case CHUNK_FIELD.LastSequence:
+        msg.lastSequence = reader.uint32();
         break;
       default:
         reader.skip(wireType);
@@ -250,12 +287,59 @@ export interface BifrostClientOptions {
     received: number,
     total: number
   ) => void;
+
+  /**
+   * Whether to attempt automatic reconnection after an abnormal close.
+   * Defaults to `true`. A normal close (code 1000) or an explicit
+   * `client.close()` call never reconnects regardless of this setting.
+   */
+  autoReconnect?: boolean;
+
+  /**
+   * Maximum reconnect attempts before giving up and rejecting all pending
+   * requests with the most recent connect error. Defaults to `Infinity`.
+   */
+  maxReconnectAttempts?: number;
+
+  /**
+   * Backoff policy used to compute the delay before each reconnect attempt.
+   * Defaults to a fresh `ExponentialBackoff` instance with the standard 100ms
+   * → 30s schedule and 25% jitter. Pass a deterministic policy in tests.
+   */
+  backoff?: BackoffPolicy;
+
+  /**
+   * Called after a successful reconnect, with the attempt number that
+   * succeeded. Useful for UI indicators and metrics.
+   */
+  onReconnect?: (attempt: number) => void;
+
+  /**
+   * Called when reconnect attempts are exhausted (`maxReconnectAttempts`
+   * reached). The client transitions to a closed state and all pending
+   * requests are rejected with `error`.
+   */
+  onReconnectFailed?: (attempts: number, error: Error) => void;
+}
+
+/**
+ * Metadata captured at send-time so a request can be re-sent after a
+ * reconnect that did not yield any partial chunks. We need the original
+ * type/query/variables because the server has already lost the request when
+ * the connection dropped. Stored on both `pending` and `streamingRequests`
+ * entries.
+ */
+interface RequestMetadata {
+  type: BifrostMessageType;
+  query: string;
+  variables?: Record<string, unknown>;
 }
 
 interface PendingRequest {
   resolve: (result: BifrostQueryResult) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  meta: RequestMetadata;
 }
 
 /**
@@ -292,6 +376,13 @@ export class BifrostBinaryClient implements StreamingClientInternals {
   private readonly pending = new Map<number, PendingRequest>();
   private readonly reassemblers = new Map<number, ChunkReassembler>();
   private readonly streamingQueues = new Map<number, StreamingQueue>();
+  /**
+   * Original request metadata for each active streaming request. Mirrored from
+   * `streamingQueues` so the reconnect path can replay the initiating frame
+   * without holding the metadata on the StreamingQueue itself (which keeps
+   * streaming.ts agnostic of reconnect concerns).
+   */
+  private readonly streamingRequests = new Map<number, RequestMetadata>();
   private readonly wsConstructor: IWebSocketConstructor;
   private readonly url: string;
   private readonly requestTimeoutMs: number;
@@ -303,6 +394,19 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     received: number,
     total: number
   ) => void;
+  private readonly autoReconnect: boolean;
+  private readonly onReconnect?: (attempt: number) => void;
+  private readonly onReconnectFailed?: (attempts: number, error: Error) => void;
+  private readonly reconnectController: ReconnectController | null;
+  /**
+   * True while the client is in the middle of an auto-reconnect cycle. Used to
+   * gate `connect()`'s "already connected" fast-path and to suppress the
+   * `onClose` callback for transient drops (we only fire it after a clean
+   * close or an exhausted retry budget).
+   */
+  private reconnecting = false;
+  /** True once `close()` has been called, to make it permanent. */
+  private closed = false;
 
   constructor(options: BifrostClientOptions) {
     this.url = options.url;
@@ -311,6 +415,9 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     this.onClose = options.onClose;
     this.onError = options.onError;
     this.onChunkProgress = options.onChunkProgress;
+    this.autoReconnect = options.autoReconnect ?? true;
+    this.onReconnect = options.onReconnect;
+    this.onReconnectFailed = options.onReconnectFailed;
 
     const WsCtor =
       options.WebSocket ??
@@ -322,48 +429,249 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       );
     }
     this.wsConstructor = WsCtor;
+
+    this.reconnectController = this.autoReconnect
+      ? new ReconnectController({
+          policy: options.backoff ?? new ExponentialBackoff(),
+          maxAttempts: options.maxReconnectAttempts ?? Number.POSITIVE_INFINITY,
+          connect: () => this.openSocket(),
+          onSuccess: (attempt) => this.handleReconnectSuccess(attempt),
+          onGiveUp: (attempts, err) => this.handleReconnectGiveUp(attempts, err),
+        })
+      : null;
   }
 
   /**
    * Opens the WebSocket connection. Resolves when the connection is established,
-   * rejects if the connection fails.
+   * rejects if the connection fails. Calling `connect()` while the client is
+   * already in the middle of an auto-reconnect cycle is a no-op that resolves
+   * once the in-flight reconnect succeeds (or rejects if it gives up).
    */
   connect(): Promise<void> {
+    if (this.ws && this.ws.readyState === this.wsConstructor.OPEN) {
+      return Promise.resolve();
+    }
+    return this.openSocket();
+  }
+
+  /**
+   * Internal: opens a fresh WebSocket and wires up handlers. Used by both the
+   * public `connect()` and by `ReconnectController` for retry attempts. The
+   * returned promise mirrors the standard `connect()` semantics: resolves on
+   * `onopen`, rejects on `onerror` (when no connection has been established
+   * yet) or on a close event that fires before the socket ever opened.
+   */
+  private openSocket(): Promise<void> {
     return new Promise((resolve, reject) => {
-      if (this.ws && this.ws.readyState === this.wsConstructor.OPEN) {
-        resolve();
+      if (this.closed) {
+        reject(new Error("Client is closed"));
         return;
       }
 
       const ws = new this.wsConstructor(this.url);
       ws.binaryType = "arraybuffer";
+      let settled = false;
 
       ws.onopen = () => {
         this.ws = ws;
         this.onOpen?.();
-        resolve();
+        if (!settled) {
+          settled = true;
+          resolve();
+        }
       };
 
       ws.onerror = () => {
         const err = new Error("WebSocket connection failed");
         this.onError?.(err);
-        if (!this.ws) {
+        if (!settled) {
+          // Only reject the connect promise if the socket never opened. If we
+          // already settled and the error fires later, route it through the
+          // close handler instead so the reconnect path picks it up.
+          settled = true;
           reject(err);
         }
       };
 
       ws.onclose = (event) => {
-        this.rejectAllPending(
-          new Error(`Connection closed: ${event.code} ${event.reason}`)
-        );
-        this.ws = null;
-        this.onClose?.(event.code, event.reason);
+        // The socket may have closed before ever opening (failed handshake);
+        // surface that as a rejection of the in-flight connect promise so the
+        // reconnect controller can schedule its next attempt with the close
+        // info as the failure cause.
+        if (!settled) {
+          settled = true;
+          reject(
+            new Error(`Connection closed: ${event.code} ${event.reason}`)
+          );
+        }
+        this.handleSocketClose(ws, event.code, event.reason);
       };
 
       ws.onmessage = (event) => {
         this.handleMessage(event.data as ArrayBuffer);
       };
     });
+  }
+
+  /**
+   * Decides whether a socket close should trigger reconnect or terminate the
+   * client. Called once per closed socket. Normal closes (1000) and explicit
+   * `client.close()` calls always terminate; abnormal closes route through the
+   * reconnect controller when `autoReconnect` is enabled.
+   */
+  private handleSocketClose(
+    closedWs: IWebSocket,
+    code: number,
+    reason: string
+  ): void {
+    // If a different socket is already attached (e.g. during a fast retry),
+    // ignore the late close from the previous instance.
+    if (this.ws !== null && this.ws !== closedWs) {
+      return;
+    }
+    this.ws = null;
+
+    const shouldReconnect =
+      !this.closed &&
+      this.autoReconnect &&
+      this.reconnectController !== null &&
+      code !== 1000 &&
+      (this.pending.size > 0 || this.streamingRequests.size > 0 || this.reconnecting);
+
+    if (shouldReconnect && this.reconnectController) {
+      this.reconnecting = true;
+      // Snapshot per-request resume offsets but KEEP the reassembler buffers
+      // across the disconnect so partial chunks already received aren't lost
+      // — the server's GetChunksAfter only retransmits chunks strictly after
+      // `lastSequence`, so we must hold the earlier ones locally to be able
+      // to assemble the full message once the tail arrives on the new socket.
+      this.captureResumeState();
+      this.reconnectController.start(
+        new Error(`Connection closed: ${code} ${reason}`)
+      );
+      return;
+    }
+
+    // Normal close path: reject everything, clear state, fire onClose.
+    this.rejectAllPending(new Error(`Connection closed: ${code} ${reason}`));
+    if (this.reconnectController && !this.closed) {
+      this.reconnectController.cancel();
+    }
+    this.reconnecting = false;
+    this.onClose?.(code, reason);
+  }
+
+  /**
+   * Snapshots the highest contiguous sequence per pending reassembler into
+   * `resumeFromByRequestId` so the next successful reconnect can send a
+   * Resume frame asking the server to retransmit from there. The reassembler
+   * buffers themselves are kept so the partial chunks already received can
+   * be merged with the retransmitted tail. Streaming requests track their
+   * own contiguous sequence via `streamingResumeFrom`, populated
+   * incrementally in handleChunkedFrame.
+   */
+  private captureResumeState(): void {
+    for (const [requestId, reassembler] of this.reassemblers) {
+      if (this.pending.has(requestId)) {
+        this.resumeFromByRequestId.set(requestId, reassembler.lastReceivedSequence);
+      }
+    }
+  }
+
+  /**
+   * Per-request "highest contiguous chunk sequence so far". Populated only
+   * when a disconnect interrupts a chunked transfer; consulted by
+   * `replayPendingAfterReconnect` to decide between RESUME and re-send.
+   * A value of -1 (the ChunkReassembler default) means no chunks were seen.
+   */
+  private readonly resumeFromByRequestId = new Map<number, number>();
+  /** Same idea for streaming requests. */
+  private readonly streamingResumeFrom = new Map<number, number>();
+
+  private handleReconnectSuccess(attempt: number): void {
+    this.reconnecting = false;
+    this.onReconnect?.(attempt);
+    this.replayPendingAfterReconnect();
+    this.resumeFromByRequestId.clear();
+    this.streamingResumeFrom.clear();
+  }
+
+  private handleReconnectGiveUp(attempts: number, lastError: Error): void {
+    this.reconnecting = false;
+    const err = new Error(
+      `Reconnect failed after ${attempts} attempts: ${lastError.message}`
+    );
+    this.rejectAllPending(err);
+    this.resumeFromByRequestId.clear();
+    this.streamingResumeFrom.clear();
+    this.onReconnectFailed?.(attempts, lastError);
+    this.onClose?.(1006, lastError.message);
+  }
+
+  /**
+   * Walks every pending and streaming request and either sends a Resume frame
+   * (if the request had received at least one chunk before the disconnect) or
+   * re-sends the original Query/Mutation frame. Called from the reconnect
+   * controller's success callback once a fresh socket is open.
+   */
+  private replayPendingAfterReconnect(): void {
+    if (!this.ws || this.ws.readyState !== this.wsConstructor.OPEN) {
+      return;
+    }
+
+    for (const [requestId, pending] of this.pending) {
+      const resumeFrom = this.resumeFromByRequestId.get(requestId);
+      if (resumeFrom !== undefined && resumeFrom >= 0) {
+        this.sendResumeFrame(requestId, resumeFrom);
+      } else {
+        this.sendOriginalFrame(requestId, pending.meta);
+      }
+    }
+
+    for (const [requestId, meta] of this.streamingRequests) {
+      const resumeFrom = this.streamingResumeFrom.get(requestId);
+      if (resumeFrom !== undefined && resumeFrom >= 0) {
+        this.sendResumeFrame(requestId, resumeFrom);
+      } else {
+        this.sendOriginalFrame(requestId, meta);
+      }
+    }
+  }
+
+  private sendResumeFrame(requestId: number, lastSequence: number): void {
+    if (!this.ws || this.ws.readyState !== this.wsConstructor.OPEN) {
+      return;
+    }
+    const frame: BifrostMessage = {
+      requestId,
+      type: BifrostMessageType.Resume,
+      query: "",
+      variablesJson: "",
+      payload: new Uint8Array(0),
+      errors: [],
+      chunkInfo: emptyChunkInfo(),
+      // Server treats uint.MaxValue as "no chunks received". For real progress
+      // we just pass the highest contiguous sequence we have.
+      lastSequence: lastSequence < 0 ? RESUME_NO_CHUNKS_RECEIVED : lastSequence,
+    };
+    this.ws.send(encodeMessage(frame));
+  }
+
+  private sendOriginalFrame(requestId: number, meta: RequestMetadata): void {
+    if (!this.ws || this.ws.readyState !== this.wsConstructor.OPEN) {
+      return;
+    }
+    const frame: BifrostMessage = {
+      requestId,
+      type: meta.type,
+      query: meta.query,
+      variablesJson: meta.variables ? JSON.stringify(meta.variables) : "",
+      payload: new Uint8Array(0),
+      errors: [],
+      chunkInfo: emptyChunkInfo(),
+      lastSequence: 0,
+    };
+    this.ws.send(encodeMessage(frame));
   }
 
   /**
@@ -407,6 +715,11 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     queryText: string,
     variables?: Record<string, unknown>
   ): AsyncIterableIterator<StreamChunk> {
+    this.pendingStreamingMeta = {
+      type: BifrostMessageType.Query,
+      query: queryText,
+      variables,
+    };
     return createChunkStream(this, BifrostMessageType.Query, queryText, variables);
   }
 
@@ -417,6 +730,11 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     mutationText: string,
     variables?: Record<string, unknown>
   ): AsyncIterableIterator<StreamChunk> {
+    this.pendingStreamingMeta = {
+      type: BifrostMessageType.Mutation,
+      query: mutationText,
+      variables,
+    };
     return createChunkStream(
       this,
       BifrostMessageType.Mutation,
@@ -424,6 +742,14 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       variables
     );
   }
+
+  /**
+   * Set by `stream()`/`streamMutation()` immediately before they call
+   * `createChunkStream`, then consumed by `registerStreamingQueue` so the
+   * client captures the original request metadata for resume/replay without
+   * adding any new arguments to the streaming.ts surface.
+   */
+  private pendingStreamingMeta: RequestMetadata | null = null;
 
   // --- StreamingClientInternals (used by createChunkStream / StreamingQueue) ---
 
@@ -439,11 +765,17 @@ export class BifrostBinaryClient implements StreamingClientInternals {
   /** @internal Registers a streaming queue so chunks for `requestId` route to it. */
   registerStreamingQueue(requestId: number, queue: StreamingQueue): void {
     this.streamingQueues.set(requestId, queue);
+    if (this.pendingStreamingMeta) {
+      this.streamingRequests.set(requestId, this.pendingStreamingMeta);
+      this.pendingStreamingMeta = null;
+    }
   }
 
   /** @internal Removes a streaming queue (called on stream end / consumer break). */
   removeStreamingQueue(requestId: number): void {
     this.streamingQueues.delete(requestId);
+    this.streamingRequests.delete(requestId);
+    this.streamingResumeFrom.delete(requestId);
   }
 
   /** @internal Sends a pre-encoded frame on the underlying socket. */
@@ -466,12 +798,25 @@ export class BifrostBinaryClient implements StreamingClientInternals {
 
   /**
    * Closes the WebSocket connection gracefully. Drops any in-progress chunk
-   * reassemblers so their buffers can be garbage collected and terminates
-   * any active streaming iterators with a connection-closed error.
+   * reassemblers so their buffers can be garbage collected, terminates any
+   * active streaming iterators with a connection-closed error, and stops the
+   * reconnect controller so a transient close racing with `close()` cannot
+   * accidentally re-open the connection.
    */
   close(): void {
+    this.closed = true;
+    if (this.reconnectController) {
+      this.reconnectController.stop();
+    }
+    this.reconnecting = false;
     this.reassemblers.clear();
+    this.resumeFromByRequestId.clear();
+    this.streamingResumeFrom.clear();
     this.errorAllStreamingQueues(new Error("Connection closed: client closed"));
+    // Reject any non-streaming pending requests too. The previous version
+    // relied on the socket's onclose event to call rejectAllPending, but with
+    // reconnect support we may no longer want to wait for that round-trip.
+    this.rejectAllPending(new Error("Connection closed: client closed"));
     if (this.ws) {
       this.ws.close(1000, "Client closed");
       this.ws = null;
@@ -496,7 +841,8 @@ export class BifrostBinaryClient implements StreamingClientInternals {
         reject(new Error(`Request ${requestId} timed out`));
       }, this.requestTimeoutMs);
 
-      this.pending.set(requestId, { resolve, reject, timer });
+      const meta: RequestMetadata = { type, query: queryText, variables };
+      this.pending.set(requestId, { resolve, reject, timer, meta });
 
       const msg: BifrostMessage = {
         requestId,
@@ -506,6 +852,7 @@ export class BifrostBinaryClient implements StreamingClientInternals {
         payload: new Uint8Array(0),
         errors: [],
         chunkInfo: emptyChunkInfo(),
+        lastSequence: 0,
       };
 
       const bytes = encodeMessage(msg);
@@ -519,6 +866,14 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       response = decodeMessage(new Uint8Array(buffer));
     } catch (err) {
       this.onError?.(err instanceof Error ? err : new Error(String(err)));
+      return;
+    }
+
+    // ResumeAck is purely informational on the client: the server uses it to
+    // confirm the resume is in progress, then sends the actual remaining Chunk
+    // frames via the normal chunked-frame path. We have no business with the
+    // ack itself.
+    if (response.type === BifrostMessageType.ResumeAck) {
       return;
     }
 
@@ -553,7 +908,18 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     // `streamingQueues` via its cleanup callback when it completes or errors.
     const streamingQueue = this.streamingQueues.get(chunk.requestId);
     if (streamingQueue) {
-      ingestStreamingChunk(streamingQueue, chunk);
+      const accepted = ingestStreamingChunk(streamingQueue, chunk);
+      if (accepted) {
+        // Track the highest contiguous sequence the queue has actually
+        // accepted, so a mid-stream disconnect knows what to RESUME from. The
+        // server's GetChunksAfter retransmits everything strictly after the
+        // value we send, so any gap below the contiguous high-water mark
+        // would be silently lost if we reported the absolute max instead.
+        this.streamingResumeFrom.set(
+          chunk.requestId,
+          streamingQueue.lastContiguousSequence
+        );
+      }
       return;
     }
 
@@ -686,6 +1052,7 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     // which mutates `streamingQueues` via removeStreamingQueue.
     const queues = Array.from(this.streamingQueues.values());
     this.streamingQueues.clear();
+    this.streamingRequests.clear();
     for (const queue of queues) {
       queue.error(error);
     }

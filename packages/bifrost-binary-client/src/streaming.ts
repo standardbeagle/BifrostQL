@@ -110,6 +110,16 @@ export class StreamingQueue implements AsyncIterableIterator<StreamChunk> {
   }
 
   /**
+   * Highest contiguous chunk sequence that has been ingested so far, or -1 if
+   * no contiguous run has started yet. Used by the reconnect path to send a
+   * Resume frame asking the server to retransmit only the chunks the client
+   * is still missing.
+   */
+  get lastContiguousSequence(): number {
+    return this.nextSequence - 1;
+  }
+
+  /**
    * Accepts a verified chunk frame from the client. Buffers out-of-order
    * arrivals until the next contiguous sequence is available, then drains
    * any newly-contiguous run into the ready queue and wakes the consumer.
@@ -363,6 +373,7 @@ export function createChunkStream(
     payload: new Uint8Array(0),
     errors: [],
     chunkInfo: emptyChunkInfo(),
+    lastSequence: 0,
   };
   client.sendRawFrame(encodeMessage(frame));
   return queue;

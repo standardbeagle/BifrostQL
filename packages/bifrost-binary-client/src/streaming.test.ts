@@ -30,6 +30,7 @@ function emptyMessage(overrides: Partial<BifrostMessage> = {}): BifrostMessage {
     payload: new Uint8Array(0),
     errors: [],
     chunkInfo: emptyChunkInfo(),
+    lastSequence: 0,
     ...overrides,
   };
 }
@@ -271,6 +272,7 @@ describe("ingestStreamingChunk", () => {
       payload: new Uint8Array(0),
       errors: [],
       chunkInfo: emptyChunkInfo(),
+      lastSequence: 0,
       ...overrides,
     };
   }

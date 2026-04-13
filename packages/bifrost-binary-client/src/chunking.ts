@@ -235,7 +235,7 @@ export class ChunkReassembler {
   private readonly buffer: Uint8Array;
   private readonly received: boolean[];
   private receivedCount = 0;
-  private _lastReceivedSequence = -1;
+  private _lastContiguousSequence = -1;
 
   /**
    * @param requestId - The request_id this reassembler is for (for error context).
@@ -266,12 +266,16 @@ export class ChunkReassembler {
   }
 
   /**
-   * The highest contiguous chunk sequence number received so far, or -1 if no
-   * chunks have arrived. Used by the future Resume protocol (task pGkDg4FKSg7g)
-   * to tell the server which chunk to retransmit from.
+   * The highest **contiguous** chunk sequence number received so far, or -1 if
+   * no chunks have arrived (or chunk 0 hasn't yet). Used by the Resume protocol
+   * to tell the server which chunk to retransmit from: the server's
+   * `ChunkBuffer.GetChunksAfter(requestId, lastSequence)` returns every chunk
+   * with sequence > `lastSequence`, so reporting a non-contiguous max would
+   * silently lose any gaps. Reporting the highest contiguous value guarantees
+   * the server replays everything we are still missing.
    */
   get lastReceivedSequence(): number {
-    return this._lastReceivedSequence;
+    return this._lastContiguousSequence;
   }
 
   /**
@@ -321,8 +325,14 @@ export class ChunkReassembler {
     this.buffer.set(fragment, offset);
     this.received[sequence] = true;
     this.receivedCount++;
-    if (sequence > this._lastReceivedSequence) {
-      this._lastReceivedSequence = sequence;
+    // Advance the contiguous high-water mark by walking forward from its
+    // current value, which is O(1) amortized across all chunk arrivals (each
+    // index is visited at most once over the full transfer).
+    while (
+      this._lastContiguousSequence + 1 < this.total &&
+      this.received[this._lastContiguousSequence + 1] === true
+    ) {
+      this._lastContiguousSequence++;
     }
 
     this.onProgress?.(this.receivedCount, this.total);

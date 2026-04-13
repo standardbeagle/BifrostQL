@@ -26,6 +26,7 @@ function emptyMessage(overrides: Partial<BifrostMessage> = {}): BifrostMessage {
     payload: new Uint8Array(0),
     errors: [],
     chunkInfo: emptyChunkInfo(),
+    lastSequence: 0,
     ...overrides,
   };
 }
@@ -530,22 +531,35 @@ describe("BifrostBinaryClient", () => {
       ]);
     });
 
-    it("rejects pending requests when the server initiates close", async () => {
-      const p = client.query("{ a }");
+    it("rejects pending requests when the server initiates close (autoReconnect disabled)", async () => {
+      // With autoReconnect disabled the abnormal close is terminal: pending
+      // requests reject immediately. The autoReconnect path is covered in
+      // reconnect.test.ts.
+      const noReconnect = new BifrostBinaryClient({
+        url: TEST_URL,
+        WebSocket: tracker.ctor,
+        autoReconnect: false,
+      });
+      const cp = noReconnect.connect();
+      tracker.last.simulateOpen();
+      await cp;
+
+      const p = noReconnect.query("{ a }");
       const assertion = expect(p).rejects.toThrowError(
         /Connection closed: 1011 server error/
       );
       tracker.last.simulateClose(1011, "server error");
       await assertion;
-      expect(client.pendingCount).toBe(0);
+      expect(noReconnect.pendingCount).toBe(0);
     });
 
-    it("invokes the onClose callback with code and reason", async () => {
+    it("invokes the onClose callback with code and reason on a normal close", async () => {
       const onClose = vi.fn();
       const c = new BifrostBinaryClient({
         url: TEST_URL,
         WebSocket: tracker.ctor,
         onClose,
+        autoReconnect: false,
       });
       const cp = c.connect();
       tracker.last.simulateOpen();

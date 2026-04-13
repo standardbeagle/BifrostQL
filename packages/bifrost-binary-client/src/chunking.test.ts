@@ -311,19 +311,30 @@ describe("ChunkReassembler", () => {
     );
   });
 
-  it("tracks lastReceivedSequence as the highest sequence accepted", () => {
+  it("tracks lastReceivedSequence as the highest CONTIGUOUS sequence accepted", () => {
+    // Resume contract requires the highest *contiguous* sequence so the
+    // server's GetChunksAfter retransmits every missing chunk including any
+    // gaps below the current high-water mark.
     const payload = new Uint8Array(20);
     const chunks = splitPayload(payload, 5);
     const r = new ChunkReassembler(8, chunks.length, payload.length);
     expect(r.lastReceivedSequence).toBe(-1);
 
+    // Out-of-order: chunk 2 arrives first. Contiguous still -1 because we
+    // haven't seen 0.
     r.addChunk(2, chunks[2]!.offset, chunks[2]!.fragment, chunks[2]!.checksum);
-    expect(r.lastReceivedSequence).toBe(2);
+    expect(r.lastReceivedSequence).toBe(-1);
 
+    // Chunk 0 arrives → contiguous advances to 0 only (1 still missing).
     r.addChunk(0, chunks[0]!.offset, chunks[0]!.fragment, chunks[0]!.checksum);
-    expect(r.lastReceivedSequence).toBe(2);
+    expect(r.lastReceivedSequence).toBe(0);
 
+    // Chunk 3 arrives → still 0 (1 still missing).
     r.addChunk(3, chunks[3]!.offset, chunks[3]!.fragment, chunks[3]!.checksum);
+    expect(r.lastReceivedSequence).toBe(0);
+
+    // Chunk 1 fills the gap → contiguous jumps all the way to 3 in one step.
+    r.addChunk(1, chunks[1]!.offset, chunks[1]!.fragment, chunks[1]!.checksum);
     expect(r.lastReceivedSequence).toBe(3);
   });
 });

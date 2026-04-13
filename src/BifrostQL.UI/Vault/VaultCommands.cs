@@ -44,12 +44,14 @@ public static class VaultCommands
         var sshPortOpt = new Option<int>("--ssh-port") { Description = "SSH tunnel port", DefaultValueFactory = _ => 22 };
         var sshUserOpt = new Option<string?>("--ssh-user") { Description = "SSH tunnel username" };
         var sshIdentityOpt = new Option<string?>("--ssh-identity") { Description = "SSH identity file path" };
+        var wpDiscoverOpt = new Option<bool>("--wp-discover") { Description = "Auto-discover DB credentials via WP-CLI over SSH (requires --ssh-host; opt-in only)" };
+        var wpRootOpt = new Option<string[]>("--wp-root") { Description = "WordPress install path to search for wp-config.php (repeatable; defaults to common locations)", AllowMultipleArgumentsPerToken = true };
         var tagOpt = new Option<string[]>("--tag") { Description = "Tags for this server (can be repeated)", AllowMultipleArgumentsPerToken = true };
 
         var cmd = new Command("add", "Add a server to the vault")
         {
             nameArg, providerOpt, hostOpt, portOpt, databaseOpt, usernameOpt, passwordOpt,
-            sslModeOpt, sshHostOpt, sshPortOpt, sshUserOpt, sshIdentityOpt, tagOpt
+            sslModeOpt, sshHostOpt, sshPortOpt, sshUserOpt, sshIdentityOpt, wpDiscoverOpt, wpRootOpt, tagOpt
         };
 
         cmd.SetAction((parseResult, _) =>
@@ -67,6 +69,8 @@ public static class VaultCommands
             var sshPort = parseResult.GetValue(sshPortOpt);
             var sshUser = parseResult.GetValue(sshUserOpt);
             var sshIdentity = parseResult.GetValue(sshIdentityOpt);
+            var wpDiscover = parseResult.GetValue(wpDiscoverOpt);
+            var wpRoots = parseResult.GetValue(wpRootOpt) ?? [];
             var tags = parseResult.GetValue(tagOpt) ?? [];
 
             // Interactive password prompt if not provided
@@ -78,7 +82,16 @@ public static class VaultCommands
             VaultSshConfig? ssh = null;
             if (!string.IsNullOrWhiteSpace(sshHost))
             {
-                ssh = new VaultSshConfig(sshHost, sshPort, sshUser ?? Environment.UserName, sshIdentity);
+                VaultWordPressDiscovery? wpConfig = null;
+                if (wpDiscover || wpRoots.Length > 0)
+                {
+                    wpConfig = new VaultWordPressDiscovery(wpRoots.Length > 0 ? [.. wpRoots] : null);
+                }
+                ssh = new VaultSshConfig(sshHost, sshPort, sshUser ?? Environment.UserName, sshIdentity, wpConfig);
+            }
+            else if (wpDiscover || wpRoots.Length > 0)
+            {
+                Console.Error.WriteLine("Warning: --wp-discover/--wp-root requires --ssh-host; ignoring.");
             }
 
             var server = new VaultServer(name, provider, host, port, database, username, password, sslMode, ssh, [.. tags]);

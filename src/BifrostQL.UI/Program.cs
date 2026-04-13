@@ -538,50 +538,54 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
                     server.Ssh.IdentityFile, remoteHost, remotePort);
                 var localPort = await sshTunnel.StartAsync(sshConfig, ct);
 
-                // Auto-discover WordPress credentials via WP-CLI if username is empty
+                // WordPress credential auto-discovery is opt-in via Ssh.WordPressDiscovery.
+                // When the vault entry sets it, we run `wp config get` over the SSH tunnel
+                // to populate DB_USER/DB_PASSWORD/DB_NAME. Without the opt-in we trust the
+                // credentials in the vault entry and let the DB driver surface any auth failures.
                 string? dbUser = null, dbPassword = null, dbName = null;
-                if (string.IsNullOrWhiteSpace(server.Username))
+                if (server.Ssh.WordPressDiscovery is { } wpDiscovery)
                 {
-                    try
+                    var roots = wpDiscovery.Roots is { Count: > 0 } customRoots
+                        ? customRoots
+                        : (IReadOnlyList<string>)VaultWordPressDiscovery.DefaultRoots;
+
+                    BifrostQL.UI.WpCredentials? discovered = null;
+                    Exception? lastError = null;
+
+                    foreach (var wpRoot in roots)
                     {
-                        // Try common WordPress paths for WP Engine and similar hosts
-                        var wpRoots = new[] { "~/public_html", "~/public_html/austinsymphony", ".", "/var/www/html", "~/www", "~/htdocs" };
-                        var creds = new BifrostQL.UI.WpCredentials("", "", "", "");
-                        Exception? lastError = null;
-                        var found = false;
-                        
-                        foreach (var wpRoot in wpRoots)
+                        try
                         {
-                            try
+                            var wpConfig = new BifrostQL.UI.WpDiscoverConfig("wp", wpRoot);
+                            var creds = await sshTunnel.DiscoverWordPressAsync(sshConfig, wpConfig, ct);
+                            if (!string.IsNullOrWhiteSpace(creds.DbUser))
                             {
-                                var wpConfig = new BifrostQL.UI.WpDiscoverConfig("wp", wpRoot);
-                                creds = await sshTunnel.DiscoverWordPressAsync(sshConfig, wpConfig, ct);
-                                if (!string.IsNullOrWhiteSpace(creds.DbUser))
-                                {
-                                    found = true;
-                                    break; // Success!
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                lastError = ex;
-                                // Try next path
+                                discovered = creds;
+                                break;
                             }
                         }
-                        
-                        if (!found || string.IsNullOrWhiteSpace(creds.DbUser))
+                        catch (Exception ex)
                         {
-                            throw lastError ?? new InvalidOperationException("Could not find WordPress installation via WP-CLI");
+                            lastError = ex;
                         }
-                        
-                        dbUser = creds.DbUser;
-                        dbPassword = creds.DbPassword;
-                        dbName = creds.DbName;
                     }
-                    catch (Exception wpEx)
+
+                    if (discovered is null)
                     {
-                        return Results.BadRequest(new { success = false, error = $"Failed to auto-discover WordPress credentials: {wpEx.Message}" });
+                        var rootList = string.Join(", ", roots);
+                        var detail = lastError?.Message ?? "no installations found";
+                        return Results.BadRequest(new
+                        {
+                            success = false,
+                            error = $"WordPress auto-discovery failed (searched {rootList}): {detail}. " +
+                                    "Set explicit Username/Password on the vault entry, or remove the " +
+                                    "Ssh.WordPressDiscovery field to disable auto-discovery."
+                        });
                     }
+
+                    dbUser = discovered.DbUser;
+                    dbPassword = discovered.DbPassword;
+                    dbName = discovered.DbName;
                 }
 
                 // Rewrite to tunnel through localhost with discovered credentials

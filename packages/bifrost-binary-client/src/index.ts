@@ -1,4 +1,22 @@
 import { BinaryReader, BinaryWriter, WireType } from "@bufbuild/protobuf/wire";
+import {
+  CHUNK_FIELD,
+  ChunkReassembler,
+  emptyChunkInfo,
+  isChunkedFrame,
+  type ChunkInfo,
+} from "./chunking.js";
+
+export {
+  ChunkReassembler,
+  crc32,
+  decodeChunkInfo,
+  encodeChunkInfo,
+  emptyChunkInfo,
+  isChunkedFrame,
+  verifyChecksum,
+  type ChunkInfo,
+} from "./chunking.js";
 
 /**
  * Minimal WebSocket interface consumed by BifrostBinaryClient.
@@ -28,18 +46,28 @@ export const enum BifrostMessageType {
   Mutation = 1,
   Result = 2,
   Error = 3,
+  Chunk = 4,
+  ChunkAck = 5,
+  Resume = 6,
+  ResumeAck = 7,
+  ChunkNack = 8,
 }
 
 /**
  * Binary transport envelope matching the server's BifrostMessage protobuf wire format.
  *
- * Wire format fields:
- *   field 1: request_id (uint32, varint)
- *   field 2: type (int32, varint)
- *   field 3: query (string, length-delimited)
- *   field 4: variables_json (string, length-delimited)
- *   field 5: payload (bytes, length-delimited)
- *   field 6: errors (repeated string, length-delimited)
+ * Wire format fields (see src/BifrostQL.Server/BifrostMessage.cs):
+ *   field  1: request_id      (uint32, varint)
+ *   field  2: type            (int32, varint)
+ *   field  3: query           (string, length-delimited)
+ *   field  4: variables_json  (string, length-delimited)
+ *   field  5: payload         (bytes, length-delimited)
+ *   field  6: errors          (repeated string, length-delimited)
+ *   field  7: chunk_sequence  (uint32, varint)
+ *   field  8: chunk_total     (uint32, varint)
+ *   field  9: chunk_offset    (uint64, varint)
+ *   field 10: total_bytes     (uint64, varint)
+ *   field 11: chunk_checksum  (uint32, varint)
  */
 export interface BifrostMessage {
   requestId: number;
@@ -48,6 +76,12 @@ export interface BifrostMessage {
   variablesJson: string;
   payload: Uint8Array;
   errors: string[];
+  /**
+   * Chunked-frame metadata. Populated by `decodeMessage` when the frame carries
+   * any chunk_* fields; otherwise all fields are zero (proto3 defaults). A
+   * frame is "chunked" when chunkInfo.total > 0.
+   */
+  chunkInfo: ChunkInfo;
 }
 
 export function encodeMessage(msg: BifrostMessage): Uint8Array {
@@ -71,6 +105,31 @@ export function encodeMessage(msg: BifrostMessage): Uint8Array {
   for (const error of msg.errors) {
     writer.tag(6, WireType.LengthDelimited).string(error);
   }
+  if (msg.chunkInfo.sequence !== 0) {
+    writer
+      .tag(CHUNK_FIELD.ChunkSequence, WireType.Varint)
+      .uint32(msg.chunkInfo.sequence);
+  }
+  if (msg.chunkInfo.total !== 0) {
+    writer
+      .tag(CHUNK_FIELD.ChunkTotal, WireType.Varint)
+      .uint32(msg.chunkInfo.total);
+  }
+  if (msg.chunkInfo.offset !== 0) {
+    writer
+      .tag(CHUNK_FIELD.ChunkOffset, WireType.Varint)
+      .uint64(msg.chunkInfo.offset);
+  }
+  if (msg.chunkInfo.totalBytes !== 0) {
+    writer
+      .tag(CHUNK_FIELD.TotalBytes, WireType.Varint)
+      .uint64(msg.chunkInfo.totalBytes);
+  }
+  if (msg.chunkInfo.checksum !== 0) {
+    writer
+      .tag(CHUNK_FIELD.ChunkChecksum, WireType.Varint)
+      .uint32(msg.chunkInfo.checksum);
+  }
 
   return writer.finish();
 }
@@ -84,6 +143,7 @@ export function decodeMessage(data: Uint8Array): BifrostMessage {
     variablesJson: "",
     payload: new Uint8Array(0),
     errors: [],
+    chunkInfo: emptyChunkInfo(),
   };
 
   while (reader.pos < reader.len) {
@@ -107,6 +167,21 @@ export function decodeMessage(data: Uint8Array): BifrostMessage {
       case 6:
         msg.errors.push(reader.string());
         break;
+      case CHUNK_FIELD.ChunkSequence:
+        msg.chunkInfo.sequence = reader.uint32();
+        break;
+      case CHUNK_FIELD.ChunkTotal:
+        msg.chunkInfo.total = reader.uint32();
+        break;
+      case CHUNK_FIELD.ChunkOffset:
+        msg.chunkInfo.offset = uint64FieldToNumber(reader.uint64());
+        break;
+      case CHUNK_FIELD.TotalBytes:
+        msg.chunkInfo.totalBytes = uint64FieldToNumber(reader.uint64());
+        break;
+      case CHUNK_FIELD.ChunkChecksum:
+        msg.chunkInfo.checksum = reader.uint32();
+        break;
       default:
         reader.skip(wireType);
         break;
@@ -114,6 +189,21 @@ export function decodeMessage(data: Uint8Array): BifrostMessage {
   }
 
   return msg;
+}
+
+/**
+ * Narrows a uint64 wire value to a JS number, throwing if it exceeds the safe
+ * integer range. Chunk offsets and total payload sizes never approach 2^53 in
+ * practice (that's 9 PB), so this is purely a defensive guard.
+ */
+function uint64FieldToNumber(value: bigint | string): number {
+  const big = typeof value === "string" ? BigInt(value) : value;
+  if (big > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(
+      `uint64 chunk field ${big} exceeds Number.MAX_SAFE_INTEGER`
+    );
+  }
+  return Number(big);
 }
 
 /**
@@ -136,6 +226,17 @@ export interface BifrostClientOptions {
   onClose?: (code: number, reason: string) => void;
   /** Called on connection or protocol errors. */
   onError?: (error: Error) => void;
+  /**
+   * Called once per received chunk while a chunked response is being
+   * reassembled. `received` is the cumulative chunk count for the request,
+   * `total` is the declared chunk_total. Useful for upload/download progress
+   * UIs. Not called for single-frame (non-chunked) responses.
+   */
+  onChunkProgress?: (
+    requestId: number,
+    received: number,
+    total: number
+  ) => void;
 }
 
 interface PendingRequest {
@@ -176,12 +277,18 @@ export class BifrostBinaryClient {
   private ws: IWebSocket | null = null;
   private nextRequestId = 1;
   private readonly pending = new Map<number, PendingRequest>();
+  private readonly reassemblers = new Map<number, ChunkReassembler>();
   private readonly wsConstructor: IWebSocketConstructor;
   private readonly url: string;
   private readonly requestTimeoutMs: number;
   private readonly onOpen?: () => void;
   private readonly onClose?: (code: number, reason: string) => void;
   private readonly onError?: (error: Error) => void;
+  private readonly onChunkProgress?: (
+    requestId: number,
+    received: number,
+    total: number
+  ) => void;
 
   constructor(options: BifrostClientOptions) {
     this.url = options.url;
@@ -189,6 +296,7 @@ export class BifrostBinaryClient {
     this.onOpen = options.onOpen;
     this.onClose = options.onClose;
     this.onError = options.onError;
+    this.onChunkProgress = options.onChunkProgress;
 
     const WsCtor =
       options.WebSocket ??
@@ -277,9 +385,11 @@ export class BifrostBinaryClient {
   }
 
   /**
-   * Closes the WebSocket connection gracefully.
+   * Closes the WebSocket connection gracefully. Drops any in-progress chunk
+   * reassemblers so their buffers can be garbage collected.
    */
   close(): void {
+    this.reassemblers.clear();
     if (this.ws) {
       this.ws.close(1000, "Client closed");
       this.ws = null;
@@ -316,6 +426,7 @@ export class BifrostBinaryClient {
         variablesJson: variables ? JSON.stringify(variables) : "",
         payload: new Uint8Array(0),
         errors: [],
+        chunkInfo: emptyChunkInfo(),
       };
 
       const bytes = encodeMessage(msg);
@@ -332,6 +443,101 @@ export class BifrostBinaryClient {
       return;
     }
 
+    if (isChunkedFrame(response.chunkInfo)) {
+      this.handleChunkedFrame(response);
+      return;
+    }
+
+    this.deliverComplete(response);
+  }
+
+  /**
+   * Routes a chunked frame into a per-requestId reassembler, verifies the
+   * checksum, and once the final chunk arrives, deserializes the assembled
+   * buffer and delivers the inner Result message to the pending promise.
+   *
+   * Chunks for unknown requestIds are forwarded to onError (matching how the
+   * existing single-frame path silently ignores unknown responses, but with a
+   * diagnostic since chunks for an unknown id usually indicate a protocol bug).
+   */
+  private handleChunkedFrame(chunk: BifrostMessage): void {
+    if (!this.pending.has(chunk.requestId)) {
+      this.onError?.(
+        new Error(
+          `Received chunk for unknown requestId ${chunk.requestId} (sequence ${chunk.chunkInfo.sequence}/${chunk.chunkInfo.total})`
+        )
+      );
+      return;
+    }
+
+    let reassembler = this.reassemblers.get(chunk.requestId);
+    if (!reassembler) {
+      reassembler = new ChunkReassembler(
+        chunk.requestId,
+        chunk.chunkInfo.total,
+        chunk.chunkInfo.totalBytes,
+        this.onChunkProgress
+          ? (received, total) =>
+              this.onChunkProgress!(chunk.requestId, received, total)
+          : undefined
+      );
+      this.reassemblers.set(chunk.requestId, reassembler);
+    }
+
+    let assembled: Uint8Array | null;
+    try {
+      assembled = reassembler.addChunk(
+        chunk.chunkInfo.sequence,
+        chunk.chunkInfo.offset,
+        chunk.payload,
+        chunk.chunkInfo.checksum
+      );
+    } catch (err) {
+      // Checksum or layout failure: reject the pending request and drop state.
+      this.reassemblers.delete(chunk.requestId);
+      const pending = this.pending.get(chunk.requestId);
+      if (pending) {
+        clearTimeout(pending.timer);
+        this.pending.delete(chunk.requestId);
+        pending.reject(err instanceof Error ? err : new Error(String(err)));
+      }
+      return;
+    }
+
+    if (assembled === null) {
+      return;
+    }
+
+    this.reassemblers.delete(chunk.requestId);
+
+    let inner: BifrostMessage;
+    try {
+      inner = decodeMessage(assembled);
+    } catch (err) {
+      const pending = this.pending.get(chunk.requestId);
+      if (pending) {
+        clearTimeout(pending.timer);
+        this.pending.delete(chunk.requestId);
+        pending.reject(
+          new Error(
+            `Failed to decode reassembled chunked message for request ${chunk.requestId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          )
+        );
+      }
+      return;
+    }
+
+    this.deliverComplete(inner);
+  }
+
+  /**
+   * Delivers a fully-decoded (single-frame or reassembled) BifrostMessage to
+   * its pending request promise. Frames with no matching pending entry are
+   * silently dropped to match the existing single-frame behavior.
+   */
+  private deliverComplete(response: BifrostMessage): void {
     const pending = this.pending.get(response.requestId);
     if (!pending) {
       return;
@@ -355,5 +561,6 @@ export class BifrostBinaryClient {
       pending.reject(error);
     }
     this.pending.clear();
+    this.reassemblers.clear();
   }
 }

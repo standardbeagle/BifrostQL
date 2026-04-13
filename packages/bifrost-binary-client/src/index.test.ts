@@ -3,9 +3,11 @@ import {
   BifrostBinaryClient,
   BifrostMessageType,
   decodeMessage,
+  emptyChunkInfo,
   encodeMessage,
   type BifrostMessage,
 } from "./index.js";
+import { crc32 } from "./chunking.js";
 import {
   FakeWebSocket,
   FakeWebSocketReadyState,
@@ -23,6 +25,7 @@ function emptyMessage(overrides: Partial<BifrostMessage> = {}): BifrostMessage {
     variablesJson: "",
     payload: new Uint8Array(0),
     errors: [],
+    chunkInfo: emptyChunkInfo(),
     ...overrides,
   };
 }
@@ -55,6 +58,35 @@ describe("encodeMessage / decodeMessage", () => {
   it("round-trips an empty message", () => {
     const decoded = decodeMessage(encodeMessage(emptyMessage()));
     expect(decoded).toEqual(emptyMessage());
+  });
+
+  it("round-trips chunk fields on a Chunk envelope", () => {
+    const fragment = new Uint8Array([10, 20, 30, 40, 50]);
+    const original = emptyMessage({
+      requestId: 7,
+      type: BifrostMessageType.Chunk,
+      payload: fragment,
+      chunkInfo: {
+        sequence: 2,
+        total: 5,
+        offset: 128,
+        totalBytes: 320,
+        checksum: crc32(fragment),
+      },
+    });
+
+    const decoded = decodeMessage(encodeMessage(original));
+
+    expect(decoded.requestId).toBe(7);
+    expect(decoded.type).toBe(BifrostMessageType.Chunk);
+    expect(Array.from(decoded.payload)).toEqual([10, 20, 30, 40, 50]);
+    expect(decoded.chunkInfo).toEqual({
+      sequence: 2,
+      total: 5,
+      offset: 128,
+      totalBytes: 320,
+      checksum: crc32(fragment),
+    });
   });
 
   it("round-trips an empty payload alongside other fields", () => {
@@ -529,6 +561,194 @@ describe("BifrostBinaryClient", () => {
         WebSocket: tracker.ctor,
       });
       expect(() => fresh.close()).not.toThrow();
+    });
+  });
+
+  describe("chunked responses", () => {
+    /**
+     * Build the raw bytes the server would emit for a chunked Result by
+     * mirroring ChunkSender.SplitIntoChunks: serialize the inner Result, slice
+     * the bytes into N fragments, wrap each fragment in a Chunk-typed
+     * BifrostMessage with the right offset/sequence/checksum metadata.
+     */
+    function buildChunkFrames(
+      requestId: number,
+      inner: BifrostMessage,
+      chunkSize: number
+    ): Uint8Array[] {
+      const serialized = encodeMessage(inner);
+      const totalBytes = serialized.length;
+      const total = Math.ceil(totalBytes / chunkSize);
+      const frames: Uint8Array[] = [];
+      for (let i = 0; i < total; i++) {
+        const offset = i * chunkSize;
+        const length = Math.min(chunkSize, totalBytes - offset);
+        const fragment = serialized.slice(offset, offset + length);
+        frames.push(
+          encodeMessage(
+            emptyMessage({
+              requestId,
+              type: BifrostMessageType.Chunk,
+              payload: fragment,
+              chunkInfo: {
+                sequence: i,
+                total,
+                offset,
+                totalBytes,
+                checksum: crc32(fragment),
+              },
+            })
+          )
+        );
+      }
+      return frames;
+    }
+
+    let onChunkProgress: ReturnType<typeof vi.fn>;
+    let chunkedClient: BifrostBinaryClient;
+
+    beforeEach(async () => {
+      onChunkProgress = vi.fn();
+      chunkedClient = new BifrostBinaryClient({
+        url: TEST_URL,
+        WebSocket: tracker.ctor,
+        onChunkProgress,
+      });
+      const p = chunkedClient.connect();
+      tracker.last.simulateOpen();
+      await p;
+    });
+
+    it("reassembles a 3-chunk response delivered in order", async () => {
+      const ws = tracker.last;
+      const promise = chunkedClient.query("{ big }");
+      const sentId = decodeMessage(ws.sentFrames[0]!).requestId;
+
+      const inner = emptyMessage({
+        requestId: sentId,
+        type: BifrostMessageType.Result,
+        payload: new TextEncoder().encode(
+          JSON.stringify({ rows: ["a", "b", "c"], n: 3 })
+        ),
+      });
+      const frames = buildChunkFrames(sentId, inner, 8);
+      expect(frames.length).toBeGreaterThanOrEqual(3);
+
+      for (const frame of frames) {
+        ws.receive(frame);
+      }
+
+      const result = await promise;
+      expect(result.errors).toEqual([]);
+      expect(result.data).toEqual({ rows: ["a", "b", "c"], n: 3 });
+      expect(onChunkProgress).toHaveBeenCalledTimes(frames.length);
+      const counts = onChunkProgress.mock.calls.map((c) => c[1] as number);
+      expect(counts).toEqual(counts.slice().sort((a, b) => a - b));
+      expect(counts[counts.length - 1]).toBe(frames.length);
+      expect(chunkedClient.pendingCount).toBe(0);
+    });
+
+    it("reassembles a chunked response delivered out of order", async () => {
+      const ws = tracker.last;
+      const promise = chunkedClient.query("{ big }");
+      const sentId = decodeMessage(ws.sentFrames[0]!).requestId;
+
+      const inner = emptyMessage({
+        requestId: sentId,
+        type: BifrostMessageType.Result,
+        payload: new TextEncoder().encode(
+          JSON.stringify({ ordered: false, value: 42 })
+        ),
+      });
+      const frames = buildChunkFrames(sentId, inner, 7);
+      expect(frames.length).toBeGreaterThanOrEqual(3);
+
+      // Reverse delivery
+      for (let i = frames.length - 1; i >= 0; i--) {
+        ws.receive(frames[i]!);
+      }
+
+      const result = await promise;
+      expect(result.data).toEqual({ ordered: false, value: 42 });
+      expect(chunkedClient.pendingCount).toBe(0);
+    });
+
+    it("rejects pending request when a chunk has a bad checksum", async () => {
+      const ws = tracker.last;
+      const promise = chunkedClient.query("{ big }");
+      const sentId = decodeMessage(ws.sentFrames[0]!).requestId;
+
+      const inner = emptyMessage({
+        requestId: sentId,
+        type: BifrostMessageType.Result,
+        payload: new TextEncoder().encode(JSON.stringify({ x: 1 })),
+      });
+      const frames = buildChunkFrames(sentId, inner, 6);
+      // Corrupt the second frame: re-encode with a bogus checksum.
+      const decoded = decodeMessage(frames[1]!);
+      decoded.chunkInfo.checksum = (decoded.chunkInfo.checksum ^ 0xffffffff) >>> 0;
+      const corrupted = encodeMessage(decoded);
+
+      const assertion = expect(promise).rejects.toThrowError(/CRC32 mismatch/);
+      ws.receive(frames[0]!);
+      ws.receive(corrupted);
+      await assertion;
+      expect(chunkedClient.pendingCount).toBe(0);
+    });
+
+    it("forwards onError when a chunk arrives for an unknown requestId", async () => {
+      const onError = vi.fn();
+      const c = new BifrostBinaryClient({
+        url: TEST_URL,
+        WebSocket: tracker.ctor,
+        onError,
+      });
+      const p = c.connect();
+      tracker.last.simulateOpen();
+      await p;
+
+      const ws = tracker.last;
+      const stray = encodeMessage(
+        emptyMessage({
+          requestId: 9999,
+          type: BifrostMessageType.Chunk,
+          payload: new Uint8Array([1, 2, 3]),
+          chunkInfo: {
+            sequence: 0,
+            total: 2,
+            offset: 0,
+            totalBytes: 6,
+            checksum: crc32(new Uint8Array([1, 2, 3])),
+          },
+        })
+      );
+      ws.receive(stray);
+
+      expect(onError).toHaveBeenCalledOnce();
+      expect(onError.mock.calls[0]![0]).toBeInstanceOf(Error);
+      expect((onError.mock.calls[0]![0] as Error).message).toMatch(
+        /unknown requestId 9999/
+      );
+    });
+
+    it("clears in-progress reassemblers on close()", async () => {
+      const ws = tracker.last;
+      const promise = chunkedClient.query("{ big }");
+      const sentId = decodeMessage(ws.sentFrames[0]!).requestId;
+
+      const inner = emptyMessage({
+        requestId: sentId,
+        type: BifrostMessageType.Result,
+        payload: new TextEncoder().encode(JSON.stringify({ partial: true })),
+      });
+      const frames = buildChunkFrames(sentId, inner, 6);
+      // Deliver only the first frame, then close mid-flight.
+      ws.receive(frames[0]!);
+
+      const assertion = expect(promise).rejects.toThrowError(/Connection closed/);
+      chunkedClient.close();
+      await assertion;
+      expect(chunkedClient.pendingCount).toBe(0);
     });
   });
 });

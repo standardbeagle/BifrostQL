@@ -204,32 +204,20 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         }
     });
 
-    // API endpoint to set the current connection — rebinds BifrostQL and resets the schema cache
-    app.MapPost("/api/connection/set", (ConnectionSetRequest request) =>
-    {
-        if (string.IsNullOrWhiteSpace(request.ConnectionString))
-        {
-            return Results.BadRequest(new { error = "Connection string is required" });
-        }
-
-        currentConnectionString = request.ConnectionString;
-        currentProvider = request.Provider != null
-            ? DbConnFactoryResolver.ParseProviderName(request.Provider)
-            : DbConnFactoryResolver.DetectProvider(request.ConnectionString);
-
-        // Rebind the connection on the BifrostQL options and reset the PathCache
-        // so the next GraphQL request loads the new database schema
-        bifrostOptions?.BindConnectionString(request.ConnectionString);
-        bifrostOptions?.BindProvider(currentProvider.Value.ToString().ToLowerInvariant());
-        // Reset the cached schema so it reloads with the new connection
-        bifrostOptions?.ResetSchema(app.Services);
-
-        return Results.Ok(new {
-            success = true,
-            message = "Connection updated.",
-            provider = currentProvider.Value.ToString().ToLowerInvariant()
-        });
-    });
+    // Vault credential hardening (task XGSUbdBiIzla): the previous
+    // /api/connection/set endpoint used to accept a raw connection string
+    // — including the database password — via HTTP POST. That created a
+    // path where browser memory and any sniffed localhost traffic held
+    // plaintext credentials. It has been deleted; all connection changes
+    // now flow through one of:
+    //   - POST /api/vault/connect (activate a saved vault entry), or
+    //   - the native bridge "request-credential" handler (opens the
+    //     isolated Photino child window for password entry and writes
+    //     the vault entry server-side — see the handler registration
+    //     in the window bootstrap block below).
+    // Quickstart-created SQLite databases now self-bind on the server
+    // side at the end of /api/database/create-quickstart so they don't
+    // need the deleted endpoint either.
 
     // API endpoint to create a test database (SQL Server only - legacy)
     app.MapPost("/api/database/create", async (CreateDatabaseRequest request, CancellationToken ct) =>
@@ -422,6 +410,22 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
             {
                 yield return SseEvent("Seed data", 90, "No seed data available for this schema/size combination (DDL only)");
             }
+
+            // Self-bind the freshly created SQLite database on the server
+            // side. Previously the client would POST the returned
+            // connection string back to /api/connection/set to activate
+            // the schema cache, but that endpoint has been deleted (task
+            // XGSUbdBiIzla) so passwords can't cross HTTP. SQLite
+            // connection strings carry no credentials — just a file path
+            // — so it's safe (and simpler) for the server to activate
+            // itself here before announcing completion. The client now
+            // treats the Complete! event as "ready to switch views" and
+            // doesn't need a follow-up bind request.
+            currentConnectionString = sqliteConnectionString;
+            currentProvider = BifrostDbProvider.Sqlite;
+            bifrostOptions?.BindConnectionString(sqliteConnectionString);
+            bifrostOptions?.BindProvider("sqlite");
+            bifrostOptions?.ResetSchema(app.Services);
 
             yield return SseEvent("Complete!", 100, "Quickstart database created successfully",
                 connectionString: sqliteConnectionString, provider: "sqlite");
@@ -730,45 +734,123 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         // a named entry, the host opens an isolated Photino child window
         // (separate WebView2 instance, own NativeBridgeHost, CSP-locked
         // embedded HTML — see CredentialPromptWindow / CredentialPromptHtml)
-        // that collects username/password and hands them back here.
+        // that collects the password and hands it back here.
         //
-        // SECURITY: the password is deliberately NOT returned to the main
-        // SPA. This task only establishes the prompt flow — the sibling
-        // task wires the result into the vault write path. Until then the
-        // handler returns { saved, username } so the renderer can reflect
-        // UI state without ever seeing the plaintext. The CredentialResult
-        // variable is nulled out immediately after the shape-only reply is
-        // built so no reference lingers on the heap.
+        // SECURITY:
+        //   - The full ConnectionInfo payload (vaultName, provider, host,
+        //     port, database, username, ssl) comes from the main SPA over
+        //     the bridge. None of these are sensitive.
+        //   - The password is ONLY collected by the child window and never
+        //     returned to the renderer. This handler writes the complete
+        //     VaultServer record to the encrypted vault via VaultStore.Save
+        //     inside the process, then drops the CredentialResult reference
+        //     so the password string becomes unreachable.
+        //   - The bridge response to the renderer is {saved, name}; no
+        //     username, no password, nothing sensitive. The renderer then
+        //     refetches /api/vault/servers and calls /api/vault/connect
+        //     with the returned name to activate the connection.
         var bridgeWindow = window;
         var bridgeLoggerForHandler = bridgeLogger;
         nativeBridge.Register("request-credential", async (payload, innerCt) =>
         {
-            var vaultName = payload.ValueKind == JsonValueKind.Object &&
-                            payload.TryGetProperty("vaultName", out var v) &&
-                            v.ValueKind == JsonValueKind.String
-                ? v.GetString()
-                : null;
+            // ConnectionInfo extraction — every field is optional on the
+            // wire except vaultName and provider (provider is required so
+            // we can pick a sensible default port). Missing fields fall
+            // through to defaults or persist as null on the vault entry.
+            if (payload.ValueKind != JsonValueKind.Object)
+                throw new ArgumentException("ConnectionInfo payload required");
 
+            string? ReadString(string key) =>
+                payload.TryGetProperty(key, out var p) && p.ValueKind == JsonValueKind.String
+                    ? p.GetString()
+                    : null;
+            int? ReadInt(string key) =>
+                payload.TryGetProperty(key, out var p) && p.ValueKind == JsonValueKind.Number && p.TryGetInt32(out var i)
+                    ? i
+                    : null;
+            bool? ReadBool(string key) =>
+                payload.TryGetProperty(key, out var p) && (p.ValueKind == JsonValueKind.True || p.ValueKind == JsonValueKind.False)
+                    ? p.GetBoolean()
+                    : null;
+
+            var vaultName = ReadString("vaultName");
             if (string.IsNullOrWhiteSpace(vaultName))
                 throw new ArgumentException("vaultName required");
 
+            var provider = ReadString("provider")?.ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(provider))
+                throw new ArgumentException("provider required");
+
+            var host = ReadString("host") ?? "";
+            var port = ReadInt("port") ?? provider switch
+            {
+                "postgres" => 5432,
+                "mysql" => 3306,
+                "sqlserver" => 1433,
+                _ => 0,
+            };
+            var database = ReadString("database");
+            var username = ReadString("username");
+            var ssl = ReadBool("ssl");
+            var sslMode = ssl == true ? "Require" : null;
+
+            // Collect the password via the isolated child window. This
+            // call blocks until the user clicks Save, Cancel, or closes
+            // the window. PromptAsync throws OperationCanceledException
+            // on innerCt cancellation, which NativeBridgeHost catches and
+            // scrubs into a BridgeError("error", message with "cancel")
+            // — the TS wrapper turns that into CredentialCancelledError.
             var result = await BifrostQL.UI.NativeBridge.CredentialPromptWindow
                 .PromptAsync(bridgeWindow, vaultName!, bridgeLoggerForHandler, innerCt)
                 .ConfigureAwait(false);
 
             if (!result.IsSaved)
             {
-                return new { saved = false, username = (string?)null };
+                // User cancelled — surface as a bridge error so the wrapper
+                // can map it to CredentialCancelledError. Using a message
+                // containing "cancel" is the contract the wrapper matches.
+                throw new OperationCanceledException("Credential prompt cancelled by user");
             }
 
-            // Capture the username BEFORE nulling the local, return only
-            // { saved, username } to the renderer. The vault-write path
-            // is completed in task XGSUbdBiIzla — until then we drop the
-            // password on the floor rather than cache it anywhere.
-            var savedUsername = result.Username;
-            result = null!; // drop CredentialResult reference ASAP
+            // Construct the vault entry. The username from the child
+            // window takes precedence over the payload username — the
+            // child window is authoritative on what the user typed. If
+            // somehow the child window returned an empty username, fall
+            // back to the payload-supplied one so we still have a value.
+            var effectiveUsername = string.IsNullOrEmpty(result.Username)
+                ? username
+                : result.Username;
 
-            return new { saved = true, username = savedUsername };
+            var server = new BifrostQL.UI.Vault.VaultServer(
+                Name: vaultName!,
+                Provider: provider!,
+                Host: host,
+                Port: port,
+                Database: database,
+                Username: effectiveUsername,
+                Password: result.Password,
+                SslMode: sslMode,
+                Ssh: null,
+                Tags: new List<string>());
+
+            // Load + upsert + save, same as the CLI `vault add` path.
+            var vault = BifrostQL.UI.Vault.VaultStore.Load(activeVaultPath);
+            var servers = vault.Servers
+                .Where(s => !s.Name.Equals(vaultName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            servers.Add(server);
+            vault = vault with { Servers = servers };
+            BifrostQL.UI.Vault.VaultStore.Save(vault, activeVaultPath);
+
+            // Drop all references to the password ASAP. The VaultServer
+            // `server` local still has it, so null both the local and the
+            // result. .NET can't guarantee the heap string is collected
+            // immediately, but this severs the only paths from which any
+            // subsequent code could reach the plaintext.
+            server = null!;
+            result = null!;
+
+            return new { saved = true, name = vaultName! };
         });
 
         window.WaitForClose();
@@ -878,7 +960,7 @@ static IResult WriteSseStream(IAsyncEnumerable<string> events)
 
 // Record types for API requests
 record ConnectionTestRequest(string ConnectionString, string? Provider = null);
-record ConnectionSetRequest(string ConnectionString, string? Provider = null);
+// ConnectionSetRequest removed with /api/connection/set — see task XGSUbdBiIzla.
 record ListDatabasesRequest(string ConnectionString, string? Provider = null, bool PeerAuth = false, string? PsqlUser = null);
 record SshConnectRequest(string SshHost, int SshPort, string SshUsername,
     string? IdentityFile, string RemoteHost, int RemotePort);

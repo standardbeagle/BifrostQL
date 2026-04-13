@@ -215,31 +215,16 @@ public class BifrostUIApiTests
             $"Endpoint should accept request (fallback to default). Got: {response.StatusCode}");
     }
 
-    [Fact]
-    public async Task SetConnectionEndpoint_RejectsEmptyConnectionString()
-    {
-        if (!await IsServerRunning())
-        {
-            _output.WriteLine("Server is not running. Test skipped.");
-            return;
-        }
-
-        using var client = new HttpClient();
-
-        var payload = new
-        {
-            connectionString = ""
-        };
-
-        var json = JsonSerializer.Serialize(payload);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-        var response = await client.PostAsync($"{BaseUrl}/api/connection/set", content);
-
-        Assert.Equal(System.Net.HttpStatusCode.BadRequest, response.StatusCode);
-
-        _output.WriteLine("Set connection endpoint correctly rejects empty connection string.");
-    }
+    // SetConnectionEndpoint_RejectsEmptyConnectionString was removed in
+    // task XGSUbdBiIzla along with POST /api/connection/set — that
+    // endpoint used to accept a raw connection string (password and all)
+    // over plain HTTP. The replacement flows are:
+    //   - POST /api/vault/connect to activate a saved vault entry
+    //   - the Photino native-bridge "request-credential" handler, which
+    //     opens an isolated child window, collects the password there,
+    //     and writes the encrypted vault entry in-process
+    // Both replacement paths keep passwords off the HTTP boundary, so
+    // there is no /api/connection/set to test any more.
 
     [Fact]
     public async Task GraphQL_EndpointIsAccessible()

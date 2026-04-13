@@ -25,6 +25,11 @@ import {
   type QueryTransport,
   type TransportMode,
 } from './lib/transport';
+import {
+  requestCredential,
+  CredentialCancelledError,
+  type ConnectionInfo as BridgeConnectionInfo,
+} from './lib/credential-prompt';
 import './connection/connection.css';
 import './app.css';
 
@@ -33,6 +38,66 @@ const API_TEST_CONNECTION = '/api/connection/test';
 const API_QUICKSTART = '/api/database/create-quickstart';
 
 type AppView = 'welcome' | 'quickstart' | 'provider-select' | 'connect' | 'editor';
+
+/**
+ * Extract non-sensitive structured metadata from an ADO.NET-style
+ * connection string so it can be passed to the Photino credential
+ * prompt. Password/Pwd is deliberately ignored — the user re-enters
+ * the secret in the isolated child window, and it is never forwarded
+ * to this module or the bridge payload.
+ *
+ * Each provider uses slightly different key names (Server vs Host,
+ * User Id vs Username vs Uid, etc). We normalise them into the
+ * ConnectionInfo shape here rather than making the caller branch.
+ * Unknown keys are silently ignored — they'll fall through to defaults
+ * on the server side.
+ */
+function parseConnectionStringForBridge(
+  connectionString: string,
+  provider: Provider
+): { host?: string; port?: number; database?: string; username?: string; ssl?: boolean } {
+  const parts = connectionString
+    .split(';')
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .map((p) => {
+      const eq = p.indexOf('=');
+      if (eq < 0) return ['', ''] as const;
+      return [p.slice(0, eq).trim().toLowerCase(), p.slice(eq + 1).trim()] as const;
+    });
+  const lookup = new Map<string, string>(parts);
+  const get = (...keys: string[]): string | undefined => {
+    for (const k of keys) {
+      const v = lookup.get(k);
+      if (v !== undefined && v.length > 0) return v;
+    }
+    return undefined;
+  };
+
+  let host = get('server', 'host', 'data source');
+  let port: number | undefined;
+  if (provider === 'sqlserver' && host && host.includes(',')) {
+    // SQL Server encodes "host,port" in the Server field.
+    const comma = host.indexOf(',');
+    const parsedPort = Number.parseInt(host.slice(comma + 1), 10);
+    if (Number.isFinite(parsedPort)) port = parsedPort;
+    host = host.slice(0, comma);
+  }
+  if (port === undefined) {
+    const portStr = get('port');
+    if (portStr) {
+      const n = Number.parseInt(portStr, 10);
+      if (Number.isFinite(n)) port = n;
+    }
+  }
+
+  const database = get('database', 'initial catalog');
+  const username = get('user id', 'username', 'uid', 'user');
+  const sslModeRaw = get('sslmode', 'ssl mode');
+  const ssl = sslModeRaw ? /require|verify|true|prefer/i.test(sslModeRaw) : undefined;
+
+  return { host, port, database, username, ssl };
+}
 
 export default function App() {
   const restored = loadSession();
@@ -52,29 +117,27 @@ export default function App() {
     fetchVaultServers().then(setVaultServers);
   }, []);
 
-  // Restore backend connection if we have a saved session (survives page reloads)
+  // Restore backend connection if we have a saved session (survives page reloads).
+  //
+  // Only vault-backed sessions can be restored automatically: the raw-
+  // connection-string restore path used to POST the (potentially password-
+  // bearing) string to /api/connection/set, but that endpoint was deleted
+  // with task XGSUbdBiIzla so no password ever crosses HTTP. Non-vault
+  // sessions still render their editor view from localStorage, but the
+  // server-side schema cache will rebind on the next explicit connect via
+  // the credential prompt flow. Any initial command-line connection string
+  // (bifrostui "<connection>") is bound at startup by Program.cs, so the
+  // common dev-launch case still works without this effect.
   useEffect(() => {
     if (!restored) return;
-    if (restored.vaultServerName) {
-      fetch('/api/vault/connect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: restored.vaultServerName }),
-      }).catch(() => {
-        // Backend may not be ready yet — health check will handle recovery
-      });
-    } else {
-      fetch('/api/connection/set', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          connectionString: restored.connectionString,
-          provider: restored.provider,
-        }),
-      }).catch(() => {
-        // Backend may not be ready yet — health check will handle recovery
-      });
-    }
+    if (!restored.vaultServerName) return;
+    fetch('/api/vault/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: restored.vaultServerName }),
+    }).catch(() => {
+      // Backend may not be ready yet — health check will handle recovery
+    });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // GraphQL transport selection (HTTP/JSON vs WebSocket binary).
@@ -202,45 +265,69 @@ export default function App() {
         throw new Error(result.error || 'Connection failed');
       }
 
-      // Update the backend connection
-      const updateResponse = await fetch('/api/connection/set', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connectionString, provider: resolvedProvider }),
-      });
+      // Route activation through the native bridge credential prompt
+      // and the vault flow. The legacy /api/connection/set endpoint
+      // (which accepted the raw connection string including password
+      // over HTTP) has been deleted as part of task XGSUbdBiIzla.
+      //
+      // We parse the connection string locally for the non-secret
+      // metadata (host/port/database/username) and pass those to the
+      // bridge as a ConnectionInfo — the password is deliberately
+      // dropped on the floor, and the user re-enters it in the
+      // isolated Photino child window. That window persists the full
+      // VaultServer entry server-side, and we then activate it via
+      // /api/vault/connect. No password ever touches HTTP traffic
+      // and the main webview heap holds it only for the brief window
+      // between ConnectionForm submit and this callback running.
+      const parsed = parseConnectionStringForBridge(connectionString, resolvedProvider);
+      const bridgeInfo: BridgeConnectionInfo = {
+        vaultName: connectionName,
+        provider: resolvedProvider,
+        ...parsed,
+      };
+      const promptResult = await requestCredential(bridgeInfo);
 
-      if (!updateResponse.ok) {
-        const updateResult = await updateResponse.json().catch(() => ({}));
-        throw new Error(updateResult.error || 'Failed to update connection');
+      // Refetch vault servers so the UI's server list reflects the
+      // newly-persisted entry, then activate via the vault connect path.
+      setVaultServers(await fetchVaultServers());
+
+      const connectResult = await connectVaultServer(promptResult.name);
+      if (!connectResult.success) {
+        throw new Error(connectResult.error || 'Failed to activate vault entry');
       }
 
       const info: ConnectionInfo = {
         id: Date.now().toString(),
         name: connectionName,
-        connectionString,
+        connectionString: '', // never persist the raw string on bridge flow
         connectedAt: new Date().toISOString(),
-        server: connectionName,
-        database: connectionName,
-        provider: resolvedProvider,
+        server: connectResult.server ?? connectionName,
+        database: connectResult.database ?? connectionName,
+        provider: (connectResult.provider as Provider) ?? resolvedProvider,
+        vaultServerName: promptResult.name,
       };
 
       setConnectionInfo(info);
       saveSession(info);
-      const updated = [...recentConnections.filter((c) => c.connectionString !== connectionString), info];
-      setRecentConnections(updated.slice(0, 5));
-      saveRecentConnections(updated.slice(0, 5));
 
       setEditorKey((k) => k + 1);
       setCurrentView('editor');
       setConnectionState('connected');
     } catch (err) {
+      if (err instanceof CredentialCancelledError) {
+        // User dismissed the credential prompt — return to idle without
+        // surfacing an error. The inline form state is still intact so
+        // they can retry or tweak the metadata.
+        setConnectionState('idle');
+        return;
+      }
       setConnectionState('error');
       const msg = err instanceof Error ? err.message : 'Connection failed';
       setErrorMessage(msg.includes('Failed to fetch')
         ? 'Cannot reach the backend server. It may have crashed or failed to start.'
         : msg);
     }
-  }, [recentConnections, selectedProvider]);
+  }, [selectedProvider]);
 
   const handleSelectRecentConnection = useCallback((connection: ConnectionInfo) => {
     const provider = connection.provider ?? 'sqlserver';
@@ -337,12 +424,13 @@ export default function App() {
         }
 
         if (connectionString) {
-          await fetch('/api/connection/set', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ connectionString, provider: 'sqlite' }),
-          });
-
+          // No follow-up POST needed — /api/database/create-quickstart
+          // now self-binds the freshly created SQLite database on the
+          // server side before emitting the Complete! event, so by the
+          // time we get here BifrostQL is already pointed at the new
+          // file. SQLite connection strings carry no credentials so
+          // this side-band bind does not re-introduce the password-
+          // over-HTTP issue that prompted deleting /api/connection/set.
           const info: ConnectionInfo = {
             id: Date.now().toString(),
             name: `QuickStart - ${schema}`,
@@ -368,12 +456,10 @@ export default function App() {
       } else {
         const result = await response.json();
 
-        await fetch('/api/connection/set', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connectionString: result.connectionString, provider: 'sqlite' }),
-        });
-
+        // Non-SSE path — the server has already self-bound to the new
+        // SQLite database before returning. See the SSE branch above
+        // and the self-bind block in /api/database/create-quickstart
+        // (Program.cs) for the rationale.
         const info: ConnectionInfo = {
           id: Date.now().toString(),
           name: `QuickStart - ${schema}`,

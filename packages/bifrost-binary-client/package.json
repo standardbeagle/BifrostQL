@@ -17,13 +17,18 @@
   ],
   "scripts": {
     "build": "tsc",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.0.0"
   },
   "devDependencies": {
-    "typescript": "^5.5.0"
+    "@vitest/coverage-v8": "^2.1.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.1.0"
   },
   "license": "ISC",
   "repository": {

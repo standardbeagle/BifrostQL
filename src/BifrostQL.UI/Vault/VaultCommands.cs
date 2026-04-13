@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.UI.Vault;
 
@@ -38,7 +39,8 @@ public static class VaultCommands
         var portOpt = new Option<int?>("--port") { Description = "Database port (default: provider-specific)" };
         var databaseOpt = new Option<string?>("--database") { Description = "Database name" };
         var usernameOpt = new Option<string?>("--username") { Description = "Database username" };
-        var passwordOpt = new Option<string?>("--password") { Description = "Database password (omit to prompt interactively)" };
+        var passwordOpt = new Option<string?>("--password") { Description = "Database password (visible in argv; prefer --password-stdin or the interactive prompt)" };
+        var passwordStdinOpt = new Option<bool>("--password-stdin") { Description = "Read password from stdin (one line). Mutually exclusive with --password. Requires stdin to be redirected (e.g. `echo pw | bifrostui vault add ...`)." };
         var sslModeOpt = new Option<string?>("--ssl-mode") { Description = "SSL mode" };
         var sshHostOpt = new Option<string?>("--ssh-host") { Description = "SSH tunnel host" };
         var sshPortOpt = new Option<int>("--ssh-port") { Description = "SSH tunnel port", DefaultValueFactory = _ => 22 };
@@ -46,9 +48,9 @@ public static class VaultCommands
         var sshIdentityOpt = new Option<string?>("--ssh-identity") { Description = "SSH identity file path" };
         var tagOpt = new Option<string[]>("--tag") { Description = "Tags for this server (can be repeated; the 'wordpress' tag enables WP-CLI credential auto-discovery for SSH-tunneled entries with no username)", AllowMultipleArgumentsPerToken = true };
 
-        var cmd = new Command("add", "Add a server to the vault")
+        var cmd = new Command("add", "Add a server to the vault. Password can be supplied via --password (insecure; visible in argv), --password-stdin (piped), or the interactive prompt when stdin is a tty.")
         {
-            nameArg, providerOpt, hostOpt, portOpt, databaseOpt, usernameOpt, passwordOpt,
+            nameArg, providerOpt, hostOpt, portOpt, databaseOpt, usernameOpt, passwordOpt, passwordStdinOpt,
             sslModeOpt, sshHostOpt, sshPortOpt, sshUserOpt, sshIdentityOpt, tagOpt
         };
 
@@ -62,6 +64,8 @@ public static class VaultCommands
             var database = parseResult.GetValue(databaseOpt);
             var username = parseResult.GetValue(usernameOpt);
             var password = parseResult.GetValue(passwordOpt);
+            var hasPasswordFlag = parseResult.GetResult(passwordOpt) is { Implicit: false };
+            var passwordStdin = parseResult.GetValue(passwordStdinOpt);
             var sslMode = parseResult.GetValue(sslModeOpt);
             var sshHost = parseResult.GetValue(sshHostOpt);
             var sshPort = parseResult.GetValue(sshPortOpt);
@@ -69,10 +73,35 @@ public static class VaultCommands
             var sshIdentity = parseResult.GetValue(sshIdentityOpt);
             var tags = parseResult.GetValue(tagOpt) ?? [];
 
-            // Interactive password prompt if not provided
-            if (password is null && username is not null)
+            // Resolve password source: --password, --password-stdin, interactive prompt, or legacy stdin fallback.
+            // Only run the resolver when a username is present — with no username there's no password to resolve.
+            if (username is not null || hasPasswordFlag || passwordStdin)
             {
-                password = ReadPassword("Password: ");
+                var resolution = PasswordSourceResolver.Resolve(
+                    hasPasswordFlag: hasPasswordFlag,
+                    passwordValue: password,
+                    passwordStdin: passwordStdin,
+                    stdinIsRedirected: Console.IsInputRedirected,
+                    readStdinLine: () => Console.In.ReadLine());
+
+                switch (resolution.Kind)
+                {
+                    case PasswordSourceKind.Error:
+                        Console.Error.WriteLine(resolution.ErrorMessage);
+                        return Task.FromResult(1);
+
+                    case PasswordSourceKind.Interactive:
+                        password = ReadPassword("Password: ");
+                        break;
+
+                    case PasswordSourceKind.Value:
+                        password = resolution.Value;
+                        if (resolution.LegacyStdinFallback)
+                        {
+                            Console.Error.WriteLine("Warning: reading password from redirected stdin without --password-stdin is deprecated; pass --password-stdin for clarity.");
+                        }
+                        break;
+                }
             }
 
             VaultSshConfig? ssh = null;
@@ -91,7 +120,7 @@ public static class VaultCommands
             VaultStore.Save(vault, vaultPath);
 
             Console.WriteLine($"Added '{name}' ({provider} @ {host}:{port})");
-            return Task.CompletedTask;
+            return Task.FromResult(0);
         });
 
         return cmd;

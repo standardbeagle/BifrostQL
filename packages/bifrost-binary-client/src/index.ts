@@ -6,6 +6,13 @@ import {
   isChunkedFrame,
   type ChunkInfo,
 } from "./chunking.js";
+import {
+  createChunkStream,
+  ingestStreamingChunk,
+  StreamingQueue,
+  type StreamChunk,
+  type StreamingClientInternals,
+} from "./streaming.js";
 
 export {
   ChunkReassembler,
@@ -17,6 +24,12 @@ export {
   verifyChecksum,
   type ChunkInfo,
 } from "./chunking.js";
+
+export {
+  StreamingQueue,
+  MAX_QUEUE_SIZE,
+  type StreamChunk,
+} from "./streaming.js";
 
 /**
  * Minimal WebSocket interface consumed by BifrostBinaryClient.
@@ -273,11 +286,12 @@ export interface BifrostQueryResult {
  * client.close();
  * ```
  */
-export class BifrostBinaryClient {
+export class BifrostBinaryClient implements StreamingClientInternals {
   private ws: IWebSocket | null = null;
   private nextRequestId = 1;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly reassemblers = new Map<number, ChunkReassembler>();
+  private readonly streamingQueues = new Map<number, StreamingQueue>();
   private readonly wsConstructor: IWebSocketConstructor;
   private readonly url: string;
   private readonly requestTimeoutMs: number;
@@ -374,6 +388,72 @@ export class BifrostBinaryClient {
     return this.send(BifrostMessageType.Mutation, mutationText, variables);
   }
 
+  /**
+   * Sends a GraphQL query and returns an async iterator of `StreamChunk`s.
+   * Each chunk is yielded as soon as it arrives and verifies CRC32, in
+   * sequence order even if wire delivery was shuffled. Use this when you want
+   * to process a chunked response incrementally instead of waiting for full
+   * reassembly via `query()`.
+   *
+   * @example
+   * ```ts
+   * for await (const chunk of client.stream("{ download { bytes } }")) {
+   *   write(chunk.bytes);
+   *   if (chunk.isLast) console.log("done");
+   * }
+   * ```
+   */
+  stream(
+    queryText: string,
+    variables?: Record<string, unknown>
+  ): AsyncIterableIterator<StreamChunk> {
+    return createChunkStream(this, BifrostMessageType.Query, queryText, variables);
+  }
+
+  /**
+   * Streaming counterpart to `mutate()`. See `stream()` for usage.
+   */
+  streamMutation(
+    mutationText: string,
+    variables?: Record<string, unknown>
+  ): AsyncIterableIterator<StreamChunk> {
+    return createChunkStream(
+      this,
+      BifrostMessageType.Mutation,
+      mutationText,
+      variables
+    );
+  }
+
+  // --- StreamingClientInternals (used by createChunkStream / StreamingQueue) ---
+
+  /** @internal Allocates the next request id, wrapping at uint32 max. */
+  allocateRequestId(): number {
+    const id = this.nextRequestId++;
+    if (this.nextRequestId > 0xffffffff) {
+      this.nextRequestId = 1;
+    }
+    return id;
+  }
+
+  /** @internal Registers a streaming queue so chunks for `requestId` route to it. */
+  registerStreamingQueue(requestId: number, queue: StreamingQueue): void {
+    this.streamingQueues.set(requestId, queue);
+  }
+
+  /** @internal Removes a streaming queue (called on stream end / consumer break). */
+  removeStreamingQueue(requestId: number): void {
+    this.streamingQueues.delete(requestId);
+  }
+
+  /** @internal Sends a pre-encoded frame on the underlying socket. */
+  sendRawFrame(bytes: Uint8Array): void {
+    if (!this.ws || this.ws.readyState !== this.wsConstructor.OPEN) {
+      throw new Error("Not connected");
+    }
+    this.ws.send(bytes);
+  }
+
   /** Whether the WebSocket connection is currently open. */
   get connected(): boolean {
     return this.ws?.readyState === this.wsConstructor.OPEN;
@@ -386,10 +466,12 @@ export class BifrostBinaryClient {
 
   /**
    * Closes the WebSocket connection gracefully. Drops any in-progress chunk
-   * reassemblers so their buffers can be garbage collected.
+   * reassemblers so their buffers can be garbage collected and terminates
+   * any active streaming iterators with a connection-closed error.
    */
   close(): void {
     this.reassemblers.clear();
+    this.errorAllStreamingQueues(new Error("Connection closed: client closed"));
     if (this.ws) {
       this.ws.close(1000, "Client closed");
       this.ws = null;
@@ -407,10 +489,7 @@ export class BifrostBinaryClient {
         return;
       }
 
-      const requestId = this.nextRequestId++;
-      if (this.nextRequestId > 0xffffffff) {
-        this.nextRequestId = 1;
-      }
+      const requestId = this.allocateRequestId();
 
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
@@ -448,6 +527,14 @@ export class BifrostBinaryClient {
       return;
     }
 
+    // Non-chunked Result/Error frames addressed to a streaming request map
+    // to a single-chunk delivery (or an iterator error for type=Error).
+    const streamingQueue = this.streamingQueues.get(response.requestId);
+    if (streamingQueue) {
+      this.deliverStreamingNonChunked(response, streamingQueue);
+      return;
+    }
+
     this.deliverComplete(response);
   }
 
@@ -461,6 +548,15 @@ export class BifrostBinaryClient {
    * diagnostic since chunks for an unknown id usually indicate a protocol bug).
    */
   private handleChunkedFrame(chunk: BifrostMessage): void {
+    // Streaming consumers receive each verified chunk directly without going
+    // through the reassembly buffer. The queue removes itself from
+    // `streamingQueues` via its cleanup callback when it completes or errors.
+    const streamingQueue = this.streamingQueues.get(chunk.requestId);
+    if (streamingQueue) {
+      ingestStreamingChunk(streamingQueue, chunk);
+      return;
+    }
+
     if (!this.pending.has(chunk.requestId)) {
       this.onError?.(
         new Error(
@@ -555,6 +651,46 @@ export class BifrostBinaryClient {
     pending.resolve({ data, errors: response.errors });
   }
 
+  /**
+   * Delivers a non-chunked Result/Error frame to a streaming consumer. Result
+   * frames yield exactly one StreamChunk (sequence 0 of 1) and complete the
+   * iterator; Error frames terminate the iterator with the joined error text.
+   */
+  private deliverStreamingNonChunked(
+    response: BifrostMessage,
+    queue: StreamingQueue
+  ): void {
+    if (response.type === BifrostMessageType.Error || response.errors.length > 0) {
+      queue.error(
+        new Error(
+          response.errors.length > 0
+            ? response.errors.join("; ")
+            : `Server error for request ${response.requestId}`
+        )
+      );
+      return;
+    }
+
+    queue.push({
+      requestId: response.requestId,
+      sequence: 0,
+      totalChunks: 1,
+      bytes: response.payload,
+      isLast: true,
+    });
+    queue.complete();
+  }
+
+  private errorAllStreamingQueues(error: Error): void {
+    // Snapshot values first because queue.error() runs the cleanup callback
+    // which mutates `streamingQueues` via removeStreamingQueue.
+    const queues = Array.from(this.streamingQueues.values());
+    this.streamingQueues.clear();
+    for (const queue of queues) {
+      queue.error(error);
+    }
+  }
+
   private rejectAllPending(error: Error): void {
     for (const [, pending] of this.pending) {
       clearTimeout(pending.timer);
@@ -562,5 +698,6 @@ export class BifrostBinaryClient {
     }
     this.pending.clear();
     this.reassemblers.clear();
+    this.errorAllStreamingQueues(error);
   }
 }

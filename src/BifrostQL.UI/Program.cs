@@ -692,12 +692,16 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     }
     else
     {
-        // Create the Photino window
+        // Create the Photino window. DevTools and the WebView context menu are
+        // gated to Development so Release builds never expose F12 / right-click-Inspect
+        // on the embedded React SPA (protects JS heap + source maps).
+        var isDev = app.Environment.IsDevelopment();
         var window = new PhotinoWindow()
             .SetTitle("BifrostQL - Database Explorer")
             .SetSize(1400, 900)
             .Center()
-            .SetDevToolsEnabled(true)
+            .SetDevToolsEnabled(isDev)
+            .SetContextMenuEnabled(isDev)
             .Load(localUrl);
 
         window.WaitForClose();

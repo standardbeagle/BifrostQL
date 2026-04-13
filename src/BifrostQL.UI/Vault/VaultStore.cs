@@ -30,21 +30,17 @@ public record VaultSshConfig(
     string Host,
     int Port,
     string Username,
-    string? IdentityFile,
-    VaultWordPressDiscovery? WordPressDiscovery = null)
+    string? IdentityFile)
 {
-    public VaultSshConfig() : this("", 22, "", null, null) { }
+    public VaultSshConfig() : this("", 22, "", null) { }
 }
 
 /// <summary>
-/// Opt-in WordPress credential auto-discovery via WP-CLI over SSH.
-/// When set, vault connect runs `wp config get` on the SSH host to extract
-/// DB_USER/DB_PASSWORD/DB_NAME instead of using the credentials in the vault
-/// entry. Only triggered if the vault entry's Username is empty.
+/// Default WordPress installation paths searched by `wp config get` when a
+/// vault entry has the "wordpress" tag, SSH config, and an empty username.
 /// </summary>
-public record VaultWordPressDiscovery(List<string>? Roots = null)
+public static class WordPressDiscovery
 {
-    /// <summary>Default WP installation paths to search when Roots is null.</summary>
     public static readonly IReadOnlyList<string> DefaultRoots =
         ["~/public_html", "/var/www/html", "~/www", "~/htdocs", "."];
 }

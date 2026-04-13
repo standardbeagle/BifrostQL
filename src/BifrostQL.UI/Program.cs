@@ -538,21 +538,21 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
                     server.Ssh.IdentityFile, remoteHost, remotePort);
                 var localPort = await sshTunnel.StartAsync(sshConfig, ct);
 
-                // WordPress credential auto-discovery is opt-in via Ssh.WordPressDiscovery.
-                // When the vault entry sets it, we run `wp config get` over the SSH tunnel
-                // to populate DB_USER/DB_PASSWORD/DB_NAME. Without the opt-in we trust the
-                // credentials in the vault entry and let the DB driver surface any auth failures.
+                // WordPress credential auto-discovery runs when the vault entry is
+                // tagged "wordpress" AND has no explicit username. We `wp config get`
+                // over the SSH tunnel to populate DB_USER/DB_PASSWORD/DB_NAME. Other
+                // SSH-tunneled entries (no wordpress tag, or with explicit credentials)
+                // pass straight through and let the DB driver surface auth failures.
                 string? dbUser = null, dbPassword = null, dbName = null;
-                if (server.Ssh.WordPressDiscovery is { } wpDiscovery)
+                var wantsWpDiscovery =
+                    server.Tags.Any(t => string.Equals(t, "wordpress", StringComparison.OrdinalIgnoreCase))
+                    && string.IsNullOrWhiteSpace(server.Username);
+                if (wantsWpDiscovery)
                 {
-                    var roots = wpDiscovery.Roots is { Count: > 0 } customRoots
-                        ? customRoots
-                        : (IReadOnlyList<string>)VaultWordPressDiscovery.DefaultRoots;
-
                     BifrostQL.UI.WpCredentials? discovered = null;
                     Exception? lastError = null;
 
-                    foreach (var wpRoot in roots)
+                    foreach (var wpRoot in BifrostQL.UI.Vault.WordPressDiscovery.DefaultRoots)
                     {
                         try
                         {
@@ -572,14 +572,14 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
 
                     if (discovered is null)
                     {
-                        var rootList = string.Join(", ", roots);
+                        var rootList = string.Join(", ", BifrostQL.UI.Vault.WordPressDiscovery.DefaultRoots);
                         var detail = lastError?.Message ?? "no installations found";
                         return Results.BadRequest(new
                         {
                             success = false,
                             error = $"WordPress auto-discovery failed (searched {rootList}): {detail}. " +
-                                    "Set explicit Username/Password on the vault entry, or remove the " +
-                                    "Ssh.WordPressDiscovery field to disable auto-discovery."
+                                    "Set explicit Username/Password on the vault entry, or drop the " +
+                                    "'wordpress' tag to skip auto-discovery."
                         });
                     }
 

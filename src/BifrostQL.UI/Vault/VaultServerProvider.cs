@@ -201,8 +201,29 @@ public static class VaultServerProvider
         {
             parts.Add("Integrated Security=True");
         }
+        parts.Add($"Encrypt={MapSqlServerEncrypt(s.SslMode)}");
         parts.Add("TrustServerCertificate=True");
         return string.Join(';', parts);
+    }
+
+    /// <summary>
+    /// Map the vault entry's SslMode to a Microsoft.Data.SqlClient `Encrypt` value.
+    /// SqlClient 6.x defaults to `Mandatory`, which causes connect failures from
+    /// OpenSSL-3 hosts (e.g. WSL2) to older Windows SQL Servers because OpenSSL 3
+    /// rejects the SQL Server's default TLS cipher suite. Setting `--ssl-mode false`
+    /// (or `disable`/`optional`/`off`) on the vault entry produces `Encrypt=False`
+    /// to bypass the TLS handshake.
+    /// </summary>
+    private static string MapSqlServerEncrypt(string? sslMode)
+    {
+        if (string.IsNullOrWhiteSpace(sslMode)) return "Mandatory";
+        return sslMode.Trim().ToLowerInvariant() switch
+        {
+            "false" or "disable" or "disabled" or "off" or "none" or "optional" => "False",
+            "true" or "require" or "required" or "mandatory" or "on" => "Mandatory",
+            "strict" => "Strict",
+            _ => sslMode, // pass through unknown values verbatim
+        };
     }
 
     private static string BuildPostgresConnectionString(VaultServer s)

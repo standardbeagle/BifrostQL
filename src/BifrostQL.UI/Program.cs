@@ -704,6 +704,28 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
             .SetContextMenuEnabled(isDev)
             .Load(localUrl);
 
+        // Native bridge: in-process request/response channel between the
+        // React SPA and this C# host. Deliberately non-HTTP — messages ride
+        // the Photino webview IPC so credentials and host-only features
+        // never traverse localhost sockets. The ping handler is a smoke
+        // test for the wire format; real handlers land in subsequent tasks.
+        var bridgeLogger = app.Services
+            .GetService<ILoggerFactory>()?
+            .CreateLogger<BifrostQL.UI.NativeBridge.NativeBridgeHost>();
+        using var nativeBridge =
+            new BifrostQL.UI.NativeBridge.NativeBridgeHost(window, bridgeLogger);
+        nativeBridge.Register("ping", (payload, _) =>
+        {
+            // Echo the raw JSON back so the caller can confirm its payload
+            // round-tripped unchanged through System.Text.Json. Using
+            // GetRawText keeps us agnostic to payload shape — primitives,
+            // objects, null all fall out the same way.
+            var echo = payload.ValueKind == JsonValueKind.Undefined
+                ? "undefined"
+                : payload.GetRawText();
+            return Task.FromResult<object?>(new { pong = true, echo });
+        });
+
         window.WaitForClose();
 
         // Shutdown the server and SSH tunnel when window closes

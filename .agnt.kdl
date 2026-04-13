@@ -20,7 +20,9 @@ scripts {
         autostart true
     }
     dev-backend {
-        run "dotnet watch run --no-hot-reload --project src/BifrostQL.UI/BifrostQL.UI.csproj -- --headless --port 5000"
+        // DOTNET_USE_POLLING_FILE_WATCHER=true is required on WSL2; inotify
+        // silently misses file changes, leaving `dotnet watch` stuck on stale code.
+        run "DOTNET_USE_POLLING_FILE_WATCHER=true dotnet watch run --no-hot-reload --project src/BifrostQL.UI/BifrostQL.UI.csproj -- --headless --port 5000"
         autostart true
         url-matchers "Now listening on {url}"
     }

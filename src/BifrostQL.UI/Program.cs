@@ -726,6 +726,51 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
             return Task.FromResult<object?>(new { pong = true, echo });
         });
 
+        // Credential prompt: the renderer asks for vault credentials for
+        // a named entry, the host opens an isolated Photino child window
+        // (separate WebView2 instance, own NativeBridgeHost, CSP-locked
+        // embedded HTML — see CredentialPromptWindow / CredentialPromptHtml)
+        // that collects username/password and hands them back here.
+        //
+        // SECURITY: the password is deliberately NOT returned to the main
+        // SPA. This task only establishes the prompt flow — the sibling
+        // task wires the result into the vault write path. Until then the
+        // handler returns { saved, username } so the renderer can reflect
+        // UI state without ever seeing the plaintext. The CredentialResult
+        // variable is nulled out immediately after the shape-only reply is
+        // built so no reference lingers on the heap.
+        var bridgeWindow = window;
+        var bridgeLoggerForHandler = bridgeLogger;
+        nativeBridge.Register("request-credential", async (payload, innerCt) =>
+        {
+            var vaultName = payload.ValueKind == JsonValueKind.Object &&
+                            payload.TryGetProperty("vaultName", out var v) &&
+                            v.ValueKind == JsonValueKind.String
+                ? v.GetString()
+                : null;
+
+            if (string.IsNullOrWhiteSpace(vaultName))
+                throw new ArgumentException("vaultName required");
+
+            var result = await BifrostQL.UI.NativeBridge.CredentialPromptWindow
+                .PromptAsync(bridgeWindow, vaultName!, bridgeLoggerForHandler, innerCt)
+                .ConfigureAwait(false);
+
+            if (!result.IsSaved)
+            {
+                return new { saved = false, username = (string?)null };
+            }
+
+            // Capture the username BEFORE nulling the local, return only
+            // { saved, username } to the renderer. The vault-write path
+            // is completed in task XGSUbdBiIzla — until then we drop the
+            // password on the floor rather than cache it anywhere.
+            var savedUsername = result.Username;
+            result = null!; // drop CredentialResult reference ASAP
+
+            return new { saved = true, username = savedUsername };
+        });
+
         window.WaitForClose();
 
         // Shutdown the server and SSH tunnel when window closes

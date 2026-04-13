@@ -29,7 +29,7 @@ namespace BifrostQL.Core.Forms
             var sb = new StringBuilder();
             var columnName = column.ColumnName;
             var isRequired = !column.IsNullable && !column.IsIdentity
-                && column.GetMetadataValue("populate") == null;
+                && column.GetMetadataValue(MetadataKeys.AutoPopulate.Marker) == null;
 
             sb.Append("<fieldset>");
             sb.Append($"<legend>{Encode(label)}</legend>");
@@ -65,7 +65,7 @@ namespace BifrostQL.Core.Forms
             var sb = new StringBuilder();
             var columnId = column.ColumnName.ToLowerInvariant().Replace(' ', '-');
             var isRequired = !column.IsNullable && !column.IsIdentity
-                && column.GetMetadataValue("populate") == null;
+                && column.GetMetadataValue(MetadataKeys.AutoPopulate.Marker) == null;
 
             sb.Append($"<select id=\"{Encode(columnId)}\" name=\"{Encode(column.ColumnName)}\"");
             if (isRequired)

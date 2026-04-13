@@ -20,7 +20,7 @@ namespace BifrostQL.Core.Model.Relationships
 
             foreach (var sourceTable in model.Tables)
             {
-                var m2mValue = sourceTable.GetMetadataValue("many-to-many");
+                var m2mValue = sourceTable.GetMetadataValue(MetadataKeys.Relationships.ManyToMany);
                 if (string.IsNullOrWhiteSpace(m2mValue))
                     continue;
 

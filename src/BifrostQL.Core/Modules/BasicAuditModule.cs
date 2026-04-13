@@ -50,7 +50,7 @@ namespace BifrostQL.Core.Modules
         public string[] Insert(Dictionary<string, object?> data, IDbTable table, IDictionary<string, object?> userContext, IDbModel model)
         {
             var dateTime = DateTime.UtcNow;
-            var auditKey = model.GetMetadataValue("user-audit-key");
+            var auditKey = model.GetMetadataValue(MetadataKeys.Audit.UserKey);
             var hasAuditKey = !string.IsNullOrWhiteSpace(auditKey);
             var auditValue = ResolveAuditUser(auditKey, userContext, hasAuditKey);
             foreach (var column in table.Columns)
@@ -66,7 +66,7 @@ namespace BifrostQL.Core.Modules
         public string[] Update(Dictionary<string, object?> data, IDbTable table, IDictionary<string, object?> userContext, IDbModel model)
         {
             var dateTime = DateTime.UtcNow;
-            var auditKey = model.GetMetadataValue("user-audit-key");
+            var auditKey = model.GetMetadataValue(MetadataKeys.Audit.UserKey);
             var hasAuditKey = !string.IsNullOrWhiteSpace(auditKey);
             var auditValue = ResolveAuditUser(auditKey, userContext, hasAuditKey);
             foreach (var column in table.Columns)
@@ -80,7 +80,7 @@ namespace BifrostQL.Core.Modules
         public string[] Delete(Dictionary<string, object?> data, IDbTable table, IDictionary<string, object?> userContext, IDbModel model)
         {
             var dateTime = DateTime.UtcNow;
-            var auditKey = model.GetMetadataValue("user-audit-key");
+            var auditKey = model.GetMetadataValue(MetadataKeys.Audit.UserKey);
             var hasAuditKey = !string.IsNullOrWhiteSpace(auditKey);
             var auditValue = ResolveAuditUser(auditKey, userContext, hasAuditKey);
             foreach (var column in table.Columns)

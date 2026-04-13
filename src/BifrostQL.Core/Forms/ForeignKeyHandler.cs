@@ -118,7 +118,7 @@ namespace BifrostQL.Core.Forms
 
             if (!column.IsNullable && !column.IsIdentity)
             {
-                if (column.GetMetadataValue("populate") == null)
+                if (column.GetMetadataValue(MetadataKeys.AutoPopulate.Marker) == null)
                 {
                     sb.Append(" required");
                     sb.Append(" aria-required=\"true\"");

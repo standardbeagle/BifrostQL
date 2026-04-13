@@ -32,7 +32,7 @@ namespace BifrostQL.Core.Resolvers
                     .Where(t => tableName == null || t.GraphQlName == tableName)
                     .Select(t =>
                     {
-                        var labelColumnName = t.GetMetadataValue("label");
+                        var labelColumnName = t.GetMetadataValue(MetadataKeys.Ui.Label);
                         var labelColumn = t.Columns.FirstOrDefault(c => Equal(c.DbName, labelColumnName));
                         if (labelColumn == null && t.KeyColumns.Any())
                         {
@@ -56,8 +56,8 @@ namespace BifrostQL.Core.Resolvers
                                 // Extract numeric precision/scale from DECIMAL(10,2) style dbType
                                 var (numericPrecision, numericScale) = ExtractNumericPrecision(c.DataType);
                                 // Get enum values from metadata if present
-                                var enumValues = c.GetMetadataValue("enum-values")?.Split(',').Select(v => v.Trim()).ToArray();
-                                var enumLabels = c.GetMetadataValue("enum-labels")?.Split(',').Select(v => v.Trim()).ToArray();
+                                var enumValues = c.GetMetadataValue(MetadataKeys.Enum.Values)?.Split(',').Select(v => v.Trim()).ToArray();
+                                var enumLabels = c.GetMetadataValue(MetadataKeys.Enum.Labels)?.Split(',').Select(v => v.Trim()).ToArray();
 
                                 return new
                                 {
@@ -87,10 +87,10 @@ namespace BifrostQL.Core.Resolvers
                                     min = numericPrecision,
                                     max = numericScale,
                                     step = (double?)null,
-                                    pattern = c.GetMetadataValue("pattern"),
-                                    patternMessage = c.GetMetadataValue("pattern-message") ?? c.GetMetadataValue("title"),
-                                    inputType = c.GetMetadataValue("input-type"),
-                                    defaultValue = c.GetMetadataValue("default"),
+                                    pattern = c.GetMetadataValue(MetadataKeys.Validation.Pattern),
+                                    patternMessage = c.GetMetadataValue(MetadataKeys.Validation.PatternMessage) ?? c.GetMetadataValue(MetadataKeys.DataType.Title),
+                                    inputType = c.GetMetadataValue(MetadataKeys.Validation.InputType),
+                                    defaultValue = c.GetMetadataValue(MetadataKeys.DataType.Default),
                                     enumValues,
                                     enumLabels,
                                     metadata = c.Metadata

@@ -29,16 +29,16 @@ namespace BifrostQL.Core.Forms
             var accept = metadata?.Accept;
             if (string.IsNullOrEmpty(accept))
             {
-                var fileConfig = metadata?.GetFileConfig() ?? FileColumnConfig.FromMetadata(column.GetMetadataValue("file"));
+                var fileConfig = metadata?.GetFileConfig() ?? FileColumnConfig.FromMetadata(column.GetMetadataValue(MetadataKeys.FileStorage.File));
                 accept = fileConfig?.GetAcceptAttribute() ?? DefaultAccept;
             }
 
             sb.Append($"<input type=\"file\" id=\"{Encode(columnId)}\" name=\"{Encode(column.ColumnName)}\"");
             sb.Append($" accept=\"{Encode(accept)}\"");
-            
+
             // Add data attributes for file storage configuration
-            var fileStorageConfig = metadata?.FileStorage ?? column.GetMetadataValue("file");
-            var storageConfig = column.GetMetadataValue("storage");
+            var fileStorageConfig = metadata?.FileStorage ?? column.GetMetadataValue(MetadataKeys.FileStorage.File);
+            var storageConfig = column.GetMetadataValue(MetadataKeys.Storage.Config);
             if (!string.IsNullOrWhiteSpace(fileStorageConfig))
             {
                 sb.Append($" data-file-storage=\"{Encode(fileStorageConfig)}\"");
@@ -62,11 +62,11 @@ namespace BifrostQL.Core.Forms
         public static bool IsFileColumn(ColumnDto column, ColumnMetadata? metadata = null)
         {
             // Check explicit file metadata
-            if (metadata?.FileStorage != null || column.GetMetadataValue("file") != null)
+            if (metadata?.FileStorage != null || column.GetMetadataValue(MetadataKeys.FileStorage.File) != null)
                 return true;
 
             // Check for storage metadata (implies file storage)
-            if (metadata?.StorageBucket != null || column.GetMetadataValue("storage") != null)
+            if (metadata?.StorageBucket != null || column.GetMetadataValue(MetadataKeys.Storage.Config) != null)
                 return true;
 
             // Check for binary data type
@@ -90,7 +90,7 @@ namespace BifrostQL.Core.Forms
                 return metadata.Accept;
 
             // Then check file config
-            var fileConfig = metadata?.GetFileConfig() ?? FileColumnConfig.FromMetadata(column.GetMetadataValue("file"));
+            var fileConfig = metadata?.GetFileConfig() ?? FileColumnConfig.FromMetadata(column.GetMetadataValue(MetadataKeys.FileStorage.File));
             var configAccept = fileConfig?.GetAcceptAttribute();
             if (!string.IsNullOrEmpty(configAccept))
                 return configAccept;

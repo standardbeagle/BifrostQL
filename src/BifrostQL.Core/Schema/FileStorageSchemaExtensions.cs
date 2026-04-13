@@ -109,20 +109,20 @@ input FileDownloadInput {
         {
             // File storage is enabled if any table has storage metadata
             // or if database-level storage config exists
-            var dbStorageConfig = model.GetMetadataValue("storage");
+            var dbStorageConfig = model.GetMetadataValue(Model.MetadataKeys.Storage.Config);
             if (!string.IsNullOrWhiteSpace(dbStorageConfig))
                 return true;
 
             // Check if any table or column has storage config
             foreach (var table in model.Tables)
             {
-                if (!string.IsNullOrWhiteSpace(table.GetMetadataValue("storage")))
+                if (!string.IsNullOrWhiteSpace(table.GetMetadataValue(Model.MetadataKeys.Storage.Config)))
                     return true;
 
                 foreach (var column in table.Columns)
                 {
-                    if (!string.IsNullOrWhiteSpace(column.GetMetadataValue("storage")) ||
-                        !string.IsNullOrWhiteSpace(column.GetMetadataValue("file")))
+                    if (!string.IsNullOrWhiteSpace(column.GetMetadataValue(Model.MetadataKeys.Storage.Config)) ||
+                        !string.IsNullOrWhiteSpace(column.GetMetadataValue(Model.MetadataKeys.FileStorage.File)))
                         return true;
                 }
             }

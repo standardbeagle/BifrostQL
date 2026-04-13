@@ -96,7 +96,7 @@ namespace BifrostQL.Core.Views
                 return "<span class=\"binary-value\">(binary data)</span>";
 
             // Email column (via metadata override)
-            var metadataType = column.GetMetadataValue("type");
+            var metadataType = column.GetMetadataValue(MetadataKeys.DataType.Type);
             if (string.Equals(metadataType, "email", StringComparison.OrdinalIgnoreCase))
             {
                 var email = value.ToString() ?? "";

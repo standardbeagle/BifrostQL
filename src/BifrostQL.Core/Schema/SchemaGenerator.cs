@@ -164,7 +164,7 @@ namespace BifrostQL.Core.Schema
 
         internal static bool IsRawSqlEnabled(IDbModel model)
         {
-            var value = model.GetMetadataValue("raw-sql");
+            var value = model.GetMetadataValue(Model.MetadataKeys.RawSql.Enabled);
             return string.Equals(value, "enabled", StringComparison.OrdinalIgnoreCase);
         }
 

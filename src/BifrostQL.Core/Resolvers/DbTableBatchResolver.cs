@@ -72,7 +72,7 @@ namespace BifrostQL.Core.Resolvers
 
         private static int GetMaxBatchSize(IDbTable table)
         {
-            var metaValue = table.GetMetadataValue("batch-max-size");
+            var metaValue = table.GetMetadataValue(MetadataKeys.Batch.MaxSize);
             if (metaValue != null && int.TryParse(metaValue, out var size) && size > 0)
                 return size;
             return DefaultMaxBatchSize;

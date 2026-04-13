@@ -24,7 +24,7 @@ namespace BifrostQL.Core.Storage
         public StorageBucketConfig? GetBucketConfig(IDbTable table, ColumnDto column, IDbModel model)
         {
             // Check column-level storage config
-            var columnConfig = column.GetMetadataValue("storage");
+            var columnConfig = column.GetMetadataValue(MetadataKeys.Storage.Config);
             if (!string.IsNullOrWhiteSpace(columnConfig))
             {
                 var config = StorageBucketConfig.FromMetadata(columnConfig);
@@ -33,7 +33,7 @@ namespace BifrostQL.Core.Storage
             }
 
             // Check table-level storage config
-            var tableConfig = table.GetMetadataValue("storage");
+            var tableConfig = table.GetMetadataValue(MetadataKeys.Storage.Config);
             if (!string.IsNullOrWhiteSpace(tableConfig))
             {
                 var config = StorageBucketConfig.FromMetadata(tableConfig);
@@ -51,7 +51,7 @@ namespace BifrostQL.Core.Storage
         public bool IsFileStorageColumn(IDbTable table, ColumnDto column, IDbModel model)
         {
             // Check for explicit file tag
-            var fileTag = column.GetMetadataValue("file");
+            var fileTag = column.GetMetadataValue(MetadataKeys.FileStorage.File);
             if (!string.IsNullOrWhiteSpace(fileTag))
                 return true;
 
@@ -68,7 +68,7 @@ namespace BifrostQL.Core.Storage
         /// </summary>
         public FileColumnConfig? GetFileColumnConfig(ColumnDto column)
         {
-            var fileTag = column.GetMetadataValue("file");
+            var fileTag = column.GetMetadataValue(MetadataKeys.FileStorage.File);
             if (string.IsNullOrWhiteSpace(fileTag))
                 return null;
 

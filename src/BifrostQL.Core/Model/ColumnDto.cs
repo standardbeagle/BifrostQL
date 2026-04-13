@@ -48,7 +48,7 @@ namespace BifrostQL.Core.Model
         /// Returns the effective data type, checking for metadata type override (e.g., "type: json").
         /// Use this instead of DataType for schema generation and type mapping.
         /// </summary>
-        public string EffectiveDataType => GetMetadataValue("type") ?? DataType;
+        public string EffectiveDataType => GetMetadataValue(MetadataKeys.DataType.Type) ?? DataType;
         public bool IsNullable { get; init; }
         public int OrdinalPosition { get; init; }
         public bool IsIdentity { get; init; } = false;

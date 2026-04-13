@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Utils;
 using BifrostQL.Server;
 using BifrostQL.MySql;
 using BifrostQL.Ngsql;
@@ -619,16 +620,44 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         }
         catch (Exception ex)
         {
-            // Get logger and log full exception details
+            // SECURITY: every string derived from the exception is routed through
+            // SecretScrubber before it leaves this process. DB drivers occasionally
+            // embed the full connection string (including Password=...) inside
+            // exception messages and Data dictionaries, so we must not forward
+            // ex.Message / ex.StackTrace / ex.ToString() verbatim to the browser
+            // or the log stream. See BifrostQL.Core.Utils.SecretScrubber for the
+            // patterns covered.
             var logger = app.Services.GetRequiredService<ILogger<Program>>();
-            logger.LogError(ex, "Vault connect failed for '{ServerName}'", request.Name);
-            
-            var errorDetails = $"{ex.Message}\n\nStack trace:\n{ex.StackTrace}";
+
+            var scrubbedMessage = SecretScrubber.Scrub(ex.Message) ?? "";
+            var scrubbedDetailsBuilder = new StringBuilder();
+            scrubbedDetailsBuilder.Append(scrubbedMessage);
+            scrubbedDetailsBuilder.Append("\n\nStack trace:\n");
+            scrubbedDetailsBuilder.Append(SecretScrubber.Scrub(ex.StackTrace) ?? "");
             if (ex.InnerException != null)
             {
-                errorDetails += $"\n\nInner exception: {ex.InnerException.Message}\n{ex.InnerException.StackTrace}";
+                scrubbedDetailsBuilder.Append("\n\nInner exception: ");
+                scrubbedDetailsBuilder.Append(SecretScrubber.Scrub(ex.InnerException.Message) ?? "");
+                scrubbedDetailsBuilder.Append('\n');
+                scrubbedDetailsBuilder.Append(SecretScrubber.Scrub(ex.InnerException.StackTrace) ?? "");
             }
-            return Results.BadRequest(new { success = false, error = ex.Message, details = errorDetails });
+            var scrubbedDetails = scrubbedDetailsBuilder.ToString();
+
+            // Do NOT pass `ex` directly to the logger — the default logging
+            // formatters call ex.ToString() which would bypass the scrubber.
+            // Instead log the exception type + scrubbed message as positional args.
+            logger.LogError(
+                "Vault connect failed for '{ServerName}' ({ExceptionType}): {ScrubbedMessage}",
+                request.Name,
+                ex.GetType().FullName,
+                scrubbedMessage);
+
+            return Results.BadRequest(new
+            {
+                success = false,
+                error = scrubbedMessage,
+                details = scrubbedDetails
+            });
         }
     });
 

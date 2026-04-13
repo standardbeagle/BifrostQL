@@ -43,6 +43,7 @@ export default defineConfig({
 						{ label: 'Authentication', slug: 'guides/authentication' },
 					{ label: 'Desktop App', slug: 'guides/desktop-app' },
 						{ label: 'WordPress', slug: 'guides/wordpress' },
+						{ label: 'Binary Transport', slug: 'guides/binary-transport' },
 					],
 				},
 				{

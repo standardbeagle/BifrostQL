@@ -55,29 +55,59 @@ jobs:
       - name: publish MySql to repo
         run: dotnet nuget push "src/data/BifrostQL.MySql/bin/Release/*.nupkg" --source "github" -k ${{secrets.REPO_NUGET}} --skip-duplicate
       - name: publish Core to nuget.org
-        if: ${{ secrets.NUGET_API_KEY != '' }}
-        run: dotnet nuget push "src/BifrostQL.Core/bin/Release/*.nupkg" --source "nuget.org" -k ${{secrets.NUGET_API_KEY}} --skip-duplicate
-        continue-on-error: true
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -n "$NUGET_API_KEY" ]; then
+            dotnet nuget push "src/BifrostQL.Core/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate
+          else
+            echo "Skipping nuget.org publish: NUGET_API_KEY not set"
+          fi
       - name: publish Server to nuget.org
-        if: ${{ secrets.NUGET_API_KEY != '' }}
-        run: dotnet nuget push "src/BifrostQL.Server/bin/Release/*.nupkg" --source "nuget.org" -k ${{secrets.NUGET_API_KEY}} --skip-duplicate
-        continue-on-error: true
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -n "$NUGET_API_KEY" ]; then
+            dotnet nuget push "src/BifrostQL.Server/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate
+          else
+            echo "Skipping nuget.org publish: NUGET_API_KEY not set"
+          fi
       - name: publish Ngsql to nuget.org
-        if: ${{ secrets.NUGET_API_KEY != '' }}
-        run: dotnet nuget push "src/data/BifrostQL.Ngsql/bin/Release/*.nupkg" --source "nuget.org" -k ${{secrets.NUGET_API_KEY}} --skip-duplicate
-        continue-on-error: true
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -n "$NUGET_API_KEY" ]; then
+            dotnet nuget push "src/data/BifrostQL.Ngsql/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate
+          else
+            echo "Skipping nuget.org publish: NUGET_API_KEY not set"
+          fi
       - name: publish SqlServer to nuget.org
-        if: ${{ secrets.NUGET_API_KEY != '' }}
-        run: dotnet nuget push "src/data/BifrostQL.SqlServer/bin/Release/*.nupkg" --source "nuget.org" -k ${{secrets.NUGET_API_KEY}} --skip-duplicate
-        continue-on-error: true
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -n "$NUGET_API_KEY" ]; then
+            dotnet nuget push "src/data/BifrostQL.SqlServer/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate
+          else
+            echo "Skipping nuget.org publish: NUGET_API_KEY not set"
+          fi
       - name: publish Sqlite to nuget.org
-        if: ${{ secrets.NUGET_API_KEY != '' }}
-        run: dotnet nuget push "src/data/BifrostQL.Sqlite/bin/Release/*.nupkg" --source "nuget.org" -k ${{secrets.NUGET_API_KEY}} --skip-duplicate
-        continue-on-error: true
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -n "$NUGET_API_KEY" ]; then
+            dotnet nuget push "src/data/BifrostQL.Sqlite/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate
+          else
+            echo "Skipping nuget.org publish: NUGET_API_KEY not set"
+          fi
       - name: publish MySql to nuget.org
-        if: ${{ secrets.NUGET_API_KEY != '' }}
-        run: dotnet nuget push "src/data/BifrostQL.MySql/bin/Release/*.nupkg" --source "nuget.org" -k ${{secrets.NUGET_API_KEY}} --skip-duplicate
-        continue-on-error: true
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -n "$NUGET_API_KEY" ]; then
+            dotnet nuget push "src/data/BifrostQL.MySql/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate
+          else
+            echo "Skipping nuget.org publish: NUGET_API_KEY not set"
+          fi
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:

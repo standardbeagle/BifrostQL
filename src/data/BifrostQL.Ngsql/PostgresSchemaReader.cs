@@ -31,20 +31,21 @@ WHERE ccu.table_schema NOT IN ('pg_catalog', 'information_schema', 'ag_catalog')
 UNION ALL
 -- Unique constraints from unique indexes
 SELECT
-    db_name() AS table_catalog,
+    current_database() AS table_catalog,
     schemaname AS table_schema,
     tablename AS table_name,
     a.attname AS column_name,
-    db_name() AS constraint_catalog,
+    current_database() AS constraint_catalog,
     schemaname AS constraint_schema,
     indexname AS constraint_name,
     'UNIQUE' AS constraint_type
 FROM pg_indexes pi
-JOIN pg_class t ON t.relname = pi.tablename
-JOIN pg_index ix ON ix.indexrelid = (pi.schemaname || '.' || pi.indexname)::regclass
+JOIN pg_class t ON t.relname = pi.tablename AND t.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = pi.schemaname)
+JOIN pg_index ix ON ix.indexrelid = to_regclass(pi.schemaname || '.' || pi.indexname)
 JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
 WHERE ix.indisunique = true
   AND ix.indisprimary = false
+  AND to_regclass(pi.schemaname || '.' || pi.indexname) IS NOT NULL
   AND schemaname NOT IN ('pg_catalog', 'information_schema', 'ag_catalog');
 
 -- Columns

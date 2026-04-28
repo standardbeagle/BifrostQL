@@ -159,7 +159,8 @@ namespace BifrostQL.Core.Schema
                 var isNullable = column.IsNullable;
                 if (column.CompareMetadata("populate", "created-on") || column.CompareMetadata("populate", "created-by") ||
                     column.CompareMetadata("populate", "updated-on") || column.CompareMetadata("populate", "updated-by") ||
-                    column.CompareMetadata("populate", "deleted-on") || column.CompareMetadata("populate", "deleted-by")
+                    column.CompareMetadata("populate", "deleted-on") || column.CompareMetadata("populate", "deleted-by") ||
+                    column.CompareMetadata("populate", "server-injected")
                     )
                     isNullable = true;
                 if (column.IsIdentity)

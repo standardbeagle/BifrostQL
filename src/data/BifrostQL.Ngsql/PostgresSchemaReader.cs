@@ -75,6 +75,7 @@ SELECT
     c.domain_name,
     CASE
         WHEN c.column_default LIKE 'nextval(%' THEN 1
+        WHEN c.identity_generation IS NOT NULL THEN 1
         ELSE 0
     END AS is_identity
 FROM information_schema.columns c

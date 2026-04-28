@@ -41,19 +41,68 @@ jobs:
           dotnet pack "src/data/BifrostQL.Sqlite/BifrostQL.Sqlite.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }} 
           dotnet pack "src/data/BifrostQL.MySql/BifrostQL.MySql.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }} 
       - name: add source
-        run: dotnet nuget add source --username standardbeagle --password ${{secrets.REPO_NUGET}} --store-password-in-clear-text --name github "https://nuget.pkg.github.com/standardbeagle/index.json"
+        env:
+          REPO_NUGET: ${{ secrets.REPO_NUGET }}
+        run: |
+          if [ -n "$REPO_NUGET" ]; then
+            dotnet nuget add source --username standardbeagle --password "$REPO_NUGET" --store-password-in-clear-text --name github "https://nuget.pkg.github.com/standardbeagle/index.json"
+          else
+            echo "REPO_NUGET not set, skipping GitHub Packages source setup"
+          fi
       - name: publish Core to repo
-        run: dotnet nuget push "src/BifrostQL.Core/bin/Release/*.nupkg" --source "github" -k ${{secrets.REPO_NUGET}} --skip-duplicate
+        env:
+          REPO_NUGET: ${{ secrets.REPO_NUGET }}
+        run: |
+          if [ -n "$REPO_NUGET" ]; then
+            dotnet nuget push "src/BifrostQL.Core/bin/Release/*.nupkg" --source "github" -k "$REPO_NUGET" --skip-duplicate
+          else
+            echo "REPO_NUGET not set, skipping GitHub Packages publish"
+          fi
       - name: publish Server to repo
-        run: dotnet nuget push "src/BifrostQL.Server/bin/Release/*.nupkg" --source "github" -k ${{secrets.REPO_NUGET}} --skip-duplicate
+        env:
+          REPO_NUGET: ${{ secrets.REPO_NUGET }}
+        run: |
+          if [ -n "$REPO_NUGET" ]; then
+            dotnet nuget push "src/BifrostQL.Server/bin/Release/*.nupkg" --source "github" -k "$REPO_NUGET" --skip-duplicate
+          else
+            echo "REPO_NUGET not set, skipping GitHub Packages publish"
+          fi
       - name: publish Ngsql to repo
-        run: dotnet nuget push "src/data/BifrostQL.Ngsql/bin/Release/*.nupkg" --source "github" -k ${{secrets.REPO_NUGET}} --skip-duplicate
+        env:
+          REPO_NUGET: ${{ secrets.REPO_NUGET }}
+        run: |
+          if [ -n "$REPO_NUGET" ]; then
+            dotnet nuget push "src/data/BifrostQL.Ngsql/bin/Release/*.nupkg" --source "github" -k "$REPO_NUGET" --skip-duplicate
+          else
+            echo "REPO_NUGET not set, skipping GitHub Packages publish"
+          fi
       - name: publish SqlServer to repo
-        run: dotnet nuget push "src/data/BifrostQL.SqlServer/bin/Release/*.nupkg" --source "github" -k ${{secrets.REPO_NUGET}} --skip-duplicate
+        env:
+          REPO_NUGET: ${{ secrets.REPO_NUGET }}
+        run: |
+          if [ -n "$REPO_NUGET" ]; then
+            dotnet nuget push "src/data/BifrostQL.SqlServer/bin/Release/*.nupkg" --source "github" -k "$REPO_NUGET" --skip-duplicate
+          else
+            echo "REPO_NUGET not set, skipping GitHub Packages publish"
+          fi
       - name: publish Sqlite to repo
-        run: dotnet nuget push "src/data/BifrostQL.Sqlite/bin/Release/*.nupkg" --source "github" -k ${{secrets.REPO_NUGET}} --skip-duplicate
+        env:
+          REPO_NUGET: ${{ secrets.REPO_NUGET }}
+        run: |
+          if [ -n "$REPO_NUGET" ]; then
+            dotnet nuget push "src/data/BifrostQL.Sqlite/bin/Release/*.nupkg" --source "github" -k "$REPO_NUGET" --skip-duplicate
+          else
+            echo "REPO_NUGET not set, skipping GitHub Packages publish"
+          fi
       - name: publish MySql to repo
-        run: dotnet nuget push "src/data/BifrostQL.MySql/bin/Release/*.nupkg" --source "github" -k ${{secrets.REPO_NUGET}} --skip-duplicate
+        env:
+          REPO_NUGET: ${{ secrets.REPO_NUGET }}
+        run: |
+          if [ -n "$REPO_NUGET" ]; then
+            dotnet nuget push "src/data/BifrostQL.MySql/bin/Release/*.nupkg" --source "github" -k "$REPO_NUGET" --skip-duplicate
+          else
+            echo "REPO_NUGET not set, skipping GitHub Packages publish"
+          fi
       - name: publish Core to nuget.org
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}

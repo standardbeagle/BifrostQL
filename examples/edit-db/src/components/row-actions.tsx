@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 
 interface RowActionsProps {
     anchorEl: HTMLElement;
-    onEdit: () => void;
+    onEdit?: () => void;
     onDelete?: () => void;
     onMouseEnter: () => void;
     onDismiss: () => void;
@@ -47,16 +47,18 @@ export function RowActions({ anchorEl, onEdit, onDelete, onMouseEnter, onDismiss
             onMouseEnter={onMouseEnter}
             onMouseLeave={onDismiss}
         >
-            <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={onEdit}
-                aria-label="Edit row"
-                title="Edit"
-                className="size-6"
-            >
-                <Pencil className="size-3.5" />
-            </Button>
+            {onEdit && (
+                <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={onEdit}
+                    aria-label="Edit row"
+                    title="Edit"
+                    className="size-6"
+                >
+                    <Pencil className="size-3.5" />
+                </Button>
+            )}
             {onDelete && (
                 <Button
                     variant="ghost"

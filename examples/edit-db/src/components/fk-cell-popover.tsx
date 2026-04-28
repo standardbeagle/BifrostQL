@@ -12,6 +12,12 @@ const HOVER_CLOSE_DELAY = 200;
 interface FkCellPopoverProps {
     tableName: string;
     recordId: string | number;
+    /**
+     * The column on `tableName` whose value is `recordId`. Callers pass the FK target
+     * column from the join metadata (`destinationColumnNames[0]`). Using the target's
+     * "primary key" column here is wrong for composite-PK and denormalized-FK targets.
+     */
+    filterColumn: string;
     children: ReactNode;
 }
 
@@ -35,22 +41,21 @@ function formatValue(value: unknown): string {
     return str;
 }
 
-export function FkCellPopover({ tableName, recordId, children }: FkCellPopoverProps) {
+export function FkCellPopover({ tableName, recordId, filterColumn, children }: FkCellPopoverProps) {
     const [open, setOpen] = useState(false);
     const schema = useSchema();
     const fetcher = useFetcher();
 
     const table = schema.findTable(tableName);
-    const pkColumn = table?.primaryKeys?.[0] ?? "id";
-    const pkType = table?.columns.find((c) => c.name === pkColumn)?.paramType ?? "Int";
+    const lookupType = table?.columns.find((c) => c.name === filterColumn)?.paramType ?? "Int";
     const previewColumns = table ? getPreviewColumns(table.columns) : [];
 
     const query = table && previewColumns.length > 0
-        ? buildPreviewQuery(tableName, previewColumns, pkColumn, pkType)
+        ? buildPreviewQuery(tableName, previewColumns, filterColumn, lookupType)
         : null;
 
-    const numericPkTypes = ["Int", "Int!", "Float", "Float!"];
-    const variables = { id: numericPkTypes.includes(pkType) ? Number(recordId) : recordId };
+    const numericLookupTypes = ["Int", "Int!", "Float", "Float!"];
+    const variables = { id: numericLookupTypes.includes(lookupType) ? Number(recordId) : recordId };
 
     const { data, isLoading } = useQuery({
         queryKey: ["fkPreview", tableName, recordId],

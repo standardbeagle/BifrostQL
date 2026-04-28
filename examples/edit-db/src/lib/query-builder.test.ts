@@ -9,6 +9,8 @@ import {
     serializeColumnFilters,
     deserializeColumnFilters,
     getPkType,
+    getPkTypes,
+    buildPkEqVariables,
     buildQuery,
     type ColumnFilterValue,
 } from './query-builder';
@@ -376,9 +378,12 @@ describe('getPkType', () => {
         expect(getPkType(table)).toBe('String');
     });
 
-    it('defaults to Int when no pk column found', () => {
+    it('defaults to String when PK column is declared but not in the columns list', () => {
+        // getPkType used to default to Int for this edge case; the unified implementation
+        // now prefers String so an unknown PK is handled as opaque text rather than silently
+        // coerced to a number. Real schemas always have the PK column present.
         const table = makeTable({ primaryKeys: ['missing'] });
-        expect(getPkType(table)).toBe('Int');
+        expect(getPkType(table)).toBe('String');
     });
 
     it('defaults to Int when no pk defined', () => {
@@ -525,12 +530,176 @@ describe('buildQuery', () => {
         const joinSchema = makeSchema([tableWithJoins, simple]);
         const q = buildQuery(tableWithJoins, joinSchema, '', [])!;
         // Should not duplicate id column
-        expect(q).toContain('tags { id  }');
+        expect(q).toContain('tags { id }');
     });
 
     it('handles table with no columns', () => {
         const emptyTable = makeTable({ columns: [] });
         const q = buildQuery(emptyTable, makeSchema([emptyTable]), '', []);
         expect(q).toBeTruthy();
+    });
+});
+
+// ── Composite primary key support ──────────────────────────────
+
+describe('getPkTypes', () => {
+    it('returns one entry per PK column in declaration order', () => {
+        const table = makeTable({
+            primaryKeys: ['student_id', 'course_id'],
+            columns: [
+                makeColumn({ name: 'student_id', paramType: 'Int!', isPrimaryKey: true }),
+                makeColumn({ name: 'course_id', paramType: 'String!', isPrimaryKey: true }),
+                makeColumn({ name: 'grade', paramType: 'String' }),
+            ],
+        });
+        expect(getPkTypes(table)).toEqual([
+            { name: 'student_id', gqlType: 'Int' },
+            { name: 'course_id', gqlType: 'String' },
+        ]);
+    });
+
+    it('returns a single entry for a simple PK', () => {
+        expect(getPkTypes(makeTable())).toEqual([{ name: 'id', gqlType: 'Int' }]);
+    });
+
+    it('returns an empty array when the table has no primary keys', () => {
+        const table = makeTable({ primaryKeys: [] });
+        expect(getPkTypes(table)).toEqual([]);
+    });
+
+    it('falls back to String when the PK column is missing from columns', () => {
+        const table = makeTable({
+            primaryKeys: ['missing'],
+            columns: [makeColumn({ name: 'name', paramType: 'String' })],
+        });
+        expect(getPkTypes(table)).toEqual([{ name: 'missing', gqlType: 'String' }]);
+    });
+});
+
+describe('buildPkEqVariables', () => {
+    it('returns a single { id: coerced } entry for a single-PK table', () => {
+        const table = makeTable({
+            primaryKeys: ['id'],
+            columns: [makeColumn({ name: 'id', paramType: 'Int!', isPrimaryKey: true })],
+        });
+        expect(buildPkEqVariables('42', table)).toEqual({ id: 42 });
+    });
+
+    it('coerces string PK values as string for String PKs', () => {
+        const table = makeTable({
+            primaryKeys: ['code'],
+            columns: [makeColumn({ name: 'code', paramType: 'String!', isPrimaryKey: true })],
+        });
+        expect(buildPkEqVariables('CS-101', table)).toEqual({ id: 'CS-101' });
+    });
+
+    it('returns one pk_${name} variable per column for composite PKs', () => {
+        const table = makeTable({
+            primaryKeys: ['student_id', 'course_id'],
+            columns: [
+                makeColumn({ name: 'student_id', paramType: 'Int!', isPrimaryKey: true }),
+                makeColumn({ name: 'course_id', paramType: 'String!', isPrimaryKey: true }),
+            ],
+        });
+        expect(buildPkEqVariables('1::cs-101', table)).toEqual({
+            pk_student_id: 1,
+            pk_course_id: 'cs-101',
+        });
+    });
+});
+
+describe('buildQuery — composite primary keys', () => {
+    const enrollment = makeTable({
+        name: 'enrollment',
+        graphQlName: 'enrollment',
+        primaryKeys: ['student_id', 'course_id'],
+        columns: [
+            makeColumn({ name: 'student_id', paramType: 'Int!', isPrimaryKey: true }),
+            makeColumn({ name: 'course_id', paramType: 'String!', isPrimaryKey: true }),
+            makeColumn({ name: 'grade', paramType: 'String' }),
+        ],
+        singleJoins: [],
+        multiJoins: [],
+    });
+    const schema = makeSchema([enrollment]);
+
+    it('emits one $pk_${name} variable per PK column when querying by id', () => {
+        const q = buildQuery(enrollment, schema, '', [], '1::cs-101')!;
+        expect(q).toContain('$pk_student_id: Int');
+        expect(q).toContain('$pk_course_id: String');
+    });
+
+    it('wraps the composite-PK filter in {and: [...]}', () => {
+        const q = buildQuery(enrollment, schema, '', [], '1::cs-101')!;
+        expect(q).toContain('{and: [{student_id: {_eq: $pk_student_id}}, {course_id: {_eq: $pk_course_id}}]}');
+    });
+
+    it('does not use the legacy single $id variable for composite PKs', () => {
+        const q = buildQuery(enrollment, schema, '', [], '1::cs-101')!;
+        expect(q).not.toContain('$id: Int');
+        expect(q).not.toMatch(/\$id:\s/);
+    });
+
+    it('still generates the legacy $id form for single-PK tables', () => {
+        const single = makeTable({
+            primaryKeys: ['id'],
+            columns: [makeColumn({ name: 'id', paramType: 'Int!', isPrimaryKey: true })],
+        });
+        const q = buildQuery(single, makeSchema([single]), '', [], '42')!;
+        expect(q).toContain('$id: Int');
+        expect(q).toContain('{ id: { _eq: $id}}');
+    });
+
+    it('emits all PK columns of a composite-PK destination in a multiJoin child query', () => {
+        const composite = makeTable({
+            name: 'enrollment',
+            graphQlName: 'enrollment',
+            labelColumn: 'grade',
+            primaryKeys: ['student_id', 'course_id'],
+            columns: [
+                makeColumn({ name: 'student_id', paramType: 'Int!', isPrimaryKey: true }),
+                makeColumn({ name: 'course_id', paramType: 'String!', isPrimaryKey: true }),
+                makeColumn({ name: 'grade', paramType: 'String' }),
+            ],
+        });
+        const parent = makeTable({
+            name: 'students',
+            graphQlName: 'students',
+            primaryKeys: ['student_id'],
+            columns: [makeColumn({ name: 'student_id', paramType: 'Int!', isPrimaryKey: true })],
+            multiJoins: [{
+                name: 'enrollment',
+                sourceColumnNames: ['student_id'],
+                destinationTable: 'enrollment',
+                destinationColumnNames: ['student_id'],
+            }],
+        });
+        const parentSchema = makeSchema([parent, composite]);
+        const q = buildQuery(parent, parentSchema, '', [])!;
+        expect(q).toContain('enrollment { student_id course_id grade }');
+    });
+
+    it('handles a nested parent-table filter with a composite parent PK', () => {
+        const parent = makeTable({
+            name: 'enrollment',
+            graphQlName: 'enrollment',
+            primaryKeys: ['student_id', 'course_id'],
+            columns: [
+                makeColumn({ name: 'student_id', paramType: 'Int!', isPrimaryKey: true }),
+                makeColumn({ name: 'course_id', paramType: 'String!', isPrimaryKey: true }),
+            ],
+        });
+        const child = makeTable({
+            name: 'grades',
+            graphQlName: 'grades',
+            primaryKeys: ['grade_id'],
+            columns: [makeColumn({ name: 'grade_id', paramType: 'Int!', isPrimaryKey: true })],
+        });
+        const parentSchema = makeSchema([parent, child]);
+        // tableFilter='enrollment' but no filterColumn or matching singleJoin — falls into the nested-parent path.
+        const q = buildQuery(child, parentSchema, '', [], '1::cs-101', 'enrollment')!;
+        expect(q).toContain('$pk_student_id: Int');
+        expect(q).toContain('$pk_course_id: String');
+        expect(q).toContain('{ enrollment: {and: [{student_id: {_eq: $pk_student_id}}, {course_id: {_eq: $pk_course_id}}]}}');
     });
 });

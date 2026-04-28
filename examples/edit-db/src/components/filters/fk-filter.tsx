@@ -28,15 +28,21 @@ interface FkFilterProps<TData, TValue> {
     column: Column<TData, TValue>;
     joinTable: string;
     joinLabelColumn: string;
+    /**
+     * The destination column of the join (FK target). Used to project the option values
+     * so the filter applies against the same column the FK points at. Do NOT substitute
+     * the target table's first primary-key column here — on composite-PK or denormalized-FK
+     * targets those are different columns.
+     */
+    joinFkColumn: string;
 }
 
-export function FkFilter<TData, TValue>({ column, joinTable, joinLabelColumn }: FkFilterProps<TData, TValue>) {
+export function FkFilter<TData, TValue>({ column, joinTable, joinLabelColumn, joinFkColumn }: FkFilterProps<TData, TValue>) {
     const fetcher = useFetcher();
     const schema = useSchema();
     const joinSchema = schema.findTable(joinTable);
-    const pkColumn = joinSchema?.primaryKeys?.[0] ?? 'id';
 
-    const query = `query Lookup${joinTable} { ${joinTable}(sort: [${joinLabelColumn}_asc], limit: 100) { data { id: ${pkColumn} label: ${joinLabelColumn} } } }`;
+    const query = `query Lookup${joinTable} { ${joinTable}(sort: [${joinLabelColumn}_asc], limit: 100) { data { id: ${joinFkColumn} label: ${joinLabelColumn} } } }`;
 
     const { data: lookupData } = useQuery({
         queryKey: ['fkLookup', joinTable, joinLabelColumn],

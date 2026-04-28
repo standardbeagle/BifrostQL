@@ -5,6 +5,7 @@
 
 import type { Table, Column, Join, Schema } from '../types/schema';
 import type { ColumnFiltersState } from '@tanstack/react-table';
+import { rowIdOf, buildPkEqFilter, parsePkRoute } from './row-id';
 
 export interface FilterResult {
     variables: Record<string, unknown>;
@@ -21,6 +22,11 @@ export interface ColumnFilterResult {
     variables: Record<string, unknown>;
     params: string[];
     filterTexts: string[];
+}
+
+export interface PkTypeInfo {
+    name: string;
+    gqlType: string;
 }
 
 interface RowData {
@@ -65,9 +71,10 @@ export function toLocaleDate(d: string): string {
 }
 
 export function getRowPkValue(row: RowData, table: Table): string {
-    const pk = table.primaryKeys?.[0];
-    if (!pk) return String(row?.id ?? "");
-    return String(row?.[pk] ?? "");
+    const keys = table.primaryKeys ?? [];
+    if (keys.length === 0) return String(row?.id ?? "");
+    if (keys.length === 1) return String(row?.[keys[0]] ?? "");
+    return rowIdOf(row as Record<string, unknown>, table, 0);
 }
 
 export function getGraphQlType(paramType: string): string {
@@ -136,11 +143,76 @@ export function deserializeColumnFilters(raw: string): ColumnFiltersState {
     }
 }
 
+/**
+ * Returns the GraphQL type of the first PK column. For composite PKs use {@link getPkTypes}.
+ */
 export function getPkType(table: Table): string {
-    const pkName = table.primaryKeys?.[0];
-    if (!pkName) return "Int";
-    const pkColumn = table.columns.find((c: Column) => c.name === pkName);
-    return pkColumn?.paramType?.replace("!", "") ?? "Int";
+    return getPkTypes(table)[0]?.gqlType ?? "Int";
+}
+
+/**
+ * Returns one {name, gqlType} per primary-key column in declaration order.
+ * Empty array if the table has no primary keys.
+ */
+export function getPkTypes(table: Table): PkTypeInfo[] {
+    const keys = table.primaryKeys ?? [];
+    if (keys.length === 0) return [];
+    const byName = new Map(table.columns.map((c) => [c.name, c] as const));
+    return keys.map((pk) => ({
+        name: pk,
+        gqlType: byName.get(pk)?.paramType?.replace("!", "") ?? "String",
+    }));
+}
+
+function coerceGqlValue(raw: unknown, gqlType: string): unknown {
+    if (raw === null || raw === undefined) return null;
+    switch (gqlType) {
+        case "Int": {
+            const n = typeof raw === "number" ? raw : Number(raw);
+            return Number.isFinite(n) ? Math.trunc(n) : raw;
+        }
+        case "Float": {
+            const n = typeof raw === "number" ? raw : Number(raw);
+            return Number.isFinite(n) ? n : raw;
+        }
+        case "Boolean":
+            if (typeof raw === "boolean") return raw;
+            return raw === "true" || raw === 1;
+        default:
+            return String(raw);
+    }
+}
+
+/**
+ * Builds the variables dict that accompanies a buildQuery result for a single-record lookup.
+ * - Single PK: returns `{ id: <coerced value> }` matching the `$id` variable in the query.
+ * - Composite PK: returns `{ pk_${col1}: ..., pk_${col2}: ... }` matching the composite form.
+ *
+ * `idRoute` is the same string passed to buildQuery's `id` parameter — for composite PKs
+ * it is a route-encoded string produced by {@link encodePkRoute}.
+ */
+export function buildPkEqVariables(idRoute: string, table: Table): Record<string, unknown> {
+    const pkTypes = getPkTypes(table);
+    if (pkTypes.length <= 1) {
+        return { id: coerceGqlValue(idRoute, getPkType(table)) };
+    }
+    const parsed = parsePkRoute(idRoute, table);
+    if (!parsed) return {};
+    const result = buildPkEqFilter(parsed, table);
+    return result?.variables ?? {};
+}
+
+function buildMultiJoinFields(schema: Schema, multiJoins: Join[]): string {
+    return multiJoins
+        .map((j) => {
+            const joinSchema = schema.findTable(j.destinationTable);
+            const labelCol = joinSchema?.labelColumn ?? 'id';
+            const destPks = joinSchema?.primaryKeys?.length ? joinSchema.primaryKeys : ['id'];
+            const fields = [...destPks];
+            if (labelCol && !fields.includes(labelCol)) fields.push(labelCol);
+            return `${j.destinationTable} { ${fields.join(' ')} }`;
+        })
+        .join(' ');
 }
 
 export function buildQuery(
@@ -155,8 +227,9 @@ export function buildQuery(
     if (!table || !schema?.data) return null;
     const tableSchema = schema.findTable(table.graphQlName);
     if (!tableSchema) return null;
-    const primaryKey = tableSchema?.primaryKeys?.[0] ?? "id";
     const pkType = getPkType(tableSchema);
+    const pkTypes = getPkTypes(tableSchema);
+    const primaryKey = pkTypes[0]?.name ?? "id";
     let { param, filterText } = getFilterObj(filterString);
 
     const { params: cfParams, filterTexts: cfFilterTexts } = buildColumnFilters(columnFilters, table);
@@ -193,39 +266,51 @@ export function buildQuery(
         })
         .join(' ');
 
-    // Add multi-join child queries (fetch label column for count + titles)
-    const multiJoinFields = tableSchema.multiJoins
-        .map((j: Join) => {
-            const joinSchema = schema.findTable(j.destinationTable);
-            const labelCol = joinSchema?.labelColumn ?? 'id';
-            const pkCol = joinSchema?.primaryKeys?.[0] ?? 'id';
-            return `${j.destinationTable} { ${pkCol} ${labelCol !== pkCol ? labelCol : ''} }`;
-        })
-        .join(' ');
-
+    const multiJoinFields = buildMultiJoinFields(schema, tableSchema.multiJoins);
     const allFields = multiJoinFields ? `${dataColumns} ${multiJoinFields}` : dataColumns;
 
     if (id && !tableFilter && !filterColumn) {
-        param = `, $id: ${pkType}`;
-        filterText = `{ ${ primaryKey }: { _eq: $id}}`;
+        if (pkTypes.length <= 1) {
+            // Single PK (or no PK) — byte-identical with the legacy shape
+            param = `, $id: ${pkType}`;
+            filterText = `{ ${primaryKey}: { _eq: $id}}`;
+        } else {
+            // Composite PK — one $pk_${name} variable per column, wrapped in and
+            param = `, ${pkTypes.map((t) => `$pk_${t.name}: ${t.gqlType}`).join(', ')}`;
+            const clauses = pkTypes.map((t) => `{${t.name}: {_eq: $pk_${t.name}}}`);
+            filterText = `{and: [${clauses.join(', ')}]}`;
+        }
     } else if (id && (filterColumn || tableFilter)) {
         const fkColumn = filterColumn
             ?? tableSchema.singleJoins.find((j: Join) => j.destinationTable === tableFilter)?.sourceColumnNames?.[0];
         const fkCol = table.columns.find((c: Column) => c.name === fkColumn);
         const idType = fkCol ? getGraphQlType(fkCol.paramType) : "Int";
-        param = `, $id: ${idType}` + param;
+
         if (fkColumn) {
+            // Direct FK filter — still a single column on the child side
+            param = `, $id: ${idType}` + param;
             if (filterText)
                 filterText = `{and: [${filterText}, { ${fkColumn}: { _eq: $id}} ]}`;
             else
                 filterText = `{ ${fkColumn}: { _eq: $id}}`;
         } else {
+            // Fallback: nested filter through join using the parent table's PK
             const parentTable = schema.findTable(tableFilter!);
-            const parentPk = parentTable?.primaryKeys?.[0] ?? "id";
-            if (filterText)
-                filterText = `{and: [${filterText}, { ${tableFilter}: { ${ parentPk }: { _eq: $id}}} ]}`;
-            else
-                filterText = `{ ${tableFilter}: { ${ parentPk }: { _eq: $id}}}`;
+            const parentPkTypes = getPkTypes(parentTable!);
+            if (parentPkTypes.length <= 1) {
+                const parentPk = parentPkTypes[0]?.name ?? "id";
+                param = `, $id: ${idType}` + param;
+                const wrapped = `{ ${tableFilter}: { ${parentPk}: { _eq: $id}}}`;
+                filterText = filterText ? `{and: [${filterText}, ${wrapped} ]}` : wrapped;
+            } else {
+                // Composite parent PK — one $pk_${name} per parent PK column
+                const pkParamDecls = parentPkTypes.map((t) => `$pk_${t.name}: ${t.gqlType}`).join(', ');
+                param = `, ${pkParamDecls}` + param;
+                const clauses = parentPkTypes.map((t) => `{${t.name}: {_eq: $pk_${t.name}}}`);
+                const nestedAnd = `{and: [${clauses.join(', ')}]}`;
+                const wrapped = `{ ${tableFilter}: ${nestedAnd}}`;
+                filterText = filterText ? `{and: [${filterText}, ${wrapped} ]}` : wrapped;
+            }
         }
     }
 

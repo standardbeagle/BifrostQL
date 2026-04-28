@@ -38,6 +38,17 @@ scripts {
 proxies {
     dev {
         script "dev-frontend"
+        // This is the canonical repro for agnt's proxy wait-for feature:
+        // Vite on :5173 proxies /api + /graphql to the dotnet backend on
+        // :5000. Without this gate, any request hitting the proxy during
+        // the startup window (vite binds fast, dotnet takes several
+        // seconds) produces ECONNREFUSED 127.0.0.1:5000 in get_errors.
+        // With the gate, incoming requests get a 503 with the
+        // agnt_proxy_not_ready sentinel (filtered by get_errors) until
+        // dev-backend is actually up. dev-lib must also be ready because
+        // the frontend's watch-workspace-lib plugin reloads on dist/
+        // rebuilds and expects the lib to have produced its first build.
+        wait-for "dev-backend" "dev-lib"
         fallback-port 5173
     }
 }

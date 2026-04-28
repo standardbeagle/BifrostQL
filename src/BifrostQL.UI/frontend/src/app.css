@@ -197,14 +197,8 @@
   transform: translateY(-1px);
 }
 
-/* Welcome container — same deep void */
+/* Welcome container — WelcomePanel handles its own full-page sizing */
 .bifrost-welcome-container {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 2rem;
   background: var(--void);
 }
 

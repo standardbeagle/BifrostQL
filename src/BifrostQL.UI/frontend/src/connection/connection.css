@@ -333,8 +333,9 @@ input[type="checkbox"]:focus-visible {
 
 .welcome-card__icon {
   font-size: 1.75rem;
-  line-height: 1;
+  line-height: 1.2;
   opacity: 0.5;
+  overflow: hidden;
 }
 
 .welcome-card__icon--hero {

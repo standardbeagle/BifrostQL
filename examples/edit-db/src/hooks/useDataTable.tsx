@@ -13,14 +13,25 @@ import { Button } from "../components/ui/button";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "../components/ui/hover-card";
 import { ContentViewer } from "../components/content-viewer";
 import { isLongTextDbType, isBinaryDbType } from "../lib/content-detect";
+import {
+    getFilterOperators,
+    getFilterObj,
+    toLocaleDate,
+    getRowPkValue,
+    getGraphQlType,
+    getPkTypes,
+    buildColumnFilters,
+    serializeColumnFilters,
+    deserializeColumnFilters,
+    buildQuery,
+    buildPkEqVariables,
+} from "../lib/query-builder";
+
+// Re-export for existing filter component imports.
+export { getFilterOperators } from "../lib/query-builder";
+export type { ColumnFilterValue } from "../lib/query-builder";
 
 const numericTypes = ["Int", "Int!", "Float", "Float!"];
-
-interface FilterResult {
-    variables: Record<string, unknown>;
-    param: string;
-    filterText: string;
-}
 
 interface RowData {
     id?: number | string;
@@ -32,141 +43,9 @@ interface ColumnWithJoin extends Column {
     joinLabelColumn?: string;
 }
 
-/**
- * Value structure for column filters.
- * @interface ColumnFilterValue
- */
-export interface ColumnFilterValue {
-    /** Filter operator (e.g., "_eq", "_contains", "_gt") */
-    operator: string;
-    /** Value to filter by */
-    value: unknown;
-}
-
-const columnFilterOperators: Record<string, string[]> = {
-    String:   ["_eq", "_neq", "_contains", "_starts_with", "_ends_with", "_null"],
-    Int:      ["_eq", "_neq", "_gt", "_gte", "_lt", "_lte", "_between", "_null"],
-    Float:    ["_eq", "_neq", "_gt", "_gte", "_lt", "_lte", "_between", "_null"],
-    Boolean:  ["_eq", "_null"],
-    DateTime: ["_eq", "_neq", "_gt", "_gte", "_lt", "_lte", "_between", "_null"],
-};
-
-/**
- * Get available filter operators for a given parameter type.
- * 
- * @param paramType - GraphQL parameter type (e.g., "String", "Int!")
- * @returns Array of supported filter operator strings
- * 
- * @example
- * ```typescript
- * const operators = getFilterOperators("String");
- * // Returns: ["_eq", "_neq", "_contains", "_starts_with", "_ends_with", "_null"]
- * ```
- */
-export function getFilterOperators(paramType: string): string[] {
-    const baseType = paramType.replace("!", "");
-    return columnFilterOperators[baseType] ?? columnFilterOperators.String;
-}
-
-const getFilterObj = (filterString: string): FilterResult => {
-    try {
-        if (!filterString) return { variables: {}, param: "", filterText: "" };
-        const [column, action, value, type] = JSON.parse(filterString);
-        return { variables: { filter: value }, param: `, $filter: ${type}`, filterText: `{${column}: {${action}: $filter} }` }
-    } catch {
-        return { variables: {}, param: "", filterText: "" };
-    }
-}
-
-const toLocaleDate = (d: string): string => {
-    if (!d) return "";
-    const dd = new Date(d);
-    if (dd.toString() === "Invalid Date") return "";
-    if (dd < new Date('1973-01-01')) return "";
-    return dd.toLocaleString();
-};
-
-const getRowPkValue = (row: RowData, table: Table): string => {
-    const pk = table.primaryKeys?.[0];
-    if (!pk) return String(row?.id ?? "");
-    return String(row?.[pk] ?? "");
-};
-
-const getJoinedRowPkValue = (row: RowData): string => {
-    return String(row?.id ?? "");
-};
-
-function getGraphQlType(paramType: string): string {
-    const baseType = paramType.replace("!", "");
-    switch (baseType) {
-        case "Int": return "Int";
-        case "Float": return "Float";
-        case "Boolean": return "Boolean";
-        case "DateTime": return "String";
-        default: return "String";
-    }
-}
-
-interface ColumnFilterResult {
-    variables: Record<string, unknown>;
-    params: string[];
-    filterTexts: string[];
-}
-
-function buildColumnFilters(columnFilters: ColumnFiltersState, table: Table): ColumnFilterResult {
-    const variables: Record<string, unknown> = {};
-    const params: string[] = [];
-    const filterTexts: string[] = [];
-
-    for (const cf of columnFilters) {
-        const filterValue = cf.value as ColumnFilterValue;
-        if (filterValue.value === undefined || filterValue.value === null || filterValue.value === "") continue;
-
-        const col = table.columns.find((c) => c.name === cf.id);
-        if (!col) continue;
-
-        const varName = `cf_${cf.id}`;
-        const gqlType = getGraphQlType(col.paramType);
-
-        if (filterValue.operator === "_null") {
-            filterTexts.push(`{${cf.id}: {_null: ${filterValue.value ? "true" : "false"}}}`);
-            continue;
-        }
-
-        if (filterValue.operator === "_between") {
-            const range = filterValue.value as [unknown, unknown];
-            if (!Array.isArray(range) || range.length !== 2) continue;
-            const loVar = `${varName}_lo`;
-            const hiVar = `${varName}_hi`;
-            variables[loVar] = range[0];
-            variables[hiVar] = range[1];
-            params.push(`$${loVar}: ${gqlType}`, `$${hiVar}: ${gqlType}`);
-            filterTexts.push(`{${cf.id}: {_between: [$${loVar}, $${hiVar}]}}`);
-            continue;
-        }
-
-        variables[varName] = filterValue.value;
-        params.push(`$${varName}: ${gqlType}`);
-        filterTexts.push(`{${cf.id}: {${filterValue.operator}: $${varName}}}`);
-    }
-
-    return { variables, params, filterTexts };
-}
-
-function serializeColumnFilters(columnFilters: ColumnFiltersState): string {
-    if (columnFilters.length === 0) return "";
-    return JSON.stringify(columnFilters.map((cf) => [cf.id, (cf.value as ColumnFilterValue).operator, (cf.value as ColumnFilterValue).value]));
-}
-
-function deserializeColumnFilters(raw: string): ColumnFiltersState {
-    try {
-        if (!raw) return [];
-        const parsed = JSON.parse(raw) as [string, string, unknown][];
-        return parsed.map(([id, operator, value]) => ({ id, value: { operator, value } as ColumnFilterValue }));
-    } catch {
-        return [];
-    }
-}
+// Joined rows in GraphQL responses are always aliased as `{ id: destCol }` by the SDL query
+// builder, so the joined-row PK lookup is distinct from the source-row composite PK lookup.
+const getJoinedRowPkValue = (row: RowData): string => String(row?.id ?? "");
 
 const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: ColumnPanel) => void): ColumnDef<RowData, unknown>[] => {
     if (!table || !schema) return [];
@@ -191,14 +70,18 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                     accessorKey: c.name,
                     header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={headerTitle} />,
                     enableSorting: true,
-                    meta: { sortField: c.name, paramType: c.paramType, filterOperators: operators, joinTable: singleJoin.destinationTable, joinLabelColumn, column: c, isSelfReference },
+                    meta: { sortField: c.name, paramType: c.paramType, filterOperators: operators, joinTable: singleJoin.destinationTable, joinLabelColumn, joinFkColumn: singleJoin.destinationColumnNames[0], column: c, isSelfReference },
                     cell: ({ row }) => {
                         const joined = row.original[columnName] as RowData | undefined;
                         if (!joined) return null;
                         const joinedPk = getJoinedRowPkValue(joined);
                         return (
                             <span className="group/fk inline-flex items-center gap-0.5">
-                                <FkCellPopover tableName={singleJoin.destinationTable} recordId={joinedPk}>
+                                <FkCellPopover
+                                    tableName={singleJoin.destinationTable}
+                                    recordId={joinedPk}
+                                    filterColumn={singleJoin.destinationColumnNames[0]}
+                                >
                                     <Link to={"/" + joinSchema?.name + "/" + joinedPk} className="text-primary hover:text-primary/80 hover:underline">
                                         {joined?.label as string}
                                     </Link>
@@ -367,105 +250,43 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
     return [...dataColumns, ...multiJoinColumns];
 }
 
-const getPkType = (table: Table): string => {
-    const pkName = table.primaryKeys?.[0];
-    if (!pkName) return "Int";
-    const pkColumn = table.columns.find((c: Column) => c.name === pkName);
-    return pkColumn?.paramType?.replace("!", "") ?? "Int";
-};
-
-const buildQuery = (
+/**
+ * Build the id-lookup variables dict that matches the query shape emitted by `buildQuery`
+ * for the current table + filter context:
+ *
+ * - By own PK (composite-aware): `{id: ...}` for single PK, `{pk_${col}: ...}` per column.
+ * - FK column path: `{id: coerced-to-fk-type}`.
+ * - Nested parent filter (single parent PK): `{id: coerced-to-parent-pk-type}`.
+ * - Nested parent filter (composite parent PK): `{pk_${col}: ...}` per parent PK column.
+ */
+function buildIdLookupVariables(
+    id: string,
     table: Table,
     schema: Schema,
-    filterString: string,
-    columnFilters: ColumnFiltersState,
-    id?: string,
-    tableFilter?: string,
+    filterTable?: string,
     filterColumn?: string,
-): string | null => {
-    if (!table || !schema?.data) return null;
-    const tableSchema = schema.findTable(table.graphQlName);
-    if (!tableSchema) return null;
-    const primaryKey = tableSchema?.primaryKeys?.[0] ?? "id";
-    const pkType = getPkType(tableSchema);
-    let { param, filterText } = getFilterObj(filterString);
-
-    const { params: cfParams, filterTexts: cfFilterTexts } = buildColumnFilters(columnFilters, table);
-    if (cfParams.length > 0) {
-        param += cfParams.map((p) => `, ${p}`).join("");
+): Record<string, unknown> {
+    if (!filterTable && !filterColumn) {
+        return buildPkEqVariables(id, table);
     }
 
-    const allFilterTexts: string[] = [];
-    if (filterText) allFilterTexts.push(filterText);
-    allFilterTexts.push(...cfFilterTexts);
+    const tableSchema = schema.findTable(table.graphQlName) ?? table;
+    const fkColumn = filterColumn
+        ?? tableSchema.singleJoins.find((j: Join) => j.destinationTable === filterTable)?.sourceColumnNames?.[0];
 
-    if (allFilterTexts.length > 1) {
-        filterText = `{and: [${allFilterTexts.join(", ")}]}`;
-    } else if (allFilterTexts.length === 1) {
-        filterText = allFilterTexts[0];
-    } else {
-        filterText = "";
+    if (fkColumn) {
+        const fkCol = table.columns.find((c) => c.name === fkColumn);
+        const coerced = fkCol && numericTypes.includes(fkCol.paramType) ? Number(id) : id;
+        return { id: coerced };
     }
 
-    const dataColumns = table.columns
-        .filter((x: Column) => (x as ColumnWithJoin)?.joinTable === undefined)
-        .map((x: Column): ColumnWithJoin => {
-            const joinTable = tableSchema.singleJoins.find((j: Join) => j.sourceColumnNames?.[0] === x.name);
-            if (!joinTable) return x;
-            const joinSchema = schema.findTable(joinTable.destinationTable);
-            const labelColumn = joinSchema?.labelColumn ?? "id";
-            return {...x, joinTable, joinLabelColumn: labelColumn};
-        })
-        .map((x: ColumnWithJoin) => {
-            if (x?.joinTable) {
-                return x.name + ` ${x.joinTable.destinationTable} { id: ${x.joinTable.destinationColumnNames?.[0]} label: ${x.joinLabelColumn} }`;
-            }
-            return x.name;
-        })
-        .join(' ');
-
-    if (id && !tableFilter && !filterColumn) {
-        param = `, $id: ${pkType}`;
-        filterText = `{ ${ primaryKey }: { _eq: $id}}`;
-    } else if (id && (filterColumn || tableFilter)) {
-        // filterColumn: explicit FK column on the child table (from join metadata)
-        // tableFilter: parent table name (from URL routes like /submissions/from/assignments/6)
-        const fkColumn = filterColumn
-            ?? tableSchema.singleJoins.find((j: Join) => j.destinationTable === tableFilter)?.sourceColumnNames?.[0];
-        const fkCol = table.columns.find((c: Column) => c.name === fkColumn);
-        const idType = fkCol ? getGraphQlType(fkCol.paramType) : "Int";
-        param = `, $id: ${idType}` + param;
-        if (fkColumn) {
-            // Direct FK filter — no JOIN needed
-            if (filterText)
-                filterText = `{and: [${filterText}, { ${fkColumn}: { _eq: $id}} ]}`;
-            else
-                filterText = `{ ${fkColumn}: { _eq: $id}}`;
-        } else {
-            // Fallback: nested filter through join (requires JOIN support)
-            const parentTable = schema.findTable(tableFilter!);
-            const parentPk = parentTable?.primaryKeys?.[0] ?? "id";
-            if (filterText)
-                filterText = `{and: [${filterText}, { ${tableFilter}: { ${ parentPk }: { _eq: $id}}} ]}`;
-            else
-                filterText = `{ ${tableFilter}: { ${ parentPk }: { _eq: $id}}}`;
-        }
+    const parentTable = schema.findTable(filterTable!);
+    if (parentTable && (parentTable.primaryKeys?.length ?? 0) > 1) {
+        return buildPkEqVariables(id, parentTable);
     }
-
-    // Add multi-join child queries (fetch label column for count + titles)
-    const multiJoinFields = tableSchema.multiJoins
-        .map((j: Join) => {
-            const joinSchema = schema.findTable(j.destinationTable);
-            const labelCol = joinSchema?.labelColumn ?? 'id';
-            const pkCol = joinSchema?.primaryKeys?.[0] ?? 'id';
-            return `${j.destinationTable} { ${pkCol} ${labelCol !== pkCol ? labelCol : ''} }`;
-        })
-        .join(' ');
-
-    const allFields = multiJoinFields ? `${dataColumns} ${multiJoinFields}` : dataColumns;
-
-    if (filterText) filterText = `filter: ${filterText}`;
-    return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${table.name}(sort: $sort limit: $limit offset: $offset ${filterText}) { total offset limit data {${allFields}}}}`;
+    const parentPkType = parentTable ? getPkTypes(parentTable)[0]?.gqlType : undefined;
+    const isNumeric = parentPkType ? numericTypes.includes(parentPkType) : true;
+    return { id: isNumeric ? Number(id) : id };
 }
 
 interface TableQueryData {
@@ -490,8 +311,8 @@ interface UseDataTableResult {
     sorting: SortingState;
     /** Active column filters */
     columnFilters: ColumnFiltersState;
-    /** Field name used as the row identifier */
-    rowIdField: string;
+    /** Primary-key column names in declaration order (empty when the table has no PK). */
+    primaryKeys: string[];
     /** Current page index (0-based) */
     pageIndex: number;
     /** Number of rows per page */
@@ -538,12 +359,11 @@ interface UseDataTableResult {
  * @param id - Optional record ID for filtering to a specific row
  * @param filterTable - Optional parent table name for relationship filtering
  * @param filterColumn - Optional column name for explicit FK filtering
- * @param onDeleteRow - Callback when a row delete action is triggered
  * @param onExpandContent - Callback when content expansion is requested
  * @param onOpenColumn - Callback when opening a side panel column
  * @returns Data table state and control functions
  */
-export function useDataTable(table: Table | null, id?: string, filterTable?: string, filterColumn?: string, onDeleteRow?: (pk: string) => void, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: ColumnPanel) => void): UseDataTableResult {
+export function useDataTable(table: Table | null, id?: string, filterTable?: string, filterColumn?: string, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: ColumnPanel) => void): UseDataTableResult {
     const { search } = useSearchParams();
     const navigate = useNavigate();
     const filterString = search.get('filter') ?? '';
@@ -588,17 +408,16 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         [columnFilters, table]
     );
 
-    const pkType = table ? getPkType(table) : "Int";
     const offset = pageIndex * pageSize;
 
     const queryVariables = useMemo(() => ({
         sort: appliedSort,
         limit: pageSize,
         offset,
-        ...(!id ? {} : { id: numericTypes.includes(pkType) ? +id : id }),
+        ...(id && table ? buildIdLookupVariables(id, table, schema, filterTable, filterColumn) : {}),
         ...filterVariables,
         ...cfVariables,
-    }), [appliedSort, pageSize, offset, id, pkType, filterVariables, cfVariables]);
+    }), [appliedSort, pageSize, offset, id, table, schema, filterTable, filterColumn, filterVariables, cfVariables]);
 
     const { isLoading, error, data } = useQuery({
         queryKey: ['tableData', table?.name, query, queryVariables],
@@ -646,13 +465,13 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         setPageIndex(0);
     }, []);
 
-    const rowIdField = table?.primaryKeys?.[0] ?? 'id';
+    const primaryKeys = table?.primaryKeys ?? [];
 
     return {
         columns,
         sorting,
         columnFilters,
-        rowIdField,
+        primaryKeys,
         pageIndex,
         pageSize,
         pageCount,

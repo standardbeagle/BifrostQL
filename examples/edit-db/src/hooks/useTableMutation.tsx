@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { useFetcher } from "../common/fetcher";
 import { Table, Column } from "../types/schema";
+import { parsePkRoute, type PkFilter } from "../lib/row-id";
 
 const numericTypes = ["Int", "Int!", "Float", "Float!", "BigInt", "BigInt!"];
 const booleanTypes = ["Boolean", "Boolean!"];
@@ -14,7 +15,7 @@ function coerceDetail(
     detail: Record<string, unknown>,
     editColumns: ColumnJoin[],
     idColumns: Column[],
-    editId: string | undefined,
+    pkFilter: PkFilter | null,
     isInsert: boolean
 ): Record<string, unknown> {
     const coerced = { ...detail };
@@ -27,9 +28,14 @@ function coerceDetail(
             coerced[col.name] = !!coerced[col.name];
         }
     }
-    if (!isInsert) {
+    if (!isInsert && pkFilter) {
         for (const col of idColumns) {
-            coerced[col.name] = numericTypes.some(t => t === col.paramType) ? +(editId ?? 0) : editId;
+            const raw = pkFilter[col.name];
+            if (numericTypes.some(t => t === col.paramType)) {
+                coerced[col.name] = raw == null ? null : Number(raw);
+            } else {
+                coerced[col.name] = raw;
+            }
         }
     }
     return coerced;
@@ -76,13 +82,18 @@ export function useTableMutation(
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tableData', table.name] }),
     });
 
+    const pkFilter = useMemo(() => {
+        if (isInsert || !editId) return null;
+        return parsePkRoute(editId, table);
+    }, [isInsert, editId, table]);
+
     const update = (detail: Record<string, unknown>) => {
-        const coerced = coerceDetail(detail, editColumns, idColumns, editId, false);
+        const coerced = coerceDetail(detail, editColumns, idColumns, pkFilter, false);
         return updateMutation.mutateAsync(coerced);
     };
 
     const insert = (detail: Record<string, unknown>) => {
-        const coerced = coerceDetail(detail, editColumns, idColumns, editId, true);
+        const coerced = coerceDetail(detail, editColumns, idColumns, null, true);
         return insertMutation.mutateAsync(coerced);
     };
 

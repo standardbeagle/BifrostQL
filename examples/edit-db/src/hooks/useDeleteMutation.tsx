@@ -2,20 +2,68 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { useFetcher } from "../common/fetcher";
 import { Table } from "../types/schema";
+import type { PkFilter } from "../lib/row-id";
+
+export type DeleteInput = PkFilter | string | number;
 
 export interface UseDeleteMutationResult {
-    deleteRow: (pkValue: string | number) => Promise<unknown>;
-    deleteRows: (pkValues: (string | number)[]) => Promise<unknown>;
+    deleteRow: (detail: DeleteInput) => Promise<unknown>;
+    deleteRows: (details: DeleteInput[]) => Promise<unknown>;
     isPending: boolean;
     error: Error | null;
+}
+
+function isPkFilter(value: DeleteInput): value is PkFilter {
+    return typeof value === 'object' && value !== null;
+}
+
+function coerceValue(value: unknown, paramType: string | undefined): unknown {
+    if (value === null || value === undefined) return null;
+    if (!paramType) return value;
+    const base = paramType.replace('!', '');
+    if (base === 'Int') {
+        const n = typeof value === 'number' ? value : Number(value);
+        return Number.isFinite(n) ? Math.trunc(n) : value;
+    }
+    if (base === 'Float') {
+        const n = typeof value === 'number' ? value : Number(value);
+        return Number.isFinite(n) ? n : value;
+    }
+    if (base === 'Boolean') {
+        if (typeof value === 'boolean') return value;
+        return value === 'true' || value === 1;
+    }
+    return String(value);
 }
 
 export function useDeleteMutation(table: Table): UseDeleteMutationResult {
     const fetcher = useFetcher();
     const queryClient = useQueryClient();
-    const pkColumn = table.primaryKeys?.[0] ?? "id";
-    const pkCol = table.columns.find((c) => c.name === pkColumn);
-    const isIntPk = pkCol?.paramType?.startsWith("Int") ?? true;
+
+    const columnParamType = useMemo(() => {
+        const map = new Map<string, string>();
+        for (const c of table.columns) map.set(c.name, c.paramType);
+        return map;
+    }, [table]);
+
+    const pkColumns = useMemo(() => {
+        const keys = table.primaryKeys ?? [];
+        return keys.length > 0 ? keys : ['id'];
+    }, [table]);
+
+    const buildPayload = (input: DeleteInput): PkFilter => {
+        const payload: PkFilter = {};
+        if (isPkFilter(input)) {
+            for (const col of pkColumns) {
+                payload[col] = coerceValue(input[col], columnParamType.get(col));
+            }
+            return payload;
+        }
+        // Legacy scalar form — assumes a single-column PK on the first PK.
+        const firstPk = pkColumns[0];
+        payload[firstPk] = coerceValue(input, columnParamType.get(firstPk));
+        return payload;
+    };
 
     const deleteQueryStr = useMemo(() =>
         `mutation deleteSingle($detail: Delete_${table.name}){
@@ -32,7 +80,7 @@ export function useDeleteMutation(table: Table): UseDeleteMutationResult {
     );
 
     const deleteMutation = useMutation({
-        mutationFn: (detail: Record<string, unknown>) => fetcher.query(deleteQueryStr, { detail }),
+        mutationFn: (detail: PkFilter) => fetcher.query(deleteQueryStr, { detail }),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tableData', table.name] }),
     });
 
@@ -41,15 +89,12 @@ export function useDeleteMutation(table: Table): UseDeleteMutationResult {
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tableData', table.name] }),
     });
 
-    const deleteRow = (pkValue: string | number) => {
-        const detail: Record<string, unknown> = { [pkColumn]: isIntPk ? +pkValue : pkValue };
-        return deleteMutation.mutateAsync(detail);
+    const deleteRow = (detail: DeleteInput) => {
+        return deleteMutation.mutateAsync(buildPayload(detail));
     };
 
-    const deleteRows = (pkValues: (string | number)[]) => {
-        const actions = pkValues.map((pk) => ({
-            delete: { [pkColumn]: isIntPk ? +pk : pk },
-        }));
+    const deleteRows = (details: DeleteInput[]) => {
+        const actions = details.map((d) => ({ delete: buildPayload(d) }));
         return batchMutation.mutateAsync(actions);
     };
 

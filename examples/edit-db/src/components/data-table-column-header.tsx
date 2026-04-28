@@ -42,11 +42,24 @@ function isBooleanColumn<TData, TValue>(column: Column<TData, TValue>): boolean 
     return getBaseParamType(column) === 'Boolean';
 }
 
-function getFkMeta<TData, TValue>(column: Column<TData, TValue>): { joinTable: string; joinLabelColumn: string; isSelfReference: boolean } | null {
-    const meta = column.columnDef.meta as { joinTable?: string; joinLabelColumn?: string; isSelfReference?: boolean } | undefined;
+interface FkMeta {
+    joinTable: string;
+    joinLabelColumn: string;
+    joinFkColumn: string;
+    isSelfReference: boolean;
+}
+
+function getFkMeta<TData, TValue>(column: Column<TData, TValue>): FkMeta | null {
+    const meta = column.columnDef.meta as {
+        joinTable?: string;
+        joinLabelColumn?: string;
+        joinFkColumn?: string;
+        isSelfReference?: boolean;
+    } | undefined;
     if (meta?.joinTable) return {
         joinTable: meta.joinTable,
         joinLabelColumn: meta.joinLabelColumn ?? 'id',
+        joinFkColumn: meta.joinFkColumn ?? 'id',
         isSelfReference: meta.isSelfReference === true,
     };
     return null;
@@ -91,7 +104,7 @@ function getTypeIcon(col: ColumnSchema) {
 
 interface ColumnMetadataTooltipProps {
     column: ColumnSchema;
-    fkMeta: { joinTable: string; joinLabelColumn: string; isSelfReference: boolean } | null;
+    fkMeta: FkMeta | null;
 }
 
 function ColumnMetadataTooltip({ column, fkMeta }: ColumnMetadataTooltipProps) {
@@ -328,7 +341,7 @@ export function DataTableColumnHeader<TData, TValue>({
                                     Filter
                                 </DropdownMenuSubTrigger>
                                 <DropdownMenuSubContent>
-                                    <FkFilter column={column} joinTable={fkMeta.joinTable} joinLabelColumn={fkMeta.joinLabelColumn} />
+                                    <FkFilter column={column} joinTable={fkMeta.joinTable} joinLabelColumn={fkMeta.joinLabelColumn} joinFkColumn={fkMeta.joinFkColumn} />
                                 </DropdownMenuSubContent>
                             </DropdownMenuSub>
                         </>

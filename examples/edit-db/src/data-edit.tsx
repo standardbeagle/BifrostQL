@@ -7,6 +7,7 @@ import { Schema, Table, Column, Join } from "./types/schema";
 import { TableRefValue, useTableRef } from "./hooks/useTableRef";
 import { useFetcher } from "./common/fetcher";
 import { useTableMutation } from "./hooks/useTableMutation";
+import { parsePkRoute, buildPkEqFilter } from "./lib/row-id";
 import {
     Dialog,
     DialogContent,
@@ -32,6 +33,8 @@ const booleanTypes = ["Boolean", "Boolean!"];
 const dateTypes = ["DateTime", "DateTime!"];
 const numericTypes = ["Int", "Int!", "Float", "Float!"];
 
+const EMPTY_PK_EQ_FILTER = { filterText: "", variables: {} as Record<string, unknown>, params: [] as string[] };
+
 interface DataEditRouteParams {
     table?: string;
     editid?: string;
@@ -48,10 +51,18 @@ function useTable(schema: Schema, tableName: string) {
         const table = schema?.data?.find((x: { graphQlName: string | undefined; }) => x.graphQlName == tableName)!;
         const editColumns = table.columns.filter((c: Column) => !c.isReadOnly && !c.isIdentity);
         const editColumnsJoin = editColumns.map((c: Column) => ({ column: c, join: table.singleJoins.find((j: Join) => j.sourceColumnNames[0] === c.graphQlName) }));
+        // idColumns is every primary-key column in declaration order. Composite PKs need them
+        // all for the by-id filter and for the update mutation's WHERE clause. Previously this
+        // was `c.isIdentity` which only captured auto-increment columns and silently dropped
+        // the second half of a composite key.
+        const byName = new Map(table.columns.map((c: Column) => [c.name, c] as const));
+        const idColumns: Column[] = (table.primaryKeys ?? [])
+            .map((pk) => byName.get(pk))
+            .filter((c): c is Column => !!c);
         return [
             table,
             editColumnsJoin,
-            table.columns.filter((c: Column) => c.isIdentity),
+            idColumns,
         ] as [Table, ColumnJoin[], Column[]];
     }, [schema, tableName]);
 }
@@ -66,24 +77,26 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
 
     const mutation = useTableMutation(dataTable, editColumns, idColumns, editid);
 
-    const pkName = idColumns[0]?.name ?? dataTable.primaryKeys?.[0] ?? "id";
-    const pkColumn = idColumns[0] ?? dataTable.columns.find((c: Column) => c.name === pkName);
-    const pkParamType = pkColumn?.paramType?.replace("!", "") ?? "Int";
-    const isNumericPk = numericTypes.includes(pkParamType);
+    const pkEq = useMemo(() => {
+        if (isInsert) return EMPTY_PK_EQ_FILTER;
+        const parsed = parsePkRoute(editid, dataTable);
+        if (!parsed) return EMPTY_PK_EQ_FILTER;
+        return buildPkEqFilter(parsed, dataTable) ?? EMPTY_PK_EQ_FILTER;
+    }, [isInsert, editid, dataTable]);
 
-    const queryStr = useMemo(() =>
-        `query GetSingleEdit_${dataTable.name}($id: ${pkParamType}){
-            value: ${dataTable.name}(filter: {${pkName}: { _eq: $id}}) {
+    const queryStr = useMemo(() => {
+        const paramDecls = pkEq.params.length > 0 ? pkEq.params.join(", ") : "";
+        return `query GetSingleEdit_${dataTable.name}(${paramDecls}){
+            value: ${dataTable.name}(filter: ${pkEq.filterText || "{}"}) {
                 data { ${editColumns.map(({ column: c }) => c.name).join(" ")} }
             }
-        }`,
-        [dataTable, editColumns, pkParamType, pkName]
-    );
+        }`;
+    }, [dataTable, editColumns, pkEq]);
 
     const { isLoading, error, data } = useQuery({
         queryKey: ['editRecord', dataTable.name, editid],
-        queryFn: () => fetcher.query<{ value: { data: Record<string, unknown>[] } }>(queryStr, { id: isNumericPk ? +editid : editid }),
-        enabled: !!dataTable && !isInsert,
+        queryFn: () => fetcher.query<{ value: { data: Record<string, unknown>[] } }>(queryStr, pkEq.variables),
+        enabled: !!dataTable && !isInsert && pkEq.filterText !== "",
     });
 
     const value = useMemo(() => data?.value?.data?.at(0) ?? {}, [data]);

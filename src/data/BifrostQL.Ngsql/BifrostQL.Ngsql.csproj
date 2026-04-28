@@ -10,6 +10,7 @@
 		<Authors>Andy Brummer</Authors>
 		<Company>StandardBeagle</Company>
 		<Description>PostgreSQL dialect support for BifrostQL.</Description>
+		<PackageVersion>0.4.0</PackageVersion>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>
 	</PropertyGroup>
 

@@ -6,6 +6,7 @@
 		<Nullable>enable</Nullable>
 		<IsPublishable>False</IsPublishable>
 		<IsPackable>true</IsPackable>
+		<PackageVersion>0.4.0</PackageVersion>
 		<PackageId>BifrostQL.SqlServer</PackageId>
 		<Authors>Andy Brummer</Authors>
 		<Company>StandardBeagle</Company>

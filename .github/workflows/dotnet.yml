@@ -106,7 +106,6 @@ jobs:
       - name: publish Core to nuget.org
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        continue-on-error: true
         run: |
           if [ -n "$NUGET_API_KEY" ]; then
             dotnet nuget push "src/BifrostQL.Core/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate
@@ -116,7 +115,6 @@ jobs:
       - name: publish Server to nuget.org
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        continue-on-error: true
         run: |
           if [ -n "$NUGET_API_KEY" ]; then
             dotnet nuget push "src/BifrostQL.Server/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate
@@ -126,7 +124,6 @@ jobs:
       - name: publish Ngsql to nuget.org
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        continue-on-error: true
         run: |
           if [ -n "$NUGET_API_KEY" ]; then
             dotnet nuget push "src/data/BifrostQL.Ngsql/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate
@@ -136,7 +133,6 @@ jobs:
       - name: publish SqlServer to nuget.org
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        continue-on-error: true
         run: |
           if [ -n "$NUGET_API_KEY" ]; then
             dotnet nuget push "src/data/BifrostQL.SqlServer/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate
@@ -146,7 +142,6 @@ jobs:
       - name: publish Sqlite to nuget.org
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        continue-on-error: true
         run: |
           if [ -n "$NUGET_API_KEY" ]; then
             dotnet nuget push "src/data/BifrostQL.Sqlite/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate
@@ -156,7 +151,6 @@ jobs:
       - name: publish MySql to nuget.org
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        continue-on-error: true
         run: |
           if [ -n "$NUGET_API_KEY" ]; then
             dotnet nuget push "src/data/BifrostQL.MySql/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ConnectionInfo, PROVIDERS } from './types';
+import { ConnectionInfo, PROVIDERS, VaultServer } from './types';
 import { saveRecentConnections, loadRecentConnections } from './recent-connections';
 
 const formatDate = (dateString: string): string => {
@@ -34,6 +34,8 @@ interface WelcomePanelProps {
   recentConnections?: ConnectionInfo[];
   onSelectRecentConnection?: (connection: ConnectionInfo) => void;
   onClearRecentConnections?: () => void;
+  vaultServers?: VaultServer[];
+  onConnectVaultServer?: (name: string) => void;
 }
 
 export const WelcomePanel: React.FC<WelcomePanelProps> = ({
@@ -42,6 +44,8 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({
   recentConnections: externalRecentConnections,
   onSelectRecentConnection,
   onClearRecentConnections,
+  vaultServers,
+  onConnectVaultServer,
 }) => {
   const [internalRecentConnections, setInternalRecentConnections] = useState<ConnectionInfo[]>([]);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -118,6 +122,51 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({
             </div>
           </button>
         </div>
+
+        {vaultServers && vaultServers.length > 0 && (
+          <div className="welcome-vault">
+            <h2 className="welcome-recent__header">Saved Servers</h2>
+            <div className="welcome-recent__list">
+              {vaultServers.map((server) => (
+                <div
+                  key={`vault-${server.name}`}
+                  className={`welcome-recent__item${hoveredId === `vault-${server.name}` ? ' welcome-recent__item--hover' : ''}`}
+                  onMouseEnter={() => setHoveredId(`vault-${server.name}`)}
+                  onMouseLeave={() => setHoveredId(null)}
+                >
+                  <button
+                    type="button"
+                    className="welcome-recent__connect"
+                    onClick={() => onConnectVaultServer?.(server.name)}
+                    aria-label={`Connect to ${server.name}`}
+                  >
+                    <span className="welcome-recent__provider-badge">
+                      {getProviderIcon(server.provider)}
+                    </span>
+                    <div className="welcome-recent__info">
+                      <span className="welcome-recent__name">
+                        {server.name}
+                        {server.hasSsh && <span className="welcome-vault__badge" title="SSH tunnel">SSH</span>}
+                        {server.source === 'env' && <span className="welcome-vault__badge welcome-vault__badge--env" title="From environment variable">ENV</span>}
+                      </span>
+                      <span className="welcome-recent__meta">
+                        {getProviderName(server.provider)} &middot; {server.host}:{server.port}
+                        {server.database ? `/${server.database}` : ''}
+                      </span>
+                    </div>
+                    {server.tags.length > 0 && (
+                      <div className="welcome-vault__tags">
+                        {server.tags.map((tag) => (
+                          <span key={tag} className="welcome-vault__tag">{tag}</span>
+                        ))}
+                      </div>
+                    )}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {recentConnections.length > 0 && (
           <div className="welcome-recent">

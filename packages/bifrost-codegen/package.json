@@ -1,0 +1,53 @@
+{
+  "name": "@bifrostql/codegen",
+  "version": "0.1.0",
+  "description": "TypeScript codegen CLI for BifrostQL — emits typed interfaces from a .proto schema",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "bin": {
+    "@bifrostql/codegen": "./dist/cli.js",
+    "bifrostql-codegen": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage"
+  },
+  "peerDependencies": {
+    "@bifrostql/binary-client": "workspace:*",
+    "@bufbuild/protobuf": "^2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@bifrostql/binary-client": {
+      "optional": true
+    },
+    "@bufbuild/protobuf": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@vitest/coverage-v8": "^2.1.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.1.0"
+  },
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/standardbeagle/bifrost",
+    "directory": "packages/bifrost-codegen"
+  }
+}

@@ -37,4 +37,21 @@ public sealed class SqlServerDbConnFactory : IDbConnFactory
     {
         return new SqlConnection(_connectionString);
     }
+
+    /// <inheritdoc />
+    public async Task<string[]> ListDatabasesAsync(CancellationToken cancellationToken = default)
+    {
+        var builder = new SqlConnectionStringBuilder(_connectionString) { InitialCatalog = "master" };
+        await using var conn = new SqlConnection(builder.ConnectionString);
+        await conn.OpenAsync(cancellationToken);
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT name FROM sys.databases WHERE state_desc = 'ONLINE' ORDER BY name";
+
+        var databases = new List<string>();
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            databases.Add(reader.GetString(0));
+        return databases.ToArray();
+    }
 }

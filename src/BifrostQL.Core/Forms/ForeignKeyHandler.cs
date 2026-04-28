@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.Core.Forms
 {
@@ -117,7 +118,7 @@ namespace BifrostQL.Core.Forms
 
             if (!column.IsNullable && !column.IsIdentity)
             {
-                if (column.GetMetadataValue("populate") == null)
+                if (column.GetMetadataValue(MetadataKeys.AutoPopulate.Marker) == null)
                 {
                     sb.Append(" required");
                     sb.Append(" aria-required=\"true\"");
@@ -143,7 +144,7 @@ namespace BifrostQL.Core.Forms
 
         private static bool IsTextColumn(string dataType)
         {
-            var normalized = dataType.ToLowerInvariant().Trim();
+            var normalized = StringNormalizer.NormalizeType(dataType);
             return normalized is "varchar" or "nvarchar" or "char" or "nchar";
         }
 

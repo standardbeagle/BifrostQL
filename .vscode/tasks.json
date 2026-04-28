@@ -7,11 +7,102 @@
             "type": "process",
             "args": [
                 "build",
-                "${workspaceFolder}/src/BifrostQL.Server/BifrostQL.Server.csproj",
+                "${workspaceFolder}/BifrostQL.sln",
+                "/property:GenerateFullPaths=true",
+                "/consoleloggerparameters:NoSummary"
+            ],
+            "problemMatcher": "$msCompile",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "build-host",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "build",
+                "${workspaceFolder}/src/BifrostQL.Host/BifrostQL.Host.csproj",
                 "/property:GenerateFullPaths=true",
                 "/consoleloggerparameters:NoSummary"
             ],
             "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "build-tool",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "build",
+                "${workspaceFolder}/src/BifrostQL.Tool/BifrostQL.Tool.csproj",
+                "/property:GenerateFullPaths=true",
+                "/consoleloggerparameters:NoSummary"
+            ],
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "build-ui",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "build",
+                "${workspaceFolder}/src/BifrostQL.UI/BifrostQL.UI.csproj",
+                "/property:GenerateFullPaths=true",
+                "/consoleloggerparameters:NoSummary"
+            ],
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "build-tests",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "build",
+                "${workspaceFolder}/tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj",
+                "${workspaceFolder}/tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj",
+                "/property:GenerateFullPaths=true",
+                "/consoleloggerparameters:NoSummary"
+            ],
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "test",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "test",
+                "${workspaceFolder}/BifrostQL.sln",
+                "--no-build"
+            ],
+            "problemMatcher": "$msCompile",
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "dependsOn": ["build"]
+        },
+        {
+            "label": "test-core",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "test",
+                "${workspaceFolder}/tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj"
+            ],
+            "problemMatcher": "$msCompile",
+            "group": "test"
+        },
+        {
+            "label": "test-server",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "test",
+                "${workspaceFolder}/tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj"
+            ],
+            "problemMatcher": "$msCompile",
+            "group": "test"
         },
         {
             "label": "publish",
@@ -19,7 +110,7 @@
             "type": "process",
             "args": [
                 "publish",
-                "${workspaceFolder}/src/BifrostQL.Server/BifrostQL.Server.csproj",
+                "${workspaceFolder}/src/BifrostQL.Host/BifrostQL.Host.csproj",
                 "/property:GenerateFullPaths=true",
                 "/consoleloggerparameters:NoSummary"
             ],
@@ -33,7 +124,29 @@
                 "watch",
                 "run",
                 "--project",
-                "${workspaceFolder}/src/BifrostQL.Server/BifrostQL.Server.csproj"
+                "${workspaceFolder}/src/BifrostQL.Host/BifrostQL.Host.csproj"
+            ],
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "pack-tool",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "pack",
+                "${workspaceFolder}/src/BifrostQL.Tool/BifrostQL.Tool.csproj",
+                "--configuration",
+                "Release"
+            ],
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "clean",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "clean",
+                "${workspaceFolder}/BifrostQL.sln"
             ],
             "problemMatcher": "$msCompile"
         }

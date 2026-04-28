@@ -15,15 +15,18 @@ namespace BifrostQL.Server
         private readonly RequestDelegate _next;
         private readonly IGraphQLSerializer _serializer;
         private readonly BifrostDocumentExecutor _executor;
+        private readonly ILogger<BifrostHttpMiddleware> _logger;
 
         public BifrostHttpMiddleware(
             RequestDelegate next,
             IGraphQLSerializer serializer,
-            IDocumentExecuter documentExecutor)
+            IDocumentExecuter documentExecutor,
+            ILogger<BifrostHttpMiddleware> logger)
         {
             _next = next;
             _serializer = serializer;
             _executor = new BifrostDocumentExecutor(documentExecutor);
+            _logger = logger;
         }
 
         public async Task InvokeAsync(HttpContext context)
@@ -60,11 +63,16 @@ namespace BifrostQL.Server
             catch (Exception ex)
             {
                 var innerMessage = ex.InnerException?.Message ?? ex.Message;
+                var errorMessage = $"Server error: {innerMessage}";
+                
+                // Log full exception with stack trace using ASP.NET Core logging
+                _logger.LogError(ex, "GraphQL execution failed: {ErrorMessage}", errorMessage);
+                
                 result = new ExecutionResult
                 {
                     Errors = new ExecutionErrors
                     {
-                        new ExecutionError($"Server error: {innerMessage}")
+                        new ExecutionError(errorMessage)
                     }
                 };
             }
@@ -130,6 +138,11 @@ namespace BifrostQL.Server
             {
                 // Surface connection/schema errors as GraphQL errors instead of 500
                 var innerMessage = ex.InnerException?.Message ?? ex.Message;
+                
+                // Log full exception with stack trace for debugging
+                var logger = options.RequestServices!.GetService<ILogger<BifrostDocumentExecutor>>();
+                logger?.LogError(ex, "Schema resolution failed: {Message}", innerMessage);
+                
                 return Task.FromResult(new ExecutionResult
                 {
                     Errors = new ExecutionErrors

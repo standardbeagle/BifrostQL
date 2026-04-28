@@ -182,7 +182,11 @@ namespace BifrostQL.Core.Model
             "soft-delete-column",
             "sp-include",
             "sp-exclude",
+            "prefix-groups",
             "tenant-context-key",
+            "auto-detect-app",
+            "app-schema",
+            "detected-app",
         };
 
         /// <summary>

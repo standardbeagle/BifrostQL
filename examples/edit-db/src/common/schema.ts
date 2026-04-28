@@ -48,6 +48,17 @@ query dbSchema {
       isIdentity
       isNullable
       isReadOnly
+      maxLength
+      minLength
+      min
+      max
+      step
+      pattern
+      patternMessage
+      inputType
+      defaultValue
+      enumValues
+      enumLabels
       metadata {
         key
         value

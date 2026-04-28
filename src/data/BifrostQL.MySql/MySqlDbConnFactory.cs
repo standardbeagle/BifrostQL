@@ -37,4 +37,21 @@ public sealed class MySqlDbConnFactory : IDbConnFactory
     {
         return new MySqlConnection(_connectionString);
     }
+
+    /// <inheritdoc />
+    public async Task<string[]> ListDatabasesAsync(CancellationToken cancellationToken = default)
+    {
+        var builder = new MySqlConnectionStringBuilder(_connectionString) { Database = "" };
+        await using var conn = new MySqlConnection(builder.ConnectionString);
+        await conn.OpenAsync(cancellationToken);
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT schema_name FROM information_schema.schemata ORDER BY schema_name";
+
+        var databases = new List<string>();
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            databases.Add(reader.GetString(0));
+        return databases.ToArray();
+    }
 }

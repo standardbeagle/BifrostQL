@@ -44,6 +44,13 @@ async function main() {
     console.log("Inserted:", result.data);
   }
 
+  // Streaming: receive chunks as they arrive instead of waiting for the full
+  // response. Useful for large binary downloads (images, files, reports).
+  for await (const chunk of client.stream("{ download_large_blob }")) {
+    console.log(`chunk ${chunk.sequence + 1}/${chunk.totalChunks} (${chunk.bytes.length} bytes)`);
+    if (chunk.isLast) console.log("download complete");
+  }
+
   client.close();
 }
 

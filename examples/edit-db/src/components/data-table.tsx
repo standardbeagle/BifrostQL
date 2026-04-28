@@ -45,6 +45,7 @@ import {
     Trash2,
 } from 'lucide-react';
 import { RowActions } from './row-actions';
+import { rowIdOf, pkFilterFor, type PkFilter } from '@/lib/row-id';
 
 const COL_MIN_WIDTH = 60;
 const COL_MAX_AUTO_WIDTH = 450;
@@ -73,32 +74,90 @@ function saveColumnSizing(tableName: string, sizing: ColumnSizingState): void {
     }
 }
 
+/**
+ * Props for the DataTable component.
+ * @interface DataTableProps
+ * @template TData - The type of data rows displayed in the table
+ */
 interface DataTableProps<TData> {
+    /** Column definitions for the table */
     columns: ColumnDef<TData, unknown>[];
+    /** Data rows to display */
     data: TData[];
+    /** Table name for persisting column sizing to localStorage */
     tableName?: string;
+    /** Total number of pages */
     pageCount: number;
+    /** Current page index (0-based) */
     pageIndex: number;
+    /** Number of rows per page */
     pageSize: number;
+    /** Current sorting state */
     sorting: SortingState;
+    /** Active column filters */
     columnFilters: ColumnFiltersState;
+    /** Whether data is currently loading */
     loading?: boolean;
+    /** Enable row selection checkboxes */
     selectable?: boolean;
-    rowIdField?: string;
+    /**
+     * Primary key column names in declaration order.
+     * - Single-column PK: `['id']` (or whichever column).
+     * - Composite PK: multiple entries — the row id becomes a composite-encoded string.
+     * - Empty / omitted: synthetic `row-${index}` ids; edit/delete actions are disabled.
+     */
+    primaryKeys?: string[];
+    /** Currently selected row ID — must be a value produced by `rowIdOf` (composite-encoded). */
     selectedRowId?: string | null;
+    /** Callback when a row is selected */
     onRowSelect?: (rowId: string | null) => void;
+    /** Callback when sorting changes */
     onSortingChange: (sorting: SortingState) => void;
+    /** Callback when column filters change */
     onColumnFiltersChange: (filters: ColumnFiltersState) => void;
+    /** Callback when page index changes */
     onPageIndexChange: (pageIndex: number) => void;
+    /** Callback when page size changes */
     onPageSizeChange: (pageSize: number) => void;
-    onEditRow?: (pk: string) => void;
-    onDeleteRow?: (pk: string) => void;
-    onDeleteSelected?: (pks: string[]) => void;
+    /** Callback when edit action is triggered for a row */
+    onEditRow?: (pk: PkFilter) => void;
+    /** Callback when delete action is triggered for a row */
+    onDeleteRow?: (pk: PkFilter) => void;
+    /** Callback when deleting multiple selected rows */
+    onDeleteSelected?: (pks: PkFilter[]) => void;
 }
 
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100];
 const FIT_SENTINEL = -1;
 
+/**
+ * DataTable component - A comprehensive data table with sorting, filtering,
+ * pagination, and column resizing capabilities.
+ * 
+ * Built on top of TanStack Table (@tanstack/react-table) with a Tailwind CSS
+ * interface. Supports row selection, inline actions, and persistent column sizing.
+ * 
+ * @example
+ * ```tsx
+ * <DataTable
+ *   columns={columns}
+ *   data={rows}
+ *   pageCount={10}
+ *   pageIndex={0}
+ *   pageSize={20}
+ *   sorting={[{ id: 'name', desc: false }]}
+ *   columnFilters={[]}
+ *   onSortingChange={setSorting}
+ *   onColumnFiltersChange={setFilters}
+ *   onPageIndexChange={setPageIndex}
+ *   onPageSizeChange={setPageSize}
+ * />
+ * ```
+ * 
+ * @template TData - The type of data rows
+ * @param props - DataTable configuration props
+ * @returns React element containing the data table interface
+ */
 export function DataTable<TData>({
     columns,
     data,
@@ -110,7 +169,7 @@ export function DataTable<TData>({
     columnFilters,
     loading,
     selectable = false,
-    rowIdField = 'id',
+    primaryKeys = [],
     selectedRowId,
     onRowSelect,
     onSortingChange,
@@ -121,12 +180,12 @@ export function DataTable<TData>({
     onDeleteRow,
     onDeleteSelected,
 }: DataTableProps<TData>) {
-    const [hoveredRow, setHoveredRow] = useState<{ pk: string; el: HTMLElement } | null>(null);
+    const [hoveredRow, setHoveredRow] = useState<{ rowId: string; el: HTMLElement } | null>(null);
     const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    const hoverRow = useCallback((pk: string, el: HTMLElement) => {
+    const hoverRow = useCallback((rowId: string, el: HTMLElement) => {
         if (dismissTimer.current) { clearTimeout(dismissTimer.current); dismissTimer.current = null; }
-        setHoveredRow({ pk, el });
+        setHoveredRow({ rowId, el });
     }, []);
 
     const scheduleDismiss = useCallback(() => {
@@ -241,7 +300,7 @@ export function DataTable<TData>({
         data,
         columns: allColumns,
         pageCount,
-        getRowId: (row) => String((row as Record<string, unknown>)?.[rowIdField] ?? ''),
+        getRowId: (row, index) => rowIdOf(row as Record<string, unknown>, { primaryKeys }, index),
         state: {
             sorting,
             columnFilters,
@@ -288,11 +347,31 @@ export function DataTable<TData>({
     const selectedCount = Object.keys(rowSelection).length;
 
     const handleDeleteSelected = useCallback(() => {
-        const selectedPks = Object.keys(rowSelection);
-        if (selectedPks.length > 0 && onDeleteSelected) {
-            onDeleteSelected(selectedPks);
+        if (!onDeleteSelected) return;
+        const filters: PkFilter[] = [];
+        for (const r of table.getSelectedRowModel().rows) {
+            const f = pkFilterFor(r.original as Record<string, unknown>, { primaryKeys });
+            if (f) filters.push(f);
         }
-    }, [rowSelection, onDeleteSelected]);
+        if (filters.length > 0) onDeleteSelected(filters);
+    }, [table, onDeleteSelected, primaryKeys]);
+
+    const buildRowPkFilter = useCallback((rowId: string): PkFilter | null => {
+        const row = table.getRow(rowId);
+        return row ? pkFilterFor(row.original as Record<string, unknown>, { primaryKeys }) : null;
+    }, [table, primaryKeys]);
+
+    const handleHoverEdit = useCallback(() => {
+        if (!hoveredRow || !onEditRow) return;
+        const filter = buildRowPkFilter(hoveredRow.rowId);
+        if (filter) onEditRow(filter);
+    }, [hoveredRow, onEditRow, buildRowPkFilter]);
+
+    const handleHoverDelete = useCallback(() => {
+        if (!hoveredRow || !onDeleteRow) return;
+        const filter = buildRowPkFilter(hoveredRow.rowId);
+        if (filter) onDeleteRow(filter);
+    }, [hoveredRow, onDeleteRow, buildRowPkFilter]);
 
     return (
         <div className="flex flex-col w-full min-h-0 flex-1">
@@ -385,16 +464,14 @@ export function DataTable<TData>({
                             </TableRow>
                         ) : (
                             table.getRowModel().rows.map((row) => {
-                                const rowPk = (row.original as Record<string, unknown>)?.[rowIdField] ?? row.id;
-                                const pkStr = String(rowPk);
-                                const isSelected = selectedRowId != null && pkStr === selectedRowId;
+                                const isSelected = selectedRowId != null && row.id === selectedRowId;
                                 return (
                                     <TableRow
                                         key={row.id}
                                         data-state={isSelected ? 'selected' : row.getIsSelected() ? 'selected' : undefined}
                                         className={onRowSelect ? 'cursor-pointer group/row' : 'group/row'}
-                                        onClick={onRowSelect ? () => onRowSelect(isSelected ? null : pkStr) : undefined}
-                                        onMouseEnter={(e) => hoverRow(pkStr, e.currentTarget)}
+                                        onClick={onRowSelect ? () => onRowSelect(isSelected ? null : row.id) : undefined}
+                                        onMouseEnter={(e) => hoverRow(row.id, e.currentTarget)}
                                         onMouseLeave={scheduleDismiss}
                                     >
                                         {row.getVisibleCells().map((cell) => (
@@ -415,8 +492,8 @@ export function DataTable<TData>({
                 {hoveredRow && (onEditRow || onDeleteRow) && (
                     <RowActions
                         anchorEl={hoveredRow.el}
-                        onEdit={() => onEditRow!(hoveredRow.pk)}
-                        onDelete={onDeleteRow ? () => onDeleteRow(hoveredRow.pk) : undefined}
+                        onEdit={onEditRow ? handleHoverEdit : undefined}
+                        onDelete={onDeleteRow ? handleHoverDelete : undefined}
                         onMouseEnter={cancelDismiss}
                         onDismiss={scheduleDismiss}
                     />

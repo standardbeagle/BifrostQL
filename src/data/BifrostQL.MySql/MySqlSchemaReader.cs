@@ -28,7 +28,27 @@ INNER JOIN information_schema.table_constraints tc ON
     tc.constraint_schema = ccu.constraint_schema AND
     tc.constraint_name = ccu.constraint_name AND
     tc.table_name = ccu.table_name
-WHERE ccu.table_schema = DATABASE();
+WHERE ccu.table_schema = DATABASE()
+UNION ALL
+-- Unique constraints from unique indexes
+SELECT
+    DATABASE() AS table_catalog,
+    DATABASE() AS table_schema,
+    t.table_name,
+    c.column_name,
+    DATABASE() AS constraint_catalog,
+    DATABASE() AS constraint_schema,
+    t.index_name AS constraint_name,
+    'UNIQUE' AS constraint_type
+FROM information_schema.statistics t
+JOIN information_schema.columns c ON 
+    t.table_schema = c.table_schema AND
+    t.table_name = c.table_name AND
+    t.column_name = c.column_name
+WHERE t.table_schema = DATABASE()
+  AND t.non_unique = 0
+  AND t.index_name != 'PRIMARY'
+  AND t.seq_in_index = 1;
 
 -- Columns
 SELECT
@@ -88,7 +108,7 @@ ORDER BY table_schema, table_name;
         var rawColumns = GetDtos(reader, r => ColumnDto.FromReader(r, columnConstraints)).ToArray();
         var columns = rawColumns
             .GroupBy(c => new TableRef(c.TableCatalog, c.TableSchema, c.TableName))
-            .ToDictionary(g => g.Key, g => g.ToArray());
+            .ToDictionary(g => g.Key, g => ColumnDto.DeduplicateGraphQlNames(g).ToArray());
 
         await reader.NextResultAsync();
 

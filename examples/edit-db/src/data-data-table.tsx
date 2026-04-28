@@ -7,6 +7,7 @@ import { ConfirmDialog } from './components/confirm-dialog';
 import { ContentPanel, type ContentPanelTarget } from './components/content-panel';
 import { Table, Column } from './types/schema';
 import { ColumnPanel } from './data-panel';
+import { encodePkRoute, type PkFilter } from './lib/row-id';
 
 interface DataDataTableParams {
     table: Table;
@@ -18,26 +19,29 @@ interface DataDataTableParams {
     onOpenColumn?: (panel: ColumnPanel) => void;
 }
 
+type DeleteTarget =
+    | { type: 'single'; pk: PkFilter }
+    | { type: 'batch'; pks: PkFilter[] };
+
 export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRowId, onRowSelect, onOpenColumn }: DataDataTableParams): JSX.Element {
     const deleteMutation = useDeleteMutation(table);
     const navigate = useNavigate();
 
-    // Delete confirmation state
-    const [deleteTarget, setDeleteTarget] = useState<{ type: 'single'; pk: string } | { type: 'batch'; pks: string[] } | null>(null);
+    const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
 
     // Content panel state
     const [panelColumn, setPanelColumn] = useState<string | null>(null);
     const [panelRowIndex, setPanelRowIndex] = useState<number>(0);
 
-    const handleEditRow = useCallback((pk: string) => {
-        navigate(`/${table.graphQlName}/edit/${pk}`);
-    }, [table.graphQlName, navigate]);
+    const handleEditRow = useCallback((pk: PkFilter) => {
+        navigate(`/${table.graphQlName}/edit/${encodePkRoute(pk, table)}`);
+    }, [table, navigate]);
 
-    const handleDeleteRow = useCallback((pk: string) => {
+    const handleDeleteRow = useCallback((pk: PkFilter) => {
         setDeleteTarget({ type: 'single', pk });
     }, []);
 
-    const handleDeleteSelected = useCallback((pks: string[]) => {
+    const handleDeleteSelected = useCallback((pks: PkFilter[]) => {
         if (pks.length === 0) return;
         setDeleteTarget({ type: 'batch', pks });
     }, []);
@@ -51,7 +55,6 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
         columns,
         sorting,
         columnFilters,
-        rowIdField,
         pageIndex,
         pageSize,
         pageCount,
@@ -62,7 +65,7 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
         onColumnFiltersChange,
         onPageIndexChange,
         onPageSizeChange,
-    } = useDataTable(table, id, tableFilter, filterColumn, table.isEditable !== false ? handleDeleteRow : undefined, handleExpandContent, onOpenColumn);
+    } = useDataTable(table, id, tableFilter, filterColumn, handleExpandContent, onOpenColumn);
 
     const handleConfirmDelete = useCallback(async () => {
         if (!deleteTarget) return;
@@ -109,6 +112,8 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
 
     if (error) return <div>Error: {error.message}</div>;
 
+    const isEditable = table.isEditable !== false;
+
     return (
         <>
             <DataTable
@@ -121,17 +126,17 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
                 sorting={sorting}
                 columnFilters={columnFilters}
                 loading={loading}
-                rowIdField={rowIdField}
-                selectable={table.isEditable !== false}
+                primaryKeys={table.primaryKeys ?? []}
+                selectable={isEditable}
                 selectedRowId={selectedRowId}
                 onRowSelect={onRowSelect}
                 onSortingChange={onSortingChange}
                 onColumnFiltersChange={onColumnFiltersChange}
                 onPageIndexChange={onPageIndexChange}
                 onPageSizeChange={onPageSizeChange}
-                onEditRow={table.isEditable !== false ? handleEditRow : undefined}
-                onDeleteRow={table.isEditable !== false ? handleDeleteRow : undefined}
-                onDeleteSelected={table.isEditable !== false ? handleDeleteSelected : undefined}
+                onEditRow={isEditable ? handleEditRow : undefined}
+                onDeleteRow={isEditable ? handleDeleteRow : undefined}
+                onDeleteSelected={isEditable ? handleDeleteSelected : undefined}
             />
             <ConfirmDialog
                 open={deleteTarget !== null}

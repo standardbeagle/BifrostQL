@@ -9,6 +9,9 @@ var router = new CommandRouter()
     .Register(new SchemaCommand())
     .Register(new ConfigValidateCommand())
     .Register(new ConfigGenerateCommand())
+    .Register(new DoctorCommand())
+    .Register(new WatchCommand())
+    .Register(new ExportCommand())
     .Register(new ServeCommand());
 
 return await router.ExecuteAsync(config, output);

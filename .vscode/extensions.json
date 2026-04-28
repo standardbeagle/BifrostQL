@@ -1,0 +1,16 @@
+{
+    "recommendations": [
+        "ms-dotnettools.csharp",
+        "ms-dotnettools.csdevkit",
+        "ms-dotnettools.vscode-dotnet-runtime",
+        "formulahendry.dotnet-test-explorer",
+        "k--kato.docomment",
+        "eamodio.gitlens",
+        "github.vscode-pull-request-github",
+        "davidanson.vscode-markdownlint",
+        "redhat.vscode-yaml",
+        "graphql.vscode-graphql",
+        "graphql.vscode-graphql-syntax"
+    ],
+    "unwantedRecommendations": []
+}

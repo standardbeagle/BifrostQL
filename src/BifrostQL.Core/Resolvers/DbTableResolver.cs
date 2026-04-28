@@ -1,34 +1,28 @@
-﻿using BifrostQL.Core.Model;
+using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Model;
-using GraphQL;
 using GraphQL.Resolvers;
-using GraphQL.Types;
 
 namespace BifrostQL.Core.Resolvers
 {
     public interface IDbTableResolver : IBifrostResolver, IFieldResolver
     {
-
     }
 
-    public class DbTableResolver : IDbTableResolver
+    /// <summary>
+    /// Resolver for database table queries.
+    /// Delegates execution to the SQL execution manager.
+    /// </summary>
+    public sealed class DbTableResolver : TableResolverBase, IDbTableResolver
     {
-        private readonly IDbTable _table;
-        public DbTableResolver(IDbTable table)
+        public DbTableResolver(IDbTable table) : base(table)
         {
-            _table = table;
         }
 
-        public ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
+        public override ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
         {
             var bifrost = new BifrostContextAdapter(context);
-            return bifrost.Executor.ResolveAsync(context, _table);
-        }
-
-        ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
-        {
-            return ResolveAsync(new BifrostFieldContextAdapter(context));
+            return bifrost.Executor.ResolveAsync(context, Table);
         }
     }
 

@@ -6,7 +6,7 @@ namespace BifrostQL.Ngsql;
 
 /// <summary>
 /// PostgreSQL implementation of schema reader using information_schema views.
-/// Excludes pg_catalog and information_schema system schemas.
+/// Excludes pg_catalog, information_schema, and ag_catalog (Apache AGE extension) system schemas.
 /// Identity columns are detected by checking if column_default starts with 'nextval('.
 /// </summary>
 public sealed class PostgresSchemaReader : ISchemaReader
@@ -27,7 +27,25 @@ INNER JOIN information_schema.table_constraints tc ON
     tc.constraint_catalog = ccu.constraint_catalog AND
     tc.constraint_schema = ccu.constraint_schema AND
     tc.constraint_name = ccu.constraint_name
-WHERE ccu.table_schema NOT IN ('pg_catalog', 'information_schema');
+WHERE ccu.table_schema NOT IN ('pg_catalog', 'information_schema', 'ag_catalog')
+UNION ALL
+-- Unique constraints from unique indexes
+SELECT
+    db_name() AS table_catalog,
+    schemaname AS table_schema,
+    tablename AS table_name,
+    a.attname AS column_name,
+    db_name() AS constraint_catalog,
+    schemaname AS constraint_schema,
+    indexname AS constraint_name,
+    'UNIQUE' AS constraint_type
+FROM pg_indexes pi
+JOIN pg_class t ON t.relname = pi.tablename
+JOIN pg_index ix ON ix.indexrelid = (pi.schemaname || '.' || pi.indexname)::regclass
+JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+WHERE ix.indisunique = true
+  AND ix.indisprimary = false
+  AND schemaname NOT IN ('pg_catalog', 'information_schema', 'ag_catalog');
 
 -- Columns
 SELECT
@@ -59,7 +77,7 @@ SELECT
         ELSE 0
     END AS is_identity
 FROM information_schema.columns c
-WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema')
+WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema', 'ag_catalog')
 ORDER BY c.table_catalog, c.table_schema, c.table_name, c.ordinal_position;
 
 -- Tables
@@ -69,7 +87,7 @@ SELECT
     table_name,
     table_type
 FROM information_schema.tables
-WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+WHERE table_schema NOT IN ('pg_catalog', 'information_schema', 'ag_catalog')
 ORDER BY table_catalog, table_schema, table_name;
 ";
 
@@ -90,7 +108,7 @@ ORDER BY table_catalog, table_schema, table_name;
         var rawColumns = GetDtos(reader, r => ColumnDto.FromReader(r, columnConstraints)).ToArray();
         var columns = rawColumns
             .GroupBy(c => new TableRef(c.TableCatalog, c.TableSchema, c.TableName))
-            .ToDictionary(g => g.Key, g => g.ToArray());
+            .ToDictionary(g => g.Key, g => ColumnDto.DeduplicateGraphQlNames(g).ToArray());
 
         await reader.NextResultAsync();
 

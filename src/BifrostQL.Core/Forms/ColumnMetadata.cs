@@ -1,3 +1,5 @@
+using BifrostQL.Core.Storage;
+
 namespace BifrostQL.Core.Forms
 {
     /// <summary>
@@ -78,5 +80,27 @@ namespace BifrostQL.Core.Forms
         /// in browsers when a pattern mismatch occurs.
         /// </summary>
         public string? Title { get; set; }
+
+        /// <summary>
+        /// When set, marks this column as a file storage column.
+        /// Contains configuration like "type:image;maxSize:5242880;accept:image/*"
+        /// </summary>
+        public string? FileStorage { get; set; }
+
+        /// <summary>
+        /// Storage bucket configuration for file columns.
+        /// Overrides table-level and database-level storage config.
+        /// </summary>
+        public StorageBucketConfig? StorageBucket { get; set; }
+
+        /// <summary>
+        /// Gets the file column configuration if this is a file storage column
+        /// </summary>
+        public FileColumnConfig? GetFileConfig()
+        {
+            if (string.IsNullOrWhiteSpace(FileStorage))
+                return null;
+            return FileColumnConfig.FromMetadata(FileStorage);
+        }
     }
 }

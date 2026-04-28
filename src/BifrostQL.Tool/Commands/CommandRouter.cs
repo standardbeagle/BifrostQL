@@ -90,5 +90,12 @@ public sealed class CommandRouter
         output.WriteInfo("  bifrost bifrostql.json                  Use config file");
         output.WriteInfo("  bifrost serve                           Auto-discover bifrostql.json");
         output.WriteInfo("  bifrost serve --connection-string \"...\" Explicit connection string");
+        output.WriteInfo("");
+        output.WriteHeader("Developer Commands:");
+        output.WriteInfo("  bifrost doctor                          Diagnose connection issues");
+        output.WriteInfo("  bifrost watch                           Watch for schema changes");
+        output.WriteInfo("  bifrost export [format]                 Export schema (json/sql/markdown)");
+        output.WriteInfo("  bifrost config-validate                 Validate config rules");
+        output.WriteInfo("  bifrost config-generate                 Auto-generate config rules");
     }
 }

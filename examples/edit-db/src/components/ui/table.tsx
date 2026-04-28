@@ -39,7 +39,7 @@ function TableBody({ className, ...props }: React.ComponentProps<"tbody">) {
   return (
     <tbody
       data-slot="table-body"
-      className={cn("[&_tr:last-child]:border-0", className)}
+      className={cn("[&_tr:last-child]:border-0 [&_tr:nth-child(even)]:bg-muted/25", className)}
       {...props}
     />
   )
@@ -77,7 +77,7 @@ function TableHead({ className, style, ...props }: React.ComponentProps<"th">) {
     <th
       data-slot="table-head"
       className={cn(
-        "px-2 text-left align-middle font-medium whitespace-nowrap text-muted-foreground text-xs [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+        "px-2 text-left align-middle font-medium whitespace-nowrap text-muted-foreground text-xs border-r border-border last:border-r-0 [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
         className
       )}
       style={{ height: TABLE_HEADER_HEIGHT, ...style }}
@@ -91,7 +91,7 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
     <td
       data-slot="table-cell"
       className={cn(
-        "px-2 py-1 align-middle whitespace-nowrap text-[13px] overflow-hidden text-ellipsis [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+        "px-2 py-1 align-middle whitespace-nowrap text-[13px] overflow-hidden text-ellipsis border-r border-border last:border-r-0 [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
         className
       )}
       {...props}

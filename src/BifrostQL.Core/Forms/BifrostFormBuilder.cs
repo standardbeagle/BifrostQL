@@ -195,8 +195,8 @@ namespace BifrostQL.Core.Forms
                 return;
             }
 
-            // Check for binary column (file upload)
-            if (TypeMapper.IsBinaryType(column.EffectiveDataType))
+            // Check for file column (binary type or file metadata)
+            if (FileUploadHandler.IsFileColumn(column, metadata))
             {
                 sb.Append($"<label for=\"{Encode(columnId)}\">{Encode(FormatLabel(column.ColumnName))}</label>");
                 sb.Append(FileUploadHandler.GenerateFileInput(column, metadata, hasCurrentValue: value != null));
@@ -308,7 +308,7 @@ namespace BifrostQL.Core.Forms
                 return metadata.Required.Value;
 
             return !column.IsNullable && !column.IsIdentity
-                && column.GetMetadataValue("populate") == null;
+                && column.GetMetadataValue(MetadataKeys.AutoPopulate.Marker) == null;
         }
 
         private static void AppendMetadataAttributes(StringBuilder sb, ColumnMetadata? metadata)
@@ -358,7 +358,7 @@ namespace BifrostQL.Core.Forms
             {
                 if (!ShouldInclude(column, mode))
                     continue;
-                if (TypeMapper.IsBinaryType(column.EffectiveDataType))
+                if (FileUploadHandler.IsFileColumn(column))
                     return true;
             }
             return false;
@@ -404,7 +404,7 @@ namespace BifrostQL.Core.Forms
         private static bool ShouldInclude(ColumnDto column, FormMode mode)
         {
             // Auto-populated audit columns are excluded from form rendering
-            if (column.GetMetadataValue("populate") != null)
+            if (column.GetMetadataValue(MetadataKeys.AutoPopulate.Marker) != null)
                 return false;
 
             if (mode == FormMode.Insert)

@@ -30,9 +30,13 @@ public sealed class SqliteSchemaReader : ISchemaReader
             tableNames.Add(((string)tablesReader["name"], (string)tablesReader["type"]));
         }
 
-        // For each table, get column information
+        // For each table, get column information and constraints
         foreach (var (tableName, tableType) in tableNames)
         {
+            // First, collect all constraints for this table
+            await CollectConstraintsAsync(connection, tableName, columnConstraints);
+
+            // Then read columns (which will use the constraints)
             var columnsCmd = connection.CreateCommand();
             columnsCmd.CommandText = $"PRAGMA table_xinfo({tableName})";
 
@@ -64,6 +68,8 @@ public sealed class SqliteSchemaReader : ISchemaReader
             {
                 var isIdentity = pkCount == 1 && isPk && dataType.Equals("INTEGER", StringComparison.OrdinalIgnoreCase);
                 var columnRef = new ColumnRef("main", "main", tableName, columnName);
+                var isPrimary = columnConstraints.TryGetValue(columnRef, out var con) && con.Any(c => c.ConstraintType == "PRIMARY KEY");
+                var isUnique = columnConstraints.TryGetValue(columnRef, out var uniqueCons) && uniqueCons.Any(c => c.ConstraintType == "UNIQUE");
 
                 var column = new ColumnDto
                 {
@@ -79,56 +85,12 @@ public sealed class SqliteSchemaReader : ISchemaReader
                     OrdinalPosition = ordinal++,
                     IsIdentity = isIdentity,
                     IsComputed = isComputed,
-                    IsPrimaryKey = isPk,
+                    IsPrimaryKey = isPrimary,
+                    IsUnique = isUnique,
                 };
 
                 tableColumns.Add(column);
                 allColumns.Add(column);
-
-                if (isPk)
-                {
-                    if (!columnConstraints.ContainsKey(columnRef))
-                        columnConstraints[columnRef] = new List<ColumnConstraintDto>();
-
-                    columnConstraints[columnRef].Add(new ColumnConstraintDto
-                    {
-                        ConstraintCatalog = "main",
-                        ConstraintSchema = "main",
-                        ConstraintName = $"PK_{tableName}",
-                        TableCatalog = "main",
-                        TableSchema = "main",
-                        TableName = tableName,
-                        ColumnName = columnName,
-                        ConstraintType = "PRIMARY KEY",
-                    });
-                }
-            }
-
-            // Get foreign key information
-            var fkCmd = connection.CreateCommand();
-            fkCmd.CommandText = $"PRAGMA foreign_key_list({tableName})";
-
-            await using var fkReader = await fkCmd.ExecuteReaderAsync();
-            while (await fkReader.ReadAsync())
-            {
-                var columnName = (string)fkReader["from"];
-                var colRef = new ColumnRef("main", "main", tableName, columnName);
-
-                if (!columnConstraints.ContainsKey(colRef))
-                    columnConstraints[colRef] = new List<ColumnConstraintDto>();
-
-                var fkId = (long)fkReader["id"];
-                columnConstraints[colRef].Add(new ColumnConstraintDto
-                {
-                    ConstraintCatalog = "main",
-                    ConstraintSchema = "main",
-                    ConstraintName = $"FK_{tableName}_{fkId}",
-                    TableCatalog = "main",
-                    TableSchema = "main",
-                    TableName = tableName,
-                    ColumnName = columnName,
-                    ConstraintType = "FOREIGN KEY",
-                });
             }
 
             var graphQlName = tableName.ToGraphQl("tbl");
@@ -149,4 +111,115 @@ public sealed class SqliteSchemaReader : ISchemaReader
         return new SchemaData(columnConstraints, allColumns.ToArray(), tables);
     }
 
+    private static async Task CollectConstraintsAsync(DbConnection connection, string tableName, Dictionary<ColumnRef, List<ColumnConstraintDto>> columnConstraints)
+    {
+        // Get primary key information from table_xinfo (pk column)
+        var pkCmd = connection.CreateCommand();
+        pkCmd.CommandText = $"PRAGMA table_xinfo({tableName})";
+
+        await using var pkReader = await pkCmd.ExecuteReaderAsync();
+        while (await pkReader.ReadAsync())
+        {
+            var hidden = (long)pkReader["hidden"];
+            if (hidden == 1)
+                continue;
+
+            var isPk = ((long)pkReader["pk"]) > 0;
+            if (!isPk)
+                continue;
+
+            var columnName = (string)pkReader["name"];
+            var colRef = new ColumnRef("main", "main", tableName, columnName);
+
+            if (!columnConstraints.ContainsKey(colRef))
+                columnConstraints[colRef] = new List<ColumnConstraintDto>();
+
+            columnConstraints[colRef].Add(new ColumnConstraintDto
+            {
+                ConstraintCatalog = "main",
+                ConstraintSchema = "main",
+                ConstraintName = $"PK_{tableName}",
+                TableCatalog = "main",
+                TableSchema = "main",
+                TableName = tableName,
+                ColumnName = columnName,
+                ConstraintType = "PRIMARY KEY",
+            });
+        }
+
+        // Get foreign key information
+        var fkCmd = connection.CreateCommand();
+        fkCmd.CommandText = $"PRAGMA foreign_key_list({tableName})";
+
+        await using var fkReader = await fkCmd.ExecuteReaderAsync();
+        while (await fkReader.ReadAsync())
+        {
+            var columnName = (string)fkReader["from"];
+            var colRef = new ColumnRef("main", "main", tableName, columnName);
+
+            if (!columnConstraints.ContainsKey(colRef))
+                columnConstraints[colRef] = new List<ColumnConstraintDto>();
+
+            var fkId = (long)fkReader["id"];
+            columnConstraints[colRef].Add(new ColumnConstraintDto
+            {
+                ConstraintCatalog = "main",
+                ConstraintSchema = "main",
+                ConstraintName = $"FK_{tableName}_{fkId}",
+                TableCatalog = "main",
+                TableSchema = "main",
+                TableName = tableName,
+                ColumnName = columnName,
+                ConstraintType = "FOREIGN KEY",
+            });
+        }
+
+        // Get unique index information
+        var uniqueCmd = connection.CreateCommand();
+        uniqueCmd.CommandText = $"PRAGMA index_list({tableName})";
+
+        await using var uniqueReader = await uniqueCmd.ExecuteReaderAsync();
+        var uniqueIndexes = new List<(string name, bool isUnique)>();
+        while (await uniqueReader.ReadAsync())
+        {
+            var indexName = (string)uniqueReader["name"];
+            var isUnique = (long)uniqueReader["unique"] == 1;
+            uniqueIndexes.Add((indexName, isUnique));
+        }
+
+        foreach (var (indexName, isUnique) in uniqueIndexes)
+        {
+            if (!isUnique)
+                continue;
+
+            var indexInfoCmd = connection.CreateCommand();
+            indexInfoCmd.CommandText = $"PRAGMA index_info({indexName})";
+
+            await using var indexInfoReader = await indexInfoCmd.ExecuteReaderAsync();
+            while (await indexInfoReader.ReadAsync())
+            {
+                var columnName = (string)indexInfoReader["name"];
+                var colRef = new ColumnRef("main", "main", tableName, columnName);
+
+                if (!columnConstraints.ContainsKey(colRef))
+                    columnConstraints[colRef] = new List<ColumnConstraintDto>();
+
+                // Skip if already has PRIMARY KEY constraint (SQLite often creates unique index for PK)
+                if (columnConstraints[colRef].Any(c => c.ConstraintType == "PRIMARY KEY"))
+                    continue;
+
+                columnConstraints[colRef].Add(new ColumnConstraintDto
+                {
+                    ConstraintCatalog = "main",
+                    ConstraintSchema = "main",
+                    ConstraintName = indexName,
+                    TableCatalog = "main",
+                    TableSchema = "main",
+                    TableName = tableName,
+                    ColumnName = columnName,
+                    ConstraintType = "UNIQUE",
+                });
+            }
+        }
+    }
 }

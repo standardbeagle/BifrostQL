@@ -16,28 +16,20 @@ namespace BifrostQL.Core.Modules;
 /// The key used to look up the tenant in UserContext can be configured:
 ///   "BifrostQL:Metadata { tenant-context-key: org_id }"
 /// </summary>
-public sealed class TenantFilterTransformer : IFilterTransformer, IModuleNamed
+public sealed class TenantFilterTransformer : ContextValueFilterTransformerBase
 {
     public const string MetadataKey = "tenant-filter";
     public const string TenantContextKeyMetadata = "tenant-context-key";
     public const string DefaultTenantContextKey = "tenant_id";
 
-    public string ModuleName => "tenant-filter";
-
-    // Security: Tenant filtering runs first (innermost)
-    public int Priority => 0;
-
-    public bool AppliesTo(IDbTable table, QueryTransformContext context)
+    public TenantFilterTransformer() : base(MetadataKey, DefaultTenantContextKey, priority: 0)
     {
-        return table.Metadata.TryGetValue(MetadataKey, out var val) && val != null;
     }
 
-    public TableFilter? GetAdditionalFilter(IDbTable table, QueryTransformContext context)
-    {
-        var columnName = table.Metadata[MetadataKey]?.ToString();
-        if (string.IsNullOrWhiteSpace(columnName))
-            return null;
+    public override string ModuleName => "tenant-filter";
 
+    protected override TableFilter BuildFilter(IDbTable table, string columnName, QueryTransformContext context)
+    {
         // Determine which key to look up in UserContext
         var tenantContextKey = GetTenantContextKey(context.Model);
 
@@ -55,13 +47,6 @@ public sealed class TenantFilterTransformer : IFilterTransformer, IModuleNamed
         {
             throw new BifrostExecutionError(
                 $"Tenant ID cannot be null for table '{fullTableName}'.");
-        }
-
-        // Verify the column exists
-        if (!table.ColumnLookup.ContainsKey(columnName))
-        {
-            throw new BifrostExecutionError(
-                $"Tenant filter column '{columnName}' not found in table '{fullTableName}'.");
         }
 
         return TableFilterFactory.Equals(table.DbName, columnName, tenantId);

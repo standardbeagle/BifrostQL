@@ -1,4 +1,5 @@
 using System.Text;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.Core.Forms
 {
@@ -100,7 +101,7 @@ namespace BifrostQL.Core.Forms
 
         private static string NormalizeType(string dataType)
         {
-            return dataType.ToLowerInvariant().Trim();
+            return StringNormalizer.NormalizeType(dataType);
         }
     }
 }

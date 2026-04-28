@@ -78,6 +78,12 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine($"\t{link.Value.TargetTable.GraphQlName}(filter: {link.Value.TargetTable.TableFilterTypeName}) : [{link.Value.TargetTable.GraphQlName}]");
             }
 
+            // Add _meta field if this table is an EAV parent
+            if (model.EavConfigs.Any(e => string.Equals(e.ParentTableDbName, _table.DbName, StringComparison.OrdinalIgnoreCase)))
+            {
+                builder.AppendLine("\t_meta: String");
+            }
+
             if (includeDynamicJoins)
             {
                 builder.AppendLine($"\t_single : {_table.GraphQlName}_single");

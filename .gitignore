@@ -202,6 +202,7 @@ PublishScripts/
 !**/[Pp]ackages/build/
 # JS/TS packages (not NuGet)
 !/packages/bifrost-binary-client/
+!/packages/bifrost-codegen/
 !/packages/@bifrostql/
 !/packages/@bifrostql/**
 # Uncomment if necessary however generally it will be regenerated when needed
@@ -368,6 +369,10 @@ FodyWeavers.xsd
 
 # Claude Code
 .claude/
+
+# DartAI loop runtime state
+.dartai/
+.dartai-locks.json
 
 # agnt audit artifacts (screenshots, reports)
 .agnt/audit/

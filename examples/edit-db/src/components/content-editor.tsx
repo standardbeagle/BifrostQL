@@ -3,17 +3,7 @@ import { detectContentKind, isBinaryDbType, isLongTextDbType, type ContentKind }
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
-import { Binary, Braces, Code, Database, FileText, WrapText, Check, X, Copy } from 'lucide-react';
-
-const kindIcons: Record<ContentKind, typeof Braces> = {
-    json: Braces,
-    xml: Code,
-    'php-serialized': Database,
-    binary: Binary,
-    longtext: FileText,
-    text: FileText,
-};
+import { Binary, WrapText } from 'lucide-react';
 
 interface ContentEditorProps {
     name: string;
@@ -96,55 +86,33 @@ export function ContentEditor({
         }
     };
 
-    const handleCopy = () => {
-        navigator.clipboard.writeText(value);
-    };
-
-    const Icon = kindIcons[kind];
     const canFormat = kind === 'json' || kind === 'xml';
 
     return (
-        <div className="grid gap-2">
-            <div className="flex items-center gap-2">
-                <Label htmlFor={name} className="flex items-center gap-1.5">
-                    <Icon className="size-3.5 text-muted-foreground" />
-                    {label}
-                </Label>
-                <div className="flex items-center gap-1 ml-auto">
-                    {canFormat && (
-                        <>
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                className="h-6 text-xs px-2"
-                                onClick={handleFormat}
-                            >
-                                <WrapText className="size-3" />
-                                Format
-                            </Button>
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                className="h-6 text-xs px-2"
-                                onClick={handleMinify}
-                            >
-                                Minify
-                            </Button>
-                        </>
-                    )}
+        <div className="grid gap-1">
+            {canFormat && (
+                <div className="flex items-center gap-1 justify-end">
                     <Button
                         type="button"
                         variant="ghost"
                         size="sm"
                         className="h-6 text-xs px-2"
-                        onClick={handleCopy}
+                        onClick={handleFormat}
                     >
-                        <Copy className="size-3" />
+                        <WrapText className="size-3" />
+                        Format
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 text-xs px-2"
+                        onClick={handleMinify}
+                    >
+                        Minify
                     </Button>
                 </div>
-            </div>
+            )}
             <textarea
                 ref={textareaRef}
                 id={name}
@@ -165,14 +133,6 @@ export function ContentEditor({
             {formatError && (
                 <p className="text-xs text-destructive">{formatError}</p>
             )}
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span>{value.length} chars</span>
-                {kind !== 'text' && kind !== 'longtext' && (
-                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-muted text-xs">
-                        {kind.toUpperCase()}
-                    </span>
-                )}
-            </div>
         </div>
     );
 }

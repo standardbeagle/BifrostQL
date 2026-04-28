@@ -1,6 +1,5 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
-using BifrostQL.Core.Resolvers;
 
 namespace BifrostQL.Core.Modules;
 
@@ -18,19 +17,20 @@ namespace BifrostQL.Core.Modules;
 /// Or per-table:
 ///   UserContext["include_deleted:dbo.users"] = true
 /// </summary>
-public sealed class SoftDeleteFilterTransformer : IFilterTransformer, IModuleNamed
+public sealed class SoftDeleteFilterTransformer : SingleColumnFilterTransformerBase
 {
     public const string MetadataKey = "soft-delete";
     public const string IncludeDeletedKey = "include_deleted";
 
-    public string ModuleName => "soft-delete";
-
-    // Soft-delete runs after security filters
-    public int Priority => 100;
-
-    public bool AppliesTo(IDbTable table, QueryTransformContext context)
+    public SoftDeleteFilterTransformer() : base(MetadataKey, priority: 100)
     {
-        if (!table.Metadata.TryGetValue(MetadataKey, out var val) || val == null)
+    }
+
+    public override string ModuleName => "soft-delete";
+
+    public override bool AppliesTo(IDbTable table, QueryTransformContext context)
+    {
+        if (!base.AppliesTo(table, context))
             return false;
 
         // Check if user explicitly wants deleted records
@@ -40,20 +40,8 @@ public sealed class SoftDeleteFilterTransformer : IFilterTransformer, IModuleNam
         return true;
     }
 
-    public TableFilter? GetAdditionalFilter(IDbTable table, QueryTransformContext context)
+    protected override TableFilter BuildFilter(IDbTable table, string columnName, QueryTransformContext context)
     {
-        var columnName = table.Metadata[MetadataKey]?.ToString();
-        if (string.IsNullOrWhiteSpace(columnName))
-            return null;
-
-        // Verify the column exists
-        if (!table.ColumnLookup.ContainsKey(columnName))
-        {
-            var fullTableName = $"{table.TableSchema}.{table.DbName}";
-            throw new BifrostExecutionError(
-                $"Soft-delete column '{columnName}' not found in table '{fullTableName}'.");
-        }
-
         // Filter: deleted_at IS NULL
         return TableFilterFactory.IsNull(table.DbName, columnName);
     }

@@ -1,5 +1,6 @@
 using System.Text;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.Core.Schema
 {
@@ -55,7 +56,7 @@ namespace BifrostQL.Core.Schema
 
         internal static string GetProtoType(string dataType)
         {
-            return dataType switch
+            return StringNormalizer.NormalizeType(dataType) switch
             {
                 "int" => "int32",
                 "smallint" => "int32",

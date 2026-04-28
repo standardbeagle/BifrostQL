@@ -1,0 +1,31 @@
+{
+    "dotnet.defaultSolution": "BifrostQL.sln",
+    "omnisharp.enableRoslynAnalyzers": true,
+    "omnisharp.enableEditorConfigSupport": true,
+    "omnisharp.organizeImportsOnFormat": true,
+    "csharp.format.enable": true,
+    "csharp.semanticHighlighting.enabled": true,
+    "editor.formatOnSave": true,
+    "editor.formatOnType": true,
+    "editor.rulers": [120],
+    "files.exclude": {
+        "**/bin": true,
+        "**/obj": true,
+        "**/.git": true,
+        "**/.DS_Store": true,
+        "**/node_modules": true
+    },
+    "files.watcherExclude": {
+        "**/bin/**": true,
+        "**/obj/**": true,
+        "**/node_modules/**": true
+    },
+    "search.exclude": {
+        "**/bin": true,
+        "**/obj": true,
+        "**/node_modules": true
+    },
+    "testExplorer.useNativeTesting": true,
+    "dotnet-test-explorer.testProjectPath": "tests/**/*Test*.csproj",
+    "debug.internalConsoleOptions": "neverOpen"
+}

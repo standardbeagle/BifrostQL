@@ -684,6 +684,23 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
                 payload.TryGetProperty(key, out var p) && (p.ValueKind == JsonValueKind.True || p.ValueKind == JsonValueKind.False)
                     ? p.GetBoolean()
                     : null;
+            List<string> ReadStringArray(string key)
+            {
+                if (!payload.TryGetProperty(key, out var p) || p.ValueKind != JsonValueKind.Array)
+                    return [];
+
+                var values = new List<string>();
+                foreach (var item in p.EnumerateArray())
+                {
+                    if (item.ValueKind == JsonValueKind.String)
+                    {
+                        var value = item.GetString();
+                        if (!string.IsNullOrWhiteSpace(value))
+                            values.Add(value);
+                    }
+                }
+                return values;
+            }
 
             var vaultName = ReadString("vaultName");
             if (string.IsNullOrWhiteSpace(vaultName))
@@ -705,6 +722,31 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
             var username = ReadString("username");
             var ssl = ReadBool("ssl");
             var sslMode = ssl == true ? "Require" : null;
+            var tags = ReadStringArray("tags");
+
+            BifrostQL.UI.Vault.VaultSshConfig? ssh = null;
+            if (payload.TryGetProperty("ssh", out var sshPayload) && sshPayload.ValueKind == JsonValueKind.Object)
+            {
+                string? ReadSshString(string key) =>
+                    sshPayload.TryGetProperty(key, out var p) && p.ValueKind == JsonValueKind.String
+                        ? p.GetString()
+                        : null;
+                int? ReadSshInt(string key) =>
+                    sshPayload.TryGetProperty(key, out var p) && p.ValueKind == JsonValueKind.Number && p.TryGetInt32(out var i)
+                        ? i
+                        : null;
+
+                var sshHost = ReadSshString("host");
+                var sshUsername = ReadSshString("username");
+                if (!string.IsNullOrWhiteSpace(sshHost) && !string.IsNullOrWhiteSpace(sshUsername))
+                {
+                    ssh = new BifrostQL.UI.Vault.VaultSshConfig(
+                        sshHost,
+                        ReadSshInt("port") ?? 22,
+                        sshUsername,
+                        ReadSshString("identityFile"));
+                }
+            }
 
             // Collect the password via the isolated child window. This
             // call blocks until the user clicks Save, Cancel, or closes
@@ -742,8 +784,8 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
                 Username: effectiveUsername,
                 Password: result.Password,
                 SslMode: sslMode,
-                Ssh: null,
-                Tags: new List<string>());
+                Ssh: ssh,
+                Tags: tags);
 
             // Load + upsert + save, same as the CLI `vault add` path.
             var vault = BifrostQL.UI.Vault.VaultStore.Load(activeVaultPath);

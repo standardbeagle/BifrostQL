@@ -15,6 +15,7 @@ import {
   loadRecentConnections,
   fetchVaultServers,
   connectVaultServer,
+  type ConnectionRequest,
 } from './connection';
 import type { VaultServer } from './connection/types';
 import { saveSession, loadSession } from './connection/session';
@@ -34,7 +35,6 @@ import './connection/connection.css';
 import './app.css';
 
 // API endpoints
-const API_TEST_CONNECTION = '/api/connection/test';
 const API_QUICKSTART = '/api/database/create-quickstart';
 
 type AppView = 'welcome' | 'quickstart' | 'provider-select' | 'connect' | 'editor';
@@ -97,6 +97,25 @@ function parseConnectionStringForBridge(
   const ssl = sslModeRaw ? /require|verify|true|prefer/i.test(sslModeRaw) : undefined;
 
   return { host, port, database, username, ssl };
+}
+
+function requestToBridgeInfo(request: ConnectionRequest): BridgeConnectionInfo {
+  return {
+    vaultName: request.name,
+    provider: request.provider,
+    host: request.host,
+    port: request.port,
+    database: request.database,
+    username: request.username,
+    ssl: request.ssl,
+    ssh: request.ssh?.enabled ? {
+      host: request.ssh.sshHost,
+      port: request.ssh.sshPort,
+      username: request.ssh.sshUsername,
+      identityFile: request.ssh.identityFile || undefined,
+    } : undefined,
+    tags: request.tags,
+  };
 }
 
 export default function App() {
@@ -223,21 +242,53 @@ export default function App() {
 
   const graphqlUri = `${window.location.origin}/graphql`;
 
-  const handleTestConnection = useCallback(async (connectionString: string): Promise<boolean> => {
+  const activateSavedVaultEntry = useCallback(async (
+    vaultName: string,
+    displayName: string,
+    fallbackProvider: Provider,
+  ): Promise<ConnectionInfo> => {
+    setVaultServers(await fetchVaultServers());
+
+    const connectResult = await connectVaultServer(vaultName);
+    if (!connectResult.success) {
+      throw new Error(connectResult.error || 'Failed to activate vault entry');
+    }
+
+    return {
+      id: Date.now().toString(),
+      name: displayName,
+      connectionString: '',
+      connectedAt: new Date().toISOString(),
+      server: connectResult.server ?? displayName,
+      database: connectResult.database ?? displayName,
+      provider: (connectResult.provider as Provider) ?? fallbackProvider,
+      vaultServerName: vaultName,
+    };
+  }, []);
+
+  const handleTestConnection = useCallback(async (request: ConnectionRequest): Promise<boolean> => {
     try {
       setConnectionState('testing');
       setErrorMessage(null);
-      const response = await fetch(API_TEST_CONNECTION, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connectionString }),
-      });
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.error || 'Connection test failed');
+
+      if (request.provider === 'sqlite' && request.connectionString) {
+        const response = await fetch('/api/connection/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connectionString: request.connectionString }),
+        });
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error || 'Connection test failed');
+        }
+        return result.success;
       }
-      return result.success;
+
+      const promptResult = await requestCredential(requestToBridgeInfo(request));
+      await activateSavedVaultEntry(promptResult.name, request.name, request.provider);
+      return true;
     } catch (err) {
+      if (err instanceof CredentialCancelledError) return false;
       const msg = err instanceof Error ? err.message : 'Connection test failed';
       setErrorMessage(msg.includes('Failed to fetch')
         ? 'Cannot reach the backend server. It may have crashed or failed to start.'
@@ -246,23 +297,41 @@ export default function App() {
     } finally {
       setConnectionState('idle');
     }
-  }, []);
+  }, [activateSavedVaultEntry]);
 
-  const handleConnect = useCallback(async (connectionString: string, connectionName: string, provider?: Provider) => {
-    const resolvedProvider = provider ?? selectedProvider ?? 'sqlserver';
+  const handleConnect = useCallback(async (request: ConnectionRequest) => {
+    const resolvedProvider = request.provider ?? selectedProvider ?? 'sqlserver';
     try {
       setConnectionState('connecting');
       setErrorMessage(null);
 
-      const response = await fetch(API_TEST_CONNECTION, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connectionString }),
-      });
+      if (resolvedProvider === 'sqlite' && request.connectionString) {
+        const response = await fetch('/api/connection/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connectionString: request.connectionString }),
+        });
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error || 'Connection failed');
+        }
 
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.error || 'Connection failed');
+        const info: ConnectionInfo = {
+          id: Date.now().toString(),
+          name: request.name,
+          connectionString: request.connectionString,
+          connectedAt: new Date().toISOString(),
+          server: 'localhost',
+          database: request.database ?? request.name,
+          provider: resolvedProvider,
+        };
+
+        setConnectionInfo(info);
+        saveSession(info);
+        setEditorKey((k) => k + 1);
+        setCurrentView('editor');
+        setConnectionState('connected');
+        return;
       }
 
       // Route activation through the native bridge credential prompt
@@ -270,42 +339,19 @@ export default function App() {
       // (which accepted the raw connection string including password
       // over HTTP) has been deleted as part of task XGSUbdBiIzla.
       //
-      // We parse the connection string locally for the non-secret
-      // metadata (host/port/database/username) and pass those to the
-      // bridge as a ConnectionInfo — the password is deliberately
-      // dropped on the floor, and the user re-enters it in the
-      // isolated Photino child window. That window persists the full
-      // VaultServer entry server-side, and we then activate it via
-      // /api/vault/connect. No password ever touches HTTP traffic
-      // and the main webview heap holds it only for the brief window
-      // between ConnectionForm submit and this callback running.
-      const parsed = parseConnectionStringForBridge(connectionString, resolvedProvider);
-      const bridgeInfo: BridgeConnectionInfo = {
-        vaultName: connectionName,
-        provider: resolvedProvider,
-        ...parsed,
-      };
+      // We pass only non-secret metadata to the bridge. If the user chose raw
+      // connection-string mode, parse and discard any password-like fields here;
+      // the credential prompt remains the only place where DB passwords are
+      // collected.
+      const bridgeInfo = request.connectionString
+        ? {
+          vaultName: request.name,
+          provider: resolvedProvider,
+          ...parseConnectionStringForBridge(request.connectionString, resolvedProvider),
+        }
+        : requestToBridgeInfo(request);
       const promptResult = await requestCredential(bridgeInfo);
-
-      // Refetch vault servers so the UI's server list reflects the
-      // newly-persisted entry, then activate via the vault connect path.
-      setVaultServers(await fetchVaultServers());
-
-      const connectResult = await connectVaultServer(promptResult.name);
-      if (!connectResult.success) {
-        throw new Error(connectResult.error || 'Failed to activate vault entry');
-      }
-
-      const info: ConnectionInfo = {
-        id: Date.now().toString(),
-        name: connectionName,
-        connectionString: '', // never persist the raw string on bridge flow
-        connectedAt: new Date().toISOString(),
-        server: connectResult.server ?? connectionName,
-        database: connectResult.database ?? connectionName,
-        provider: (connectResult.provider as Provider) ?? resolvedProvider,
-        vaultServerName: promptResult.name,
-      };
+      const info = await activateSavedVaultEntry(promptResult.name, request.name, resolvedProvider);
 
       setConnectionInfo(info);
       saveSession(info);
@@ -327,13 +373,7 @@ export default function App() {
         ? 'Cannot reach the backend server. It may have crashed or failed to start.'
         : msg);
     }
-  }, [selectedProvider]);
-
-  const handleSelectRecentConnection = useCallback((connection: ConnectionInfo) => {
-    const provider = connection.provider ?? 'sqlserver';
-    setSelectedProvider(provider);
-    handleConnect(connection.connectionString, connection.name, provider);
-  }, [handleConnect]);
+  }, [activateSavedVaultEntry, selectedProvider]);
 
   const handleConnectVaultServer = useCallback(async (name: string) => {
     try {
@@ -368,6 +408,21 @@ export default function App() {
         : msg);
     }
   }, []);
+
+  const handleSelectRecentConnection = useCallback((connection: ConnectionInfo) => {
+    const provider = connection.provider ?? 'sqlserver';
+    setSelectedProvider(provider);
+    if (connection.vaultServerName) {
+      handleConnectVaultServer(connection.vaultServerName);
+      return;
+    }
+    handleConnect({
+      name: connection.name,
+      provider,
+      connectionString: connection.connectionString,
+      database: connection.database,
+    });
+  }, [handleConnect, handleConnectVaultServer]);
 
   const handleTryItNow = useCallback(() => {
     setCurrentView('quickstart');

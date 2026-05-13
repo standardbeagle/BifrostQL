@@ -176,7 +176,7 @@ interface ConnectionFormData {
   database: string;            // Database name (required)
   authMethod: AuthMethod;      // Authentication method
   username?: string;           // Username for SQL Auth
-  password?: string;           // Password for SQL Auth
+  // Passwords are collected only by the native credential prompt.
   trustServerCertificate: boolean;
 }
 ```

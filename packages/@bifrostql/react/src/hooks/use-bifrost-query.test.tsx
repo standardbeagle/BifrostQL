@@ -107,7 +107,7 @@ describe('useBifrostQuery', () => {
       .calls[0];
     const body = JSON.parse(fetchOptions.body);
     expect(body.query).toContain('sort:');
-    expect(body.query).toContain('created_at desc');
+    expect(body.query).toContain('created_at_desc');
   });
 
   it('builds query with pagination', async () => {

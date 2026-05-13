@@ -14,6 +14,7 @@ import {
   WelcomePanel,
   ConnectionForm,
   ConnectionInfo,
+  ConnectionRequest,
   TestDatabaseDialog,
   TestDatabaseTemplate,
   TestDatabaseProgress,
@@ -41,21 +42,23 @@ function App() {
   }, []);
 
   // Handle connection from connection form or recent connection
-  const handleConnect = useCallback((connectionString: string, connectionName: string) => {
+  const handleConnect = useCallback((request: ConnectionRequest) => {
+    const connectionString = request.connectionString ?? '';
     // Parse connection string to extract server and database
     const serverMatch = connectionString.match(/Server=([^;]+)/);
     const dbMatch = connectionString.match(/Database=([^;]+)/);
-    const server = serverMatch ? serverMatch[1] : 'localhost';
-    const database = dbMatch ? dbMatch[1] : 'unknown';
+    const server = request.host ?? (serverMatch ? serverMatch[1] : 'localhost');
+    const database = request.database ?? (dbMatch ? dbMatch[1] : 'unknown');
 
     const connectionInfo: ConnectionInfo = {
       id: Date.now().toString(),
-      name: connectionName,
+      name: request.name,
       connectionString,
       connectedAt: new Date().toISOString(),
       server,
       database,
-      provider: 'sqlserver',
+      provider: request.provider,
+      ssh: request.ssh,
     };
 
     // Save to recent connections
@@ -71,7 +74,7 @@ function App() {
   }, [recentConnections]);
 
   // Handle test connection (optional - requires backend API)
-  const handleTestConnection = useCallback(async (_connectionString: string): Promise<boolean> => {
+  const handleTestConnection = useCallback(async (_request: ConnectionRequest): Promise<boolean> => {
     try {
       // This would call a backend API to test the connection
       // For now, simulate a test
@@ -85,7 +88,13 @@ function App() {
 
   // Handle recent connection selection
   const handleSelectRecentConnection = useCallback((connection: ConnectionInfo) => {
-    handleConnect(connection.connectionString, connection.name);
+    handleConnect({
+      name: connection.name,
+      provider: connection.provider,
+      connectionString: connection.connectionString,
+      database: connection.database,
+      ssh: connection.ssh,
+    });
   }, [handleConnect]);
 
   // Handle clear recent connections
@@ -117,7 +126,12 @@ function App() {
       // Auto-connect after creation
       setTimeout(() => {
         if (stages[4].connectionString) {
-          handleConnect(stages[4].connectionString, `${template.replace('-', ' ')} test database`);
+          handleConnect({
+            name: `${template.replace('-', ' ')} test database`,
+            provider: 'sqlserver',
+            connectionString: stages[4].connectionString,
+            database: `${template}_test`,
+          });
         }
         setIsTestDbDialogOpen(false);
       }, 500);

@@ -281,7 +281,7 @@ describe('useBifrostTable', () => {
         .mock.calls[0];
       const body = JSON.parse(fetchOptions.body);
       expect(body.query).toContain('sort:');
-      expect(body.query).toContain('name asc');
+      expect(body.query).toContain('name_asc');
     });
 
     it('toggleSort cycles asc -> desc -> none', async () => {

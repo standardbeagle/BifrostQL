@@ -49,6 +49,13 @@ export interface ConnectionInfo {
   database?: string;
   username?: string;
   ssl?: boolean;
+  ssh?: {
+    host: string;
+    port: number;
+    username: string;
+    identityFile?: string;
+  };
+  tags?: string[];
 }
 
 /**

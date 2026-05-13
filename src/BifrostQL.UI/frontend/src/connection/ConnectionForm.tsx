@@ -6,6 +6,7 @@ import {
   PostgresAuthMethod,
   ConnectionFormProps,
   ConnectionFormErrors,
+  ConnectionRequest,
   ConnectionState,
   SqlServerFormData,
   PostgresFormData,
@@ -32,37 +33,14 @@ function getDefaultDbPort(provider: Provider): number {
   }
 }
 
-function rewriteForTunnel(provider: Provider, connStr: string, localPort: number): string {
-  const parts = new Map<string, string>();
-  for (const segment of connStr.split(';')) {
-    const eq = segment.indexOf('=');
-    if (eq <= 0) continue;
-    parts.set(segment.slice(0, eq).trim().toLowerCase(), segment.slice(eq + 1).trim());
-  }
-  switch (provider) {
-    case 'sqlserver':
-      parts.set('server', `127.0.0.1,${localPort}`);
-      break;
-    case 'postgres':
-      parts.set('host', '127.0.0.1');
-      parts.set('port', String(localPort));
-      break;
-    case 'mysql':
-      parts.set('server', '127.0.0.1');
-      parts.set('port', String(localPort));
-      break;
-  }
-  return [...parts.entries()].map(([k, v]) => `${k}=${v}`).join(';');
-}
-
 function createDefaultFormData(provider: Provider) {
   switch (provider) {
     case 'sqlserver':
-      return { server: 'localhost', database: '', authMethod: AuthMethod.SqlServer, username: '', password: '', trustServerCertificate: true } satisfies SqlServerFormData;
+      return { server: 'localhost', database: '', authMethod: AuthMethod.SqlServer, username: '', trustServerCertificate: true } satisfies SqlServerFormData;
     case 'postgres':
-      return { host: 'localhost', port: 5432, database: '', authMethod: PostgresAuthMethod.Password, username: '', password: '', sslMode: 'Prefer' as PostgresSslMode } satisfies PostgresFormData;
+      return { host: 'localhost', port: 5432, database: '', authMethod: PostgresAuthMethod.Password, username: '', sslMode: 'Prefer' as PostgresSslMode } satisfies PostgresFormData;
     case 'mysql':
-      return { host: 'localhost', port: 3306, database: '', username: '', password: '', sslMode: 'Preferred' as MySqlSslMode } satisfies MySqlFormData;
+      return { host: 'localhost', port: 3306, database: '', username: '', sslMode: 'Preferred' as MySqlSslMode } satisfies MySqlFormData;
     case 'sqlite':
       return { filePath: '', createNew: false } satisfies SqliteFormData;
   }
@@ -74,7 +52,7 @@ function buildConnectionString(provider: Provider, data: Record<string, any>): s
       const d = data as SqlServerFormData;
       const parts = [`Server=${d.server}`, `Database=${d.database}`];
       if (d.authMethod === AuthMethod.SqlServer) {
-        parts.push(`User Id=${d.username}`, `Password=${d.password}`);
+        parts.push(`User Id=${d.username}`);
       } else {
         parts.push('Integrated Security=true');
       }
@@ -87,14 +65,16 @@ function buildConnectionString(provider: Provider, data: Record<string, any>): s
       const d = data as PostgresFormData;
       const parts = [`Host=${d.host}`, `Port=${d.port}`, `Database=${d.database}`];
       if (d.authMethod === PostgresAuthMethod.Password) {
-        parts.push(`Username=${d.username}`, `Password=${d.password}`);
+        parts.push(`Username=${d.username}`);
       }
       parts.push(`SSL Mode=${d.sslMode}`);
       return parts.join(';');
     }
     case 'mysql': {
       const d = data as MySqlFormData;
-      return `Server=${d.host};Port=${d.port};Database=${d.database};Uid=${d.username};Pwd=${d.password};SslMode=${d.sslMode}`;
+      const parts = [`Server=${d.host}`, `Port=${d.port}`, `Database=${d.database}`, `Uid=${d.username}`];
+      parts.push(`SslMode=${d.sslMode}`);
+      return parts.join(';');
     }
     case 'sqlite': {
       const d = data as SqliteFormData;
@@ -131,7 +111,6 @@ function validateFormData(provider: Provider, data: Record<string, any>): Connec
       if (!d.database.trim()) errors.database = 'Database name is required';
       if (d.authMethod === AuthMethod.SqlServer) {
         if (!d.username.trim()) errors.username = 'Username is required';
-        if (!d.password) errors.password = 'Password is required';
       }
       break;
     }
@@ -163,6 +142,118 @@ function validateFormData(provider: Provider, data: Record<string, any>): Connec
   return errors;
 }
 
+function parseConnectionString(provider: Provider, connectionString: string): ConnectionRequest {
+  const entries = connectionString
+    .split(';')
+    .map((segment) => {
+      const eq = segment.indexOf('=');
+      return eq < 0 ? null : [segment.slice(0, eq).trim().toLowerCase(), segment.slice(eq + 1).trim()] as const;
+    })
+    .filter((entry): entry is readonly [string, string] => !!entry);
+  const parts = new Map(entries);
+  const get = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = parts.get(key);
+      if (value) return value;
+    }
+    return undefined;
+  };
+
+  let host = get('server', 'host', 'data source');
+  let port: number | undefined;
+  if (provider === 'sqlserver' && host?.includes(',')) {
+    const [server, portText] = host.split(',', 2);
+    host = server;
+    const parsed = Number.parseInt(portText, 10);
+    if (Number.isFinite(parsed)) port = parsed;
+  }
+  const portText = get('port');
+  if (port === undefined && portText) {
+    const parsed = Number.parseInt(portText, 10);
+    if (Number.isFinite(parsed)) port = parsed;
+  }
+
+  const name = provider === 'sqlite'
+    ? get('data source') ?? `${provider} connection`
+    : `${host ?? 'server'}${port ? `:${port}` : ''}/${get('database', 'initial catalog') ?? ''}`;
+
+  return {
+    name,
+    provider,
+    connectionString: provider === 'sqlite' ? connectionString : undefined,
+    host,
+    port,
+    database: get('database', 'initial catalog'),
+    username: get('user id', 'username', 'uid', 'user'),
+    ssl: /require|verify|true|prefer/i.test(get('sslmode', 'ssl mode') ?? ''),
+  };
+}
+
+function buildConnectionRequest(
+  provider: Provider,
+  data: Record<string, any>,
+  name: string,
+  sshConfig: SshConfig,
+  wpConfig: WpConfig,
+): ConnectionRequest {
+  const ssh = sshConfig.enabled && provider !== 'sqlite' ? sshConfig : undefined;
+  const tags = wpConfig.enabled && provider === 'mysql' ? ['wordpress'] : undefined;
+
+  switch (provider) {
+    case 'sqlserver': {
+      const d = data as SqlServerFormData;
+      return {
+        name,
+        provider,
+        host: d.server,
+        port: getDefaultDbPort(provider),
+        database: d.database,
+        username: d.authMethod === AuthMethod.SqlServer ? d.username : undefined,
+        ssl: d.trustServerCertificate,
+        ssh,
+        tags,
+      };
+    }
+    case 'postgres': {
+      const d = data as PostgresFormData;
+      return {
+        name,
+        provider,
+        host: d.host,
+        port: d.port,
+        database: d.database,
+        username: d.authMethod === PostgresAuthMethod.Password ? d.username : undefined,
+        ssl: d.sslMode !== 'Disable',
+        ssh,
+        tags,
+      };
+    }
+    case 'mysql': {
+      const d = data as MySqlFormData;
+      return {
+        name,
+        provider,
+        host: d.host,
+        port: d.port,
+        database: d.database,
+        username: wpConfig.enabled ? undefined : d.username,
+        ssl: d.sslMode !== 'None',
+        ssh,
+        tags,
+      };
+    }
+    case 'sqlite': {
+      const d = data as SqliteFormData;
+      return {
+        name,
+        provider,
+        connectionString: buildConnectionString(provider, d),
+        database: d.filePath,
+      };
+    }
+  }
+}
+
 export const ConnectionForm: React.FC<ConnectionFormProps> = ({
   provider,
   onConnect,
@@ -181,8 +272,6 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
   const [loadingDatabases, setLoadingDatabases] = useState(false);
   const [sshConfig, setSshConfig] = useState<SshConfig>(DEFAULT_SSH);
   const [wpConfig, setWpConfig] = useState<WpConfig>(DEFAULT_WP);
-  const [tunnelPort, setTunnelPort] = useState<number | null>(null);
-  const [wpDiscovering, setWpDiscovering] = useState(false);
   const [sshError, setSshError] = useState<string | null>(null);
 
   const isDisabled = connectionState === 'connecting' || connectionState === 'testing';
@@ -205,11 +294,6 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
     setErrors((prev) => ({ ...prev, [field]: fieldErrors[field] }));
   }, [provider, formData]);
 
-  const getConnectionString = useCallback((): string => {
-    if (useRawString) return rawConnectionString;
-    return buildConnectionString(provider, formData);
-  }, [useRawString, rawConnectionString, provider, formData]);
-
   const handleTestConnection = useCallback(async () => {
     if (!useRawString) {
       const fieldErrors = validateFormData(provider, formData);
@@ -224,7 +308,11 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
     setConnectionState('testing');
     setTestResult(null);
     try {
-      const success = await onTestConnection(getConnectionString());
+      const connName = useRawString ? `${providerInfo.name} connection` : buildConnectionName(provider, formData);
+      const request = useRawString && provider === 'sqlite'
+        ? { ...parseConnectionString(provider, rawConnectionString), name: connName }
+        : buildConnectionRequest(provider, formData, connName, sshConfig, wpConfig);
+      const success = await onTestConnection(request);
       setTestResult({
         success,
         message: success
@@ -239,7 +327,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
     } finally {
       setConnectionState('idle');
     }
-  }, [provider, formData, useRawString, onTestConnection, getConnectionString]);
+  }, [provider, formData, useRawString, onTestConnection, providerInfo, rawConnectionString, sshConfig, wpConfig]);
 
   const handleConnect = useCallback(async () => {
     if (!useRawString) {
@@ -253,92 +341,38 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
     setConnectionState('connecting');
     setSshError(null);
 
-    let connString = getConnectionString();
-
-    // Start SSH tunnel if enabled
     if (sshConfig.enabled && provider !== 'sqlite') {
-      try {
-        const dbHost = (formData as any).host || (formData as any).server || 'localhost';
-        const dbPort = (formData as any).port || getDefaultDbPort(provider);
-        const resp = await fetch('/api/ssh/connect', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sshHost: sshConfig.sshHost,
-            sshPort: sshConfig.sshPort,
-            sshUsername: sshConfig.sshUsername,
-            identityFile: sshConfig.identityFile || null,
-            remoteHost: dbHost,
-            remotePort: dbPort,
-          }),
-        });
-        const result = await resp.json();
-        if (!resp.ok || !result.success) {
-          setSshError(result.error || 'Failed to start SSH tunnel');
-          setConnectionState('idle');
-          return;
-        }
-        setTunnelPort(result.localPort);
-        connString = rewriteForTunnel(provider, connString, result.localPort);
-      } catch (err) {
-        setSshError(err instanceof Error ? err.message : 'SSH tunnel failed');
+      if (!sshConfig.sshHost.trim() || !sshConfig.sshUsername.trim()) {
+        setSshError('SSH host and username are required');
         setConnectionState('idle');
         return;
       }
     }
 
     const connName = useRawString ? `${providerInfo.name} connection` : buildConnectionName(provider, formData);
-    onConnect(connString, connName);
-  }, [provider, formData, useRawString, getConnectionString, providerInfo, onConnect, sshConfig]);
+    const request = useRawString && provider === 'sqlite'
+      ? { ...parseConnectionString(provider, rawConnectionString), name: connName }
+      : buildConnectionRequest(provider, formData, connName, sshConfig, wpConfig);
+    onConnect(request);
+  }, [provider, formData, useRawString, rawConnectionString, providerInfo, onConnect, sshConfig, wpConfig]);
 
   const updateSshField = useCallback((field: string, value: unknown) => {
     setSshConfig((prev) => ({ ...prev, [field]: value }));
     setSshError(null);
   }, []);
 
-  const handleWpDiscover = useCallback(async () => {
-    if (!sshConfig.sshHost || !sshConfig.sshUsername) return;
-    setWpDiscovering(true);
-    setSshError(null);
-    try {
-      const resp = await fetch('/api/ssh/wp-discover', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sshHost: sshConfig.sshHost,
-          sshPort: sshConfig.sshPort,
-          sshUsername: sshConfig.sshUsername,
-          identityFile: sshConfig.identityFile || null,
-          wpPath: wpConfig.wpPath || null,
-          wpRoot: wpConfig.wpRoot || null,
-        }),
-      });
-      const result = await resp.json();
-      if (!resp.ok || !result.success) {
-        setSshError(result.error || 'WP-CLI discovery failed');
-        return;
-      }
-      // Auto-fill MySQL form fields from discovered credentials
-      const host = result.dbHost?.includes(':') ? result.dbHost.split(':')[0] : (result.dbHost || 'localhost');
-      const port = result.dbHost?.includes(':') ? Number(result.dbHost.split(':')[1]) : 3306;
-      setFormData((prev) => ({
-        ...prev,
-        host,
-        port,
-        database: result.dbName,
-        username: result.dbUser,
-        password: result.dbPassword,
-      }));
-      setTestResult({ success: true, message: `Discovered WordPress database: ${result.dbName}` });
-    } catch (err) {
-      setSshError(err instanceof Error ? err.message : 'WP-CLI discovery failed');
-    } finally {
-      setWpDiscovering(false);
-    }
-  }, [sshConfig, wpConfig]);
-
   const handleLoadDatabases = useCallback(async () => {
     if (provider === 'sqlite') return;
+    const passwordAuth = (provider === 'sqlserver' && (formData as SqlServerFormData).authMethod === AuthMethod.SqlServer)
+      || (provider === 'postgres' && (formData as PostgresFormData).authMethod === PostgresAuthMethod.Password)
+      || provider === 'mysql';
+    if (passwordAuth) {
+      setTestResult({
+        success: false,
+        message: 'Database discovery is available after connecting with the vault credential flow.',
+      });
+      return;
+    }
     setLoadingDatabases(true);
     setAvailableDatabases(null);
     try {
@@ -522,7 +556,6 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
             {d.authMethod === AuthMethod.SqlServer && (
               <>
                 {renderField('username', 'Username', 'text', d.username, true, 'sa')}
-                {renderField('password', 'Password', 'password', d.password, true)}
               </>
             )}
 
@@ -577,7 +610,6 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
             {d.authMethod === PostgresAuthMethod.Password && (
               <>
                 {renderField('username', 'Username', 'text', d.username, true, 'postgres')}
-                {renderField('password', 'Password', 'password', d.password, false)}
               </>
             )}
 
@@ -595,7 +627,6 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
             {renderField('port', 'Port', 'number', d.port, true, '3306')}
             {renderDatabaseField()}
             {renderField('username', 'Username', 'text', d.username, true, 'root')}
-            {renderField('password', 'Password', 'password', d.password, false)}
             {renderSelect('sslMode', 'SSL Mode', d.sslMode, MYSQL_SSL_MODES)}
           </>
         );
@@ -705,41 +736,13 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   </label>
 
                   {wpConfig.enabled && (
-                    <>
-                      <div className="conn-form__row">
-                        <div className="conn-form__group conn-form__group--half">
-                          <label htmlFor="wpPath" className="conn-form__label">WP-CLI Path</label>
-                          <input id="wpPath" type="text" value={wpConfig.wpPath}
-                            onChange={(e) => setWpConfig((prev) => ({ ...prev, wpPath: e.target.value }))}
-                            disabled={isDisabled} placeholder="wp"
-                            className="conn-form__input" />
-                        </div>
-                        <div className="conn-form__group conn-form__group--half">
-                          <label htmlFor="wpRoot" className="conn-form__label">WordPress Root</label>
-                          <input id="wpRoot" type="text" value={wpConfig.wpRoot}
-                            onChange={(e) => setWpConfig((prev) => ({ ...prev, wpRoot: e.target.value }))}
-                            disabled={isDisabled} placeholder="/var/www/html (auto-detect)"
-                            className="conn-form__input" />
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleWpDiscover}
-                        disabled={isDisabled || wpDiscovering || !sshConfig.sshHost || !sshConfig.sshUsername}
-                        className="conn-form__btn conn-form__btn--secondary"
-                      >
-                        {wpDiscovering ? 'Discovering...' : 'Discover Credentials'}
-                      </button>
-                    </>
+                    <div className="conn-form__alert conn-form__alert--success" role="status">
+                      WordPress credentials will be discovered server-side when the saved vault entry connects.
+                    </div>
                   )}
                 </div>
               )}
 
-              {tunnelPort && (
-                <div className="conn-form__alert conn-form__alert--success" role="status">
-                  {'\u2713'} SSH tunnel active on local port {tunnelPort}
-                </div>
-              )}
               {sshError && (
                 <div className="conn-form__alert conn-form__alert--error" role="alert">
                   {'\u26A0'} {sshError}
@@ -750,29 +753,33 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
         </fieldset>
       )}
 
-      <label className="conn-form__checkbox conn-form__raw-toggle">
-        <input
-          type="checkbox"
-          checked={useRawString}
-          onChange={(e) => setUseRawString(e.target.checked)}
-          disabled={isDisabled}
-        />
-        <span>Use connection string</span>
-      </label>
+      {provider === 'sqlite' && (
+        <>
+          <label className="conn-form__checkbox conn-form__raw-toggle">
+            <input
+              type="checkbox"
+              checked={useRawString}
+              onChange={(e) => setUseRawString(e.target.checked)}
+              disabled={isDisabled}
+            />
+            <span>Use connection string</span>
+          </label>
 
-      {useRawString && (
-        <div className="conn-form__group">
-          <label htmlFor="rawConnectionString" className="conn-form__label">Connection String</label>
-          <textarea
-            id="rawConnectionString"
-            value={rawConnectionString}
-            onChange={(e) => { setRawConnectionString(e.target.value); setTestResult(null); }}
-            disabled={isDisabled}
-            className="conn-form__textarea"
-            rows={3}
-            placeholder="Enter your full connection string..."
-          />
-        </div>
+          {useRawString && (
+            <div className="conn-form__group">
+              <label htmlFor="rawConnectionString" className="conn-form__label">Connection String</label>
+              <textarea
+                id="rawConnectionString"
+                value={rawConnectionString}
+                onChange={(e) => { setRawConnectionString(e.target.value); setTestResult(null); }}
+                disabled={isDisabled}
+                className="conn-form__textarea"
+                rows={3}
+                placeholder="Data Source=/path/to/database.db"
+              />
+            </div>
+          )}
+        </>
       )}
 
       <div className="conn-form__buttons">

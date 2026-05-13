@@ -67,7 +67,6 @@ export interface SqlServerFormData {
   database: string;
   authMethod: AuthMethod;
   username: string;
-  password: string;
   trustServerCertificate: boolean;
 }
 
@@ -77,7 +76,6 @@ export interface PostgresFormData {
   database: string;
   authMethod: PostgresAuthMethod;
   username: string;
-  password: string;
   sslMode: PostgresSslMode;
 }
 
@@ -86,7 +84,6 @@ export interface MySqlFormData {
   port: number;
   database: string;
   username: string;
-  password: string;
   sslMode: MySqlSslMode;
 }
 
@@ -136,6 +133,19 @@ export interface ConnectionInfo {
   vaultServerName?: string;
 }
 
+export interface ConnectionRequest {
+  name: string;
+  provider: Provider;
+  connectionString?: string;
+  host?: string;
+  port?: number;
+  database?: string;
+  username?: string;
+  ssl?: boolean;
+  ssh?: SshConfig;
+  tags?: string[];
+}
+
 /**
  * Test database templates
  */
@@ -178,8 +188,8 @@ export type ConnectionState =
  */
 export interface ConnectionFormProps {
   provider: Provider;
-  onConnect: (connectionString: string, connectionName: string) => void;
-  onTestConnection?: (connectionString: string) => Promise<boolean>;
+  onConnect: (request: ConnectionRequest) => void;
+  onTestConnection?: (request: ConnectionRequest) => Promise<boolean>;
   onBack: () => void;
 }
 

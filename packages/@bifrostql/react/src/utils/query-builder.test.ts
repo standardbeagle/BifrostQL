@@ -52,7 +52,7 @@ describe('buildGraphqlQuery', () => {
       fields: ['id', 'name'],
     });
     expect(result).toContain('sort:');
-    expect(result).toContain('name asc');
+    expect(result).toContain('name_asc');
   });
 
   it('builds a query with pagination', () => {

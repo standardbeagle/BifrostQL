@@ -53,7 +53,7 @@ function buildFilterArgs(filter: AdvancedFilter): string {
 
 function buildSortArgs(sort: SortOption[]): string {
   if (sort.length === 0) return '';
-  const parts = sort.map((s) => `"${s.field} ${s.direction}"`);
+  const parts = sort.map((s) => `${s.field}_${s.direction}`);
   return `sort: [${parts.join(', ')}]`;
 }
 

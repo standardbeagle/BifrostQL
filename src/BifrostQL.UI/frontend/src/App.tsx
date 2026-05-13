@@ -28,6 +28,7 @@ import {
 } from './lib/transport';
 import {
   requestCredential,
+  saveVaultEntry,
   CredentialCancelledError,
   type ConnectionInfo as BridgeConnectionInfo,
 } from './lib/credential-prompt';
@@ -284,9 +285,8 @@ export default function App() {
         return result.success;
       }
 
-      const promptResult = await requestCredential(requestToBridgeInfo(request));
-      await activateSavedVaultEntry(promptResult.name, request.name, request.provider);
-      return true;
+      setErrorMessage('Use Connect to save credentials and validate this server.');
+      return false;
     } catch (err) {
       if (err instanceof CredentialCancelledError) return false;
       const msg = err instanceof Error ? err.message : 'Connection test failed';
@@ -350,7 +350,9 @@ export default function App() {
           ...parseConnectionStringForBridge(request.connectionString, resolvedProvider),
         }
         : requestToBridgeInfo(request);
-      const promptResult = await requestCredential(bridgeInfo);
+      const promptResult = request.requiresCredential === false
+        ? await saveVaultEntry(bridgeInfo)
+        : await requestCredential(bridgeInfo);
       const info = await activateSavedVaultEntry(promptResult.name, request.name, resolvedProvider);
 
       setConnectionInfo(info);

@@ -144,6 +144,7 @@ export interface ConnectionRequest {
   ssl?: boolean;
   ssh?: SshConfig;
   tags?: string[];
+  requiresCredential?: boolean;
 }
 
 /**

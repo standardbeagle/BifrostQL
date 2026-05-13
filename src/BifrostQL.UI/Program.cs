@@ -663,12 +663,11 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         //     with the returned name to activate the connection.
         var bridgeWindow = window;
         var bridgeLoggerForHandler = bridgeLogger;
-        nativeBridge.Register("request-credential", async (payload, innerCt) =>
+        BifrostQL.UI.Vault.VaultServer BuildVaultServerFromPayload(
+            JsonElement payload,
+            string? usernameOverride,
+            string? password)
         {
-            // ConnectionInfo extraction — every field is optional on the
-            // wire except vaultName and provider (provider is required so
-            // we can pick a sensible default port). Missing fields fall
-            // through to defaults or persist as null on the vault entry.
             if (payload.ValueKind != JsonValueKind.Object)
                 throw new ArgumentException("ConnectionInfo payload required");
 
@@ -719,7 +718,9 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
                 _ => 0,
             };
             var database = ReadString("database");
-            var username = ReadString("username");
+            var username = string.IsNullOrEmpty(usernameOverride)
+                ? ReadString("username")
+                : usernameOverride;
             var ssl = ReadBool("ssl");
             var sslMode = ssl == true ? "Require" : null;
             var tags = ReadStringArray("tags");
@@ -748,6 +749,41 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
                 }
             }
 
+            return new BifrostQL.UI.Vault.VaultServer(
+                Name: vaultName!,
+                Provider: provider!,
+                Host: host,
+                Port: port,
+                Database: database,
+                Username: username,
+                Password: password,
+                SslMode: sslMode,
+                Ssh: ssh,
+                Tags: tags);
+        }
+
+        void UpsertVaultServer(BifrostQL.UI.Vault.VaultServer server)
+        {
+            var vault = BifrostQL.UI.Vault.VaultStore.Load(activeVaultPath);
+            var servers = vault.Servers
+                .Where(s => !s.Name.Equals(server.Name, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            servers.Add(server);
+            vault = vault with { Servers = servers };
+            BifrostQL.UI.Vault.VaultStore.Save(vault, activeVaultPath);
+        }
+
+        nativeBridge.Register("save-vault-entry", (payload, _) =>
+        {
+            var server = BuildVaultServerFromPayload(payload, null, null);
+            UpsertVaultServer(server);
+            return Task.FromResult<object?>(new { saved = true, name = server.Name });
+        });
+
+        nativeBridge.Register("request-credential", async (payload, innerCt) =>
+        {
+            var metadata = BuildVaultServerFromPayload(payload, null, null);
+
             // Collect the password via the isolated child window. This
             // call blocks until the user clicks Save, Cancel, or closes
             // the window. PromptAsync throws OperationCanceledException
@@ -755,7 +791,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
             // scrubs into a BridgeError("error", message with "cancel")
             // — the TS wrapper turns that into CredentialCancelledError.
             var result = await BifrostQL.UI.NativeBridge.CredentialPromptWindow
-                .PromptAsync(bridgeWindow, vaultName!, bridgeLoggerForHandler, innerCt)
+                .PromptAsync(bridgeWindow, metadata.Name, bridgeLoggerForHandler, innerCt)
                 .ConfigureAwait(false);
 
             if (!result.IsSaved)
@@ -771,30 +807,11 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
             // child window is authoritative on what the user typed. If
             // somehow the child window returned an empty username, fall
             // back to the payload-supplied one so we still have a value.
-            var effectiveUsername = string.IsNullOrEmpty(result.Username)
-                ? username
-                : result.Username;
-
-            var server = new BifrostQL.UI.Vault.VaultServer(
-                Name: vaultName!,
-                Provider: provider!,
-                Host: host,
-                Port: port,
-                Database: database,
-                Username: effectiveUsername,
-                Password: result.Password,
-                SslMode: sslMode,
-                Ssh: ssh,
-                Tags: tags);
+            var server = BuildVaultServerFromPayload(payload, result.Username, result.Password);
+            var savedName = server.Name;
 
             // Load + upsert + save, same as the CLI `vault add` path.
-            var vault = BifrostQL.UI.Vault.VaultStore.Load(activeVaultPath);
-            var servers = vault.Servers
-                .Where(s => !s.Name.Equals(vaultName, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-            servers.Add(server);
-            vault = vault with { Servers = servers };
-            BifrostQL.UI.Vault.VaultStore.Save(vault, activeVaultPath);
+            UpsertVaultServer(server);
 
             // Drop all references to the password ASAP. The VaultServer
             // `server` local still has it, so null both the local and the
@@ -804,7 +821,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
             server = null!;
             result = null!;
 
-            return new { saved = true, name = vaultName! };
+            return new { saved = true, name = savedName };
         });
 
         window.WaitForClose();

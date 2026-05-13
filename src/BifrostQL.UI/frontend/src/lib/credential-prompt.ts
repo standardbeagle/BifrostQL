@@ -23,9 +23,9 @@
  *      a browser tab wondering why nothing happens.
  *
  * SECURITY: no password ever touches this file. The ConnectionInfo carries
- * only non-sensitive metadata (host/port/db/username/ssl). The host opens
- * an isolated child window that collects the password and writes the vault
- * entry server-side; the renderer only sees `{saved, name}` on success.
+ * only non-sensitive metadata (host/port/db/username/ssl). Password auth
+ * opens an isolated child window that collects the password and writes the
+ * vault entry server-side; passwordless auth stores metadata directly.
  */
 
 import {
@@ -140,4 +140,20 @@ export async function requestCredential(
     }
     throw err;
   }
+}
+
+export async function saveVaultEntry(
+  info: ConnectionInfo
+): Promise<CredentialPromptResult> {
+  if (!isBridgeAvailable()) {
+    throw new Error(
+      "Native bridge unavailable. Run the desktop app (bifrostui) instead of a plain browser, or add credentials via `bifrostui vault add` from the CLI."
+    );
+  }
+
+  return sendBridgeRequest<CredentialPromptResult>(
+    "save-vault-entry",
+    info,
+    { timeoutMs: CREDENTIAL_PROMPT_TIMEOUT_MS }
+  );
 }

@@ -127,8 +127,9 @@ function validateFormData(provider: Provider, data: Record<string, any>): Connec
     case 'mysql': {
       const d = data as MySqlFormData;
       if (!d.host.trim()) errors.host = 'Host is required';
-      if (!d.database.trim()) errors.database = 'Database name is required';
-      if (!d.username.trim()) errors.username = 'Username is required';
+      const wantsWpDiscovery = Boolean(data.__wpDiscoveryEnabled);
+      if (!wantsWpDiscovery && !d.database.trim()) errors.database = 'Database name is required';
+      if (!wantsWpDiscovery && !d.username.trim()) errors.username = 'Username is required';
       if (!d.port || d.port < 1 || d.port > 65535) errors.port = 'Valid port required (1-65535)';
       break;
     }
@@ -212,6 +213,7 @@ function buildConnectionRequest(
         ssl: d.trustServerCertificate,
         ssh,
         tags,
+        requiresCredential: d.authMethod === AuthMethod.SqlServer,
       };
     }
     case 'postgres': {
@@ -226,6 +228,7 @@ function buildConnectionRequest(
         ssl: d.sslMode !== 'Disable',
         ssh,
         tags,
+        requiresCredential: d.authMethod === PostgresAuthMethod.Password,
       };
     }
     case 'mysql': {
@@ -240,6 +243,7 @@ function buildConnectionRequest(
         ssl: d.sslMode !== 'None',
         ssh,
         tags,
+        requiresCredential: !wpConfig.enabled,
       };
     }
     case 'sqlite': {
@@ -249,6 +253,7 @@ function buildConnectionRequest(
         provider,
         connectionString: buildConnectionString(provider, d),
         database: d.filePath,
+        requiresCredential: false,
       };
     }
   }
@@ -296,7 +301,10 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
 
   const handleTestConnection = useCallback(async () => {
     if (!useRawString) {
-      const fieldErrors = validateFormData(provider, formData);
+      const fieldErrors = validateFormData(provider, {
+        ...formData,
+        __wpDiscoveryEnabled: wpConfig.enabled,
+      });
       if (Object.values(fieldErrors).some(Boolean)) {
         setErrors(fieldErrors);
         setTouched(new Set(Object.keys(fieldErrors)));
@@ -331,7 +339,10 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
 
   const handleConnect = useCallback(async () => {
     if (!useRawString) {
-      const fieldErrors = validateFormData(provider, formData);
+      const fieldErrors = validateFormData(provider, {
+        ...formData,
+        __wpDiscoveryEnabled: wpConfig.enabled,
+      });
       if (Object.values(fieldErrors).some(Boolean)) {
         setErrors(fieldErrors);
         setTouched(new Set(Object.keys(fieldErrors)));

@@ -208,4 +208,33 @@ describe("credential-prompt", () => {
     expect(payload.username).toBe("qa-user");
     expect(payload.ssl).toBe(false);
   });
+
+  it("saves passwordless vault entries without opening the credential prompt", async () => {
+    const fake = installFakeExternal();
+    const { saveVaultEntry } = await loadModule();
+
+    const info = {
+      vaultName: "local-pg-peer",
+      provider: "postgres",
+      host: "localhost",
+      port: 5432,
+      database: "app",
+      ssl: false,
+    };
+
+    const pending = saveVaultEntry(info);
+    const envelope = lastSentEnvelope(fake);
+    expect(envelope.kind).toBe("save-vault-entry");
+    expect(envelope.payload).toEqual(info);
+
+    fake.dispatch!(
+      JSON.stringify({
+        id: envelope.id,
+        kind: "result",
+        payload: { saved: true, name: "local-pg-peer" },
+      })
+    );
+
+    await expect(pending).resolves.toEqual({ saved: true, name: "local-pg-peer" });
+  });
 });

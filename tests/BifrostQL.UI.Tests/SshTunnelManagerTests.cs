@@ -1,5 +1,6 @@
 using BifrostQL.UI;
 using FluentAssertions;
+using System.Collections.ObjectModel;
 using Xunit;
 
 namespace BifrostQL.UI.Tests;
@@ -72,6 +73,35 @@ public sealed class SshTunnelManagerTests : IDisposable
         var act = () => _manager.DiscoverWordPressAsync(sshConfig, wpConfig);
 
         await act.Should().ThrowAsync<InvalidOperationException>();
+    }
+
+    [Fact]
+    public void AddSshTunnelArguments_PreservesIdentityFileWithSpacesAsSingleArgument()
+    {
+        var config = new SshTunnelConfig(
+            "db.example.com", 2222, "deploy", "/home/me/.ssh/key with spaces.pem", "127.0.0.1", 5432);
+        var args = new Collection<string>();
+        var method = typeof(SshTunnelManager).GetMethod("AddSshTunnelArguments",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        method.Should().NotBeNull();
+        method!.Invoke(null, [args, config, 15432]);
+
+        args.Should().ContainInOrder("-i", "/home/me/.ssh/key with spaces.pem");
+        args.Should().Contain("127.0.0.1:15432:127.0.0.1:5432");
+        args.Should().Contain("deploy@db.example.com");
+    }
+
+    [Fact]
+    public void ShellEscape_EscapesSingleQuotes()
+    {
+        var method = typeof(SshTunnelManager).GetMethod("ShellEscape",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        method.Should().NotBeNull();
+        var escaped = (string)method!.Invoke(null, ["wp'cli"])!;
+
+        escaped.Should().Be("'wp'\\''cli'");
     }
 
     [Fact]

@@ -74,6 +74,34 @@ public class LocalStorageProviderTests : IDisposable
         Assert.True(File.Exists(path));
     }
 
+    [Theory]
+    [InlineData("../outside.txt")]
+    [InlineData("nested/../../outside.txt")]
+    [InlineData("/tmp/outside.txt")]
+    public async Task UploadAsync_WithTraversalPath_Throws(string fileKey)
+    {
+        var config = new StorageBucketConfig { BucketName = _tempDir };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _provider.UploadAsync(config, fileKey, new byte[] { 1, 2, 3 }));
+    }
+
+    [Fact]
+    public async Task UploadAsync_WithBackslashTraversal_Throws()
+    {
+        var config = new StorageBucketConfig { BucketName = _tempDir };
+
+        if (Path.DirectorySeparatorChar == '\\')
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                _provider.UploadAsync(config, @"..\outside.txt", new byte[] { 1, 2, 3 }));
+            return;
+        }
+
+        var path = await _provider.UploadAsync(config, @"..\outside.txt", new byte[] { 1, 2, 3 });
+        Assert.StartsWith(_tempDir, path);
+    }
+
     #endregion
 
     #region DownloadAsync

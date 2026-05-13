@@ -219,104 +219,16 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     // side at the end of /api/database/create-quickstart so they don't
     // need the deleted endpoint either.
 
-    // API endpoint to create a test database (SQL Server only - legacy)
-    app.MapPost("/api/database/create", async (CreateDatabaseRequest request, CancellationToken ct) =>
+    // Legacy SQL Server test-database creation accepted password-bearing
+    // connection strings over HTTP. Keep the route as an explicit tombstone so
+    // older clients receive a clear migration response without sending secrets
+    // through the old streaming path.
+    app.MapPost("/api/database/create", () =>
     {
-        async IAsyncEnumerable<string> StreamProgress()
+        return Results.Json(new
         {
-            yield return SseEvent("Parsing connection string", 5, "Extracting server details");
-
-            var connBuilder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(request.ConnectionString ??
-                "Server=localhost;Database=master;User Id=sa;Password=your_password;TrustServerCertificate=True");
-            var originalDatabase = connBuilder.InitialCatalog;
-            connBuilder.InitialCatalog = "master";
-
-            yield return SseEvent("Connecting to server", 10, "Establishing connection to master database");
-
-            Microsoft.Data.SqlClient.SqlConnection? conn = null;
-            Exception? connectError = null;
-
-            try
-            {
-                conn = new Microsoft.Data.SqlClient.SqlConnection(connBuilder.ConnectionString);
-                await conn.OpenAsync(ct);
-            }
-            catch (Exception ex)
-            {
-                connectError = ex;
-            }
-
-            if (connectError != null)
-            {
-                yield return SseEvent("Error", 0, $"Failed to connect to SQL Server: {connectError.Message}", error: true);
-                yield break;
-            }
-
-            await using var _conn = conn!;
-
-            var dbName = request.Template switch
-            {
-                "northwind" => "Northwind_Test",
-                "adventureworks-lite" => "AdventureWorksLite_Test",
-                "simple-blog" => "SimpleBlog_Test",
-                _ => "TestDB_" + Guid.NewGuid().ToString("N")[..8]
-            };
-
-            yield return SseEvent("Creating database", 20, $"Creating database {dbName}");
-
-            await using (var cmd = new Microsoft.Data.SqlClient.SqlCommand($"IF NOT EXISTS (SELECT name FROM sys.databases WHERE name = '{dbName}') BEGIN CREATE DATABASE [{dbName}] END", _conn))
-            {
-                await cmd.ExecuteNonQueryAsync(ct);
-            }
-
-            yield return SseEvent("Creating tables", 30, "Setting up database schema");
-
-            connBuilder.InitialCatalog = dbName;
-            await using var newConn = new Microsoft.Data.SqlClient.SqlConnection(connBuilder.ConnectionString);
-            await newConn.OpenAsync(ct);
-
-            var sql = request.Template switch
-            {
-                "northwind" => TestDatabaseSchemas.GetNorthwindSchema(),
-                "adventureworks-lite" => TestDatabaseSchemas.GetAdventureWorksLiteSchema(),
-                "simple-blog" => TestDatabaseSchemas.GetSimpleBlogSchema(),
-                _ => TestDatabaseSchemas.GetSimpleBlogSchema()
-            };
-
-            var statements = sql.Split(new[] { "GO" }, StringSplitOptions.RemoveEmptyEntries);
-
-            for (int i = 0; i < statements.Length; i++)
-            {
-                var percent = 40 + (i * 50 / statements.Length);
-                yield return SseEvent("Creating schema", percent, $"Executing statement {i + 1} of {statements.Length}");
-
-                await using var cmd = new Microsoft.Data.SqlClient.SqlCommand(statements[i].Trim(), newConn);
-                await cmd.ExecuteNonQueryAsync(ct);
-            }
-
-            yield return SseEvent("Inserting sample data", 90, "Adding sample records");
-
-            var dataSql = request.Template switch
-            {
-                "northwind" => TestDatabaseSchemas.GetNorthwindData(),
-                "adventureworks-lite" => TestDatabaseSchemas.GetAdventureWorksLiteData(),
-                "simple-blog" => TestDatabaseSchemas.GetSimpleBlogData(),
-                _ => TestDatabaseSchemas.GetSimpleBlogData()
-            };
-
-            var dataStatements = dataSql.Split(new[] { "GO" }, StringSplitOptions.RemoveEmptyEntries);
-            for (int i = 0; i < dataStatements.Length; i++)
-            {
-                await using var cmd = new Microsoft.Data.SqlClient.SqlCommand(dataStatements[i].Trim(), newConn);
-                await cmd.ExecuteNonQueryAsync(ct);
-            }
-
-            var newConnectionString = connBuilder.ConnectionString;
-
-            yield return SseEvent("Complete!", 100, "Database created successfully", connectionString: newConnectionString);
-        }
-
-        return WriteSseStream(StreamProgress());
+            error = "The legacy SQL Server database creation endpoint is disabled because it accepted password-bearing connection strings over HTTP. Use /api/database/create-quickstart for SQLite quickstarts or create a saved vault entry and connect with /api/vault/connect."
+        }, statusCode: StatusCodes.Status410Gone);
     });
 
     // POST /api/database/create-quickstart - Creates a SQLite quickstart database

@@ -179,6 +179,9 @@ namespace BifrostQL.Core.Resolvers
             if (!propertyInfo.keyData.Any())
                 return 0;
 
+            if (!propertyInfo.standardData.Any())
+                return 0;
+
             var moduleSql = modules.Update(propertyInfo.data, table, context.UserContext, model);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var setClause = string.Join(",", propertyInfo.standardData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));

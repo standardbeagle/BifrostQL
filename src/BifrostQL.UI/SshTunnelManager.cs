@@ -1,7 +1,7 @@
 using System.Diagnostics;
+using System.Collections.ObjectModel;
 using System.Net;
 using System.Net.Sockets;
-using System.Text;
 using System.Text.Json;
 
 namespace BifrostQL.UI;
@@ -45,15 +45,14 @@ public sealed class SshTunnelManager : IDisposable
             await StopInternalAsync();
 
             var localPort = FindFreePort();
-            var args = BuildSshArgs(config, localPort);
-
-            var psi = new ProcessStartInfo("ssh", args)
+            var psi = new ProcessStartInfo("ssh")
             {
                 RedirectStandardError = true,
                 RedirectStandardOutput = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
+            AddSshTunnelArguments(psi.ArgumentList, config, localPort);
 
             _process = Process.Start(psi)
                 ?? throw new InvalidOperationException("Failed to start ssh process");
@@ -113,7 +112,7 @@ public sealed class SshTunnelManager : IDisposable
     public async Task<WpCredentials> DiscoverWordPressAsync(
         SshTunnelConfig sshConfig, WpDiscoverConfig wpConfig, CancellationToken ct = default)
     {
-        var wpPath = wpConfig.WpPath ?? "wp";
+        var wpPath = ShellEscape(wpConfig.WpPath ?? "wp");
         var wpCmd = $"{wpPath} config list --fields=name,value --format=json";
         if (!string.IsNullOrWhiteSpace(wpConfig.WpRoot))
             wpCmd = $"{wpPath} --path={ShellEscape(wpConfig.WpRoot)} config list --fields=name,value --format=json";
@@ -219,24 +218,31 @@ public sealed class SshTunnelManager : IDisposable
             DbHost: dbHost ?? "localhost");
     }
 
-    private static string BuildSshArgs(SshTunnelConfig config, int localPort)
+    private static void AddSshTunnelArguments(Collection<string> args, SshTunnelConfig config, int localPort)
     {
-        var sb = new StringBuilder();
-        sb.Append("-N ");  // no remote command
-        sb.Append("-o BatchMode=yes ");
-        sb.Append("-o StrictHostKeyChecking=accept-new ");
-        sb.Append("-o ExitOnForwardFailure=yes ");
-        sb.Append("-o ServerAliveInterval=30 ");
-        sb.Append("-o ServerAliveCountMax=3 ");
-        sb.Append($"-p {config.SshPort} ");
+        args.Add("-N");
+        args.Add("-o");
+        args.Add("BatchMode=yes");
+        args.Add("-o");
+        args.Add("StrictHostKeyChecking=accept-new");
+        args.Add("-o");
+        args.Add("ExitOnForwardFailure=yes");
+        args.Add("-o");
+        args.Add("ServerAliveInterval=30");
+        args.Add("-o");
+        args.Add("ServerAliveCountMax=3");
+        args.Add("-p");
+        args.Add(config.SshPort.ToString());
 
         if (!string.IsNullOrWhiteSpace(config.IdentityFile))
-            sb.Append($"-i {config.IdentityFile} ");
+        {
+            args.Add("-i");
+            args.Add(config.IdentityFile);
+        }
 
-        sb.Append($"-L 127.0.0.1:{localPort}:{config.RemoteHost}:{config.RemotePort} ");
-        sb.Append($"{config.SshUsername}@{config.SshHost}");
-
-        return sb.ToString();
+        args.Add("-L");
+        args.Add($"127.0.0.1:{localPort}:{config.RemoteHost}:{config.RemotePort}");
+        args.Add($"{config.SshUsername}@{config.SshHost}");
     }
 
     private static int FindFreePort()

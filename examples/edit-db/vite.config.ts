@@ -18,22 +18,6 @@ export default defineConfig(({ mode }) => ({
   build: {
     minify: mode === 'production',
     sourcemap: mode !== 'production',
-    watch: {
-      // WSL2 inotify is unreliable — use polling for file change detection.
-      // Ignore non-source noise so dart-query / git / dist writes don't
-      // trigger spurious rebuilds (which cause HMR storms in consumers).
-      chokidar: {
-        usePolling: true,
-        interval: 500,
-        ignored: [
-          '**/.dartai/**',
-          '**/.dartai-locks.json',
-          '**/node_modules/**',
-          '**/dist/**',
-          '**/.git/**',
-        ],
-      },
-    },
     lib: {
       entry: path.resolve(__dirname, 'src/index.ts'),
       name: 'editor',

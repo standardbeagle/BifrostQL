@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "check": "tsc --noEmit",
+    "check": "pnpm --filter @standardbeagle/edit-db build && pnpm --filter @bifrostql/binary-client build && tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },

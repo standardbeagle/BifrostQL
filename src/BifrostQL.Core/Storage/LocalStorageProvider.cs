@@ -84,14 +84,24 @@ namespace BifrostQL.Core.Storage
 
         private static string GetFullFilePath(StorageBucketConfig bucketConfig, string fileKey)
         {
-            // BucketName is used as the base directory for local storage
-            var basePath = bucketConfig.BucketName;
+            ArgumentException.ThrowIfNullOrWhiteSpace(bucketConfig.BucketName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(fileKey);
+
+            var basePath = Path.GetFullPath(bucketConfig.BucketName);
             var prefixedKey = bucketConfig.GetFullPath(fileKey);
-            
-            // Sanitize the path to prevent directory traversal
-            var safeKey = prefixedKey.Replace("..", "").Replace("//", "/").TrimStart('/');
-            
-            return Path.Combine(basePath, safeKey);
+
+            if (Path.IsPathRooted(prefixedKey))
+                throw new InvalidOperationException("File key must be relative to the storage bucket.");
+
+            var fullPath = Path.GetFullPath(Path.Combine(basePath, prefixedKey));
+            var normalizedBase = Path.EndsInDirectorySeparator(basePath)
+                ? basePath
+                : basePath + Path.DirectorySeparatorChar;
+
+            if (!fullPath.StartsWith(normalizedBase, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("File key resolves outside the storage bucket.");
+
+            return fullPath;
         }
     }
 }

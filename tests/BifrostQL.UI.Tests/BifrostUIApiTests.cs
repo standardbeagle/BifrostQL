@@ -146,7 +146,7 @@ public class BifrostUIApiTests
     [InlineData("northwind")]
     [InlineData("adventureworks-lite")]
     [InlineData("simple-blog")]
-    public async Task CreateDatabaseEndpoint_AcceptsTemplateRequest(string template)
+    public async Task CreateDatabaseEndpoint_IsDisabled(string template)
     {
         if (!await IsServerRunning())
         {
@@ -165,24 +165,19 @@ public class BifrostUIApiTests
         var json = JsonSerializer.Serialize(payload);
         var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-        // The endpoint should accept the request and return 200 OK
-        // The response is a streaming SSE endpoint, so we just check the status code
-        // Use ResponseHeadersRead to avoid buffering the streaming response
         var request = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/api/database/create") { Content = content };
         var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        var responseText = await response.Content.ReadAsStringAsync();
 
-        // The endpoint returns 200 OK and streams progress events
-        // Even if SQL Server is unavailable, the endpoint should start streaming
         _output.WriteLine($"Template '{template}' endpoint status: {response.StatusCode}");
+        _output.WriteLine($"Response: {responseText}");
 
-        // Verify the response is successful (streaming started)
-        // Note: The actual database creation may fail later in the stream, but the endpoint should accept the request
-        Assert.True(response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.InternalServerError,
-            $"Endpoint should accept request or return internal error (no SQL Server). Got: {response.StatusCode}");
+        Assert.Equal(System.Net.HttpStatusCode.Gone, response.StatusCode);
+        Assert.DoesNotContain("Password=test", responseText);
     }
 
     [Fact]
-    public async Task CreateDatabaseEndpoint_RejectsInvalidTemplate()
+    public async Task CreateDatabaseEndpoint_InvalidTemplate_IsDisabledBeforeProcessing()
     {
         if (!await IsServerRunning())
         {
@@ -201,18 +196,15 @@ public class BifrostUIApiTests
         var json = JsonSerializer.Serialize(payload);
         var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-        // The endpoint should accept the request - invalid templates fall back to default
-        // This is by design in Program.cs (switch with _ => "TestDB_" + Guid.NewGuid()...)
-        // Use ResponseHeadersRead to avoid buffering the streaming response
         var request = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/api/database/create") { Content = content };
         var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        var responseText = await response.Content.ReadAsStringAsync();
 
-        // Endpoint should still accept the request (200 OK) because invalid template falls back to default
-        _output.WriteLine($"Invalid template status: {response.StatusCode} (expected: OK - fallback to default schema)");
+        _output.WriteLine($"Invalid template status: {response.StatusCode} (expected: Gone)");
+        _output.WriteLine($"Response: {responseText}");
 
-        // The endpoint uses the template switch with a default fallback, so it should still work
-        Assert.True(response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.InternalServerError,
-            $"Endpoint should accept request (fallback to default). Got: {response.StatusCode}");
+        Assert.Equal(System.Net.HttpStatusCode.Gone, response.StatusCode);
+        Assert.DoesNotContain("Password=test", responseText);
     }
 
     // SetConnectionEndpoint_RejectsEmptyConnectionString was removed in

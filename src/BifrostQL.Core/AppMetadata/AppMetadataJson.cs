@@ -44,6 +44,22 @@ namespace BifrostQL.Core.AppMetadata
                 "App metadata JSON deserialized to null.");
         }
 
+        /// <summary>
+        /// Deserializes the stable camelCase JSON representation of a single
+        /// <see cref="EntityMetadata"/> overlay entry. Used by sources that
+        /// store one entity overlay per row (e.g. a database table keyed by
+        /// qualified table name).
+        /// </summary>
+        /// <exception cref="JsonException">The JSON is malformed or does not
+        /// represent an <see cref="EntityMetadata"/> entry.</exception>
+        public static EntityMetadata DeserializeEntity(string json)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(json);
+            var result = JsonSerializer.Deserialize<EntityMetadata>(json, Options);
+            return result ?? throw new JsonException(
+                "App metadata entity JSON deserialized to null.");
+        }
+
         private static JsonSerializerOptions CreateOptions()
         {
             var options = new JsonSerializerOptions

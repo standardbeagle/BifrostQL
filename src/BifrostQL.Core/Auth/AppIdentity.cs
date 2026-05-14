@@ -7,9 +7,10 @@ namespace BifrostQL.Core.Auth;
 /// constructing it, and <see cref="IdentityContextMapper"/> projects it into the
 /// <c>UserContext</c> dictionary consumed by the security modules.
 ///
-/// The record is immutable. <see cref="OrgIds"/>, <see cref="Roles"/>, and
-/// <see cref="Claims"/> are normalized to non-null empty collections by the
-/// constructor so consumers never need to null-check them.
+/// The record is immutable. <see cref="OrgIds"/>, <see cref="Roles"/>,
+/// <see cref="Permissions"/>, and <see cref="Claims"/> are normalized to
+/// non-null empty collections by the constructor so consumers never need to
+/// null-check them.
 /// </summary>
 public sealed record AppIdentity
 {
@@ -48,6 +49,13 @@ public sealed record AppIdentity
     public IReadOnlyList<string> Roles { get; }
 
     /// <summary>
+    /// Fine-grained permissions granted to the user. Never null; empty when the
+    /// user has no explicit permissions. Projected to the canonical
+    /// <c>permissions</c> user-context claim by <see cref="IdentityContextMapper"/>.
+    /// </summary>
+    public IReadOnlyList<string> Permissions { get; }
+
+    /// <summary>
     /// Additional provider claims keyed by claim name. Never null; empty when the
     /// provider supplied no extra claims. Copied verbatim into the user context.
     /// </summary>
@@ -61,7 +69,8 @@ public sealed record AppIdentity
         string? tenantId = null,
         IReadOnlyList<string>? orgIds = null,
         IReadOnlyList<string>? roles = null,
-        IReadOnlyDictionary<string, object?>? claims = null)
+        IReadOnlyDictionary<string, object?>? claims = null,
+        IReadOnlyList<string>? permissions = null)
     {
         if (string.IsNullOrWhiteSpace(id))
             throw new ArgumentException("Identity id is required.", nameof(id));
@@ -76,5 +85,6 @@ public sealed record AppIdentity
         OrgIds = orgIds ?? Array.Empty<string>();
         Roles = roles ?? Array.Empty<string>();
         Claims = claims ?? new Dictionary<string, object?>();
+        Permissions = permissions ?? Array.Empty<string>();
     }
 }

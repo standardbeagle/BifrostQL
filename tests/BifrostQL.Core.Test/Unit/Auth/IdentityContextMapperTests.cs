@@ -14,7 +14,8 @@ public class IdentityContextMapperTests
         tenantId: "tenant-7",
         orgIds: new[] { "org-1", "org-2" },
         roles: new[] { "admin", "viewer" },
-        claims: new Dictionary<string, object?> { ["department"] = "engineering" });
+        claims: new Dictionary<string, object?> { ["department"] = "engineering" },
+        permissions: new[] { "orders:read", "orders:write" });
 
     [Fact]
     public void ToUserContext_DefaultKeys_WritesTenantRolesAndAuditUser()
@@ -27,6 +28,64 @@ public class IdentityContextMapperTests
         Assert.Equal("tenant-7", context["tenant_id"]);
         Assert.Equal(new[] { "admin", "viewer" }, context["roles"]);
         Assert.Equal("user-42", context["id"]);
+    }
+
+    [Fact]
+    public void ToUserContext_DefaultKeys_WritesCanonicalUserIdTenantIdsAndPermissions()
+    {
+        var mapper = new IdentityContextMapper();
+
+        var context = mapper.ToUserContext(SampleIdentity());
+
+        Assert.Equal("user-42", context["user_id"]);
+        Assert.Equal(new[] { "org-1", "org-2" }, context["tenant_ids"]);
+        Assert.Equal(new[] { "orders:read", "orders:write" }, context["permissions"]);
+    }
+
+    [Fact]
+    public void ToUserContext_NoOrgsOrPermissions_WritesEmptyTenantIdsAndPermissions()
+    {
+        var identity = new AppIdentity(id: "user-1", provider: "local");
+        var mapper = new IdentityContextMapper();
+
+        var context = mapper.ToUserContext(identity);
+
+        var tenantIds = Assert.IsAssignableFrom<IReadOnlyList<string>>(context["tenant_ids"]);
+        Assert.Empty(tenantIds);
+        var permissions = Assert.IsAssignableFrom<IReadOnlyList<string>>(context["permissions"]);
+        Assert.Empty(permissions);
+    }
+
+    [Fact]
+    public void ToUserContext_CanonicalKeysWinOverSameNamedProviderClaims()
+    {
+        var identity = new AppIdentity(
+            id: "real-id",
+            provider: "oidc",
+            orgIds: new[] { "real-org" },
+            permissions: new[] { "real:perm" },
+            claims: new Dictionary<string, object?>
+            {
+                ["user_id"] = "spoofed-id",
+                ["tenant_ids"] = "spoofed-orgs",
+                ["permissions"] = "spoofed-perms",
+            });
+        var mapper = new IdentityContextMapper();
+
+        var context = mapper.ToUserContext(identity);
+
+        Assert.Equal("real-id", context["user_id"]);
+        Assert.Equal(new[] { "real-org" }, context["tenant_ids"]);
+        Assert.Equal(new[] { "real:perm" }, context["permissions"]);
+    }
+
+    [Fact]
+    public void Constructor_DefaultCanonicalKeysMatchMetadataKeyConstants()
+    {
+        // Guards the canonical claim names against drift.
+        Assert.Equal("tenant_ids", MetadataKeys.Auth.DefaultTenantIdsContextKey);
+        Assert.Equal("user_id", MetadataKeys.Auth.DefaultUserIdContextKey);
+        Assert.Equal("permissions", MetadataKeys.Auth.DefaultPermissionsContextKey);
     }
 
     [Fact]
@@ -128,6 +187,18 @@ public class AppIdentityTests
         Assert.Empty(identity.OrgIds);
         Assert.Empty(identity.Roles);
         Assert.Empty(identity.Claims);
+        Assert.Empty(identity.Permissions);
+    }
+
+    [Fact]
+    public void Constructor_PreservesSuppliedPermissions()
+    {
+        var identity = new AppIdentity(
+            id: "u",
+            provider: "local",
+            permissions: new[] { "orders:read" });
+
+        Assert.Equal(new[] { "orders:read" }, identity.Permissions);
     }
 
     [Fact]

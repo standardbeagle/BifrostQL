@@ -344,6 +344,10 @@ namespace BifrostQL.Core.Model
         /// contract (<c>AppIdentity</c> / <c>IdentityContextMapper</c>). These
         /// mirror the defaults read by the tenancy, auto-filter, and audit
         /// modules so a mapped identity satisfies them without extra metadata.
+        ///
+        /// The canonical claim set projected into the user context is:
+        /// <c>tenant_id</c>, <c>tenant_ids</c>, <c>user_id</c>, <c>roles</c>,
+        /// <c>permissions</c>, and the audit user key (default <c>id</c>).
         /// </summary>
         public static class Auth
         {
@@ -354,10 +358,32 @@ namespace BifrostQL.Core.Model
             public const string DefaultTenantContextKey = "tenant_id";
 
             /// <summary>
+            /// Default user-context key carrying every organization/tenant
+            /// identifier the user belongs to (the plural projection of
+            /// <c>AppIdentity.OrgIds</c>). Written as
+            /// <c>IReadOnlyList&lt;string&gt;</c>.
+            /// </summary>
+            public const string DefaultTenantIdsContextKey = "tenant_ids";
+
+            /// <summary>
+            /// Default user-context key carrying the explicit user identifier
+            /// (the canonical <c>user_id</c> claim). Distinct from the audit
+            /// user key, which is configurable and defaults to <c>id</c>.
+            /// </summary>
+            public const string DefaultUserIdContextKey = "user_id";
+
+            /// <summary>
             /// Default user-context key carrying the user's roles. Matches the
             /// key read by the auto-filter module (<c>roles</c>).
             /// </summary>
             public const string DefaultRolesContextKey = "roles";
+
+            /// <summary>
+            /// Default user-context key carrying the user's permissions
+            /// (the plural projection of <c>AppIdentity.Permissions</c>).
+            /// Written as <c>IReadOnlyList&lt;string&gt;</c>.
+            /// </summary>
+            public const string DefaultPermissionsContextKey = "permissions";
 
             /// <summary>
             /// Default user-context key carrying the audit user identifier.

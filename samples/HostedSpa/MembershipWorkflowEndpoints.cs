@@ -26,6 +26,13 @@ namespace BifrostQL.Samples.HostedSpa;
 /// or renewal that has already been collected. A server-side adapter that
 /// orchestrates a real provider is the documented future adapter point — it
 /// would run before the <c>dues_payments</c> insert below.
+///
+/// <c>POST /workflows/membership/check-in</c> records event attendance the same
+/// way: it inserts an <c>event_attendance</c> row through the executor and
+/// writes an <c>event.checkin</c> audit entry. The
+/// <c>UNIQUE(event_id, member_id)</c> constraint on <c>event_attendance</c>
+/// means a member can only be checked in once per event; a repeat check-in is
+/// reported as <c>409 Conflict</c> rather than writing a duplicate row.
 /// </summary>
 public static class MembershipWorkflowEndpoints
 {
@@ -54,6 +61,16 @@ public static class MembershipWorkflowEndpoints
         string? InvoiceDueOn);
 
     /// <summary>
+    /// Request body for <c>POST /workflows/membership/check-in</c>. Records that
+    /// <paramref name="MemberId"/> attended <paramref name="EventId"/>. When
+    /// <paramref name="CheckedInAt"/> is omitted the current UTC time is used.
+    /// </summary>
+    public sealed record CheckInRequest(
+        long EventId,
+        long MemberId,
+        string? CheckedInAt);
+
+    /// <summary>
     /// Maps the Membership Manager sidecar workflow endpoints onto
     /// <paramref name="app"/>. Call this alongside <c>UseBifrostQL</c>.
     /// </summary>
@@ -63,6 +80,7 @@ public static class MembershipWorkflowEndpoints
 
         app.MapPost("/workflows/membership/record-payment", RecordPaymentAsync);
         app.MapPost("/workflows/membership/renew", RenewMembershipAsync);
+        app.MapPost("/workflows/membership/check-in", CheckInAsync);
         return app;
     }
 
@@ -229,6 +247,72 @@ public static class MembershipWorkflowEndpoints
             entity_type = "member_memberships",
             entity_id = request.MemberMembershipId.ToString(),
             summary = $"Membership {request.MemberMembershipId} renewed through {request.NewEndDate}",
+            created_at = UtcTimestamp(),
+        }, userContext);
+
+        return Results.Ok();
+    }
+
+    /// <summary>
+    /// Records a member's attendance at an event: inserts an
+    /// <c>event_attendance</c> row and writes an <c>event.checkin</c> audit
+    /// entry. The <c>UNIQUE(event_id, member_id)</c> constraint means a member
+    /// can only be checked in once per event — a repeat check-in is reported as
+    /// <c>409 Conflict</c> and writes neither an attendance row nor an audit row.
+    /// </summary>
+    private static async Task<IResult> CheckInAsync(
+        CheckInRequest request,
+        HttpContext http,
+        IBifrostWorkflowExecutor bifrost,
+        PathCache<Inputs> schemaCache)
+    {
+        var userContext = http.GetBifrostUserContext();
+
+        // Pre-flight gate: reject the whole workflow before any write, using the
+        // SAME evaluator and TablePolicy the mutation pipeline uses.
+        // event_attendance is created, so the gating action is Create.
+        if (!CanAct(schemaCache, "event_attendance", PolicyAction.Create, userContext))
+            return Results.Forbid();
+
+        var @event = await bifrost.QuerySingleAsync("events", request.EventId, userContext);
+        if (@event is null)
+            return Results.NotFound();           // tenant-filter already scoped the read
+
+        var member = await bifrost.QuerySingleAsync("members", request.MemberId, userContext);
+        if (member is null)
+            return Results.NotFound();           // tenant-filter already scoped the read
+
+        // 1. Record the check-in. The UNIQUE(event_id, member_id) constraint
+        //    rejects a second check-in for the same member at the same event;
+        //    that surfaces as a pipeline error, reported here as 409 Conflict so
+        //    neither an attendance row nor an audit row is written twice.
+        try
+        {
+            await bifrost.InsertAsync("event_attendance", new
+            {
+                tenant_id = @event["tenant_id"],
+                event_id = request.EventId,
+                member_id = request.MemberId,
+                checked_in_at = string.IsNullOrWhiteSpace(request.CheckedInAt)
+                    ? UtcTimestamp()
+                    : request.CheckedInAt,
+            }, userContext);
+        }
+        catch (InvalidOperationException ex)
+            when (ex.Message.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase))
+        {
+            return Results.Conflict("This member is already checked in for this event.");
+        }
+
+        // 2. Audit the named operation.
+        await bifrost.InsertAsync("audit_log", new
+        {
+            tenant_id = @event["tenant_id"],
+            actor_user_id = ActorUserId(userContext),
+            action = "event.checkin",
+            entity_type = "event_attendance",
+            entity_id = request.EventId.ToString(),
+            summary = $"Member {request.MemberId} checked in to event {request.EventId}",
             created_at = UtcTimestamp(),
         }, userContext);
 

@@ -15,6 +15,7 @@ import { RecordPayment } from './membership-plans/record-payment';
 import { EventList } from './events/event-list';
 import { EventForm } from './events/event-form';
 import { EventRsvps } from './events/event-rsvps';
+import { EventCheckin } from './events/event-checkin';
 import { UnpaidDuesReport } from './reports/unpaid-dues-report';
 import { UpcomingRenewalsReport } from './reports/upcoming-renewals-report';
 import { ExpiredMembershipsReport } from './reports/expired-memberships-report';
@@ -203,6 +204,21 @@ function App() {
               onUnauthenticated={() => navigate('/login')}
             >
               <EventRsvps />
+            </ProtectedRoute>
+          </Route>
+          {/*
+            Per-event attendance check-in. Declared before `/events/:id` so the
+            three-segment check-in path is matched ahead of the two-segment
+            form route, the same ordering as the RSVP route above. Reuses the
+            `main.members.read` permission gate; no distinct event-manager
+            permission is wired yet.
+          */}
+          <Route path="/events/:id/check-in">
+            <ProtectedRoute
+              requirePermission={MEMBERS_READ}
+              onUnauthenticated={() => navigate('/login')}
+            >
+              <EventCheckin />
             </ProtectedRoute>
           </Route>
           <Route path="/events/:id">

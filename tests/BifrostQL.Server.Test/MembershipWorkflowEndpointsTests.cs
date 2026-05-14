@@ -12,8 +12,9 @@ namespace BifrostQL.Server.Test;
 /// <summary>
 /// WebApplicationFactory integration tests for the Membership Manager sidecar
 /// workflow endpoints hosted by the HostedSpa sample
-/// (<c>POST /workflows/membership/record-payment</c> and
-/// <c>POST /workflows/membership/renew</c>).
+/// (<c>POST /workflows/membership/record-payment</c>,
+/// <c>POST /workflows/membership/renew</c>, and
+/// <c>POST /workflows/membership/check-in</c>).
 ///
 /// Each test drives the endpoint over HTTP and then reads back through the
 /// <c>/graphql</c> endpoint to prove the orchestration landed: the workflow
@@ -170,6 +171,95 @@ public class MembershipWorkflowEndpointsTests
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task CheckIn_RecordsAttendance_AndAuditsAction()
+    {
+        // Arrange: a fresh host so event 1 and member 1 are seeded and unchecked.
+        await using var factory = new WorkflowFactory();
+        var client = factory.CreateClient();
+
+        // Act: check the seeded member in to the seeded event.
+        var response = await client.PostAsJsonAsync(
+            "/workflows/membership/check-in",
+            new { eventId = 1, memberId = 1, checkedInAt = "2025-03-01 10:05:00" });
+
+        // Assert: the endpoint succeeded.
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Assert: an event_attendance row was inserted through the pipeline.
+        var attendance = await QueryRows(
+            client,
+            "{ event_attendance { data { event_id member_id checked_in_at } } }",
+            "event_attendance");
+        attendance.Should().ContainSingle();
+        attendance[0].GetProperty("event_id").GetInt32().Should().Be(1);
+        attendance[0].GetProperty("member_id").GetInt32().Should().Be(1);
+        attendance[0].GetProperty("checked_in_at").GetString().Should().Be("2025-03-01 10:05:00");
+
+        // Assert: exactly one audit_log row naming the check-in action.
+        var audits = await QueryRows(
+            client, "{ audit_log { data { action entity_type } } }", "audit_log");
+        var audit = audits.Should().ContainSingle().Subject;
+        audit.GetProperty("action").GetString().Should().Be("event.checkin");
+        audit.GetProperty("entity_type").GetString().Should().Be("event_attendance");
+    }
+
+    [Fact]
+    public async Task CheckIn_DuplicateCheckIn_ReturnsConflict_AndWritesNothingExtra()
+    {
+        // Arrange: a fresh host, then a first successful check-in.
+        await using var factory = new WorkflowFactory();
+        var client = factory.CreateClient();
+
+        var first = await client.PostAsJsonAsync(
+            "/workflows/membership/check-in",
+            new { eventId = 1, memberId = 1 });
+        first.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Act: check the same member in to the same event a second time.
+        var second = await client.PostAsJsonAsync(
+            "/workflows/membership/check-in",
+            new { eventId = 1, memberId = 1 });
+
+        // Assert: the repeat check-in is rejected as a conflict.
+        second.StatusCode.Should().Be(HttpStatusCode.Conflict);
+
+        // Assert: still exactly one attendance row and one audit row — the
+        // UNIQUE(event_id, member_id) constraint was honoured without a
+        // duplicate write.
+        var attendance = await QueryRows(
+            client, "{ event_attendance { data { event_id member_id } } }", "event_attendance");
+        attendance.Should().ContainSingle("a duplicate check-in must not record a second row");
+
+        var audits = await QueryRows(
+            client, "{ audit_log { data { action } } }", "audit_log");
+        audits.Should().ContainSingle("a rejected duplicate check-in must not write a second audit row");
+    }
+
+    [Fact]
+    public async Task CheckIn_UnknownEvent_ReturnsNotFound_AndWritesNothing()
+    {
+        // Arrange
+        await using var factory = new WorkflowFactory();
+        var client = factory.CreateClient();
+
+        // Act: an event id that does not exist.
+        var response = await client.PostAsJsonAsync(
+            "/workflows/membership/check-in",
+            new { eventId = 999, memberId = 1 });
+
+        // Assert: the workflow reports not-found and does not partially apply.
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        var attendance = await QueryRows(
+            client, "{ event_attendance { data { event_id } } }", "event_attendance");
+        attendance.Should().BeEmpty("a not-found event must not record attendance");
+
+        var audits = await QueryRows(
+            client, "{ audit_log { data { action } } }", "audit_log");
+        audits.Should().BeEmpty("a rejected workflow must not write an audit row");
     }
 
     /// <summary>

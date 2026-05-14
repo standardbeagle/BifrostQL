@@ -38,8 +38,9 @@ internal static class SampleDatabase
     /// <c>widgets</c> table plus the slice of the Membership Manager schema the
     /// sidecar workflow endpoints operate on (<c>tenants</c>, <c>app_users</c>,
     /// <c>members</c>, <c>membership_plans</c>, <c>member_memberships</c>,
-    /// <c>dues_invoices</c>, <c>dues_payments</c>, <c>audit_log</c>). Existing
-    /// files are left untouched.
+    /// <c>dues_invoices</c>, <c>dues_payments</c>, <c>audit_log</c>,
+    /// <c>events</c>, <c>event_attendance</c>). Existing files are left
+    /// untouched.
     /// </summary>
     /// <param name="dbPath">Absolute path to the SQLite database file.</param>
     public static void EnsureCreated(string dbPath)
@@ -143,6 +144,25 @@ internal static class SampleDatabase
                 paid_on TEXT NOT NULL DEFAULT (datetime('now')),
                 method TEXT NOT NULL DEFAULT 'card'
             );
+            CREATE TABLE events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id INTEGER NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+                title TEXT NOT NULL,
+                description TEXT,
+                location TEXT,
+                starts_at TEXT NOT NULL,
+                ends_at TEXT,
+                capacity INTEGER,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE TABLE event_attendance (
+                attendance_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id INTEGER NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+                event_id INTEGER NOT NULL REFERENCES events(event_id) ON DELETE CASCADE,
+                member_id INTEGER NOT NULL REFERENCES members(member_id) ON DELETE CASCADE,
+                checked_in_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(event_id, member_id)
+            );
 
             INSERT INTO tenants (tenant_id, name, slug) VALUES (1, 'Riverside Tennis Club', 'riverside-tennis');
             INSERT INTO app_users (user_id, tenant_id, email, display_name)
@@ -155,6 +175,8 @@ internal static class SampleDatabase
                 VALUES (1, 1, 1, 1, '2024-01-10', '2025-01-10', 'expired');
             INSERT INTO dues_invoices (invoice_id, tenant_id, member_id, member_membership_id, amount_cents, issued_on, due_on, status)
                 VALUES (1, 1, 1, 1, 12000, '2024-12-15', '2025-01-10', 'open');
+            INSERT INTO events (event_id, tenant_id, title, description, location, starts_at, ends_at, capacity, created_at)
+                VALUES (1, 1, 'Spring Open House', 'Season kick-off social', 'Main Clubhouse', '2025-03-01 10:00:00', '2025-03-01 14:00:00', 60, '2025-01-15 09:00:00');
             """;
         command.ExecuteNonQuery();
     }

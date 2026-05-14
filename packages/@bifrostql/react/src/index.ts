@@ -128,6 +128,7 @@ export {
   buildUpdateMutation,
   buildUpsertMutation,
   buildDeleteMutation,
+  createCrudHelpers,
   diff,
   detectConflicts,
   serializeSort,
@@ -143,6 +144,15 @@ export type {
   DiffResult,
   UrlTableState,
   BifrostAuthHandlers,
+  CrudHelpers,
+  TypedOperation,
+  TypedCreateOperation,
+  TypedUpdateOperation,
+  TypedDeleteOperation,
+  ListOptions,
+  DetailOptions,
+  LookupOptions,
+  RowField,
 } from './utils';
 export type {
   BifrostConfig,

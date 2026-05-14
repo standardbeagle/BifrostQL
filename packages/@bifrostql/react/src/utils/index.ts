@@ -13,6 +13,18 @@ export {
   buildDeleteMutation,
 } from './mutation-builder';
 export type { MutationType } from './mutation-builder';
+export { createCrudHelpers } from './crud-helpers';
+export type {
+  CrudHelpers,
+  TypedOperation,
+  TypedCreateOperation,
+  TypedUpdateOperation,
+  TypedDeleteOperation,
+  ListOptions,
+  DetailOptions,
+  LookupOptions,
+  RowField,
+} from './crud-helpers';
 export { diff, detectConflicts } from './diff-engine';
 export type { DiffStrategy, DiffResult } from './diff-engine';
 export {

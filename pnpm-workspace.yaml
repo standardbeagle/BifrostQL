@@ -3,6 +3,7 @@ packages:
   - examples/*
   - packages/*
   - packages/@bifrostql/*
+  - samples/HostedSpa/spa
   - src/BifrostQL.UI/frontend
   - tests/BifrostQL.UI.E2E
 allowBuilds:

@@ -105,22 +105,27 @@ export interface CrudHelpers<
 }
 
 /** A create operation: carries the typed mutation variables alongside the string. */
-export interface TypedCreateOperation<TRow, TInsert>
-  extends TypedOperation<TRow> {
+export interface TypedCreateOperation<
+  TRow,
+  TInsert,
+> extends TypedOperation<TRow> {
   /** The `$detail` variable payload for the mutation, typed as `TInsert`. */
   readonly variables: { detail: TInsert };
 }
 
 /** An update operation: carries the typed mutation variables alongside the string. */
-export interface TypedUpdateOperation<TRow, TUpdate>
-  extends TypedOperation<TRow> {
+export interface TypedUpdateOperation<
+  TRow,
+  TUpdate,
+> extends TypedOperation<TRow> {
   /** The `$detail` variable payload for the mutation, typed as `TUpdate` plus the id. */
   readonly variables: { detail: TUpdate & { id: string | number } };
 }
 
 /** A delete operation: carries the id variable alongside the string. */
-export interface TypedDeleteOperation
-  extends TypedOperation<{ id: string | number }> {
+export interface TypedDeleteOperation extends TypedOperation<{
+  id: string | number;
+}> {
   /** The `$detail` variable payload identifying the row to delete. */
   readonly variables: { detail: { id: string | number } };
 }

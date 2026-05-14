@@ -7,11 +7,7 @@ import { BifrostProvider } from './components/bifrost-provider';
  * Creates a mock fetch function that resolves with the given response.
  * Assign the return value to `globalThis.fetch` in your test.
  */
-export function createFetchMock(
-  response: unknown,
-  ok = true,
-  status = 200,
-) {
+export function createFetchMock(response: unknown, ok = true, status = 200) {
   return vi.fn().mockResolvedValue({
     ok,
     status,

@@ -411,8 +411,7 @@ const modernDarkTheme: TableTheme = {
   container: {
     ...baseDarkTheme.container,
     borderRadius: '8px',
-    boxShadow:
-      '0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2)',
+    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2)',
     border: '1px solid #374151',
     overflowY: 'hidden',
     backgroundColor: '#111827',

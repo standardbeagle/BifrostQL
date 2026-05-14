@@ -43,12 +43,15 @@ export function BifrostProvider({
       });
     }
     return internalClientRef.current;
-  }, [externalClient, parentClient, config.defaultQueryOptions, config.onError]);
+  }, [
+    externalClient,
+    parentClient,
+    config.defaultQueryOptions,
+    config.onError,
+  ]);
 
   const contextContent = (
-    <BifrostContext.Provider value={config}>
-      {children}
-    </BifrostContext.Provider>
+    <BifrostContext.Provider value={config}>{children}</BifrostContext.Provider>
   );
 
   if (queryClient) {

@@ -93,9 +93,7 @@ describe('createCrudHelpers — create', () => {
   it('types the input as TInsert and result as TRow', () => {
     const users = createCrudHelpers<UserRow, UserInsert>('users');
     const op = users.create({ name: 'Ada' });
-    expectTypeOf(op).toEqualTypeOf<
-      TypedCreateOperation<UserRow, UserInsert>
-    >();
+    expectTypeOf(op).toEqualTypeOf<TypedCreateOperation<UserRow, UserInsert>>();
     expectTypeOf(op.variables.detail).toEqualTypeOf<UserInsert>();
     expectTypeOf(op.__result).toEqualTypeOf<UserRow | undefined>();
     expectTypeOf(users.create).parameter(0).toEqualTypeOf<UserInsert>();
@@ -160,12 +158,10 @@ describe('createCrudHelpers — lookup', () => {
 
   it('constrains valueField/labelField to row keys', () => {
     const users = createCrudHelpers<UserRow>('users');
-    expectTypeOf(users.lookup)
-      .parameter(0)
-      .toMatchTypeOf<{
-        valueField: keyof UserRow;
-        labelField: keyof UserRow;
-      }>();
+    expectTypeOf(users.lookup).parameter(0).toMatchTypeOf<{
+      valueField: keyof UserRow;
+      labelField: keyof UserRow;
+    }>();
   });
 
   it('infers the option-list result type', () => {

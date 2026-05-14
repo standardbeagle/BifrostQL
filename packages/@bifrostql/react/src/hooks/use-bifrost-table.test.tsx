@@ -77,7 +77,9 @@ function setupDownloadMocks(): DownloadMock {
     constructor(parts?: BlobPart[], options?: BlobPropertyBag) {
       super(parts, options);
       if (parts) {
-        const text = parts.map((p) => (typeof p === 'string' ? p : '')).join('');
+        const text = parts
+          .map((p) => (typeof p === 'string' ? p : ''))
+          .join('');
         if (text) {
           contents.push(text);
           blobs.push({ text: () => Promise.resolve(text) });
@@ -1738,7 +1740,9 @@ describe('useBifrostTable', () => {
       act(() => {
         result.current.columnManagement.hideColumn('email');
       });
-      expect(result.current.columnManagement.visibleColumns).not.toContain('email');
+      expect(result.current.columnManagement.visibleColumns).not.toContain(
+        'email',
+      );
 
       act(() => {
         result.current.columnManagement.showColumn('email');
@@ -1757,7 +1761,10 @@ describe('useBifrostTable', () => {
       act(() => {
         result.current.columnManagement.hideColumn('name');
       });
-      expect(result.current.columnManagement.visibleColumns).toEqual(['id', 'email']);
+      expect(result.current.columnManagement.visibleColumns).toEqual([
+        'id',
+        'email',
+      ]);
     });
 
     it('showColumn is idempotent for already visible column', async () => {
@@ -1867,13 +1874,13 @@ describe('useBifrostTable', () => {
         result.current.columnManagement.autoFitColumn('email');
       });
 
-      expect(result.current.columnManagement.columnWidths.email).toBeGreaterThan(50);
+      expect(
+        result.current.columnManagement.columnWidths.email,
+      ).toBeGreaterThan(50);
     });
 
     it('autoFitAllColumns estimates widths for all columns', async () => {
-      const mockUsers = [
-        { id: 1, name: 'Alice', email: 'alice@example.com' },
-      ];
+      const mockUsers = [{ id: 1, name: 'Alice', email: 'alice@example.com' }];
       globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
 
       const { result } = renderHook(
@@ -1892,9 +1899,15 @@ describe('useBifrostTable', () => {
         result.current.columnManagement.autoFitAllColumns();
       });
 
-      expect(result.current.columnManagement.columnWidths.id).toBeGreaterThanOrEqual(50);
-      expect(result.current.columnManagement.columnWidths.name).toBeGreaterThanOrEqual(50);
-      expect(result.current.columnManagement.columnWidths.email).toBeGreaterThanOrEqual(50);
+      expect(
+        result.current.columnManagement.columnWidths.id,
+      ).toBeGreaterThanOrEqual(50);
+      expect(
+        result.current.columnManagement.columnWidths.name,
+      ).toBeGreaterThanOrEqual(50);
+      expect(
+        result.current.columnManagement.columnWidths.email,
+      ).toBeGreaterThanOrEqual(50);
     });
 
     it('autoFitColumn does nothing for unknown field', async () => {
@@ -1988,7 +2001,9 @@ describe('useBifrostTable', () => {
       act(() => {
         result.current.columnManagement.unpinColumn('name');
       });
-      expect(result.current.columnManagement.pinnedColumns.name).toBeUndefined();
+      expect(
+        result.current.columnManagement.pinnedColumns.name,
+      ).toBeUndefined();
     });
 
     it('unpinColumn is a no-op for unpinned column', async () => {
@@ -2057,12 +2072,15 @@ describe('useBifrostTable', () => {
 
       expect(result.current.columnManagement.presets).toHaveLength(1);
       expect(result.current.columnManagement.presets[0].name).toBe('My Preset');
-      expect(result.current.columnManagement.presets[0].visibleColumns).toEqual([
-        'id',
-        'name',
-      ]);
-      expect(result.current.columnManagement.presets[0].columnWidths.name).toBe(300);
-      expect(result.current.columnManagement.presets[0].pinnedColumns.id).toBe('left');
+      expect(result.current.columnManagement.presets[0].visibleColumns).toEqual(
+        ['id', 'name'],
+      );
+      expect(result.current.columnManagement.presets[0].columnWidths.name).toBe(
+        300,
+      );
+      expect(result.current.columnManagement.presets[0].pinnedColumns.id).toBe(
+        'left',
+      );
     });
 
     it('loadPreset restores column configuration', async () => {
@@ -2096,7 +2114,10 @@ describe('useBifrostTable', () => {
       act(() => {
         result.current.columnManagement.loadPreset('Saved');
       });
-      expect(result.current.columnManagement.visibleColumns).toEqual(['id', 'name']);
+      expect(result.current.columnManagement.visibleColumns).toEqual([
+        'id',
+        'name',
+      ]);
       expect(result.current.columnManagement.columnWidths.name).toBe(300);
     });
 
@@ -2112,7 +2133,9 @@ describe('useBifrostTable', () => {
       act(() => {
         result.current.columnManagement.loadPreset('does-not-exist');
       });
-      expect(result.current.columnManagement.visibleColumns).toEqual(beforeVisible);
+      expect(result.current.columnManagement.visibleColumns).toEqual(
+        beforeVisible,
+      );
     });
 
     it('deletePreset removes a preset', async () => {
@@ -2157,7 +2180,9 @@ describe('useBifrostTable', () => {
       });
 
       expect(result.current.columnManagement.presets).toHaveLength(1);
-      expect(result.current.columnManagement.presets[0].visibleColumns).not.toContain('email');
+      expect(
+        result.current.columnManagement.presets[0].visibleColumns,
+      ).not.toContain('email');
     });
 
     it('column presets persist to localStorage', async () => {
@@ -2177,7 +2202,9 @@ describe('useBifrostTable', () => {
         result.current.columnManagement.savePreset('Persisted');
       });
 
-      const stored = window.localStorage.getItem('test-col-presets_columnPresets');
+      const stored = window.localStorage.getItem(
+        'test-col-presets_columnPresets',
+      );
       expect(stored).not.toBeNull();
       const parsed = JSON.parse(stored!);
       expect(parsed).toHaveLength(1);
@@ -2308,7 +2335,9 @@ describe('useBifrostTable', () => {
         result.current.export.exportCsv();
       });
 
-      expect(mock.links.some((l) => l.download === 'my-users-export.csv')).toBe(true);
+      expect(mock.links.some((l) => l.download === 'my-users-export.csv')).toBe(
+        true,
+      );
 
       mock.cleanup();
     });
@@ -2384,9 +2413,7 @@ describe('useBifrostTable', () => {
 
   describe('export - JSON', () => {
     it('exportJson triggers a file download', async () => {
-      const mockUsers = [
-        { id: 1, name: 'Alice', email: 'alice@test.com' },
-      ];
+      const mockUsers = [{ id: 1, name: 'Alice', email: 'alice@test.com' }];
       globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
 
       const mock = setupDownloadMocks();
@@ -2418,9 +2445,7 @@ describe('useBifrostTable', () => {
     });
 
     it('exportJson only includes visible columns', async () => {
-      const mockUsers = [
-        { id: 1, name: 'Alice', email: 'alice@test.com' },
-      ];
+      const mockUsers = [{ id: 1, name: 'Alice', email: 'alice@test.com' }];
       globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
 
       const mock = setupDownloadMocks();
@@ -2486,9 +2511,7 @@ describe('useBifrostTable', () => {
 
   describe('export - custom formatters', () => {
     it('applies custom formatter to exported values', async () => {
-      const mockUsers = [
-        { id: 1, name: 'Alice', email: 'alice@test.com' },
-      ];
+      const mockUsers = [{ id: 1, name: 'Alice', email: 'alice@test.com' }];
       globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
 
       const mock = setupDownloadMocks();
@@ -2524,9 +2547,7 @@ describe('useBifrostTable', () => {
 
   describe('export - copyToClipboard', () => {
     it('copies data to clipboard as TSV', async () => {
-      const mockUsers = [
-        { id: 1, name: 'Alice', email: 'alice@test.com' },
-      ];
+      const mockUsers = [{ id: 1, name: 'Alice', email: 'alice@test.com' }];
       globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
 
       const writeTextSpy = vi.fn().mockResolvedValue(undefined);
@@ -2601,9 +2622,7 @@ describe('useBifrostTable', () => {
 
   describe('export - handles null and undefined values', () => {
     it('exports null values as empty strings in CSV', async () => {
-      const mockUsers = [
-        { id: 1, name: null, email: 'alice@test.com' },
-      ];
+      const mockUsers = [{ id: 1, name: null, email: 'alice@test.com' }];
       globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
 
       const mock = setupDownloadMocks();
@@ -5924,11 +5943,7 @@ describe('useBifrostTable', () => {
       const names = result.current.data.map(
         (r: Record<string, unknown>) => r.full_name,
       );
-      expect(names).toEqual([
-        'Alice Beta',
-        'Bob Alpha',
-        'Charlie Zeta',
-      ]);
+      expect(names).toEqual(['Alice Beta', 'Bob Alpha', 'Charlie Zeta']);
     });
 
     it('sorts by computed column client-side descending', async () => {
@@ -5951,11 +5966,7 @@ describe('useBifrostTable', () => {
       const names = result.current.data.map(
         (r: Record<string, unknown>) => r.full_name,
       );
-      expect(names).toEqual([
-        'Charlie Zeta',
-        'Bob Alpha',
-        'Alice Beta',
-      ]);
+      expect(names).toEqual(['Charlie Zeta', 'Bob Alpha', 'Alice Beta']);
     });
 
     it('toggles sort on computed column', async () => {
@@ -5982,11 +5993,7 @@ describe('useBifrostTable', () => {
         const names = result.current.data.map(
           (r: Record<string, unknown>) => r.full_name,
         );
-        expect(names).toEqual([
-          'Alice Beta',
-          'Bob Alpha',
-          'Charlie Zeta',
-        ]);
+        expect(names).toEqual(['Alice Beta', 'Bob Alpha', 'Charlie Zeta']);
       });
     });
   });
@@ -6468,14 +6475,11 @@ describe('useBifrostTable', () => {
 
   describe('computed column memoization', () => {
     it('does not recompute when unrelated state changes', async () => {
-      const mockUsers = [
-        { id: 1, first_name: 'Alice', last_name: 'Smith' },
-      ];
+      const mockUsers = [{ id: 1, first_name: 'Alice', last_name: 'Smith' }];
       globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
 
       const computeFn = vi.fn(
-        (row: Record<string, unknown>) =>
-          `${row.first_name} ${row.last_name}`,
+        (row: Record<string, unknown>) => `${row.first_name} ${row.last_name}`,
       );
 
       const columns: ColumnConfig[] = [
@@ -6500,9 +6504,7 @@ describe('useBifrostTable', () => {
       const callCount = computeFn.mock.calls.length;
 
       act(() => {
-        result.current.selection.toggleRow(
-          result.current.data[0],
-        );
+        result.current.selection.toggleRow(result.current.data[0]);
       });
 
       // Selection change should not trigger recomputation
@@ -7040,7 +7042,10 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         act(() => {
-          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 0 });
+          result.current.a11y.keyboard.setFocusedCell({
+            rowIndex: 0,
+            colIndex: 0,
+          });
         });
 
         expect(result.current.a11y.keyboard.focusedCell).toEqual({
@@ -7069,7 +7074,10 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         act(() => {
-          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 0 });
+          result.current.a11y.keyboard.setFocusedCell({
+            rowIndex: 0,
+            colIndex: 0,
+          });
         });
 
         act(() => {
@@ -7102,7 +7110,10 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         act(() => {
-          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 0 });
+          result.current.a11y.keyboard.setFocusedCell({
+            rowIndex: 0,
+            colIndex: 0,
+          });
         });
 
         act(() => {
@@ -7138,7 +7149,10 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         act(() => {
-          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 1, colIndex: 0 });
+          result.current.a11y.keyboard.setFocusedCell({
+            rowIndex: 1,
+            colIndex: 0,
+          });
         });
 
         act(() => {
@@ -7172,7 +7186,10 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         act(() => {
-          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 1 });
+          result.current.a11y.keyboard.setFocusedCell({
+            rowIndex: 0,
+            colIndex: 1,
+          });
         });
 
         act(() => {
@@ -7206,7 +7223,10 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         act(() => {
-          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 0 });
+          result.current.a11y.keyboard.setFocusedCell({
+            rowIndex: 0,
+            colIndex: 0,
+          });
         });
 
         act(() => {
@@ -7240,7 +7260,10 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         act(() => {
-          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 2 });
+          result.current.a11y.keyboard.setFocusedCell({
+            rowIndex: 0,
+            colIndex: 2,
+          });
         });
 
         act(() => {
@@ -7274,7 +7297,10 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         act(() => {
-          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 1 });
+          result.current.a11y.keyboard.setFocusedCell({
+            rowIndex: 0,
+            colIndex: 1,
+          });
         });
 
         act(() => {
@@ -7308,7 +7334,10 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         act(() => {
-          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 0 });
+          result.current.a11y.keyboard.setFocusedCell({
+            rowIndex: 0,
+            colIndex: 0,
+          });
         });
 
         act(() => {
@@ -7342,7 +7371,10 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         act(() => {
-          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 2 });
+          result.current.a11y.keyboard.setFocusedCell({
+            rowIndex: 0,
+            colIndex: 2,
+          });
         });
 
         act(() => {
@@ -7376,7 +7408,10 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         act(() => {
-          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 2 });
+          result.current.a11y.keyboard.setFocusedCell({
+            rowIndex: 0,
+            colIndex: 2,
+          });
         });
 
         act(() => {
@@ -7411,7 +7446,10 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         act(() => {
-          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 0 });
+          result.current.a11y.keyboard.setFocusedCell({
+            rowIndex: 0,
+            colIndex: 0,
+          });
         });
 
         act(() => {
@@ -7447,7 +7485,10 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         act(() => {
-          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 0 });
+          result.current.a11y.keyboard.setFocusedCell({
+            rowIndex: 0,
+            colIndex: 0,
+          });
         });
 
         act(() => {
@@ -7484,7 +7525,10 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         act(() => {
-          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 0 });
+          result.current.a11y.keyboard.setFocusedCell({
+            rowIndex: 0,
+            colIndex: 0,
+          });
         });
 
         act(() => {
@@ -7496,7 +7540,8 @@ describe('useBifrostTable', () => {
 
         expect(result.current.selection.selectedRows).toHaveLength(1);
         expect(
-          (result.current.selection.selectedRows[0] as Record<string, unknown>).id,
+          (result.current.selection.selectedRows[0] as Record<string, unknown>)
+            .id,
         ).toBe(1);
       });
 
@@ -7518,7 +7563,10 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         act(() => {
-          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 0 });
+          result.current.a11y.keyboard.setFocusedCell({
+            rowIndex: 0,
+            colIndex: 0,
+          });
         });
 
         expect(result.current.a11y.keyboard.focusedCell).not.toBeNull();
@@ -7555,7 +7603,10 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         act(() => {
-          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 1 });
+          result.current.a11y.keyboard.setFocusedCell({
+            rowIndex: 0,
+            colIndex: 1,
+          });
         });
 
         act(() => {
@@ -7588,7 +7639,10 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         act(() => {
-          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 0, colIndex: 0 });
+          result.current.a11y.keyboard.setFocusedCell({
+            rowIndex: 0,
+            colIndex: 0,
+          });
         });
 
         act(() => {
@@ -7650,7 +7704,10 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         act(() => {
-          result.current.a11y.keyboard.setFocusedCell({ rowIndex: 1, colIndex: 0 });
+          result.current.a11y.keyboard.setFocusedCell({
+            rowIndex: 1,
+            colIndex: 0,
+          });
         });
 
         expect(result.current.a11y.getRowProps(0).tabIndex).toBe(-1);
@@ -7706,7 +7763,9 @@ describe('useBifrostTable', () => {
 
         const { isMobile, isTablet, isDesktop } = result.current.responsive;
         // Exactly one of these should match the current breakpoint group
-        const trueCount = [isMobile, isTablet, isDesktop].filter(Boolean).length;
+        const trueCount = [isMobile, isTablet, isDesktop].filter(
+          Boolean,
+        ).length;
         expect(trueCount).toBe(1);
       });
     });
@@ -7758,8 +7817,12 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         // At xs, email (md+) and phone (lg+) should be hidden
-        expect(result.current.responsive.responsiveVisibleColumns).toContain('id');
-        expect(result.current.responsive.responsiveVisibleColumns).toContain('name');
+        expect(result.current.responsive.responsiveVisibleColumns).toContain(
+          'id',
+        );
+        expect(result.current.responsive.responsiveVisibleColumns).toContain(
+          'name',
+        );
         expect(
           result.current.responsive.responsiveVisibleColumns,
         ).not.toContain('email');
@@ -7799,8 +7862,12 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         // At lg (1024+), both should be visible
-        expect(result.current.responsive.responsiveVisibleColumns).toContain('email');
-        expect(result.current.responsive.responsiveVisibleColumns).toContain('phone');
+        expect(result.current.responsive.responsiveVisibleColumns).toContain(
+          'email',
+        );
+        expect(result.current.responsive.responsiveVisibleColumns).toContain(
+          'phone',
+        );
 
         // Restore
         Object.defineProperty(window, 'innerWidth', {
@@ -8541,9 +8608,10 @@ describe('useBifrostTable', () => {
         const range = result.current.virtualScroll.visibleRange;
         expect(range.endIndex).toBe(9999);
         // Last visible row should be the final row
-        const lastRow = result.current.virtualScroll.visibleRows[
-          result.current.virtualScroll.visibleRows.length - 1
-        ];
+        const lastRow =
+          result.current.virtualScroll.visibleRows[
+            result.current.virtualScroll.visibleRows.length - 1
+          ];
         expect(lastRow.id).toBe(10000);
       });
     });
@@ -8757,7 +8825,9 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         // At least one request was made
-        expect(result.current.performance.requestCount).toBeGreaterThanOrEqual(1);
+        expect(result.current.performance.requestCount).toBeGreaterThanOrEqual(
+          1,
+        );
       });
 
       it('tracks last request time', async () => {

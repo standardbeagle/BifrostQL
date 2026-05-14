@@ -806,7 +806,11 @@ describe('BifrostTable', () => {
         exportable: true,
         renderToolbar: (actions) => (
           <div data-testid="custom-toolbar">
-            <button type="button" onClick={actions.export} data-testid="custom-export">
+            <button
+              type="button"
+              onClick={actions.export}
+              data-testid="custom-export"
+            >
               Custom Export
             </button>
           </div>
@@ -1170,7 +1174,9 @@ describe('composable sub-components', () => {
           </tbody>
         </table>,
       );
-      expect(screen.getByTestId('styled-row').style.backgroundColor).toBe('red');
+      expect(screen.getByTestId('styled-row').style.backgroundColor).toBe(
+        'red',
+      );
     });
   });
 
@@ -1240,9 +1246,7 @@ describe('composable sub-components', () => {
     });
 
     it('applies custom style', () => {
-      render(
-        <TableToolbar style={{ padding: '20px' }}>Toolbar</TableToolbar>,
-      );
+      render(<TableToolbar style={{ padding: '20px' }}>Toolbar</TableToolbar>);
       expect(screen.getByTestId('table-toolbar').style.padding).toBe('20px');
     });
   });
@@ -1460,7 +1464,9 @@ describe('composable sub-components', () => {
       fireEvent.click(toggle);
       expect(screen.getByTestId('column-selector-menu')).toBeInTheDocument();
       fireEvent.click(toggle);
-      expect(screen.queryByTestId('column-selector-menu')).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId('column-selector-menu'),
+      ).not.toBeInTheDocument();
     });
   });
 
@@ -1471,16 +1477,12 @@ describe('composable sub-components', () => {
     ];
 
     it('renders when there are filterable columns', () => {
-      render(
-        <FilterBuilder columns={filterableColumns} onApply={vi.fn()} />,
-      );
+      render(<FilterBuilder columns={filterableColumns} onApply={vi.fn()} />);
       expect(screen.getByTestId('filter-builder')).toBeInTheDocument();
     });
 
     it('does not render when no filterable columns', () => {
-      const cols: ColumnConfig[] = [
-        { field: 'id', header: 'ID' },
-      ];
+      const cols: ColumnConfig[] = [{ field: 'id', header: 'ID' }];
       const { container } = render(
         <FilterBuilder columns={cols} onApply={vi.fn()} />,
       );
@@ -1488,26 +1490,20 @@ describe('composable sub-components', () => {
     });
 
     it('renders field select with filterable columns', () => {
-      render(
-        <FilterBuilder columns={filterableColumns} onApply={vi.fn()} />,
-      );
+      render(<FilterBuilder columns={filterableColumns} onApply={vi.fn()} />);
       const select = screen.getByTestId('filter-field-select');
       expect(select).toBeInTheDocument();
       expect(select.querySelectorAll('option')).toHaveLength(2);
     });
 
     it('renders value input', () => {
-      render(
-        <FilterBuilder columns={filterableColumns} onApply={vi.fn()} />,
-      );
+      render(<FilterBuilder columns={filterableColumns} onApply={vi.fn()} />);
       expect(screen.getByTestId('filter-value-input')).toBeInTheDocument();
     });
 
     it('calls onApply with filter when Apply is clicked', () => {
       const onApply = vi.fn();
-      render(
-        <FilterBuilder columns={filterableColumns} onApply={onApply} />,
-      );
+      render(<FilterBuilder columns={filterableColumns} onApply={onApply} />);
       const input = screen.getByTestId('filter-value-input');
       fireEvent.change(input, { target: { value: 'Alice' } });
       fireEvent.click(screen.getByTestId('filter-apply-button'));
@@ -1518,9 +1514,7 @@ describe('composable sub-components', () => {
 
     it('calls onApply on Enter key', () => {
       const onApply = vi.fn();
-      render(
-        <FilterBuilder columns={filterableColumns} onApply={onApply} />,
-      );
+      render(<FilterBuilder columns={filterableColumns} onApply={onApply} />);
       const input = screen.getByTestId('filter-value-input');
       fireEvent.change(input, { target: { value: 'test' } });
       fireEvent.keyDown(input, { key: 'Enter' });
@@ -1531,19 +1525,17 @@ describe('composable sub-components', () => {
 
     it('does not call onApply when value is empty', () => {
       const onApply = vi.fn();
-      render(
-        <FilterBuilder columns={filterableColumns} onApply={onApply} />,
-      );
+      render(<FilterBuilder columns={filterableColumns} onApply={onApply} />);
       fireEvent.click(screen.getByTestId('filter-apply-button'));
       expect(onApply).not.toHaveBeenCalled();
     });
 
     it('clears value after apply', () => {
       const onApply = vi.fn();
-      render(
-        <FilterBuilder columns={filterableColumns} onApply={onApply} />,
-      );
-      const input = screen.getByTestId('filter-value-input') as HTMLInputElement;
+      render(<FilterBuilder columns={filterableColumns} onApply={onApply} />);
+      const input = screen.getByTestId(
+        'filter-value-input',
+      ) as HTMLInputElement;
       fireEvent.change(input, { target: { value: 'test' } });
       fireEvent.click(screen.getByTestId('filter-apply-button'));
       expect(input.value).toBe('');
@@ -1551,9 +1543,7 @@ describe('composable sub-components', () => {
 
     it('uses selected field in the filter', () => {
       const onApply = vi.fn();
-      render(
-        <FilterBuilder columns={filterableColumns} onApply={onApply} />,
-      );
+      render(<FilterBuilder columns={filterableColumns} onApply={onApply} />);
       const select = screen.getByTestId('filter-field-select');
       fireEvent.change(select, { target: { value: 'email' } });
       const input = screen.getByTestId('filter-value-input');
@@ -1627,14 +1617,20 @@ describe('composable sub-components', () => {
       const mockClick = vi.fn();
       vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
         if (tag === 'a') {
-          return { href: '', download: '', click: mockClick } as unknown as HTMLAnchorElement;
+          return {
+            href: '',
+            download: '',
+            click: mockClick,
+          } as unknown as HTMLAnchorElement;
         }
         return origCreate(tag);
       });
 
       fireEvent.click(screen.getByTestId('export-menu-toggle'));
       fireEvent.click(screen.getByTestId('export-json-button'));
-      expect(screen.queryByTestId('export-menu-dropdown')).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId('export-menu-dropdown'),
+      ).not.toBeInTheDocument();
 
       vi.restoreAllMocks();
       globalThis.URL.createObjectURL = origCreateObjectURL;
@@ -1649,7 +1645,9 @@ describe('composable sub-components', () => {
       fireEvent.click(toggle);
       expect(screen.getByTestId('export-menu-dropdown')).toBeInTheDocument();
       fireEvent.click(toggle);
-      expect(screen.queryByTestId('export-menu-dropdown')).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId('export-menu-dropdown'),
+      ).not.toBeInTheDocument();
     });
   });
 });

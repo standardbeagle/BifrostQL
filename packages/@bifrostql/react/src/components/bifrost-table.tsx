@@ -131,7 +131,9 @@ export function TableHeader({
                     ? 'descending'
                     : 'none'
               }
-              onClick={isSortable && onSort ? () => onSort(col.field) : undefined}
+              onClick={
+                isSortable && onSort ? () => onSort(col.field) : undefined
+              }
             >
               {col.header}
               {isSortable && (
@@ -165,12 +167,7 @@ export interface TableRowProps {
   testId?: string;
 }
 
-export function TableRow({
-  style,
-  onClick,
-  children,
-  testId,
-}: TableRowProps) {
+export function TableRow({ style, onClick, children, testId }: TableRowProps) {
   const theme = useTableTheme();
 
   return (
@@ -245,7 +242,11 @@ export function ExpandedRow({
   const theme = useTableTheme();
 
   return (
-    <tr style={{ ...theme.expandedRow, ...style }} role="row" data-testid={testId}>
+    <tr
+      style={{ ...theme.expandedRow, ...style }}
+      role="row"
+      data-testid={testId}
+    >
       <td colSpan={colSpan} role="cell" style={theme.expandedRowContent}>
         {children}
       </td>
@@ -276,7 +277,9 @@ export function Pagination({
     <div style={{ ...theme.pagination, ...style }} data-testid="pagination">
       <button
         type="button"
-        style={page === 0 ? theme.paginationButtonDisabled : theme.paginationButton}
+        style={
+          page === 0 ? theme.paginationButtonDisabled : theme.paginationButton
+        }
         disabled={page === 0}
         onClick={onPrevious}
         data-testid="pagination-prev"
@@ -320,7 +323,10 @@ export function ColumnSelector({
   const [open, setOpen] = useState(false);
 
   return (
-    <div style={{ position: 'relative', ...style }} data-testid="column-selector">
+    <div
+      style={{ position: 'relative', ...style }}
+      data-testid="column-selector"
+    >
       <button
         type="button"
         style={theme.toolbarButton}
@@ -378,11 +384,7 @@ export interface FilterBuilderProps {
   style?: CSSProperties;
 }
 
-export function FilterBuilder({
-  columns,
-  onApply,
-  style,
-}: FilterBuilderProps) {
+export function FilterBuilder({ columns, onApply, style }: FilterBuilderProps) {
   const theme = useTableTheme();
   const filterableColumns = columns.filter((c) => c.filterable);
   const [field, setField] = useState(filterableColumns[0]?.field ?? '');
@@ -580,14 +582,24 @@ export interface BifrostTableProps<
   urlSync?: boolean | UseBifrostTableOptions['urlSync'];
   emptyMessage?: string;
   loadingMessage?: string;
-  renderHeader?: (columns: ColumnConfig[], sortState: SortOption[]) => ReactNode;
-  renderFooter?: (data: T[], pagination: { page: number; pageSize: number }) => ReactNode;
+  renderHeader?: (
+    columns: ColumnConfig[],
+    sortState: SortOption[],
+  ) => ReactNode;
+  renderFooter?: (
+    data: T[],
+    pagination: { page: number; pageSize: number },
+  ) => ReactNode;
   renderRow?: (row: T, rowIndex: number, defaultRow: ReactNode) => ReactNode;
   renderCell?: (value: unknown, row: T, column: ColumnConfig) => ReactNode;
   renderEmpty?: () => ReactNode;
   renderLoading?: () => ReactNode;
   renderError?: (error: Error) => ReactNode;
-  renderToolbar?: (actions: { export: () => void; expandAll: () => void; collapseAll: () => void }) => ReactNode;
+  renderToolbar?: (actions: {
+    export: () => void;
+    expandAll: () => void;
+    collapseAll: () => void;
+  }) => ReactNode;
 }
 
 export function BifrostTable<T = Record<string, unknown>>(
@@ -653,14 +665,16 @@ export function BifrostTable<T = Record<string, unknown>>(
   } | null>(null);
   const [editValue, setEditValue] = useState('');
 
-  const baseColumns =
-    expandable
-      ? [{ field: '__expand', header: '', width: 40 } as ColumnConfig, ...columns]
-      : columns;
+  const baseColumns = expandable
+    ? [{ field: '__expand', header: '', width: 40 } as ColumnConfig, ...columns]
+    : columns;
 
   const visibleColumns =
     rowActions && rowActions.length > 0
-      ? [...baseColumns, { field: '__actions', header: 'Actions' } as ColumnConfig]
+      ? [
+          ...baseColumns,
+          { field: '__actions', header: 'Actions' } as ColumnConfig,
+        ]
       : baseColumns;
 
   const handleExport = useCallback(() => {
@@ -709,7 +723,9 @@ export function BifrostTable<T = Record<string, unknown>>(
   }
 
   const showPagination = table.data.length > 0 || table.pagination.page > 0;
-  const showToolbar = (exportable && table.data.length > 0) || (expandable && table.data.length > 0);
+  const showToolbar =
+    (exportable && table.data.length > 0) ||
+    (expandable && table.data.length > 0);
 
   return (
     <TableThemeContext.Provider value={{ theme }}>
@@ -772,7 +788,10 @@ export function BifrostTable<T = Record<string, unknown>>(
                     table.sorting.current,
                     col.field,
                   );
-                  const isSortable = col.sortable && col.field !== '__actions' && col.field !== '__expand';
+                  const isSortable =
+                    col.sortable &&
+                    col.field !== '__actions' &&
+                    col.field !== '__expand';
                   return (
                     <th
                       key={col.field}
@@ -824,7 +843,8 @@ export function BifrostTable<T = Record<string, unknown>>(
                 const key = String(rowRecord[rowKey] ?? rowIndex);
                 const isHovered = hoverable && hoveredRowIndex === rowIndex;
                 const isStriped = striped && rowIndex % 2 === 1;
-                const isExpanded = expandable && table.expansion.expandedRows.has(key);
+                const isExpanded =
+                  expandable && table.expansion.expandedRows.has(key);
 
                 const rowStyle: CSSProperties = {
                   ...theme.bodyRow,
@@ -886,7 +906,9 @@ export function BifrostTable<T = Record<string, unknown>>(
                               type="button"
                               style={theme.expandToggle}
                               aria-expanded={isExpanded}
-                              aria-label={isExpanded ? 'Collapse row' : 'Expand row'}
+                              aria-label={
+                                isExpanded ? 'Collapse row' : 'Expand row'
+                              }
                               data-testid={`expand-toggle-${key}`}
                             >
                               {isExpanded ? '\u25BC' : '\u25B6'}
@@ -931,7 +953,8 @@ export function BifrostTable<T = Record<string, unknown>>(
                           role="cell"
                           onDoubleClick={
                             editable
-                              ? () => handleEditStart(rowIndex, col.field, value)
+                              ? () =>
+                                  handleEditStart(rowIndex, col.field, value)
                               : undefined
                           }
                         >

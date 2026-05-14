@@ -29,7 +29,12 @@ export type {
   ExportMenuProps,
   TableExportFormat,
 } from './bifrost-table';
-export { getTheme, createBifrostTheme, getThemeTokens, themeToCssVariables } from './table-theme';
+export {
+  getTheme,
+  createBifrostTheme,
+  getThemeTokens,
+  themeToCssVariables,
+} from './table-theme';
 export type {
   ThemeName,
   DarkThemeName,

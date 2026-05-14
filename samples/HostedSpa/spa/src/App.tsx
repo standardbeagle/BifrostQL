@@ -6,23 +6,10 @@ import {
   ProtectedRoute,
 } from '@bifrostql/app-shell';
 import { MemberList } from './members/member-list';
+import { MemberForm } from './members/member-form';
 
 /** Permission required to view and manage the member roster. */
 const MEMBERS_READ = 'main.members.read';
-
-/** Stub member-detail screen. The editable form is delivered in sub-task 3. */
-function MemberDetailStub() {
-  const navigate = useNavigate();
-  return (
-    <section data-testid="member-detail-stub">
-      <h2>Member detail</h2>
-      <p>The member detail form is delivered in a later sub-task.</p>
-      <button type="button" onClick={() => navigate('/members')}>
-        Back to members
-      </button>
-    </section>
-  );
-}
 
 /**
  * Membership Manager SPA root.
@@ -60,12 +47,19 @@ function App() {
               <MemberList />
             </ProtectedRoute>
           </Route>
+          {/*
+            One route covers both detail/edit and create: `MemberForm` reads
+            the `:id` param and treats the sentinel value `new` as create mode.
+            A separate `/members/new` route is avoided because virtual-router's
+            `:id` segment also matches the literal `new`, which would mount the
+            form twice.
+          */}
           <Route path="/members/:id">
             <ProtectedRoute
               requirePermission={MEMBERS_READ}
               onUnauthenticated={() => navigate('/login')}
             >
-              <MemberDetailStub />
+              <MemberForm />
             </ProtectedRoute>
           </Route>
         </Routes>

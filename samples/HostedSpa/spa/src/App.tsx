@@ -12,6 +12,9 @@ import { PlanList } from './membership-plans/plan-list';
 import { PlanForm } from './membership-plans/plan-form';
 import { MemberPlanAssignment } from './membership-plans/member-plan-assignment';
 import { RecordPayment } from './membership-plans/record-payment';
+import { EventList } from './events/event-list';
+import { EventForm } from './events/event-form';
+import { EventRsvps } from './events/event-rsvps';
 import { UnpaidDuesReport } from './reports/unpaid-dues-report';
 import { UpcomingRenewalsReport } from './reports/upcoming-renewals-report';
 import { ExpiredMembershipsReport } from './reports/expired-memberships-report';
@@ -173,6 +176,41 @@ function App() {
               onUnauthenticated={() => navigate('/login')}
             >
               <RecordPayment />
+            </ProtectedRoute>
+          </Route>
+          {/*
+            Events reuse the members pattern: a list route plus a single
+            `:id`-with-`new`-sentinel form route. The events nav entry comes
+            from the overlay's `main.events` `navPlacement: main` via `AppNav`.
+          */}
+          <Route path="/events">
+            <ProtectedRoute
+              requirePermission={MEMBERS_READ}
+              onUnauthenticated={() => navigate('/login')}
+            >
+              <EventList />
+            </ProtectedRoute>
+          </Route>
+          {/*
+            Per-event RSVP management. Declared before `/events/:id` so the
+            three-segment RSVP path is matched ahead of the two-segment form
+            route. Reuses the `main.members.read` permission gate; no distinct
+            event-manager permission is wired yet.
+          */}
+          <Route path="/events/:id/rsvps">
+            <ProtectedRoute
+              requirePermission={MEMBERS_READ}
+              onUnauthenticated={() => navigate('/login')}
+            >
+              <EventRsvps />
+            </ProtectedRoute>
+          </Route>
+          <Route path="/events/:id">
+            <ProtectedRoute
+              requirePermission={MEMBERS_READ}
+              onUnauthenticated={() => navigate('/login')}
+            >
+              <EventForm />
             </ProtectedRoute>
           </Route>
           {/*

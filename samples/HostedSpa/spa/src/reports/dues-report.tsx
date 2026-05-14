@@ -3,9 +3,14 @@ import {
   buildColumns,
   entityKeyToQueryName,
   useAppMetadata,
+  useSession,
 } from '@bifrostql/app-shell';
 import { BifrostTable } from '@bifrostql/react';
 import type { TableFilter } from '@bifrostql/react';
+import {
+  canReadFinanceFields,
+  isFinanceField,
+} from '../membership-plans/finance-fields';
 
 /** Props for {@link DuesReport}. */
 export interface DuesReportProps {
@@ -43,16 +48,31 @@ export interface DuesReportProps {
  */
 export function DuesReport({ entityKey, title, testId, filter }: DuesReportProps) {
   const { entities, isLoading, isError, error } = useAppMetadata();
+  const { permissions } = useSession();
 
   const entity = entities[entityKey];
   const queryName = useMemo(
     () => entityKeyToQueryName(entityKey),
     [entityKey],
   );
-  const columns = useMemo(
-    () => (entity ? buildColumns(entity) : []),
-    [entity],
-  );
+
+  // Columns are overlay-driven; finance columns (`amount_cents` on
+  // `main.dues_invoices`) are then dropped for non-finance sessions so a
+  // report never names a column the host's `policy-read-deny` rejects. For
+  // non-finance entities `isFinanceField` matches nothing, so this is a no-op.
+  const canReadFinance = canReadFinanceFields(permissions);
+  const columns = useMemo(() => {
+    if (!entity) {
+      return [];
+    }
+    const built = buildColumns(entity);
+    if (canReadFinance) {
+      return built;
+    }
+    return built.filter(
+      (column) => !isFinanceField(column.field, entityKey),
+    );
+  }, [entity, entityKey, canReadFinance]);
 
   if (isLoading) {
     return <p data-testid={`${testId}-loading`}>Loading {title}…</p>;

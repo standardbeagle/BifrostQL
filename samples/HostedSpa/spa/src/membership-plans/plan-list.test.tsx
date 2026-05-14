@@ -5,6 +5,7 @@ import { PathProvider } from '@standardbeagle/virtual-router';
 import { AppShellProvider } from '@bifrostql/app-shell';
 import type { AppMetadata } from '@bifrostql/app-shell';
 import { PlanList } from './plan-list';
+import { MEMBERS_FINANCE } from './finance-fields';
 
 const ENDPOINT = 'http://localhost:5000/graphql';
 
@@ -199,6 +200,51 @@ describe('PlanList', () => {
       screen.queryByRole('button', { name: 'New plan' }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText('Deactivate')).not.toBeInTheDocument();
+  });
+
+  it('hides the price_cents column and never queries it for a non-finance session', async () => {
+    // Arrange: a session WITHOUT main.members.finance.
+    globalThis.fetch = createFetchMock(identityWith(['main.members.read']));
+
+    // Act
+    renderPlanList();
+    await waitFor(() =>
+      expect(screen.getByTestId('bifrost-table')).toBeInTheDocument(),
+    );
+
+    // Assert: no price_cents column header, and non-finance columns remain.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('columnheader', { name: /price_cents/i }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole('columnheader', { name: /billing_period/i }),
+    ).toBeInTheDocument();
+    // No GraphQL query names the policy-read-denied column.
+    expect(
+      graphqlRequests.find((r) => /price_cents/.test(r.query)),
+    ).toBeUndefined();
+  });
+
+  it('shows the price_cents column for a finance session', async () => {
+    // Arrange: a session WITH main.members.finance.
+    globalThis.fetch = createFetchMock(
+      identityWith(['main.members.read', MEMBERS_FINANCE]),
+    );
+
+    // Act
+    renderPlanList();
+    await waitFor(() =>
+      expect(screen.getByTestId('bifrost-table')).toBeInTheDocument(),
+    );
+
+    // Assert: the price_cents column header is present.
+    await waitFor(() =>
+      expect(
+        screen.getByRole('columnheader', { name: /price_cents/i }),
+      ).toBeInTheDocument(),
+    );
   });
 
   it('issues an update mutation setting is_active false when Deactivate clicked', async () => {

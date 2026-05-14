@@ -12,6 +12,7 @@ import {
   buildUpdateMutation,
 } from '@bifrostql/react';
 import type { RowAction } from '@bifrostql/react';
+import { canReadFinanceFields, isFinanceField } from './finance-fields';
 
 /** Qualified entity key of the membership_plans entity in the overlay. */
 const PLANS_ENTITY_KEY = 'main.membership_plans';
@@ -49,10 +50,21 @@ export function PlanList() {
     [],
   );
 
-  const columns = useMemo(
-    () => (entity ? buildColumns(entity) : []),
-    [entity],
-  );
+  // Columns are overlay-driven; `price_cents` is then dropped for non-finance
+  // sessions so they never name a column the host's `policy-read-deny` rejects.
+  const canReadFinance = canReadFinanceFields(permissions);
+  const columns = useMemo(() => {
+    if (!entity) {
+      return [];
+    }
+    const built = buildColumns(entity);
+    if (canReadFinance) {
+      return built;
+    }
+    return built.filter(
+      (column) => !isFinanceField(column.field, PLANS_ENTITY_KEY),
+    );
+  }, [entity, canReadFinance]);
 
   const canWrite = permissions.includes(MEMBERS_WRITE);
 

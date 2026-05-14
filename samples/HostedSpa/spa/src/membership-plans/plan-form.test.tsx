@@ -6,6 +6,7 @@ import { AppShellProvider } from '@bifrostql/app-shell';
 import type { AppMetadata } from '@bifrostql/app-shell';
 import { PlanForm } from './plan-form';
 import { buildPlanFormFields, MEMBERS_ADMIN } from './plan-form-fields';
+import { MEMBERS_FINANCE } from './finance-fields';
 
 const ENDPOINT = 'http://localhost:5000/graphql';
 
@@ -165,8 +166,11 @@ describe('buildPlanFormFields', () => {
   const entity = sampleMetadata.entities!['main.membership_plans'];
 
   it('orders fields by displayFields then declaration order', () => {
-    // Act
-    const fields = buildPlanFormFields(entity, [MEMBERS_ADMIN]);
+    // Act: a finance-holding session sees price_cents in the field set.
+    const fields = buildPlanFormFields(entity, [
+      MEMBERS_ADMIN,
+      MEMBERS_FINANCE,
+    ]);
 
     // Assert
     expect(fields[0].name).toBe('name');
@@ -174,13 +178,38 @@ describe('buildPlanFormFields', () => {
   });
 
   it('omits admin-only (visible:false) tenant_id for a non-admin session', () => {
-    // Act
-    const fields = buildPlanFormFields(entity, ['main.members.write']);
+    // Act: a writer session that also holds the finance permission.
+    const fields = buildPlanFormFields(entity, [
+      'main.members.write',
+      MEMBERS_FINANCE,
+    ]);
 
     // Assert
     const names = fields.map((f) => f.name);
     expect(names).not.toContain('tenant_id');
     expect(names).toContain('price_cents');
+  });
+
+  it('omits finance field price_cents for a non-finance session', () => {
+    // Act: a writer session WITHOUT main.members.finance.
+    const fields = buildPlanFormFields(entity, ['main.members.write']);
+
+    // Assert: price_cents is gated out, non-finance fields remain.
+    const names = fields.map((f) => f.name);
+    expect(names).not.toContain('price_cents');
+    expect(names).toContain('name');
+    expect(names).toContain('billing_period');
+  });
+
+  it('includes finance field price_cents for a finance session', () => {
+    // Act
+    const fields = buildPlanFormFields(entity, [
+      'main.members.write',
+      MEMBERS_FINANCE,
+    ]);
+
+    // Assert
+    expect(fields.map((f) => f.name)).toContain('price_cents');
   });
 
   it('includes tenant_id flagged adminOnly + readOnly for an admin', () => {
@@ -208,8 +237,10 @@ describe('PlanForm', () => {
   });
 
   it('renders a metadata-driven create form on /plans/new', async () => {
-    // Arrange
-    globalThis.fetch = createFetchMock(identityWith(['main.members.write']));
+    // Arrange: a finance-holding writer sees the price_cents field.
+    globalThis.fetch = createFetchMock(
+      identityWith(['main.members.write', MEMBERS_FINANCE]),
+    );
 
     // Act
     renderForm('/plans/new');
@@ -221,6 +252,21 @@ describe('PlanForm', () => {
     expect(screen.getByLabelText('name')).toBeInTheDocument();
     expect(screen.getByLabelText('price_cents')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Create' })).toBeInTheDocument();
+  });
+
+  it('hides the price_cents field for a non-finance writer', async () => {
+    // Arrange: a writer WITHOUT main.members.finance.
+    globalThis.fetch = createFetchMock(identityWith(['main.members.write']));
+
+    // Act
+    renderForm('/plans/new');
+
+    // Assert: the form renders but price_cents is gated out.
+    await waitFor(() =>
+      expect(screen.getByTestId('plan-form')).toBeInTheDocument(),
+    );
+    expect(screen.getByLabelText('name')).toBeInTheDocument();
+    expect(screen.queryByLabelText('price_cents')).not.toBeInTheDocument();
   });
 
   it('issues an insert mutation on Create', async () => {

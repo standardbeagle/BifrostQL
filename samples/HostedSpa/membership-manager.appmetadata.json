@@ -159,7 +159,7 @@
         "name": { "widget": "text", "group": "Identity" },
         "description": { "widget": "textarea", "group": "Identity", "helpText": "What the plan includes." },
         "billing_period": { "widget": "select", "group": "Billing", "helpText": "How often dues are billed (annual, monthly)." },
-        "price_cents": { "widget": "number", "group": "Billing", "helpText": "Plan price in cents." },
+        "price_cents": { "widget": "number", "group": "Billing", "helpText": "Plan price in cents. Finance-only: the host carries a policy-read-deny qualified to policy-read-deny-roles officer,event_manager,member,read_only; the SPA hides this column from sessions lacking main.members.finance (see spa/src/membership-plans/finance-fields.ts)." },
         "is_active": { "widget": "checkbox", "group": "Billing", "helpText": "Whether the plan can be selected for new memberships." },
         "tenant_id": {
           "widget": "fk-lookup",
@@ -266,7 +266,7 @@
           "group": "Billing",
           "helpText": "Membership term this invoice covers. Optional."
         },
-        "amount_cents": { "widget": "number", "group": "Billing", "helpText": "Invoiced amount in cents." },
+        "amount_cents": { "widget": "number", "group": "Billing", "helpText": "Invoiced amount in cents. Finance-only: the host carries a policy-read-deny qualified to policy-read-deny-roles officer,event_manager,member,read_only; the SPA hides this column from sessions lacking main.members.finance (see spa/src/membership-plans/finance-fields.ts)." },
         "issued_on": { "widget": "datepicker", "group": "Schedule" },
         "due_on": { "widget": "datepicker", "group": "Schedule" },
         "status": { "widget": "select", "group": "Schedule" },
@@ -323,7 +323,7 @@
           "group": "Payment",
           "helpText": "Invoice this payment is applied against."
         },
-        "amount_cents": { "widget": "number", "group": "Payment", "helpText": "Payment amount in cents." },
+        "amount_cents": { "widget": "number", "group": "Payment", "helpText": "Payment amount in cents. Finance-only: the host carries a policy-read-deny qualified to policy-read-deny-roles officer,event_manager,member,read_only; the SPA hides this column from sessions lacking main.members.finance (see spa/src/membership-plans/finance-fields.ts)." },
         "paid_on": { "widget": "datepicker", "group": "Payment" },
         "method": { "widget": "select", "group": "Payment", "helpText": "Payment method (card, cash, check)." },
         "tenant_id": {

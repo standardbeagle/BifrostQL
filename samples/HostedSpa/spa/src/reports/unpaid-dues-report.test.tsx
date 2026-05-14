@@ -4,6 +4,7 @@ import { PathProvider } from '@standardbeagle/virtual-router';
 import { AppShellProvider } from '@bifrostql/app-shell';
 import type { AppMetadata } from '@bifrostql/app-shell';
 import { UnpaidDuesReport } from './unpaid-dues-report';
+import { MEMBERS_FINANCE } from '../membership-plans/finance-fields';
 
 const ENDPOINT = 'http://localhost:5000/graphql';
 
@@ -180,6 +181,51 @@ describe('UnpaidDuesReport', () => {
       expect(query!.query).toContain('status');
       expect(query!.query).toContain('open');
     });
+  });
+
+  it('hides the amount_cents column and never queries it for a non-finance session', async () => {
+    // Arrange: a session WITHOUT main.members.finance.
+    globalThis.fetch = createFetchMock(identityWith(['main.members.read']));
+
+    // Act
+    renderReport();
+    await waitFor(() =>
+      expect(screen.getByTestId('bifrost-table')).toBeInTheDocument(),
+    );
+
+    // Assert: no amount_cents column header, non-finance columns remain.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('columnheader', { name: /amount_cents/i }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole('columnheader', { name: /status/i }),
+    ).toBeInTheDocument();
+    // No GraphQL query names the policy-read-denied column.
+    expect(
+      graphqlRequests.find((r) => /amount_cents/.test(r.query)),
+    ).toBeUndefined();
+  });
+
+  it('shows the amount_cents column for a finance session', async () => {
+    // Arrange: a session WITH main.members.finance.
+    globalThis.fetch = createFetchMock(
+      identityWith(['main.members.read', MEMBERS_FINANCE]),
+    );
+
+    // Act
+    renderReport();
+    await waitFor(() =>
+      expect(screen.getByTestId('bifrost-table')).toBeInTheDocument(),
+    );
+
+    // Assert: the amount_cents column header is present.
+    await waitFor(() =>
+      expect(
+        screen.getByRole('columnheader', { name: /amount_cents/i }),
+      ).toBeInTheDocument(),
+    );
   });
 
   it('renders no row actions — the report is read-only', async () => {

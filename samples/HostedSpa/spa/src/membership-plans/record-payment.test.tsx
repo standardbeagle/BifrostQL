@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { AppShellProvider } from '@bifrostql/app-shell';
 import type { AppMetadata } from '@bifrostql/app-shell';
 import { RecordPayment } from './record-payment';
+import { MEMBERS_FINANCE } from './finance-fields';
 
 const ENDPOINT = 'http://localhost:5000/graphql';
 
@@ -239,8 +240,10 @@ describe('RecordPayment', () => {
   });
 
   it('lists recorded payments resolving each invoice to a member name', async () => {
-    // Arrange
-    globalThis.fetch = createFetchMock(identityWith(['main.members.write']));
+    // Arrange: a finance session sees the amount column.
+    globalThis.fetch = createFetchMock(
+      identityWith(['main.members.write', MEMBERS_FINANCE]),
+    );
 
     // Act
     renderScreen();
@@ -255,9 +258,11 @@ describe('RecordPayment', () => {
   });
 
   it('records a payment via fk-lookup invoice select — no manual FK id entry', async () => {
-    // Arrange
+    // Arrange: a finance session can enter the payment amount.
     const user = userEvent.setup();
-    globalThis.fetch = createFetchMock(identityWith(['main.members.write']));
+    globalThis.fetch = createFetchMock(
+      identityWith(['main.members.write', MEMBERS_FINANCE]),
+    );
     renderScreen();
     await waitFor(() =>
       expect(screen.getByTestId('record-payment-add')).toBeInTheDocument(),
@@ -293,9 +298,11 @@ describe('RecordPayment', () => {
   });
 
   it('advances the member membership status to active after a payment', async () => {
-    // Arrange
+    // Arrange: a finance session can enter the payment amount.
     const user = userEvent.setup();
-    globalThis.fetch = createFetchMock(identityWith(['main.members.write']));
+    globalThis.fetch = createFetchMock(
+      identityWith(['main.members.write', MEMBERS_FINANCE]),
+    );
     renderScreen();
     await waitFor(() =>
       expect(screen.getByTestId('record-payment-add')).toBeInTheDocument(),
@@ -365,6 +372,53 @@ describe('RecordPayment', () => {
     expect(
       screen.queryByTestId('record-payment-add'),
     ).not.toBeInTheDocument();
+  });
+
+  it('hides amount_cents and never queries it for a non-finance writer', async () => {
+    // Arrange: a writer WITHOUT main.members.finance.
+    globalThis.fetch = createFetchMock(identityWith(['main.members.write']));
+
+    // Act
+    renderScreen();
+    await waitFor(() =>
+      expect(screen.getByTestId('record-payment-add')).toBeInTheDocument(),
+    );
+
+    // Assert: the amount control is gated out of the recording form...
+    expect(screen.queryByLabelText('amount_cents')).not.toBeInTheDocument();
+    // ...the recorded-payment rows show no amount cell...
+    expect(
+      screen.queryByTestId('record-payment-91-amount'),
+    ).not.toBeInTheDocument();
+    // ...and no GraphQL query names the policy-read-denied column.
+    const financeQuery = graphqlRequests.find((r) =>
+      /amount_cents/.test(r.query),
+    );
+    expect(financeQuery).toBeUndefined();
+  });
+
+  it('shows amount_cents and queries it for a finance writer', async () => {
+    // Arrange: a writer WITH main.members.finance.
+    globalThis.fetch = createFetchMock(
+      identityWith(['main.members.write', MEMBERS_FINANCE]),
+    );
+
+    // Act
+    renderScreen();
+    await waitFor(() =>
+      expect(screen.getByTestId('record-payment-add')).toBeInTheDocument(),
+    );
+
+    // Assert: the amount control is present and the recorded amount renders.
+    expect(screen.getByLabelText('amount_cents')).toBeInTheDocument();
+    expect(
+      screen.getByTestId('record-payment-91-amount'),
+    ).toHaveTextContent('5000');
+    // The payments query names amount_cents for a finance session.
+    const financeQuery = graphqlRequests.find((r) =>
+      /amount_cents/.test(r.query),
+    );
+    expect(financeQuery).toBeDefined();
   });
 
   it('reports a missing dues_payments overlay entity', async () => {

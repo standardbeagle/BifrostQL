@@ -1,7 +1,11 @@
 import type { EntityMetadata, FieldMetadata } from '@bifrostql/app-shell';
+import { canReadFinanceFields, isFinanceField } from './finance-fields';
 
 /** Permission that grants visibility of admin-only (`visible: false`) fields. */
 export const MEMBERS_ADMIN = 'main.members.admin';
+
+/** Qualified entity key of the membership_plans entity in the overlay. */
+const PLANS_ENTITY_KEY = 'main.membership_plans';
 
 /**
  * A metadata-driven field descriptor for the membership-plan form / detail view.
@@ -40,6 +44,12 @@ export interface PlanFormField {
  * (`tenant_id`): omitted entirely unless the session holds {@link MEMBERS_ADMIN};
  * for an admin it is included and flagged `adminOnly`, always read-only.
  *
+ * Finance gate: `price_cents` is a finance column the host carries a
+ * `policy-read-deny` on — it is omitted entirely unless the session holds
+ * `main.members.finance` (finance_manager / admin), mirroring the server's
+ * `policy-read-deny-roles` so a non-finance session never names a denied
+ * column.
+ *
  * @param entity - The `main.membership_plans` entity metadata from the overlay.
  * @param permissions - The current session's permission strings.
  */
@@ -49,6 +59,7 @@ export function buildPlanFormFields(
 ): PlanFormField[] {
   const fields: Record<string, FieldMetadata> = entity.fields ?? {};
   const isAdmin = permissions.includes(MEMBERS_ADMIN);
+  const canReadFinance = canReadFinanceFields(permissions);
 
   const ordered = [
     ...(entity.displayFields ?? []),
@@ -61,6 +72,9 @@ export function buildPlanFormFields(
     .map((name): PlanFormField | null => {
       const field = fields[name];
       if (!field) {
+        return null;
+      }
+      if (!canReadFinance && isFinanceField(name, PLANS_ENTITY_KEY)) {
         return null;
       }
       const adminOnly = field.visible === false;

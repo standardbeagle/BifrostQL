@@ -11,6 +11,7 @@ import {
   buildInsertMutation,
   buildUpdateMutation,
 } from '@bifrostql/react';
+import { canReadFinanceFields } from './finance-fields';
 
 /** Qualified entity key of the dues_payments entity in the overlay. */
 const DUES_PAYMENTS_ENTITY_KEY = 'main.dues_payments';
@@ -90,6 +91,12 @@ export function RecordPayment() {
 
   const canWrite = permissions.includes(MEMBERS_WRITE);
 
+  // `amount_cents` on dues_invoices / dues_payments is a finance column the
+  // host carries a `policy-read-deny` on. Non-finance sessions must not query
+  // or render it; only finance_manager / admin (which hold
+  // `main.members.finance`) see the amounts.
+  const canReadFinance = canReadFinanceFields(permissions);
+
   const paymentEntity = entities[DUES_PAYMENTS_ENTITY_KEY];
   const paymentQueryName = useMemo(
     () => entityKeyToQueryName(DUES_PAYMENTS_ENTITY_KEY),
@@ -108,9 +115,16 @@ export function RecordPayment() {
     [],
   );
 
-  // Existing recorded payments.
+  // Existing recorded payments. `amount_cents` is requested only for finance
+  // sessions — a non-finance session would have the column read-denied.
   const paymentsQuery = useBifrostQuery<PaymentRow[]>(paymentQueryName, {
-    fields: ['id', 'invoice_id', 'amount_cents', 'paid_on', 'method'],
+    fields: [
+      'id',
+      'invoice_id',
+      ...(canReadFinance ? ['amount_cents'] : []),
+      'paid_on',
+      'method',
+    ],
   });
   const payments = paymentsQuery.data ?? [];
 
@@ -121,7 +135,7 @@ export function RecordPayment() {
       'id',
       'member_id',
       'member_membership_id',
-      'amount_cents',
+      ...(canReadFinance ? ['amount_cents'] : []),
       'status',
     ],
     filter: { status: { _eq: 'open' } },
@@ -165,9 +179,11 @@ export function RecordPayment() {
     return memberLabel(invoice.member_id);
   };
 
-  // Open invoices in the fk-lookup select are labelled by member + amount.
+  // Open invoices in the fk-lookup select are labelled by member — and, for
+  // finance sessions, the invoiced amount. A non-finance session never has
+  // `amount_cents` (it is not queried), so its options are member-name only.
   // The member-name lookup is inlined (rather than calling `memberLabel`) so
-  // the memo's dependencies are the two source lists it actually reads.
+  // the memo's dependencies are the source lists it actually reads.
   const invoiceOptions = useMemo(
     () =>
       invoices.map((invoice) => {
@@ -181,10 +197,12 @@ export function RecordPayment() {
           : String(invoice.member_id);
         return {
           key: String(invoice.id),
-          label: `${name} — ${invoice.amount_cents ?? 0}`,
+          label: canReadFinance
+            ? `${name} — ${invoice.amount_cents ?? 0}`
+            : name,
         };
       }),
-    [invoices, members],
+    [invoices, members, canReadFinance],
   );
 
   const insertPayment = useBifrostMutation(
@@ -211,10 +229,15 @@ export function RecordPayment() {
     }
     const invoice = invoiceById(String(newInvoiceId));
 
+    // `amount_cents` is only collected (and only sent) for finance sessions —
+    // a non-finance session never renders its control, so it is omitted from
+    // the insert rather than sent as null.
     insertPayment.mutate({
       detail: {
         invoice_id: newInvoiceId,
-        amount_cents: newAmount === '' ? null : Number(newAmount),
+        ...(canReadFinance
+          ? { amount_cents: newAmount === '' ? null : Number(newAmount) }
+          : {}),
         paid_on: newPaidOn || null,
         method: newMethod || null,
       },
@@ -267,8 +290,14 @@ export function RecordPayment() {
           >
             <span>{paymentInvoiceLabel(payment.invoice_id)}</span>
             {' — '}
-            <span>{payment.amount_cents}</span>
-            {' — '}
+            {canReadFinance ? (
+              <>
+                <span data-testid={`record-payment-${payment.id}-amount`}>
+                  {payment.amount_cents}
+                </span>
+                {' — '}
+              </>
+            ) : null}
             <span>{payment.paid_on}</span>
             {' — '}
             <span>{payment.method}</span>
@@ -293,13 +322,15 @@ export function RecordPayment() {
             fkTargetEntity={DUES_INVOICES_ENTITY_KEY}
             onChange={(value) => setNewInvoiceId(value)}
           />
-          <FieldControl
-            name="amount_cents"
-            field={paymentEntity.fields?.amount_cents}
-            label="amount_cents"
-            value={newAmount}
-            onChange={(value) => setNewAmount(value)}
-          />
+          {canReadFinance ? (
+            <FieldControl
+              name="amount_cents"
+              field={paymentEntity.fields?.amount_cents}
+              label="amount_cents"
+              value={newAmount}
+              onChange={(value) => setNewAmount(value)}
+            />
+          ) : null}
           <FieldControl
             name="paid_on"
             field={paymentEntity.fields?.paid_on}

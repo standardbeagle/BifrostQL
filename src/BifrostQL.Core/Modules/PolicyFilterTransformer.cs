@@ -95,6 +95,11 @@ public sealed class PolicyFilterTransformer : IFilterTransformer, IColumnReadGua
         if (IsAdmin(identity))
             return null;
 
+        // Role-scoped row scope: when the policy names the roles it applies to,
+        // a caller holding none of them is left unscoped (still tenant-filtered).
+        if (!RowScopeApplies(policy, identity))
+            return null;
+
         return RowScopeCompiler.Compile(policy.RowScopeExpression, table.DbName, context.UserContext);
     }
 
@@ -182,5 +187,16 @@ public sealed class PolicyFilterTransformer : IFilterTransformer, IColumnReadGua
         // The evaluator's admin bypass is internal; a denying policy that the
         // identity still passes is the observable signal of an admin.
         return _evaluator.CanAct(AdminProbePolicy, PolicyAction.Read, identity).Allowed;
+    }
+
+    // True when the policy's row-scope expression should narrow this caller: an
+    // unqualified policy (no RowScopeRoles) applies to every non-admin caller;
+    // a role-qualified policy applies only to a caller holding one of its roles.
+    private static bool RowScopeApplies(TablePolicy policy, AppIdentity identity)
+    {
+        if (policy.RowScopeRoles.Count == 0)
+            return true;
+
+        return identity.Roles.Any(policy.RowScopeRoles.Contains);
     }
 }

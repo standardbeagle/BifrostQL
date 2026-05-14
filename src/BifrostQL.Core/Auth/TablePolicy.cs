@@ -81,6 +81,16 @@ public sealed record TablePolicy
     public string? RowScopeExpression { get; }
 
     /// <summary>
+    /// Optional set of role names the <see cref="RowScopeExpression"/> applies to
+    /// (case-insensitive match). When empty, the row scope applies to every
+    /// non-admin caller. When non-empty, only a caller holding one of these roles
+    /// is narrowed by the row-scope filter — other non-admin callers are left
+    /// unscoped, so a tenant-scoped officer keeps full-table access while a
+    /// member is constrained to their own rows.
+    /// </summary>
+    public IReadOnlySet<string> RowScopeRoles { get; }
+
+    /// <summary>
     /// True when this policy carries any configured restriction. False only for
     /// <see cref="None"/>.
     /// </summary>
@@ -94,7 +104,8 @@ public sealed record TablePolicy
         IEnumerable<PolicyAction>? allowedActions = null,
         IEnumerable<string>? readDenyColumns = null,
         IEnumerable<string>? writeDenyColumns = null,
-        string? rowScopeExpression = null)
+        string? rowScopeExpression = null,
+        IEnumerable<string>? rowScopeRoles = null)
     {
         AllowedActions = new HashSet<PolicyAction>(
             allowedActions ?? Enumerable.Empty<PolicyAction>());
@@ -105,6 +116,8 @@ public sealed record TablePolicy
         RowScopeExpression = string.IsNullOrWhiteSpace(rowScopeExpression)
             ? null
             : rowScopeExpression.Trim();
+        RowScopeRoles = new HashSet<string>(
+            rowScopeRoles ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
 
         HasPolicy =
             AllowedActions.Count > 0 ||

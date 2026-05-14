@@ -250,6 +250,16 @@ namespace BifrostQL.Core.Model
             /// </summary>
             public const string RowScope = "policy-row-scope";
 
+            /// <summary>
+            /// Optional table-level comma-separated list of role names the
+            /// <see cref="RowScope"/> expression applies to. When present, the
+            /// row-scope filter narrows only callers holding one of these roles;
+            /// every other non-admin caller is left unscoped (still subject to
+            /// the tenant filter and the action grants). When absent, the
+            /// row-scope filter narrows every non-admin caller.
+            /// </summary>
+            public const string RowScopeRoles = "policy-row-scope-roles";
+
             /// <summary>Default role name that bypasses all policy checks.</summary>
             public const string DefaultAdminRole = "admin";
         }

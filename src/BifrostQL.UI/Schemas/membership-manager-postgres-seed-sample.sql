@@ -19,8 +19,8 @@
 --     app_users             { label: App Users,        tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids }
 --     organization_memberships { label: Staff Roles,   tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,update }
 --     audit_log             { label: Audit Log,        tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read }
---     households            { label: Households,       tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update,delete }
---     members               { label: Members,         tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, soft-delete: deleted_at, policy-actions: read,create,update,delete }
+--     households            { label: Households,       tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update,delete, policy-row-scope: household_id = {household_id}, policy-row-scope-roles: member }
+--     members               { label: Members,         tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, soft-delete: deleted_at, policy-actions: read,create,update,delete, policy-row-scope: user_id = {user_id}, policy-row-scope-roles: member }
 --     household_members     { label: Household Members,tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update,delete }
 --     membership_plans      { label: Membership Plans, tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update,delete }
 --     member_memberships    { label: Member Memberships,tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update,delete }
@@ -44,6 +44,39 @@
 --
 -- audit_log carries policy-actions: read so it is read-only through the
 -- generated CRUD — only server-side workflow endpoints append rows.
+--
+-- ============================================================
+-- Member self-service row scope (Membership Manager policy, sub-task 2/4)
+-- ============================================================
+--
+-- `policy-row-scope` on members and households constrains the `member` role to
+-- its own data. The expression grammar is a single `column = {context-key}`
+-- term (RowScopeCompiler): the left side is a table column, the right side a
+-- per-request user-context claim. PolicyFilterTransformer compiles it and ANDs
+-- the resulting WHERE alongside the tenant filter on the query path;
+-- PolicyMutationTransformer applies the same filter to update/delete so a
+-- cross-member write matches no row and is rejected server-side.
+--
+-- `policy-row-scope-roles: member` qualifies the row scope to the `member` role
+-- only. officer/event_manager/finance_manager/read_only hold a different role,
+-- so the row-scope filter does not narrow them — their access to members and
+-- households stays governed by the table-level policy-actions grants and the
+-- tenant-filter (officer keeps full lifecycle CRUD within its tenant). admin
+-- bypasses the policy engine entirely and is never narrowed.
+--
+--   members    policy-row-scope: user_id = {user_id}   policy-row-scope-roles: member
+--              members.user_id is the FK to app_users — the member row linked to
+--              the caller's login account. {user_id} is the canonical user-id
+--              claim IdentityContextMapper always writes, so no extra wiring is
+--              needed: a `member` sees and edits only their own member row.
+--
+--   households policy-row-scope: household_id = {household_id}   policy-row-scope-roles: member
+--              A `member` may read and edit their own household. households has
+--              no user FK, so the scope keys on the household_id the caller
+--              belongs to. {household_id} is a provider claim — the
+--              authentication layer resolves the caller's member row and adds
+--              household_id to AppIdentity.Claims, which IdentityContextMapper
+--              copies verbatim into the user context.
 --
 -- ============================================================
 -- Role -> permission matrix (Membership Manager policy, sub-task 1/4)

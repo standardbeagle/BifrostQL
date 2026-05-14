@@ -530,5 +530,17 @@
         }
       }
     }
+  },
+  "emailSegments": {
+    "active-members": {
+      "name": "Active Members",
+      "entity": "main.members",
+      "filters": [ "status = active" ]
+    },
+    "lapsed-members": {
+      "name": "Lapsed Members",
+      "entity": "main.members",
+      "filters": [ "status = inactive" ]
+    }
   }
 }

@@ -21,6 +21,7 @@ import { UpcomingRenewalsReport } from './reports/upcoming-renewals-report';
 import { ExpiredMembershipsReport } from './reports/expired-memberships-report';
 import { AttendanceByEventReport } from './reports/attendance-by-event-report';
 import { AttendanceByMemberReport } from './reports/attendance-by-member-report';
+import { EmailSegments } from './segments/email-segments';
 
 /** Permission required to view and manage the member roster. */
 const MEMBERS_READ = 'main.members.read';
@@ -40,6 +41,7 @@ const REPORT_NAV_ITEMS = [
   { path: '/reports/expired-memberships', label: 'Expired Memberships' },
   { path: '/reports/attendance-by-event', label: 'Attendance by Event' },
   { path: '/reports/attendance-by-member', label: 'Attendance by Member' },
+  { path: '/reports/email-segments', label: 'Email Segments' },
 ];
 
 /**
@@ -283,6 +285,22 @@ function App() {
               onUnauthenticated={() => navigate('/login')}
             >
               <AttendanceByMemberReport />
+            </ProtectedRoute>
+          </Route>
+          {/*
+            Email segments: lists the overlay's declarative `emailSegments`
+            audience definitions and renders the matching audience for a
+            selected segment via a filtered `BifrostTable`. Definition-and-
+            audience only — no sending infrastructure. Like the other reports
+            it is not an overlay entity, so its nav entry is appended by
+            `MembershipNav`.
+          */}
+          <Route path="/reports/email-segments">
+            <ProtectedRoute
+              requirePermission={MEMBERS_READ}
+              onUnauthenticated={() => navigate('/login')}
+            >
+              <EmailSegments />
             </ProtectedRoute>
           </Route>
         </Routes>

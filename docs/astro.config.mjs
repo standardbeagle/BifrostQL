@@ -31,6 +31,7 @@ export default defineConfig({
 						{ label: 'Schema Generation', slug: 'concepts/schema-generation' },
 						{ label: 'Solving N+1 Queries', slug: 'concepts/n-plus-one' },
 						{ label: 'App Schema Detection', slug: 'concepts/app-schema-detection' },
+						{ label: 'App Metadata Overlay', slug: 'concepts/app-metadata-overlay' },
 					],
 				},
 				{

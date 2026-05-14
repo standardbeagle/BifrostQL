@@ -62,6 +62,26 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
+        /// Maps the app-metadata overlay endpoint, which serves the loaded
+        /// <see cref="BifrostQL.Core.AppMetadata.AppMetadataModel"/> as the stable
+        /// camelCase JSON contract for SPA and React Native clients. The endpoint
+        /// returns an empty overlay when none has been registered via
+        /// <c>AddBifrostAppMetadata</c>, so it always serves the stable contract.
+        /// </summary>
+        public static IApplicationBuilder UseBifrostAppMetadata(
+            this IApplicationBuilder app,
+            Action<BifrostAppMetadataOptions>? configure = null)
+        {
+            var options = new BifrostAppMetadataOptions();
+            configure?.Invoke(options);
+
+            if (options.Enabled)
+                app.UseMiddleware<BifrostAppMetadataMiddleware>(options);
+
+            return app;
+        }
+
+        /// <summary>
         /// Registers local DB-backed user login for self-hosted deployments. The app-user
         /// table lives in the same database BifrostQL serves, reached through a server-side
         /// <see cref="IDbConnFactory"/> built from <paramref name="connectionString"/> — the

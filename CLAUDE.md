@@ -38,6 +38,7 @@ dotnet run --project src/BifrostQL.Host  # Web server
 | `ResolverBase` | `Resolvers/ResolverBase.cs` | Base class for all resolvers |
 | `StringNormalizer` | `Utils/StringNormalizer.cs` | Centralized string normalization |
 | `MetadataKeys` | `Model/MetadataKeys.cs` | Constants for metadata keys |
+| `AppMetadataModel` | `AppMetadata/` | App-metadata overlay — client presentation layer (labels, forms, grids, relationships) |
 
 ## Design Patterns
 
@@ -127,9 +128,15 @@ Priority ranges: 0-99 (security), 100-199 (data filtering), 200+ (app)
 ## Quick Reference
 
 ```csharp
-// Metadata configuration
+// Schema metadata — controls API behavior (server-side)
 "dbo.users { tenant-filter: tenant_id }"
 "dbo.orders { soft-delete: deleted_at }"
+
+// App-metadata overlay — controls client presentation (SPA/RN)
+// Standalone camelCase JSON, separate coexisting pipeline. Never merged
+// into schema metadata. Load via AddBifrostAppMetadata, serve via
+// UseBifrostAppMetadata (GET /_app-metadata). See AppMetadata/ and
+// docs concepts/app-metadata-overlay.
 
 // Filter operators
 _eq, _neq, _lt, _lte, _gt, _gte, _contains, _in, _between, _null

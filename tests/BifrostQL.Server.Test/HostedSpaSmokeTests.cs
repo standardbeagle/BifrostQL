@@ -37,7 +37,9 @@ namespace BifrostQL.Server.Test
             response.StatusCode.Should().Be(HttpStatusCode.OK);
             response.Content.Headers.ContentType?.MediaType.Should().Be("text/html");
             var body = await response.Content.ReadAsStringAsync();
-            body.Should().Contain("BifrostQL HostedSpa Sample");
+            // Assert on the stable SPA shell structure (the React mount point) rather than
+            // brittle title text, which changes as the sample SPA evolves.
+            body.Should().Contain("<div id=\"root\">");
         }
 
         [Fact]
@@ -80,7 +82,7 @@ namespace BifrostQL.Server.Test
             // Assert: the excluded path is handled by its own endpoint, not the SPA
             // index.html fallback, so it never returns the SPA shell markup.
             body.Should().NotContain(
-                "BifrostQL HostedSpa Sample",
+                "<div id=\"root\">",
                 $"'{path}' is an excluded prefix and must not fall back to the SPA index.html");
         }
 

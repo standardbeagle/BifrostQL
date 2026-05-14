@@ -1,15 +1,15 @@
 {
   "claims": {
-    "7Jac0E98ah55": {
+    "pQh0QGYsWGxr": {
       "runner_instance_id": "DESKTOP-NPIOPS6-13041",
       "runner_email": "andybrummer@standardbeagle.com",
-      "claimed_at": "2026-05-14T16:30:00Z",
+      "claimed_at": "2026-05-14T16:38:00Z",
       "agent_id": "DESKTOP-NPIOPS6-13041",
       "parent_loop_id": "epYVBosC0i3a",
-      "purpose": "App metadata 1/4 — core overlay model + JSON format",
+      "purpose": "App metadata 2/4 — grid presets + relationship metadata",
       "source_event": {
         "loop_id": "epYVBosC0i3a",
-        "task_id": "7Jac0E98ah55",
+        "task_id": "pQh0QGYsWGxr",
         "conversation_id": null
       }
     }

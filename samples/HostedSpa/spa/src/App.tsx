@@ -11,6 +11,7 @@ import { HouseholdForm } from './households/household-form';
 import { PlanList } from './membership-plans/plan-list';
 import { PlanForm } from './membership-plans/plan-form';
 import { MemberPlanAssignment } from './membership-plans/member-plan-assignment';
+import { RecordPayment } from './membership-plans/record-payment';
 
 /** Permission required to view and manage the member roster. */
 const MEMBERS_READ = 'main.members.read';
@@ -112,6 +113,20 @@ function App() {
               onUnauthenticated={() => navigate('/login')}
             >
               <MemberPlanAssignment />
+            </ProtectedRoute>
+          </Route>
+          {/*
+            Record-payment: a single screen listing recorded `dues_payments`
+            and recording new ones against an open `dues_invoices`, advancing
+            the linked `member_memberships` status. Nav entry comes from the
+            overlay's `dues_payments` `navPlacement: main` via `AppNav`.
+          */}
+          <Route path="/payments">
+            <ProtectedRoute
+              requirePermission={MEMBERS_READ}
+              onUnauthenticated={() => navigate('/login')}
+            >
+              <RecordPayment />
             </ProtectedRoute>
           </Route>
         </Routes>

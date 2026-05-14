@@ -1,15 +1,15 @@
 {
   "claims": {
-    "apkJ6YsTXBcA": {
+    "rAyPuOYy0TO3": {
       "runner_instance_id": "DESKTOP-NPIOPS6-13041",
       "runner_email": "andybrummer@standardbeagle.com",
-      "claimed_at": "2026-05-14T14:53:00Z",
+      "claimed_at": "2026-05-14T15:02:00Z",
       "agent_id": "DESKTOP-NPIOPS6-13041",
       "parent_loop_id": "epYVBosC0i3a",
-      "purpose": "Org model 3/4 — tenant + auto-filter composition integration tests",
+      "purpose": "Org model 4/4 — deployment-model + metadata + mutation-behavior docs",
       "source_event": {
         "loop_id": "epYVBosC0i3a",
-        "task_id": "apkJ6YsTXBcA",
+        "task_id": "rAyPuOYy0TO3",
         "conversation_id": null
       }
     }

@@ -45,6 +45,7 @@ export default defineConfig({
 						{ label: 'Multi-Tenant Org Model', slug: 'guides/org-model' },
 						{ label: 'Desktop App', slug: 'guides/desktop-app' },
 						{ label: 'Hosted SPA / API Mode', slug: 'guides/hosted-spa' },
+						{ label: 'React Native', slug: 'guides/react-native' },
 						{ label: 'WordPress', slug: 'guides/wordpress' },
 						{ label: 'Binary Transport', slug: 'guides/binary-transport' },
 					],

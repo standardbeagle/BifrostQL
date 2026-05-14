@@ -168,6 +168,10 @@ export function useBifrostBatch(options: UseBifrostBatchOptions = {}) {
             variables,
             undefined,
             config.getToken,
+            {
+              refreshToken: config.refreshToken,
+              onSessionExpired: config.onSessionExpired,
+            },
           );
           results.push({ index: originalIndex, data });
           progressRef.current = {

@@ -83,6 +83,10 @@ export function useBifrost<T = unknown>(
         variables,
         signal,
         config.getToken,
+        {
+          refreshToken: config.refreshToken,
+          onSessionExpired: config.onSessionExpired,
+        },
       ),
     enabled,
     retry,

@@ -114,6 +114,10 @@ export function useBifrostDiff(options: UseBifrostDiffOptions) {
         { detail },
         undefined,
         config.getToken,
+        {
+          refreshToken: config.refreshToken,
+          onSessionExpired: config.onSessionExpired,
+        },
       );
     },
     onSuccess: (data) => {

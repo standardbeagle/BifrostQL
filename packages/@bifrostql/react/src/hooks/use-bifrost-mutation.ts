@@ -59,6 +59,10 @@ export function useBifrostMutation<
         variables,
         undefined,
         config.getToken,
+        {
+          refreshToken: config.refreshToken,
+          onSessionExpired: config.onSessionExpired,
+        },
       ),
     onSuccess: (data) => {
       if (options.invalidateQueries) {

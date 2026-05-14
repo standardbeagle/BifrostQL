@@ -122,6 +122,7 @@ export type {
 export {
   buildGraphqlQuery,
   executeGraphQL,
+  BifrostAuthError,
   buildMutation,
   buildInsertMutation,
   buildUpdateMutation,
@@ -141,6 +142,7 @@ export type {
   DiffStrategy,
   DiffResult,
   UrlTableState,
+  BifrostAuthHandlers,
 } from './utils';
 export type {
   BifrostConfig,

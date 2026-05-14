@@ -1,5 +1,10 @@
 export { buildGraphqlQuery } from './query-builder';
-export { executeGraphQL, defaultRetryDelay } from './graphql-client';
+export {
+  executeGraphQL,
+  defaultRetryDelay,
+  BifrostAuthError,
+} from './graphql-client';
+export type { BifrostAuthHandlers } from './graphql-client';
 export {
   buildMutation,
   buildInsertMutation,

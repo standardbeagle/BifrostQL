@@ -128,6 +128,10 @@ export function useBifrostInfinite<TData = unknown, TPageParam = unknown>(
         variables,
         signal,
         config.getToken,
+        {
+          refreshToken: config.refreshToken,
+          onSessionExpired: config.onSessionExpired,
+        },
       );
     },
     enabled,

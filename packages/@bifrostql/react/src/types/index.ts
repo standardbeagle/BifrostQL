@@ -30,6 +30,23 @@ export interface BifrostConfig {
    * Called before each request; the returned value is set as the `Authorization` header.
    */
   getToken?: () => string | null | Promise<string | null>;
+  /**
+   * Optional async or sync hook invoked when a request fails authentication
+   * (HTTP `401` or a GraphQL auth error). Implementations typically call the
+   * server's session/login endpoints (e.g. `GET /auth/session`, `/auth/login`)
+   * to obtain a fresh credential. When it resolves successfully the request is
+   * retried exactly once with a token re-read via {@link getToken}. When it
+   * returns a string, that value is used as the bearer token for the retry.
+   * When it throws, or returns without producing a usable token, the original
+   * auth failure is surfaced as a typed error.
+   */
+  refreshToken?: () => string | null | void | Promise<string | null | void>;
+  /**
+   * Optional hook invoked when an authentication failure could not be
+   * recovered — either no {@link refreshToken} hook is configured, or the
+   * refresh attempt itself failed. Receives the typed auth error.
+   */
+  onSessionExpired?: (error: Error) => void;
   /** Default TanStack Query options applied to all queries. */
   defaultQueryOptions?: BifrostDefaultQueryOptions;
   /** Global error handler invoked on any mutation failure. */

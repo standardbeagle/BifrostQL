@@ -1,4 +1,11 @@
-import { useState, useCallback, useMemo, useEffect, useRef, useContext } from 'react';
+import {
+  useState,
+  useCallback,
+  useMemo,
+  useEffect,
+  useRef,
+  useContext,
+} from 'react';
 import { useBifrostQuery } from './use-bifrost-query';
 import { BifrostContext } from '../components/bifrost-provider';
 import { executeGraphQL } from '../utils/graphql-client';
@@ -274,10 +281,7 @@ export interface ExportState {
   exportExcel: (allPages?: boolean) => void;
   exportJson: (allPages?: boolean) => void;
   copyToClipboard: (allPages?: boolean) => Promise<void>;
-  downloadFile: (
-    format: ExportFormat,
-    allPages?: boolean,
-  ) => void;
+  downloadFile: (format: ExportFormat, allPages?: boolean) => void;
 }
 
 export interface CellError {
@@ -432,7 +436,11 @@ export interface FocusPosition {
 export interface KeyboardNavigationState {
   focusedCell: FocusPosition | null;
   setFocusedCell: (pos: FocusPosition | null) => void;
-  handleKeyDown: (e: { key: string; preventDefault: () => void; shiftKey?: boolean }) => void;
+  handleKeyDown: (e: {
+    key: string;
+    preventDefault: () => void;
+    shiftKey?: boolean;
+  }) => void;
 }
 
 export interface AccessibilityState {
@@ -539,7 +547,10 @@ const DEFAULT_BREAKPOINTS: BreakpointConfig = {
 
 const BREAKPOINT_ORDER: Breakpoint[] = ['xs', 'sm', 'md', 'lg', 'xl'];
 
-function getBreakpointFromWidth(width: number, config: BreakpointConfig): Breakpoint {
+function getBreakpointFromWidth(
+  width: number,
+  config: BreakpointConfig,
+): Breakpoint {
   if (width >= config.xl) return 'xl';
   if (width >= config.lg) return 'lg';
   if (width >= config.md) return 'md';
@@ -753,7 +764,12 @@ function writeColumnPresetsToLocalStorage(
 function escapeCsvValue(value: unknown): string {
   if (value === null || value === undefined) return '';
   const str = String(value);
-  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+  if (
+    str.includes(',') ||
+    str.includes('"') ||
+    str.includes('\n') ||
+    str.includes('\r')
+  ) {
     return `"${str.replace(/"/g, '""')}"`;
   }
   return str;
@@ -799,7 +815,10 @@ function rowsToTsv(
   const dataLines = rows.map((row) =>
     fields
       .map((field) =>
-        formatExportValue(row[field], field, row, formatters).replace(/\t/g, ' '),
+        formatExportValue(row[field], field, row, formatters).replace(
+          /\t/g,
+          ' ',
+        ),
       )
       .join('\t'),
   );
@@ -825,7 +844,11 @@ function rowsToJson(
   return JSON.stringify(filtered, null, 2);
 }
 
-function triggerDownload(content: string, filename: string, mimeType: string): void {
+function triggerDownload(
+  content: string,
+  filename: string,
+  mimeType: string,
+): void {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
@@ -1097,9 +1120,7 @@ function computeAggregateForRows(
   config: AggregateConfig,
 ): unknown {
   if (typeof config.fn === 'function') {
-    const values = rows.map((row) =>
-      config.field ? row[config.field] : row,
-    );
+    const values = rows.map((row) => (config.field ? row[config.field] : row));
     return config.fn(values);
   }
   if (config.fn === 'count') return rows.length;
@@ -1282,12 +1303,13 @@ export function useBifrostTable<T = Record<string, unknown>>(
   const [childLoadingRows, setChildLoadingRows] = useState<Set<string>>(
     new Set(),
   );
-  const [childErrors, setChildErrors] = useState<Map<string, Error>>(
-    new Map(),
-  );
+  const [childErrors, setChildErrors] = useState<Map<string, Error>>(new Map());
   const childAbortRef = useRef<Map<string, AbortController>>(new Map());
   const bifrostConfig = useContext(BifrostContext);
-  const defaultColumnFields = useMemo(() => columns.map((c) => c.field), [columns]);
+  const defaultColumnFields = useMemo(
+    () => columns.map((c) => c.field),
+    [columns],
+  );
   const defaultColumnWidths = useMemo(() => {
     const widths: Record<string, number> = {};
     for (const col of columns) {
@@ -1305,16 +1327,17 @@ export function useBifrostTable<T = Record<string, unknown>>(
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>(
     () => ({ ...defaultColumnWidths }),
   );
-  const [pinnedColumns, setPinnedColumns] = useState<Record<string, PinPosition>>(
-    () => ({}),
-  );
+  const [pinnedColumns, setPinnedColumns] = useState<
+    Record<string, PinPosition>
+  >(() => ({}));
   const initialColumnPresets = useMemo(() => {
     if (!localStorageConfig?.key) return [];
     return readColumnPresetsFromLocalStorage(localStorageConfig.key);
     // Only read localStorage on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const [columnPresets, setColumnPresets] = useState<ColumnPreset[]>(initialColumnPresets);
+  const [columnPresets, setColumnPresets] =
+    useState<ColumnPreset[]>(initialColumnPresets);
 
   const [editingCell, setEditingCell] = useState<{
     rowKey: string;
@@ -1569,6 +1592,10 @@ export function useBifrostTable<T = Record<string, unknown>>(
         undefined,
         controller.signal,
         bifrostConfig.getToken,
+        {
+          refreshToken: bifrostConfig.refreshToken,
+          onSessionExpired: bifrostConfig.onSessionExpired,
+        },
       )
         .then((data) => {
           const childData = data[childQuery.query] ?? [];
@@ -1603,7 +1630,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
 
   const getChildData = useCallback(
     (rowId: string): ChildRowData => ({
-      data: childCacheRef.current.get(rowId) as unknown[] | null ?? null,
+      data: (childCacheRef.current.get(rowId) as unknown[] | null) ?? null,
       loading: childLoadingRows.has(rowId),
       error: childErrors.get(rowId) ?? null,
     }),
@@ -1620,27 +1647,24 @@ export function useBifrostTable<T = Record<string, unknown>>(
     [childErrors],
   );
 
-  const clearChildCache = useCallback(
-    (rowId?: string) => {
-      if (rowId) {
-        childCacheRef.current.delete(rowId);
-        const controller = childAbortRef.current.get(rowId);
-        if (controller) {
-          controller.abort();
-          childAbortRef.current.delete(rowId);
-        }
-      } else {
-        childCacheRef.current.clear();
-        for (const controller of childAbortRef.current.values()) {
-          controller.abort();
-        }
-        childAbortRef.current.clear();
+  const clearChildCache = useCallback((rowId?: string) => {
+    if (rowId) {
+      childCacheRef.current.delete(rowId);
+      const controller = childAbortRef.current.get(rowId);
+      if (controller) {
+        controller.abort();
+        childAbortRef.current.delete(rowId);
       }
-      setChildLoadingRows(new Set());
-      setChildErrors(new Map());
-    },
-    [],
-  );
+    } else {
+      childCacheRef.current.clear();
+      for (const controller of childAbortRef.current.values()) {
+        controller.abort();
+      }
+      childAbortRef.current.clear();
+    }
+    setChildLoadingRows(new Set());
+    setChildErrors(new Map());
+  }, []);
 
   // Abort in-flight child requests on unmount
   useEffect(() => {
@@ -1750,7 +1774,13 @@ export function useBifrostTable<T = Record<string, unknown>>(
         return updated;
       });
     },
-    [visibleColumns, columnOrder, columnWidths, pinnedColumns, localStorageConfig?.key],
+    [
+      visibleColumns,
+      columnOrder,
+      columnWidths,
+      pinnedColumns,
+      localStorageConfig?.key,
+    ],
   );
 
   const loadColumnPreset = useCallback(
@@ -1785,8 +1815,13 @@ export function useBifrostTable<T = Record<string, unknown>>(
     setPinnedColumns({});
   }, [defaultColumnFields, defaultColumnWidths]);
 
-  const getExportFields = useCallback((): { fields: string[]; headers: string[] } => {
-    const orderedVisible = columnOrder.filter((f) => visibleColumns.includes(f));
+  const getExportFields = useCallback((): {
+    fields: string[];
+    headers: string[];
+  } => {
+    const orderedVisible = columnOrder.filter((f) =>
+      visibleColumns.includes(f),
+    );
     const headers = orderedVisible.map((f) => {
       const col = columns.find((c) => c.field === f);
       return col?.header ?? f;
@@ -1808,7 +1843,12 @@ export function useBifrostTable<T = Record<string, unknown>>(
     (allPages?: boolean) => {
       const { fields: exportFields, headers } = getExportFields();
       const rows = getExportRows(allPages);
-      const csv = rowsToCsv(rows, exportFields, headers, exportConfig?.formatters);
+      const csv = rowsToCsv(
+        rows,
+        exportFields,
+        headers,
+        exportConfig?.formatters,
+      );
       const filename = `${exportConfig?.filename ?? table}-export.csv`;
       triggerDownload(csv, filename, 'text/csv;charset=utf-8;');
     },
@@ -1819,7 +1859,12 @@ export function useBifrostTable<T = Record<string, unknown>>(
     (allPages?: boolean) => {
       const { fields: exportFields, headers } = getExportFields();
       const rows = getExportRows(allPages);
-      const tsv = rowsToTsv(rows, exportFields, headers, exportConfig?.formatters);
+      const tsv = rowsToTsv(
+        rows,
+        exportFields,
+        headers,
+        exportConfig?.formatters,
+      );
       const filename = `${exportConfig?.filename ?? table}-export.xls`;
       triggerDownload(tsv, filename, 'application/vnd.ms-excel');
     },
@@ -1842,7 +1887,12 @@ export function useBifrostTable<T = Record<string, unknown>>(
       if (typeof navigator === 'undefined' || !navigator.clipboard) return;
       const { fields: exportFields, headers } = getExportFields();
       const rows = getExportRows(allPages);
-      const tsv = rowsToTsv(rows, exportFields, headers, exportConfig?.formatters);
+      const tsv = rowsToTsv(
+        rows,
+        exportFields,
+        headers,
+        exportConfig?.formatters,
+      );
       await navigator.clipboard.writeText(tsv);
     },
     [getExportFields, getExportRows, exportConfig],
@@ -2455,7 +2505,9 @@ export function useBifrostTable<T = Record<string, unknown>>(
     const dataLen = dataWithComputed.length;
     if (dataLen !== prevDataLenRef.current) {
       prevDataLenRef.current = dataLen;
-      setAnnouncement(`Table updated, ${dataLen} row${dataLen === 1 ? '' : 's'} displayed`);
+      setAnnouncement(
+        `Table updated, ${dataLen} row${dataLen === 1 ? '' : 's'} displayed`,
+      );
     }
   }, [dataWithComputed.length]);
 
@@ -2503,7 +2555,14 @@ export function useBifrostTable<T = Record<string, unknown>>(
         ? { 'aria-multiselectable': true }
         : {}),
     }),
-    [tableLabel, table, dataRowCount, visibleColCount, selectedRows.length, columns.length],
+    [
+      tableLabel,
+      table,
+      dataRowCount,
+      visibleColCount,
+      selectedRows.length,
+      columns.length,
+    ],
   );
 
   const getRowProps = useCallback(
@@ -2539,8 +2598,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
         role: 'gridcell' as const,
         'aria-colindex': colIndex + 1,
         'aria-readonly': isReadOnly,
-        tabIndex:
-          focusedCell?.colIndex === colIndex ? 0 : -1,
+        tabIndex: focusedCell?.colIndex === colIndex ? 0 : -1,
       };
     },
     [editableColumnSet, focusedCell],
@@ -2557,7 +2615,10 @@ export function useBifrostTable<T = Record<string, unknown>>(
         role: 'columnheader' as const,
         'aria-colindex': colIndex + 1,
         'aria-sort': ariaSort,
-        tabIndex: focusedCell?.rowIndex === -1 && focusedCell?.colIndex === colIndex ? 0 : -1,
+        tabIndex:
+          focusedCell?.rowIndex === -1 && focusedCell?.colIndex === colIndex
+            ? 0
+            : -1,
       };
     },
     [sort, focusedCell],
@@ -2669,7 +2730,11 @@ export function useBifrostTable<T = Record<string, unknown>>(
   // --- Responsive ---
   const responsiveVisibleColumns = useMemo(
     () =>
-      getColumnsForBreakpoint(visibleColumns, responsiveColumns, currentBreakpoint),
+      getColumnsForBreakpoint(
+        visibleColumns,
+        responsiveColumns,
+        currentBreakpoint,
+      ),
     [visibleColumns, responsiveColumns, currentBreakpoint],
   );
 
@@ -2726,7 +2791,14 @@ export function useBifrostTable<T = Record<string, unknown>>(
     const overscanStartIndex = Math.max(0, startIndex - vsOverscan);
     const overscanEndIndex = Math.min(totalRows - 1, endIndex + vsOverscan);
     return { startIndex, endIndex, overscanStartIndex, overscanEndIndex };
-  }, [vsEnabled, vsScrollTop, vsRowHeight, vsContainerHeight, vsOverscan, dataWithComputed.length]);
+  }, [
+    vsEnabled,
+    vsScrollTop,
+    vsRowHeight,
+    vsContainerHeight,
+    vsOverscan,
+    dataWithComputed.length,
+  ]);
 
   const vsOffsetTop = useMemo(
     () => vsVisibleRange.overscanStartIndex * vsRowHeight,
@@ -2743,13 +2815,10 @@ export function useBifrostTable<T = Record<string, unknown>>(
     );
   }, [vsEnabled, vsVisibleRange, dataWithComputed]);
 
-  const vsOnScroll = useCallback(
-    (scrollTop: number) => {
-      const clamped = Math.max(0, scrollTop);
-      setVsScrollTop(clamped);
-    },
-    [],
-  );
+  const vsOnScroll = useCallback((scrollTop: number) => {
+    const clamped = Math.max(0, scrollTop);
+    setVsScrollTop(clamped);
+  }, []);
 
   const vsScrollToRow = useCallback(
     (index: number) => {

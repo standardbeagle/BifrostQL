@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { executeGraphQL } from './graphql-client';
+import { executeGraphQL, BifrostAuthError } from './graphql-client';
 
 function createFetchMock(response: unknown, ok = true, status = 200) {
   return vi.fn().mockResolvedValue({
@@ -207,15 +207,252 @@ describe('executeGraphQL', () => {
     expect(options.signal).toBeUndefined();
   });
 
+  describe('auth refresh / session-failure handling', () => {
+    function createAuthFailingThenOkFetch(okResponse: unknown) {
+      // First call: 401. Second call (retry): OK.
+      return vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 401,
+          statusText: 'Unauthorized',
+          json: () => Promise.resolve({}),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          json: () => Promise.resolve(okResponse),
+        });
+    }
+
+    it('refreshes and retries once on HTTP 401, then succeeds', async () => {
+      globalThis.fetch = createAuthFailingThenOkFetch({
+        data: { users: [{ id: 1 }] },
+      });
+      const refreshToken = vi.fn().mockResolvedValue('fresh-token');
+      let tokenCalls = 0;
+      const getToken = vi.fn(() => {
+        tokenCalls += 1;
+        return tokenCalls === 1 ? 'stale-token' : 'fresh-token';
+      });
+
+      const result = await executeGraphQL(
+        'http://localhost/graphql',
+        {},
+        '{ users { id } }',
+        undefined,
+        undefined,
+        getToken,
+        { refreshToken },
+      );
+
+      expect(result).toEqual({ users: [{ id: 1 }] });
+      expect(refreshToken).toHaveBeenCalledTimes(1);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+      const [, retryOptions] = (globalThis.fetch as ReturnType<typeof vi.fn>)
+        .mock.calls[1];
+      expect(retryOptions.headers['Authorization']).toBe('Bearer fresh-token');
+    });
+
+    it('uses the token returned by refreshToken on the retry', async () => {
+      globalThis.fetch = createAuthFailingThenOkFetch({ data: { ok: true } });
+      const refreshToken = vi.fn().mockResolvedValue('returned-token');
+
+      await executeGraphQL(
+        'http://localhost/graphql',
+        {},
+        '{ users { id } }',
+        undefined,
+        undefined,
+        () => 'stale-token',
+        { refreshToken },
+      );
+
+      const [, retryOptions] = (globalThis.fetch as ReturnType<typeof vi.fn>)
+        .mock.calls[1];
+      expect(retryOptions.headers['Authorization']).toBe(
+        'Bearer returned-token',
+      );
+    });
+
+    it('refreshes and retries once on a GraphQL auth error', async () => {
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          json: () =>
+            Promise.resolve({
+              data: null,
+              errors: [{ message: 'Unauthorized: token expired' }],
+            }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          json: () => Promise.resolve({ data: { users: [] } }),
+        });
+      const refreshToken = vi.fn().mockResolvedValue('fresh-token');
+
+      const result = await executeGraphQL(
+        'http://localhost/graphql',
+        {},
+        '{ users { id } }',
+        undefined,
+        undefined,
+        () => 'stale-token',
+        { refreshToken },
+      );
+
+      expect(result).toEqual({ users: [] });
+      expect(refreshToken).toHaveBeenCalledTimes(1);
+    });
+
+    it('throws BifrostAuthError when no refreshToken hook is configured', async () => {
+      globalThis.fetch = createFetchMock({}, false, 401);
+
+      await expect(
+        executeGraphQL('http://localhost/graphql', {}, '{ users { id } }'),
+      ).rejects.toBeInstanceOf(BifrostAuthError);
+    });
+
+    it('throws BifrostAuthError when refreshToken hook throws', async () => {
+      globalThis.fetch = createFetchMock({}, false, 401);
+      const refreshToken = vi
+        .fn()
+        .mockRejectedValue(new Error('refresh endpoint down'));
+
+      await expect(
+        executeGraphQL(
+          'http://localhost/graphql',
+          {},
+          '{ users { id } }',
+          undefined,
+          undefined,
+          () => 'stale-token',
+          { refreshToken },
+        ),
+      ).rejects.toBeInstanceOf(BifrostAuthError);
+    });
+
+    it('throws BifrostAuthError when the retry also fails with 401', async () => {
+      globalThis.fetch = createFetchMock({}, false, 401);
+      const refreshToken = vi.fn().mockResolvedValue('still-bad-token');
+
+      await expect(
+        executeGraphQL(
+          'http://localhost/graphql',
+          {},
+          '{ users { id } }',
+          undefined,
+          undefined,
+          () => 'stale-token',
+          { refreshToken },
+        ),
+      ).rejects.toBeInstanceOf(BifrostAuthError);
+      // One initial + one retry only — never more than one retry.
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('invokes onSessionExpired with the typed error when refresh fails', async () => {
+      globalThis.fetch = createFetchMock({}, false, 401);
+      const onSessionExpired = vi.fn();
+
+      await expect(
+        executeGraphQL(
+          'http://localhost/graphql',
+          {},
+          '{ users { id } }',
+          undefined,
+          undefined,
+          undefined,
+          { onSessionExpired },
+        ),
+      ).rejects.toBeInstanceOf(BifrostAuthError);
+      expect(onSessionExpired).toHaveBeenCalledTimes(1);
+      expect(onSessionExpired.mock.calls[0][0]).toBeInstanceOf(
+        BifrostAuthError,
+      );
+    });
+
+    it('does not invoke onSessionExpired when the retry succeeds', async () => {
+      globalThis.fetch = createAuthFailingThenOkFetch({ data: { users: [] } });
+      const onSessionExpired = vi.fn();
+      const refreshToken = vi.fn().mockResolvedValue('fresh-token');
+
+      await executeGraphQL(
+        'http://localhost/graphql',
+        {},
+        '{ users { id } }',
+        undefined,
+        undefined,
+        () => 'stale',
+        { refreshToken, onSessionExpired },
+      );
+
+      expect(onSessionExpired).not.toHaveBeenCalled();
+    });
+
+    it('does not retry or alter behavior on a non-auth GraphQL error', async () => {
+      globalThis.fetch = createFetchMock({
+        data: null,
+        errors: [{ message: 'Field not found' }],
+      });
+      const refreshToken = vi.fn();
+
+      await expect(
+        executeGraphQL(
+          'http://localhost/graphql',
+          {},
+          '{ users { id } }',
+          undefined,
+          undefined,
+          () => 'token',
+          { refreshToken },
+        ),
+      ).rejects.toThrow('Field not found');
+      expect(refreshToken).not.toHaveBeenCalled();
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not retry on a non-401 HTTP error', async () => {
+      globalThis.fetch = createFetchMock({}, false, 500);
+      const refreshToken = vi.fn();
+
+      await expect(
+        executeGraphQL(
+          'http://localhost/graphql',
+          {},
+          '{ users { id } }',
+          undefined,
+          undefined,
+          () => 'token',
+          { refreshToken },
+        ),
+      ).rejects.toThrow('BifrostQL request failed: 500');
+      expect(refreshToken).not.toHaveBeenCalled();
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('rejects with AbortError when signal is aborted', async () => {
     const controller = new AbortController();
     globalThis.fetch = vi.fn().mockImplementation(
       (_url: string, init: RequestInit) =>
         new Promise((_resolve, reject) => {
+          const abortError = new DOMException(
+            'The operation was aborted.',
+            'AbortError',
+          );
+          if (init.signal?.aborted) {
+            reject(abortError);
+            return;
+          }
           init.signal?.addEventListener('abort', () => {
-            reject(
-              new DOMException('The operation was aborted.', 'AbortError'),
-            );
+            reject(abortError);
           });
         }),
     );

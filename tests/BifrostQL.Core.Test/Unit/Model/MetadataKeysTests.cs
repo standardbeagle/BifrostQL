@@ -54,6 +54,36 @@ namespace BifrostQL.Core.Test.Model
         {
             actual.Should().Be(expected);
         }
+
+        [Theory]
+        [InlineData(MetadataKeys.Security.TenantFilter, "tenant-filter")]
+        [InlineData(MetadataKeys.Security.TenantContextKey, "tenant-context-key")]
+        [InlineData(MetadataKeys.Security.AutoFilter, "auto-filter")]
+        [InlineData(MetadataKeys.Security.AutoFilterBypassRole, "auto-filter-bypass-role")]
+        public void SecurityKeys_HaveCorrectValues(string actual, string expected)
+        {
+            actual.Should().Be(expected);
+        }
+
+        [Theory]
+        [InlineData(MetadataKeys.SoftDelete.Column, "soft-delete")]
+        [InlineData(MetadataKeys.SoftDelete.DeletedBy, "soft-delete-by")]
+        [InlineData(MetadataKeys.SoftDelete.LegacyType, "soft-delete-type")]
+        [InlineData(MetadataKeys.SoftDelete.LegacyColumn, "soft-delete-column")]
+        [InlineData(MetadataKeys.SoftDelete.DeleteType, "delete-type")]
+        public void SoftDeleteKeys_HaveCorrectValues(string actual, string expected)
+        {
+            actual.Should().Be(expected);
+        }
+
+        [Theory]
+        [InlineData(MetadataKeys.Audit.Table, "audit-table")]
+        [InlineData(MetadataKeys.Audit.LegacyUserKey, "audit-user-key")]
+        [InlineData(MetadataKeys.Audit.UserKey, "user-audit-key")]
+        public void AuditKeys_HaveCorrectValues(string actual, string expected)
+        {
+            actual.Should().Be(expected);
+        }
         
         [Theory]
         [InlineData(MetadataKeys.Validation.Min, "min")]
@@ -96,6 +126,9 @@ namespace BifrostQL.Core.Test.Model
             MetadataKeys.DataType.Type.Should().NotBeNullOrEmpty();
             MetadataKeys.Storage.Bucket.Should().NotBeNullOrEmpty();
             MetadataKeys.Ui.Label.Should().NotBeNullOrEmpty();
+            MetadataKeys.Security.TenantFilter.Should().NotBeNullOrEmpty();
+            MetadataKeys.SoftDelete.Column.Should().NotBeNullOrEmpty();
+            MetadataKeys.Audit.UserKey.Should().NotBeNullOrEmpty();
             MetadataKeys.Validation.Min.Should().NotBeNullOrEmpty();
             MetadataKeys.Enum.Values.Should().NotBeNullOrEmpty();
             MetadataKeys.AutoPopulate.Timestamp.Should().NotBeNullOrEmpty();

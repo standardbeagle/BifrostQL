@@ -167,7 +167,7 @@ public sealed class ConfigValidator
         List<ConfigValidationIssue> issues)
     {
         // soft-delete references a column
-        if (properties.TryGetValue("soft-delete", out var sdColumn) &&
+        if (properties.TryGetValue(MetadataKeys.SoftDelete.Column, out var sdColumn) &&
             !table.ColumnLookup.ContainsKey(sdColumn))
         {
             issues.Add(new ConfigValidationIssue(
@@ -177,7 +177,7 @@ public sealed class ConfigValidator
         }
 
         // soft-delete-by references a column
-        if (properties.TryGetValue("soft-delete-by", out var sdByColumn) &&
+        if (properties.TryGetValue(MetadataKeys.SoftDelete.DeletedBy, out var sdByColumn) &&
             !table.ColumnLookup.ContainsKey(sdByColumn))
         {
             issues.Add(new ConfigValidationIssue(
@@ -187,7 +187,7 @@ public sealed class ConfigValidator
         }
 
         // tenant-filter references a column
-        if (properties.TryGetValue("tenant-filter", out var tfColumn) &&
+        if (properties.TryGetValue(MetadataKeys.Security.TenantFilter, out var tfColumn) &&
             !table.ColumnLookup.ContainsKey(tfColumn))
         {
             issues.Add(new ConfigValidationIssue(

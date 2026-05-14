@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
+using BifrostQL.Core.Model;
 using FluentAssertions;
 using Xunit;
 
@@ -34,6 +35,20 @@ namespace BifrostQL.Core.Test.Model
         // this empty unless you have a documented reason; every entry is a
         // hole in the regression guard.
         private static readonly HashSet<string> AllowedLiterals = new(StringComparer.Ordinal);
+
+        private static readonly string[] SecuritySensitiveMetadataKeys =
+        {
+            MetadataKeys.Security.TenantFilter,
+            MetadataKeys.Security.TenantContextKey,
+            MetadataKeys.Security.AutoFilter,
+            MetadataKeys.Security.AutoFilterBypassRole,
+            MetadataKeys.SoftDelete.Column,
+            MetadataKeys.SoftDelete.DeletedBy,
+            MetadataKeys.RawSql.Enabled,
+            MetadataKeys.RawSql.Role,
+            MetadataKeys.RawSql.Timeout,
+            MetadataKeys.RawSql.MaxRows,
+        };
 
         [Fact]
         public void NoRawStringLiteralsInMetadataCalls()
@@ -82,6 +97,48 @@ namespace BifrostQL.Core.Test.Model
 
             violations.Should().BeEmpty(
                 "all metadata accessors must use MetadataKeys constants. Offenders:\n  " +
+                string.Join("\n  ", violations));
+        }
+
+        [Fact]
+        public void NoRawSecuritySensitiveMetadataKeysOutsideMetadataKeys()
+        {
+            var sourceRoot = LocateBifrostCoreSourceRoot();
+            sourceRoot.Should().NotBeNull(
+                "the BifrostQL.Core source directory must be locatable from the test assembly");
+
+            var violations = new List<string>();
+
+            foreach (var file in Directory.EnumerateFiles(sourceRoot!, "*.cs", SearchOption.AllDirectories))
+            {
+                var relative = Path.GetRelativePath(sourceRoot!, file).Replace('\\', '/');
+                if (relative is "Model/MetadataKeys.cs")
+                    continue;
+                if (relative.StartsWith("obj/", StringComparison.Ordinal) ||
+                    relative.StartsWith("bin/", StringComparison.Ordinal))
+                    continue;
+
+                var lines = File.ReadAllLines(file);
+                for (var i = 0; i < lines.Length; i++)
+                {
+                    var trimmed = lines[i].TrimStart();
+                    if (trimmed.StartsWith("//", StringComparison.Ordinal) ||
+                        trimmed.StartsWith("///", StringComparison.Ordinal) ||
+                        trimmed.StartsWith("*", StringComparison.Ordinal))
+                        continue;
+
+                    foreach (var key in SecuritySensitiveMetadataKeys)
+                    {
+                        if (lines[i].Contains($"\"{key}\"", StringComparison.Ordinal))
+                        {
+                            violations.Add($"{relative}:{i + 1}  \"{key}\" -> use MetadataKeys");
+                        }
+                    }
+                }
+            }
+
+            violations.Should().BeEmpty(
+                "security-sensitive metadata keys must use MetadataKeys constants. Offenders:\n  " +
                 string.Join("\n  ", violations));
         }
 

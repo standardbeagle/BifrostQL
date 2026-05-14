@@ -12,14 +12,14 @@ namespace BifrostQL.Core.Resolvers
     /// </summary>
     public sealed class RawSqlQueryResolver : IBifrostResolver, IFieldResolver
     {
-        public const string MetadataKey = "raw-sql";
+        public const string MetadataKey = MetadataKeys.RawSql.Enabled;
         public const string MetadataEnabled = "enabled";
         public const string DefaultRequiredRole = "bifrost-raw-sql";
         public const int DefaultTimeoutSeconds = 30;
         public const int DefaultMaxRows = 1000;
-        public const string RoleMetadataKey = "raw-sql-role";
-        public const string TimeoutMetadataKey = "raw-sql-timeout";
-        public const string MaxRowsMetadataKey = "raw-sql-max-rows";
+        public const string RoleMetadataKey = MetadataKeys.RawSql.Role;
+        public const string TimeoutMetadataKey = MetadataKeys.RawSql.Timeout;
+        public const string MaxRowsMetadataKey = MetadataKeys.RawSql.MaxRows;
 
         private readonly IDbModel _model;
         private readonly RawSqlValidator _validator = new();

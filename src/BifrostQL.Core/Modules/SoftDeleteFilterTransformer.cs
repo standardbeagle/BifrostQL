@@ -19,14 +19,14 @@ namespace BifrostQL.Core.Modules;
 /// </summary>
 public sealed class SoftDeleteFilterTransformer : SingleColumnFilterTransformerBase
 {
-    public const string MetadataKey = "soft-delete";
+    public const string MetadataKey = MetadataKeys.SoftDelete.Column;
     public const string IncludeDeletedKey = "include_deleted";
 
     public SoftDeleteFilterTransformer() : base(MetadataKey, priority: 100)
     {
     }
 
-    public override string ModuleName => "soft-delete";
+    public override string ModuleName => MetadataKeys.SoftDelete.Column;
 
     public override bool AppliesTo(IDbTable table, QueryTransformContext context)
     {

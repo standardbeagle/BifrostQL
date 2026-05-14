@@ -1,3 +1,5 @@
+import { assertGraphqlName } from './graphql-identifiers';
+
 /** The four mutation operations supported by BifrostQL. */
 export type MutationType = 'insert' | 'update' | 'upsert' | 'delete';
 
@@ -19,6 +21,7 @@ function capitalize(s: string): string {
  * ```
  */
 export function buildMutation(table: string, type: MutationType): string {
+  assertGraphqlName(table, 'table');
   const label = capitalize(type);
   return `mutation ${label}($detail: ${label}_${table}) { ${table}(${type}: $detail) }`;
 }

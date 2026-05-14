@@ -133,4 +133,43 @@ describe('buildGraphqlQuery', () => {
     expect(result).toContain('"admin"');
     expect(result).toContain('"editor"');
   });
+
+  it('rejects unsafe table names', () => {
+    expect(() => buildGraphqlQuery('users) { injected')).toThrow(
+      /Invalid GraphQL table/,
+    );
+  });
+
+  it('rejects unsafe field names', () => {
+    expect(() =>
+      buildGraphqlQuery('users', {
+        fields: ['id', 'name) { injected'],
+      }),
+    ).toThrow(/Invalid GraphQL selection field/);
+  });
+
+  it('rejects unsafe filter fields and operators', () => {
+    expect(() =>
+      buildGraphqlQuery('users', {
+        filter: { 'status) { injected': 'active' },
+      }),
+    ).toThrow(/Invalid GraphQL filter field/);
+
+    expect(() =>
+      buildGraphqlQuery('users', {
+        filter: {
+          // @ts-expect-error runtime validation rejects unknown operators too
+          status: { _containsInjected: 'active' },
+        },
+      }),
+    ).toThrow(/Invalid GraphQL filter operator/);
+  });
+
+  it('rejects unsafe sort fields', () => {
+    expect(() =>
+      buildGraphqlQuery('users', {
+        sort: [{ field: 'name) { injected', direction: 'asc' }],
+      }),
+    ).toThrow(/Invalid GraphQL sort field/);
+  });
 });

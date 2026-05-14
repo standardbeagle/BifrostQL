@@ -22,11 +22,12 @@ FROM mcr.microsoft.com/vscode/devcontainers/typescript-node:${VARIANT} AS edit-d
 WORKDIR /
 COPY . .
 WORKDIR "/examples/edit-db"
-RUN npm install
+RUN corepack enable && corepack prepare pnpm@11.1.1 --activate
+RUN pnpm install --frozen-lockfile
 
 FROM edit-db-base AS edit-db-build
-RUN npm run build
-RUN npm run build-storybook
+RUN pnpm run build
+RUN pnpm run build-storybook
 
 FROM base AS final
 WORKDIR /app

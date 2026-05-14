@@ -23,15 +23,15 @@ namespace BifrostQL.Core.Modules;
 /// </summary>
 public sealed class SoftDeleteMutationTransformer : SoftDeleteMutationTransformerBase
 {
-    public const string MetadataKey = "soft-delete";
-    public const string DeletedByMetadataKey = "soft-delete-by";
+    public const string MetadataKey = MetadataKeys.SoftDelete.Column;
+    public const string DeletedByMetadataKey = MetadataKeys.SoftDelete.DeletedBy;
     public const string UserIdContextKey = "user_id";
 
     public SoftDeleteMutationTransformer() : base(MetadataKey, priority: 100)
     {
     }
 
-    public override string ModuleName => "soft-delete";
+    public override string ModuleName => MetadataKeys.SoftDelete.Column;
 
     protected override MutationTransformResult TransformDelete(
         IDbTable table,

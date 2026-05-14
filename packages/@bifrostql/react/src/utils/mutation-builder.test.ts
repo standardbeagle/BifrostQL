@@ -27,6 +27,12 @@ describe('buildMutation', () => {
       'mutation Delete($detail: Delete_users) { users(delete: $detail) }',
     );
   });
+
+  it('rejects unsafe table names', () => {
+    expect(() => buildMutation('users) { injected', 'insert')).toThrow(
+      /Invalid GraphQL table/,
+    );
+  });
 });
 
 describe('buildInsertMutation', () => {

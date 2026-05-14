@@ -18,15 +18,15 @@ namespace BifrostQL.Core.Modules;
 /// </summary>
 public sealed class TenantFilterTransformer : ContextValueFilterTransformerBase
 {
-    public const string MetadataKey = "tenant-filter";
-    public const string TenantContextKeyMetadata = "tenant-context-key";
+    public const string MetadataKey = MetadataKeys.Security.TenantFilter;
+    public const string TenantContextKeyMetadata = MetadataKeys.Security.TenantContextKey;
     public const string DefaultTenantContextKey = "tenant_id";
 
     public TenantFilterTransformer() : base(MetadataKey, DefaultTenantContextKey, priority: 0)
     {
     }
 
-    public override string ModuleName => "tenant-filter";
+    public override string ModuleName => MetadataKeys.Security.TenantFilter;
 
     protected override TableFilter BuildFilter(IDbTable table, string columnName, QueryTransformContext context)
     {

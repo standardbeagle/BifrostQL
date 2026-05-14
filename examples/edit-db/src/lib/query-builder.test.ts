@@ -131,7 +131,17 @@ describe('getFilterObj', () => {
 
     it('handles malformed array gracefully', () => {
         const result = getFilterObj(JSON.stringify([1]));
-        expect(result.param).toBe(', $filter: undefined');
+        expect(result).toEqual({ variables: {}, param: '', filterText: '' });
+    });
+
+    it('rejects filter JSON with unsafe GraphQL identifiers', () => {
+        const result = getFilterObj(JSON.stringify(['name) { injected', '_eq', 'test', 'String']));
+        expect(result).toEqual({ variables: {}, param: '', filterText: '' });
+    });
+
+    it('rejects unsupported filter operators', () => {
+        const result = getFilterObj(JSON.stringify(['name', '_contains_something', 'test', 'String']));
+        expect(result).toEqual({ variables: {}, param: '', filterText: '' });
     });
 });
 
@@ -276,6 +286,19 @@ describe('buildColumnFilters', () => {
 
     it('skips filters for nonexistent columns', () => {
         const filters = [{ id: 'nonexistent', value: { operator: '_eq', value: 'x' } as ColumnFilterValue }];
+        expect(buildColumnFilters(filters, table).filterTexts).toEqual([]);
+    });
+
+    it('skips filters with unsafe column identifiers', () => {
+        const unsafeTable = makeTable({
+            columns: [makeColumn({ name: 'name) { injected', paramType: 'String' })],
+        });
+        const filters = [{ id: 'name) { injected', value: { operator: '_eq', value: 'x' } as ColumnFilterValue }];
+        expect(buildColumnFilters(filters, unsafeTable).filterTexts).toEqual([]);
+    });
+
+    it('skips unsupported operators for the column type', () => {
+        const filters = [{ id: 'active', value: { operator: '_contains', value: true } as ColumnFilterValue }];
         expect(buildColumnFilters(filters, table).filterTexts).toEqual([]);
     });
 

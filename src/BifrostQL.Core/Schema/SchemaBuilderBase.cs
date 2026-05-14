@@ -75,7 +75,7 @@ public abstract class SchemaBuilderBase
     /// </summary>
     protected bool IsRawSqlEnabled()
     {
-        return Model.Metadata.TryGetValue("enable-raw-sql", out var val) && val?.ToString() == "true";
+        return Model.Metadata.TryGetValue(MetadataKeys.Model.EnableRawSql, out var val) && val?.ToString() == "true";
     }
 
     /// <summary>
@@ -83,7 +83,7 @@ public abstract class SchemaBuilderBase
     /// </summary>
     protected bool IsGenericTableEnabled()
     {
-        return Model.Metadata.TryGetValue("enable-generic-table", out var val) && val?.ToString() == "true";
+        return Model.Metadata.TryGetValue(MetadataKeys.Model.EnableGenericTable, out var val) && val?.ToString() == "true";
     }
 
     /// <summary>
@@ -91,7 +91,7 @@ public abstract class SchemaBuilderBase
     /// </summary>
     protected bool HasSoftDelete(IDbTable table)
     {
-        return table.Metadata.TryGetValue("soft-delete", out var val) && val != null;
+        return table.Metadata.TryGetValue(MetadataKeys.SoftDelete.Column, out var val) && val != null;
     }
 
     /// <summary>

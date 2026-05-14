@@ -106,6 +106,9 @@ namespace BifrostQL.Core.Model
             /// <summary>Column label for display.</summary>
             public const string Label = "label";
 
+            /// <summary>Visibility marker for tables, columns, and schema artifacts.</summary>
+            public const string Visibility = "visibility";
+
             /// <summary>Hide this table or column from the UI.</summary>
             public const string Hidden = "hidden";
 
@@ -186,6 +189,12 @@ namespace BifrostQL.Core.Model
         /// </summary>
         public static class Audit
         {
+            /// <summary>Model-level metadata key naming the audit table.</summary>
+            public const string Table = "audit-table";
+
+            /// <summary>Legacy model-level metadata key naming the audit user claim.</summary>
+            public const string LegacyUserKey = "audit-user-key";
+
             /// <summary>
             /// Model-level metadata key naming the user-context claim used to
             /// populate created-by / updated-by / deleted-by columns.
@@ -194,10 +203,52 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
+        /// Metadata keys used by the tenancy and automatic-filter modules.
+        /// </summary>
+        public static class Security
+        {
+            /// <summary>Table-level column used for tenant isolation.</summary>
+            public const string TenantFilter = "tenant-filter";
+
+            /// <summary>Model-level user-context key for resolving tenant IDs.</summary>
+            public const string TenantContextKey = "tenant-context-key";
+
+            /// <summary>Table-level mappings from context claims to filter columns.</summary>
+            public const string AutoFilter = "auto-filter";
+
+            /// <summary>Model-level role name that bypasses auto filters.</summary>
+            public const string AutoFilterBypassRole = "auto-filter-bypass-role";
+        }
+
+        /// <summary>
+        /// Metadata keys for soft-delete filtering and mutation rewriting.
+        /// </summary>
+        public static class SoftDelete
+        {
+            /// <summary>Table-level column set when records are soft deleted.</summary>
+            public const string Column = "soft-delete";
+
+            /// <summary>Optional table-level column set to the deleting user ID.</summary>
+            public const string DeletedBy = "soft-delete-by";
+
+            /// <summary>Legacy model-level soft-delete type setting.</summary>
+            public const string LegacyType = "soft-delete-type";
+
+            /// <summary>Legacy model-level soft-delete column setting.</summary>
+            public const string LegacyColumn = "soft-delete-column";
+
+            /// <summary>Table-level delete behavior selector.</summary>
+            public const string DeleteType = "delete-type";
+        }
+
+        /// <summary>
         /// Metadata keys for explicit relationship declarations.
         /// </summary>
         public static class Relationships
         {
+            /// <summary>Metadata key for explicit join declarations.</summary>
+            public const string Join = "join";
+
             /// <summary>
             /// Table-level many-to-many declaration. Format:
             /// <c>"TargetTable:JunctionTable[, TargetTable:JunctionTable...]"</c>.
@@ -209,6 +260,30 @@ namespace BifrostQL.Core.Model
             /// containers in the GraphQL schema. Defaults to true.
             /// </summary>
             public const string DynamicJoins = "dynamic-joins";
+
+            /// <summary>Model-level toggle for automatic join discovery.</summary>
+            public const string AutoJoin = "auto-join";
+
+            /// <summary>Model-level toggle for foreign-key join discovery.</summary>
+            public const string ForeignJoins = "foreign-joins";
+        }
+
+        /// <summary>
+        /// Metadata keys for model-level query/schema behavior.
+        /// </summary>
+        public static class Model
+        {
+            /// <summary>Default per-table limit.</summary>
+            public const string DefaultLimit = "default-limit";
+
+            /// <summary>Model-level toggle for generic table query fields.</summary>
+            public const string EnableGenericTable = "enable-generic-table";
+
+            /// <summary>Legacy model-level toggle for raw SQL schema exposure.</summary>
+            public const string EnableRawSql = "enable-raw-sql";
+
+            /// <summary>Model-level toggle for de-pluralizing GraphQL names.</summary>
+            public const string DePluralize = "de-pluralize";
         }
 
         /// <summary>
@@ -230,6 +305,49 @@ namespace BifrostQL.Core.Model
             /// value must be <c>"enabled"</c> for raw SQL queries to be exposed.
             /// </summary>
             public const string Enabled = "raw-sql";
+
+            /// <summary>Model-level role required for raw SQL execution.</summary>
+            public const string Role = "raw-sql-role";
+
+            /// <summary>Model-level raw SQL timeout in seconds.</summary>
+            public const string Timeout = "raw-sql-timeout";
+
+            /// <summary>Model-level maximum rows returned by raw SQL.</summary>
+            public const string MaxRows = "raw-sql-max-rows";
+        }
+
+        /// <summary>
+        /// Metadata keys for schema-prefix and schema-field presentation.
+        /// </summary>
+        public static class Schema
+        {
+            public const string Prefix = "schema-prefix";
+            public const string PrefixDefault = "schema-prefix-default";
+            public const string PrefixFormat = "schema-prefix-format";
+            public const string Display = "schema-display";
+            public const string Default = "schema-default";
+            public const string Excluded = "schema-excluded";
+            public const string Permissions = "schema-permissions";
+        }
+
+        /// <summary>
+        /// Metadata keys for stored procedure discovery.
+        /// </summary>
+        public static class StoredProcedures
+        {
+            public const string Include = "sp-include";
+            public const string Exclude = "sp-exclude";
+        }
+
+        /// <summary>
+        /// Metadata keys for application-schema detection.
+        /// </summary>
+        public static class AppSchema
+        {
+            public const string AutoDetect = "auto-detect-app";
+            public const string App = "app-schema";
+            public const string Detected = "detected-app";
+            public const string PrefixGroups = "prefix-groups";
         }
     }
 }

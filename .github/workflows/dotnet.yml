@@ -160,24 +160,21 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 11.1.1
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: examples/edit-db/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
       - name: set editor version
-        working-directory: ./examples/edit-db
-        run: npm version 0.4.${{ github.run_number }}
+        run: pnpm --dir examples/edit-db version 0.4.${{ github.run_number }} --no-git-tag-version
       - name: install editor
-        working-directory: ./examples/edit-db
         run: pnpm install --frozen-lockfile
       - name: build editor
-        working-directory: ./examples/edit-db
-        run: pnpm run build
+        run: pnpm --dir examples/edit-db build
       - name: publish npm package
-        working-directory: ./examples/edit-db
         run: |
           echo "//registry.npmjs.org/:_authToken=${{secrets.NPM_TOKEN}}" > ~/.npmrc
-          npm publish --access public
+          pnpm --dir examples/edit-db publish --access public --no-git-checks

@@ -47,6 +47,21 @@ const columnFilterOperators: Record<string, string[]> = {
     DateTime: ["_eq", "_neq", "_gt", "_gte", "_lt", "_lte", "_between", "_null"],
 };
 
+const graphQlNamePattern = /^[_A-Za-z][_0-9A-Za-z]*$/;
+const graphQlTypePattern = /^[_A-Za-z][_0-9A-Za-z]*!?$/;
+
+function isGraphQlName(value: unknown): value is string {
+    return typeof value === "string" && graphQlNamePattern.test(value);
+}
+
+function isGraphQlType(value: unknown): value is string {
+    return typeof value === "string" && graphQlTypePattern.test(value);
+}
+
+function isFilterOperator(value: unknown, paramType: string): value is string {
+    return typeof value === "string" && getFilterOperators(paramType).includes(value);
+}
+
 export function getFilterOperators(paramType: string): string[] {
     const baseType = paramType.replace("!", "");
     return columnFilterOperators[baseType] ?? columnFilterOperators.String;
@@ -56,6 +71,9 @@ export function getFilterObj(filterString: string): FilterResult {
     try {
         if (!filterString) return { variables: {}, param: "", filterText: "" };
         const [column, action, value, type] = JSON.parse(filterString);
+        if (!isGraphQlName(column) || !isGraphQlType(type) || !isFilterOperator(action, type)) {
+            return { variables: {}, param: "", filterText: "" };
+        }
         return { variables: { filter: value }, param: `, $filter: ${type}`, filterText: `{${column}: {${action}: $filter} }` }
     } catch {
         return { variables: {}, param: "", filterText: "" };
@@ -99,6 +117,7 @@ export function buildColumnFilters(columnFilters: ColumnFiltersState, table: Tab
 
         const col = table.columns.find((c) => c.name === cf.id);
         if (!col) continue;
+        if (!isGraphQlName(cf.id) || !isFilterOperator(filterValue.operator, col.paramType)) continue;
 
         const varName = `cf_${cf.id}`;
         const gqlType = getGraphQlType(col.paramType);

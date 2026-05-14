@@ -4,6 +4,7 @@ import type {
   AdvancedFilter,
   CompoundFilter,
 } from '../types';
+import { assertFilterOperator, assertGraphqlName } from './graphql-identifiers';
 
 function isCompoundFilter(filter: AdvancedFilter): filter is CompoundFilter {
   return '_and' in filter || '_or' in filter;
@@ -27,12 +28,14 @@ function buildFilterObject(filter: AdvancedFilter): string {
   if (entries.length === 0) return '';
 
   const parts = entries.map(([field, value]) => {
+    assertGraphqlName(field, 'filter field');
     if (value === null) return `${field}: { _null: true }`;
     if (typeof value !== 'object')
       return `${field}: { _eq: ${JSON.stringify(value)} }`;
 
     const ops = Object.entries(value as Record<string, unknown>)
       .map(([op, val]) => {
+        assertFilterOperator(op);
         if (op === '_between' && Array.isArray(val) && val.length === 2) {
           return `_gte: ${JSON.stringify(val[0])}, _lte: ${JSON.stringify(val[1])}`;
         }
@@ -53,7 +56,10 @@ function buildFilterArgs(filter: AdvancedFilter): string {
 
 function buildSortArgs(sort: SortOption[]): string {
   if (sort.length === 0) return '';
-  const parts = sort.map((s) => `${s.field}_${s.direction}`);
+  const parts = sort.map((s) => {
+    assertGraphqlName(s.field, 'sort field');
+    return `${s.field}_${s.direction}`;
+  });
   return `sort: [${parts.join(', ')}]`;
 }
 
@@ -90,6 +96,7 @@ export function buildGraphqlQuery(
   options: QueryOptions = {},
 ): string {
   const { filter, sort, pagination, fields } = options;
+  assertGraphqlName(table, 'table');
 
   const args: string[] = [];
   if (filter) args.push(buildFilterArgs(filter));
@@ -101,7 +108,14 @@ export function buildGraphqlQuery(
 
   const argStr = args.length > 0 ? `(${args.join(', ')})` : '';
   const fieldStr =
-    fields && fields.length > 0 ? fields.join('\n    ') : '__typename';
+    fields && fields.length > 0
+      ? fields
+          .map((field) => {
+            assertGraphqlName(field, 'selection field');
+            return field;
+          })
+          .join('\n    ')
+      : '__typename';
 
   return `{
   ${table}${argStr} {

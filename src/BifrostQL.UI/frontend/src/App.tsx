@@ -644,7 +644,7 @@ export default function App() {
           <div
             className="bifrost-transport-toggle"
             role="group"
-            aria-label="GraphQL transport"
+            aria-label="GraphQL transport probe"
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -657,16 +657,16 @@ export default function App() {
               aria-label={
                 transportMode === 'binary'
                   ? transportConnected
-                    ? 'Binary transport connected'
-                    : 'Binary transport disconnected'
-                  : 'HTTP transport (stateless)'
+                    ? 'Binary probe connected'
+                    : 'Binary probe disconnected'
+                  : 'HTTP editor transport'
               }
               title={
                 transportMode === 'binary'
                   ? transportConnected
-                    ? 'Binary WebSocket connected'
-                    : 'Binary WebSocket disconnected'
-                  : 'HTTP transport — stateless, always reachable'
+                    ? 'Binary WebSocket probe connected; editor queries still use HTTP'
+                    : 'Binary WebSocket probe disconnected; editor queries still use HTTP'
+                  : 'Editor queries use HTTP'
               }
               style={{
                 width: 8,
@@ -685,7 +685,7 @@ export default function App() {
               type="button"
               onClick={handleToggleTransport}
               aria-pressed={transportMode === 'binary'}
-              title="Toggle between HTTP/JSON and WebSocket binary transport"
+              title="Probe HTTP/JSON or WebSocket binary transport. Editor queries still use HTTP until @standardbeagle/edit-db accepts a transport."
               style={{
                 background: 'transparent',
                 border: '1px solid currentColor',
@@ -696,7 +696,7 @@ export default function App() {
                 color: 'inherit',
               }}
             >
-              {transportMode === 'binary' ? 'Binary' : 'HTTP'}
+              {transportMode === 'binary' ? 'Binary probe' : 'HTTP editor'}
             </button>
           </div>
           <button

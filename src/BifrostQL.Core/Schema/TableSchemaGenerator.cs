@@ -26,7 +26,7 @@ namespace BifrostQL.Core.Schema
 
         public string GetTableFieldDefinition()
         {
-            var hasSoftDelete = _table.Metadata.TryGetValue("soft-delete", out var sdVal) && sdVal != null;
+            var hasSoftDelete = _table.Metadata.TryGetValue(MetadataKeys.SoftDelete.Column, out var sdVal) && sdVal != null;
             var includeDeletedArg = hasSoftDelete ? " _includeDeleted: Boolean" : "";
             return
                 $"{_table.GraphQlName}(limit: Int, offset: Int, sort: [{_table.TableColumnSortEnumName}!] filter: {_table.TableFilterTypeName} _primaryKey: [String]{includeDeletedArg}): {_table.GraphQlName}_paged";

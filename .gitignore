@@ -384,3 +384,9 @@ examples/bifrost-react/coverage/
 # Symlinks to local binaries
 bifrostui
 /wwwroot
+
+# BifrostQL.UI frontend build output. Existing tracked assets are generated
+# publish artifacts; new hashes should come from `pnpm --dir src/BifrostQL.UI/frontend build`.
+src/BifrostQL.UI/wwwroot/assets/
+src/BifrostQL.UI/wwwroot/fonts/
+src/BifrostQL.UI/wwwroot/index.html

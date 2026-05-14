@@ -520,11 +520,11 @@ type AggregateFn = 'sum' | 'avg' | 'min' | 'max' | 'count';
 ## Development
 
 ```bash
-npm install
-npm test
-npm run build
-npm run lint
-npm run format
+pnpm install
+pnpm --dir packages/@bifrostql/react test
+pnpm --dir packages/@bifrostql/react build
+pnpm --dir packages/@bifrostql/react lint
+pnpm --dir packages/@bifrostql/react format
 ```
 
 ## License

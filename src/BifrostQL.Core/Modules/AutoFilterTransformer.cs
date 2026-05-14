@@ -26,11 +26,11 @@ namespace BifrostQL.Core.Modules;
 /// </summary>
 public sealed class AutoFilterTransformer : IFilterTransformer, IModuleNamed
 {
-    public const string MetadataKey = "auto-filter";
-    public const string BypassRoleMetadataKey = "auto-filter-bypass-role";
+    public const string MetadataKey = MetadataKeys.Security.AutoFilter;
+    public const string BypassRoleMetadataKey = MetadataKeys.Security.AutoFilterBypassRole;
     public const string RolesContextKey = "roles";
 
-    public string ModuleName => "auto-filter";
+    public string ModuleName => MetadataKeys.Security.AutoFilter;
 
     // Security: runs at priority 1, right after tenant filter (priority 0)
     public int Priority => 1;

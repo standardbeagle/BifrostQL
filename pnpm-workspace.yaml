@@ -1,4 +1,5 @@
 packages:
+  - docs
   - examples/*
   - packages/*
   - packages/@bifrostql/*
@@ -7,3 +8,4 @@ packages:
 allowBuilds:
   '@swc/core': true
   esbuild: true
+  sharp: true

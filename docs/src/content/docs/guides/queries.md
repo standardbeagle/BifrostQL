@@ -69,12 +69,12 @@ Multiple fields at the same level are combined with AND:
 }
 ```
 
-Use `_and` and `_or` for explicit boolean logic:
+Use `and` and `or` for explicit boolean logic:
 
 ```graphql
 {
   products(filter: {
-    _or: [
+    or: [
       { price: { _lt: 10 } },
       { category: { _eq: "sale" } }
     ]

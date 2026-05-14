@@ -41,7 +41,7 @@ export default defineConfig({
 						{ label: 'Mutations', slug: 'guides/mutations' },
 						{ label: 'Module System', slug: 'guides/modules' },
 						{ label: 'Authentication', slug: 'guides/authentication' },
-					{ label: 'Desktop App', slug: 'guides/desktop-app' },
+						{ label: 'Desktop App', slug: 'guides/desktop-app' },
 						{ label: 'WordPress', slug: 'guides/wordpress' },
 						{ label: 'Binary Transport', slug: 'guides/binary-transport' },
 					],

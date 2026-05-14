@@ -12,7 +12,7 @@ At startup, BifrostQL:
 1. Connects to your database using the configured provider
 2. Reads all tables, columns, primary keys, and foreign key relationships
 3. Maps SQL types to GraphQL types using the dialect's type mapper
-4. Generates query fields (one per table, paged), mutation fields (insert, update, upsert, delete per table), and input types
+4. Generates query fields (one per table, paged), mutation fields (one table field with insert, update, upsert, delete arguments), batch mutation fields, and input types
 5. Applies metadata rules to hide tables/columns, configure modules, and adjust behavior
 6. Caches the schema for the lifetime of the application
 
@@ -39,25 +39,28 @@ Columns that are non-nullable in the database produce non-nullable (`!`) GraphQL
 For a table named `orders`, BifrostQL generates:
 
 ```graphql
-type Query {
+type database {
   orders(
     limit: Int
     offset: Int
-    sort: [OrderSort]
-    filter: OrderFilter
-  ): OrderPage
+    sort: [ordersSortEnum!]
+    filter: TableFilterordersInput
+    _primaryKey: [String]
+  ): orders_paged
 }
 
-type OrderPage {
-  data: [Order]
-  total: Int
+type orders_paged {
+  data: [orders]
+  total: Int!
+  offset: Int
+  limit: Int
 }
 ```
 
 The sort enum contains one entry per column in both ascending and descending variants:
 
 ```graphql
-enum OrderSort {
+enum ordersSortEnum {
   orderId_asc
   orderId_desc
   customerId_asc
@@ -69,18 +72,23 @@ enum OrderSort {
 
 ## Generated mutation fields
 
-For each table with a primary key, BifrostQL generates four mutation operations:
+For each table with a primary key, BifrostQL generates one mutation field with four operation arguments, plus a batch field:
 
 ```graphql
-type Mutation {
-  insert_orders(data: OrderInsertInput!): Order
-  update_orders(data: OrderUpdateInput!): Order
-  upsert_orders(data: OrderUpsertInput!): Order
-  delete_orders(filter: OrderFilter!): Int
+type databaseInput {
+  orders(
+    insert: Insert_orders
+    update: Update_orders
+    upsert: Upsert_orders
+    delete: Delete_orders
+    _primaryKey: [String]
+  ): Int
+
+  orders_batch(actions: [batch_orders!]!): Int
 }
 ```
 
-Insert inputs exclude auto-increment columns. Update inputs require all non-nullable columns (not just the ones being changed). Delete returns the count of affected rows.
+Insert inputs exclude auto-increment and computed columns. Update and delete inputs use primary-key values to locate rows. Table mutation fields return scalar values: inserted identity, updated primary key, affected row count, or applied batch count.
 
 ## Metadata overrides
 

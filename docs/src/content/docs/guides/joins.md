@@ -3,7 +3,7 @@ title: Joins
 description: Automatic and explicit table joins in BifrostQL.
 ---
 
-BifrostQL adds a `__join` field to every table type. This field lets you traverse from any row to any other table, using either automatic key matching or explicit filter conditions.
+BifrostQL exposes relationships directly on generated table types. Foreign-key and name-based relationships become fields on the row, and many-to-many relationships become list fields.
 
 ## Automatic joins
 
@@ -32,12 +32,8 @@ You can join from orders to customers:
     data {
       orderId
       total
-      __join {
-        customers {
-          data {
-            name
-          }
-        }
+      customers {
+        name
       }
     }
   }
@@ -46,22 +42,19 @@ You can join from orders to customers:
 
 BifrostQL sees that `orders.customerId` matches `customers.customerId` and generates the appropriate JOIN clause.
 
-## Explicit joins with filters
+## Direct child collections
 
-When column names don't match, or you want a specific join condition, use filters inside the `__join`:
+Parent rows expose child collections when BifrostQL can infer the relationship. Child collection fields accept a `filter` argument:
 
 ```graphql
 {
-  orders {
+  customers {
     data {
-      orderId
-      __join {
-        users(filter: { userId: { _eq: 42 } }) {
-          data {
-            name
-            email
-          }
-        }
+      customerId
+      name
+      orders(filter: { total: { _gt: 100 } }) {
+        orderId
+        total
       }
     }
   }
@@ -72,7 +65,7 @@ When column names don't match, or you want a specific join condition, use filter
 
 For tables linked by multiple columns, BifrostQL supports composite key matching. If both columns match by name and both tables use a composite primary key, the join is automatic.
 
-For explicit composite joins, apply filters on each key column:
+Composite relationships are exposed as normal nested fields:
 
 ```graphql
 {
@@ -80,15 +73,8 @@ For explicit composite joins, apply filters on each key column:
     data {
       orderId
       lineNumber
-      __join {
-        inventory(filter: {
-          warehouseId: { _eq: 1 },
-          productId: { _eq: 100 }
-        }) {
-          data {
-            quantity
-          }
-        }
+      inventory {
+        quantity
       }
     }
   }
@@ -97,26 +83,18 @@ For explicit composite joins, apply filters on each key column:
 
 ## Nested joins
 
-Joins can nest arbitrarily deep. Each `__join` opens a new level of traversal:
+Joins can nest arbitrarily deep:
 
 ```graphql
 {
   orders {
     data {
       orderId
-      __join {
-        customers {
-          data {
-            name
-            __join {
-              addresses {
-                data {
-                  street
-                  city
-                }
-              }
-            }
-          }
+      customers {
+        name
+        addresses {
+          street
+          city
         }
       }
     }
@@ -124,22 +102,52 @@ Joins can nest arbitrarily deep. Each `__join` opens a new level of traversal:
 }
 ```
 
-This walks from `orders` to `customers` to `addresses` in a single query. BifrostQL generates the SQL joins to resolve this in one round-trip.
+This walks from `orders` to `customers` to `addresses` in a single request. BifrostQL generates the SQL needed to resolve this in one round-trip.
+
+## Many-to-many joins
+
+Many-to-many relationships are detected from junction tables or declared with `many-to-many` metadata. The target table is exposed as a list field:
+
+```graphql
+{
+  posts {
+    data {
+      postId
+      title
+      tags {
+        tagId
+        name
+      }
+    }
+  }
+}
+```
+
+You can declare one manually when automatic detection is not enough:
+
+```
+"dbo.posts { many-to-many: tags:post_tags; }"
+```
+
+## Application schema relationships
+
+Prefer real database foreign keys where possible. Known application schemas such as WordPress can also inject synthetic foreign keys during schema detection, so legacy databases without declared constraints can still expose direct relationship fields.
 
 ## Join behavior
 
-- Joins produce sub-queries, not flat results. Each joined table returns its own paged `data` array.
-- You can apply `filter`, `sort`, `limit`, and `offset` to joined tables the same way you would at the top level.
-- Automatic join detection is based on column names matching primary key columns. Disable it per-table with `auto-join: false` in metadata.
-- The `__join` field itself is always present on every table type. If there are no matching tables, it returns an empty result.
+- Joins produce nested results, not flattened rows.
+- Top-level table queries are paged; relationship fields return nested objects or lists.
+- Child collection fields support filters.
+- Automatic join detection uses database foreign keys and name-based conventions. Disable it with `auto-join: false` metadata.
+- Generated `_join` / `_single` containers are controlled by `dynamic-joins`; prefer direct relationship fields in application queries.
 
 ## Controlling join behavior
 
-Use metadata rules to disable automatic joins or the `__join` field entirely:
+Use metadata rules to disable automatic relationship inference or generated dynamic join containers:
 
 ```
 "dbo.sensitive_table { auto-join: false; }"
 "dbo.audit_log { dynamic-joins: false; }"
 ```
 
-`auto-join: false` prevents BifrostQL from inferring joins based on column names. `dynamic-joins: false` removes the `__join` field from the table's GraphQL type entirely.
+`auto-join: false` prevents BifrostQL from inferring joins based on column names. `dynamic-joins: false` removes `_join` and `_single` containers from generated table types.

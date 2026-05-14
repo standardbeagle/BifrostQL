@@ -3,7 +3,7 @@ title: Module System
 description: Cross-cutting concerns via filter transformers, mutation transformers, and query observers.
 ---
 
-BifrostQL's module system handles cross-cutting concerns through metadata configuration. No custom code required for common patterns like tenant isolation, soft-delete, and audit columns.
+BifrostQL's module system handles cross-cutting concerns through metadata configuration. No custom code required for common patterns like tenant isolation, claim-based filters, soft-delete, and audit columns.
 
 ## Architecture
 
@@ -50,11 +50,28 @@ There is no opt-out per query. The filter is applied at the SQL level before exe
 
 ### Configuring the claim key
 
-By default, BifrostQL looks for `tenant_id` in the user context. Change the claim key with:
+By default, BifrostQL looks for `tenant_id` in the user context. Change the claim key with model-level metadata:
 
 ```
-"dbo.* { tenant-context-key: org_id; }"
+":root { tenant-context-key: org_id; }"
 ```
+
+## Automatic claim filters
+
+Use `auto-filter` when the filter is not strictly a tenant ID, or when one table needs several claim-to-column mappings.
+
+```json
+{
+  "BifrostQL": {
+    "Metadata": [
+      "dbo.orders { auto-filter: organization_id:org_id,region_id:region; }",
+      ":root { auto-filter-bypass-role: admin; }"
+    ]
+  }
+}
+```
+
+Each mapping is `column:claim`. The transformer reads the claim from the authenticated user context and injects an equality filter for that column. If the claim value is an array, the generated SQL uses an `IN` filter. The bypass role is read from `UserContext["roles"]`.
 
 ## Soft delete
 
@@ -76,7 +93,17 @@ Soft delete converts DELETE mutations into UPDATE mutations that set a timestamp
 
 - **Queries**: A `WHERE deleted_at IS NULL` filter is added to every query against the table
 - **DELETE mutations**: Transformed into `UPDATE ... SET deleted_at = NOW(), deleted_by_user_id = @userId`
-- **Schema**: No visible change -- the delete mutation still looks like `delete_orders(filter: ...)` to the consumer
+- **Schema**: Soft-deleted tables expose an `_includeDeleted: Boolean` query argument for administrative reads
+
+```graphql
+{
+  orders(_includeDeleted: true) {
+    data { orderId deletedAt }
+  }
+}
+```
+
+The delete mutation shape stays the same: `orders(delete: { orderId: 42 })`.
 
 ### Priority ordering
 

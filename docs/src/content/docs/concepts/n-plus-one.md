@@ -14,10 +14,8 @@ When a GraphQL resolver fetches a list and then resolves a related field for eac
   orders(limit: 50) {
     data {
       orderId
-      __join {
-        customers {
-          data { name }
-        }
+      customers {
+        name
       }
     }
   }

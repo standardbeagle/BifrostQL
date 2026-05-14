@@ -57,17 +57,24 @@ The context exposes a `UserContext` dictionary keyed by claim names. Modules rea
 | Claim | Used by | Default key |
 |-------|---------|-------------|
 | Tenant ID | `TenantFilterTransformer` | `tenant_id` |
-| User audit key | `BasicAuditModule` | `user-audit-key` |
+| User audit key | `BasicAuditModule` | configured by `user-audit-key` |
+| Arbitrary row filters | `AutoFilterTransformer` | configured by `auto-filter` |
 
 ### Changing claim keys
 
 The default claim keys can be overridden via metadata:
 
 ```
-"dbo.* { tenant-context-key: org_id; }"
+":root { tenant-context-key: org_id; user-audit-key: sub; }"
 ```
 
-This tells the tenant filter transformer to read `org_id` from the user context instead of `tenant_id`.
+This tells the tenant filter transformer to read `org_id` from the user context instead of `tenant_id`, and tells audit population to use the `sub` claim as the user key.
+
+For additional row-level filters, map columns to claims with `auto-filter`:
+
+```
+"dbo.orders { auto-filter: organization_id:org_id,region_id:region; }"
+```
 
 ## Disabling authentication
 

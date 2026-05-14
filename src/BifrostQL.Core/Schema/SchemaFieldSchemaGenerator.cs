@@ -8,7 +8,7 @@ namespace BifrostQL.Core.Schema
     /// database schemas become top-level query fields grouping their tables.
     /// In this mode: query { sales { orders(...) { ... } } hr { employees(...) { ... } } }
     /// Tables in the default schema remain directly on the root query type.
-    /// Cross-schema __join fields reference tables across all schemas.
+    /// Cross-schema _join containers reference tables across all schemas.
     /// </summary>
     public static class SchemaFieldSchemaGenerator
     {

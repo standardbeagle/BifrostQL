@@ -10,6 +10,7 @@ This guide covers development workflows, debugging techniques, and best practice
 ### Prerequisites
 
 - .NET 8.0 SDK or later
+- pnpm 11.1.1 for JavaScript workspaces
 - Visual Studio 2022, VS Code, or JetBrains Rider
 - SQL Server (LocalDB, Express, or full), PostgreSQL, or MySQL for testing
 
@@ -18,7 +19,34 @@ This guide covers development workflows, debugging techniques, and best practice
 ```bash
 git clone https://github.com/standardbeagle/BifrostQL.git
 cd BifrostQL
+pnpm install --frozen-lockfile
 dotnet build
+```
+
+The root `pnpm-lock.yaml` is the only JavaScript lockfile. Do not add package-specific `package-lock.json` or nested `pnpm-lock.yaml` files for workspace packages.
+
+### JavaScript workspace commands
+
+```bash
+# React package
+pnpm --dir packages/@bifrostql/react test
+pnpm --dir packages/@bifrostql/react typecheck
+
+# edit-db package
+pnpm --dir examples/edit-db test
+pnpm --dir examples/edit-db ts
+
+# documentation site
+pnpm --dir docs dev
+pnpm --dir docs build
+```
+
+### Desktop UI frontend
+
+The Photino desktop app serves files from `src/BifrostQL.UI/wwwroot`, but that directory is Vite output and is not tracked. Make changes in `src/BifrostQL.UI/frontend/src` and rebuild the assets with:
+
+```bash
+pnpm --dir src/BifrostQL.UI/frontend build
 ```
 
 ### Running Tests

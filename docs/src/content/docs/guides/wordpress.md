@@ -33,7 +33,6 @@ WordPress doesn't declare foreign keys in its DDL. BifrostQL injects the followi
 | `wp_comments.comment_post_ID` | `wp_posts` | `ID` |
 | `wp_comments.user_id` | `wp_users` | `ID` |
 | `wp_commentmeta.comment_id` | `wp_comments` | `comment_ID` |
-| `wp_term_relationships.object_id` | `wp_posts` | `ID` |
 | `wp_term_relationships.term_taxonomy_id` | `wp_term_taxonomy` | `term_taxonomy_id` |
 | `wp_term_taxonomy.term_id` | `wp_terms` | `term_id` |
 | `wp_usermeta.user_id` | `wp_users` | `ID` |
@@ -150,20 +149,16 @@ This applies to all meta tables and the options table. Values that aren't PHP se
       ID
       post_title
       post_date
-      __join {
-        wp_users(on: { post_author: "ID" }) {
-          data {
-            display_name
-            user_email
-          }
-        }
+      wp_users {
+        display_name
+        user_email
       }
     }
   }
 }
 ```
 
-### Posts with meta and categories
+### Posts with meta rows
 
 ```graphql
 {
@@ -172,22 +167,27 @@ This applies to all meta tables and the options table. Values that aren't PHP se
       ID
       post_title
       _meta
-      __join {
-        wp_term_relationships(on: { ID: "object_id" }) {
-          data {
-            __join {
-              wp_term_taxonomy(on: { term_taxonomy_id: "term_taxonomy_id" }) {
-                data {
-                  taxonomy
-                  __join {
-                    wp_terms(on: { term_id: "term_id" }) {
-                      data { name slug }
-                    }
-                  }
-                }
-              }
-            }
-          }
+      wp_postmeta(filter: { meta_key: { _eq: "_thumbnail_id" } }) {
+        meta_key
+        meta_value
+      }
+    }
+  }
+}
+```
+
+### Term taxonomy with terms
+
+```graphql
+{
+  wp_term_relationships(limit: 10) {
+    data {
+      object_id
+      wp_term_taxonomy {
+        taxonomy
+        wp_terms {
+          name
+          slug
         }
       }
     }

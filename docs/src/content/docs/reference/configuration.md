@@ -22,7 +22,8 @@ BifrostQL is configured through `appsettings.json` (or any ASP.NET Core configur
       "dbo.*|has(tenant_id) { tenant-filter: tenant_id; }",
       "dbo.orders { soft-delete: deleted_at; soft-delete-by: deleted_by_user_id; delete-type: soft; }",
       "dbo.*.createdOn { populate: created-on; update: none; }",
-      "dbo.*.updatedOn { populate: updated-on; update: none; }"
+      "dbo.*.updatedOn { populate: updated-on; update: none; }",
+      ":root { raw-sql: disabled; generic-table: disabled; }"
     ]
   },
   "JwtSettings": {
@@ -71,7 +72,9 @@ Metadata rules use a CSS-like selector syntax to target tables and columns. Each
 | Property | Values | Applies to | Description |
 |----------|--------|-----------|-------------|
 | `tenant-filter` | column name | table | Enable tenant isolation on this column |
-| `tenant-context-key` | claim key | table | JWT claim key for tenant ID (default: `tenant_id`) |
+| `tenant-context-key` | claim key | model | User-context key for tenant ID (default: `tenant_id`) |
+| `auto-filter` | `column:claim[,column:claim]` | table | Inject filters from arbitrary user-context claims |
+| `auto-filter-bypass-role` | role name | model | Role that bypasses `auto-filter` rules |
 | `soft-delete` | column name | table | Soft-delete timestamp column |
 | `soft-delete-by` | column name | table | Column recording who deleted |
 | `delete-type` | `soft` | table | Mark table for soft-delete behavior |
@@ -79,10 +82,56 @@ Metadata rules use a CSS-like selector syntax to target tables and columns. Each
 | `update` | `none` | column | Make column read-only for updates |
 | `visibility` | `hidden` | table/column | Hide from GraphQL schema |
 | `label` | column name | table | Display label column |
-| `auto-join` | `true`/`false` | table | Enable automatic join inference |
-| `dynamic-joins` | `true`/`false` | table | Enable `__join` fields |
-| `default-limit` | number | table | Default page size |
-| `de-pluralize` | `true`/`false` | table | De-pluralize table name in schema |
+| `join` | join declaration | table/column | Declare explicit relationships |
+| `many-to-many` | `TargetTable:JunctionTable` | table | Declare a many-to-many relationship |
+| `auto-join` | `true`/`false` | model/table | Enable automatic join inference |
+| `foreign-joins` | `true`/`false` | model | Enable FK-based join inference |
+| `dynamic-joins` | `true`/`false` | model | Emit `_join` / `_single` containers |
+| `default-limit` | number | model/table | Default page size |
+| `de-pluralize` | `true`/`false` | model | De-pluralize table names in schema |
+| `batch-max-size` | number | table | Maximum batch mutation size |
+
+### Optional feature metadata
+
+| Property | Values | Applies to | Description |
+|----------|--------|-----------|-------------|
+| `raw-sql` | `enabled`/`disabled` | model | Expose `_rawQuery(sql:, params:, timeout:)` |
+| `raw-sql-role` | role name | model | Role required for `_rawQuery` (default: `bifrost-raw-sql`) |
+| `raw-sql-timeout` | seconds | model | Max raw SQL timeout |
+| `raw-sql-max-rows` | number | model | Max rows returned by raw SQL |
+| `generic-table` | `enabled`/`disabled` | model | Expose `_table(name:, limit:, offset:, filter:)` |
+| `generic-table-role` | role name | model | Role required for `_table` (default: `bifrost-admin`) |
+| `generic-table-max-rows` | number | model | Max rows returned by `_table` |
+| `generic-table-allowed` | comma list | model | Allow-list for generic table names |
+| `generic-table-denied` | comma list | model | Deny-list for generic table names |
+| `schema-prefix` | `enabled`/`disabled` | model | Prefix GraphQL table names with schema names |
+| `schema-prefix-default` | schema name | model | Schema left unprefixed when prefixing is enabled |
+| `schema-prefix-format` | format string | model | Custom schema prefix format |
+| `schema-display` | `flat`/`prefix`/`field` | model | Multi-schema presentation mode |
+| `schema-default` | schema name | model | Default schema for field-mode presentation |
+| `schema-excluded` | comma list | model | Schemas hidden from schema-field presentation |
+| `schema-permissions` | rules | model | Schema-field access rules |
+| `sp-include` | regex | model | Include matching stored procedures |
+| `sp-exclude` | regex | model | Exclude matching stored procedures |
+| `auto-detect-app` | `disabled`, `wordpress`, etc. | model | Control app-schema detection |
+| `app-schema` | detector name | model | Force a specific app-schema detector |
+| `detected-app` | detector name | model | Read-only detection result metadata |
+
+### EAV, file, and storage metadata
+
+| Property | Values | Applies to | Description |
+|----------|--------|-----------|-------------|
+| `eav-parent` | table name | table | Parent table for an EAV meta table |
+| `eav-fk` | column name | table | FK from EAV table to parent |
+| `eav-key` | column name | table | EAV attribute-name column |
+| `eav-value` | column name | table | EAV attribute-value column |
+| `file` | config string | column | Mark column as a file-storage column |
+| `file-storage` | config string | column | Legacy file-storage marker |
+| `storage` | config string | model/table/column | Storage bucket configuration |
+| `max-size` | bytes | column | Max file size |
+| `content-type-column` | column name | column | Column storing MIME type |
+| `file-name-column` | column name | column | Column storing original filename |
+| `accept` | MIME pattern | column | Accepted upload MIME types |
 
 ### Populate values
 

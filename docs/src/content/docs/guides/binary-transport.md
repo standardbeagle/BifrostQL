@@ -53,12 +53,16 @@ app.UseBifrostBinary(
 
 The JSON `/graphql` endpoint and the binary `/bifrost-ws` endpoint can run side-by-side on the same server. Clients pick whichever transport fits the request.
 
+:::note
+The BifrostQL.UI desktop header can probe the binary endpoint, but the embedded `@standardbeagle/edit-db` editor still sends its table queries over the HTTP `uri` prop. Treat the desktop toggle as a transport health probe until the editor accepts a pluggable transport.
+:::
+
 ## Client install
 
 The TypeScript client is published as `@bifrostql/binary-client`:
 
 ```bash
-npm install @bifrostql/binary-client
+pnpm add @bifrostql/binary-client
 ```
 
 Connect, run two queries concurrently over the same socket, and close:
@@ -91,8 +95,8 @@ Mutations use the same client with variables:
 
 ```ts
 const result = await client.mutate(
-  `mutation ($input: usersInput!) {
-    insert_users(input: $input) { id name }
+  `mutation ($input: Insert_users!) {
+    users(insert: $input)
   }`,
   { input: { name: "Alice", email: "alice@example.com" } }
 );
@@ -161,7 +165,7 @@ A normal close (code 1000) or an explicit `client.close()` call never triggers r
 `@bifrostql/codegen` reads a BifrostQL `.proto` schema and emits typed TypeScript interfaces — one file per message plus a barrel `index.ts`. Run it as a one-shot CLI from a checked-in proto file:
 
 ```bash
-npx @bifrostql/codegen --proto-file ./schema/bifrost.proto --out ./generated
+pnpm dlx @bifrostql/codegen --proto-file ./schema/bifrost.proto --out ./generated
 ```
 
 CLI flags:

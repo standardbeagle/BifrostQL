@@ -29,9 +29,9 @@ That's a complete GraphQL API. Every table, every column, every relationship. Qu
 
 - **Reads your database schema, builds a GraphQL API.** Add a table or column, restart, and the field appears with the correct type and validation. No code generation. No mapping files.
 - **Solves the N+1 problem.** BifrostQL generates one SQL query per table in the request, not one per row. All queries are sent in a single database round-trip and read back as multiple result sets. See [How BifrostQL solves N+1](#how-bifrostql-solves-n1) below.
-- **Dynamic joins via `__join` fields.** Join any table to any other table directly in your GraphQL query. No configuration required for single-column key matches. Multi-column and explicit joins supported.
+- **Relationship fields.** Foreign keys, matching key names, and many-to-many tables become nested GraphQL fields.
 - **Directus-style filtering and pagination.** Filter on any field with operators like `_eq`, `_contains`, `_gt`, `_in`. Pagination via `limit`/`offset`. Sorting via enum fields.
-- **Full mutation support.** Insert, update, upsert, and delete -- generated from primary key metadata. BifrostQL matches your input fields by name and does the right thing.
+- **Full mutation support.** Insert, update, upsert, delete, and batch mutations -- generated from primary key metadata. BifrostQL matches your input fields by name and does the right thing.
 
 ## Supported Databases
 
@@ -52,7 +52,7 @@ Cross-cutting concerns handled via metadata configuration. No custom code requir
 "dbo.orders { tenant-filter: tenant_id }"
 ```
 
-**Soft Delete** -- DELETE mutations become UPDATE mutations that set a timestamp. SELECT queries automatically exclude soft-deleted rows.
+**Soft Delete** -- DELETE mutations become UPDATE mutations that set a timestamp. SELECT queries automatically exclude soft-deleted rows and expose `_includeDeleted` for administrative reads.
 
 ```
 "dbo.orders { soft-delete: deleted_at; soft-delete-by: deleted_by_user_id }"
@@ -72,6 +72,12 @@ Cross-cutting concerns handled via metadata configuration. No custom code requir
 ```
 
 All module configuration uses a CSS-like selector syntax with glob patterns. Apply rules to one table, a pattern of tables, or every table in a schema.
+
+**Automatic Claim Filters** -- Map arbitrary user-context claims to table columns for row-level security beyond a single tenant ID.
+
+```
+"dbo.orders { auto-filter: organization_id:org_id,region_id:region }"
+```
 
 ## Quick Start
 
@@ -135,7 +141,7 @@ BifrostQL includes a CLI tool for schema introspection, config generation, and l
 dotnet tool install -g BifrostQL.Tool
 bifrost serve --connection "Server=localhost;Database=mydb;..."
 bifrost schema --connection "..."
-bifrost config generate --connection "..."
+bifrost config-generate --connection "..."
 ```
 
 ## Query Examples
@@ -163,17 +169,13 @@ bifrost config generate --connection "..."
   }
 }
 
-# Dynamic join - no config needed
+# Relationship fields - no config needed for matching keys
 {
   orders {
     data {
       orderId
-      __join {
-        customers(filter: { customerId: { _eq: 42 } }) {
-          data {
-            name
-          }
-        }
+      customers {
+        name
       }
     }
   }
@@ -181,11 +183,7 @@ bifrost config generate --connection "..."
 
 # Insert mutation
 mutation {
-  insert_product(data: { name: "Widget", price: 9.99 }) {
-    productId
-    name
-    price
-  }
+  products(insert: { name: "Widget", price: 9.99 })
 }
 ```
 
@@ -210,9 +208,13 @@ For example, this query:
     data {
       orderId
       total
-      __join {
-        customers { data { name email } }
-        order_items { data { productId quantity } }
+      customers {
+        name
+        email
+      }
+      order_items {
+        productId
+        quantity
       }
     }
   }
@@ -298,6 +300,9 @@ Rules use CSS-like selectors to target tables and columns:
 | Property | Values | Description |
 |----------|--------|-------------|
 | `tenant-filter` | column name | Enable tenant isolation on this column |
+| `tenant-context-key` | claim key | User-context key for tenant ID |
+| `auto-filter` | `column:claim` list | Inject filters from user-context claims |
+| `auto-filter-bypass-role` | role name | Role that bypasses auto filters |
 | `soft-delete` | column name | Soft-delete timestamp column |
 | `soft-delete-by` | column name | Column to record who deleted |
 | `delete-type` | `soft` | Mark table for soft-delete behavior |
@@ -306,9 +311,13 @@ Rules use CSS-like selectors to target tables and columns:
 | `visibility` | `hidden` | Hide from GraphQL schema |
 | `label` | column name | Display label column for the table |
 | `auto-join` | `true`/`false` | Enable automatic join inference |
-| `dynamic-joins` | `true`/`false` | Enable `__join` fields |
+| `dynamic-joins` | `true`/`false` | Emit `_join` / `_single` containers |
 | `default-limit` | number | Default page size |
 | `de-pluralize` | `true`/`false` | De-pluralize table names in schema |
+| `raw-sql` | `enabled`/`disabled` | Expose guarded `_rawQuery` |
+| `generic-table` | `enabled`/`disabled` | Expose guarded `_table` query |
+| `schema-prefix` | `enabled`/`disabled` | Prefix table names with schema names |
+| `sp-include` / `sp-exclude` | regex | Include or exclude stored procedures |
 
 ## Solution Structure
 

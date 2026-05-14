@@ -87,7 +87,7 @@ BifrostQL also ships as a standalone CLI tool for quick schema inspection and lo
 dotnet tool install -g BifrostQL.Tool
 bifrost serve --connection "Server=localhost;Database=mydb;..."
 bifrost schema --connection "..."
-bifrost config generate --connection "..."
+bifrost config-generate --connection "..."
 ```
 
 `bifrost serve` starts a local GraphQL server without writing any project files. Useful for exploring a database schema before committing to a project structure.
@@ -98,3 +98,4 @@ bifrost config generate --connection "..."
 - [Queries](/BifrostQL/guides/queries/) -- filtering, sorting, and pagination
 - [Joins](/BifrostQL/guides/joins/) -- automatic and explicit table joins
 - [Mutations](/BifrostQL/guides/mutations/) -- insert, update, upsert, delete
+- [Module System](/BifrostQL/guides/modules/) -- tenant isolation, auto filters, soft delete, audit columns

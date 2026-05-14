@@ -2,6 +2,7 @@ using BifrostQL.Core.AppMetadata;
 using BifrostQL.Core.Model;
 using BifrostQL.Samples.HostedSpa;
 using BifrostQL.Server;
+using BifrostQL.Server.Auth;
 using BifrostQL.Sqlite;
 
 // Sample: a Vite-built SPA and a BifrostQL GraphQL API served from one ASP.NET process.
@@ -23,6 +24,17 @@ SampleDatabase.EnsureCreated(dbPath);
 builder.Services.AddBifrostQL(options =>
     options.BindStandardConfig(builder.Configuration));
 
+// Local DB-backed auth against the Membership Manager app_users table. The MM schema
+// names its key columns user_id/email and stores a denormalized delimited role list in
+// a roles column, so the LocalAuthOptions defaults are overridden to match.
+builder.Services.AddBifrostLocalAuth(connectionString!, auth =>
+{
+    auth.UserTable = "app_users";
+    auth.IdColumn = "user_id";
+    auth.LoginColumn = "email";
+    auth.RolesColumn = "roles";
+});
+
 // App-metadata overlay: a standalone JSON file describing how the Membership
 // Manager entities (members, households, household_members) present in a
 // metadata-driven client. Served at /_app-metadata, independent of the schema.
@@ -34,8 +46,18 @@ var app = builder.Build();
 
 app.UseDeveloperExceptionPage();
 
+// Local DB-backed auth is independent of the GraphQL JWT auth path (BifrostQL:DisableAuth
+// stays true — this sample does not gate the GraphQL endpoint behind JWT). The cookie
+// authentication scheme AddBifrostLocalAuth registered must still run so /auth/session
+// sees the login cookie, so UseAuthentication is added explicitly here.
+app.UseAuthentication();
+
 // GraphQL endpoint first so the SPA fallback does not shadow it.
 app.UseBifrostQL();
+
+// Local auth login/logout/session endpoints, mapped after the authentication
+// middleware so the issued cookie is honored on /auth/session.
+app.UseBifrostLocalAuth();
 
 // Membership Manager sidecar workflow endpoints (record-payment, renew).
 // Mapped after UseBifrostQL so they sit alongside /graphql and before the SPA

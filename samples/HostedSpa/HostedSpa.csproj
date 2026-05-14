@@ -9,6 +9,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The server test project hosts this sample via WebApplicationFactory and
+         asserts against the seeded first-admin credentials in SampleDatabase. -->
+    <InternalsVisibleTo Include="BifrostQL.Server.Test" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\BifrostQL.Core\BifrostQL.Core.csproj" />
     <ProjectReference Include="..\..\src\BifrostQL.Server\BifrostQL.Server.csproj" />
     <ProjectReference Include="..\..\src\data\BifrostQL.Sqlite\BifrostQL.Sqlite.csproj" />

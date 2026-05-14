@@ -41,11 +41,17 @@ CREATE TABLE role_permissions (
     UNIQUE(role_id, permission)
 );
 
+-- password_hash holds an ASP.NET Core PasswordHasher hash for local-auth login;
+-- roles is a denormalized, delimited role list LocalUserStore reads directly. The
+-- canonical role data lives in organization_memberships.role_id -> roles.name; the
+-- denormalized column is the simplest correct source for LocalAuthOptions.RolesColumn.
 CREATE TABLE app_users (
     user_id INTEGER PRIMARY KEY AUTOINCREMENT,
     tenant_id INTEGER NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
     email TEXT NOT NULL,
     display_name TEXT NOT NULL,
+    password_hash TEXT,
+    roles TEXT,
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(tenant_id, email)

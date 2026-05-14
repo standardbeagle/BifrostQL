@@ -252,12 +252,16 @@ INSERT INTO role_permissions (role_permission_id, role_id, permission) VALUES
 (165, 6, 'organization_memberships:read'), (166, 6, 'tenants:read');
 
 -- App users — staff/admins who log in (tenant-scoped) (5)
-INSERT INTO app_users (user_id, tenant_id, email, display_name, is_active, created_at) VALUES
-(1, 1, 'manager@riverside-tennis.example', 'Tina Reed', 1, '2023-01-15 09:05:00'),
-(2, 1, 'admin@riverside-tennis.example', 'Omar Vance', 1, '2023-01-18 11:00:00'),
-(3, 2, 'manager@summit-hiking.example', 'Greta Holm', 1, '2023-04-02 10:35:00'),
-(4, 3, 'manager@harbor-sailing.example', 'Pavel Marsh', 1, '2022-11-20 08:20:00'),
-(5, 3, 'admin@harbor-sailing.example', 'Lena Cruz', 1, '2022-12-01 09:30:00');
+-- password_hash is left NULL here: this static seed cannot compute an ASP.NET Core
+-- PasswordHasher hash. Hosts that enable local auth seed a hashed first-admin at
+-- runtime (see samples/HostedSpa/SampleDatabase.cs). roles carries the denormalized,
+-- delimited role list LocalUserStore reads directly.
+INSERT INTO app_users (user_id, tenant_id, email, display_name, password_hash, roles, is_active, created_at) VALUES
+(1, 1, 'manager@riverside-tennis.example', 'Tina Reed', NULL, 'admin', 1, '2023-01-15 09:05:00'),
+(2, 1, 'admin@riverside-tennis.example', 'Omar Vance', NULL, 'officer', 1, '2023-01-18 11:00:00'),
+(3, 2, 'manager@summit-hiking.example', 'Greta Holm', NULL, 'admin', 1, '2023-04-02 10:35:00'),
+(4, 3, 'manager@harbor-sailing.example', 'Pavel Marsh', NULL, 'admin', 1, '2022-11-20 08:20:00'),
+(5, 3, 'admin@harbor-sailing.example', 'Lena Cruz', NULL, 'officer', 1, '2022-12-01 09:30:00');
 
 -- Organization memberships — staff roles within a club (tenant-scoped) (5)
 -- role_id references the six-role catalog: 1=admin, 2=officer.

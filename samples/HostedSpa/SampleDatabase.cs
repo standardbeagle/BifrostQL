@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Data.Sqlite;
 
 namespace BifrostQL.Samples.HostedSpa;
@@ -8,6 +9,18 @@ namespace BifrostQL.Samples.HostedSpa;
 /// </summary>
 internal static class SampleDatabase
 {
+    /// <summary>Email of the deterministic first-admin app_user seeded for local auth.</summary>
+    public const string FirstAdminEmail = "admin@riverside-tennis.example";
+
+    /// <summary>Plaintext password of the seeded first-admin. Sample-only; not for production.</summary>
+    public const string FirstAdminPassword = "ChangeMe!2024";
+
+    /// <summary>Tenant id the seeded first-admin belongs to.</summary>
+    public const string FirstAdminTenantId = "1";
+
+    /// <summary>Role granted to the seeded first-admin.</summary>
+    public const string FirstAdminRole = "admin";
+
     /// <summary>
     /// Resolves the SQLite database file path from the configured connection string.
     /// Falls back to <c>hostedspa-sample.db</c> under <paramref name="contentRootPath"/>
@@ -76,11 +89,18 @@ internal static class SampleDatabase
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
+            -- password_hash holds an ASP.NET Core PasswordHasher hash for local-auth login;
+            -- roles is a denormalized, delimited role list LocalUserStore reads directly.
+            -- MM's canonical role data lives in organization_memberships.role_id -> roles.name;
+            -- the denormalized column is the simplest correct source for the sample's
+            -- LocalAuthOptions.RolesColumn without LocalUserStore needing a join.
             CREATE TABLE app_users (
                 user_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tenant_id INTEGER NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
                 email TEXT NOT NULL,
                 display_name TEXT NOT NULL,
+                password_hash TEXT,
+                roles TEXT,
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 UNIQUE(tenant_id, email)
@@ -165,8 +185,10 @@ internal static class SampleDatabase
             );
 
             INSERT INTO tenants (tenant_id, name, slug) VALUES (1, 'Riverside Tennis Club', 'riverside-tennis');
+            -- First-admin app_user. password_hash/roles are filled in by SeedFirstAdmin
+            -- after this batch so the hash comes from the real ASP.NET Core PasswordHasher.
             INSERT INTO app_users (user_id, tenant_id, email, display_name)
-                VALUES (1, 1, 'officer@riverside-tennis.example', 'Club Officer');
+                VALUES (1, 1, 'admin@riverside-tennis.example', 'Club Admin');
             INSERT INTO members (member_id, tenant_id, user_id, first_name, last_name, email, status, joined_on)
                 VALUES (1, 1, 1, 'Carol', 'Reyes', 'carol@example.com', 'active', '2024-01-10');
             INSERT INTO membership_plans (plan_id, tenant_id, name, billing_period, price_cents)
@@ -178,6 +200,34 @@ internal static class SampleDatabase
             INSERT INTO events (event_id, tenant_id, title, description, location, starts_at, ends_at, capacity, created_at)
                 VALUES (1, 1, 'Spring Open House', 'Season kick-off social', 'Main Clubhouse', '2025-03-01 10:00:00', '2025-03-01 14:00:00', 60, '2025-01-15 09:00:00');
             """;
+        command.ExecuteNonQuery();
+
+        SeedFirstAdmin(connection);
+    }
+
+    /// <summary>
+    /// Fills in the first-admin <c>app_user</c> (user_id 1) password hash and role list
+    /// so a self-hosted club can sign in with local auth out of the box. The password is
+    /// hashed with the same ASP.NET Core <see cref="PasswordHasher{TUser}"/>
+    /// <c>LocalUserStore.VerifyCredentialsAsync</c> verifies against, so the seeded hash
+    /// and the verification path always agree. The <c>roles</c> column carries the
+    /// denormalized <c>admin</c> role LocalUserStore reads directly. The row itself is
+    /// inserted in the main seed batch so foreign keys to it resolve.
+    /// </summary>
+    private static void SeedFirstAdmin(SqliteConnection connection)
+    {
+        var passwordHash = new PasswordHasher<string>()
+            .HashPassword(FirstAdminEmail, FirstAdminPassword);
+
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            UPDATE app_users
+            SET password_hash = $passwordHash, roles = $roles
+            WHERE user_id = 1;
+            """;
+        command.Parameters.AddWithValue("$passwordHash", passwordHash);
+        command.Parameters.AddWithValue("$roles", FirstAdminRole);
         command.ExecuteNonQuery();
     }
 }

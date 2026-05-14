@@ -15,24 +15,24 @@
 -- roles, permissions.
 --
 --   Tenant-scoped tables (carry tenant-filter + auto-filter, label as shown):
---     tenants               { label: Clubs, auto-filter: tenant_id:tenant_ids }   -- row is the club itself
+--     tenants               { label: Clubs, auto-filter: tenant_id:tenant_ids, policy-actions: read }   -- row is the club itself
 --     app_users             { label: App Users,        tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids }
---     organization_memberships { label: Staff Roles,   tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids }
+--     organization_memberships { label: Staff Roles,   tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,update }
 --     audit_log             { label: Audit Log,        tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read }
---     households            { label: Households,       tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids }
---     members               { label: Members,         tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, soft-delete: deleted_at }
---     household_members     { label: Household Members,tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids }
---     membership_plans      { label: Membership Plans, tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids }
---     member_memberships    { label: Member Memberships,tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids }
---     dues_invoices         { label: Dues Invoices,    tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids }
---     dues_payments         { label: Dues Payments,    tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids }
---     events                { label: Events,          tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids }
---     event_rsvps           { label: Event RSVPs,      tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids }
---     event_attendance      { label: Event Attendance, tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids }
+--     households            { label: Households,       tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update,delete }
+--     members               { label: Members,         tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, soft-delete: deleted_at, policy-actions: read,create,update,delete }
+--     household_members     { label: Household Members,tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update,delete }
+--     membership_plans      { label: Membership Plans, tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update,delete }
+--     member_memberships    { label: Member Memberships,tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update,delete }
+--     dues_invoices         { label: Dues Invoices,    tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update }
+--     dues_payments         { label: Dues Payments,    tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update }
+--     events                { label: Events,          tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update,delete }
+--     event_rsvps           { label: Event RSVPs,      tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update,delete }
+--     event_attendance      { label: Event Attendance, tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update,delete }
 --
 --   Global lookup tables (un-scoped — do NOT add tenant-filter/auto-filter):
---     roles
---     role_permissions
+--     roles                 { policy-actions: read }
+--     role_permissions      { policy-actions: read }
 --
 -- tenant-filter is the mandatory tenant-isolation mechanism: it constrains
 -- every query on a tenant-scoped table to the caller's tenant_id. auto-filter
@@ -44,6 +44,60 @@
 --
 -- audit_log carries policy-actions: read so it is read-only through the
 -- generated CRUD — only server-side workflow endpoints append rows.
+--
+-- ============================================================
+-- Role -> permission matrix (Membership Manager policy, sub-task 1/4)
+-- ============================================================
+--
+-- Six roles drive the membership-manager authorization model. The matrix has
+-- two layers:
+--
+--   1. Table-level allowed-action grants -- the `policy-actions` metadata shown
+--      above. PolicyConfigCollector reads `policy-actions` from each table's
+--      metadata and produces a TablePolicy; PolicyEvaluator gates generated
+--      CRUD against it. This layer is the UNION of what any non-admin role may
+--      do on the table, so every table permits `read` (satisfies read_only)
+--      and each mutating table permits the widest action any role needs.
+--   2. The role catalog + per-role grants -- the `roles` and `role_permissions`
+--      seed rows below. These name the six roles and record their intended
+--      grants as `<resource>:<action>` permission strings, the vocabulary the
+--      later sub-tasks (field restrictions, row-scope) build on.
+--
+-- Role intent (table-level; field- and row-level nuance is sub-tasks 2 & 3):
+--
+--   admin            Full control of every table. Bypasses the policy engine
+--                    entirely (MetadataKeys.Policy.DefaultAdminRole = "admin"),
+--                    so it carries no per-table policy-actions restriction.
+--   officer          Manages the member lifecycle: full CRUD on members,
+--                    households, household_members, membership_plans,
+--                    member_memberships. Read on finance, events, audit, org.
+--   event_manager    Runs events end to end: full CRUD on events, event_rsvps,
+--                    event_attendance. Read elsewhere.
+--   finance_manager  Manages dues: create/update on dues_invoices and
+--                    dues_payments (no delete -- dues are corrected, never
+--                    destroyed). Read elsewhere.
+--   member           Read-all plus self-service create/update on event_rsvps
+--                    (RSVP to events). Self-scoping of "own" rows is sub-task 3.
+--   read_only        Read on every table; no create/update/delete anywhere.
+--
+-- Per-table grant matrix (R=read C=create U=update D=delete; admin=full):
+--
+--   table                  officer  event_manager finance_manager member read_only
+--   members                R C U D  R             R               R      R
+--   households             R C U D  R             R               R      R
+--   household_members      R C U D  R             R               R      R
+--   membership_plans       R C U D  R             R               R      R
+--   member_memberships     R C U D  R             R               R      R
+--   dues_invoices          R        R             R C U           R      R
+--   dues_payments          R        R             R C U           R      R
+--   events                 R        R C U D       R               R      R
+--   event_rsvps            R        R C U D       R               R C U  R
+--   event_attendance       R        R C U D       R               R      R
+--   audit_log              R        R             R               R      R
+--   roles                  R        R             R               R      R
+--   role_permissions       R        R             R               R      R
+--   organization_memberships R U    R             R               R      R
+--   tenants                R        R             R               R      R
 
 -- ============================================================
 -- Org-model foundation
@@ -227,22 +281,83 @@ INSERT INTO tenants (tenant_id, name, slug, plan, is_active, created_at) OVERRID
 (2, 'Summit Hiking Association', 'summit-hiking', 'standard', TRUE, '2023-04-02 10:30:00'),
 (3, 'Harbor Sailing Club', 'harbor-sailing', 'enterprise', TRUE, '2022-11-20 08:15:00');
 
--- Roles (global lookup — shared across all clubs) (3)
+-- Roles (global lookup — shared across all clubs) (6)
+-- The six-role Membership Manager catalog. See the role -> permission matrix
+-- in the header for table-level intent. admin bypasses the policy engine
+-- (MetadataKeys.Policy.DefaultAdminRole = "admin").
 INSERT INTO roles (role_id, name, description, is_system) OVERRIDING SYSTEM VALUE VALUES
-(1, 'owner', 'Full administrative control of the club', TRUE),
-(2, 'admin', 'Manage members, plans, events, and dues', TRUE),
-(3, 'member', 'Standard member access', TRUE);
+(1, 'admin', 'Full administrative control of the club; bypasses the policy engine', TRUE),
+(2, 'officer', 'Manages the member lifecycle: members, households, plans, memberships', TRUE),
+(3, 'event_manager', 'Runs events end to end: events, RSVPs, attendance', TRUE),
+(4, 'finance_manager', 'Manages dues invoices and payments (create/update, no delete)', TRUE),
+(5, 'member', 'Standard member: read-all plus self-service event RSVPs', TRUE),
+(6, 'read_only', 'Read-only access to every table; no mutations', TRUE);
 
--- Role permissions (global lookup) (8)
+-- Role permissions (global lookup) — the per-role, per-table grant matrix as
+-- `<table>:<action>` permission strings. Covers every MM table for every role.
+-- This is the role-keyed layer; the table-level union is the `policy-actions`
+-- metadata documented in the header. admin is granted explicit full CRUD on
+-- every table for completeness even though it also bypasses the policy engine.
 INSERT INTO role_permissions (role_id, permission) VALUES
-(1, 'club:manage'),
-(1, 'members:manage'),
-(1, 'dues:manage'),
-(1, 'events:manage'),
-(2, 'members:manage'),
-(2, 'dues:manage'),
-(2, 'events:manage'),
-(3, 'events:rsvp');
+-- admin — full CRUD on every MM table
+(1, 'members:read'), (1, 'members:create'), (1, 'members:update'), (1, 'members:delete'),
+(1, 'households:read'), (1, 'households:create'), (1, 'households:update'), (1, 'households:delete'),
+(1, 'household_members:read'), (1, 'household_members:create'), (1, 'household_members:update'), (1, 'household_members:delete'),
+(1, 'membership_plans:read'), (1, 'membership_plans:create'), (1, 'membership_plans:update'), (1, 'membership_plans:delete'),
+(1, 'member_memberships:read'), (1, 'member_memberships:create'), (1, 'member_memberships:update'), (1, 'member_memberships:delete'),
+(1, 'dues_invoices:read'), (1, 'dues_invoices:create'), (1, 'dues_invoices:update'), (1, 'dues_invoices:delete'),
+(1, 'dues_payments:read'), (1, 'dues_payments:create'), (1, 'dues_payments:update'), (1, 'dues_payments:delete'),
+(1, 'events:read'), (1, 'events:create'), (1, 'events:update'), (1, 'events:delete'),
+(1, 'event_rsvps:read'), (1, 'event_rsvps:create'), (1, 'event_rsvps:update'), (1, 'event_rsvps:delete'),
+(1, 'event_attendance:read'), (1, 'event_attendance:create'), (1, 'event_attendance:update'), (1, 'event_attendance:delete'),
+(1, 'audit_log:read'), (1, 'audit_log:create'), (1, 'audit_log:update'), (1, 'audit_log:delete'),
+(1, 'roles:read'), (1, 'roles:create'), (1, 'roles:update'), (1, 'roles:delete'),
+(1, 'role_permissions:read'), (1, 'role_permissions:create'), (1, 'role_permissions:update'), (1, 'role_permissions:delete'),
+(1, 'organization_memberships:read'), (1, 'organization_memberships:create'), (1, 'organization_memberships:update'), (1, 'organization_memberships:delete'),
+(1, 'tenants:read'), (1, 'tenants:create'), (1, 'tenants:update'), (1, 'tenants:delete'),
+-- officer — full CRUD on the member lifecycle; read elsewhere
+(2, 'members:read'), (2, 'members:create'), (2, 'members:update'), (2, 'members:delete'),
+(2, 'households:read'), (2, 'households:create'), (2, 'households:update'), (2, 'households:delete'),
+(2, 'household_members:read'), (2, 'household_members:create'), (2, 'household_members:update'), (2, 'household_members:delete'),
+(2, 'membership_plans:read'), (2, 'membership_plans:create'), (2, 'membership_plans:update'), (2, 'membership_plans:delete'),
+(2, 'member_memberships:read'), (2, 'member_memberships:create'), (2, 'member_memberships:update'), (2, 'member_memberships:delete'),
+(2, 'dues_invoices:read'), (2, 'dues_payments:read'),
+(2, 'events:read'), (2, 'event_rsvps:read'), (2, 'event_attendance:read'),
+(2, 'audit_log:read'), (2, 'roles:read'), (2, 'role_permissions:read'),
+(2, 'organization_memberships:read'), (2, 'organization_memberships:update'), (2, 'tenants:read'),
+-- event_manager — full CRUD on events; read elsewhere
+(3, 'events:read'), (3, 'events:create'), (3, 'events:update'), (3, 'events:delete'),
+(3, 'event_rsvps:read'), (3, 'event_rsvps:create'), (3, 'event_rsvps:update'), (3, 'event_rsvps:delete'),
+(3, 'event_attendance:read'), (3, 'event_attendance:create'), (3, 'event_attendance:update'), (3, 'event_attendance:delete'),
+(3, 'members:read'), (3, 'households:read'), (3, 'household_members:read'),
+(3, 'membership_plans:read'), (3, 'member_memberships:read'),
+(3, 'dues_invoices:read'), (3, 'dues_payments:read'),
+(3, 'audit_log:read'), (3, 'roles:read'), (3, 'role_permissions:read'),
+(3, 'organization_memberships:read'), (3, 'tenants:read'),
+-- finance_manager — create/update dues; read elsewhere
+(4, 'dues_invoices:read'), (4, 'dues_invoices:create'), (4, 'dues_invoices:update'),
+(4, 'dues_payments:read'), (4, 'dues_payments:create'), (4, 'dues_payments:update'),
+(4, 'members:read'), (4, 'households:read'), (4, 'household_members:read'),
+(4, 'membership_plans:read'), (4, 'member_memberships:read'),
+(4, 'events:read'), (4, 'event_rsvps:read'), (4, 'event_attendance:read'),
+(4, 'audit_log:read'), (4, 'roles:read'), (4, 'role_permissions:read'),
+(4, 'organization_memberships:read'), (4, 'tenants:read'),
+-- member — read-all plus self-service event RSVPs
+(5, 'members:read'), (5, 'households:read'), (5, 'household_members:read'),
+(5, 'membership_plans:read'), (5, 'member_memberships:read'),
+(5, 'dues_invoices:read'), (5, 'dues_payments:read'),
+(5, 'events:read'),
+(5, 'event_rsvps:read'), (5, 'event_rsvps:create'), (5, 'event_rsvps:update'),
+(5, 'event_attendance:read'),
+(5, 'audit_log:read'), (5, 'roles:read'), (5, 'role_permissions:read'),
+(5, 'organization_memberships:read'), (5, 'tenants:read'),
+-- read_only — read on every MM table; no mutations
+(6, 'members:read'), (6, 'households:read'), (6, 'household_members:read'),
+(6, 'membership_plans:read'), (6, 'member_memberships:read'),
+(6, 'dues_invoices:read'), (6, 'dues_payments:read'),
+(6, 'events:read'), (6, 'event_rsvps:read'), (6, 'event_attendance:read'),
+(6, 'audit_log:read'), (6, 'roles:read'), (6, 'role_permissions:read'),
+(6, 'organization_memberships:read'), (6, 'tenants:read');
 
 -- App users — staff/admins who log in (tenant-scoped) (5)
 INSERT INTO app_users (user_id, tenant_id, email, display_name, is_active, created_at) OVERRIDING SYSTEM VALUE VALUES
@@ -253,6 +368,7 @@ INSERT INTO app_users (user_id, tenant_id, email, display_name, is_active, creat
 (5, 3, 'admin@harbor-sailing.example', 'Lena Cruz', TRUE, '2022-12-01 09:30:00');
 
 -- Organization memberships — staff roles within a club (tenant-scoped) (5)
+-- role_id references the six-role catalog: 1=admin, 2=officer.
 INSERT INTO organization_memberships (tenant_id, user_id, role_id, status, joined_at) VALUES
 (1, 1, 1, 'active', '2023-01-15 09:05:00'),
 (1, 2, 2, 'active', '2023-01-18 11:00:00'),

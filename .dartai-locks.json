@@ -1,15 +1,15 @@
 {
   "claims": {
-    "tlO3aCfGAxkk": {
+    "oOPhtVxddgcT": {
       "runner_instance_id": "DESKTOP-NPIOPS6-13041",
       "runner_email": "andybrummer@standardbeagle.com",
-      "claimed_at": "2026-05-14T17:56:00Z",
+      "claimed_at": "2026-05-14T18:05:00Z",
       "agent_id": "DESKTOP-NPIOPS6-13041",
       "parent_loop_id": "epYVBosC0i3a",
-      "purpose": "Typed client 1/4 — shared @bifrostql/types package scaffold + relocate contract types",
+      "purpose": "Typed client 2/4 — codegen emits proto-derived types into @bifrostql/types/generated",
       "source_event": {
         "loop_id": "epYVBosC0i3a",
-        "task_id": "tlO3aCfGAxkk",
+        "task_id": "oOPhtVxddgcT",
         "conversation_id": null
       }
     }

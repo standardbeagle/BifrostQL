@@ -201,6 +201,10 @@ importers:
         version: 7.3.1(@types/node@24.12.4)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.0)
 
   packages/@bifrostql/app-shell:
+    dependencies:
+      '@bifrostql/types':
+        specifier: workspace:*
+        version: link:../types
     devDependencies:
       '@bifrostql/react':
         specifier: workspace:*
@@ -270,6 +274,10 @@ importers:
         version: 3.2.4(@types/debug@4.1.13)(@types/node@24.12.4)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.31.1)(terser@5.46.0)
 
   packages/@bifrostql/react:
+    dependencies:
+      '@bifrostql/types':
+        specifier: workspace:*
+        version: link:../types
     devDependencies:
       '@tanstack/react-query':
         specifier: ^5.62.0
@@ -331,6 +339,30 @@ importers:
       vite-plugin-dts:
         specifier: ^4.5.4
         version: 4.5.4(@types/node@24.12.4)(rollup@4.59.0)(typescript@5.9.3)(vite@7.3.1(@types/node@24.12.4)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.0))
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/debug@4.1.13)(@types/node@24.12.4)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.31.1)(terser@5.46.0)
+
+  packages/@bifrostql/types:
+    devDependencies:
+      '@typescript-eslint/eslint-plugin':
+        specifier: ^7.12.0
+        version: 7.18.0(@typescript-eslint/parser@7.18.0(eslint@8.57.1)(typescript@5.9.3))(eslint@8.57.1)(typescript@5.9.3)
+      '@typescript-eslint/parser':
+        specifier: ^7.12.0
+        version: 7.18.0(eslint@8.57.1)(typescript@5.9.3)
+      '@vitest/coverage-v8':
+        specifier: ^3.0.0
+        version: 3.2.4(vitest@3.2.4(@types/debug@4.1.13)(@types/node@24.12.4)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.31.1)(terser@5.46.0))
+      eslint:
+        specifier: ^8.55.0
+        version: 8.57.1
+      prettier:
+        specifier: ^3.4.0
+        version: 3.8.1
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
       vitest:
         specifier: ^3.0.0
         version: 3.2.4(@types/debug@4.1.13)(@types/node@24.12.4)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.31.1)(terser@5.46.0)

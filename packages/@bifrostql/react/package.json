@@ -40,6 +40,9 @@
     "react": "^18.0.0 || ^19.0.0",
     "react-dom": "^18.0.0 || ^19.0.0"
   },
+  "dependencies": {
+    "@bifrostql/types": "workspace:*"
+  },
   "devDependencies": {
     "@tanstack/react-query": "^5.62.0",
     "@testing-library/dom": "^10.4.0",

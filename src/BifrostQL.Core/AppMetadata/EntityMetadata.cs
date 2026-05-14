@@ -43,5 +43,20 @@ namespace BifrostQL.Core.AppMetadata
         /// </summary>
         public IReadOnlyDictionary<string, FieldMetadata> Fields { get; init; }
             = new Dictionary<string, FieldMetadata>();
+
+        /// <summary>
+        /// The grid-preset metadata describing how the entity's list/table view
+        /// should be presented. Null when the entity has no grid preset; clients
+        /// then choose their own list presentation.
+        /// </summary>
+        public GridPresetMetadata? Grid { get; init; }
+
+        /// <summary>
+        /// Relationship metadata keyed by relationship name. Each entry
+        /// references its target entity by qualified table name. Empty when the
+        /// entity has no overlay relationship metadata.
+        /// </summary>
+        public IReadOnlyDictionary<string, RelationshipMetadata> Relationships { get; init; }
+            = new Dictionary<string, RelationshipMetadata>();
     }
 }

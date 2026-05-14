@@ -19,6 +19,8 @@ import { EventCheckin } from './events/event-checkin';
 import { UnpaidDuesReport } from './reports/unpaid-dues-report';
 import { UpcomingRenewalsReport } from './reports/upcoming-renewals-report';
 import { ExpiredMembershipsReport } from './reports/expired-memberships-report';
+import { AttendanceByEventReport } from './reports/attendance-by-event-report';
+import { AttendanceByMemberReport } from './reports/attendance-by-member-report';
 
 /** Permission required to view and manage the member roster. */
 const MEMBERS_READ = 'main.members.read';
@@ -36,6 +38,8 @@ const REPORT_NAV_ITEMS = [
   { path: '/reports/unpaid-dues', label: 'Unpaid Dues' },
   { path: '/reports/upcoming-renewals', label: 'Upcoming Renewals' },
   { path: '/reports/expired-memberships', label: 'Expired Memberships' },
+  { path: '/reports/attendance-by-event', label: 'Attendance by Event' },
+  { path: '/reports/attendance-by-member', label: 'Attendance by Member' },
 ];
 
 /**
@@ -257,6 +261,28 @@ function App() {
               onUnauthenticated={() => navigate('/login')}
             >
               <ExpiredMembershipsReport />
+            </ProtectedRoute>
+          </Route>
+          {/*
+            Event-attendance reports: read-only `BifrostTable` views over the
+            `main.event_attendance` entity, grouped by event or by member via a
+            server-side sort. Like the dues reports, they are not overlay
+            entities, so their nav entries are appended by `MembershipNav`.
+          */}
+          <Route path="/reports/attendance-by-event">
+            <ProtectedRoute
+              requirePermission={MEMBERS_READ}
+              onUnauthenticated={() => navigate('/login')}
+            >
+              <AttendanceByEventReport />
+            </ProtectedRoute>
+          </Route>
+          <Route path="/reports/attendance-by-member">
+            <ProtectedRoute
+              requirePermission={MEMBERS_READ}
+              onUnauthenticated={() => navigate('/login')}
+            >
+              <AttendanceByMemberReport />
             </ProtectedRoute>
           </Route>
         </Routes>

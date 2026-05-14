@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text.Json;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Server;
@@ -6,6 +7,7 @@ using BifrostQL.Server.Auth;
 using BifrostQL.Sqlite;
 using FluentAssertions;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Data.Sqlite;
 using Xunit;
@@ -182,6 +184,73 @@ namespace BifrostQL.Server.Test
             principal.Identity.AuthenticationType.Should().Be(CookieAuthenticationDefaults.AuthenticationScheme);
             principal.FindFirstValue(ClaimTypes.NameIdentifier).Should().Be("user-9");
             principal.IsInRole("member").Should().BeTrue();
+        }
+
+        [Fact]
+        public async Task SessionEndpoint_Unauthenticated_Returns401()
+        {
+            // Arrange: a context whose User is an anonymous (unauthenticated) principal.
+            var context = new DefaultHttpContext();
+            context.Request.Method = HttpMethods.Get;
+            context.User = new ClaimsPrincipal(new ClaimsIdentity());
+
+            // Act
+            await LocalAuthEndpoint.HandleSessionAsync(context);
+
+            // Assert
+            context.Response.StatusCode.Should().Be(StatusCodes.Status401Unauthorized);
+        }
+
+        [Fact]
+        public async Task SessionEndpoint_NonGetMethod_Returns405()
+        {
+            // Arrange
+            var context = new DefaultHttpContext();
+            context.Request.Method = HttpMethods.Post;
+            context.User = new ClaimsPrincipal(new ClaimsIdentity());
+
+            // Act
+            await LocalAuthEndpoint.HandleSessionAsync(context);
+
+            // Assert
+            context.Response.StatusCode.Should().Be(StatusCodes.Status405MethodNotAllowed);
+        }
+
+        [Fact]
+        public async Task SessionEndpoint_Authenticated_Returns200WithCamelCaseAppIdentity()
+        {
+            // Arrange: an authenticated cookie principal built the same way login issues it.
+            var store = CreateStore();
+            var login = await store.VerifyCredentialsAsync("alice@club.test", "correct horse battery");
+            login.Succeeded.Should().BeTrue();
+            var principal = LocalAuthEndpoint.BuildPrincipal(login.Identity!);
+
+            var context = new DefaultHttpContext();
+            context.Request.Method = HttpMethods.Get;
+            context.User = principal;
+            var body = new MemoryStream();
+            context.Response.Body = body;
+
+            // Act
+            await LocalAuthEndpoint.HandleSessionAsync(context);
+
+            // Assert: 200 + the camelCase AppIdentity contract the app-shell SessionProvider reads.
+            context.Response.StatusCode.Should().Be(StatusCodes.Status200OK);
+            context.Response.ContentType.Should().StartWith("application/json");
+
+            body.Position = 0;
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            root.GetProperty("id").GetString().Should().Be("user-1");
+            root.GetProperty("email").GetString().Should().Be("alice@club.test");
+            root.GetProperty("displayName").GetString().Should().Be("Alice Member");
+            root.GetProperty("provider").GetString().Should().Be("local");
+            root.GetProperty("tenantId").GetString().Should().Be("club-7");
+            root.GetProperty("roles").EnumerateArray().Select(e => e.GetString())
+                .Should().BeEquivalentTo("admin", "editor");
+            root.GetProperty("orgIds").GetArrayLength().Should().Be(0);
+            root.GetProperty("permissions").GetArrayLength().Should().Be(0);
+            root.TryGetProperty("claims", out _).Should().BeTrue();
         }
 
         public void Dispose()

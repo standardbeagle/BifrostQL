@@ -45,6 +45,9 @@ namespace BifrostQL.Server.Auth
 
         /// <summary>Logout path for the local auth endpoint. Defaults to <c>/auth/logout</c>.</summary>
         public string LogoutPath { get; set; } = "/auth/logout";
+
+        /// <summary>Read-session path for the local auth endpoint. Defaults to <c>/auth/session</c>.</summary>
+        public string SessionPath { get; set; } = "/auth/session";
     }
 
     /// <summary>

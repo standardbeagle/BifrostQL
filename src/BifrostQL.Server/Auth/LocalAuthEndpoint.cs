@@ -30,6 +30,7 @@ namespace BifrostQL.Server.Auth
 
             app.Map(options.LoginPath, branch => branch.Run(HandleLoginAsync));
             app.Map(options.LogoutPath, branch => branch.Run(HandleLogoutAsync));
+            app.Map(options.SessionPath, branch => branch.Run(HandleSessionAsync));
             return app;
         }
 
@@ -124,6 +125,33 @@ namespace BifrostQL.Server.Auth
 
             await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme).ConfigureAwait(false);
             context.Response.StatusCode = StatusCodes.Status204NoContent;
+        }
+
+        /// <summary>
+        /// Returns the current session as the camelCase <see cref="AppIdentity"/> contract
+        /// the app-shell SessionProvider reads, reconstructed from the authenticated
+        /// <see cref="ClaimsPrincipal"/> via the same <see cref="BifrostContext.BuildAppIdentity"/>
+        /// path the GraphQL pipeline uses. Returns 401 when the request carries no
+        /// authenticated principal. Only the public AppIdentity fields are written: the
+        /// database credentials and the raw cookie claims never reach the client.
+        /// </summary>
+        internal static async Task HandleSessionAsync(HttpContext context)
+        {
+            if (!HttpMethods.IsGet(context.Request.Method))
+            {
+                context.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
+                return;
+            }
+
+            var principal = context.User;
+            if (principal?.Identity == null || !principal.Identity.IsAuthenticated)
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return;
+            }
+
+            var identity = BifrostContext.BuildAppIdentity(principal);
+            await context.Response.WriteAsJsonAsync(identity, context.RequestAborted).ConfigureAwait(false);
         }
     }
 

@@ -1,15 +1,15 @@
 {
   "claims": {
-    "5FQiDCrRSmu6": {
+    "TVMKRdj7pl5Y": {
       "runner_instance_id": "DESKTOP-NPIOPS6-13041",
       "runner_email": "andybrummer@standardbeagle.com",
-      "claimed_at": "2026-05-14T22:10:00Z",
+      "claimed_at": "2026-05-14T22:16:00Z",
       "agent_id": "DESKTOP-NPIOPS6-13041",
       "parent_loop_id": "epYVBosC0i3a",
-      "purpose": "Membership Manager: roles, officer permissions, member self-service policy",
+      "purpose": "MM Roles 1/4 — role→permission matrix as policy metadata + seed 6 roles",
       "source_event": {
         "loop_id": "epYVBosC0i3a",
-        "task_id": "5FQiDCrRSmu6",
+        "task_id": "TVMKRdj7pl5Y",
         "conversation_id": null
       }
     }

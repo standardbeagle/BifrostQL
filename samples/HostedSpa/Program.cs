@@ -35,6 +35,28 @@ builder.Services.AddBifrostLocalAuth(connectionString!, auth =>
     auth.RolesColumn = "roles";
 });
 
+// Optional OIDC login (Google / Microsoft 365), added purely by configuration on top of
+// local auth — inert by default. The sample ships with no "Oidc" config section, so this
+// block is skipped and the sample runs on local auth only. A self-hosted club enables it
+// by adding an "Oidc" section to appsettings.json with a real client id/secret; no code
+// change is needed. The OIDC claim mappers normalize a Google / Microsoft 365 principal
+// to the SAME AppIdentity (id/email/tenant/roles) LocalUserStore produces, so the policy
+// engine and tenant filter behave identically — authorization semantics are unchanged.
+var oidcConfig = builder.Configuration.GetSection("Oidc");
+if (oidcConfig.Exists())
+{
+    builder.Services.AddBifrostOidcClaimMappers(mappers =>
+    {
+        var microsoftIssuer = oidcConfig["Microsoft365:Issuer"];
+        if (!string.IsNullOrWhiteSpace(microsoftIssuer))
+            mappers.AddMicrosoft365(microsoftIssuer);
+
+        var googleIssuer = oidcConfig["Google:Issuer"];
+        if (!string.IsNullOrWhiteSpace(googleIssuer))
+            mappers.AddGoogle(googleIssuer);
+    });
+}
+
 // App-metadata overlay: a standalone JSON file describing how the Membership
 // Manager entities (members, households, household_members) present in a
 // metadata-driven client. Served at /_app-metadata, independent of the schema.

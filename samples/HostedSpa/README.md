@@ -67,6 +67,19 @@ projected into the user context by `IdentityContextMapper`, so both the
 (`household_id = {household_id}`) resolve end to end. A member with no household
 simply carries no `household_id` claim.
 
+## Adding Google / Microsoft 365 login
+
+The sample runs on local DB-backed auth only. Google and Microsoft 365 OIDC login can
+be added **purely by configuration** — `Program.cs` wires the OIDC claim mappers only
+when an `Oidc` section is present in `appsettings.json`, and that section ships commented
+out. To enable it, uncomment the `Oidc` block, supply a real issuer URL, and add the
+matching `AddOpenIdConnect` client id/secret.
+
+OIDC logins map to the **same** `AppIdentity` (id, email, tenant, roles) `LocalUserStore`
+produces, so the policy engine and tenant filter behave identically — app authorization
+semantics are unchanged. See the [Authentication guide](../../docs/src/content/docs/guides/authentication.md)
+for the full onboarding path and the claim-shape parity guarantee.
+
 ## Rebuilding the SPA
 
 The SPA source lives under `spa/`. To change it and rebuild into `wwwroot/`:

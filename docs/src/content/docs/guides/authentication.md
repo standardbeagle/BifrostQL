@@ -130,6 +130,16 @@ The same `OidcClaimMapping` override works for Microsoft 365 when a deployment p
 
 Subject, email, and name are resolved provider-neutrally — the mapper reads the standard OIDC claim types with ASP.NET-mapped fallbacks, so mapping works whether or not ASP.NET's inbound claim mapping has rewritten the claim types.
 
+### Onboarding path: start local, add OIDC later by configuration
+
+A self-hosted deployment — for example a club running the Membership Manager app — can start with local DB-backed login alone and add Google or Microsoft 365 login later **purely by configuration, with no code change to the app's authorization rules**.
+
+1. **Start with local auth.** `AddBifrostLocalAuth` against the app-user table is enough to sign users in. Tenant isolation, audit columns, and policy checks all work off the `AppIdentity` local login produces.
+2. **Add OIDC when you want it.** Register the claim mappers with `AddBifrostOidcClaimMappers` and add the matching `AddOpenIdConnect` client configuration. Gate it behind a config section so the wiring stays inert until a real issuer and client secret are supplied — see the [HostedSpa sample](https://github.com/standardbeagle/BifrostQL/tree/main/samples/HostedSpa), which ships the OIDC block commented out and runs on local auth only by default.
+3. **Authorization semantics are unchanged.** Both paths converge on the same `AppIdentity`, and `IdentityContextMapper` projects either one into the **identical** `UserContext` keys — the tenant key, the roles key, and the audit user key. The policy engine, `TenantFilterTransformer`, and role-bypass checks read those keys and never see which provider authenticated the request.
+
+The claim-shape guarantee is enforced by tests, not just documented: `OidcLocalAuthParityTests` verifies that a Microsoft 365 OIDC principal and a `LocalUserStore` login for the same logical user produce the same tenant and roles `UserContext` values — including after the OIDC identity is re-issued in the shared local-auth cookie shape. So adding OIDC cannot silently change who can see or do what; if a mapper ever diverged from local auth's claim shape, that test would fail.
+
 ## JWT bearer tokens
 
 BifrostQL also supports OAuth2/OIDC via raw JWT bearer tokens, without the cookie re-issue path.

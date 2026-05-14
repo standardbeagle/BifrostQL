@@ -54,7 +54,8 @@ public class MembershipManagerAppMetadataTests
         overlay.Entities.Keys.Should().BeEquivalentTo(
             "main.members", "main.households", "main.household_members",
             "main.membership_plans", "main.member_memberships",
-            "main.dues_invoices", "main.dues_payments");
+            "main.dues_invoices", "main.dues_payments",
+            "main.events", "main.event_rsvps", "main.event_attendance");
         overlay.Entities["main.members"].Label.Should().Be("Members");
         overlay.Entities["main.households"].Label.Should().Be("Households");
         overlay.Entities["main.household_members"].Label.Should().Be("Household Members");
@@ -146,6 +147,104 @@ public class MembershipManagerAppMetadataTests
         var payments = overlay.Entities["main.dues_payments"];
         payments.Relationships["invoice"].TargetEntity.Should().Be("main.dues_invoices");
         payments.Relationships["invoice"].ForeignKeyField.Should().Be("invoice_id");
+    }
+
+    [Fact]
+    public void OverlayFile_DescribesEventEntities_WithFieldsMatchingSchemaColumns()
+    {
+        // The three MM Events tables (membership-manager.sql) are exposed as
+        // overlay entities so a metadata-driven client renders their forms
+        // generically, keyed by the actual SQL column names.
+        var overlay = LoadOverlay();
+
+        var events = overlay.Entities["main.events"];
+        events.Label.Should().Be("Events");
+        events.Fields.Should().ContainKeys(
+            "title", "description", "location", "starts_at", "ends_at",
+            "capacity", "tenant_id");
+
+        var rsvps = overlay.Entities["main.event_rsvps"];
+        rsvps.Label.Should().Be("Event RSVPs");
+        rsvps.Fields.Should().ContainKeys(
+            "event_id", "member_id", "response", "guests", "responded_at",
+            "tenant_id");
+
+        var attendance = overlay.Entities["main.event_attendance"];
+        attendance.Label.Should().Be("Event Attendance");
+        attendance.Fields.Should().ContainKeys(
+            "event_id", "member_id", "checked_in_at", "tenant_id");
+
+        // Every event field carries a layout group, matching the
+        // members/households convention.
+        foreach (var key in new[]
+                 {
+                     "main.events", "main.event_rsvps", "main.event_attendance",
+                 })
+        {
+            overlay.Entities[key].Fields.Values
+                .Select(f => f.Group).Should().OnlyContain(g => g != null);
+        }
+    }
+
+    [Fact]
+    public void OverlayFile_GatesEventAdminFields_WithVisibilityFlags()
+    {
+        // tenant_id stays admin-only and read-only across the event entities,
+        // consistent with the members/households convention.
+        var overlay = LoadOverlay();
+
+        foreach (var key in new[]
+                 {
+                     "main.events", "main.event_rsvps", "main.event_attendance",
+                 })
+        {
+            var tenant = overlay.Entities[key].Fields["tenant_id"];
+            tenant.Visible.Should().BeFalse($"{key}.tenant_id is admin-only");
+            tenant.ReadOnly.Should().BeTrue($"{key}.tenant_id is system-managed");
+        }
+    }
+
+    [Fact]
+    public void OverlayFile_PlacesEventsInMainNav_WithMobileFlowHints()
+    {
+        // events surfaces in AppNav via navPlacement: main; the RSVP/attendance
+        // child entities carry mobile-friendly flow hints in field help text.
+        var overlay = LoadOverlay();
+
+        overlay.Entities["main.events"].NavPlacement.Should().Be("main");
+
+        overlay.Entities["main.event_rsvps"].Fields["response"].HelpText
+            .Should().NotBeNullOrWhiteSpace();
+        overlay.Entities["main.event_attendance"].Fields["checked_in_at"].HelpText
+            .Should().NotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public void OverlayFile_DescribesEventRelationships_ForFkFreeEditing()
+    {
+        // Event RSVPs and attendance chain back to events and members via
+        // fk-lookup relationship metadata; events exposes both as child
+        // collections.
+        var overlay = LoadOverlay();
+
+        var events = overlay.Entities["main.events"];
+        events.Relationships["rsvps"].TargetEntity.Should().Be("main.event_rsvps");
+        events.Relationships["rsvps"].Kind.Should().Be(RelationshipKind.ChildCollection);
+        events.Relationships["attendance"].TargetEntity.Should().Be("main.event_attendance");
+        events.Relationships["attendance"].Kind.Should().Be(RelationshipKind.ChildCollection);
+
+        var rsvps = overlay.Entities["main.event_rsvps"];
+        rsvps.Relationships["event"].TargetEntity.Should().Be("main.events");
+        rsvps.Relationships["event"].ForeignKeyField.Should().Be("event_id");
+        rsvps.Relationships["event"].Kind.Should().Be(RelationshipKind.ForeignKeySelector);
+        rsvps.Relationships["member"].TargetEntity.Should().Be("main.members");
+        rsvps.Relationships["member"].ForeignKeyField.Should().Be("member_id");
+
+        var attendance = overlay.Entities["main.event_attendance"];
+        attendance.Relationships["event"].TargetEntity.Should().Be("main.events");
+        attendance.Relationships["event"].ForeignKeyField.Should().Be("event_id");
+        attendance.Relationships["member"].TargetEntity.Should().Be("main.members");
+        attendance.Relationships["member"].ForeignKeyField.Should().Be("member_id");
     }
 
     [Fact]
@@ -253,7 +352,7 @@ public class MembershipManagerAppMetadataTests
         json.Should().Contain("\"displayFields\"")
             .And.Contain("\"foreignKeyField\"")
             .And.Contain("\"foreignKeySelector\"");
-        restored.Entities.Should().HaveCount(7);
+        restored.Entities.Should().HaveCount(10);
         restored.Entities["main.members"].Grid!.DefaultColumns.Should()
             .ContainInOrder("first_name", "last_name", "email", "phone", "status");
         restored.Entities["main.household_members"].Relationships["member"].Kind

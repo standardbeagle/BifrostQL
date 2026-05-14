@@ -346,6 +346,168 @@
           "foreignKeyField": "invoice_id"
         }
       }
+    },
+    "main.events": {
+      "label": "Events",
+      "icon": "event",
+      "navPlacement": "main",
+      "displayFields": [ "title" ],
+      "fields": {
+        "title": { "widget": "text", "group": "Identity" },
+        "description": { "widget": "textarea", "group": "Identity", "helpText": "What the event is about." },
+        "location": { "widget": "text", "group": "Schedule", "helpText": "Where the event is held." },
+        "starts_at": { "widget": "datepicker", "group": "Schedule", "helpText": "When the event starts." },
+        "ends_at": { "widget": "datepicker", "group": "Schedule", "helpText": "When the event ends. Empty for open-ended." },
+        "capacity": { "widget": "number", "group": "Schedule", "helpText": "Maximum attendees. Empty for unlimited." },
+        "created_at": {
+          "widget": "datepicker",
+          "group": "Admin",
+          "visible": false,
+          "readOnly": true,
+          "helpText": "Record creation timestamp. Admin-only, system-managed."
+        },
+        "tenant_id": {
+          "widget": "fk-lookup",
+          "group": "Admin",
+          "visible": false,
+          "readOnly": true,
+          "helpText": "Owning club. Admin-only, system-managed."
+        }
+      },
+      "grid": {
+        "defaultColumns": [ "title", "location", "starts_at", "ends_at", "capacity" ],
+        "defaultSort": [ "starts_at desc" ],
+        "savedViews": {
+          "upcoming": {
+            "name": "Upcoming Events",
+            "filters": [ "starts_at >= now" ]
+          }
+        }
+      },
+      "relationships": {
+        "rsvps": {
+          "label": "RSVPs",
+          "targetEntity": "main.event_rsvps",
+          "kind": "childCollection",
+          "foreignKeyField": "event_id",
+          "displayColumns": [ "member_id", "response", "guests" ]
+        },
+        "attendance": {
+          "label": "Attendance",
+          "targetEntity": "main.event_attendance",
+          "kind": "childCollection",
+          "foreignKeyField": "event_id",
+          "displayColumns": [ "member_id", "checked_in_at" ]
+        }
+      }
+    },
+    "main.event_rsvps": {
+      "label": "Event RSVPs",
+      "icon": "how_to_reg",
+      "navPlacement": "related",
+      "displayFields": [ "response" ],
+      "fields": {
+        "event_id": {
+          "widget": "fk-lookup",
+          "group": "RSVP",
+          "helpText": "Event being responded to."
+        },
+        "member_id": {
+          "widget": "fk-lookup",
+          "group": "RSVP",
+          "helpText": "Member responding to the event."
+        },
+        "response": {
+          "widget": "select",
+          "group": "RSVP",
+          "helpText": "Tap to set your response: yes, no, or maybe."
+        },
+        "guests": {
+          "widget": "number",
+          "group": "RSVP",
+          "helpText": "How many extra guests you are bringing."
+        },
+        "responded_at": {
+          "widget": "datepicker",
+          "group": "RSVP",
+          "readOnly": true,
+          "helpText": "When the response was recorded."
+        },
+        "tenant_id": {
+          "widget": "fk-lookup",
+          "group": "Admin",
+          "visible": false,
+          "readOnly": true,
+          "helpText": "Owning club. Admin-only, system-managed."
+        }
+      },
+      "grid": {
+        "defaultColumns": [ "event_id", "member_id", "response", "guests", "responded_at" ],
+        "defaultSort": [ "responded_at desc" ]
+      },
+      "relationships": {
+        "event": {
+          "label": "Event",
+          "targetEntity": "main.events",
+          "kind": "foreignKeySelector",
+          "foreignKeyField": "event_id"
+        },
+        "member": {
+          "label": "Member",
+          "targetEntity": "main.members",
+          "kind": "foreignKeySelector",
+          "foreignKeyField": "member_id"
+        }
+      }
+    },
+    "main.event_attendance": {
+      "label": "Event Attendance",
+      "icon": "check_circle",
+      "navPlacement": "related",
+      "displayFields": [ "checked_in_at" ],
+      "fields": {
+        "event_id": {
+          "widget": "fk-lookup",
+          "group": "Attendance",
+          "helpText": "Event the member checked in to."
+        },
+        "member_id": {
+          "widget": "fk-lookup",
+          "group": "Attendance",
+          "helpText": "Member who checked in."
+        },
+        "checked_in_at": {
+          "widget": "datepicker",
+          "group": "Attendance",
+          "readOnly": true,
+          "helpText": "Tap check-in to record arrival at the event."
+        },
+        "tenant_id": {
+          "widget": "fk-lookup",
+          "group": "Admin",
+          "visible": false,
+          "readOnly": true,
+          "helpText": "Owning club. Admin-only, system-managed."
+        }
+      },
+      "grid": {
+        "defaultColumns": [ "event_id", "member_id", "checked_in_at" ],
+        "defaultSort": [ "checked_in_at desc" ]
+      },
+      "relationships": {
+        "event": {
+          "label": "Event",
+          "targetEntity": "main.events",
+          "kind": "foreignKeySelector",
+          "foreignKeyField": "event_id"
+        },
+        "member": {
+          "label": "Member",
+          "targetEntity": "main.members",
+          "kind": "foreignKeySelector",
+          "foreignKeyField": "member_id"
+        }
+      }
     }
   }
 }

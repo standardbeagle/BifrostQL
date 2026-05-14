@@ -1,15 +1,15 @@
 {
   "claims": {
-    "9DzDN0mP1Q9c": {
+    "ptTFmNMARcIr": {
       "runner_instance_id": "DESKTOP-NPIOPS6-13041",
       "runner_email": "andybrummer@standardbeagle.com",
-      "claimed_at": "2026-05-14T21:16:00Z",
+      "claimed_at": "2026-05-14T21:28:00Z",
       "agent_id": "DESKTOP-NPIOPS6-13041",
       "parent_loop_id": "epYVBosC0i3a",
-      "purpose": "MM Events 1/4 — events app-metadata overlay",
+      "purpose": "MM Events 2/4 — event CRUD + RSVP screens",
       "source_event": {
         "loop_id": "epYVBosC0i3a",
-        "task_id": "9DzDN0mP1Q9c",
+        "task_id": "ptTFmNMARcIr",
         "conversation_id": null
       }
     }

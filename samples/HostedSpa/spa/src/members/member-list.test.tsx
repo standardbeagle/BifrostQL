@@ -56,6 +56,10 @@ const sampleMetadata: AppMetadata = {
         defaultFilters: ['status = active'],
         savedViews: {
           active: { name: 'Active Members', filters: ['status = active'] },
+          inactive: {
+            name: 'Inactive Members',
+            filters: ['status = inactive'],
+          },
         },
       },
     },
@@ -165,10 +169,10 @@ describe('buildFilterControls', () => {
     );
     const statusControl = controls.find((c) => c.field === 'status');
 
-    // Assert: the `status = active` saved-view filter is discovered.
+    // Assert: both saved-view `status = ...` filters are discovered.
     expect(statusControl).toMatchObject({
       kind: 'select',
-      options: ['active'],
+      options: ['active', 'inactive'],
     });
   });
 
@@ -274,6 +278,51 @@ describe('MemberList', () => {
       expect(screen.getByText('View')).toBeInTheDocument(),
     );
     expect(screen.queryByText('Deactivate')).not.toBeInTheDocument();
+  });
+
+  it('renders a saved-view picker driven by the overlay', async () => {
+    // Arrange
+    globalThis.fetch = createFetchMock(identityWith(['main.members.read']));
+
+    // Act
+    renderMemberList();
+
+    // Assert: the picker and an option per overlay saved view are present.
+    await waitFor(() =>
+      expect(screen.getByTestId('saved-view-picker')).toBeInTheDocument(),
+    );
+    expect(screen.getByText('Active Members')).toBeInTheDocument();
+    expect(screen.getByText('Inactive Members')).toBeInTheDocument();
+  });
+
+  it('changes the issued GraphQL filter when a saved view is selected', async () => {
+    // Arrange
+    const user = userEvent.setup();
+    globalThis.fetch = createFetchMock(identityWith(['main.members.read']));
+    renderMemberList();
+    await waitFor(() =>
+      expect(screen.getByTestId('saved-view-picker')).toBeInTheDocument(),
+    );
+    // Baseline: the table query carries no status filter yet.
+    await waitFor(() => expect(graphqlRequests.length).toBeGreaterThan(0));
+    expect(
+      graphqlRequests.some((r) => r.query.includes('status: { _eq: "inactive"')),
+    ).toBe(false);
+
+    // Act: select the Inactive Members saved view.
+    await user.selectOptions(
+      screen.getByTestId('saved-view-picker'),
+      'inactive',
+    );
+
+    // Assert: a query carrying the saved view's filter is issued.
+    await waitFor(() =>
+      expect(
+        graphqlRequests.some((r) =>
+          r.query.includes('status: { _eq: "inactive"'),
+        ),
+      ).toBe(true),
+    );
   });
 
   it('issues an update mutation when Deactivate is clicked', async () => {

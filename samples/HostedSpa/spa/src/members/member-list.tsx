@@ -13,6 +13,7 @@ import {
 } from '@bifrostql/react';
 import type { RowAction } from '@bifrostql/react';
 import { buildFilterControls, buildTableFilter } from './member-list-filters';
+import { getSavedViewOptions } from './saved-views';
 
 /** Qualified entity key of the members entity in the app-metadata overlay. */
 const MEMBERS_ENTITY_KEY = 'main.members';
@@ -33,8 +34,10 @@ const INACTIVE_STATUS = 'inactive';
  * app-metadata overlay via {@link useAppMetadata} — search, the status filter,
  * and any tag/renewal columns appear only because the overlay declares those
  * fields, never from hardcoded names. Data is rendered with the
- * `@bifrostql/react` {@link BifrostTable}. Each row offers a View action that
- * routes to the member detail screen, and — for officers/admins holding
+ * `@bifrostql/react` {@link BifrostTable}. A saved-view picker — also driven by
+ * the overlay's `grid.savedViews`, never hardcoded — lets an officer apply a
+ * named view's filters to the table. Each row offers a View action that routes
+ * to the member detail screen, and — for officers/admins holding
  * `main.members.write` — a Deactivate action wired to an update mutation that
  * sets the member's status to `inactive`.
  */
@@ -58,11 +61,20 @@ export function MemberList() {
     [entity],
   );
 
-  const [filterValues, setFilterValues] = useState<Record<string, string>>({});
-  const tableFilter = useMemo(
-    () => buildTableFilter(filterControls, filterValues),
-    [filterControls, filterValues],
+  const savedViewOptions = useMemo(
+    () => getSavedViewOptions(entity),
+    [entity],
   );
+
+  const [filterValues, setFilterValues] = useState<Record<string, string>>({});
+  const [savedViewId, setSavedViewId] = useState('');
+
+  const tableFilter = useMemo(() => {
+    const fromControls = buildTableFilter(filterControls, filterValues);
+    const savedView = savedViewOptions.find((v) => v.id === savedViewId);
+    // The selected saved view's filter layers over the ad-hoc filter controls.
+    return savedView ? { ...fromControls, ...savedView.filter } : fromControls;
+  }, [filterControls, filterValues, savedViewOptions, savedViewId]);
 
   const canWrite = permissions.includes(MEMBERS_WRITE);
 
@@ -114,6 +126,29 @@ export function MemberList() {
     <section data-testid="member-list">
       <h2>{entity.label ?? 'Members'}</h2>
 
+      {savedViewOptions.length > 0 && (
+        <div
+          className="member-list__saved-views"
+          data-testid="member-list-saved-views"
+        >
+          <label>
+            Saved view
+            <select
+              data-testid="saved-view-picker"
+              value={savedViewId}
+              onChange={(e) => setSavedViewId(e.target.value)}
+            >
+              <option value="">All members</option>
+              {savedViewOptions.map((view) => (
+                <option key={view.id} value={view.id}>
+                  {view.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
+
       <div className="member-list__filters" data-testid="member-list-filters">
         {filterControls.map((control) =>
           control.kind === 'select' ? (
@@ -158,6 +193,10 @@ export function MemberList() {
       </div>
 
       <BifrostTable
+        // BifrostTable seeds its filter state from `defaultFilters` only on
+        // mount, so remount it when the saved view changes to re-seed the
+        // table — and therefore the issued GraphQL filter — from the new view.
+        key={savedViewId}
         query={queryName}
         columns={columns}
         rowActions={rowActions}

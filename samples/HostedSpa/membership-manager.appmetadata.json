@@ -42,6 +42,10 @@
           "active": {
             "name": "Active Members",
             "filters": [ "status = active" ]
+          },
+          "inactive": {
+            "name": "Inactive Members",
+            "filters": [ "status = inactive" ]
           }
         },
         "bulkActions": [ "export", "email" ]
@@ -225,6 +229,11 @@
           "active": {
             "name": "Active Memberships",
             "filters": [ "status = active" ]
+          },
+          "renewal-upcoming": {
+            "name": "Renewal Upcoming",
+            "filters": [ "end_date >= now", "end_date <= now+30d" ],
+            "sort": [ "end_date asc" ]
           }
         }
       },
@@ -286,6 +295,11 @@
           "open": {
             "name": "Open Invoices",
             "filters": [ "status = open" ]
+          },
+          "unpaid": {
+            "name": "Unpaid Dues",
+            "filters": [ "status = open" ],
+            "sort": [ "due_on asc" ]
           }
         },
         "bulkActions": [ "export" ]
@@ -492,7 +506,14 @@
       },
       "grid": {
         "defaultColumns": [ "event_id", "member_id", "checked_in_at" ],
-        "defaultSort": [ "checked_in_at desc" ]
+        "defaultSort": [ "checked_in_at desc" ],
+        "savedViews": {
+          "event-attendees": {
+            "name": "Event Attendees",
+            "columns": [ "event_id", "member_id", "checked_in_at" ],
+            "sort": [ "checked_in_at desc" ]
+          }
+        }
       },
       "relationships": {
         "event": {

@@ -54,7 +54,7 @@ jobs:
           REPO_NUGET: ${{ secrets.REPO_NUGET }}
         run: |
           if [ -n "$REPO_NUGET" ]; then
-            dotnet nuget push "src/BifrostQL.Core/bin/Release/*.nupkg" --source "github" -k "$REPO_NUGET" --skip-duplicate
+            dotnet nuget push "src/BifrostQL.Core/bin/Release/*.nupkg" --source "github" -k "$REPO_NUGET" --skip-duplicate --no-symbols
           else
             echo "REPO_NUGET not set, skipping GitHub Packages publish"
           fi
@@ -63,7 +63,7 @@ jobs:
           REPO_NUGET: ${{ secrets.REPO_NUGET }}
         run: |
           if [ -n "$REPO_NUGET" ]; then
-            dotnet nuget push "src/BifrostQL.Server/bin/Release/*.nupkg" --source "github" -k "$REPO_NUGET" --skip-duplicate
+            dotnet nuget push "src/BifrostQL.Server/bin/Release/*.nupkg" --source "github" -k "$REPO_NUGET" --skip-duplicate --no-symbols
           else
             echo "REPO_NUGET not set, skipping GitHub Packages publish"
           fi
@@ -72,7 +72,7 @@ jobs:
           REPO_NUGET: ${{ secrets.REPO_NUGET }}
         run: |
           if [ -n "$REPO_NUGET" ]; then
-            dotnet nuget push "src/data/BifrostQL.Ngsql/bin/Release/*.nupkg" --source "github" -k "$REPO_NUGET" --skip-duplicate
+            dotnet nuget push "src/data/BifrostQL.Ngsql/bin/Release/*.nupkg" --source "github" -k "$REPO_NUGET" --skip-duplicate --no-symbols
           else
             echo "REPO_NUGET not set, skipping GitHub Packages publish"
           fi
@@ -81,7 +81,7 @@ jobs:
           REPO_NUGET: ${{ secrets.REPO_NUGET }}
         run: |
           if [ -n "$REPO_NUGET" ]; then
-            dotnet nuget push "src/data/BifrostQL.SqlServer/bin/Release/*.nupkg" --source "github" -k "$REPO_NUGET" --skip-duplicate
+            dotnet nuget push "src/data/BifrostQL.SqlServer/bin/Release/*.nupkg" --source "github" -k "$REPO_NUGET" --skip-duplicate --no-symbols
           else
             echo "REPO_NUGET not set, skipping GitHub Packages publish"
           fi
@@ -90,7 +90,7 @@ jobs:
           REPO_NUGET: ${{ secrets.REPO_NUGET }}
         run: |
           if [ -n "$REPO_NUGET" ]; then
-            dotnet nuget push "src/data/BifrostQL.Sqlite/bin/Release/*.nupkg" --source "github" -k "$REPO_NUGET" --skip-duplicate
+            dotnet nuget push "src/data/BifrostQL.Sqlite/bin/Release/*.nupkg" --source "github" -k "$REPO_NUGET" --skip-duplicate --no-symbols
           else
             echo "REPO_NUGET not set, skipping GitHub Packages publish"
           fi
@@ -99,7 +99,7 @@ jobs:
           REPO_NUGET: ${{ secrets.REPO_NUGET }}
         run: |
           if [ -n "$REPO_NUGET" ]; then
-            dotnet nuget push "src/data/BifrostQL.MySql/bin/Release/*.nupkg" --source "github" -k "$REPO_NUGET" --skip-duplicate
+            dotnet nuget push "src/data/BifrostQL.MySql/bin/Release/*.nupkg" --source "github" -k "$REPO_NUGET" --skip-duplicate --no-symbols
           else
             echo "REPO_NUGET not set, skipping GitHub Packages publish"
           fi
@@ -108,7 +108,7 @@ jobs:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
           if [ -n "$NUGET_API_KEY" ]; then
-            dotnet nuget push "src/BifrostQL.Core/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate
+            dotnet nuget push "src/BifrostQL.Core/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate --no-symbols
           else
             echo "Skipping nuget.org publish: NUGET_API_KEY not set"
           fi
@@ -117,7 +117,7 @@ jobs:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
           if [ -n "$NUGET_API_KEY" ]; then
-            dotnet nuget push "src/BifrostQL.Server/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate
+            dotnet nuget push "src/BifrostQL.Server/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate --no-symbols
           else
             echo "Skipping nuget.org publish: NUGET_API_KEY not set"
           fi
@@ -126,7 +126,7 @@ jobs:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
           if [ -n "$NUGET_API_KEY" ]; then
-            dotnet nuget push "src/data/BifrostQL.Ngsql/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate
+            dotnet nuget push "src/data/BifrostQL.Ngsql/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate --no-symbols
           else
             echo "Skipping nuget.org publish: NUGET_API_KEY not set"
           fi
@@ -135,7 +135,7 @@ jobs:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
           if [ -n "$NUGET_API_KEY" ]; then
-            dotnet nuget push "src/data/BifrostQL.SqlServer/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate
+            dotnet nuget push "src/data/BifrostQL.SqlServer/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate --no-symbols
           else
             echo "Skipping nuget.org publish: NUGET_API_KEY not set"
           fi
@@ -144,7 +144,7 @@ jobs:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
           if [ -n "$NUGET_API_KEY" ]; then
-            dotnet nuget push "src/data/BifrostQL.Sqlite/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate
+            dotnet nuget push "src/data/BifrostQL.Sqlite/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate --no-symbols
           else
             echo "Skipping nuget.org publish: NUGET_API_KEY not set"
           fi
@@ -153,7 +153,7 @@ jobs:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
           if [ -n "$NUGET_API_KEY" ]; then
-            dotnet nuget push "src/data/BifrostQL.MySql/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate
+            dotnet nuget push "src/data/BifrostQL.MySql/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate --no-symbols
           else
             echo "Skipping nuget.org publish: NUGET_API_KEY not set"
           fi

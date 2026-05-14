@@ -52,6 +52,53 @@ Modify mutation data before execution. Used for:
 - Auto-populating audit columns
 - Setting default values
 
+## Authorization Policy Engine
+
+The policy engine is an always-on, opt-in-per-table authorization layer. A table
+is governed by policy only when it carries `policy-*` metadata; a table with no
+policy metadata is unrestricted (the documented opt-in default). It is split
+across two transformers that share one `TablePolicy` (parsed by
+`PolicyConfigCollector`):
+
+- `PolicyFilterTransformer` (`IFilterTransformer`, priority 1) — the query path.
+  Enforces table read-deny, compiles the row-scope expression into a filter
+  ANDed alongside the tenant filter, and — through the `IColumnReadGuard` seam
+  called by `QueryTransformerService` — enforces column read-deny.
+- `PolicyMutationTransformer` (`IMutationTransformer`, priority 1) — the
+  mutation path. Enforces table action-deny, column write-deny, and row scope on
+  update/delete.
+
+Both run inside the 0-99 security range, immediately after the tenant filter at
+priority 0. Identity is read from the per-request user context (`user_id`,
+`roles`). The `admin` role bypasses every check.
+
+**Enforcement mechanism — reject, not hide.** A request that references a denied
+table, column, or action is rejected with a clear, generic error rather than
+having the denied field silently stripped. Every policy error message is
+non-leaking: it never names the table, column, or action, so error output cannot
+be used to probe the schema. Enforcement lives in the query/mutation pipeline,
+so a direct GraphQL request cannot bypass it — there is no UI-only check.
+
+### Policy metadata
+
+| Key | Scope | Effect |
+|-----|-------|--------|
+| `policy-actions` | table | Comma-separated permitted actions: `read`, `create`, `update`, `delete`. Unrecognized tokens are ignored. |
+| `policy-read-deny` | table | Comma-separated columns that may not be read. A query selecting one is rejected. |
+| `policy-write-deny` | table | Comma-separated columns that may not be written. A mutation writing one is rejected. |
+| `policy-row-scope` | table | Row-scope expression `column = {context-key}`, ANDed onto every read and onto update/delete. |
+
+```csharp
+// dbo.orders permits read + update only; the ssn column is read-denied;
+// non-admins are scoped to their own tenant's rows.
+"dbo.orders { policy-actions: read,update }"
+"dbo.orders { policy-read-deny: ssn }"
+"dbo.orders { policy-row-scope: tenant_id = {tenant_id} }"
+```
+
+Both policy transformers are registered automatically by the BifrostQL host —
+no explicit `AddFilterTransformer`/`AddMutationTransformer` call is needed.
+
 ## Creating a Filter Transformer
 
 Using the base class:

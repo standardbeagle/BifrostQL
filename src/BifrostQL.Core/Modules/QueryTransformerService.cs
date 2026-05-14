@@ -49,6 +49,13 @@ public sealed class QueryTransformerService : IQueryTransformerService
             IsNestedQuery = isNested
         };
 
+        // Column-level read enforcement. IFilterTransformer only sees the table,
+        // so transformers that enforce column-read-deny (the policy engine)
+        // implement IColumnReadGuard and are called here with the columns this
+        // query actually selects. Same reject mechanism as GetAdditionalFilter —
+        // a denied column aborts the query rather than being silently stripped.
+        EnforceColumnReadGuards(query, context);
+
         // Get additional filters from transformers
         var additionalFilter = _filterTransformers.GetCombinedFilter(query.DbTable, context);
 
@@ -74,6 +81,20 @@ public sealed class QueryTransformerService : IQueryTransformerService
             And = new List<TableFilter> { existing, additional },
             FilterType = FilterType.And,
         };
+    }
+
+    private void EnforceColumnReadGuards(GqlObjectQuery query, QueryTransformContext context)
+    {
+        var requestedColumns = query.ScalarColumns
+            .Select(c => c.DbDbName)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .ToArray();
+
+        if (requestedColumns.Length == 0)
+            return;
+
+        foreach (var guard in _filterTransformers.OfType<IColumnReadGuard>())
+            guard.AssertColumnsReadable(query.DbTable, requestedColumns, context);
     }
 }
 

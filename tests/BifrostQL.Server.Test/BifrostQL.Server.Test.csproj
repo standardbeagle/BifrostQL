@@ -30,6 +30,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\BifrostQL.Server\BifrostQL.Server.csproj" />
+    <!-- In-memory SQLite driver: backs the self-contained policy bypass-prevention
+         e2e test that exercises BifrostHttpMiddleware against a real schema. -->
+    <ProjectReference Include="..\..\src\data\BifrostQL.Sqlite\BifrostQL.Sqlite.csproj" />
     <!-- The HostedSpa sample is a real coexisting SPA + GraphQL host used as the
          system under test for the hosted SPA/API smoke test. -->
     <ProjectReference Include="..\..\samples\HostedSpa\HostedSpa.csproj" />

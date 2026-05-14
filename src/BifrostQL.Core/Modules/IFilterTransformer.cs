@@ -34,6 +34,30 @@ public interface IFilterTransformer
 }
 
 /// <summary>
+/// Optional companion to <see cref="IFilterTransformer"/> for transformers that
+/// enforce column-level read permission. <see cref="IFilterTransformer"/> only
+/// sees the table, not the selected columns, so a transformer that needs to
+/// reject a query referencing a read-denied column implements this interface and
+/// <see cref="QueryTransformerService"/> calls it with the query's selected
+/// columns. This is the same enforcement mechanism as
+/// <see cref="IFilterTransformer.GetAdditionalFilter"/> — reject by throwing —
+/// surfaced for the column-selection path; it does not introduce a second
+/// mechanism.
+/// </summary>
+public interface IColumnReadGuard
+{
+    /// <summary>
+    /// Throws to abort the query when <paramref name="requestedColumns"/> includes
+    /// any column the caller may not read under <paramref name="table"/>'s policy.
+    /// The thrown error message must be generic and never name the column or table.
+    /// </summary>
+    void AssertColumnsReadable(
+        IDbTable table,
+        IEnumerable<string> requestedColumns,
+        QueryTransformContext context);
+}
+
+/// <summary>
 /// Context available to filter transformers during query transformation.
 /// </summary>
 public sealed class QueryTransformContext

@@ -37,7 +37,7 @@ namespace BifrostQL.Core.Modules;
 /// <c>IdentityContextMapper</c> writes. Admin-role bypass and the absent-policy
 /// ALLOW default are delegated to the stateless <see cref="PolicyEvaluator"/>.
 /// </summary>
-public sealed class PolicyFilterTransformer : IFilterTransformer, IModuleNamed
+public sealed class PolicyFilterTransformer : IFilterTransformer, IColumnReadGuard, IModuleNamed
 {
     private const string UserIdContextKey = MetadataKeys.Auth.DefaultUserIdContextKey;
     private const string RolesContextKey = MetadataKeys.Auth.DefaultRolesContextKey;

@@ -8,6 +8,9 @@ import {
 import { MemberList } from './members/member-list';
 import { MemberForm } from './members/member-form';
 import { HouseholdForm } from './households/household-form';
+import { PlanList } from './membership-plans/plan-list';
+import { PlanForm } from './membership-plans/plan-form';
+import { MemberPlanAssignment } from './membership-plans/member-plan-assignment';
 
 /** Permission required to view and manage the member roster. */
 const MEMBERS_READ = 'main.members.read';
@@ -75,6 +78,40 @@ function App() {
               onUnauthenticated={() => navigate('/login')}
             >
               <HouseholdForm />
+            </ProtectedRoute>
+          </Route>
+          {/*
+            Membership plans reuse the members pattern: a list route plus a
+            single `:id`-with-`new`-sentinel form route. The plan nav entry
+            comes from the overlay's `navPlacement: main` via `AppNav`.
+          */}
+          <Route path="/plans">
+            <ProtectedRoute
+              requirePermission={MEMBERS_READ}
+              onUnauthenticated={() => navigate('/login')}
+            >
+              <PlanList />
+            </ProtectedRoute>
+          </Route>
+          <Route path="/plans/:id">
+            <ProtectedRoute
+              requirePermission={MEMBERS_READ}
+              onUnauthenticated={() => navigate('/login')}
+            >
+              <PlanForm />
+            </ProtectedRoute>
+          </Route>
+          {/*
+            Member-plan assignment: a single screen listing and creating
+            `member_memberships` links. Nav entry comes from the overlay's
+            `member_memberships` `navPlacement: main` via `AppNav`.
+          */}
+          <Route path="/memberships">
+            <ProtectedRoute
+              requirePermission={MEMBERS_READ}
+              onUnauthenticated={() => navigate('/login')}
+            >
+              <MemberPlanAssignment />
             </ProtectedRoute>
           </Route>
         </Routes>

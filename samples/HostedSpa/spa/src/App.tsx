@@ -7,6 +7,7 @@ import {
 } from '@bifrostql/app-shell';
 import { MemberList } from './members/member-list';
 import { MemberForm } from './members/member-form';
+import { HouseholdForm } from './households/household-form';
 
 /** Permission required to view and manage the member roster. */
 const MEMBERS_READ = 'main.members.read';
@@ -60,6 +61,20 @@ function App() {
               onUnauthenticated={() => navigate('/login')}
             >
               <MemberForm />
+            </ProtectedRoute>
+          </Route>
+          {/*
+            Households reuse the single-route-with-`new`-sentinel pattern from
+            members: `HouseholdForm` reads `:id` and treats `new` as create
+            mode. The household nav entry comes from the overlay's
+            `navPlacement: main` via `AppNav`, so no nav wiring is needed here.
+          */}
+          <Route path="/households/:id">
+            <ProtectedRoute
+              requirePermission={MEMBERS_READ}
+              onUnauthenticated={() => navigate('/login')}
+            >
+              <HouseholdForm />
             </ProtectedRoute>
           </Route>
         </Routes>

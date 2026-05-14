@@ -22,9 +22,20 @@ import { ExpiredMembershipsReport } from './reports/expired-memberships-report';
 import { AttendanceByEventReport } from './reports/attendance-by-event-report';
 import { AttendanceByMemberReport } from './reports/attendance-by-member-report';
 import { EmailSegments } from './segments/email-segments';
+import { Dashboard } from './dashboard/dashboard';
 
 /** Permission required to view and manage the member roster. */
 const MEMBERS_READ = 'main.members.read';
+
+/**
+ * The dashboard summary screen, as a nav entry.
+ *
+ * Like the reports, the dashboard is not an overlay entity, so {@link AppNav}
+ * cannot surface it on its own; it is appended to the entity-driven nav via
+ * `AppNav`'s `children` render-prop. It leads the appended links because it is
+ * the SPA's default landing route (see the `/` route below).
+ */
+const DASHBOARD_NAV_ITEM = { path: '/dashboard', label: 'Dashboard' };
 
 /**
  * The dues/membership reports, as nav entries.
@@ -60,6 +71,11 @@ function MembershipNav() {
                 <a href={`#/${item.key}`}>{item.label}</a>
               </li>
             ))}
+            <li key={DASHBOARD_NAV_ITEM.path}>
+              <a href={`#${DASHBOARD_NAV_ITEM.path}`}>
+                {DASHBOARD_NAV_ITEM.label}
+              </a>
+            </li>
             {REPORT_NAV_ITEMS.map((item) => (
               <li key={item.path}>
                 <a href={`#${item.path}`}>{item.label}</a>
@@ -92,12 +108,26 @@ function App() {
         nav={<MembershipNav />}
       >
         <Routes>
+          {/*
+            The dashboard is the SPA's default landing route: `/` and the
+            explicit `/dashboard` path both render the summary cards, in place
+            of the former `MemberList` landing. The member roster keeps its own
+            `/members` route below.
+          */}
           <Route path="/">
             <ProtectedRoute
               requirePermission={MEMBERS_READ}
               onUnauthenticated={() => navigate('/login')}
             >
-              <MemberList />
+              <Dashboard />
+            </ProtectedRoute>
+          </Route>
+          <Route path="/dashboard">
+            <ProtectedRoute
+              requirePermission={MEMBERS_READ}
+              onUnauthenticated={() => navigate('/login')}
+            >
+              <Dashboard />
             </ProtectedRoute>
           </Route>
           <Route path="/members">

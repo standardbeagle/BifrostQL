@@ -149,6 +149,203 @@
           "foreignKeyField": "member_id"
         }
       }
+    },
+    "main.membership_plans": {
+      "label": "Membership Plans",
+      "icon": "card_membership",
+      "navPlacement": "main",
+      "displayFields": [ "name" ],
+      "fields": {
+        "name": { "widget": "text", "group": "Identity" },
+        "description": { "widget": "textarea", "group": "Identity", "helpText": "What the plan includes." },
+        "billing_period": { "widget": "select", "group": "Billing", "helpText": "How often dues are billed (annual, monthly)." },
+        "price_cents": { "widget": "number", "group": "Billing", "helpText": "Plan price in cents." },
+        "is_active": { "widget": "checkbox", "group": "Billing", "helpText": "Whether the plan can be selected for new memberships." },
+        "tenant_id": {
+          "widget": "fk-lookup",
+          "group": "Admin",
+          "visible": false,
+          "readOnly": true,
+          "helpText": "Owning club. Admin-only, system-managed."
+        }
+      },
+      "grid": {
+        "defaultColumns": [ "name", "billing_period", "price_cents", "is_active" ],
+        "defaultSort": [ "name asc" ],
+        "defaultFilters": [ "is_active = 1" ],
+        "savedViews": {
+          "active": {
+            "name": "Active Plans",
+            "filters": [ "is_active = 1" ]
+          }
+        }
+      },
+      "relationships": {
+        "memberMemberships": {
+          "label": "Memberships",
+          "targetEntity": "main.member_memberships",
+          "kind": "childCollection",
+          "foreignKeyField": "plan_id",
+          "displayColumns": [ "member_id", "start_date", "status" ]
+        }
+      }
+    },
+    "main.member_memberships": {
+      "label": "Member Memberships",
+      "icon": "badge",
+      "navPlacement": "main",
+      "displayFields": [ "status" ],
+      "fields": {
+        "member_id": {
+          "widget": "fk-lookup",
+          "group": "Enrollment",
+          "helpText": "Member enrolled in the plan."
+        },
+        "plan_id": {
+          "widget": "fk-lookup",
+          "group": "Enrollment",
+          "helpText": "Membership plan for this term."
+        },
+        "start_date": { "widget": "datepicker", "group": "Term" },
+        "end_date": { "widget": "datepicker", "group": "Term", "helpText": "Renewal / expiry date. Empty for open-ended." },
+        "status": { "widget": "select", "group": "Term" },
+        "tenant_id": {
+          "widget": "fk-lookup",
+          "group": "Admin",
+          "visible": false,
+          "readOnly": true,
+          "helpText": "Owning club. Admin-only, system-managed."
+        }
+      },
+      "grid": {
+        "defaultColumns": [ "member_id", "plan_id", "start_date", "end_date", "status" ],
+        "defaultSort": [ "start_date desc" ],
+        "defaultFilters": [ "status = active" ],
+        "savedViews": {
+          "active": {
+            "name": "Active Memberships",
+            "filters": [ "status = active" ]
+          }
+        }
+      },
+      "relationships": {
+        "member": {
+          "label": "Member",
+          "targetEntity": "main.members",
+          "kind": "foreignKeySelector",
+          "foreignKeyField": "member_id"
+        },
+        "plan": {
+          "label": "Plan",
+          "targetEntity": "main.membership_plans",
+          "kind": "foreignKeySelector",
+          "foreignKeyField": "plan_id"
+        },
+        "duesInvoices": {
+          "label": "Dues Invoices",
+          "targetEntity": "main.dues_invoices",
+          "kind": "childCollection",
+          "foreignKeyField": "member_membership_id",
+          "displayColumns": [ "amount_cents", "due_on", "status" ]
+        }
+      }
+    },
+    "main.dues_invoices": {
+      "label": "Dues Invoices",
+      "icon": "receipt_long",
+      "navPlacement": "main",
+      "displayFields": [ "amount_cents" ],
+      "fields": {
+        "member_id": {
+          "widget": "fk-lookup",
+          "group": "Billing",
+          "helpText": "Member the invoice is billed to."
+        },
+        "member_membership_id": {
+          "widget": "fk-lookup",
+          "group": "Billing",
+          "helpText": "Membership term this invoice covers. Optional."
+        },
+        "amount_cents": { "widget": "number", "group": "Billing", "helpText": "Invoiced amount in cents." },
+        "issued_on": { "widget": "datepicker", "group": "Schedule" },
+        "due_on": { "widget": "datepicker", "group": "Schedule" },
+        "status": { "widget": "select", "group": "Schedule" },
+        "tenant_id": {
+          "widget": "fk-lookup",
+          "group": "Admin",
+          "visible": false,
+          "readOnly": true,
+          "helpText": "Owning club. Admin-only, system-managed."
+        }
+      },
+      "grid": {
+        "defaultColumns": [ "member_id", "amount_cents", "issued_on", "due_on", "status" ],
+        "defaultSort": [ "due_on desc" ],
+        "defaultFilters": [ "status = open" ],
+        "savedViews": {
+          "open": {
+            "name": "Open Invoices",
+            "filters": [ "status = open" ]
+          }
+        },
+        "bulkActions": [ "export" ]
+      },
+      "relationships": {
+        "member": {
+          "label": "Member",
+          "targetEntity": "main.members",
+          "kind": "foreignKeySelector",
+          "foreignKeyField": "member_id"
+        },
+        "membership": {
+          "label": "Membership",
+          "targetEntity": "main.member_memberships",
+          "kind": "foreignKeySelector",
+          "foreignKeyField": "member_membership_id"
+        },
+        "payments": {
+          "label": "Payments",
+          "targetEntity": "main.dues_payments",
+          "kind": "childCollection",
+          "foreignKeyField": "invoice_id",
+          "displayColumns": [ "amount_cents", "paid_on", "method" ]
+        }
+      }
+    },
+    "main.dues_payments": {
+      "label": "Dues Payments",
+      "icon": "payments",
+      "navPlacement": "main",
+      "displayFields": [ "amount_cents" ],
+      "fields": {
+        "invoice_id": {
+          "widget": "fk-lookup",
+          "group": "Payment",
+          "helpText": "Invoice this payment is applied against."
+        },
+        "amount_cents": { "widget": "number", "group": "Payment", "helpText": "Payment amount in cents." },
+        "paid_on": { "widget": "datepicker", "group": "Payment" },
+        "method": { "widget": "select", "group": "Payment", "helpText": "Payment method (card, cash, check)." },
+        "tenant_id": {
+          "widget": "fk-lookup",
+          "group": "Admin",
+          "visible": false,
+          "readOnly": true,
+          "helpText": "Owning club. Admin-only, system-managed."
+        }
+      },
+      "grid": {
+        "defaultColumns": [ "invoice_id", "amount_cents", "paid_on", "method" ],
+        "defaultSort": [ "paid_on desc" ]
+      },
+      "relationships": {
+        "invoice": {
+          "label": "Invoice",
+          "targetEntity": "main.dues_invoices",
+          "kind": "foreignKeySelector",
+          "foreignKeyField": "invoice_id"
+        }
+      }
     }
   }
 }

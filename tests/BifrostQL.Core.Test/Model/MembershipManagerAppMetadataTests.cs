@@ -52,10 +52,100 @@ public class MembershipManagerAppMetadataTests
         var overlay = LoadOverlay();
 
         overlay.Entities.Keys.Should().BeEquivalentTo(
-            "main.members", "main.households", "main.household_members");
+            "main.members", "main.households", "main.household_members",
+            "main.membership_plans", "main.member_memberships",
+            "main.dues_invoices", "main.dues_payments");
         overlay.Entities["main.members"].Label.Should().Be("Members");
         overlay.Entities["main.households"].Label.Should().Be("Households");
         overlay.Entities["main.household_members"].Label.Should().Be("Household Members");
+    }
+
+    [Fact]
+    public void OverlayFile_DescribesFinancialEntities_WithFieldsMatchingSchemaColumns()
+    {
+        // The four MM Financial tables (membership-manager.sql) are exposed as
+        // overlay entities so a metadata-driven client renders their forms
+        // generically, keyed by the actual SQL column names.
+        var overlay = LoadOverlay();
+
+        var plans = overlay.Entities["main.membership_plans"];
+        plans.Label.Should().Be("Membership Plans");
+        plans.Fields.Should().ContainKeys(
+            "name", "description", "billing_period", "price_cents",
+            "is_active", "tenant_id");
+
+        var memberships = overlay.Entities["main.member_memberships"];
+        memberships.Label.Should().Be("Member Memberships");
+        memberships.Fields.Should().ContainKeys(
+            "member_id", "plan_id", "start_date", "end_date", "status",
+            "tenant_id");
+
+        var invoices = overlay.Entities["main.dues_invoices"];
+        invoices.Label.Should().Be("Dues Invoices");
+        invoices.Fields.Should().ContainKeys(
+            "member_id", "member_membership_id", "amount_cents", "issued_on",
+            "due_on", "status", "tenant_id");
+
+        var payments = overlay.Entities["main.dues_payments"];
+        payments.Label.Should().Be("Dues Payments");
+        payments.Fields.Should().ContainKeys(
+            "invoice_id", "amount_cents", "paid_on", "method", "tenant_id");
+
+        // Every financial field carries a layout group, matching the
+        // members/households convention.
+        foreach (var key in new[]
+                 {
+                     "main.membership_plans", "main.member_memberships",
+                     "main.dues_invoices", "main.dues_payments",
+                 })
+        {
+            overlay.Entities[key].Fields.Values
+                .Select(f => f.Group).Should().OnlyContain(g => g != null);
+        }
+    }
+
+    [Fact]
+    public void OverlayFile_GatesFinancialAdminFields_WithVisibilityFlags()
+    {
+        // tenant_id stays admin-only and read-only across the financial
+        // entities, consistent with the members/households convention.
+        var overlay = LoadOverlay();
+
+        foreach (var key in new[]
+                 {
+                     "main.membership_plans", "main.member_memberships",
+                     "main.dues_invoices", "main.dues_payments",
+                 })
+        {
+            var tenant = overlay.Entities[key].Fields["tenant_id"];
+            tenant.Visible.Should().BeFalse($"{key}.tenant_id is admin-only");
+            tenant.ReadOnly.Should().BeTrue($"{key}.tenant_id is system-managed");
+        }
+    }
+
+    [Fact]
+    public void OverlayFile_DescribesFinancialRelationships_ForFkFreeEditing()
+    {
+        // The financial entities chain member → membership → plan and
+        // invoice → payment via fk-lookup relationship metadata.
+        var overlay = LoadOverlay();
+
+        var memberships = overlay.Entities["main.member_memberships"];
+        memberships.Relationships["member"].TargetEntity.Should().Be("main.members");
+        memberships.Relationships["member"].ForeignKeyField.Should().Be("member_id");
+        memberships.Relationships["plan"].TargetEntity.Should().Be("main.membership_plans");
+        memberships.Relationships["plan"].ForeignKeyField.Should().Be("plan_id");
+        memberships.Relationships["plan"].Kind.Should().Be(RelationshipKind.ForeignKeySelector);
+
+        var invoices = overlay.Entities["main.dues_invoices"];
+        invoices.Relationships["member"].TargetEntity.Should().Be("main.members");
+        invoices.Relationships["membership"].TargetEntity.Should().Be("main.member_memberships");
+        invoices.Relationships["payments"].TargetEntity.Should().Be("main.dues_payments");
+        invoices.Relationships["payments"].Kind.Should().Be(RelationshipKind.ChildCollection);
+
+        var payments = overlay.Entities["main.dues_payments"];
+        payments.Relationships["invoice"].TargetEntity.Should().Be("main.dues_invoices");
+        payments.Relationships["invoice"].ForeignKeyField.Should().Be("invoice_id");
     }
 
     [Fact]
@@ -163,7 +253,7 @@ public class MembershipManagerAppMetadataTests
         json.Should().Contain("\"displayFields\"")
             .And.Contain("\"foreignKeyField\"")
             .And.Contain("\"foreignKeySelector\"");
-        restored.Entities.Should().HaveCount(3);
+        restored.Entities.Should().HaveCount(7);
         restored.Entities["main.members"].Grid!.DefaultColumns.Should()
             .ContainInOrder("first_name", "last_name", "email", "phone", "status");
         restored.Entities["main.household_members"].Relationships["member"].Kind

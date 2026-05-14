@@ -1,15 +1,15 @@
 {
   "claims": {
-    "kVuBazcTABZX": {
+    "wJTIF7PJgigY": {
       "runner_instance_id": "DESKTOP-NPIOPS6-13041",
       "runner_email": "andybrummer@standardbeagle.com",
-      "claimed_at": "2026-05-14T13:29:00Z",
+      "claimed_at": "2026-05-14T13:33:00Z",
       "agent_id": "DESKTOP-NPIOPS6-13041",
       "parent_loop_id": "epYVBosC0i3a",
-      "purpose": "UseBifrostSpa static-files + SPA-fallback extension (split sub-task 1/4)",
+      "purpose": "samples/HostedSpa sample — Vite SPA + Bifrost API one process (split sub-task 2/4)",
       "source_event": {
         "loop_id": "epYVBosC0i3a",
-        "task_id": "kVuBazcTABZX",
+        "task_id": "wJTIF7PJgigY",
         "conversation_id": null
       }
     }

@@ -1,8 +1,8 @@
 -- Org model sample seed data (PostgreSQL)
 --
 -- Reusable multi-tenant organization model: tenants (organizations), app users,
--- memberships, roles, role permissions, and invitations. Use this as a starting
--- point for tenant-isolated applications built on BifrostQL.
+-- memberships, roles, role permissions, invitations, and an audit log. Use this
+-- as a starting point for tenant-isolated applications built on BifrostQL.
 --
 -- Self-contained: includes DDL + seed data so it loads cleanly on a fresh
 -- PostgreSQL database. The table shape mirrors org-model.sql / the SQLite
@@ -17,6 +17,7 @@
 --     app_users                { tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids }
 --     organization_memberships { tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids }
 --     invitations              { tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids }
+--     audit_log                { tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids }
 --     tenants                  { auto-filter: tenant_id:tenant_ids }   -- row is the tenant itself, filter on its own id
 --
 --   Global lookup tables (un-scoped — do NOT add tenant-filter/auto-filter):
@@ -26,6 +27,13 @@
 -- The auto-filter mapping "tenant_id:tenant_ids" reads the plural tenant_ids
 -- claim from the user context and constrains the tenant_id column to that set,
 -- so a user only sees rows for organizations they belong to.
+--
+-- The audit_log table is the audit trail for workflow mutations (see the
+-- "Workflow Mutations & Audit Trail" guide). It is tenant-scoped exactly like
+-- the other application tables, so audit entries are queryable through Bifrost
+-- and filtered to the caller's organizations. Recommend also write-denying it
+-- to clients so only server-side workflow endpoints can append rows:
+--     audit_log { policy-actions: read }   -- read-only through generated CRUD
 
 CREATE TABLE tenants (
     tenant_id    BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -81,6 +89,22 @@ CREATE TABLE invitations (
     expires_at   TIMESTAMP
 );
 
+-- Audit log — append-only trail of workflow mutations and admin actions
+-- (status changes, payment edits, role changes). Tenant-scoped so it is
+-- queryable through Bifrost like any other table and filtered to the caller's
+-- organizations. Workflow endpoints write one row here per high-level
+-- operation; raw CRUD never writes it directly.
+CREATE TABLE audit_log (
+    audit_id     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant_id    BIGINT NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+    actor_user_id BIGINT REFERENCES app_users(user_id) ON DELETE SET NULL,
+    action       TEXT NOT NULL,
+    entity_type  TEXT NOT NULL,
+    entity_id    TEXT NOT NULL,
+    summary      TEXT,
+    created_at   TIMESTAMP NOT NULL DEFAULT now()
+);
+
 -- Tenants / organizations (2) — identity auto-generates tenant_id 1, 2
 INSERT INTO tenants (name, slug, plan, is_active, created_at) VALUES
 ('Acme Corporation', 'acme', 'enterprise', TRUE, '2024-01-10 09:00:00'),
@@ -123,3 +147,12 @@ INSERT INTO organization_memberships (tenant_id, user_id, role_id, status, joine
 INSERT INTO invitations (tenant_id, email, role_id, invited_by_user_id, status, created_at, expires_at) VALUES
 (1, 'frank@acme.example', 3, 1, 'pending', '2024-05-01 10:00:00', '2024-05-15 10:00:00'),
 (2, 'grace@globex.example', 2, 4, 'pending', '2024-05-03 13:00:00', '2024-05-17 13:00:00');
+
+-- Audit log (tenant-scoped — append-only trail of workflow mutations) (4)
+-- Each row is one high-level operation: who (actor_user_id), what (action),
+-- on which entity (entity_type/entity_id), and a human-readable summary.
+INSERT INTO audit_log (tenant_id, actor_user_id, action, entity_type, entity_id, summary, created_at) VALUES
+(1, 2, 'membership.role_changed', 'organization_memberships', '3', 'Carol Chen role changed from member to admin', '2024-04-10 09:30:00'),
+(1, 1, 'invitation.sent', 'invitations', '1', 'Invitation sent to frank@acme.example as member', '2024-05-01 10:00:00'),
+(2, 4, 'membership.status_changed', 'organization_memberships', '5', 'Erin Edwards membership set to suspended', '2024-04-20 15:45:00'),
+(2, 4, 'invitation.sent', 'invitations', '2', 'Invitation sent to grace@globex.example as admin', '2024-05-03 13:00:00');

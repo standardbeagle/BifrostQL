@@ -51,3 +51,20 @@ CREATE TABLE invitations (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     expires_at TEXT
 );
+
+-- Audit log — append-only trail of workflow mutations and admin actions
+-- (status changes, payment edits, role changes). Tenant-scoped so it is
+-- queryable through Bifrost like any other table and filtered to the caller's
+-- organizations by the tenant-filter / auto-filter modules. Workflow endpoints
+-- write one row here per high-level operation; raw CRUD never writes it
+-- directly.
+CREATE TABLE audit_log (
+    audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+    actor_user_id INTEGER REFERENCES app_users(user_id) ON DELETE SET NULL,
+    action TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    summary TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package bifrostql;
+
+// A user row pulled from the users table.
+message UserRow {
+  int32 id = 1;
+  string name = 2;
+  optional string email = 3;
+  bool isActive = 4;
+  repeated int64 friendIds = 5;
+}
+
+message OrderRow {
+  int32 orderId = 1;
+  optional double total = 2;
+  bytes payload = 3;
+  Status status = 4;
+}
+
+enum Status {
+  PENDING = 0;
+  SHIPPED = 1;
+  DELIVERED = 2;
+}

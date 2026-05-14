@@ -24,3 +24,11 @@ export type {
   SortOption,
   QueryOptions,
 } from './query';
+
+/**
+ * Proto-derived domain types emitted by `@bifrostql/codegen` into
+ * `./generated`. Regenerate with the command documented in README.md. Also
+ * available as the `@bifrostql/types/generated` subpath export for consumers
+ * that want only the generated namespace.
+ */
+export * from './generated';

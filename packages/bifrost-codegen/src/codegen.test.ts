@@ -3,7 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseProto } from "./proto-parser.js";
-import { emitEnum, emitMessage, emitSchema, mapProtoType } from "./ts-emitter.js";
+import {
+  emitEnum,
+  emitMessage,
+  emitSchema,
+  emitSharedBarrelReexport,
+  mapProtoType,
+  SHARED_PACKAGE_GENERATED_DIR,
+} from "./ts-emitter.js";
 import { parseArgs, USAGE, writeFiles } from "./cli.js";
 
 const TWO_MESSAGE_SCHEMA = `
@@ -202,6 +209,35 @@ describe("ts-emitter", () => {
     );
   });
 
+  it("emits cross-file imports for message/enum field references", () => {
+    const schema = parseProto(TWO_MESSAGE_SCHEMA);
+    const files = emitSchema(schema);
+
+    // OrderRow has a `status: Status` field — Status is an enum (value import).
+    const order = files.find((f) => f.filename === "OrderRow.ts")!;
+    expect(order.content).toContain('import { Status } from "./Status.js";');
+
+    // UserRow references only scalars — it needs no cross-file imports.
+    const user = files.find((f) => f.filename === "UserRow.ts")!;
+    expect(user.content).not.toContain("import");
+  });
+
+  it("uses `import type` for message references and skips self-references", () => {
+    const schema = parseProto(`
+      syntax = "proto3";
+      message Node {
+        Node parent = 1;
+        Leaf leaf = 2;
+      }
+      message Leaf { int32 id = 1; }
+    `);
+    const files = emitSchema(schema);
+    const node = files.find((f) => f.filename === "Node.ts")!;
+    // Leaf is a message → import type; Node self-reference is not imported.
+    expect(node.content).toContain('import type { Leaf } from "./Leaf.js";');
+    expect(node.content).not.toContain('from "./Node.js"');
+  });
+
   it("emits one file per message + per enum + an index barrel", () => {
     const schema = parseProto(TWO_MESSAGE_SCHEMA);
     const files = emitSchema(schema);
@@ -267,6 +303,41 @@ describe("cli argv parsing", () => {
   it("USAGE mentions both modes", () => {
     expect(USAGE).toContain("--proto-file");
     expect(USAGE).toContain("--endpoint");
+  });
+});
+
+describe("shared-package output convention", () => {
+  it("emits the generated namespace under the conventional sub-dir", () => {
+    expect(SHARED_PACKAGE_GENERATED_DIR).toBe("generated");
+  });
+
+  it("emits a barrel re-export line the @bifrostql/types index can use", () => {
+    expect(emitSharedBarrelReexport()).toBe('export * from "./generated/index.js";');
+  });
+
+  it("writes generated files + barrel into a package src/generated dir", async () => {
+    const root = await mkdtemp(join(tmpdir(), "bifrostql-codegen-shared-"));
+    try {
+      // Simulate `--out <pkg>/src/generated`: the CLI writes the emitted files
+      // (one per message/enum + index barrel) into the shared package's
+      // generated namespace.
+      const generatedDir = join(root, "src", SHARED_PACKAGE_GENERATED_DIR);
+      const schema = parseProto(TWO_MESSAGE_SCHEMA);
+      await writeFiles(generatedDir, emitSchema(schema));
+
+      const barrel = await readFile(join(generatedDir, "index.ts"), "utf8");
+      expect(barrel).toContain('export type { UserRow } from "./UserRow.js";');
+      expect(barrel).toContain('export { Status } from "./Status.js";');
+
+      // The package's own src/index.ts re-exports the generated namespace via
+      // the convention helper — proving the codegen output integrates without
+      // the consumer hand-writing per-message lines.
+      const reexport = emitSharedBarrelReexport();
+      expect(reexport).toContain(SHARED_PACKAGE_GENERATED_DIR);
+      expect(reexport).toContain("index.js");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 

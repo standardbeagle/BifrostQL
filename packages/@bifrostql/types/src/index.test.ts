@@ -14,7 +14,10 @@ import type {
   PaginationOptions,
   SortOption,
   QueryOptions,
+  UserRow,
+  OrderRow,
 } from './index';
+import { Status } from './index';
 
 /**
  * The barrel has no runtime exports (types only), so this suite verifies the
@@ -68,5 +71,22 @@ describe('@bifrostql/types barrel', () => {
       fields: ['id', 'name'],
     };
     expectTypeOf(opts).toMatchTypeOf<QueryOptions>();
+  });
+
+  it('re-exports the codegen-generated proto-derived domain types', () => {
+    // Proves the @bifrostql/codegen output under ./generated integrates: the
+    // barrel surfaces the generated interfaces and enum from a committed
+    // sample generation.
+    expectTypeOf<UserRow>().toHaveProperty('friendIds');
+    expectTypeOf<OrderRow>().toHaveProperty('status');
+
+    const order: OrderRow = {
+      orderId: 1,
+      total: null,
+      payload: new Uint8Array(),
+      status: Status.PENDING,
+    };
+    expectTypeOf(order).toMatchTypeOf<OrderRow>();
+    expectTypeOf(order.status).toEqualTypeOf<Status>();
   });
 });

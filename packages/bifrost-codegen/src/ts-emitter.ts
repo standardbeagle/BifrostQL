@@ -11,9 +11,10 @@
  *   - repeated T                                    → T[]
  *   - optional T                                    → T | null
  *
- * Unknown type tokens are passed through verbatim, allowing message references
- * (e.g. `UserRow`) and enum references to resolve naturally inside the same
- * generated module.
+ * Unknown type tokens are passed through verbatim as message/enum references
+ * (e.g. `UserRow`, `Status`). Because each message/enum is emitted to its own
+ * file, `emitSchema` prepends the cross-file `import` statements those
+ * references need — enums are value imports, messages are `import type`.
  */
 
 import type { ProtoEnum, ProtoMessage, ProtoSchema } from "./proto-parser.js";
@@ -87,17 +88,49 @@ export interface EmittedFile {
 }
 
 /**
+ * Builds the cross-file `import` block a message file needs for the
+ * message/enum types it references. Enums are emitted as `const enum`s (value
+ * imports); messages are interfaces (`import type`). Self-references and scalar
+ * types are skipped.
+ */
+function emitMessageImports(
+  msg: ProtoMessage,
+  messageNames: ReadonlySet<string>,
+  enumNames: ReadonlySet<string>,
+): string {
+  const typeImports = new Set<string>();
+  const valueImports = new Set<string>();
+  for (const field of msg.fields) {
+    if (isScalar(field.type) || field.type === msg.name) continue;
+    if (enumNames.has(field.type)) valueImports.add(field.type);
+    else if (messageNames.has(field.type)) typeImports.add(field.type);
+  }
+
+  const lines: string[] = [];
+  for (const name of [...typeImports].sort()) {
+    lines.push(`import type { ${name} } from "./${name}.js";`);
+  }
+  for (const name of [...valueImports].sort()) {
+    lines.push(`import { ${name} } from "./${name}.js";`);
+  }
+  return lines.length > 0 ? lines.join("\n") + "\n\n" : "";
+}
+
+/**
  * Emits a TypeScript file per message + per enum, plus a barrel `index.ts`
  * that re-exports every generated module. Each file gets the AUTO-GENERATED
  * header so consumers know not to hand-edit them.
  */
 export function emitSchema(schema: ProtoSchema): EmittedFile[] {
   const files: EmittedFile[] = [];
+  const messageNames = new Set(schema.messages.map((m) => m.name));
+  const enumNames = new Set(schema.enums.map((e) => e.name));
 
   for (const msg of schema.messages) {
+    const imports = emitMessageImports(msg, messageNames, enumNames);
     files.push({
       filename: `${msg.name}.ts`,
-      content: FILE_HEADER + "\n" + emitMessage(msg),
+      content: FILE_HEADER + "\n" + imports + emitMessage(msg),
     });
   }
 
@@ -118,6 +151,24 @@ export function emitSchema(schema: ProtoSchema): EmittedFile[] {
   });
 
   return files;
+}
+
+/**
+ * The conventional sub-path, relative to a package `src/` dir, where generated
+ * files are emitted when targeting the shared `@bifrostql/types` package. The
+ * CLI's `--out packages/@bifrostql/types/src/generated` is the build-time
+ * application of this convention; the constant lets tooling and tests refer to
+ * it without duplicating the string.
+ */
+export const SHARED_PACKAGE_GENERATED_DIR = "generated";
+
+/**
+ * Returns the barrel re-export line that the `@bifrostql/types` package's own
+ * `src/index.ts` uses to surface the generated namespace. Emitter stays pure
+ * string generation — the CLI/consumer owns where this line is written.
+ */
+export function emitSharedBarrelReexport(): string {
+  return `export * from "./${SHARED_PACKAGE_GENERATED_DIR}/index.js";`;
 }
 
 const JS_IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;

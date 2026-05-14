@@ -57,6 +57,16 @@
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
       }
+    },
+    "./generated": {
+      "import": {
+        "types": "./dist/generated/index.d.ts",
+        "default": "./dist/generated/index.js"
+      },
+      "require": {
+        "types": "./dist/generated/index.d.ts",
+        "default": "./dist/generated/index.js"
+      }
     }
   }
 }

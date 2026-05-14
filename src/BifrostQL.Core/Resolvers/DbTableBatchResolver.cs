@@ -92,11 +92,11 @@ namespace BifrostQL.Core.Resolvers
         {
             if (action.TryGetValue("insert", out var insertObj) && insertObj is Dictionary<string, object?> insertData)
             {
-                return await ExecuteInsert(insertData, table, modules, model, dialect, conn, transaction, userContext);
+                return await ExecuteInsert(insertData, table, modules, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext);
             }
             if (action.TryGetValue("update", out var updateObj) && updateObj is Dictionary<string, object?> updateData)
             {
-                return await ExecuteUpdate(updateData, table, modules, model, dialect, conn, transaction, userContext);
+                return await ExecuteUpdate(updateData, table, modules, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext);
             }
             if (action.TryGetValue("delete", out var deleteObj) && deleteObj is Dictionary<string, object?> deleteData)
             {
@@ -104,7 +104,7 @@ namespace BifrostQL.Core.Resolvers
             }
             if (action.TryGetValue("upsert", out var upsertObj) && upsertObj is Dictionary<string, object?> upsertData)
             {
-                return await ExecuteUpsert(upsertData, table, modules, model, dialect, conn, transaction, userContext);
+                return await ExecuteUpsert(upsertData, table, modules, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext);
             }
             return 0;
         }
@@ -113,13 +113,21 @@ namespace BifrostQL.Core.Resolvers
             Dictionary<string, object?> data,
             IDbTable table,
             IMutationModules modules,
+            IMutationTransformers mutationTransformers,
             IDbModel model,
             ISqlDialect dialect,
             DbConnection conn,
             DbTransaction transaction,
-            IDictionary<string, object?> userContext)
+            IDictionary<string, object?> userContext,
+            MutationTransformContext transformContext)
         {
             if (data.Count == 0) return 0;
+
+            // Mutation transformers (e.g. the authorization policy engine) gate
+            // the insert before any SQL is built; non-empty Errors abort it.
+            var transformResult = mutationTransformers.Transform(table, MutationType.Insert, data, transformContext);
+            if (transformResult.Errors.Length > 0)
+                throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
             var moduleSql = modules.Insert(data, table, userContext, model);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
@@ -137,13 +145,21 @@ namespace BifrostQL.Core.Resolvers
             Dictionary<string, object?> data,
             IDbTable table,
             IMutationModules modules,
+            IMutationTransformers mutationTransformers,
             IDbModel model,
             ISqlDialect dialect,
             DbConnection conn,
             DbTransaction transaction,
-            IDictionary<string, object?> userContext)
+            IDictionary<string, object?> userContext,
+            MutationTransformContext transformContext)
         {
             if (data.Count == 0) return 0;
+
+            // Mutation transformers (e.g. the authorization policy engine) gate
+            // the update before any SQL is built; non-empty Errors abort it.
+            var transformResult = mutationTransformers.Transform(table, MutationType.Update, data, transformContext);
+            if (transformResult.Errors.Length > 0)
+                throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
             var caseData = new Dictionary<string, object?>(data, StringComparer.OrdinalIgnoreCase);
             var keyData = caseData.Where(d => table.ColumnLookup[d.Key].IsPrimaryKey)
@@ -216,11 +232,13 @@ namespace BifrostQL.Core.Resolvers
             Dictionary<string, object?> data,
             IDbTable table,
             IMutationModules modules,
+            IMutationTransformers mutationTransformers,
             IDbModel model,
             ISqlDialect dialect,
             DbConnection conn,
             DbTransaction transaction,
-            IDictionary<string, object?> userContext)
+            IDictionary<string, object?> userContext,
+            MutationTransformContext transformContext)
         {
             if (data.Count == 0) return 0;
 
@@ -232,6 +250,12 @@ namespace BifrostQL.Core.Resolvers
 
             if (upsertSql != null)
             {
+                // An upsert that resolves to a single statement is gated as an
+                // update: it targets an existing or new row keyed by primary key.
+                var transformResult = mutationTransformers.Transform(table, MutationType.Update, caseData, transformContext);
+                if (transformResult.Errors.Length > 0)
+                    throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
+
                 var moduleSql = modules.Insert(caseData, table, userContext, model);
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = Join(upsertSql, moduleSql);
@@ -241,9 +265,9 @@ namespace BifrostQL.Core.Resolvers
             }
 
             if (keyColumns.Count > 0)
-                return await ExecuteUpdate(data, table, modules, model, dialect, conn, transaction, userContext);
+                return await ExecuteUpdate(data, table, modules, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext);
 
-            return await ExecuteInsert(data, table, modules, model, dialect, conn, transaction, userContext);
+            return await ExecuteInsert(data, table, modules, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext);
         }
 
         private static void AddParameters(DbCommand cmd, Dictionary<string, object?> data)

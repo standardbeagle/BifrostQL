@@ -30,11 +30,11 @@ namespace BifrostQL.Core.Resolvers
 
             if (context.HasArgument("insert"))
             {
-                return await InsertObject(context, table, modules, model, conFactory, dialect);
+                return await InsertObject(context, table, modules, mutationTransformers, model, conFactory, dialect);
             }
             if (context.HasArgument("update"))
             {
-                return await UpdateObject(context, table, modules, model, conFactory, dialect);
+                return await UpdateObject(context, table, modules, mutationTransformers, model, conFactory, dialect);
             }
             if (context.HasArgument("delete"))
             {
@@ -63,9 +63,9 @@ namespace BifrostQL.Core.Resolvers
                 }
 
                 if (propertyInfo.keyData.Any())
-                    return await UpdateObject(context, table, modules, model, conFactory, dialect, "upsert");
+                    return await UpdateObject(context, table, modules, mutationTransformers, model, conFactory, dialect, "upsert");
 
-                return await InsertObject(context, table, modules, model, conFactory, dialect, "upsert");
+                return await InsertObject(context, table, modules, mutationTransformers, model, conFactory, dialect, "upsert");
             }
             return null;
         }
@@ -169,7 +169,8 @@ namespace BifrostQL.Core.Resolvers
             return await ExecuteNonQuery(conFactory, Join(deleteSql, deleteModuleSql), data);
         }
 
-        private async Task<object?> UpdateObject(IBifrostFieldContext context, IDbTable table, IMutationModules modules, IDbModel model,
+        private async Task<object?> UpdateObject(IBifrostFieldContext context, IDbTable table, IMutationModules modules,
+            IMutationTransformers mutationTransformers, IDbModel model,
             IDbConnFactory conFactory, ISqlDialect dialect, string parameterName = "update")
         {
             var propertyInfo = GetPropertyInfo(context, table, parameterName);
@@ -182,6 +183,13 @@ namespace BifrostQL.Core.Resolvers
             if (!propertyInfo.standardData.Any())
                 return 0;
 
+            // Mutation transformers (e.g. the authorization policy engine) gate
+            // the update before any SQL is built; non-empty Errors abort it.
+            var transformContext = new MutationTransformContext { Model = model, UserContext = context.UserContext };
+            var transformResult = mutationTransformers.Transform(table, MutationType.Update, propertyInfo.data, transformContext);
+            if (transformResult.Errors.Length > 0)
+                throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
+
             var moduleSql = modules.Update(propertyInfo.data, table, context.UserContext, model);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var setClause = string.Join(",", propertyInfo.standardData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
@@ -191,10 +199,19 @@ namespace BifrostQL.Core.Resolvers
             return propertyInfo.keyData.Values.First();
         }
 
-        private async Task<object?> InsertObject(IBifrostFieldContext context, IDbTable table, IMutationModules modules, IDbModel model,
+        private async Task<object?> InsertObject(IBifrostFieldContext context, IDbTable table, IMutationModules modules,
+            IMutationTransformers mutationTransformers, IDbModel model,
             IDbConnFactory conFactory, ISqlDialect dialect, string parameterName = "insert")
         {
             var data = context.GetArgument<Dictionary<string, object?>>(parameterName) ?? new();
+
+            // Mutation transformers (e.g. the authorization policy engine) gate
+            // the insert before any SQL is built; non-empty Errors abort it.
+            var transformContext = new MutationTransformContext { Model = model, UserContext = context.UserContext };
+            var transformResult = mutationTransformers.Transform(table, MutationType.Insert, data, transformContext);
+            if (transformResult.Errors.Length > 0)
+                throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
+
             var moduleSql = modules.Insert(data, table, context.UserContext, model);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var columns = string.Join(",", data.Keys.Select(k => dialect.EscapeIdentifier(k)));

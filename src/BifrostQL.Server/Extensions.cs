@@ -254,6 +254,26 @@ namespace BifrostQL.Server
             combined.AddRange(configured);
             return combined;
         }
+
+        /// <summary>
+        /// Prepends the built-in security mutation transformers to the
+        /// caller-supplied set. <see cref="PolicyMutationTransformer"/> is
+        /// always active so authorization-policy metadata is enforced on the
+        /// create/update/delete path without explicit opt-in; it is opt-in per
+        /// table via the <c>policy-*</c> metadata keys and a no-op for tables
+        /// without them. A caller-supplied <see cref="PolicyMutationTransformer"/>
+        /// (e.g. one configured with a non-default admin role) takes precedence.
+        /// </summary>
+        internal static IReadOnlyCollection<IMutationTransformer> WithBuiltInMutationTransformers(
+            IReadOnlyCollection<IMutationTransformer> configured)
+        {
+            if (configured.Any(t => t is PolicyMutationTransformer))
+                return configured;
+
+            var combined = new List<IMutationTransformer> { new PolicyMutationTransformer() };
+            combined.AddRange(configured);
+            return combined;
+        }
     }
 
     /// <summary>
@@ -500,9 +520,9 @@ namespace BifrostQL.Server
                 services.AddSingleton<IFilterTransformers>(new FilterTransformersWrap { Transformers = Extensions.WithBuiltInFilterTransformers(_filterTransformers) });
 
             if (_mutationTransformerLoader != null)
-                services.AddSingleton<IMutationTransformers>(sp => new MutationTransformersWrap { Transformers = _mutationTransformerLoader(sp) });
+                services.AddSingleton<IMutationTransformers>(sp => new MutationTransformersWrap { Transformers = Extensions.WithBuiltInMutationTransformers(_mutationTransformerLoader(sp)) });
             else
-                services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap { Transformers = _mutationTransformers });
+                services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap { Transformers = Extensions.WithBuiltInMutationTransformers(_mutationTransformers) });
 
             services.AddSingleton<IQueryObservers>(sp =>
             {
@@ -820,9 +840,9 @@ namespace BifrostQL.Server
 
             // Register mutation transformers
             if (_mutationTransformerLoader != null)
-                services.AddSingleton<IMutationTransformers>(sp => new MutationTransformersWrap { Transformers = _mutationTransformerLoader(sp) });
+                services.AddSingleton<IMutationTransformers>(sp => new MutationTransformersWrap { Transformers = Extensions.WithBuiltInMutationTransformers(_mutationTransformerLoader(sp)) });
             else
-                services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap { Transformers = _mutationTransformers });
+                services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap { Transformers = Extensions.WithBuiltInMutationTransformers(_mutationTransformers) });
 
             // Register query observers with built-in logging observer and error callback
             services.AddSingleton<IQueryObservers>(sp =>

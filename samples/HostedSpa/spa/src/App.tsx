@@ -12,9 +12,55 @@ import { PlanList } from './membership-plans/plan-list';
 import { PlanForm } from './membership-plans/plan-form';
 import { MemberPlanAssignment } from './membership-plans/member-plan-assignment';
 import { RecordPayment } from './membership-plans/record-payment';
+import { UnpaidDuesReport } from './reports/unpaid-dues-report';
+import { UpcomingRenewalsReport } from './reports/upcoming-renewals-report';
+import { ExpiredMembershipsReport } from './reports/expired-memberships-report';
 
 /** Permission required to view and manage the member roster. */
 const MEMBERS_READ = 'main.members.read';
+
+/**
+ * The dues/membership reports, as nav entries.
+ *
+ * Reports are read-only filtered views over existing overlay entities, not
+ * entities themselves, so {@link AppNav} — which is entity-driven — cannot
+ * surface them on its own. They are appended to the entity-driven nav via
+ * `AppNav`'s `children` render-prop. Routing is gated on the same
+ * `main.members.read` permission as the rest of the SPA.
+ */
+const REPORT_NAV_ITEMS = [
+  { path: '/reports/unpaid-dues', label: 'Unpaid Dues' },
+  { path: '/reports/upcoming-renewals', label: 'Upcoming Renewals' },
+  { path: '/reports/expired-memberships', label: 'Expired Memberships' },
+];
+
+/**
+ * Navigation for the SPA: the entity-driven {@link AppNav} entries followed by
+ * the dues/membership report links. Mirrors `AppNav`'s default `<nav>` markup
+ * so the reports sit in the same list as the entity entries.
+ */
+function MembershipNav() {
+  return (
+    <AppNav>
+      {(items) => (
+        <nav aria-label="Application navigation">
+          <ul>
+            {items.map((item) => (
+              <li key={item.key}>
+                <a href={`#/${item.key}`}>{item.label}</a>
+              </li>
+            ))}
+            {REPORT_NAV_ITEMS.map((item) => (
+              <li key={item.path}>
+                <a href={`#${item.path}`}>{item.label}</a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      )}
+    </AppNav>
+  );
+}
 
 /**
  * Membership Manager SPA root.
@@ -33,7 +79,7 @@ function App() {
     <AppShellProvider>
       <AppLayout
         header={<strong>Membership Manager</strong>}
-        nav={<AppNav />}
+        nav={<MembershipNav />}
       >
         <Routes>
           <Route path="/">
@@ -127,6 +173,36 @@ function App() {
               onUnauthenticated={() => navigate('/login')}
             >
               <RecordPayment />
+            </ProtectedRoute>
+          </Route>
+          {/*
+            Dues/membership reports: read-only filtered `BifrostTable` views
+            over the `dues_invoices` / `member_memberships` entities. They are
+            not overlay entities, so their nav entries are appended by
+            `MembershipNav` rather than coming from `AppNav` directly.
+          */}
+          <Route path="/reports/unpaid-dues">
+            <ProtectedRoute
+              requirePermission={MEMBERS_READ}
+              onUnauthenticated={() => navigate('/login')}
+            >
+              <UnpaidDuesReport />
+            </ProtectedRoute>
+          </Route>
+          <Route path="/reports/upcoming-renewals">
+            <ProtectedRoute
+              requirePermission={MEMBERS_READ}
+              onUnauthenticated={() => navigate('/login')}
+            >
+              <UpcomingRenewalsReport />
+            </ProtectedRoute>
+          </Route>
+          <Route path="/reports/expired-memberships">
+            <ProtectedRoute
+              requirePermission={MEMBERS_READ}
+              onUnauthenticated={() => navigate('/login')}
+            >
+              <ExpiredMembershipsReport />
             </ProtectedRoute>
           </Route>
         </Routes>

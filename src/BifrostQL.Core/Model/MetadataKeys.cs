@@ -221,6 +221,40 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
+        /// Metadata keys for the server-side authorization policy engine.
+        /// Configured at the table level, mirroring the tenant-filter convention:
+        ///   "dbo.orders { policy-actions: read,update }"
+        ///   "dbo.employees { policy-read-deny: ssn,salary }"
+        /// </summary>
+        public static class Policy
+        {
+            /// <summary>
+            /// Table-level comma-separated list of permitted actions
+            /// (read/create/update/delete). Unrecognized tokens are ignored.
+            /// </summary>
+            public const string Actions = "policy-actions";
+
+            /// <summary>
+            /// Table-level comma-separated list of columns that may not be read.
+            /// </summary>
+            public const string ReadDeny = "policy-read-deny";
+
+            /// <summary>
+            /// Table-level comma-separated list of columns that may not be written.
+            /// </summary>
+            public const string WriteDeny = "policy-write-deny";
+
+            /// <summary>
+            /// Table-level row-scope policy expression, stored verbatim. Its
+            /// compilation into a query filter is handled by a later sub-task.
+            /// </summary>
+            public const string RowScope = "policy-row-scope";
+
+            /// <summary>Default role name that bypasses all policy checks.</summary>
+            public const string DefaultAdminRole = "admin";
+        }
+
+        /// <summary>
         /// Metadata keys for soft-delete filtering and mutation rewriting.
         /// </summary>
         public static class SoftDelete

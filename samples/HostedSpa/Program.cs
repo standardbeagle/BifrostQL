@@ -12,8 +12,11 @@ var builder = WebApplication.CreateBuilder(args);
 DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
 
 // Create a small SQLite database the first time the sample runs so it works
-// without any external database setup.
-var dbPath = Path.Combine(builder.Environment.ContentRootPath, "hostedspa-sample.db");
+// without any external database setup. The path is derived from the configured
+// connection string so the seeded file and the database BifrostQL opens always
+// agree (this also lets integration tests point the sample at a throwaway file).
+var connectionString = builder.Configuration.GetConnectionString("bifrost");
+var dbPath = SampleDatabase.ResolveDbPath(connectionString, builder.Environment.ContentRootPath);
 SampleDatabase.EnsureCreated(dbPath);
 
 builder.Services.AddBifrostQL(options =>
@@ -32,3 +35,6 @@ app.UseBifrostQL();
 app.UseBifrostSpa(spa => spa.AddExcludedPathPrefix("/playground"));
 
 await app.RunAsync();
+
+// Exposed so WebApplicationFactory<Program> can host this sample in integration tests.
+public partial class Program;

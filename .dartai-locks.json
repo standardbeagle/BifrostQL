@@ -1,15 +1,15 @@
 {
   "claims": {
-    "9VmvdcXBjACu": {
+    "sgt8K5waNxv3": {
       "runner_instance_id": "DESKTOP-NPIOPS6-13041",
       "runner_email": "andybrummer@standardbeagle.com",
-      "claimed_at": "2026-05-14T13:39:00Z",
+      "claimed_at": "2026-05-14T13:46:00Z",
       "agent_id": "DESKTOP-NPIOPS6-13041",
       "parent_loop_id": "epYVBosC0i3a",
-      "purpose": "hosted SPA/API mode smoke test — SPA fallback + GraphQL coexistence (split sub-task 4/4)",
+      "purpose": "hosted SPA/API mode docs guide (split sub-task 3/4)",
       "source_event": {
         "loop_id": "epYVBosC0i3a",
-        "task_id": "9VmvdcXBjACu",
+        "task_id": "sgt8K5waNxv3",
         "conversation_id": null
       }
     }

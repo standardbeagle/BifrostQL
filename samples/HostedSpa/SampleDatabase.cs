@@ -9,6 +9,31 @@ namespace BifrostQL.Samples.HostedSpa;
 internal static class SampleDatabase
 {
     /// <summary>
+    /// Resolves the SQLite database file path from the configured connection string.
+    /// Falls back to <c>hostedspa-sample.db</c> under <paramref name="contentRootPath"/>
+    /// when no connection string or <c>Data Source</c> is configured. Relative
+    /// <c>Data Source</c> values are resolved against the content root.
+    /// </summary>
+    /// <param name="connectionString">The configured <c>bifrost</c> connection string, if any.</param>
+    /// <param name="contentRootPath">The host content root used to resolve relative paths.</param>
+    /// <returns>An absolute path to the SQLite database file.</returns>
+    public static string ResolveDbPath(string? connectionString, string contentRootPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(contentRootPath);
+
+        var dataSource = string.IsNullOrWhiteSpace(connectionString)
+            ? null
+            : new SqliteConnectionStringBuilder(connectionString).DataSource;
+
+        if (string.IsNullOrWhiteSpace(dataSource))
+            dataSource = "hostedspa-sample.db";
+
+        return Path.IsPathRooted(dataSource)
+            ? dataSource
+            : Path.Combine(contentRootPath, dataSource);
+    }
+
+    /// <summary>
     /// Creates the sample database file with a single seeded <c>widgets</c> table
     /// if it does not already exist. Existing files are left untouched.
     /// </summary>

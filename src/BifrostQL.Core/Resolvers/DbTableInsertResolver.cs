@@ -144,6 +144,11 @@ namespace BifrostQL.Core.Resolvers
             if (transformResult.Errors.Length > 0)
                 throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
+            // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
+            // IS NULL) is ANDed onto the WHERE clause so it narrows — never
+            // replaces — the primary-key predicate.
+            var additionalFilter = RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
+
             if (transformResult.MutationType == MutationType.Update)
             {
                 // Soft-delete: transformed to UPDATE
@@ -157,16 +162,16 @@ namespace BifrostQL.Core.Resolvers
 
                 var setClause = string.Join(",", setData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
                 var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
-                var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause};";
-                return await ExecuteNonQuery(conFactory, Join(sql, moduleSql), transformResult.Data);
+                var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
+                return await ExecuteNonQuery(conFactory, Join(sql, moduleSql), transformResult.Data, additionalFilter.Parameters);
             }
 
             // Standard DELETE (no transformation)
             var deleteModuleSql = modules.Delete(data, table, userContext, model);
             var deleteTableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var deleteWhereClause = string.Join(" AND ", data.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
-            var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause};";
-            return await ExecuteNonQuery(conFactory, Join(deleteSql, deleteModuleSql), data);
+            var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause}{additionalFilter.WhereSuffix};";
+            return await ExecuteNonQuery(conFactory, Join(deleteSql, deleteModuleSql), data, additionalFilter.Parameters);
         }
 
         private async Task<object?> UpdateObject(IBifrostFieldContext context, IDbTable table, IMutationModules modules,
@@ -190,12 +195,17 @@ namespace BifrostQL.Core.Resolvers
             if (transformResult.Errors.Length > 0)
                 throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
+            // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
+            // IS NULL) is ANDed onto the WHERE clause so it narrows — never
+            // replaces — the primary-key predicate.
+            var additionalFilter = RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
+
             var moduleSql = modules.Update(propertyInfo.data, table, context.UserContext, model);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var setClause = string.Join(",", propertyInfo.standardData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var whereClause = string.Join(" AND ", propertyInfo.keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
-            var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause};";
-            await ExecuteNonQuery(conFactory, Join(sql, moduleSql), propertyInfo.data);
+            var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
+            await ExecuteNonQuery(conFactory, Join(sql, moduleSql), propertyInfo.data, additionalFilter.Parameters);
             return propertyInfo.keyData.Values.First();
         }
 
@@ -239,7 +249,8 @@ namespace BifrostQL.Core.Resolvers
                 throw new BifrostExecutionError(ex.Message, ex);
             }
         }
-        private static async ValueTask<int> ExecuteNonQuery(IDbConnFactory connFactory, string sql, Dictionary<string, object?> data)
+        private static async ValueTask<int> ExecuteNonQuery(IDbConnFactory connFactory, string sql,
+            Dictionary<string, object?> data, IReadOnlyList<SqlParameterInfo>? extraParameters = null)
         {
             await using var conn = connFactory.GetConnection();
             try
@@ -248,6 +259,7 @@ namespace BifrostQL.Core.Resolvers
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = sql;
                 AddParameters(cmd, data);
+                AddExtraParameters(cmd, extraParameters);
                 return await cmd.ExecuteNonQueryAsync();
             }
             catch (Exception ex)
@@ -265,6 +277,35 @@ namespace BifrostQL.Core.Resolvers
                 p.Value = kv.Value ?? DBNull.Value;
                 cmd.Parameters.Add(p);
             }
+        }
+
+        // Binds the parameters carried by a rendered AdditionalFilter. Their
+        // names (@p0, @p1, …) come from SqlParameterCollection and cannot
+        // collide with the @columnName parameters AddParameters binds.
+        private static void AddExtraParameters(DbCommand cmd, IReadOnlyList<SqlParameterInfo>? parameters)
+        {
+            if (parameters == null) return;
+            foreach (var info in parameters)
+            {
+                var p = cmd.CreateParameter();
+                p.ParameterName = info.Name;
+                p.Value = info.Value ?? DBNull.Value;
+                cmd.Parameters.Add(p);
+            }
+        }
+
+        // Renders MutationTransformResult.AdditionalFilter into an AND-prefixed
+        // WHERE suffix and its bound parameters. Returns an empty suffix when no
+        // transformer contributed a filter.
+        private static (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) RenderAdditionalFilter(
+            TableFilter? filter, ISqlDialect dialect)
+        {
+            if (filter == null)
+                return ("", Array.Empty<SqlParameterInfo>());
+
+            var parameters = new SqlParameterCollection();
+            var rendered = filter.RenderForMutation(dialect, parameters);
+            return ($" AND ({rendered.Sql})", parameters.Parameters);
         }
 
         private static string Join(string str, string[] array)

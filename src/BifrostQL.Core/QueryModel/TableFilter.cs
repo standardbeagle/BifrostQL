@@ -181,6 +181,50 @@ namespace BifrostQL.Core.QueryModel
                 parameters.Parameters.TakeLast(1).ToList());
         }
 
+        /// <summary>
+        /// Renders this filter as a parameterized WHERE-clause fragment for the
+        /// mutation resolver path, which operates entirely in database-name
+        /// space (no GraphQL-name lookup, no joins). It supports exactly the
+        /// shapes mutation transformers produce on
+        /// <see cref="Modules.MutationTransformResult.AdditionalFilter"/>:
+        /// a single <c>column = value</c> / <c>column IS NULL</c> equality
+        /// (built by <see cref="Modules.TableFilterFactory.Equals"/> /
+        /// <see cref="Modules.TableFilterFactory.IsNull"/>) and an AND of such
+        /// filters (built by the transformer wraps when more than one
+        /// transformer contributes a filter). Any other shape — OR, joins,
+        /// non-equality operators — throws <see cref="BifrostExecutionError"/>
+        /// because no mutation transformer produces it today; widening the
+        /// grammar is intentionally out of scope.
+        /// </summary>
+        public ParameterizedSql RenderForMutation(ISqlDialect dialect, SqlParameterCollection parameters)
+        {
+            ArgumentNullException.ThrowIfNull(dialect);
+            ArgumentNullException.ThrowIfNull(parameters);
+
+            // AND combination: every branch is itself a mutation filter.
+            if (Next == null && And.Count > 0)
+            {
+                var rendered = And.Select(f => f.RenderForMutation(dialect, parameters)).ToArray();
+                var sql = string.Join(" AND ", rendered.Select(r => $"({r.Sql})"));
+                return new ParameterizedSql(sql, rendered.SelectMany(r => r.Parameters).ToList());
+            }
+
+            // Single equality: FilterType.Join with a relation Next holding the
+            // operator and value, as produced by TableFilterFactory.Equals.
+            if (FilterType == FilterType.Join && Next is { Next: null })
+            {
+                if (Next.RelationName != "_eq")
+                    throw new BifrostExecutionError(
+                        "Mutation additional filter only supports equality comparisons.");
+
+                return GetSingleFilterParameterized(
+                    dialect, parameters, table: null, field: ColumnName, op: "_eq", value: Next.Value);
+            }
+
+            throw new BifrostExecutionError(
+                "Mutation additional filter has an unsupported shape.");
+        }
+
         public ParameterizedSql ToSqlParameterized(IDbModel model, ISqlDialect dialect, SqlParameterCollection parameters, string? alias = null)
         {
             if (Next == null)

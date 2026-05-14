@@ -169,15 +169,21 @@ namespace BifrostQL.Core.Resolvers
 
             if (!keyData.Any() || !standardData.Any()) return 0;
 
+            // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
+            // IS NULL) is ANDed onto the WHERE clause so it narrows — never
+            // replaces — the primary-key predicate.
+            var additionalFilter = RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
+
             var moduleSql = modules.Update(caseData, table, userContext, model);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var setClause = string.Join(",", standardData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
-            var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause};";
+            var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = Join(sql, moduleSql);
             cmd.Transaction = transaction;
             AddParameters(cmd, caseData);
+            AddExtraParameters(cmd, additionalFilter.Parameters);
             return await cmd.ExecuteNonQueryAsync();
         }
 
@@ -199,6 +205,11 @@ namespace BifrostQL.Core.Resolvers
             if (transformResult.Errors.Length > 0)
                 throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
+            // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
+            // IS NULL) is ANDed onto the WHERE clause so it narrows — never
+            // replaces — the primary-key predicate.
+            var additionalFilter = RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
+
             if (transformResult.MutationType == MutationType.Update)
             {
                 var moduleSql = modules.Delete(transformResult.Data, table, userContext, model);
@@ -209,22 +220,24 @@ namespace BifrostQL.Core.Resolvers
                     .ToDictionary(kv => kv.Key, kv => kv.Value);
                 var setClause = string.Join(",", setData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
                 var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
-                var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause};";
+                var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = Join(sql, moduleSql);
                 cmd.Transaction = transaction;
                 AddParameters(cmd, transformResult.Data);
+                AddExtraParameters(cmd, additionalFilter.Parameters);
                 return await cmd.ExecuteNonQueryAsync();
             }
 
             var deleteModuleSql = modules.Delete(data, table, userContext, model);
             var deleteTableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var deleteWhereClause = string.Join(" AND ", data.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
-            var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause};";
+            var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause}{additionalFilter.WhereSuffix};";
             await using var deleteCmd = conn.CreateCommand();
             deleteCmd.CommandText = Join(deleteSql, deleteModuleSql);
             deleteCmd.Transaction = transaction;
             AddParameters(deleteCmd, data);
+            AddExtraParameters(deleteCmd, additionalFilter.Parameters);
             return await deleteCmd.ExecuteNonQueryAsync();
         }
 
@@ -279,6 +292,34 @@ namespace BifrostQL.Core.Resolvers
                 p.Value = kv.Value ?? DBNull.Value;
                 cmd.Parameters.Add(p);
             }
+        }
+
+        // Binds the parameters carried by a rendered AdditionalFilter. Their
+        // names (@p0, @p1, …) come from SqlParameterCollection and cannot
+        // collide with the @columnName parameters AddParameters binds.
+        private static void AddExtraParameters(DbCommand cmd, IReadOnlyList<SqlParameterInfo> parameters)
+        {
+            foreach (var info in parameters)
+            {
+                var p = cmd.CreateParameter();
+                p.ParameterName = info.Name;
+                p.Value = info.Value ?? DBNull.Value;
+                cmd.Parameters.Add(p);
+            }
+        }
+
+        // Renders MutationTransformResult.AdditionalFilter into an AND-prefixed
+        // WHERE suffix and its bound parameters. Returns an empty suffix when no
+        // transformer contributed a filter.
+        private static (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) RenderAdditionalFilter(
+            TableFilter? filter, ISqlDialect dialect)
+        {
+            if (filter == null)
+                return ("", Array.Empty<SqlParameterInfo>());
+
+            var parameters = new SqlParameterCollection();
+            var rendered = filter.RenderForMutation(dialect, parameters);
+            return ($" AND ({rendered.Sql})", parameters.Parameters);
         }
 
         private static string Join(string str, string[] array)

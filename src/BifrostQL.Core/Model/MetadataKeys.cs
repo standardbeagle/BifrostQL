@@ -240,6 +240,19 @@ namespace BifrostQL.Core.Model
             public const string ReadDeny = "policy-read-deny";
 
             /// <summary>
+            /// Optional table-level comma-separated list of role names the
+            /// <see cref="ReadDeny"/> column list applies to. When present, the
+            /// read-deny columns are blocked only for a caller holding one of
+            /// these roles; every other non-admin caller may read them. When
+            /// absent, the read-deny columns are blocked for every non-admin
+            /// caller (the original unconditional behavior). Mirrors
+            /// <see cref="RowScopeRoles"/>: it role-qualifies a restriction so a
+            /// finance field can be hidden from officer/member while remaining
+            /// readable by finance_manager.
+            /// </summary>
+            public const string ReadDenyRoles = "policy-read-deny-roles";
+
+            /// <summary>
             /// Table-level comma-separated list of columns that may not be written.
             /// </summary>
             public const string WriteDeny = "policy-write-deny";

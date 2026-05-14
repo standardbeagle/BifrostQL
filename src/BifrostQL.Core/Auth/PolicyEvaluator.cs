@@ -82,9 +82,22 @@ public sealed class PolicyEvaluator
             ? policy.ReadDenyColumns
             : policy.WriteDenyColumns;
 
-        return denyList.Contains(column)
-            ? PolicyDecision.Deny
-            : PolicyDecision.Allow;
+        if (!denyList.Contains(column))
+            return PolicyDecision.Allow;
+
+        // Role-qualified read deny: when the policy names the roles its
+        // read-deny columns apply to, a caller holding none of them may still
+        // read the column (e.g. finance_manager reads a finance field that is
+        // hidden from officer/member). An unqualified deny — or any write
+        // deny — blocks every non-admin caller.
+        if (direction == PolicyDirection.Read && policy.ReadDenyRoles.Count > 0)
+        {
+            return identity.Roles.Any(policy.ReadDenyRoles.Contains)
+                ? PolicyDecision.Deny
+                : PolicyDecision.Allow;
+        }
+
+        return PolicyDecision.Deny;
     }
 
     private bool IsAdmin(AppIdentity identity) =>

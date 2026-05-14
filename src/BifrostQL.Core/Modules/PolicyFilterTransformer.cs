@@ -26,7 +26,11 @@ namespace BifrostQL.Core.Modules;
 ///     above (both fail closed) and avoids returning a partial result the caller
 ///     did not ask for. <see cref="IFilterTransformer"/> only sees the table, not
 ///     the selected columns, so this is a public seam the column-selection path
-///     (sub-task 4) calls; the policy logic itself lives here.
+///     (sub-task 4) calls; the policy logic itself lives here. The deny may be
+///     role-qualified via <c>policy-read-deny-roles</c> (sub-task 3): when that
+///     metadata is present the deny applies only to callers holding one of the
+///     named roles, so a finance field stays readable by finance_manager while
+///     being hidden from officer/member.
 ///
 /// Priority 1 — within the 0-99 security range, immediately after
 /// <see cref="TenantFilterTransformer"/> at priority 0, matching

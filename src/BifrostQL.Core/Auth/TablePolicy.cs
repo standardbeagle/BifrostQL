@@ -70,6 +70,17 @@ public sealed record TablePolicy
     /// <summary>Columns that may not be read (case-insensitive match).</summary>
     public IReadOnlySet<string> ReadDenyColumns { get; }
 
+    /// <summary>
+    /// Optional set of role names the <see cref="ReadDenyColumns"/> list applies
+    /// to (case-insensitive match). When empty, the read-deny columns are blocked
+    /// for every non-admin caller. When non-empty, only a caller holding one of
+    /// these roles is blocked from the read-deny columns — other non-admin
+    /// callers may read them. This role-qualifies the column read deny so a
+    /// finance field can be hidden from officer/member while remaining readable
+    /// by finance_manager, mirroring <see cref="RowScopeRoles"/>.
+    /// </summary>
+    public IReadOnlySet<string> ReadDenyRoles { get; }
+
     /// <summary>Columns that may not be written (case-insensitive match).</summary>
     public IReadOnlySet<string> WriteDenyColumns { get; }
 
@@ -105,12 +116,15 @@ public sealed record TablePolicy
         IEnumerable<string>? readDenyColumns = null,
         IEnumerable<string>? writeDenyColumns = null,
         string? rowScopeExpression = null,
-        IEnumerable<string>? rowScopeRoles = null)
+        IEnumerable<string>? rowScopeRoles = null,
+        IEnumerable<string>? readDenyRoles = null)
     {
         AllowedActions = new HashSet<PolicyAction>(
             allowedActions ?? Enumerable.Empty<PolicyAction>());
         ReadDenyColumns = new HashSet<string>(
             readDenyColumns ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        ReadDenyRoles = new HashSet<string>(
+            readDenyRoles ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
         WriteDenyColumns = new HashSet<string>(
             writeDenyColumns ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
         RowScopeExpression = string.IsNullOrWhiteSpace(rowScopeExpression)

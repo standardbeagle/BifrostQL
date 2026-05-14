@@ -18,10 +18,10 @@
 --     households            { label: Households,       tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update,delete, policy-row-scope: household_id = {household_id}, policy-row-scope-roles: member }
 --     members               { label: Members,         tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, soft-delete: deleted_at, policy-actions: read,create,update,delete, policy-row-scope: user_id = {user_id}, policy-row-scope-roles: member }
 --     household_members     { label: Household Members,tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update,delete }
---     membership_plans      { label: Membership Plans, tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update,delete }
+--     membership_plans      { label: Membership Plans, tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update,delete, policy-read-deny: price_cents, policy-read-deny-roles: officer,event_manager,member,read_only }
 --     member_memberships    { label: Member Memberships,tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update,delete }
---     dues_invoices         { label: Dues Invoices,    tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update }
---     dues_payments         { label: Dues Payments,    tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update }
+--     dues_invoices         { label: Dues Invoices,    tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update, policy-read-deny: amount_cents, policy-read-deny-roles: officer,event_manager,member,read_only }
+--     dues_payments         { label: Dues Payments,    tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update, policy-read-deny: amount_cents, policy-read-deny-roles: officer,event_manager,member,read_only }
 --     events                { label: Events,          tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update,delete }
 --     event_rsvps           { label: Event RSVPs,      tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update,delete }
 --     event_attendance      { label: Event Attendance, tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids, policy-actions: read,create,update,delete }
@@ -74,6 +74,40 @@
 --              authentication layer resolves the caller's member row and adds
 --              household_id to AppIdentity.Claims, which IdentityContextMapper
 --              copies verbatim into the user context.
+--
+-- ============================================================
+-- Finance field restriction (Membership Manager policy, sub-task 3/4)
+-- ============================================================
+--
+-- `policy-read-deny` on the finance tables hides the money columns from the
+-- non-finance roles. `policy-read-deny-roles` qualifies the deny to the listed
+-- roles only, mirroring `policy-row-scope-roles` from sub-task 2: when present,
+-- the read-deny columns are blocked only for a caller holding one of the named
+-- roles; finance_manager (not listed) keeps read access, and admin bypasses the
+-- policy engine entirely.
+--
+--   dues_invoices    policy-read-deny: amount_cents
+--                    policy-read-deny-roles: officer,event_manager,member,read_only
+--   dues_payments    policy-read-deny: amount_cents
+--                    policy-read-deny-roles: officer,event_manager,member,read_only
+--   membership_plans policy-read-deny: price_cents
+--                    policy-read-deny-roles: officer,event_manager,member,read_only
+--
+-- Enforcement: PolicyFilterTransformer.AssertColumnsReadable (the
+-- IColumnReadGuard seam) rejects a query that selects a denied finance column
+-- for one of the listed roles with a generic, non-leaking error. A query from
+-- finance_manager or admin selecting the same column is allowed. The deny is
+-- read-only — finance_manager still creates/updates dues rows (and thus writes
+-- amount_cents) under the table-level policy-actions grant.
+--
+-- officer operational scope: officer needs no extra field metadata. The
+-- table-level policy-actions grants from sub-task 1 already give officer full
+-- CRUD on members, households, household_members, membership_plans, and
+-- member_memberships within its tenant (the tenant-filter bounds it to the
+-- caller's clubs), and the read-deny above hides only the finance columns.
+-- event_manager is likewise scoped to the events tables by policy-actions, and
+-- read_only carries `policy-actions: read` on every table so every write is
+-- denied — no field metadata is needed for either.
 --
 -- ============================================================
 -- Role -> permission matrix (Membership Manager policy, sub-task 1/4)

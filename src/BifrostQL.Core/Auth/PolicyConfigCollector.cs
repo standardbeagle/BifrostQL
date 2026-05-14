@@ -21,6 +21,7 @@ public static class PolicyConfigCollector
 
         var actionsRaw = table.GetMetadataValue(MetadataKeys.Policy.Actions);
         var readDenyRaw = table.GetMetadataValue(MetadataKeys.Policy.ReadDeny);
+        var readDenyRolesRaw = table.GetMetadataValue(MetadataKeys.Policy.ReadDenyRoles);
         var writeDenyRaw = table.GetMetadataValue(MetadataKeys.Policy.WriteDeny);
         var rowScopeRaw = table.GetMetadataValue(MetadataKeys.Policy.RowScope);
         var rowScopeRolesRaw = table.GetMetadataValue(MetadataKeys.Policy.RowScopeRoles);
@@ -39,7 +40,8 @@ public static class PolicyConfigCollector
             readDenyColumns: SplitList(readDenyRaw),
             writeDenyColumns: SplitList(writeDenyRaw),
             rowScopeExpression: rowScopeRaw,
-            rowScopeRoles: SplitList(rowScopeRolesRaw));
+            rowScopeRoles: SplitList(rowScopeRolesRaw),
+            readDenyRoles: SplitList(readDenyRolesRaw));
     }
 
     private static IEnumerable<PolicyAction> ParseActions(string? raw)

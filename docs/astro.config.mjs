@@ -42,6 +42,7 @@ export default defineConfig({
 						{ label: 'Module System', slug: 'guides/modules' },
 						{ label: 'Authentication', slug: 'guides/authentication' },
 						{ label: 'Desktop App', slug: 'guides/desktop-app' },
+						{ label: 'Hosted SPA / API Mode', slug: 'guides/hosted-spa' },
 						{ label: 'WordPress', slug: 'guides/wordpress' },
 						{ label: 'Binary Transport', slug: 'guides/binary-transport' },
 					],

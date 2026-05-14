@@ -1,15 +1,15 @@
 {
   "claims": {
-    "DI3J86AANwCs": {
+    "ZnVNaxIa9hhD": {
       "runner_instance_id": "DESKTOP-NPIOPS6-13041",
       "runner_email": "andybrummer@standardbeagle.com",
-      "claimed_at": "2026-05-14T14:14:00Z",
+      "claimed_at": "2026-05-14T14:25:00Z",
       "agent_id": "DESKTOP-NPIOPS6-13041",
       "parent_loop_id": "epYVBosC0i3a",
-      "purpose": "Auth 3/4 — OIDC claim mapping hooks for Microsoft 365 + Google",
+      "purpose": "Auth 4/4 — auth docs with local-user + OIDC examples",
       "source_event": {
         "loop_id": "epYVBosC0i3a",
-        "task_id": "DI3J86AANwCs",
+        "task_id": "ZnVNaxIa9hhD",
         "conversation_id": null
       }
     }

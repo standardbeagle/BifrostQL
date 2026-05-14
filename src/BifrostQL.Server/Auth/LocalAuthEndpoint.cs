@@ -55,6 +55,8 @@ namespace BifrostQL.Server.Auth
                 claims.Add(new Claim(ClaimTypes.Name, identity.DisplayName));
             if (!string.IsNullOrWhiteSpace(identity.TenantId))
                 claims.Add(new Claim(LocalAuthClaims.Tenant, identity.TenantId));
+            foreach (var orgId in identity.OrgIds)
+                claims.Add(new Claim(LocalAuthClaims.Org, orgId));
             foreach (var role in identity.Roles)
                 claims.Add(new Claim(ClaimTypes.Role, role));
 
@@ -133,6 +135,9 @@ namespace BifrostQL.Server.Auth
 
         /// <summary>Claim carrying the user's primary tenant identifier.</summary>
         public const string Tenant = "bifrost:tenant";
+
+        /// <summary>Claim carrying an organization/group identifier the user belongs to. Repeated per org.</summary>
+        public const string Org = "bifrost:org";
     }
 
     /// <summary>JSON body accepted by the local auth login endpoint.</summary>

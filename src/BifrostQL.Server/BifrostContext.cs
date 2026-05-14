@@ -35,11 +35,16 @@ namespace BifrostQL.Server
 
         /// <summary>
         /// Builds an <see cref="AppIdentity"/> from an authenticated <see cref="ClaimsPrincipal"/>.
-        /// Reads the same claim shape <see cref="LocalAuthEndpoint.BuildPrincipal"/> emits, and
-        /// falls back to standard claim types so OIDC principals map cleanly too.
+        /// When an <see cref="IOidcClaimMapper"/> is supplied (the principal came from an OIDC
+        /// provider rather than local auth) the mapper owns the projection so Google and
+        /// Microsoft 365 principals normalize to the identical contract local auth produces;
+        /// otherwise the shared local-auth claim shape is read directly.
         /// </summary>
-        internal static AppIdentity BuildAppIdentity(ClaimsPrincipal principal)
+        internal static AppIdentity BuildAppIdentity(ClaimsPrincipal principal, IOidcClaimMapper? oidcMapper = null)
         {
+            if (oidcMapper != null)
+                return oidcMapper.Map(principal);
+
             var id = principal.FindFirstValue(ClaimTypes.NameIdentifier)
                 ?? principal.FindFirstValue("sub")
                 ?? principal.Identity?.Name
@@ -51,6 +56,7 @@ namespace BifrostQL.Server
             var email = principal.FindFirstValue(ClaimTypes.Email);
             var displayName = principal.FindFirstValue(ClaimTypes.Name);
             var tenantId = principal.FindFirstValue(LocalAuthClaims.Tenant);
+            var orgIds = principal.FindAll(LocalAuthClaims.Org).Select(c => c.Value).ToArray();
             var roles = principal.FindAll(ClaimTypes.Role).Select(c => c.Value).ToArray();
 
             return new AppIdentity(
@@ -59,6 +65,7 @@ namespace BifrostQL.Server
                 email: email,
                 displayName: displayName,
                 tenantId: string.IsNullOrWhiteSpace(tenantId) ? null : tenantId,
+                orgIds: orgIds,
                 roles: roles);
         }
     }

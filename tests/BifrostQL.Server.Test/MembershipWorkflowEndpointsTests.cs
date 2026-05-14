@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using BifrostQL.Samples.HostedSpa;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -260,6 +261,104 @@ public class MembershipWorkflowEndpointsTests
         var audits = await QueryRows(
             client, "{ audit_log { data { action } } }", "audit_log");
         audits.Should().BeEmpty("a rejected workflow must not write an audit row");
+    }
+
+    [Fact]
+    public async Task LinkIdentity_SetsMemberUserId_AndAuditsActionWithActor()
+    {
+        // Arrange: a fresh host. Member 2 (Dana) is seeded with a NULL user_id and
+        // app_user 2 is the matching unlinked login. The caller signs in as the
+        // seeded first-admin (app_user 1) so the link is performed by an
+        // authenticated actor.
+        await using var factory = new WorkflowFactory();
+        var client = factory.CreateClient();
+        await SignInAsFirstAdmin(client);
+
+        // Act: link app_user 2 to member 2.
+        var response = await client.PostAsJsonAsync(
+            "/workflows/membership/link-identity",
+            new { memberId = 2, userId = 2 });
+
+        // Assert: the endpoint succeeded.
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Assert: members.user_id was set through the pipeline.
+        var members = await QueryRows(
+            client, "{ members { data { member_id user_id } } }", "members");
+        members.Single(m => m.GetProperty("member_id").GetInt32() == 2)
+            .GetProperty("user_id").GetInt32().Should().Be(2);
+
+        // Assert: exactly one audit_log row naming the link, with the acting admin
+        // as actor and the member as the recorded entity.
+        var audits = await QueryRows(
+            client, "{ audit_log { data { action actor_user_id entity_type entity_id } } }", "audit_log");
+        var audit = audits.Should().ContainSingle().Subject;
+        audit.GetProperty("action").GetString().Should().Be("member.identity-linked");
+        audit.GetProperty("actor_user_id").GetInt32().Should().Be(1);
+        audit.GetProperty("entity_type").GetString().Should().Be("member");
+        audit.GetProperty("entity_id").GetString().Should().Be("2");
+    }
+
+    [Fact]
+    public async Task LinkIdentity_UnknownMember_ReturnsNotFound_AndWritesNothing()
+    {
+        // Arrange
+        await using var factory = new WorkflowFactory();
+        var client = factory.CreateClient();
+        await SignInAsFirstAdmin(client);
+
+        // Act: a member id that does not exist.
+        var response = await client.PostAsJsonAsync(
+            "/workflows/membership/link-identity",
+            new { memberId = 999, userId = 2 });
+
+        // Assert: the workflow reports not-found and does not partially apply.
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        var audits = await QueryRows(
+            client, "{ audit_log { data { action } } }", "audit_log");
+        audits.Should().BeEmpty("a rejected link must not write an audit row");
+    }
+
+    [Fact]
+    public async Task LinkIdentity_UnknownUser_ReturnsNotFound_AndWritesNothing()
+    {
+        // Arrange
+        await using var factory = new WorkflowFactory();
+        var client = factory.CreateClient();
+        await SignInAsFirstAdmin(client);
+
+        // Act: an app_user id that does not exist.
+        var response = await client.PostAsJsonAsync(
+            "/workflows/membership/link-identity",
+            new { memberId = 2, userId = 999 });
+
+        // Assert: the workflow reports not-found and does not partially apply.
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        var members = await QueryRows(
+            client, "{ members { data { member_id user_id } } }", "members");
+        var member2 = members.Single(m => m.GetProperty("member_id").GetInt32() == 2);
+        member2.TryGetProperty("user_id", out var userId);
+        (userId.ValueKind == JsonValueKind.Null).Should().BeTrue(
+            "a not-found user must not be linked to the member");
+
+        var audits = await QueryRows(
+            client, "{ audit_log { data { action } } }", "audit_log");
+        audits.Should().BeEmpty("a rejected link must not write an audit row");
+    }
+
+    /// <summary>
+    /// Signs the client in as the seeded first-admin (app_user 1) so subsequent
+    /// workflow requests carry an authenticated actor. The issued cookie is
+    /// tracked by the client and honoured on later requests.
+    /// </summary>
+    private static async Task SignInAsFirstAdmin(HttpClient client)
+    {
+        var login = await client.PostAsJsonAsync(
+            "/auth/login",
+            new { login = SampleDatabase.FirstAdminEmail, password = SampleDatabase.FirstAdminPassword });
+        login.StatusCode.Should().Be(HttpStatusCode.NoContent);
     }
 
     /// <summary>

@@ -2,6 +2,7 @@ using System.Data;
 using System.Data.Common;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.QueryModel;
 using Microsoft.AspNetCore.Identity;
 
 namespace BifrostQL.Server.Auth
@@ -39,6 +40,30 @@ namespace BifrostQL.Server.Auth
         /// Defaults to <c>roles</c>.
         /// </summary>
         public string RolesColumn { get; set; } = "roles";
+
+        /// <summary>
+        /// Optional table holding member-profile rows, used to enrich the login
+        /// identity with a <c>household_id</c> claim. Member-claim enrichment is
+        /// opt-in: it runs only when <see cref="MemberTable"/>,
+        /// <see cref="MemberUserIdColumn"/>, and <see cref="MemberHouseholdColumn"/>
+        /// are all set. Null by default.
+        /// </summary>
+        public string? MemberTable { get; set; }
+
+        /// <summary>
+        /// Column on <see cref="MemberTable"/> holding the FK back to the app-user
+        /// id (<see cref="IdColumn"/>). Used to resolve the caller's member row
+        /// during login. Null by default.
+        /// </summary>
+        public string? MemberUserIdColumn { get; set; }
+
+        /// <summary>
+        /// Column on <see cref="MemberTable"/> holding the household identifier.
+        /// When the resolved member row carries a non-null value, it is surfaced
+        /// as the <c>household_id</c> provider claim so the households policy
+        /// row-scope resolves for the caller. Null by default.
+        /// </summary>
+        public string? MemberHouseholdColumn { get; set; }
 
         /// <summary>Login path for the local auth endpoint. Defaults to <c>/auth/login</c>.</summary>
         public string LoginPath { get; set; } = "/auth/login";
@@ -166,15 +191,67 @@ namespace BifrostQL.Server.Auth
             var tenantId = GetString(reader, 3);
             var roles = ParseRoles(GetString(reader, 4));
 
+            // The app-user reader must be closed before the connection can serve
+            // the member-enrichment query below.
+            await reader.DisposeAsync().ConfigureAwait(false);
+
+            var claims = await ResolveMemberClaimsAsync(conn, dialect, id, cancellationToken)
+                .ConfigureAwait(false);
+
             var identity = new AppIdentity(
                 id: id,
                 provider: "local",
                 email: login,
                 displayName: string.IsNullOrWhiteSpace(displayName) ? null : displayName,
                 tenantId: string.IsNullOrWhiteSpace(tenantId) ? null : tenantId,
-                roles: roles);
+                roles: roles,
+                claims: claims);
 
             return LocalLoginResult.Success(identity);
+        }
+
+        /// <summary>
+        /// Resolves the authenticated user's member row and surfaces its
+        /// <c>household_id</c> as a provider claim, so the households policy
+        /// row-scope (<c>household_id = {household_id}</c>) resolves for the
+        /// caller. Returns no claims when member enrichment is not configured, no
+        /// member row is linked to the user, or the member has no household.
+        /// </summary>
+        private async Task<IReadOnlyDictionary<string, object?>?> ResolveMemberClaimsAsync(
+            DbConnection conn,
+            ISqlDialect dialect,
+            string userId,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(_options.MemberTable)
+                || string.IsNullOrWhiteSpace(_options.MemberUserIdColumn)
+                || string.IsNullOrWhiteSpace(_options.MemberHouseholdColumn))
+                return null;
+
+            await using var command = conn.CreateCommand();
+            command.CommandText =
+                $"SELECT {dialect.EscapeIdentifier(_options.MemberHouseholdColumn)} " +
+                $"FROM {dialect.EscapeIdentifier(_options.MemberTable)} " +
+                $"WHERE {dialect.EscapeIdentifier(_options.MemberUserIdColumn)} = @userId";
+
+            var userIdParam = command.CreateParameter();
+            userIdParam.ParameterName = "@userId";
+            userIdParam.DbType = DbType.String;
+            userIdParam.Value = userId;
+            command.Parameters.Add(userIdParam);
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                return null;
+
+            var householdId = GetString(reader, 0);
+            if (string.IsNullOrWhiteSpace(householdId))
+                return null;
+
+            return new Dictionary<string, object?>
+            {
+                [MetadataKeys.Auth.HouseholdClaimKey] = householdId,
+            };
         }
 
         private static string? GetString(DbDataReader reader, int ordinal)

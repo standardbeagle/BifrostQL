@@ -45,25 +45,54 @@ namespace BifrostQL.Server.Test
                 create.CommandText =
                     "CREATE TABLE app_users (" +
                     "id TEXT PRIMARY KEY, email TEXT, password_hash TEXT, " +
-                    "display_name TEXT, tenant_id TEXT, roles TEXT)";
+                    "display_name TEXT, tenant_id TEXT, roles TEXT);" +
+                    // A members slice so the optional household-claim enrichment has a
+                    // member row to resolve from the authenticated user_id. alice (user-1)
+                    // is linked to a member with a household; bob (user-2) is linked to a
+                    // member with no household.
+                    "CREATE TABLE members (" +
+                    "member_id INTEGER PRIMARY KEY, user_id TEXT, household_id TEXT)";
                 create.ExecuteNonQuery();
             }
 
             // The stored value is a real ASP.NET Core PasswordHasher hash — never plaintext.
             var hasher = new PasswordHasher<string>();
             var storedHash = hasher.HashPassword("alice@club.test", "correct horse battery");
+            var bobHash = hasher.HashPassword("bob@club.test", "another good password");
 
-            using var insert = conn.CreateCommand();
-            insert.CommandText =
-                "INSERT INTO app_users (id, email, password_hash, display_name, tenant_id, roles) " +
-                "VALUES (@id, @email, @hash, @name, @tenant, @roles)";
-            AddParam(insert, "@id", "user-1");
-            AddParam(insert, "@email", "alice@club.test");
-            AddParam(insert, "@hash", storedHash);
-            AddParam(insert, "@name", "Alice Member");
-            AddParam(insert, "@tenant", "club-7");
-            AddParam(insert, "@roles", "admin,editor");
-            insert.ExecuteNonQuery();
+            using (var insert = conn.CreateCommand())
+            {
+                insert.CommandText =
+                    "INSERT INTO app_users (id, email, password_hash, display_name, tenant_id, roles) " +
+                    "VALUES (@id, @email, @hash, @name, @tenant, @roles)";
+                AddParam(insert, "@id", "user-1");
+                AddParam(insert, "@email", "alice@club.test");
+                AddParam(insert, "@hash", storedHash);
+                AddParam(insert, "@name", "Alice Member");
+                AddParam(insert, "@tenant", "club-7");
+                AddParam(insert, "@roles", "admin,editor");
+                insert.ExecuteNonQuery();
+            }
+
+            using (var insertBob = conn.CreateCommand())
+            {
+                insertBob.CommandText =
+                    "INSERT INTO app_users (id, email, password_hash, display_name, tenant_id, roles) " +
+                    "VALUES (@id, @email, @hash, @name, @tenant, @roles)";
+                AddParam(insertBob, "@id", "user-2");
+                AddParam(insertBob, "@email", "bob@club.test");
+                AddParam(insertBob, "@hash", bobHash);
+                AddParam(insertBob, "@name", "Bob Member");
+                AddParam(insertBob, "@tenant", "club-7");
+                AddParam(insertBob, "@roles", "member");
+                insertBob.ExecuteNonQuery();
+            }
+
+            using var members = conn.CreateCommand();
+            members.CommandText =
+                "INSERT INTO members (member_id, user_id, household_id) VALUES (1, 'user-1', 'house-42');" +
+                "INSERT INTO members (member_id, user_id, household_id) VALUES (2, 'user-2', NULL)";
+            members.ExecuteNonQuery();
         }
 
         private static void AddParam(Microsoft.Data.Sqlite.SqliteCommand cmd, string name, string value)
@@ -251,6 +280,87 @@ namespace BifrostQL.Server.Test
             root.GetProperty("orgIds").GetArrayLength().Should().Be(0);
             root.GetProperty("permissions").GetArrayLength().Should().Be(0);
             root.TryGetProperty("claims", out _).Should().BeTrue();
+        }
+
+        // ---- household_id claim enrichment ----
+        //
+        // The MM households policy row-scope is `household_id = {household_id}`, so the
+        // authenticated caller's user context must carry a household_id claim resolved
+        // from their member row. Enrichment is opt-in: a deployment points LocalAuthOptions
+        // at the members table + the user-id/household-id columns, and a successful login
+        // resolves the member row and surfaces household_id as an AppIdentity claim that
+        // round-trips through the cookie into the UserContext.
+
+        private LocalUserStore CreateStoreWithHouseholdEnrichment()
+            => new(new SqliteDbConnFactory(_connectionString), new LocalAuthOptions
+            {
+                MemberTable = "members",
+                MemberUserIdColumn = "user_id",
+                MemberHouseholdColumn = "household_id",
+            });
+
+        [Fact]
+        public async Task VerifyCredentials_WithHouseholdEnrichment_SurfacesHouseholdClaim()
+        {
+            // Arrange: alice (user-1) is linked to a member with household 'house-42'.
+            var store = CreateStoreWithHouseholdEnrichment();
+
+            // Act
+            var result = await store.VerifyCredentialsAsync("alice@club.test", "correct horse battery");
+
+            // Assert: the resolved household_id is surfaced as a provider claim.
+            result.Succeeded.Should().BeTrue();
+            result.Identity!.Claims.Should().ContainKey("household_id");
+            result.Identity.Claims["household_id"].Should().Be("house-42");
+        }
+
+        [Fact]
+        public async Task VerifyCredentials_MemberWithoutHousehold_OmitsHouseholdClaim()
+        {
+            // Arrange: bob (user-2) is linked to a member row whose household_id is NULL.
+            var store = CreateStoreWithHouseholdEnrichment();
+
+            // Act
+            var result = await store.VerifyCredentialsAsync("bob@club.test", "another good password");
+
+            // Assert: no household claim when the member has no household.
+            result.Succeeded.Should().BeTrue();
+            result.Identity!.Claims.Should().NotContainKey("household_id");
+        }
+
+        [Fact]
+        public async Task VerifyCredentials_WithoutHouseholdEnrichmentConfigured_OmitsHouseholdClaim()
+        {
+            // Arrange: the default options do not configure member enrichment.
+            var store = CreateStore();
+
+            // Act
+            var result = await store.VerifyCredentialsAsync("alice@club.test", "correct horse battery");
+
+            // Assert: enrichment is opt-in — no extra query, no household claim.
+            result.Succeeded.Should().BeTrue();
+            result.Identity!.Claims.Should().NotContainKey("household_id");
+        }
+
+        [Fact]
+        public async Task HouseholdClaim_RoundTripsThroughCookie_IntoUserContext()
+        {
+            // Arrange: a full login that resolves alice's household, then the same
+            // principal -> AppIdentity -> UserContext round-trip the live pipeline runs.
+            var store = CreateStoreWithHouseholdEnrichment();
+            var login = await store.VerifyCredentialsAsync("alice@club.test", "correct horse battery");
+            login.Succeeded.Should().BeTrue();
+
+            var principal = LocalAuthEndpoint.BuildPrincipal(login.Identity!);
+
+            // Act
+            var rebuilt = BifrostContext.BuildAppIdentity(principal);
+            var userContext = new IdentityContextMapper().ToUserContext(rebuilt);
+
+            // Assert: the caller's context carries both user_id and household_id, so the
+            // MM members and households row-scopes both resolve.
+            userContext[MetadataKeys.Auth.DefaultUserIdContextKey].Should().Be("user-1");
+            userContext["household_id"].Should().Be("house-42");
         }
 
         public void Dispose()

@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using BifrostQL.Core.Auth;
+using BifrostQL.Core.Model;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Builder;
@@ -38,7 +39,8 @@ namespace BifrostQL.Server.Auth
         /// Builds the cookie-backed <see cref="ClaimsPrincipal"/> for an authenticated
         /// <see cref="AppIdentity"/>. The claims carry exactly the data the
         /// <see cref="BifrostContext"/> needs to reconstruct the same identity contract:
-        /// stable id, email, display name, provider, tenant, and roles.
+        /// stable id, email, display name, provider, tenant, roles, and the household
+        /// provider claim (when the login resolved one).
         /// </summary>
         public static ClaimsPrincipal BuildPrincipal(AppIdentity identity)
         {
@@ -60,6 +62,13 @@ namespace BifrostQL.Server.Auth
                 claims.Add(new Claim(LocalAuthClaims.Org, orgId));
             foreach (var role in identity.Roles)
                 claims.Add(new Claim(ClaimTypes.Role, role));
+
+            // The household provider claim resolved from the member row at login
+            // is carried through the cookie so BifrostContext can re-surface it.
+            if (identity.Claims.TryGetValue(MetadataKeys.Auth.HouseholdClaimKey, out var household)
+                && household is not null
+                && !string.IsNullOrWhiteSpace(household.ToString()))
+                claims.Add(new Claim(LocalAuthClaims.Household, household.ToString()!));
 
             var claimsIdentity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
             return new ClaimsPrincipal(claimsIdentity);
@@ -166,6 +175,13 @@ namespace BifrostQL.Server.Auth
 
         /// <summary>Claim carrying an organization/group identifier the user belongs to. Repeated per org.</summary>
         public const string Org = "bifrost:org";
+
+        /// <summary>
+        /// Claim carrying the household identifier resolved from the user's member
+        /// row. Carried through the cookie so <see cref="BifrostContext.BuildAppIdentity"/>
+        /// can re-surface it as the <c>household_id</c> provider claim.
+        /// </summary>
+        public const string Household = "bifrost:household";
     }
 
     /// <summary>JSON body accepted by the local auth login endpoint.</summary>

@@ -71,6 +71,16 @@ public static class MembershipWorkflowEndpoints
         string? CheckedInAt);
 
     /// <summary>
+    /// Request body for <c>POST /workflows/membership/link-identity</c>. Associates
+    /// the <c>app_users</c> login <paramref name="UserId"/> with the
+    /// <c>members</c> profile <paramref name="MemberId"/> by setting
+    /// <c>members.user_id</c>.
+    /// </summary>
+    public sealed record LinkIdentityRequest(
+        long MemberId,
+        long UserId);
+
+    /// <summary>
     /// Maps the Membership Manager sidecar workflow endpoints onto
     /// <paramref name="app"/>. Call this alongside <c>UseBifrostQL</c>.
     /// </summary>
@@ -81,6 +91,7 @@ public static class MembershipWorkflowEndpoints
         app.MapPost("/workflows/membership/record-payment", RecordPaymentAsync);
         app.MapPost("/workflows/membership/renew", RenewMembershipAsync);
         app.MapPost("/workflows/membership/check-in", CheckInAsync);
+        app.MapPost("/workflows/membership/link-identity", LinkIdentityAsync);
         return app;
     }
 
@@ -320,6 +331,70 @@ public static class MembershipWorkflowEndpoints
     }
 
     /// <summary>
+    /// Links an <c>app_users</c> login to a <c>members</c> profile: sets
+    /// <c>members.user_id</c> and writes one <c>member.identity-linked</c> audit
+    /// entry naming the actor and the member entity. This is the explicit,
+    /// auditable identity→member association the policy epic's
+    /// <c>members policy-row-scope: user_id = {user_id}</c> depends on. Both the
+    /// member and the app_user are read first (and so tenant-scoped) before any
+    /// write, so a link is only recorded when both rows are visible to the caller.
+    /// </summary>
+    private static async Task<IResult> LinkIdentityAsync(
+        LinkIdentityRequest request,
+        HttpContext http,
+        IBifrostWorkflowExecutor bifrost,
+        PathCache<Inputs> schemaCache)
+    {
+        var userContext = http.GetBifrostUserContext();
+
+        // Pre-flight gate: the workflow updates members, so the gating action is
+        // Update. Linking an identity is a privileged operation — it must be
+        // policy-gated, not open to any caller.
+        if (!CanAct(schemaCache, "members", PolicyAction.Update, userContext))
+            return Results.Forbid();
+
+        var member = await bifrost.QuerySingleAsync("members", request.MemberId, userContext);
+        if (member is null)
+            return Results.NotFound();           // tenant-filter already scoped the read
+
+        var appUser = await bifrost.QuerySingleAsync("app_users", request.UserId, userContext);
+        if (appUser is null)
+            return Results.NotFound();           // the login to link must exist and be visible
+
+        // 1. Set members.user_id. Bifrost's generated `update` requires every
+        //    non-nullable column, so the unchanged columns are carried forward
+        //    from the row just read; only `user_id` is set.
+        await bifrost.UpdateAsync("members", new
+        {
+            member_id = member["member_id"],
+            tenant_id = member["tenant_id"],
+            user_id = request.UserId,
+            household_id = member["household_id"],
+            first_name = member["first_name"],
+            last_name = member["last_name"],
+            email = member["email"],
+            phone = member["phone"],
+            status = member["status"],
+            joined_on = member["joined_on"],
+            deleted_at = member["deleted_at"],
+        }, userContext);
+
+        // 2. Audit the named operation: the link is explicit and recorded.
+        await bifrost.InsertAsync("audit_log", new
+        {
+            tenant_id = member["tenant_id"],
+            actor_user_id = ActorUserId(userContext),
+            action = "member.identity-linked",
+            entity_type = "member",
+            entity_id = request.MemberId.ToString(),
+            summary = $"App user {request.UserId} linked to member {request.MemberId}",
+            created_at = UtcTimestamp(),
+        }, userContext);
+
+        return Results.Ok();
+    }
+
+    /// <summary>
     /// Pre-flight policy check using the shared <see cref="PolicyEvaluator"/> and
     /// the same <see cref="TablePolicy"/> the mutation pipeline reads. Returns
     /// <c>true</c> when the table carries no schema yet (the gate cannot be
@@ -384,10 +459,20 @@ public static class MembershipWorkflowEndpoints
 
     /// <summary>
     /// Reads the actor's user id from the user context for the <c>audit_log</c>
-    /// row, or <c>null</c> when the request is unauthenticated.
+    /// row, or <c>null</c> when the request is unauthenticated. The user-id claim
+    /// arrives as a string; <c>audit_log.actor_user_id</c> is an integer FK, so a
+    /// numeric claim is coerced to a number for the generated <c>insert</c> input
+    /// type. A non-numeric id is passed through unchanged.
     /// </summary>
     private static object? ActorUserId(IDictionary<string, object?> userContext)
-        => userContext.TryGetValue(MetadataKeys.Auth.DefaultUserIdContextKey, out var id)
-            ? id
-            : null;
+    {
+        if (!userContext.TryGetValue(MetadataKeys.Auth.DefaultUserIdContextKey, out var id) || id is null)
+            return null;
+
+        return id switch
+        {
+            string s when long.TryParse(s, out var parsed) => parsed,
+            _ => id,
+        };
+    }
 }

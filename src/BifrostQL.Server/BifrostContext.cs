@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using System.Security.Claims;
 using BifrostQL.Core.Auth;
+using BifrostQL.Core.Model;
 using BifrostQL.Server.Auth;
 
 namespace BifrostQL.Server
@@ -59,6 +60,16 @@ namespace BifrostQL.Server
             var orgIds = principal.FindAll(LocalAuthClaims.Org).Select(c => c.Value).ToArray();
             var roles = principal.FindAll(ClaimTypes.Role).Select(c => c.Value).ToArray();
 
+            // Re-surface the household provider claim carried through the cookie so
+            // the households policy row-scope resolves for the caller.
+            IReadOnlyDictionary<string, object?>? claims = null;
+            var household = principal.FindFirstValue(LocalAuthClaims.Household);
+            if (!string.IsNullOrWhiteSpace(household))
+                claims = new Dictionary<string, object?>
+                {
+                    [MetadataKeys.Auth.HouseholdClaimKey] = household,
+                };
+
             return new AppIdentity(
                 id: id,
                 provider: provider,
@@ -66,7 +77,8 @@ namespace BifrostQL.Server
                 displayName: displayName,
                 tenantId: string.IsNullOrWhiteSpace(tenantId) ? null : tenantId,
                 orgIds: orgIds,
-                roles: roles);
+                roles: roles,
+                claims: claims);
         }
     }
 }

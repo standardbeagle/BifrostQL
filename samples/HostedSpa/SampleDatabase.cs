@@ -189,8 +189,15 @@ internal static class SampleDatabase
             -- after this batch so the hash comes from the real ASP.NET Core PasswordHasher.
             INSERT INTO app_users (user_id, tenant_id, email, display_name)
                 VALUES (1, 1, 'admin@riverside-tennis.example', 'Club Admin');
+            -- A second app_user with no linked member yet, so the identity-linking
+            -- sidecar endpoint has an unlinked login to associate.
+            INSERT INTO app_users (user_id, tenant_id, email, display_name)
+                VALUES (2, 1, 'dana@riverside-tennis.example', 'Dana Lopez');
             INSERT INTO members (member_id, tenant_id, user_id, first_name, last_name, email, status, joined_on)
                 VALUES (1, 1, 1, 'Carol', 'Reyes', 'carol@example.com', 'active', '2024-01-10');
+            -- A member with no user_id yet — the identity-linking endpoint sets it.
+            INSERT INTO members (member_id, tenant_id, user_id, first_name, last_name, email, status, joined_on)
+                VALUES (2, 1, NULL, 'Dana', 'Lopez', 'dana@example.com', 'active', '2024-02-01');
             INSERT INTO membership_plans (plan_id, tenant_id, name, billing_period, price_cents)
                 VALUES (1, 1, 'Individual', 'annual', 12000);
             INSERT INTO member_memberships (member_membership_id, tenant_id, member_id, plan_id, start_date, end_date, status)

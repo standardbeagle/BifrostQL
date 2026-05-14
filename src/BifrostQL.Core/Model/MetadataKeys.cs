@@ -447,6 +447,15 @@ namespace BifrostQL.Core.Model
             /// Matches the default <see cref="Audit.UserKey"/> value (<c>id</c>).
             /// </summary>
             public const string DefaultUserAuditKey = "id";
+
+            /// <summary>
+            /// Provider-claim key carrying the household identifier resolved from
+            /// the authenticated user's member row. Surfaced into the user context
+            /// verbatim by <see cref="BifrostQL.Core.Auth.IdentityContextMapper"/>
+            /// so the households policy row-scope (<c>household_id = {household_id}</c>)
+            /// resolves for the caller.
+            /// </summary>
+            public const string HouseholdClaimKey = "household_id";
         }
 
         /// <summary>

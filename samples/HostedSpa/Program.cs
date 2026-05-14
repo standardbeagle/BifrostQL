@@ -37,13 +37,22 @@ app.UseDeveloperExceptionPage();
 // GraphQL endpoint first so the SPA fallback does not shadow it.
 app.UseBifrostQL();
 
+// Membership Manager sidecar workflow endpoints (record-payment, renew).
+// Mapped after UseBifrostQL so they sit alongside /graphql and before the SPA
+// fallback claims the route. Each endpoint orchestrates Bifrost mutations
+// through the standard pipeline — see MembershipWorkflowEndpoints.
+app.MapMembershipWorkflows();
+
 // App-metadata overlay endpoint (/_app-metadata) before the SPA fallback.
 app.UseBifrostAppMetadata();
 
-// Static SPA assets plus an index.html route fallback. The GraphQL playground lives
-// at /playground, so it is excluded from the SPA fallback alongside the defaults
-// (/graphql, /api, /health).
-app.UseBifrostSpa(spa => spa.AddExcludedPathPrefix("/playground"));
+// Static SPA assets plus an index.html route fallback. The GraphQL playground
+// lives at /playground and the sidecar workflow endpoints under /workflows, so
+// both are excluded from the SPA fallback alongside the defaults
+// (/graphql, /api, /health) — otherwise the fallback would shadow them.
+app.UseBifrostSpa(spa => spa
+    .AddExcludedPathPrefix("/playground")
+    .AddExcludedPathPrefix("/workflows"));
 
 await app.RunAsync();
 

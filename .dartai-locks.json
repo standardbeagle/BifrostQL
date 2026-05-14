@@ -1,15 +1,15 @@
 {
   "claims": {
-    "YELBs1hwA78L": {
+    "Kr8CEdo1Jn1F": {
       "runner_instance_id": "DESKTOP-NPIOPS6-13041",
       "runner_email": "andybrummer@standardbeagle.com",
-      "claimed_at": "2026-05-14T20:38:00Z",
+      "claimed_at": "2026-05-14T20:58:00Z",
       "agent_id": "DESKTOP-NPIOPS6-13041",
       "parent_loop_id": "epYVBosC0i3a",
-      "purpose": "MM Financial 3a-ii — record-payment + renew-membership sidecar endpoints",
+      "purpose": "MM Financial 4/4 — dues reports (unpaid / upcoming renewals / expired)",
       "source_event": {
         "loop_id": "epYVBosC0i3a",
-        "task_id": "YELBs1hwA78L",
+        "task_id": "Kr8CEdo1Jn1F",
         "conversation_id": null
       }
     }

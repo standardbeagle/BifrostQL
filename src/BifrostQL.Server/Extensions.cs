@@ -853,6 +853,16 @@ namespace BifrostQL.Server
             services.AddSingleton(extensionsLoader);
             services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
 
+            // The workflow executor runs sidecar workflow endpoints through the
+            // same GraphQL pipeline as a direct /graphql request, so policy and
+            // tenant-filter still apply. See the Workflow Mutations guide.
+            // Registered here as well as in the multi-database path so the
+            // single-database AddBifrostQL host can map workflow endpoints.
+            services.AddSingleton<IBifrostWorkflowExecutor>(sp => new BifrostWorkflowExecutor(
+                sp.GetRequiredService<IDocumentExecuter>(),
+                sp.GetRequiredService<PathCache<Inputs>>(),
+                sp));
+
             if (_profileRegistry.HasProfiles)
                 services.AddSingleton(_profileRegistry);
 

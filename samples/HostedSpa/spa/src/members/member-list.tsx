@@ -14,6 +14,8 @@ import {
 import type { RowAction } from '@bifrostql/react';
 import { buildFilterControls, buildTableFilter } from './member-list-filters';
 import { getSavedViewOptions } from './saved-views';
+import { ExportButton } from '../exports/export-button';
+import { gateFinanceFields } from '../membership-plans/finance-fields';
 
 /** Qualified entity key of the members entity in the app-metadata overlay. */
 const MEMBERS_ENTITY_KEY = 'main.members';
@@ -52,10 +54,22 @@ export function MemberList() {
     [],
   );
 
-  const columns = useMemo(
-    () => (entity ? buildColumns(entity) : []),
-    [entity],
-  );
+  // Columns are overlay-driven, then finance-gated for non-finance sessions so
+  // the screen — and any CSV export of it — never names a policy-read-denied
+  // column. `main.members` declares no finance columns today, so the gate is a
+  // no-op here; it is applied for parity with the finance screens.
+  const columns = useMemo(() => {
+    if (!entity) {
+      return [];
+    }
+    const built = buildColumns(entity);
+    const allowed = gateFinanceFields(
+      built.map((column) => column.field),
+      MEMBERS_ENTITY_KEY,
+      permissions,
+    );
+    return built.filter((column) => allowed.includes(column.field));
+  }, [entity, permissions]);
   const filterControls = useMemo(
     () => (entity ? buildFilterControls(entity) : []),
     [entity],
@@ -148,6 +162,16 @@ export function MemberList() {
           </label>
         </div>
       )}
+
+      <div className="member-list__actions" data-testid="member-list-actions">
+        <ExportButton
+          queryName={queryName}
+          columns={columns}
+          filter={tableFilter}
+          fileName="members"
+          testId="member-list-export"
+        />
+      </div>
 
       <div className="member-list__filters" data-testid="member-list-filters">
         {filterControls.map((control) =>

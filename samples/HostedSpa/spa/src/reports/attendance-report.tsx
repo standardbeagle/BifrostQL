@@ -6,6 +6,7 @@ import {
 } from '@bifrostql/app-shell';
 import { BifrostTable } from '@bifrostql/react';
 import type { SortOption } from '@bifrostql/react';
+import { ExportButton } from '../exports/export-button';
 
 /** Props for {@link AttendanceReport}. */
 export interface AttendanceReportProps {
@@ -82,6 +83,13 @@ export function AttendanceReport({ title, testId, sort }: AttendanceReportProps)
   return (
     <section data-testid={testId}>
       <h2>{title}</h2>
+      <ExportButton
+        queryName={queryName}
+        columns={columns}
+        sort={sort}
+        fileName={testId}
+        testId={`${testId}-export`}
+      />
       <BifrostTable
         query={queryName}
         columns={columns}

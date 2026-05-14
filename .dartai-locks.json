@@ -1,15 +1,15 @@
 {
   "claims": {
-    "5EasixTfUzVj": {
+    "ai0cTKMPSe3J": {
       "runner_instance_id": "DESKTOP-NPIOPS6-13041",
       "runner_email": "andybrummer@standardbeagle.com",
-      "claimed_at": "2026-05-15T00:00:00Z",
+      "claimed_at": "2026-05-15T00:14:00Z",
       "agent_id": "DESKTOP-NPIOPS6-13041",
       "parent_loop_id": "epYVBosC0i3a",
-      "purpose": "MM Comms 2/4 — CSV export flow for contact lists and reports",
+      "purpose": "MM Comms 3/4 — email segment definitions",
       "source_event": {
         "loop_id": "epYVBosC0i3a",
-        "task_id": "5EasixTfUzVj",
+        "task_id": "ai0cTKMPSe3J",
         "conversation_id": null
       }
     }

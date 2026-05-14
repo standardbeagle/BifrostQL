@@ -11,6 +11,7 @@ import {
   canReadFinanceFields,
   isFinanceField,
 } from '../membership-plans/finance-fields';
+import { ExportButton } from '../exports/export-button';
 
 /** Props for {@link DuesReport}. */
 export interface DuesReportProps {
@@ -97,6 +98,13 @@ export function DuesReport({ entityKey, title, testId, filter }: DuesReportProps
   return (
     <section data-testid={testId}>
       <h2>{title}</h2>
+      <ExportButton
+        queryName={queryName}
+        columns={columns}
+        filter={filter}
+        fileName={testId}
+        testId={`${testId}-export`}
+      />
       <BifrostTable
         query={queryName}
         columns={columns}

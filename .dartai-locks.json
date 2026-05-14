@@ -1,3 +1,17 @@
 {
-  "claims": {}
+  "claims": {
+    "lFw6E2FAhbWa": {
+      "runner_instance_id": "DESKTOP-NPIOPS6-13041",
+      "runner_email": "andybrummer@standardbeagle.com",
+      "claimed_at": "2026-05-14T13:51:00Z",
+      "agent_id": "DESKTOP-NPIOPS6-13041",
+      "parent_loop_id": "epYVBosC0i3a",
+      "purpose": "Platform: normalized auth model for local users and OIDC providers",
+      "source_event": {
+        "loop_id": "epYVBosC0i3a",
+        "task_id": "lFw6E2FAhbWa",
+        "conversation_id": null
+      }
+    }
+  }
 }

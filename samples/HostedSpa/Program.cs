@@ -1,3 +1,4 @@
+using BifrostQL.Core.AppMetadata;
 using BifrostQL.Core.Model;
 using BifrostQL.Samples.HostedSpa;
 using BifrostQL.Server;
@@ -22,12 +23,22 @@ SampleDatabase.EnsureCreated(dbPath);
 builder.Services.AddBifrostQL(options =>
     options.BindStandardConfig(builder.Configuration));
 
+// App-metadata overlay: a standalone JSON file describing how the Membership
+// Manager entities (members, households, household_members) present in a
+// metadata-driven client. Served at /_app-metadata, independent of the schema.
+var overlayPath = Path.Combine(
+    builder.Environment.ContentRootPath, "membership-manager.appmetadata.json");
+builder.Services.AddBifrostAppMetadata(new FileAppMetadataSource(overlayPath));
+
 var app = builder.Build();
 
 app.UseDeveloperExceptionPage();
 
 // GraphQL endpoint first so the SPA fallback does not shadow it.
 app.UseBifrostQL();
+
+// App-metadata overlay endpoint (/_app-metadata) before the SPA fallback.
+app.UseBifrostAppMetadata();
 
 // Static SPA assets plus an index.html route fallback. The GraphQL playground lives
 // at /playground, so it is excluded from the SPA fallback alongside the defaults

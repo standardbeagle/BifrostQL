@@ -1,0 +1,154 @@
+{
+  "entities": {
+    "main.members": {
+      "label": "Members",
+      "icon": "person",
+      "navPlacement": "main",
+      "displayFields": [ "first_name", "last_name" ],
+      "fields": {
+        "first_name": { "widget": "text", "group": "Identity" },
+        "last_name": { "widget": "text", "group": "Identity" },
+        "email": { "widget": "text", "validation": "email", "group": "Contact", "helpText": "Primary contact email." },
+        "phone": { "widget": "text", "group": "Contact" },
+        "status": { "widget": "select", "group": "Membership" },
+        "joined_on": { "widget": "datepicker", "group": "Membership" },
+        "household_id": { "widget": "fk-lookup", "group": "Membership" },
+        "user_id": {
+          "widget": "fk-lookup",
+          "group": "Admin",
+          "visible": false,
+          "helpText": "Linked login account. Admin-only."
+        },
+        "tenant_id": {
+          "widget": "fk-lookup",
+          "group": "Admin",
+          "visible": false,
+          "readOnly": true,
+          "helpText": "Owning club. Admin-only, system-managed."
+        },
+        "deleted_at": {
+          "widget": "datepicker",
+          "group": "Admin",
+          "visible": false,
+          "readOnly": true,
+          "helpText": "Soft-delete timestamp. Admin-only audit field."
+        }
+      },
+      "grid": {
+        "defaultColumns": [ "first_name", "last_name", "email", "phone", "status" ],
+        "defaultSort": [ "last_name asc" ],
+        "defaultFilters": [ "status = active" ],
+        "savedViews": {
+          "active": {
+            "name": "Active Members",
+            "filters": [ "status = active" ]
+          }
+        },
+        "bulkActions": [ "export", "email" ]
+      },
+      "relationships": {
+        "household": {
+          "label": "Household",
+          "targetEntity": "main.households",
+          "kind": "foreignKeySelector",
+          "foreignKeyField": "household_id"
+        },
+        "householdMembers": {
+          "label": "Household Links",
+          "targetEntity": "main.household_members",
+          "kind": "childCollection",
+          "foreignKeyField": "member_id",
+          "displayColumns": [ "household_id", "relationship" ]
+        }
+      }
+    },
+    "main.households": {
+      "label": "Households",
+      "icon": "home",
+      "navPlacement": "main",
+      "displayFields": [ "name" ],
+      "fields": {
+        "name": { "widget": "text", "group": "Identity" },
+        "address_line1": { "widget": "text", "group": "Address" },
+        "city": { "widget": "text", "group": "Address" },
+        "region": { "widget": "text", "group": "Address" },
+        "postal_code": { "widget": "text", "group": "Address" },
+        "tenant_id": {
+          "widget": "fk-lookup",
+          "group": "Admin",
+          "visible": false,
+          "readOnly": true,
+          "helpText": "Owning club. Admin-only, system-managed."
+        }
+      },
+      "grid": {
+        "defaultColumns": [ "name", "city", "region", "postal_code" ],
+        "defaultSort": [ "name asc" ]
+      },
+      "relationships": {
+        "members": {
+          "label": "Members",
+          "targetEntity": "main.members",
+          "kind": "childCollection",
+          "foreignKeyField": "household_id",
+          "displayColumns": [ "first_name", "last_name", "status" ]
+        },
+        "householdMembers": {
+          "label": "Household Members",
+          "targetEntity": "main.household_members",
+          "kind": "childCollection",
+          "foreignKeyField": "household_id",
+          "displayColumns": [ "member_id", "relationship" ]
+        }
+      }
+    },
+    "main.household_members": {
+      "label": "Household Members",
+      "icon": "group",
+      "navPlacement": "main",
+      "displayFields": [ "relationship" ],
+      "fields": {
+        "household_id": {
+          "widget": "fk-lookup",
+          "group": "Link",
+          "helpText": "Household this membership link belongs to."
+        },
+        "member_id": {
+          "widget": "fk-lookup",
+          "group": "Link",
+          "helpText": "Member linked into the household."
+        },
+        "relationship": {
+          "widget": "select",
+          "group": "Link",
+          "helpText": "Role within the household (head, spouse, child)."
+        },
+        "tenant_id": {
+          "widget": "fk-lookup",
+          "group": "Admin",
+          "visible": false,
+          "readOnly": true,
+          "helpText": "Owning club. Admin-only, system-managed."
+        }
+      },
+      "grid": {
+        "defaultColumns": [ "household_id", "member_id", "relationship" ],
+        "defaultSort": [ "household_id asc" ]
+      },
+      "relationships": {
+        "household": {
+          "label": "Household",
+          "targetEntity": "main.households",
+          "kind": "foreignKeySelector",
+          "foreignKeyField": "household_id"
+        },
+        "member": {
+          "label": "Member",
+          "targetEntity": "main.members",
+          "kind": "foreignKeySelector",
+          "foreignKeyField": "member_id"
+        }
+      }
+    }
+  }
+}

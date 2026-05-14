@@ -1,10 +1,14 @@
+import { useContext } from 'react';
 import { Routes, Route, useNavigate } from '@standardbeagle/virtual-router';
 import {
   AppShellProvider,
   AppLayout,
   AppNav,
   ProtectedRoute,
+  useSession,
 } from '@bifrostql/app-shell';
+import { BifrostContext } from '@bifrostql/react';
+import { Login } from './auth/login';
 import { MemberList } from './members/member-list';
 import { MemberForm } from './members/member-form';
 import { HouseholdForm } from './households/household-form';
@@ -88,26 +92,81 @@ function MembershipNav() {
   );
 }
 
+/** Conventional path of the local-auth logout endpoint, a same-origin sibling
+ * of the GraphQL endpoint — mirrors the `/auth/login` and `/auth/session`
+ * derivation used by the login screen and app-shell `SessionProvider`. */
+const LOGOUT_PATH = '/auth/logout';
+
+/**
+ * Header branding plus a session-aware logout control.
+ *
+ * Rendered as the {@link AppLayout} `header`. When the session is
+ * authenticated, a "Log out" button posts to `/auth/logout` (clearing the auth
+ * cookie) and then refreshes the session via {@link useSession}, which flips
+ * the app's `ProtectedRoute` gates back to the login screen. The logout URL is
+ * derived from the configured GraphQL endpoint the same way the login screen
+ * derives `/auth/login`.
+ */
+function AppHeader() {
+  const config = useContext(BifrostContext);
+  const { isAuthenticated, refresh } = useSession();
+
+  const handleLogout = async () => {
+    if (!config) {
+      return;
+    }
+    const url = new URL(config.endpoint);
+    url.pathname = LOGOUT_PATH;
+    url.search = '';
+    url.hash = '';
+    await fetch(url.toString(), {
+      method: 'POST',
+      credentials: 'include',
+    }).catch(() => undefined);
+    refresh();
+  };
+
+  return (
+    <>
+      <strong>Membership Manager</strong>
+      {isAuthenticated ? (
+        <button type="button" onClick={handleLogout}>
+          Log out
+        </button>
+      ) : null}
+    </>
+  );
+}
+
 /**
  * Membership Manager SPA root.
  *
  * Composes the app-shell stack: {@link AppShellProvider} wires `BifrostProvider`
  * (same-origin `/graphql`) and `SessionProvider` (same-origin auth session);
- * {@link AppLayout} provides the chrome with a metadata-driven {@link AppNav};
- * {@link ProtectedRoute} gates the member screens on the `main.members.read`
- * permission. Routing uses `@standardbeagle/virtual-router`, matching the
- * router used elsewhere in this repo's examples.
+ * {@link AppLayout} provides the chrome with a metadata-driven {@link AppNav}
+ * and an {@link AppHeader} carrying the logout control; {@link ProtectedRoute}
+ * gates the member screens on the `main.members.read` permission, redirecting
+ * unauthenticated visitors to the `/login` route, which renders {@link Login}.
+ * Routing uses `@standardbeagle/virtual-router`, matching the router used
+ * elsewhere in this repo's examples.
  */
 function App() {
   const navigate = useNavigate();
 
   return (
     <AppShellProvider>
-      <AppLayout
-        header={<strong>Membership Manager</strong>}
-        nav={<MembershipNav />}
-      >
+      <AppLayout header={<AppHeader />} nav={<MembershipNav />}>
         <Routes>
+          {/*
+            The login screen. `ProtectedRoute`'s `onUnauthenticated` redirects
+            unauthenticated visitors here from every gated route; the screen
+            posts to `/auth/login` and, on success, refreshes the session so
+            the gates re-open. It is intentionally outside `ProtectedRoute` —
+            it is the destination for unauthenticated users.
+          */}
+          <Route path="/login">
+            <Login />
+          </Route>
           {/*
             The dashboard is the SPA's default landing route: `/` and the
             explicit `/dashboard` path both render the summary cards, in place

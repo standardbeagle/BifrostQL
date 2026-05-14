@@ -1,0 +1,5 @@
+# SPA build dependencies
+spa/node_modules/
+
+# Generated at first run
+hostedspa-sample.db

@@ -1,0 +1,6 @@
+(function(){const r=document.createElement("link").relList;if(r&&r.supports&&r.supports("modulepreload"))return;for(const e of document.querySelectorAll('link[rel="modulepreload"]'))i(e);new MutationObserver(e=>{for(const t of e)if(t.type==="childList")for(const s of t.addedNodes)s.tagName==="LINK"&&s.rel==="modulepreload"&&i(s)}).observe(document,{childList:!0,subtree:!0});function c(e){const t={};return e.integrity&&(t.integrity=e.integrity),e.referrerPolicy&&(t.referrerPolicy=e.referrerPolicy),e.crossOrigin==="use-credentials"?t.credentials="include":e.crossOrigin==="anonymous"?t.credentials="omit":t.credentials="same-origin",t}function i(e){if(e.ep)return;e.ep=!0;const t=c(e);fetch(e.href,t)}})();const n=document.getElementById("output"),a=document.getElementById("load"),d=`{
+  widgets {
+    data { id name color }
+  }
+}`;async function u(){n.textContent="Loading...";try{const o=await fetch("/graphql",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:d})});if(!o.ok){n.textContent=`Request failed: HTTP ${o.status}`;return}const r=await o.json();if(r.errors){n.textContent=`GraphQL errors:
+${JSON.stringify(r.errors,null,2)}`;return}n.textContent=JSON.stringify(r.data.widgets.data,null,2)}catch(o){n.textContent=`Request error: ${o.message}`}}a.addEventListener("click",u);

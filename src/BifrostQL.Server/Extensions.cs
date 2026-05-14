@@ -234,6 +234,26 @@ namespace BifrostQL.Server
             if (!check) return fluent;
             return doConfig(fluent);
         }
+
+        /// <summary>
+        /// Prepends the built-in security filter transformers to the
+        /// caller-supplied set. <see cref="PolicyFilterTransformer"/> is
+        /// always active so authorization-policy metadata is enforced on the
+        /// query path without explicit opt-in; it is opt-in per table via the
+        /// <c>policy-*</c> metadata keys and a no-op for tables without them.
+        /// A caller-supplied <see cref="PolicyFilterTransformer"/> (e.g. one
+        /// configured with a non-default admin role) takes precedence.
+        /// </summary>
+        internal static IReadOnlyCollection<IFilterTransformer> WithBuiltInFilterTransformers(
+            IReadOnlyCollection<IFilterTransformer> configured)
+        {
+            if (configured.Any(t => t is PolicyFilterTransformer))
+                return configured;
+
+            var combined = new List<IFilterTransformer> { new PolicyFilterTransformer() };
+            combined.AddRange(configured);
+            return combined;
+        }
     }
 
     /// <summary>
@@ -475,9 +495,9 @@ namespace BifrostQL.Server
                 services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = _modules });
 
             if (_filterTransformerLoader != null)
-                services.AddSingleton<IFilterTransformers>(sp => new FilterTransformersWrap { Transformers = _filterTransformerLoader(sp) });
+                services.AddSingleton<IFilterTransformers>(sp => new FilterTransformersWrap { Transformers = Extensions.WithBuiltInFilterTransformers(_filterTransformerLoader(sp)) });
             else
-                services.AddSingleton<IFilterTransformers>(new FilterTransformersWrap { Transformers = _filterTransformers });
+                services.AddSingleton<IFilterTransformers>(new FilterTransformersWrap { Transformers = Extensions.WithBuiltInFilterTransformers(_filterTransformers) });
 
             if (_mutationTransformerLoader != null)
                 services.AddSingleton<IMutationTransformers>(sp => new MutationTransformersWrap { Transformers = _mutationTransformerLoader(sp) });
@@ -794,9 +814,9 @@ namespace BifrostQL.Server
 
             // Register filter transformers
             if (_filterTransformerLoader != null)
-                services.AddSingleton<IFilterTransformers>(sp => new FilterTransformersWrap { Transformers = _filterTransformerLoader(sp) });
+                services.AddSingleton<IFilterTransformers>(sp => new FilterTransformersWrap { Transformers = Extensions.WithBuiltInFilterTransformers(_filterTransformerLoader(sp)) });
             else
-                services.AddSingleton<IFilterTransformers>(new FilterTransformersWrap { Transformers = _filterTransformers });
+                services.AddSingleton<IFilterTransformers>(new FilterTransformersWrap { Transformers = Extensions.WithBuiltInFilterTransformers(_filterTransformers) });
 
             // Register mutation transformers
             if (_mutationTransformerLoader != null)

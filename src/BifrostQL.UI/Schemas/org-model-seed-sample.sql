@@ -10,16 +10,16 @@
 -- roles, permissions.
 --
 --   Tenant-scoped tables (carry tenant-filter + auto-filter):
---     app_users                { tenant-filter: tenant_id, auto-filter: tenant_id=tenant_ids }
---     organization_memberships { tenant-filter: tenant_id, auto-filter: tenant_id=tenant_ids }
---     invitations              { tenant-filter: tenant_id, auto-filter: tenant_id=tenant_ids }
---     tenants                  { auto-filter: tenant_id=tenant_ids }   -- row is the tenant itself, filter on its own id
+--     app_users                { tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids }
+--     organization_memberships { tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids }
+--     invitations              { tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids }
+--     tenants                  { auto-filter: tenant_id:tenant_ids }   -- row is the tenant itself, filter on its own id
 --
 --   Global lookup tables (un-scoped — do NOT add tenant-filter/auto-filter):
 --     roles
 --     role_permissions
 --
--- The auto-filter mapping "tenant_id=tenant_ids" reads the plural tenant_ids
+-- The auto-filter mapping "tenant_id:tenant_ids" reads the plural tenant_ids
 -- claim from the user context and constrains the tenant_id column to that set,
 -- so a user only sees rows for organizations they belong to.
 

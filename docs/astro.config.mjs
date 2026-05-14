@@ -41,6 +41,7 @@ export default defineConfig({
 						{ label: 'Mutations', slug: 'guides/mutations' },
 						{ label: 'Module System', slug: 'guides/modules' },
 						{ label: 'Authentication', slug: 'guides/authentication' },
+						{ label: 'Multi-Tenant Org Model', slug: 'guides/org-model' },
 						{ label: 'Desktop App', slug: 'guides/desktop-app' },
 						{ label: 'Hosted SPA / API Mode', slug: 'guides/hosted-spa' },
 						{ label: 'WordPress', slug: 'guides/wordpress' },

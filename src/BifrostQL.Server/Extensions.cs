@@ -61,6 +61,50 @@ namespace BifrostQL.Server
             return services;
         }
 
+        /// <summary>
+        /// Registers local DB-backed user login for self-hosted deployments. The app-user
+        /// table lives in the same database BifrostQL serves, reached through a server-side
+        /// <see cref="IDbConnFactory"/> built from <paramref name="connectionString"/> — the
+        /// database credentials never reach the client. Adds cookie authentication and the
+        /// <see cref="BifrostQL.Server.Auth.LocalUserStore"/>; pair with
+        /// <c>UseBifrostLocalAuth()</c> to map the login/logout endpoints.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="connectionString">
+        /// Connection string for the database holding the app-user rows. Typically the same
+        /// <c>bifrost</c> connection string the GraphQL endpoint uses.
+        /// </param>
+        /// <param name="configure">Optional table/column and endpoint-path configuration.</param>
+        public static IServiceCollection AddBifrostLocalAuth(
+            this IServiceCollection services,
+            string connectionString,
+            Action<BifrostQL.Server.Auth.LocalAuthOptions>? configure = null)
+        {
+            if (string.IsNullOrWhiteSpace(connectionString))
+                throw new ArgumentException("A connection string is required for local auth.", nameof(connectionString));
+
+            var options = new BifrostQL.Server.Auth.LocalAuthOptions();
+            configure?.Invoke(options);
+
+            var connFactory = DbConnFactoryResolver.Create(connectionString);
+
+            services.AddSingleton(options);
+            services.AddSingleton(connFactory);
+            services.AddSingleton(sp => new BifrostQL.Server.Auth.LocalUserStore(
+                sp.GetRequiredService<IDbConnFactory>(),
+                sp.GetRequiredService<BifrostQL.Server.Auth.LocalAuthOptions>()));
+
+            services
+                .AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+                .AddCookie(cookieOptions =>
+                {
+                    cookieOptions.LoginPath = options.LoginPath;
+                    cookieOptions.LogoutPath = options.LogoutPath;
+                });
+
+            return services;
+        }
+
         public static IServiceCollection AddBifrostQL(this IServiceCollection services, Action<BifrostSetupOptions> optionSetter)
         {
             var options = new BifrostSetupOptions();

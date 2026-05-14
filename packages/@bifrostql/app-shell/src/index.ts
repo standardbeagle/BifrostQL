@@ -21,3 +21,11 @@ export type {
   AppShellProviderProps,
   AppShellConfig,
 } from './app-shell-provider';
+
+export { AppNav } from './nav/app-nav';
+export type { AppNavProps, NavItem, PermissionResolver } from './nav/app-nav';
+
+export { ProtectedRoute } from './routing/protected-route';
+export type { ProtectedRouteProps } from './routing/protected-route';
+export { AppLayout } from './routing/app-layout';
+export type { AppLayoutProps } from './routing/app-layout';

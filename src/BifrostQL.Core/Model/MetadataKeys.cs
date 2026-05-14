@@ -340,6 +340,33 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
+        /// Default user-context key names produced by the normalized identity
+        /// contract (<c>AppIdentity</c> / <c>IdentityContextMapper</c>). These
+        /// mirror the defaults read by the tenancy, auto-filter, and audit
+        /// modules so a mapped identity satisfies them without extra metadata.
+        /// </summary>
+        public static class Auth
+        {
+            /// <summary>
+            /// Default user-context key carrying the tenant identifier. Matches
+            /// <see cref="Security.TenantContextKey"/>'s default (<c>tenant_id</c>).
+            /// </summary>
+            public const string DefaultTenantContextKey = "tenant_id";
+
+            /// <summary>
+            /// Default user-context key carrying the user's roles. Matches the
+            /// key read by the auto-filter module (<c>roles</c>).
+            /// </summary>
+            public const string DefaultRolesContextKey = "roles";
+
+            /// <summary>
+            /// Default user-context key carrying the audit user identifier.
+            /// Matches the default <see cref="Audit.UserKey"/> value (<c>id</c>).
+            /// </summary>
+            public const string DefaultUserAuditKey = "id";
+        }
+
+        /// <summary>
         /// Metadata keys for application-schema detection.
         /// </summary>
         public static class AppSchema

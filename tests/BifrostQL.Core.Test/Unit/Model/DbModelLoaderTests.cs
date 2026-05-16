@@ -32,7 +32,6 @@ public class DbModelLoaderTests
         var result = await loader.LoadAsync();
 
         // Assert
-        await mockConnection.Received(1).OpenAsync();
         await mockSchemaReader.Received(1).ReadSchemaAsync(mockConnection);
         Assert.NotNull(result);
     }

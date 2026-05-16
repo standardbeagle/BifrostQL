@@ -10,7 +10,11 @@
         "last_name": { "widget": "text", "group": "Identity" },
         "email": { "widget": "text", "validation": "email", "group": "Contact", "helpText": "Primary contact email." },
         "phone": { "widget": "text", "group": "Contact" },
-        "status": { "widget": "select", "group": "Membership" },
+        "status": {
+          "widget": "select",
+          "group": "Membership",
+          "helpText": "Lifecycle state enforced by the members state machine."
+        },
         "joined_on": { "widget": "datepicker", "group": "Membership" },
         "household_id": { "widget": "fk-lookup", "group": "Membership" },
         "user_id": {
@@ -372,6 +376,11 @@
         "location": { "widget": "text", "group": "Schedule", "helpText": "Where the event is held." },
         "starts_at": { "widget": "datepicker", "group": "Schedule", "helpText": "When the event starts." },
         "ends_at": { "widget": "datepicker", "group": "Schedule", "helpText": "When the event ends. Empty for open-ended." },
+        "status": {
+          "widget": "select",
+          "group": "Schedule",
+          "helpText": "Lifecycle state enforced by the events state machine."
+        },
         "capacity": { "widget": "number", "group": "Schedule", "helpText": "Maximum attendees. Empty for unlimited." },
         "created_at": {
           "widget": "datepicker",
@@ -389,7 +398,7 @@
         }
       },
       "grid": {
-        "defaultColumns": [ "title", "location", "starts_at", "ends_at", "capacity" ],
+        "defaultColumns": [ "title", "location", "starts_at", "ends_at", "status", "capacity" ],
         "defaultSort": [ "starts_at desc" ],
         "savedViews": {
           "upcoming": {
@@ -542,5 +551,53 @@
       "entity": "main.members",
       "filters": [ "status = inactive" ]
     }
-  }
+  },
+  "workflows": [
+    {
+      "name": "record-payment",
+      "trigger": { "type": "manual" },
+      "inputs": { "type": "object", "required": [ "invoiceId", "amountCents", "paidOn", "method", "summary", "createdAt" ] },
+      "steps": [
+        { "name": "invoice", "type": "query", "payload": { "table": "dues_invoices", "id": "{{ inputs.invoiceId }}", "required": true }, "output": "invoice" },
+        { "name": "payment", "type": "mutation", "payload": { "table": "dues_payments", "action": "insert", "values": { "tenant_id": "{{ steps.invoice.tenant_id }}", "invoice_id": "{{ inputs.invoiceId }}", "amount_cents": "{{ inputs.amountCents }}", "method": "{{ inputs.method }}", "paid_on": "{{ inputs.paidOn }}" } }, "output": "payment" },
+        { "name": "invoice-paid", "type": "mutation", "payload": { "table": "dues_invoices", "action": "update", "values": { "invoice_id": "{{ inputs.invoiceId }}", "tenant_id": "{{ steps.invoice.tenant_id }}", "member_id": "{{ steps.invoice.member_id }}", "member_membership_id": "{{ steps.invoice.member_membership_id }}", "amount_cents": "{{ steps.invoice.amount_cents }}", "issued_on": "{{ steps.invoice.issued_on }}", "due_on": "{{ steps.invoice.due_on }}", "status": "paid" } } },
+        { "name": "membership", "type": "query", "payload": { "table": "member_memberships", "id": "{{ steps.invoice.member_membership_id }}" }, "output": "membership" },
+        { "name": "membership-active", "type": "mutation", "payload": { "table": "member_memberships", "action": "update", "values": { "member_membership_id": "{{ steps.membership.member_membership_id }}", "tenant_id": "{{ steps.membership.tenant_id }}", "member_id": "{{ steps.membership.member_id }}", "plan_id": "{{ steps.membership.plan_id }}", "start_date": "{{ steps.membership.start_date }}", "end_date": "{{ steps.membership.end_date }}", "status": "active" } } },
+        { "name": "audit", "type": "audit", "payload": { "action": "payment.recorded", "entityType": "dues_payments", "entityId": "{{ inputs.invoiceId }}", "summary": "{{ inputs.summary }}", "tenantId": "{{ steps.invoice.tenant_id }}", "actorUserId": "{{ inputs.actorUserId }}", "createdAt": "{{ inputs.createdAt }}" }, "output": "audit" }
+      ]
+    },
+    {
+      "name": "renew-membership",
+      "trigger": { "type": "manual" },
+      "inputs": { "type": "object", "required": [ "memberMembershipId", "newEndDate", "issuedOn", "createdAt" ] },
+      "steps": [
+        { "name": "membership", "type": "query", "payload": { "table": "member_memberships", "id": "{{ inputs.memberMembershipId }}", "required": true }, "output": "membership" },
+        { "name": "renew", "type": "mutation", "payload": { "table": "member_memberships", "action": "update", "values": { "member_membership_id": "{{ inputs.memberMembershipId }}", "tenant_id": "{{ steps.membership.tenant_id }}", "member_id": "{{ steps.membership.member_id }}", "plan_id": "{{ steps.membership.plan_id }}", "start_date": "{{ steps.membership.start_date }}", "end_date": "{{ inputs.newEndDate }}", "status": "active" } } },
+        { "name": "invoice", "type": "branch", "payload": { "condition": { "equals": { "left": "{{ inputs.createInvoice }}", "right": true } }, "then": [ { "name": "open-invoice", "type": "mutation", "payload": { "table": "dues_invoices", "action": "insert", "values": { "tenant_id": "{{ steps.membership.tenant_id }}", "member_id": "{{ steps.membership.member_id }}", "member_membership_id": "{{ inputs.memberMembershipId }}", "amount_cents": "{{ inputs.invoiceAmountCents }}", "issued_on": "{{ inputs.issuedOn }}", "due_on": "{{ inputs.invoiceDueOn }}", "status": "open" } } } ] } },
+        { "name": "audit", "type": "audit", "payload": { "action": "membership.renewed", "entityType": "member_memberships", "entityId": "{{ inputs.memberMembershipId }}", "summary": "{{ inputs.summary }}", "tenantId": "{{ steps.membership.tenant_id }}", "actorUserId": "{{ inputs.actorUserId }}", "createdAt": "{{ inputs.createdAt }}" }, "output": "audit" }
+      ]
+    },
+    {
+      "name": "check-in",
+      "trigger": { "type": "manual" },
+      "inputs": { "type": "object", "required": [ "eventId", "memberId", "checkedInAt", "createdAt" ] },
+      "steps": [
+        { "name": "event", "type": "query", "payload": { "table": "events", "id": "{{ inputs.eventId }}", "required": true }, "output": "event" },
+        { "name": "member", "type": "query", "payload": { "table": "members", "id": "{{ inputs.memberId }}", "required": true }, "output": "member" },
+        { "name": "attendance", "type": "mutation", "payload": { "table": "event_attendance", "action": "insert", "values": { "tenant_id": "{{ steps.event.tenant_id }}", "event_id": "{{ inputs.eventId }}", "member_id": "{{ inputs.memberId }}", "checked_in_at": "{{ inputs.checkedInAt }}" } }, "output": "attendance" },
+        { "name": "audit", "type": "audit", "payload": { "action": "event.checkin", "entityType": "event_attendance", "entityId": "{{ inputs.eventId }}", "summary": "{{ inputs.summary }}", "tenantId": "{{ steps.event.tenant_id }}", "actorUserId": "{{ inputs.actorUserId }}", "createdAt": "{{ inputs.createdAt }}" }, "output": "audit" }
+      ]
+    },
+    {
+      "name": "link-identity",
+      "trigger": { "type": "manual" },
+      "inputs": { "type": "object", "required": [ "memberId", "userId", "createdAt" ] },
+      "steps": [
+        { "name": "member", "type": "query", "payload": { "table": "members", "id": "{{ inputs.memberId }}", "required": true }, "output": "member" },
+        { "name": "appUser", "type": "query", "payload": { "table": "app_users", "id": "{{ inputs.userId }}", "required": true }, "output": "appUser" },
+        { "name": "link", "type": "mutation", "payload": { "table": "members", "action": "update", "values": { "member_id": "{{ steps.member.member_id }}", "tenant_id": "{{ steps.member.tenant_id }}", "user_id": "{{ inputs.userId }}", "household_id": "{{ steps.member.household_id }}", "first_name": "{{ steps.member.first_name }}", "last_name": "{{ steps.member.last_name }}", "email": "{{ steps.member.email }}", "phone": "{{ steps.member.phone }}", "status": "{{ steps.member.status }}", "joined_on": "{{ steps.member.joined_on }}", "deleted_at": "{{ steps.member.deleted_at }}" } } },
+        { "name": "audit", "type": "audit", "payload": { "action": "member.identity-linked", "entityType": "member", "entityId": "{{ inputs.memberId }}", "summary": "{{ inputs.summary }}", "tenantId": "{{ steps.member.tenant_id }}", "actorUserId": "{{ inputs.actorUserId }}", "createdAt": "{{ inputs.createdAt }}" }, "output": "audit" }
+      ]
+    }
+  ]
 }

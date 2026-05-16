@@ -477,7 +477,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var result = await ExecuteQueryAsync(mutation);
 
         result.Errors.Should().BeNullOrEmpty();
-        var insertedId = int.Parse(result.Data.ToString()!);
+        var insertedId = int.Parse(result.Data!.ToString()!);
         insertedId.Should().BeGreaterThan(0);
 
         // Verify product was created

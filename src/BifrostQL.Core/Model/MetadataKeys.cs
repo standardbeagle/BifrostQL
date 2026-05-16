@@ -278,6 +278,27 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
+        /// Metadata keys for table-level state-machine configuration.
+        /// </summary>
+        public static class StateMachine
+        {
+            /// <summary>Table-level column that stores the entity state.</summary>
+            public const string StateColumn = "state-column";
+
+            /// <summary>Initial state assigned by later mutation pipeline integration.</summary>
+            public const string InitialState = "initial-state";
+
+            /// <summary>Comma-separated list of valid state names.</summary>
+            public const string States = "states";
+
+            /// <summary>
+            /// Semicolon- or pipe-separated transition list. Format:
+            /// <c>from-&gt;to[role1,role2]@event</c>. Roles and event are optional.
+            /// </summary>
+            public const string Transitions = "transitions";
+        }
+
+        /// <summary>
         /// Metadata keys for soft-delete filtering and mutation rewriting.
         /// </summary>
         public static class SoftDelete

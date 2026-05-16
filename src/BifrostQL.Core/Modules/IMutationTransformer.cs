@@ -1,5 +1,6 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
+using BifrostQL.Core.Auth;
 
 namespace BifrostQL.Core.Modules;
 
@@ -37,6 +38,8 @@ public sealed class MutationTransformResult
     /// Additional filter to apply (e.g., for soft-delete to add deleted_at IS NULL to UPDATE/DELETE).
     /// </summary>
     public TableFilter? AdditionalFilter { get; init; }
+
+    public StateTransitionInfo? StateTransition { get; init; }
 }
 
 /// <summary>
@@ -73,6 +76,7 @@ public sealed class MutationTransformContext
 {
     public required IDbModel Model { get; init; }
     public required IDictionary<string, object?> UserContext { get; init; }
+    public IReadOnlyDictionary<string, object?>? CurrentRow { get; init; }
 }
 
 /// <summary>
@@ -103,6 +107,7 @@ public sealed class MutationTransformersWrap : IMutationTransformers
         var currentData = data;
         var allErrors = new List<string>();
         TableFilter? combinedFilter = null;
+        StateTransitionInfo? stateTransition = null;
 
         foreach (var transformer in Transformers.OrderBy(t => t.Priority))
         {
@@ -125,6 +130,8 @@ public sealed class MutationTransformersWrap : IMutationTransformers
                     ? result.AdditionalFilter
                     : CombineFilters(combinedFilter, result.AdditionalFilter);
             }
+
+            stateTransition ??= result.StateTransition;
         }
 
         return new MutationTransformResult
@@ -132,7 +139,8 @@ public sealed class MutationTransformersWrap : IMutationTransformers
             MutationType = currentType,
             Data = currentData,
             Errors = allErrors.ToArray(),
-            AdditionalFilter = combinedFilter
+            AdditionalFilter = combinedFilter,
+            StateTransition = stateTransition,
         };
     }
 

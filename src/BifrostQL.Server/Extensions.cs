@@ -13,10 +13,12 @@ using Microsoft.AspNetCore.Authentication;
 using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
+using BifrostQL.Core.Workflows;
 using BifrostQL.Server.Logging;
 using Microsoft.Extensions.Logging;
 
@@ -287,10 +289,14 @@ namespace BifrostQL.Server
         internal static IReadOnlyCollection<IMutationTransformer> WithBuiltInMutationTransformers(
             IReadOnlyCollection<IMutationTransformer> configured)
         {
-            if (configured.Any(t => t is PolicyMutationTransformer))
-                return configured;
+            var combined = new List<IMutationTransformer>();
 
-            var combined = new List<IMutationTransformer> { new PolicyMutationTransformer() };
+            if (!configured.Any(t => t is PolicyMutationTransformer))
+                combined.Add(new PolicyMutationTransformer());
+
+            if (!configured.Any(t => t is StateMachineMutationTransformer))
+                combined.Add(new StateMachineMutationTransformer());
+
             combined.AddRange(configured);
             return combined;
         }
@@ -533,6 +539,22 @@ namespace BifrostQL.Server
                 sp.GetRequiredService<IDocumentExecuter>(),
                 sp.GetRequiredService<PathCache<Inputs>>(),
                 sp));
+            services.AddSingleton<IReadOnlyDictionary<string, WorkflowDefinition>>(
+                new Dictionary<string, WorkflowDefinition>(StringComparer.OrdinalIgnoreCase));
+            services.AddSingleton<IWorkflowDataExecutor>(sp => sp.GetRequiredService<IBifrostWorkflowExecutor>());
+            services.AddSingleton<IWorkflowRunner>(sp => new WorkflowRunner(
+                sp.GetRequiredService<IReadOnlyDictionary<string, WorkflowDefinition>>(),
+                sp.GetRequiredService<IWorkflowDataExecutor>()));
+            services.AddSingleton<WorkflowTriggerHost>();
+            services.AddSingleton<WorkflowScheduler>();
+            services.AddSingleton<MutationObservers>(sp => new MutationObservers(
+                new IMutationObserver[] { sp.GetRequiredService<WorkflowTriggerHost>() }));
+            services.AddSingleton<StateTransitionObservers>(sp => new StateTransitionObservers(
+                new IStateTransitionObserver[]
+                {
+                    new StateTransitionAuditObserver(sp.GetRequiredService<IBifrostWorkflowExecutor>()),
+                    sp.GetRequiredService<WorkflowTriggerHost>(),
+                }));
 
             if (_profileRegistry.HasProfiles)
                 services.AddSingleton(_profileRegistry);
@@ -837,7 +859,9 @@ namespace BifrostQL.Server
                 var provider = string.IsNullOrWhiteSpace(_provider)
                     ? (BifrostDbProvider?)null
                     : DbConnFactoryResolver.ParseProviderName(_provider);
-                var connFactory = DbConnFactoryResolver.Create(_connectionString, provider);
+                var connFactory = DbConnFactoryResolver.Create(
+                    _connectionString ?? throw new InvalidOperationException("Connection string has not been configured."),
+                    provider);
                 var loader = new DbModelLoader(connFactory, metadataLoader);
                 var model = loader.LoadAsync(additionalMetadata).Result;
                 var schema = DbSchema.FromModel(model);
@@ -862,6 +886,22 @@ namespace BifrostQL.Server
                 sp.GetRequiredService<IDocumentExecuter>(),
                 sp.GetRequiredService<PathCache<Inputs>>(),
                 sp));
+            services.AddSingleton<IReadOnlyDictionary<string, WorkflowDefinition>>(
+                new Dictionary<string, WorkflowDefinition>(StringComparer.OrdinalIgnoreCase));
+            services.AddSingleton<IWorkflowDataExecutor>(sp => sp.GetRequiredService<IBifrostWorkflowExecutor>());
+            services.AddSingleton<IWorkflowRunner>(sp => new WorkflowRunner(
+                sp.GetRequiredService<IReadOnlyDictionary<string, WorkflowDefinition>>(),
+                sp.GetRequiredService<IWorkflowDataExecutor>()));
+            services.AddSingleton<WorkflowTriggerHost>();
+            services.AddSingleton<WorkflowScheduler>();
+            services.AddSingleton<MutationObservers>(sp => new MutationObservers(
+                new IMutationObserver[] { sp.GetRequiredService<WorkflowTriggerHost>() }));
+            services.AddSingleton<StateTransitionObservers>(sp => new StateTransitionObservers(
+                new IStateTransitionObserver[]
+                {
+                    new StateTransitionAuditObserver(sp.GetRequiredService<IBifrostWorkflowExecutor>()),
+                    sp.GetRequiredService<WorkflowTriggerHost>(),
+                }));
 
             if (_profileRegistry.HasProfiles)
                 services.AddSingleton(_profileRegistry);

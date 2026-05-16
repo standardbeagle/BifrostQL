@@ -153,6 +153,10 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Relationships.Join,
             MetadataKeys.Batch.MaxSize,
             MetadataKeys.DataType.Type,
+            MetadataKeys.StateMachine.StateColumn,
+            MetadataKeys.StateMachine.InitialState,
+            MetadataKeys.StateMachine.States,
+            MetadataKeys.StateMachine.Transitions,
         };
 
         private static readonly HashSet<string> KnownColumnKeys = new(StringComparer.OrdinalIgnoreCase)

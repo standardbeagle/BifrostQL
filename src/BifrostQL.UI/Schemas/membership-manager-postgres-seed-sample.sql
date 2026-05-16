@@ -318,6 +318,7 @@ CREATE TABLE events (
     title       TEXT NOT NULL,
     description TEXT,
     location    TEXT,
+    status      TEXT NOT NULL DEFAULT 'draft',
     starts_at   TIMESTAMP NOT NULL,
     ends_at     TIMESTAMP,
     capacity    INTEGER,
@@ -521,11 +522,11 @@ INSERT INTO dues_payments (tenant_id, invoice_id, amount_cents, paid_on, method)
 (3, 6, 120000, '2024-01-15 10:00:00', 'bank');
 
 -- Events (tenant-scoped) (4)
-INSERT INTO events (event_id, tenant_id, title, description, location, starts_at, ends_at, capacity, created_at) OVERRIDING SYSTEM VALUE VALUES
-(1, 1, 'Spring Doubles Tournament', 'Annual members doubles tournament', 'Riverside Courts', '2024-05-18 09:00:00', '2024-05-18 17:00:00', 32, '2024-04-01 10:00:00'),
-(2, 1, 'New Member Mixer', 'Welcome social for new members', 'Clubhouse', '2024-06-05 18:00:00', '2024-06-05 20:00:00', 50, '2024-05-01 10:00:00'),
-(3, 2, 'Summit Ridge Day Hike', 'Guided group hike on the ridge trail', 'Summit Trailhead', '2024-06-15 07:00:00', '2024-06-15 15:00:00', 20, '2024-05-10 09:00:00'),
-(4, 3, 'Harbor Regatta', 'Club regatta and awards dinner', 'Harbor Marina', '2024-07-20 08:00:00', '2024-07-20 21:00:00', 40, '2024-06-01 09:00:00');
+INSERT INTO events (event_id, tenant_id, title, description, location, status, starts_at, ends_at, capacity, created_at) OVERRIDING SYSTEM VALUE VALUES
+(1, 1, 'Spring Doubles Tournament', 'Annual members doubles tournament', 'Riverside Courts', 'published', '2024-05-18 09:00:00', '2024-05-18 17:00:00', 32, '2024-04-01 10:00:00'),
+(2, 1, 'New Member Mixer', 'Welcome social for new members', 'Clubhouse', 'draft', '2024-06-05 18:00:00', '2024-06-05 20:00:00', 50, '2024-05-01 10:00:00'),
+(3, 2, 'Summit Ridge Day Hike', 'Guided group hike on the ridge trail', 'Summit Trailhead', 'published', '2024-06-15 07:00:00', '2024-06-15 15:00:00', 20, '2024-05-10 09:00:00'),
+(4, 3, 'Harbor Regatta', 'Club regatta and awards dinner', 'Harbor Marina', 'draft', '2024-07-20 08:00:00', '2024-07-20 21:00:00', 40, '2024-06-01 09:00:00');
 
 -- Event RSVPs (tenant-scoped) (6)
 INSERT INTO event_rsvps (tenant_id, event_id, member_id, response, guests, responded_at) VALUES

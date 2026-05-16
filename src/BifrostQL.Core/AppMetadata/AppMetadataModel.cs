@@ -1,5 +1,7 @@
 namespace BifrostQL.Core.AppMetadata
 {
+    using BifrostQL.Core.Workflows;
+
     /// <summary>
     /// Root aggregate of the app-metadata overlay.
     /// <see cref="AppMetadataModel"/> is a pure data type — it has no database
@@ -25,5 +27,12 @@ namespace BifrostQL.Core.AppMetadata
         /// </summary>
         public IReadOnlyDictionary<string, EntityMetadata> Entities { get; init; }
             = new Dictionary<string, EntityMetadata>();
+
+        /// <summary>
+        /// Declarative workflows exposed by the application overlay. These are
+        /// pure data definitions; execution is provided by the workflow runner.
+        /// </summary>
+        public IReadOnlyList<WorkflowDefinition> Workflows { get; init; }
+            = Array.Empty<WorkflowDefinition>();
     }
 }

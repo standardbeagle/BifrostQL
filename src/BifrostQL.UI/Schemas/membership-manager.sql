@@ -177,6 +177,7 @@ CREATE TABLE events (
     title TEXT NOT NULL,
     description TEXT,
     location TEXT,
+    status TEXT NOT NULL DEFAULT 'draft',
     starts_at TEXT NOT NULL,
     ends_at TEXT,
     capacity INTEGER,

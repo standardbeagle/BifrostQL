@@ -223,7 +223,7 @@ public class SqliteFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetim
         var result = await ExecuteQueryAsync(mutation);
 
         result.Errors.Should().BeNullOrEmpty();
-        var insertedId = int.Parse(result.Data.ToString()!);
+        var insertedId = int.Parse(result.Data!.ToString()!);
         insertedId.Should().BeGreaterThan(0);
     }
 

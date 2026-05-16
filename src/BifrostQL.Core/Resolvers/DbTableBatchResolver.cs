@@ -155,12 +155,6 @@ namespace BifrostQL.Core.Resolvers
         {
             if (data.Count == 0) return 0;
 
-            // Mutation transformers (e.g. the authorization policy engine) gate
-            // the update before any SQL is built; non-empty Errors abort it.
-            var transformResult = mutationTransformers.Transform(table, MutationType.Update, data, transformContext);
-            if (transformResult.Errors.Length > 0)
-                throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
-
             var caseData = new Dictionary<string, object?>(data, StringComparer.OrdinalIgnoreCase);
             var keyData = caseData.Where(d => table.ColumnLookup[d.Key].IsPrimaryKey)
                 .ToDictionary(kv => kv.Key, kv => kv.Value);
@@ -168,6 +162,22 @@ namespace BifrostQL.Core.Resolvers
                 .ToDictionary(kv => kv.Key, kv => kv.Value);
 
             if (!keyData.Any() || !standardData.Any()) return 0;
+
+            var currentRow = await LoadCurrentStateMachineRow(dialect, table, keyData, conn, transaction);
+            var updateTransformContext = currentRow is null
+                ? transformContext
+                : new MutationTransformContext
+                {
+                    Model = transformContext.Model,
+                    UserContext = transformContext.UserContext,
+                    CurrentRow = currentRow,
+                };
+
+            // Mutation transformers (e.g. the authorization policy engine) gate
+            // the update before any SQL is built; non-empty Errors abort it.
+            var transformResult = mutationTransformers.Transform(table, MutationType.Update, caseData, updateTransformContext);
+            if (transformResult.Errors.Length > 0)
+                throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
             // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
             // IS NULL) is ANDed onto the WHERE clause so it narrows — never
@@ -185,6 +195,33 @@ namespace BifrostQL.Core.Resolvers
             AddParameters(cmd, caseData);
             AddExtraParameters(cmd, additionalFilter.Parameters);
             return await cmd.ExecuteNonQueryAsync();
+        }
+
+        private static async Task<IReadOnlyDictionary<string, object?>?> LoadCurrentStateMachineRow(
+            ISqlDialect dialect,
+            IDbTable table,
+            Dictionary<string, object?> keyData,
+            DbConnection conn,
+            DbTransaction transaction)
+        {
+            var definition = BifrostQL.Core.Auth.StateMachineConfigCollector.FromTable(table);
+            if (definition is null || keyData.Count == 0)
+                return null;
+
+            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+            var stateColumn = dialect.EscapeIdentifier(definition.StateColumn);
+            var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+            var sql = $"SELECT {stateColumn} FROM {tableRef} WHERE {whereClause};";
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            cmd.Transaction = transaction;
+            AddParameters(cmd, keyData);
+            var currentState = await cmd.ExecuteScalarAsync();
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                [definition.StateColumn] = currentState == DBNull.Value ? null : currentState,
+            };
         }
 
         private static async Task<int> ExecuteDelete(

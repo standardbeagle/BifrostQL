@@ -1,4 +1,5 @@
 using System.Data.Common;
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
@@ -163,7 +164,9 @@ namespace BifrostQL.Core.Resolvers
                 var setClause = string.Join(",", setData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
                 var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
                 var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
-                return await ExecuteNonQuery(conFactory, Join(sql, moduleSql), transformResult.Data, additionalFilter.Parameters);
+                var result = await ExecuteNonQuery(conFactory, Join(sql, moduleSql), transformResult.Data, additionalFilter.Parameters);
+                await NotifyMutationAsync(context.RequestServices, table, MutationType.Update, transformResult.Data, result, userContext);
+                return result;
             }
 
             // Standard DELETE (no transformation)
@@ -171,7 +174,9 @@ namespace BifrostQL.Core.Resolvers
             var deleteTableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var deleteWhereClause = string.Join(" AND ", data.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause}{additionalFilter.WhereSuffix};";
-            return await ExecuteNonQuery(conFactory, Join(deleteSql, deleteModuleSql), data, additionalFilter.Parameters);
+            var deleteResult = await ExecuteNonQuery(conFactory, Join(deleteSql, deleteModuleSql), data, additionalFilter.Parameters);
+            await NotifyMutationAsync(context.RequestServices, table, MutationType.Delete, data, deleteResult, userContext);
+            return deleteResult;
         }
 
         private async Task<object?> UpdateObject(IBifrostFieldContext context, IDbTable table, IMutationModules modules,
@@ -190,7 +195,17 @@ namespace BifrostQL.Core.Resolvers
 
             // Mutation transformers (e.g. the authorization policy engine) gate
             // the update before any SQL is built; non-empty Errors abort it.
-            var transformContext = new MutationTransformContext { Model = model, UserContext = context.UserContext };
+            var currentRow = await LoadCurrentStateMachineRow(
+                conFactory,
+                dialect,
+                table,
+                propertyInfo.keyData);
+            var transformContext = new MutationTransformContext
+            {
+                Model = model,
+                UserContext = context.UserContext,
+                CurrentRow = currentRow,
+            };
             var transformResult = mutationTransformers.Transform(table, MutationType.Update, propertyInfo.data, transformContext);
             if (transformResult.Errors.Length > 0)
                 throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
@@ -205,7 +220,9 @@ namespace BifrostQL.Core.Resolvers
             var setClause = string.Join(",", propertyInfo.standardData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var whereClause = string.Join(" AND ", propertyInfo.keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
-            await ExecuteNonQuery(conFactory, Join(sql, moduleSql), propertyInfo.data, additionalFilter.Parameters);
+            var result = await ExecuteNonQuery(conFactory, Join(sql, moduleSql), propertyInfo.data, additionalFilter.Parameters);
+            await NotifyMutationAsync(context.RequestServices, table, MutationType.Update, propertyInfo.data, result, context.UserContext);
+            await NotifyStateTransitionAsync(context.RequestServices, transformResult.StateTransition, context.UserContext);
             return propertyInfo.keyData.Values.First();
         }
 
@@ -230,7 +247,9 @@ namespace BifrostQL.Core.Resolvers
             var sql = returning != null
                 ? $"INSERT INTO {tableRef}({columns}) VALUES({values}){returning};"
                 : $"INSERT INTO {tableRef}({columns}) VALUES({values});SELECT {dialect.LastInsertedIdentity} ID;";
-            return HandleDecimals(await ExecuteScalar(conFactory, Join(sql, moduleSql), data));
+            var result = HandleDecimals(await ExecuteScalar(conFactory, Join(sql, moduleSql), data));
+            await NotifyMutationAsync(context.RequestServices, table, MutationType.Insert, data, result, context.UserContext);
+            return result;
         }
 
         private static async ValueTask<object?> ExecuteScalar(IDbConnFactory connFactory, string sql, Dictionary<string, object?> data)
@@ -243,6 +262,40 @@ namespace BifrostQL.Core.Resolvers
                 cmd.CommandText = sql;
                 AddParameters(cmd, data);
                 return await cmd.ExecuteScalarAsync();
+            }
+            catch (Exception ex)
+            {
+                throw new BifrostExecutionError(ex.Message, ex);
+            }
+        }
+
+        private static async Task<IReadOnlyDictionary<string, object?>?> LoadCurrentStateMachineRow(
+            IDbConnFactory connFactory,
+            ISqlDialect dialect,
+            IDbTable table,
+            Dictionary<string, object?> keyData)
+        {
+            var definition = StateMachineConfigCollector.FromTable(table);
+            if (definition is null || keyData.Count == 0)
+                return null;
+
+            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+            var stateColumn = dialect.EscapeIdentifier(definition.StateColumn);
+            var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+            var sql = $"SELECT {stateColumn} FROM {tableRef} WHERE {whereClause};";
+
+            await using var conn = connFactory.GetConnection();
+            try
+            {
+                await conn.OpenAsync();
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = sql;
+                AddParameters(cmd, keyData);
+                var currentState = await cmd.ExecuteScalarAsync();
+                return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [definition.StateColumn] = currentState == DBNull.Value ? null : currentState,
+                };
             }
             catch (Exception ex)
             {
@@ -312,6 +365,49 @@ namespace BifrostQL.Core.Resolvers
         {
             return String.Join(";", Flat(str, array));
         }
+
+        private static async ValueTask NotifyStateTransitionAsync(
+            IServiceProvider? services,
+            StateTransitionInfo? transition,
+            IDictionary<string, object?> userContext)
+        {
+            if (transition is null || services is null)
+                return;
+
+            var observers = services.GetService<StateTransitionObservers>();
+            if (observers is not null)
+                await observers.NotifyAsync(transition, userContext);
+        }
+
+        private static async ValueTask NotifyMutationAsync(
+            IServiceProvider? services,
+            IDbTable table,
+            MutationType mutationType,
+            IDictionary<string, object?> data,
+            object? result,
+            IDictionary<string, object?> userContext)
+        {
+            if (services is null || IsWorkflowTriggerSuppressed(userContext))
+                return;
+
+            var observers = services.GetService<MutationObservers>();
+            if (observers is not null)
+            {
+                await observers.NotifyAsync(new MutationObserverContext
+                {
+                    Table = table,
+                    MutationType = mutationType,
+                    Data = data,
+                    Result = result,
+                    UserContext = userContext,
+                });
+            }
+        }
+
+        private static bool IsWorkflowTriggerSuppressed(IDictionary<string, object?> userContext)
+            => userContext.TryGetValue(BifrostQL.Core.Workflows.WorkflowTriggerHost.SuppressTriggersKey, out var value)
+               && value is bool suppressed
+               && suppressed;
 
         private static IEnumerable<string> Flat(string str, string[] array)
         {

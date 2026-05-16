@@ -171,7 +171,7 @@ public class BifrostErrorHandlerTests
             sqlErrorType,
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
             null,
-            new object[] { number, (byte)0, (byte)0, "server", message, "proc", 0, null },
+            new object?[] { number, (byte)0, (byte)0, "server", message, "proc", 0, null },
             null)!;
 
         var errorCollectionType = typeof(SqlErrorCollection);
@@ -193,7 +193,7 @@ public class BifrostErrorHandlerTests
             exceptionType,
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
             null,
-            new object[] { message, errorCollection, null, Guid.NewGuid() },
+            new object?[] { message, errorCollection, null, Guid.NewGuid() },
             null)!;
 
         return exception;

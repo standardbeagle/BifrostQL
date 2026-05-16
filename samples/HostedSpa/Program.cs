@@ -1,5 +1,6 @@
 using BifrostQL.Core.AppMetadata;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Workflows;
 using BifrostQL.Samples.HostedSpa;
 using BifrostQL.Server;
 using BifrostQL.Server.Auth;
@@ -63,6 +64,15 @@ if (oidcConfig.Exists())
 var overlayPath = Path.Combine(
     builder.Environment.ContentRootPath, "membership-manager.appmetadata.json");
 builder.Services.AddBifrostAppMetadata(new FileAppMetadataSource(overlayPath));
+builder.Services.AddSingleton<IReadOnlyDictionary<string, WorkflowDefinition>>(_ =>
+{
+    var json = File.Exists(overlayPath) ? File.ReadAllText(overlayPath) : "{}";
+    return WorkflowConfigCollector.FromJson(json);
+});
+builder.Services.AddSingleton<IWorkflowRunner>(sp =>
+    new WorkflowRunner(
+        sp.GetRequiredService<IReadOnlyDictionary<string, WorkflowDefinition>>(),
+        sp.GetRequiredService<IWorkflowDataExecutor>()));
 
 var app = builder.Build();
 

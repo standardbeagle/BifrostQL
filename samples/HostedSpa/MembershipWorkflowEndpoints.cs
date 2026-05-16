@@ -1,6 +1,7 @@
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Schema;
+using BifrostQL.Core.Workflows;
 using BifrostQL.Server;
 using GraphQL;
 
@@ -103,7 +104,7 @@ public static class MembershipWorkflowEndpoints
     private static async Task<IResult> RecordPaymentAsync(
         RecordPaymentRequest request,
         HttpContext http,
-        IBifrostWorkflowExecutor bifrost,
+        IWorkflowRunner workflows,
         PathCache<Inputs> schemaCache)
     {
         if (request.AmountCents <= 0)
@@ -117,79 +118,24 @@ public static class MembershipWorkflowEndpoints
         if (!CanAct(schemaCache, "dues_payments", PolicyAction.Create, userContext))
             return Results.Forbid();
 
-        var invoice = await bifrost.QuerySingleAsync("dues_invoices", request.InvoiceId, userContext);
-        if (invoice is null)
-            return Results.NotFound();           // tenant-filter already scoped the read
-
-        // 1. Record the payment. dues_payments has no notes column — the note is
-        //    carried into audit_log.summary below.
-        await bifrost.InsertAsync("dues_payments", new
-        {
-            tenant_id = invoice["tenant_id"],
-            invoice_id = request.InvoiceId,
-            amount_cents = request.AmountCents,
-            method = string.IsNullOrWhiteSpace(request.Method) ? "card" : request.Method,
-            paid_on = string.IsNullOrWhiteSpace(request.PaidOn)
-                ? DateTime.UtcNow.ToString("yyyy-MM-dd")
-                : request.PaidOn,
-        }, userContext);
-
-        // 2. Mark the funding invoice paid. Bifrost's generated `update` requires
-        //    every non-nullable column, so the unchanged columns are carried
-        //    forward from the row just read; only `status` is advanced.
-        await bifrost.UpdateAsync("dues_invoices", new
-        {
-            invoice_id = request.InvoiceId,
-            tenant_id = invoice["tenant_id"],
-            member_id = invoice["member_id"],
-            member_membership_id = invoice["member_membership_id"],
-            amount_cents = invoice["amount_cents"],
-            issued_on = invoice["issued_on"],
-            due_on = invoice["due_on"],
-            status = "paid",
-        }, userContext);
-
-        // 3. Advance the invoice's membership to active — a recorded payment
-        //    makes the member current. Skipped when the invoice has no linked
-        //    membership. The membership row is read first so the `update` can
-        //    carry its required columns forward unchanged.
-        var membershipId = invoice.TryGetValue("member_membership_id", out var mm) ? mm : null;
-        if (membershipId is not null)
-        {
-            var membership = await bifrost.QuerySingleAsync(
-                "member_memberships", membershipId, userContext);
-            if (membership is not null)
-            {
-                await bifrost.UpdateAsync("member_memberships", new
-                {
-                    member_membership_id = membership["member_membership_id"],
-                    tenant_id = membership["tenant_id"],
-                    member_id = membership["member_id"],
-                    plan_id = membership["plan_id"],
-                    start_date = membership["start_date"],
-                    end_date = membership["end_date"],
-                    status = "active",
-                }, userContext);
-            }
-        }
-
-        // 4. Audit the named operation. The payment note lands here because
-        //    dues_payments carries no notes column.
         var summary = $"Payment of {request.AmountCents} cents recorded against invoice {request.InvoiceId}";
         if (!string.IsNullOrWhiteSpace(request.Notes))
-            summary = $"{summary} — {request.Notes}";
-        await bifrost.InsertAsync("audit_log", new
+            summary = $"{summary} - {request.Notes}";
+
+        var result = await workflows.RunAsync("record-payment", new Dictionary<string, object?>
         {
-            tenant_id = invoice["tenant_id"],
-            actor_user_id = ActorUserId(userContext),
-            action = "payment.recorded",
-            entity_type = "dues_payments",
-            entity_id = request.InvoiceId.ToString(),
-            summary,
-            created_at = UtcTimestamp(),
+            ["invoiceId"] = request.InvoiceId,
+            ["amountCents"] = request.AmountCents,
+            ["method"] = string.IsNullOrWhiteSpace(request.Method) ? "card" : request.Method,
+            ["paidOn"] = string.IsNullOrWhiteSpace(request.PaidOn)
+                ? DateTime.UtcNow.ToString("yyyy-MM-dd")
+                : request.PaidOn,
+            ["summary"] = summary,
+            ["actorUserId"] = ActorUserId(userContext),
+            ["createdAt"] = UtcTimestamp(),
         }, userContext);
 
-        return Results.Ok();
+        return ToWorkflowResult(result);
     }
 
     /// <summary>
@@ -200,7 +146,7 @@ public static class MembershipWorkflowEndpoints
     private static async Task<IResult> RenewMembershipAsync(
         RenewMembershipRequest request,
         HttpContext http,
-        IBifrostWorkflowExecutor bifrost,
+        IWorkflowRunner workflows,
         PathCache<Inputs> schemaCache)
     {
         if (string.IsNullOrWhiteSpace(request.NewEndDate))
@@ -213,55 +159,22 @@ public static class MembershipWorkflowEndpoints
         if (!CanAct(schemaCache, "member_memberships", PolicyAction.Update, userContext))
             return Results.Forbid();
 
-        var membership = await bifrost.QuerySingleAsync(
-            "member_memberships", request.MemberMembershipId, userContext);
-        if (membership is null)
-            return Results.NotFound();           // tenant-filter already scoped the read
-
-        // 1. Advance the membership term and status. Bifrost's generated
-        //    `update` requires every non-nullable column, so the unchanged
-        //    columns are carried forward from the row just read.
-        await bifrost.UpdateAsync("member_memberships", new
+        var result = await workflows.RunAsync("renew-membership", new Dictionary<string, object?>
         {
-            member_membership_id = request.MemberMembershipId,
-            tenant_id = membership["tenant_id"],
-            member_id = membership["member_id"],
-            plan_id = membership["plan_id"],
-            start_date = membership["start_date"],
-            end_date = request.NewEndDate,
-            status = "active",
+            ["memberMembershipId"] = request.MemberMembershipId,
+            ["newEndDate"] = request.NewEndDate,
+            ["createInvoice"] = request.InvoiceAmountCents is { } amount && amount > 0,
+            ["invoiceAmountCents"] = request.InvoiceAmountCents,
+            ["issuedOn"] = DateTime.UtcNow.ToString("yyyy-MM-dd"),
+            ["invoiceDueOn"] = string.IsNullOrWhiteSpace(request.InvoiceDueOn)
+                ? request.NewEndDate
+                : request.InvoiceDueOn,
+            ["summary"] = $"Membership {request.MemberMembershipId} renewed through {request.NewEndDate}",
+            ["actorUserId"] = ActorUserId(userContext),
+            ["createdAt"] = UtcTimestamp(),
         }, userContext);
 
-        // 2. Optionally open a dues invoice for the renewed term.
-        if (request.InvoiceAmountCents is { } amount && amount > 0)
-        {
-            await bifrost.InsertAsync("dues_invoices", new
-            {
-                tenant_id = membership["tenant_id"],
-                member_id = membership["member_id"],
-                member_membership_id = request.MemberMembershipId,
-                amount_cents = amount,
-                issued_on = DateTime.UtcNow.ToString("yyyy-MM-dd"),
-                due_on = string.IsNullOrWhiteSpace(request.InvoiceDueOn)
-                    ? request.NewEndDate
-                    : request.InvoiceDueOn,
-                status = "open",
-            }, userContext);
-        }
-
-        // 3. Audit the named operation.
-        await bifrost.InsertAsync("audit_log", new
-        {
-            tenant_id = membership["tenant_id"],
-            actor_user_id = ActorUserId(userContext),
-            action = "membership.renewed",
-            entity_type = "member_memberships",
-            entity_id = request.MemberMembershipId.ToString(),
-            summary = $"Membership {request.MemberMembershipId} renewed through {request.NewEndDate}",
-            created_at = UtcTimestamp(),
-        }, userContext);
-
-        return Results.Ok();
+        return ToWorkflowResult(result);
     }
 
     /// <summary>
@@ -274,7 +187,7 @@ public static class MembershipWorkflowEndpoints
     private static async Task<IResult> CheckInAsync(
         CheckInRequest request,
         HttpContext http,
-        IBifrostWorkflowExecutor bifrost,
+        IWorkflowRunner workflows,
         PathCache<Inputs> schemaCache)
     {
         var userContext = http.GetBifrostUserContext();
@@ -285,49 +198,20 @@ public static class MembershipWorkflowEndpoints
         if (!CanAct(schemaCache, "event_attendance", PolicyAction.Create, userContext))
             return Results.Forbid();
 
-        var @event = await bifrost.QuerySingleAsync("events", request.EventId, userContext);
-        if (@event is null)
-            return Results.NotFound();           // tenant-filter already scoped the read
-
-        var member = await bifrost.QuerySingleAsync("members", request.MemberId, userContext);
-        if (member is null)
-            return Results.NotFound();           // tenant-filter already scoped the read
-
-        // 1. Record the check-in. The UNIQUE(event_id, member_id) constraint
-        //    rejects a second check-in for the same member at the same event;
-        //    that surfaces as a pipeline error, reported here as 409 Conflict so
-        //    neither an attendance row nor an audit row is written twice.
-        try
+        var checkedInAt = string.IsNullOrWhiteSpace(request.CheckedInAt)
+            ? UtcTimestamp()
+            : request.CheckedInAt;
+        var result = await workflows.RunAsync("check-in", new Dictionary<string, object?>
         {
-            await bifrost.InsertAsync("event_attendance", new
-            {
-                tenant_id = @event["tenant_id"],
-                event_id = request.EventId,
-                member_id = request.MemberId,
-                checked_in_at = string.IsNullOrWhiteSpace(request.CheckedInAt)
-                    ? UtcTimestamp()
-                    : request.CheckedInAt,
-            }, userContext);
-        }
-        catch (InvalidOperationException ex)
-            when (ex.Message.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase))
-        {
-            return Results.Conflict("This member is already checked in for this event.");
-        }
-
-        // 2. Audit the named operation.
-        await bifrost.InsertAsync("audit_log", new
-        {
-            tenant_id = @event["tenant_id"],
-            actor_user_id = ActorUserId(userContext),
-            action = "event.checkin",
-            entity_type = "event_attendance",
-            entity_id = request.EventId.ToString(),
-            summary = $"Member {request.MemberId} checked in to event {request.EventId}",
-            created_at = UtcTimestamp(),
+            ["eventId"] = request.EventId,
+            ["memberId"] = request.MemberId,
+            ["checkedInAt"] = checkedInAt,
+            ["summary"] = $"Member {request.MemberId} checked in to event {request.EventId}",
+            ["actorUserId"] = ActorUserId(userContext),
+            ["createdAt"] = UtcTimestamp(),
         }, userContext);
 
-        return Results.Ok();
+        return ToWorkflowResult(result);
     }
 
     /// <summary>
@@ -342,7 +226,7 @@ public static class MembershipWorkflowEndpoints
     private static async Task<IResult> LinkIdentityAsync(
         LinkIdentityRequest request,
         HttpContext http,
-        IBifrostWorkflowExecutor bifrost,
+        IWorkflowRunner workflows,
         PathCache<Inputs> schemaCache)
     {
         var userContext = http.GetBifrostUserContext();
@@ -353,45 +237,16 @@ public static class MembershipWorkflowEndpoints
         if (!CanAct(schemaCache, "members", PolicyAction.Update, userContext))
             return Results.Forbid();
 
-        var member = await bifrost.QuerySingleAsync("members", request.MemberId, userContext);
-        if (member is null)
-            return Results.NotFound();           // tenant-filter already scoped the read
-
-        var appUser = await bifrost.QuerySingleAsync("app_users", request.UserId, userContext);
-        if (appUser is null)
-            return Results.NotFound();           // the login to link must exist and be visible
-
-        // 1. Set members.user_id. Bifrost's generated `update` requires every
-        //    non-nullable column, so the unchanged columns are carried forward
-        //    from the row just read; only `user_id` is set.
-        await bifrost.UpdateAsync("members", new
+        var result = await workflows.RunAsync("link-identity", new Dictionary<string, object?>
         {
-            member_id = member["member_id"],
-            tenant_id = member["tenant_id"],
-            user_id = request.UserId,
-            household_id = member["household_id"],
-            first_name = member["first_name"],
-            last_name = member["last_name"],
-            email = member["email"],
-            phone = member["phone"],
-            status = member["status"],
-            joined_on = member["joined_on"],
-            deleted_at = member["deleted_at"],
+            ["memberId"] = request.MemberId,
+            ["userId"] = request.UserId,
+            ["summary"] = $"App user {request.UserId} linked to member {request.MemberId}",
+            ["actorUserId"] = ActorUserId(userContext),
+            ["createdAt"] = UtcTimestamp(),
         }, userContext);
 
-        // 2. Audit the named operation: the link is explicit and recorded.
-        await bifrost.InsertAsync("audit_log", new
-        {
-            tenant_id = member["tenant_id"],
-            actor_user_id = ActorUserId(userContext),
-            action = "member.identity-linked",
-            entity_type = "member",
-            entity_id = request.MemberId.ToString(),
-            summary = $"App user {request.UserId} linked to member {request.MemberId}",
-            created_at = UtcTimestamp(),
-        }, userContext);
-
-        return Results.Ok();
+        return ToWorkflowResult(result);
     }
 
     /// <summary>
@@ -447,6 +302,19 @@ public static class MembershipWorkflowEndpoints
             .ToArray(),
         _ => Array.Empty<string>(),
     };
+
+    private static IResult ToWorkflowResult(WorkflowRunResult result)
+    {
+        if (result.Succeeded)
+            return Results.Ok();
+
+        return result.Error?.Code switch
+        {
+            "not_found" => Results.NotFound(),
+            "conflict" => Results.Conflict("This member is already checked in for this event."),
+            _ => Results.Problem(result.Error?.Message ?? "Workflow failed."),
+        };
+    }
 
     /// <summary>
     /// A UTC timestamp in the <c>datetime('now')</c> format the Membership

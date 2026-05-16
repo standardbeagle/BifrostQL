@@ -1,5 +1,6 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Schema;
+using BifrostQL.Core.Workflows;
 using BifrostQL.Model;
 using GraphQL;
 using GraphQL.Execution;
@@ -18,30 +19,7 @@ namespace BifrostQL.Server
     /// audit module all still apply. A workflow endpoint composes business logic
     /// on top of the pipeline; it never bypasses it.
     /// </summary>
-    public interface IBifrostWorkflowExecutor
-    {
-        /// <summary>
-        /// Reads a single row from <paramref name="table"/> by its primary key,
-        /// scoped by the caller's user context. Returns <c>null</c> when no row
-        /// is visible to the caller (e.g. <c>tenant-filter</c> scoped it out).
-        /// </summary>
-        Task<IDictionary<string, object?>?> QuerySingleAsync(
-            string table, object id, IDictionary<string, object?> userContext);
-
-        /// <summary>
-        /// Inserts a row into <paramref name="table"/> through the mutation
-        /// pipeline. <paramref name="values"/> is an object whose properties are
-        /// the column names to write.
-        /// </summary>
-        Task InsertAsync(string table, object values, IDictionary<string, object?> userContext);
-
-        /// <summary>
-        /// Updates a row in <paramref name="table"/> through the mutation
-        /// pipeline. <paramref name="values"/> is an object whose properties are
-        /// the column names to write, and must include the primary key.
-        /// </summary>
-        Task UpdateAsync(string table, object values, IDictionary<string, object?> userContext);
-    }
+    public interface IBifrostWorkflowExecutor : IWorkflowDataExecutor;
 
     /// <summary>
     /// Default <see cref="IBifrostWorkflowExecutor"/>. It builds a GraphQL
@@ -142,17 +120,33 @@ namespace BifrostQL.Server
         private static Dictionary<string, object?> ToFieldMap(object values, IDbTable table)
         {
             var fields = new Dictionary<string, object?>();
+            if (values is IDictionary<string, object?> dictionary)
+            {
+                foreach (var (key, value) in dictionary)
+                    AddField(fields, table, key, value);
+                return fields;
+            }
+
             foreach (var property in values.GetType().GetProperties())
             {
-                var column = table.Columns.FirstOrDefault(c =>
-                    string.Equals(c.DbName, property.Name, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(c.GraphQlName, property.Name, StringComparison.OrdinalIgnoreCase));
-                if (column is null)
-                    throw new ArgumentException(
-                        $"'{property.Name}' is not a column of '{table.DbName}'.", nameof(values));
-                fields[column.GraphQlName] = property.GetValue(values);
+                AddField(fields, table, property.Name, property.GetValue(values));
             }
             return fields;
+        }
+
+        private static void AddField(
+            Dictionary<string, object?> fields,
+            IDbTable table,
+            string name,
+            object? value)
+        {
+            var column = table.Columns.FirstOrDefault(c =>
+                string.Equals(c.DbName, name, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.GraphQlName, name, StringComparison.OrdinalIgnoreCase));
+            if (column is null)
+                throw new ArgumentException(
+                    $"'{name}' is not a column of '{table.DbName}'.", nameof(name));
+            fields[column.GraphQlName] = value;
         }
 
         private static IReadOnlyList<IDictionary<string, object?>> ExtractRows(

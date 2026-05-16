@@ -66,6 +66,16 @@ namespace BifrostQL.Core.Test.Model
         }
 
         [Theory]
+        [InlineData(MetadataKeys.StateMachine.StateColumn, "state-column")]
+        [InlineData(MetadataKeys.StateMachine.InitialState, "initial-state")]
+        [InlineData(MetadataKeys.StateMachine.States, "states")]
+        [InlineData(MetadataKeys.StateMachine.Transitions, "transitions")]
+        public void StateMachineKeys_HaveCorrectValues(string actual, string expected)
+        {
+            actual.Should().Be(expected);
+        }
+
+        [Theory]
         [InlineData(MetadataKeys.SoftDelete.Column, "soft-delete")]
         [InlineData(MetadataKeys.SoftDelete.DeletedBy, "soft-delete-by")]
         [InlineData(MetadataKeys.SoftDelete.LegacyType, "soft-delete-type")]
@@ -127,6 +137,7 @@ namespace BifrostQL.Core.Test.Model
             MetadataKeys.Storage.Bucket.Should().NotBeNullOrEmpty();
             MetadataKeys.Ui.Label.Should().NotBeNullOrEmpty();
             MetadataKeys.Security.TenantFilter.Should().NotBeNullOrEmpty();
+            MetadataKeys.StateMachine.StateColumn.Should().NotBeNullOrEmpty();
             MetadataKeys.SoftDelete.Column.Should().NotBeNullOrEmpty();
             MetadataKeys.Audit.UserKey.Should().NotBeNullOrEmpty();
             MetadataKeys.Validation.Min.Should().NotBeNullOrEmpty();

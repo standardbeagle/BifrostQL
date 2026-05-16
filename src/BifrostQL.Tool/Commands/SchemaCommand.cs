@@ -35,7 +35,9 @@ public sealed class SchemaCommand : ICommand
             var model = await loader.LoadAsync();
 
             var schema = DbSchema.FromModel(model);
+#pragma warning disable CS0618 // SchemaPrinter is the available printer API in this target package set.
             var sdl = new SchemaPrinter(schema).Print();
+#pragma warning restore CS0618
 
             if (output.IsJsonMode)
             {

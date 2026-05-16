@@ -170,6 +170,7 @@ internal static class SampleDatabase
                 title TEXT NOT NULL,
                 description TEXT,
                 location TEXT,
+                status TEXT NOT NULL DEFAULT 'draft',
                 starts_at TEXT NOT NULL,
                 ends_at TEXT,
                 capacity INTEGER,
@@ -204,8 +205,8 @@ internal static class SampleDatabase
                 VALUES (1, 1, 1, 1, '2024-01-10', '2025-01-10', 'expired');
             INSERT INTO dues_invoices (invoice_id, tenant_id, member_id, member_membership_id, amount_cents, issued_on, due_on, status)
                 VALUES (1, 1, 1, 1, 12000, '2024-12-15', '2025-01-10', 'open');
-            INSERT INTO events (event_id, tenant_id, title, description, location, starts_at, ends_at, capacity, created_at)
-                VALUES (1, 1, 'Spring Open House', 'Season kick-off social', 'Main Clubhouse', '2025-03-01 10:00:00', '2025-03-01 14:00:00', 60, '2025-01-15 09:00:00');
+            INSERT INTO events (event_id, tenant_id, title, description, location, status, starts_at, ends_at, capacity, created_at)
+                VALUES (1, 1, 'Spring Open House', 'Season kick-off social', 'Main Clubhouse', 'published', '2025-03-01 10:00:00', '2025-03-01 14:00:00', 60, '2025-01-15 09:00:00');
             """;
         command.ExecuteNonQuery();
 

@@ -43,6 +43,8 @@ export default defineConfig({
 						{ label: 'Module System', slug: 'guides/modules' },
 						{ label: 'Authentication', slug: 'guides/authentication' },
 						{ label: 'Multi-Tenant Org Model', slug: 'guides/org-model' },
+						{ label: 'State Machines', slug: 'guides/state-machines' },
+						{ label: 'Workflows', slug: 'guides/workflows' },
 						{ label: 'Workflow Mutations & Audit Trail', slug: 'guides/workflow-mutations' },
 						{ label: 'Desktop App', slug: 'guides/desktop-app' },
 						{ label: 'Hosted SPA / API Mode', slug: 'guides/hosted-spa' },

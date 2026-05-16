@@ -1,7 +1,9 @@
 using System.Data.Common;
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
+using BifrostQL.Core.Workflows;
 using GraphQL;
 using GraphQL.Resolvers;
 using Microsoft.Extensions.DependencyInjection;
@@ -41,15 +43,16 @@ namespace BifrostQL.Core.Resolvers
             await using var conn = conFactory.GetConnection();
             await conn.OpenAsync();
             await using var transaction = await conn.BeginTransactionAsync();
+            var outcomes = new List<BatchActionOutcome>();
             try
             {
-                var totalAffected = 0;
                 foreach (var action in actions)
                 {
-                    totalAffected += await ExecuteAction(action, _table, modules, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext);
+                    var outcome = await ExecuteAction(action, _table, modules, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext);
+                    if (outcome is not null)
+                        outcomes.Add(outcome);
                 }
                 await transaction.CommitAsync();
-                return totalAffected;
             }
             catch (BifrostExecutionError)
             {
@@ -61,7 +64,59 @@ namespace BifrostQL.Core.Resolvers
                 await transaction.RollbackAsync();
                 throw new BifrostExecutionError(ex.Message, ex);
             }
+
+            // Observers fire only after commit so audit/state-transition
+            // notifications never describe rolled-back work. Failures inside
+            // observers are swallowed by MutationObservers/StateTransitionObservers.
+            await NotifyObserversAsync(context.RequestServices, _table, outcomes, userContext);
+
+            var totalAffected = 0;
+            foreach (var outcome in outcomes) totalAffected += outcome.Affected;
+            return totalAffected;
         }
+
+        private sealed record BatchActionOutcome(
+            int Affected,
+            MutationType MutationType,
+            IDictionary<string, object?> Data,
+            StateTransitionInfo? Transition);
+
+        private static async ValueTask NotifyObserversAsync(
+            IServiceProvider? services,
+            IDbTable table,
+            IReadOnlyList<BatchActionOutcome> outcomes,
+            IDictionary<string, object?> userContext)
+        {
+            if (services is null || outcomes.Count == 0) return;
+
+            var mutationObservers = services.GetService<MutationObservers>();
+            var transitionObservers = services.GetService<StateTransitionObservers>();
+            var triggersSuppressed = IsWorkflowTriggerSuppressed(userContext);
+
+            foreach (var outcome in outcomes)
+            {
+                if (mutationObservers is not null && !triggersSuppressed)
+                {
+                    await mutationObservers.NotifyAsync(new MutationObserverContext
+                    {
+                        Table = table,
+                        MutationType = outcome.MutationType,
+                        Data = outcome.Data,
+                        Result = outcome.Affected,
+                        UserContext = userContext,
+                    });
+                }
+                if (outcome.Transition is not null && transitionObservers is not null)
+                {
+                    await transitionObservers.NotifyAsync(outcome.Transition, userContext);
+                }
+            }
+        }
+
+        private static bool IsWorkflowTriggerSuppressed(IDictionary<string, object?> userContext)
+            => userContext.TryGetValue(WorkflowTriggerHost.SuppressTriggersKey, out var value)
+               && value is bool suppressed
+               && suppressed;
 
         ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
         {
@@ -78,7 +133,7 @@ namespace BifrostQL.Core.Resolvers
             return DefaultMaxBatchSize;
         }
 
-        private static async Task<int> ExecuteAction(
+        private static async Task<BatchActionOutcome?> ExecuteAction(
             Dictionary<string, object?> action,
             IDbTable table,
             IMutationModules modules,
@@ -106,10 +161,10 @@ namespace BifrostQL.Core.Resolvers
             {
                 return await ExecuteUpsert(upsertData, table, modules, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext);
             }
-            return 0;
+            return null;
         }
 
-        private static async Task<int> ExecuteInsert(
+        private static async Task<BatchActionOutcome?> ExecuteInsert(
             Dictionary<string, object?> data,
             IDbTable table,
             IMutationModules modules,
@@ -121,7 +176,7 @@ namespace BifrostQL.Core.Resolvers
             IDictionary<string, object?> userContext,
             MutationTransformContext transformContext)
         {
-            if (data.Count == 0) return 0;
+            if (data.Count == 0) return null;
 
             // Mutation transformers (e.g. the authorization policy engine) gate
             // the insert before any SQL is built; non-empty Errors abort it.
@@ -138,10 +193,11 @@ namespace BifrostQL.Core.Resolvers
             cmd.CommandText = Join(sql, moduleSql);
             cmd.Transaction = transaction;
             AddParameters(cmd, data);
-            return await cmd.ExecuteNonQueryAsync();
+            var affected = await cmd.ExecuteNonQueryAsync();
+            return new BatchActionOutcome(affected, MutationType.Insert, data, transformResult.StateTransition);
         }
 
-        private static async Task<int> ExecuteUpdate(
+        private static async Task<BatchActionOutcome?> ExecuteUpdate(
             Dictionary<string, object?> data,
             IDbTable table,
             IMutationModules modules,
@@ -153,7 +209,7 @@ namespace BifrostQL.Core.Resolvers
             IDictionary<string, object?> userContext,
             MutationTransformContext transformContext)
         {
-            if (data.Count == 0) return 0;
+            if (data.Count == 0) return null;
 
             var caseData = new Dictionary<string, object?>(data, StringComparer.OrdinalIgnoreCase);
             var keyData = caseData.Where(d => table.ColumnLookup[d.Key].IsPrimaryKey)
@@ -161,7 +217,7 @@ namespace BifrostQL.Core.Resolvers
             var standardData = caseData.Where(d => !table.ColumnLookup[d.Key].IsPrimaryKey)
                 .ToDictionary(kv => kv.Key, kv => kv.Value);
 
-            if (!keyData.Any() || !standardData.Any()) return 0;
+            if (!keyData.Any() || !standardData.Any()) return null;
 
             var currentRow = await LoadCurrentStateMachineRow(dialect, table, keyData, conn, transaction);
             var updateTransformContext = currentRow is null
@@ -194,7 +250,8 @@ namespace BifrostQL.Core.Resolvers
             cmd.Transaction = transaction;
             AddParameters(cmd, caseData);
             AddExtraParameters(cmd, additionalFilter.Parameters);
-            return await cmd.ExecuteNonQueryAsync();
+            var affected = await cmd.ExecuteNonQueryAsync();
+            return new BatchActionOutcome(affected, MutationType.Update, caseData, transformResult.StateTransition);
         }
 
         private static async Task<IReadOnlyDictionary<string, object?>?> LoadCurrentStateMachineRow(
@@ -224,7 +281,7 @@ namespace BifrostQL.Core.Resolvers
             };
         }
 
-        private static async Task<int> ExecuteDelete(
+        private static async Task<BatchActionOutcome?> ExecuteDelete(
             Dictionary<string, object?> data,
             IDbTable table,
             IMutationModules modules,
@@ -236,7 +293,7 @@ namespace BifrostQL.Core.Resolvers
             IDictionary<string, object?> userContext,
             MutationTransformContext transformContext)
         {
-            if (data.Count == 0) return 0;
+            if (data.Count == 0) return null;
 
             var transformResult = mutationTransformers.Transform(table, MutationType.Delete, data, transformContext);
             if (transformResult.Errors.Length > 0)
@@ -263,7 +320,8 @@ namespace BifrostQL.Core.Resolvers
                 cmd.Transaction = transaction;
                 AddParameters(cmd, transformResult.Data);
                 AddExtraParameters(cmd, additionalFilter.Parameters);
-                return await cmd.ExecuteNonQueryAsync();
+                var softAffected = await cmd.ExecuteNonQueryAsync();
+                return new BatchActionOutcome(softAffected, MutationType.Update, transformResult.Data, transformResult.StateTransition);
             }
 
             var deleteModuleSql = modules.Delete(data, table, userContext, model);
@@ -275,10 +333,11 @@ namespace BifrostQL.Core.Resolvers
             deleteCmd.Transaction = transaction;
             AddParameters(deleteCmd, data);
             AddExtraParameters(deleteCmd, additionalFilter.Parameters);
-            return await deleteCmd.ExecuteNonQueryAsync();
+            var deleteAffected = await deleteCmd.ExecuteNonQueryAsync();
+            return new BatchActionOutcome(deleteAffected, MutationType.Delete, data, transformResult.StateTransition);
         }
 
-        private static async Task<int> ExecuteUpsert(
+        private static async Task<BatchActionOutcome?> ExecuteUpsert(
             Dictionary<string, object?> data,
             IDbTable table,
             IMutationModules modules,
@@ -290,7 +349,7 @@ namespace BifrostQL.Core.Resolvers
             IDictionary<string, object?> userContext,
             MutationTransformContext transformContext)
         {
-            if (data.Count == 0) return 0;
+            if (data.Count == 0) return null;
 
             var caseData = new Dictionary<string, object?>(data, StringComparer.OrdinalIgnoreCase);
             var keyColumns = caseData.Keys.Where(k => table.ColumnLookup[k].IsPrimaryKey).ToList();
@@ -311,7 +370,8 @@ namespace BifrostQL.Core.Resolvers
                 cmd.CommandText = Join(upsertSql, moduleSql);
                 cmd.Transaction = transaction;
                 AddParameters(cmd, caseData);
-                return await cmd.ExecuteNonQueryAsync();
+                var affected = await cmd.ExecuteNonQueryAsync();
+                return new BatchActionOutcome(affected, MutationType.Update, caseData, transformResult.StateTransition);
             }
 
             if (keyColumns.Count > 0)

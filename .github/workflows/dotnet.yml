@@ -14,6 +14,21 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          MSSQL_SA_PASSWORD: Bifrost!CI!Test1234
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Bifrost!CI!Test1234' -No -Q 'SELECT 1' || /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P 'Bifrost!CI!Test1234' -Q 'SELECT 1' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+          --health-start-period 30s
+
     steps:
       - uses: actions/checkout@v3
       - name: Setup .NET 8.0
@@ -32,6 +47,13 @@ jobs:
         run: dotnet test tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj --no-build --verbosity normal --configuration Release
       - name: Test Server
         run: dotnet test tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj --no-build --verbosity normal --configuration Release
+      - name: Test Integration (Sqlite + SqlServer)
+        # Sqlite tests use in-memory shared cache and always run. SqlServer
+        # tests gate on BIFROST_TEST_SQLSERVER and exercise the paged-shape
+        # GraphQL contract end-to-end against the service container above.
+        env:
+          BIFROST_TEST_SQLSERVER: "Server=localhost,1433;Database=master;User Id=sa;Password=Bifrost!CI!Test1234;TrustServerCertificate=True;Encrypt=False"
+        run: dotnet test tests/BifrostQL.Integration.Test/BifrostQL.Integration.Test.csproj --no-build --verbosity normal --configuration Release
       - name: Pack
         run: |
           dotnet pack "src/BifrostQL.Core/BifrostQL.Core.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }} 

@@ -48,9 +48,22 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
-    # MySQL service is still parked: enabling it surfaced connection-pool
-    # ceiling failures (`Too many connections`) and dialect mirror gaps
-    # that need a focused pass before CI can rely on it.
+      mysql:
+        # The default max_connections of 151 was exhausted by the parallel
+        # xunit fixtures (each test class opens its own DB), so bump to 500
+        # via the --max-connections server arg.
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: bifrost_ci_test
+          MYSQL_DATABASE: bifrost_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost -uroot -pbifrost_ci_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+          --health-start-period 20s
 
     steps:
       - uses: actions/checkout@v4
@@ -70,14 +83,22 @@ jobs:
         run: dotnet test tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj --no-build --verbosity normal --configuration Release
       - name: Test Server
         run: dotnet test tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj --no-build --verbosity normal --configuration Release
-      - name: Test Integration (Sqlite + SqlServer + Postgres)
-        # Sqlite tests use in-memory shared cache and always run. SqlServer
-        # and Postgres tests gate on their respective BIFROST_TEST_* env
-        # vars and exercise the dialect-specific SQL contract end-to-end
-        # against the service containers above.
+      - name: Raise MySQL max_connections
+        # GH Actions services don't expose post-image server args, so the
+        # default 151 connection ceiling is lifted at runtime via SET GLOBAL.
+        # The parallel xunit fixtures otherwise blow past it with
+        # `Too many connections`.
+        run: mysql --protocol=TCP -h 127.0.0.1 -P 3306 -uroot -pbifrost_ci_test -e "SET GLOBAL max_connections=500;"
+
+      - name: Test Integration (Sqlite + SqlServer + Postgres + MySQL)
+        # Sqlite tests use in-memory shared cache and always run. The other
+        # three suites gate on their respective BIFROST_TEST_* env vars and
+        # exercise the dialect-specific SQL contract end-to-end against the
+        # service containers above.
         env:
           BIFROST_TEST_SQLSERVER: "Server=localhost,1433;Database=master;User Id=sa;Password=Bifrost!CI!Test1234;TrustServerCertificate=True;Encrypt=False"
           BIFROST_TEST_POSTGRES: "Host=localhost;Port=5432;Database=bifrost_ci;Username=postgres;Password=bifrost_ci_test"
+          BIFROST_TEST_MYSQL: "Server=localhost;Port=3306;Database=bifrost_ci;User Id=root;Password=bifrost_ci_test;AllowPublicKeyRetrieval=True;SslMode=Preferred"
         run: dotnet test tests/BifrostQL.Integration.Test/BifrostQL.Integration.Test.csproj --no-build --verbosity normal --configuration Release
       - name: Pack
         run: |

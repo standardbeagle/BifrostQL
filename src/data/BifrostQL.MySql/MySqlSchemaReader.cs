@@ -89,6 +89,21 @@ SELECT
 FROM information_schema.tables
 WHERE table_schema = DATABASE()
 ORDER BY table_schema, table_name;
+
+-- Foreign keys (child -> parent column pairs, ordered for composite keys)
+SELECT
+    kcu.constraint_name,
+    kcu.table_schema   AS child_schema,
+    kcu.table_name     AS child_table,
+    kcu.column_name    AS child_column,
+    kcu.referenced_table_schema AS parent_schema,
+    kcu.referenced_table_name   AS parent_table,
+    kcu.referenced_column_name  AS parent_column,
+    kcu.ordinal_position
+FROM information_schema.key_column_usage kcu
+WHERE kcu.table_schema = DATABASE()
+  AND kcu.referenced_table_name IS NOT NULL
+ORDER BY kcu.table_schema, kcu.table_name, kcu.constraint_name, kcu.ordinal_position;
 ";
 
     /// <inheritdoc />
@@ -117,7 +132,44 @@ ORDER BY table_schema, table_name;
                 columns[new TableRef((string)reader["table_catalog"], (string)reader["table_schema"], (string)reader["table_name"])]))
             .ToList();
 
-        return new SchemaData(columnConstraints, rawColumns, tables.Cast<IDbTable>().ToList());
+        await reader.NextResultAsync();
+
+        var foreignKeys = ReadForeignKeys(reader);
+
+        return new SchemaData(columnConstraints, rawColumns, tables.Cast<IDbTable>().ToList(), foreignKeys);
+    }
+
+    private static IReadOnlyList<DbForeignKey> ReadForeignKeys(DbDataReader reader)
+    {
+        // Group adjacent FK rows by (schema, table, constraint name); the
+        // SQL already orders by ordinal_position so columns line up across
+        // the composite-key case.
+        var rows = new List<(string ConstraintName, string ChildSchema, string ChildTable, string ChildCol,
+            string ParentSchema, string ParentTable, string ParentCol)>();
+        while (reader.Read())
+        {
+            rows.Add((
+                (string)reader["constraint_name"],
+                (string)reader["child_schema"],
+                (string)reader["child_table"],
+                (string)reader["child_column"],
+                (string)reader["parent_schema"],
+                (string)reader["parent_table"],
+                (string)reader["parent_column"]));
+        }
+        return rows
+            .GroupBy(r => (r.ChildSchema, r.ChildTable, r.ConstraintName))
+            .Select(g => new DbForeignKey
+            {
+                ConstraintName = g.Key.ConstraintName,
+                ChildTableSchema = g.Key.ChildSchema,
+                ChildTableName = g.Key.ChildTable,
+                ChildColumnNames = g.Select(r => r.ChildCol).ToArray(),
+                ParentTableSchema = g.First().ParentSchema,
+                ParentTableName = g.First().ParentTable,
+                ParentColumnNames = g.Select(r => r.ParentCol).ToArray(),
+            })
+            .ToList();
     }
 
     private static IEnumerable<T> GetDtos<T>(IDataReader reader, Func<IDataReader, T> getDto)

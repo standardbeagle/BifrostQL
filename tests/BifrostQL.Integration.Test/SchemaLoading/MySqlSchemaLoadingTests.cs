@@ -209,7 +209,7 @@ public class MySqlSchemaLoadingTests : IAsyncLifetime
         orderItemsTable.SingleLinks.Should().ContainKey("orders");
     }
 
-    [SkippableFact(Skip = "Self-FK link generation is not implemented: DbModelLoader feeds an empty DbForeignKey set into the orchestrator, and NameBasedRelationshipStrategy explicitly skips matches where the column normalizes to the table's own name (FindIdMatches line 184). Re-enable when self-link support lands.")]
+    [SkippableFact]
     public void SelfReferencingTable_ShouldHaveSelfJoin()
     {
         var table = _loadedModel!.Tables.First(t => t.DbName == "SelfReferencing");

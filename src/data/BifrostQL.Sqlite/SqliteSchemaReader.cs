@@ -18,6 +18,7 @@ public sealed class SqliteSchemaReader : ISchemaReader
         var tables = new List<IDbTable>();
         var allColumns = new List<ColumnDto>();
         var columnConstraints = new Dictionary<ColumnRef, List<ColumnConstraintDto>>();
+        var foreignKeys = new List<DbForeignKey>();
 
         // Get all tables
         var tablesCmd = connection.CreateCommand();
@@ -34,7 +35,7 @@ public sealed class SqliteSchemaReader : ISchemaReader
         foreach (var (tableName, tableType) in tableNames)
         {
             // First, collect all constraints for this table
-            await CollectConstraintsAsync(connection, tableName, columnConstraints);
+            await CollectConstraintsAsync(connection, tableName, columnConstraints, foreignKeys);
 
             // Then read columns (which will use the constraints)
             var columnsCmd = connection.CreateCommand();
@@ -108,10 +109,10 @@ public sealed class SqliteSchemaReader : ISchemaReader
             tables.Add(dbTable);
         }
 
-        return new SchemaData(columnConstraints, allColumns.ToArray(), tables);
+        return new SchemaData(columnConstraints, allColumns.ToArray(), tables, foreignKeys);
     }
 
-    private static async Task CollectConstraintsAsync(DbConnection connection, string tableName, Dictionary<ColumnRef, List<ColumnConstraintDto>> columnConstraints)
+    private static async Task CollectConstraintsAsync(DbConnection connection, string tableName, Dictionary<ColumnRef, List<ColumnConstraintDto>> columnConstraints, List<DbForeignKey> foreignKeys)
     {
         // Get primary key information from table_xinfo (pk column)
         var pkCmd = connection.CreateCommand();
@@ -147,30 +148,52 @@ public sealed class SqliteSchemaReader : ISchemaReader
             });
         }
 
-        // Get foreign key information
+        // Get foreign key information. Each FK can span multiple columns;
+        // foreign_key_list returns one row per child column with the same
+        // `id`, so group by id to produce a single DbForeignKey per FK.
         var fkCmd = connection.CreateCommand();
         fkCmd.CommandText = $"PRAGMA foreign_key_list({tableName})";
 
-        await using var fkReader = await fkCmd.ExecuteReaderAsync();
-        while (await fkReader.ReadAsync())
+        var fkRows = new List<(long id, string parentTable, string fromCol, string toCol)>();
+        await using (var fkReader = await fkCmd.ExecuteReaderAsync())
         {
-            var columnName = (string)fkReader["from"];
-            var colRef = new ColumnRef("main", "main", tableName, columnName);
-
-            if (!columnConstraints.ContainsKey(colRef))
-                columnConstraints[colRef] = new List<ColumnConstraintDto>();
-
-            var fkId = (long)fkReader["id"];
-            columnConstraints[colRef].Add(new ColumnConstraintDto
+            while (await fkReader.ReadAsync())
             {
-                ConstraintCatalog = "main",
-                ConstraintSchema = "main",
-                ConstraintName = $"FK_{tableName}_{fkId}",
-                TableCatalog = "main",
-                TableSchema = "main",
-                TableName = tableName,
-                ColumnName = columnName,
-                ConstraintType = "FOREIGN KEY",
+                var columnName = (string)fkReader["from"];
+                var colRef = new ColumnRef("main", "main", tableName, columnName);
+
+                if (!columnConstraints.ContainsKey(colRef))
+                    columnConstraints[colRef] = new List<ColumnConstraintDto>();
+
+                var fkId = (long)fkReader["id"];
+                columnConstraints[colRef].Add(new ColumnConstraintDto
+                {
+                    ConstraintCatalog = "main",
+                    ConstraintSchema = "main",
+                    ConstraintName = $"FK_{tableName}_{fkId}",
+                    TableCatalog = "main",
+                    TableSchema = "main",
+                    TableName = tableName,
+                    ColumnName = columnName,
+                    ConstraintType = "FOREIGN KEY",
+                });
+
+                fkRows.Add((fkId, (string)fkReader["table"], columnName, (string)fkReader["to"]));
+            }
+        }
+
+        foreach (var group in fkRows.GroupBy(r => r.id))
+        {
+            var ordered = group.ToList();
+            foreignKeys.Add(new DbForeignKey
+            {
+                ConstraintName = $"FK_{tableName}_{group.Key}",
+                ChildTableSchema = "main",
+                ChildTableName = tableName,
+                ChildColumnNames = ordered.Select(r => r.fromCol).ToArray(),
+                ParentTableSchema = "main",
+                ParentTableName = ordered[0].parentTable,
+                ParentColumnNames = ordered.Select(r => r.toCol).ToArray(),
             });
         }
 

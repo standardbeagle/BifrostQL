@@ -38,7 +38,7 @@ namespace BifrostQL.Model
                 schemaData.Tables.Cast<DbTable>().ToList(),
                 _metadataLoader,
                 Array.Empty<DbStoredProcedure>(),
-                Array.Empty<DbForeignKey>(),
+                schemaData.ForeignKeys,
                 additionalMetadata);
             model.TypeMapper = _connFactory.TypeMapper;
             return model;

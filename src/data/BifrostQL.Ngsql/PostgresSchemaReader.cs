@@ -91,6 +91,34 @@ SELECT
 FROM information_schema.tables
 WHERE table_schema NOT IN ('pg_catalog', 'information_schema', 'ag_catalog')
 ORDER BY table_catalog, table_schema, table_name;
+
+-- Foreign keys (child -> parent column pairs, ordered for composite keys)
+SELECT
+    kcu.constraint_name,
+    kcu.table_schema   AS child_schema,
+    kcu.table_name     AS child_table,
+    kcu.column_name    AS child_column,
+    ccu.table_schema   AS parent_schema,
+    ccu.table_name     AS parent_table,
+    ccu.column_name    AS parent_column,
+    kcu.ordinal_position
+FROM information_schema.table_constraints tc
+INNER JOIN information_schema.key_column_usage kcu ON
+    tc.constraint_catalog = kcu.constraint_catalog AND
+    tc.constraint_schema  = kcu.constraint_schema  AND
+    tc.constraint_name    = kcu.constraint_name
+INNER JOIN information_schema.referential_constraints rc ON
+    tc.constraint_catalog = rc.constraint_catalog AND
+    tc.constraint_schema  = rc.constraint_schema  AND
+    tc.constraint_name    = rc.constraint_name
+INNER JOIN information_schema.key_column_usage ccu ON
+    rc.unique_constraint_catalog = ccu.constraint_catalog AND
+    rc.unique_constraint_schema  = ccu.constraint_schema  AND
+    rc.unique_constraint_name    = ccu.constraint_name    AND
+    kcu.position_in_unique_constraint = ccu.ordinal_position
+WHERE tc.constraint_type = 'FOREIGN KEY'
+  AND tc.table_schema NOT IN ('pg_catalog', 'information_schema', 'ag_catalog')
+ORDER BY kcu.table_schema, kcu.table_name, kcu.constraint_name, kcu.ordinal_position;
 ";
 
     /// <inheritdoc />
@@ -119,7 +147,41 @@ ORDER BY table_catalog, table_schema, table_name;
                 columns[new TableRef((string)reader["table_catalog"], (string)reader["table_schema"], (string)reader["table_name"])]))
             .ToList();
 
-        return new SchemaData(columnConstraints, rawColumns, tables.Cast<IDbTable>().ToList());
+        await reader.NextResultAsync();
+
+        var foreignKeys = ReadForeignKeys(reader);
+
+        return new SchemaData(columnConstraints, rawColumns, tables.Cast<IDbTable>().ToList(), foreignKeys);
+    }
+
+    private static IReadOnlyList<DbForeignKey> ReadForeignKeys(DbDataReader reader)
+    {
+        var rows = new List<(string ConstraintName, string ChildSchema, string ChildTable, string ChildCol,
+            string ParentSchema, string ParentTable, string ParentCol)>();
+        while (reader.Read())
+        {
+            rows.Add((
+                (string)reader["constraint_name"],
+                (string)reader["child_schema"],
+                (string)reader["child_table"],
+                (string)reader["child_column"],
+                (string)reader["parent_schema"],
+                (string)reader["parent_table"],
+                (string)reader["parent_column"]));
+        }
+        return rows
+            .GroupBy(r => (r.ChildSchema, r.ChildTable, r.ConstraintName))
+            .Select(g => new DbForeignKey
+            {
+                ConstraintName = g.Key.ConstraintName,
+                ChildTableSchema = g.Key.ChildSchema,
+                ChildTableName = g.Key.ChildTable,
+                ChildColumnNames = g.Select(r => r.ChildCol).ToArray(),
+                ParentTableSchema = g.First().ParentSchema,
+                ParentTableName = g.First().ParentTable,
+                ParentColumnNames = g.Select(r => r.ParentCol).ToArray(),
+            })
+            .ToList();
     }
 
     private static IEnumerable<T> GetDtos<T>(IDataReader reader, Func<IDataReader, T> getDto)

@@ -20,8 +20,22 @@ public interface ISchemaReader
 /// <summary>
 /// Container for database schema metadata read from the database.
 /// </summary>
+/// <param name="ForeignKeys">Foreign-key constraints discovered from the
+/// database catalog. Required so the foreign-key relationship strategy can
+/// build single-link/multi-link entries (including self-references); leaving
+/// it empty falls back to name-based inference, which cannot detect self-FKs.</param>
 public sealed record SchemaData(
     IDictionary<ColumnRef, List<ColumnConstraintDto>> ColumnConstraints,
     ColumnDto[] RawColumns,
-    List<IDbTable> Tables
-);
+    List<IDbTable> Tables,
+    IReadOnlyList<DbForeignKey> ForeignKeys
+)
+{
+    public SchemaData(
+        IDictionary<ColumnRef, List<ColumnConstraintDto>> columnConstraints,
+        ColumnDto[] rawColumns,
+        List<IDbTable> tables)
+        : this(columnConstraints, rawColumns, tables, Array.Empty<DbForeignKey>())
+    {
+    }
+}

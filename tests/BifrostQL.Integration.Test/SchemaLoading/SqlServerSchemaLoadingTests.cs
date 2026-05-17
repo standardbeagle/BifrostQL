@@ -143,8 +143,8 @@ CREATE TABLE NullabilityTest (
     OptionalDecimal DECIMAL(10,2) NULL
 );
 
--- Schema-qualified tables (dbo vs custom schema). CREATE SCHEMA must be
--- the first statement in its batch, so the GO precedes it.
+-- Schema-qualified tables. A batch separator precedes CREATE SCHEMA
+-- because it must be the first statement in its batch.
 GO
 
 CREATE SCHEMA TestSchema;
@@ -156,7 +156,12 @@ CREATE TABLE TestSchema.CustomSchemaTable (
 );
 ";
 
-        foreach (var batch in ddl.Split("GO", StringSplitOptions.RemoveEmptyEntries))
+        // Split only on lines that contain just `GO` (case-insensitive),
+        // not on every substring "GO" — that would split inside identifiers
+        // like `Orders` or `OrderItems` and produce malformed batches.
+        var batches = System.Text.RegularExpressions.Regex.Split(
+            ddl, @"^\s*GO\s*$", System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        foreach (var batch in batches)
         {
             if (string.IsNullOrWhiteSpace(batch)) continue;
             var cmd = new SqlCommand(batch, conn);

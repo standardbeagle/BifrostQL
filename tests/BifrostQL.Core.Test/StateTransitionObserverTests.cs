@@ -26,6 +26,20 @@ public class StateTransitionObserverTests
         observer.UserContexts.Should().ContainSingle().Which.Should().BeSameAs(userContext);
     }
 
+    [Fact]
+    public async Task NotifyAsync_ThrowingObserverDoesNotAbortRemainingObservers()
+    {
+        var transition = new StateTransitionInfo("members", 42, "pending", "active", "user-1", "StateTransitioned");
+        var failing = new ThrowingObserver();
+        var trailing = new CapturingObserver();
+        var observers = new StateTransitionObservers(new IStateTransitionObserver[] { failing, trailing });
+
+        var act = async () => await observers.NotifyAsync(transition, new Dictionary<string, object?>());
+
+        await act.Should().NotThrowAsync();
+        trailing.Transitions.Should().ContainSingle().Which.Should().Be(transition);
+    }
+
     private sealed class CapturingObserver : IStateTransitionObserver
     {
         public List<StateTransitionInfo> Transitions { get; } = new();
@@ -39,5 +53,13 @@ public class StateTransitionObserverTests
             UserContexts.Add(userContext);
             return ValueTask.CompletedTask;
         }
+    }
+
+    private sealed class ThrowingObserver : IStateTransitionObserver
+    {
+        public ValueTask OnTransitionAsync(
+            StateTransitionInfo transition,
+            IDictionary<string, object?> userContext)
+            => throw new InvalidOperationException("audit_log insert failed");
     }
 }

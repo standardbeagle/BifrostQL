@@ -1,5 +1,7 @@
 using BifrostQL.Core.Model;
 using FluentAssertions;
+using GraphQL;
+using GraphQL.SystemTextJson;
 using Microsoft.Data.SqlClient;
 using System.Text.Json;
 
@@ -148,6 +150,10 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         await cmd.ExecuteNonQueryAsync();
     }
 
+    // Top-level table queries return `<table>_paged { data: [...] total offset limit }`,
+    // so test selections wrap the column list in `data { ... }` and extractions
+    // hop through ["data"] before deserializing the row list.
+
     #region Basic Queries
 
     [SkippableFact]
@@ -156,10 +162,12 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var query = @"
             query {
                 products {
-                    productId
-                    name
-                    price
-                    stock
+                    data {
+                        productId
+                        name
+                        price
+                        stock
+                    }
                 }
             }
         ";
@@ -167,8 +175,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var result = await ExecuteQueryAsync(query);
 
         result.Errors.Should().BeNullOrEmpty();
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)result.Data!)["products"]));
+        var products = UnwrapPagedRows(result, "products");
 
         products.Should().HaveCount(5);
     }
@@ -179,9 +186,11 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var query = @"
             query {
                 products(filter: { productId: { _eq: 1 } }) {
-                    productId
-                    name
-                    price
+                    data {
+                        productId
+                        name
+                        price
+                    }
                 }
             }
         ";
@@ -189,8 +198,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var result = await ExecuteQueryAsync(query);
 
         result.Errors.Should().BeNullOrEmpty();
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)result.Data!)["products"]));
+        var products = UnwrapPagedRows(result, "products");
 
         products.Should().HaveCount(1);
         products![0]["name"].ToString().Should().Be("Laptop");
@@ -206,8 +214,10 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var query = @"
             query {
                 products(filter: { price: { _lt: 50 } }) {
-                    name
-                    price
+                    data {
+                        name
+                        price
+                    }
                 }
             }
         ";
@@ -215,8 +225,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var result = await ExecuteQueryAsync(query);
 
         result.Errors.Should().BeNullOrEmpty();
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)result.Data!)["products"]));
+        var products = UnwrapPagedRows(result, "products");
 
         products.Should().HaveCountGreaterThan(0);
         products!.All(p => decimal.Parse(p["price"].ToString()!) < 50).Should().BeTrue();
@@ -233,9 +242,11 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
                         { isActive: { _eq: true } }
                     ]
                 }) {
-                    name
-                    categoryId
-                    isActive
+                    data {
+                        name
+                        categoryId
+                        isActive
+                    }
                 }
             }
         ";
@@ -243,8 +254,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var result = await ExecuteQueryAsync(query);
 
         result.Errors.Should().BeNullOrEmpty();
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)result.Data!)["products"]));
+        var products = UnwrapPagedRows(result, "products");
 
         products.Should().HaveCountGreaterThan(0);
         products!.All(p => int.Parse(p["categoryId"].ToString()!) == 1).Should().BeTrue();
@@ -257,11 +267,15 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
     [SkippableFact]
     public async Task Query_SortByPrice_ShouldReturnSortedProducts()
     {
+        // `sort` is a list of `<table>SortEnum` values (e.g. `price_asc`),
+        // not an object literal — schema generator emits one enum per column.
         var query = @"
             query {
-                products(sort: { price: asc }) {
-                    name
-                    price
+                products(sort: [price_asc]) {
+                    data {
+                        name
+                        price
+                    }
                 }
             }
         ";
@@ -269,8 +283,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var result = await ExecuteQueryAsync(query);
 
         result.Errors.Should().BeNullOrEmpty();
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)result.Data!)["products"]));
+        var products = UnwrapPagedRows(result, "products");
 
         var prices = products!.Select(p => decimal.Parse(p["price"].ToString()!)).ToList();
         prices.Should().BeInAscendingOrder();
@@ -281,8 +294,10 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
     {
         var query = @"
             query {
-                products(sort: { name: desc }) {
-                    name
+                products(sort: [name_desc]) {
+                    data {
+                        name
+                    }
                 }
             }
         ";
@@ -290,8 +305,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var result = await ExecuteQueryAsync(query);
 
         result.Errors.Should().BeNullOrEmpty();
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)result.Data!)["products"]));
+        var products = UnwrapPagedRows(result, "products");
 
         var names = products!.Select(p => p["name"].ToString()!).ToList();
         names.Should().BeInDescendingOrder();
@@ -307,8 +321,10 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var query = @"
             query {
                 products(limit: 2) {
-                    productId
-                    name
+                    data {
+                        productId
+                        name
+                    }
                 }
             }
         ";
@@ -316,8 +332,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var result = await ExecuteQueryAsync(query);
 
         result.Errors.Should().BeNullOrEmpty();
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)result.Data!)["products"]));
+        var products = UnwrapPagedRows(result, "products");
 
         products.Should().HaveCount(2);
     }
@@ -327,9 +342,11 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
     {
         var query = @"
             query {
-                products(sort: { productId: asc }, offset: 2, limit: 2) {
-                    productId
-                    name
+                products(sort: [productId_asc], offset: 2, limit: 2) {
+                    data {
+                        productId
+                        name
+                    }
                 }
             }
         ";
@@ -337,8 +354,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var result = await ExecuteQueryAsync(query);
 
         result.Errors.Should().BeNullOrEmpty();
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)result.Data!)["products"]));
+        var products = UnwrapPagedRows(result, "products");
 
         products.Should().HaveCount(2);
         int.Parse(products![0]["productId"].ToString()!).Should().Be(3);
@@ -351,13 +367,17 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
     [SkippableFact]
     public async Task Query_ProductWithCategory_ShouldReturnJoinedData()
     {
+        // Single-link FK joins (forward FK) use the parent table's GraphQL
+        // name, which is the pluralized table name — `categories`, not `category`.
         var query = @"
             query {
                 products(filter: { productId: { _eq: 1 } }) {
-                    name
-                    category {
+                    data {
                         name
-                        description
+                        categories {
+                            name
+                            description
+                        }
                     }
                 }
             }
@@ -366,12 +386,11 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var result = await ExecuteQueryAsync(query);
 
         result.Errors.Should().BeNullOrEmpty();
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)result.Data!)["products"]));
+        var products = UnwrapPagedRows(result, "products");
 
         products.Should().HaveCount(1);
         var category = JsonSerializer.Deserialize<Dictionary<string, object>>(
-            JsonSerializer.Serialize(products![0]["category"]));
+            JsonSerializer.Serialize(products![0]["categories"]));
         category!["name"].ToString().Should().Be("Electronics");
     }
 
@@ -381,11 +400,13 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var query = @"
             query {
                 orders(filter: { orderId: { _eq: 1 } }) {
-                    orderDate
-                    totalAmount
-                    customer {
-                        name
-                        email
+                    data {
+                        orderDate
+                        totalAmount
+                        customers {
+                            name
+                            email
+                        }
                     }
                 }
             }
@@ -394,11 +415,10 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var result = await ExecuteQueryAsync(query);
 
         result.Errors.Should().BeNullOrEmpty();
-        var orders = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)result.Data!)["orders"]));
+        var orders = UnwrapPagedRows(result, "orders");
 
         var customer = JsonSerializer.Deserialize<Dictionary<string, object>>(
-            JsonSerializer.Serialize(orders![0]["customer"]));
+            JsonSerializer.Serialize(orders![0]["customers"]));
         customer!["name"].ToString().Should().Be("John Doe");
     }
 
@@ -412,10 +432,12 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var query = @"
             query {
                 categories(filter: { categoryId: { _eq: 1 } }) {
-                    name
-                    products {
+                    data {
                         name
-                        price
+                        products {
+                            name
+                            price
+                        }
                     }
                 }
             }
@@ -424,9 +446,10 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var result = await ExecuteQueryAsync(query);
 
         result.Errors.Should().BeNullOrEmpty();
-        var categories = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)result.Data!)["categories"]));
+        var categories = UnwrapPagedRows(result, "categories");
 
+        // Reverse-FK collection joins (MultiLinks) return a flat `[Type]` list,
+        // not a paged wrapper, so no extra hop is needed.
         var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
             JsonSerializer.Serialize(categories![0]["products"]));
         products.Should().HaveCountGreaterThan(0);
@@ -438,12 +461,14 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var query = @"
             query {
                 orders(filter: { orderId: { _eq: 1 } }) {
-                    orderDate
-                    orderItems {
-                        quantity
-                        unitPrice
-                        product {
-                            name
+                    data {
+                        orderDate
+                        orderItems {
+                            quantity
+                            unitPrice
+                            products {
+                                name
+                            }
                         }
                     }
                 }
@@ -453,8 +478,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var result = await ExecuteQueryAsync(query);
 
         result.Errors.Should().BeNullOrEmpty();
-        var orders = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)result.Data!)["orders"]));
+        var orders = UnwrapPagedRows(result, "orders");
 
         var items = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
             JsonSerializer.Serialize(orders![0]["orderItems"]));
@@ -483,22 +507,23 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var result = await ExecuteQueryAsync(mutation);
 
         result.Errors.Should().BeNullOrEmpty();
-        var insertedId = int.Parse(result.Data!.ToString()!);
+        var insertedId = GetMutationScalar(result, "products");
         insertedId.Should().BeGreaterThan(0);
 
         // Verify product was created
         var verifyQuery = $@"
             query {{
                 products(filter: {{ productId: {{ _eq: {insertedId} }} }}) {{
-                    name
-                    price
+                    data {{
+                        name
+                        price
+                    }}
                 }}
             }}
         ";
 
         var verifyResult = await ExecuteQueryAsync(verifyQuery);
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)verifyResult.Data!)["products"]));
+        var products = UnwrapPagedRows(verifyResult, "products");
 
         products!.Should().HaveCount(1);
         products[0]["name"].ToString().Should().Be("New Product");
@@ -511,12 +536,18 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
     [SkippableFact]
     public async Task Mutation_UpdateProduct_ShouldModifyRecord()
     {
+        // Update input type repeats every non-null column as required (schema
+        // generator does not distinguish update from insert nullability), so
+        // tests must resupply name/categoryId/isActive even when only price changes.
         var mutation = @"
             mutation {
                 products(update: {
                     productId: 1,
+                    categoryId: 1,
+                    name: ""Laptop"",
                     price: 899.99,
-                    stock: 15
+                    stock: 15,
+                    isActive: true
                 })
             }
         ";
@@ -529,15 +560,16 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var verifyQuery = @"
             query {
                 products(filter: { productId: { _eq: 1 } }) {
-                    price
-                    stock
+                    data {
+                        price
+                        stock
+                    }
                 }
             }
         ";
 
         var verifyResult = await ExecuteQueryAsync(verifyQuery);
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)verifyResult.Data!)["products"]));
+        var products = UnwrapPagedRows(verifyResult, "products");
 
         decimal.Parse(products![0]["price"].ToString()!).Should().Be(899.99m);
         int.Parse(products[0]["stock"].ToString()!).Should().Be(15);
@@ -550,6 +582,8 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
     [SkippableFact]
     public async Task Mutation_DeleteProduct_ShouldRemoveRecord()
     {
+        // Product 5 ("Keyboard") is seeded but has no OrderItem reference,
+        // so it can be deleted without violating the FK constraint.
         var mutation = @"
             mutation {
                 products(delete: {
@@ -566,14 +600,15 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var verifyQuery = @"
             query {
                 products(filter: { productId: { _eq: 5 } }) {
-                    productId
+                    data {
+                        productId
+                    }
                 }
             }
         ";
 
         var verifyResult = await ExecuteQueryAsync(verifyQuery);
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)verifyResult.Data!)["products"]));
+        var products = UnwrapPagedRows(verifyResult, "products");
 
         products.Should().BeEmpty();
     }
@@ -594,21 +629,23 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
                             { status: { _in: [""Delivered"", ""Shipped""] } }
                         ]
                     },
-                    sort: { orderDate: desc }
+                    sort: [orderDate_desc]
                 ) {
-                    orderDate
-                    totalAmount
-                    status
-                    customer {
-                        name
-                        country
-                    }
-                    orderItems {
-                        quantity
-                        product {
+                    data {
+                        orderDate
+                        totalAmount
+                        status
+                        customers {
                             name
-                            category {
+                            country
+                        }
+                        orderItems {
+                            quantity
+                            products {
                                 name
+                                categories {
+                                    name
+                                }
                             }
                         }
                     }
@@ -619,12 +656,35 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var result = await ExecuteQueryAsync(query);
 
         result.Errors.Should().BeNullOrEmpty();
-        var orders = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)result.Data!)["orders"]));
+        var orders = UnwrapPagedRows(result, "orders");
 
         orders.Should().HaveCountGreaterThan(0);
         orders!.All(o => decimal.Parse(o["totalAmount"].ToString()!) > 20).Should().BeTrue();
     }
 
     #endregion
+
+    // GraphQL .NET returns ExecutionResult.Data as a RootExecutionNode whose
+    // JSON shape can only be produced by GraphQLSerializer (System.Text.Json
+    // cannot walk the node tree directly). The serializer writes the standard
+    // `{ "data": { ... } }` envelope, which we then deserialize and navigate.
+    private static List<Dictionary<string, object>>? UnwrapPagedRows(ExecutionResult result, string field)
+    {
+        var dataElement = SerializeDataElement(result);
+        var paged = dataElement.GetProperty(field);
+        return JsonSerializer.Deserialize<List<Dictionary<string, object>>>(paged.GetProperty("data").GetRawText());
+    }
+
+    private static int GetMutationScalar(ExecutionResult result, string field)
+    {
+        var dataElement = SerializeDataElement(result);
+        return dataElement.GetProperty(field).GetInt32();
+    }
+
+    private static JsonElement SerializeDataElement(ExecutionResult result)
+    {
+        var json = new GraphQLSerializer().Serialize(result);
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.GetProperty("data").Clone();
+    }
 }

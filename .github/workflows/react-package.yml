@@ -12,6 +12,11 @@ on:
       - 'packages/@bifrostql/react/**'
       - '.github/workflows/react-package.yml'
 
+# Opt JavaScript-based actions into Node.js 24 ahead of the 2026-09-16
+# Node.js 20 sunset.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   quality:
     name: Lint, Typecheck & Test

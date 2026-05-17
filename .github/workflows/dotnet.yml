@@ -9,6 +9,12 @@ on:
   pull_request:
     branches: [ "main" ]
 
+# Opt every JavaScript-based action into the Node.js 24 runtime ahead of
+# the 2026-09-16 Node.js 20 sunset, suppressing the runner deprecation
+# annotation. Remove once the runner default flips to Node 24.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   build:
 

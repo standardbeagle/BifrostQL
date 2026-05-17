@@ -19,14 +19,13 @@ public sealed class DbTableInsertResolverTests
     #region RETURNING Clause Support Tests
 
     [Fact]
-    public void PostgresDialect_HasReturningIdentityClause()
+    public void PostgresDialect_ReturningIdentityClause_IsNull_UsesLastvalFallback()
     {
-        // Arrange & Act
-        var clause = PostgresDialect.Instance.ReturningIdentityClause;
-
-        // Assert
-        clause.Should().NotBeNull();
-        clause.Should().Be(" RETURNING id AS ID");
+        // PostgresDialect opts out of the appended RETURNING contract
+        // because `RETURNING id AS ID` hardcodes a column name that
+        // does not exist on tables using the `<table>_id` convention.
+        PostgresDialect.Instance.ReturningIdentityClause.Should().BeNull();
+        PostgresDialect.Instance.LastInsertedIdentity.Should().Be("lastval()");
     }
 
     [Fact]
@@ -66,20 +65,18 @@ public sealed class DbTableInsertResolverTests
     #region Insert SQL Generation Tests
 
     [Fact]
-    public void BuildInsertSql_WithPostgres_ReturningClause_Appended()
+    public void BuildInsertSql_WithPostgres_FallsBackToLastvalSelect()
     {
-        // Arrange
+        // Postgres uses the universal fallback shape because RETURNING id
+        // hardcoded the wrong column name for most schemas.
         var dialect = PostgresDialect.Instance;
         var tableRef = dialect.TableReference("public", "Users");
         var columns = "\"Name\", \"Email\"";
         var values = "@Name, @Email";
-        var returning = dialect.ReturningIdentityClause;
 
-        // Act
-        var sql = $"INSERT INTO {tableRef}({columns}) VALUES({values}){returning};";
+        var sql = $"INSERT INTO {tableRef}({columns}) VALUES({values});SELECT {dialect.LastInsertedIdentity} ID;";
 
-        // Assert
-        sql.Should().Be("INSERT INTO \"public\".\"Users\"(\"Name\", \"Email\") VALUES(@Name, @Email) RETURNING id AS ID;");
+        sql.Should().Be("INSERT INTO \"public\".\"Users\"(\"Name\", \"Email\") VALUES(@Name, @Email);SELECT lastval() ID;");
     }
 
     [Fact]
@@ -185,7 +182,6 @@ public sealed class DbTableInsertResolverTests
     #region Cross-Dialect Insert Tests
 
     [Theory]
-    [InlineData(typeof(PostgresDialect), " RETURNING id AS ID")]
     [InlineData(typeof(SqliteDialect), " RETURNING rowid AS ID")]
     public void DialectsWithAppendableReturning_SupportReturningIdentityClause(Type dialectType, string expectedClause)
     {

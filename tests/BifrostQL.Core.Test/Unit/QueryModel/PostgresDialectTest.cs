@@ -675,28 +675,26 @@ public sealed class PostgresDialectTest
     #region ReturningIdentityClause Tests
 
     [Fact]
-    public void ReturningIdentityClause_ReturnsReturningId()
+    public void ReturningIdentityClause_IsNull_UsesLastvalFallback()
     {
-        // Act
-        var result = _sut.ReturningIdentityClause;
-
-        // Assert
-        result.Should().Be(" RETURNING id AS ID");
+        // PostgresDialect intentionally returns null for the appended
+        // RETURNING clause because the literal `RETURNING id AS ID`
+        // assumes every table uses an `id` column — wrong for the common
+        // `<table>_id` convention. The resolver falls back to
+        // `SELECT lastval() ID`.
+        _sut.ReturningIdentityClause.Should().BeNull();
+        _sut.LastInsertedIdentity.Should().Be("lastval()");
     }
 
     [Fact]
-    public void BuildingInsertQuery_WithReturning_GeneratesValidSql()
+    public void BuildingInsertQuery_UsesLastvalFallback()
     {
-        // Arrange
         var dialect = PostgresDialect.Instance;
         var table = dialect.TableReference("public", "Users");
-        var returning = dialect.ReturningIdentityClause;
 
-        // Act
-        var sql = $"INSERT INTO {table} (\"Name\") VALUES (@Name){returning};";
+        var sql = $"INSERT INTO {table} (\"Name\") VALUES (@Name);SELECT {dialect.LastInsertedIdentity} ID;";
 
-        // Assert
-        sql.Should().Be("INSERT INTO \"public\".\"Users\" (\"Name\") VALUES (@Name) RETURNING id AS ID;");
+        sql.Should().Be("INSERT INTO \"public\".\"Users\" (\"Name\") VALUES (@Name);SELECT lastval() ID;");
     }
 
     [Fact]
@@ -712,11 +710,14 @@ public sealed class PostgresDialectTest
     }
 
     [Fact]
-    public void UsesReturning_NotLastval_ForInsertIdentity()
+    public void UsesLastval_ForInsertIdentity_BecauseReturningIdHardcodesWrongColumn()
     {
-        // Verify PostgreSQL supports RETURNING clause
-        _sut.ReturningIdentityClause.Should().NotBeNull();
-        _sut.ReturningIdentityClause.Should().Contain("RETURNING");
+        // PostgreSQL technically supports RETURNING, but the dialect cannot
+        // emit a static `RETURNING id AS ID` because real tables use
+        // `<table>_id` primary keys, not literal `id`. So the dialect uses
+        // the universal `SELECT lastval()` fallback.
+        _sut.ReturningIdentityClause.Should().BeNull();
+        _sut.LastInsertedIdentity.Should().Be("lastval()");
     }
 
     #endregion

@@ -75,14 +75,21 @@ public sealed class PostgresListDatabasesTests
         }
         finally
         {
+            // Npgsql 9 implicitly pipelines multi-statement CommandText,
+            // and DROP DATABASE is rejected inside a pipeline (25001).
+            // Split into two separate round-trips so DROP runs in its own.
             await using var conn = new NpgsqlConnection(ConnString);
             await conn.OpenAsync();
-            var cmd = conn.CreateCommand();
-            cmd.CommandText = $"""
-                SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{testDbName}';
-                DROP DATABASE IF EXISTS "{testDbName}";
-                """;
-            await cmd.ExecuteNonQueryAsync();
+            await using (var terminateCmd = conn.CreateCommand())
+            {
+                terminateCmd.CommandText = $"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{testDbName}'";
+                await terminateCmd.ExecuteNonQueryAsync();
+            }
+            await using (var dropCmd = conn.CreateCommand())
+            {
+                dropCmd.CommandText = $"DROP DATABASE IF EXISTS \"{testDbName}\"";
+                await dropCmd.ExecuteNonQueryAsync();
+            }
         }
     }
 }

@@ -12,7 +12,12 @@ public sealed class PostgresDialect : StandardConcatDialectBase
     /// <summary>Shared singleton instance.</summary>
     public static readonly PostgresDialect Instance = new();
 
-    public PostgresDialect() : base('"', "lastval()", " RETURNING id AS ID")
+    // `RETURNING id AS ID` assumes every table's identity column is literally
+    // called `id`, which is wrong for the common `<table>_id` Postgres
+    // convention. Drop the appended RETURNING clause and let the resolver
+    // fall back to `SELECT lastval() ID`, which returns the sequence value
+    // produced by the most recent INSERT in this session.
+    public PostgresDialect() : base('"', "lastval()", null)
     {
     }
 }

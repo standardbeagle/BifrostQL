@@ -700,17 +700,15 @@ public sealed class PostgresDialectTest
     }
 
     [Fact]
-    public void ReturningIdentityClause_SqlServerDialect_ReturnsOutputClause()
+    public void ReturningIdentityClause_SqlServerDialect_IsNull_UsesScopeIdentityFallback()
     {
-        // SQL Server uses OUTPUT clause for returning inserted identity
+        // SQL Server's OUTPUT clause cannot sit where the resolver appends
+        // ReturningIdentityClause (after VALUES), so SqlServerDialect returns
+        // null and the resolver falls back to SCOPE_IDENTITY().
         ISqlDialect dialect = SqlServerDialect.Instance;
 
-        // Act
-        var result = dialect.ReturningIdentityClause;
-
-        // Assert
-        result.Should().NotBeNull();
-        result.Should().Be(" OUTPUT INSERTED.id AS ID");
+        dialect.ReturningIdentityClause.Should().BeNull();
+        dialect.LastInsertedIdentity.Should().Be("SCOPE_IDENTITY()");
     }
 
     [Fact]

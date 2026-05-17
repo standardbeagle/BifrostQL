@@ -143,7 +143,10 @@ CREATE TABLE NullabilityTest (
     OptionalDecimal DECIMAL(10,2) NULL
 );
 
--- Schema-qualified tables (dbo vs custom schema)
+-- Schema-qualified tables (dbo vs custom schema). CREATE SCHEMA must be
+-- the first statement in its batch, so the GO precedes it.
+GO
+
 CREATE SCHEMA TestSchema;
 GO
 

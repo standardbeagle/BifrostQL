@@ -10,7 +10,12 @@ public sealed class SqlServerDialect : SqlDialectBase
     /// <summary>Shared singleton instance.</summary>
     public static readonly SqlServerDialect Instance = new();
 
-    public SqlServerDialect() : base("[", "]", "+", "SCOPE_IDENTITY()", " OUTPUT INSERTED.id AS ID")
+    // SQL Server's OUTPUT clause must sit between the column list and the
+    // VALUES clause, but the resolver appends ReturningIdentityClause after
+    // VALUES (Postgres-style). Until the resolver supports per-dialect
+    // placement, leave ReturningIdentityClause null so the resolver falls
+    // back to the universal `INSERT ...; SELECT SCOPE_IDENTITY()` form.
+    public SqlServerDialect() : base("[", "]", "+", "SCOPE_IDENTITY()", null)
     {
     }
 

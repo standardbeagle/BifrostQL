@@ -41,14 +41,13 @@ public sealed class DbTableInsertResolverTests
     }
 
     [Fact]
-    public void SqlServerDialect_HasReturningIdentityClause_Output()
+    public void SqlServerDialect_ReturningIdentityClause_IsNull_UsesScopeIdentityFallback()
     {
-        // Arrange & Act
-        var clause = SqlServerDialect.Instance.ReturningIdentityClause;
-
-        // Assert
-        clause.Should().NotBeNull();
-        clause.Should().Be(" OUTPUT INSERTED.id AS ID");
+        // SQL Server's OUTPUT clause sits before VALUES, but the resolver
+        // appends ReturningIdentityClause after VALUES (Postgres-style),
+        // so SqlServerDialect opts out and uses the SCOPE_IDENTITY fallback.
+        SqlServerDialect.Instance.ReturningIdentityClause.Should().BeNull();
+        SqlServerDialect.Instance.LastInsertedIdentity.Should().Be("SCOPE_IDENTITY()");
     }
 
     [Fact]
@@ -84,21 +83,18 @@ public sealed class DbTableInsertResolverTests
     }
 
     [Fact]
-    public void BuildInsertSql_WithSqlServer_OutputClause_Appended()
+    public void BuildInsertSql_WithSqlServer_FallsBackToScopeIdentitySelect()
     {
-        // Arrange
+        // SQL Server uses the universal fallback shape because its OUTPUT
+        // clause cannot live where the resolver appends ReturningIdentityClause.
         var dialect = SqlServerDialect.Instance;
         var tableRef = dialect.TableReference("dbo", "Users");
         var columns = "[Name], [Email]";
         var values = "@Name, @Email";
-        var returning = dialect.ReturningIdentityClause;
 
-        // Act
-        // OUTPUT clause goes between INSERT and VALUES in SQL Server
-        var sql = $"INSERT INTO {tableRef}{returning} ({columns}) VALUES({values});";
+        var sql = $"INSERT INTO {tableRef}({columns}) VALUES({values});SELECT {dialect.LastInsertedIdentity} ID;";
 
-        // Assert
-        sql.Should().Be("INSERT INTO [dbo].[Users] OUTPUT INSERTED.id AS ID ([Name], [Email]) VALUES(@Name, @Email);");
+        sql.Should().Be("INSERT INTO [dbo].[Users]([Name], [Email]) VALUES(@Name, @Email);SELECT SCOPE_IDENTITY() ID;");
     }
 
     [Fact]
@@ -191,8 +187,7 @@ public sealed class DbTableInsertResolverTests
     [Theory]
     [InlineData(typeof(PostgresDialect), " RETURNING id AS ID")]
     [InlineData(typeof(SqliteDialect), " RETURNING rowid AS ID")]
-    [InlineData(typeof(SqlServerDialect), " OUTPUT INSERTED.id AS ID")]
-    public void AllDialects_ExceptMySql_SupportReturningIdentityClause(Type dialectType, string expectedClause)
+    public void DialectsWithAppendableReturning_SupportReturningIdentityClause(Type dialectType, string expectedClause)
     {
         // Arrange
         var dialect = (ISqlDialect)Activator.CreateInstance(dialectType, true)!;

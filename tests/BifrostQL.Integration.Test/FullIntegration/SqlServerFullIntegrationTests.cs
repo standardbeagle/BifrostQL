@@ -237,7 +237,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         var query = @"
             query {
                 products(filter: {
-                    _and: [
+                    and: [
                         { categoryId: { _eq: 1 } },
                         { isActive: { _eq: true } }
                     ]
@@ -624,7 +624,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
             query {
                 orders(
                     filter: {
-                        _and: [
+                        and: [
                             { totalAmount: { _gt: 20 } },
                             { status: { _in: [""Delivered"", ""Shipped""] } }
                         ]

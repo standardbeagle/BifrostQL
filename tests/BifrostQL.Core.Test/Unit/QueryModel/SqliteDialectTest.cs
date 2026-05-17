@@ -775,17 +775,15 @@ public sealed class SqliteDialectTest
     }
 
     [Fact]
-    public void ReturningIdentityClause_SqlServerDialect_ReturnsOutputClause()
+    public void ReturningIdentityClause_SqlServerDialect_IsNull_UsesScopeIdentityFallback()
     {
-        // SQL Server now supports OUTPUT clause for returning inserted identity
+        // SqlServerDialect opts out of the append-after-VALUES contract
+        // because SQL Server's OUTPUT must sit before VALUES; the resolver
+        // then uses the universal `SELECT SCOPE_IDENTITY()` fallback.
         ISqlDialect dialect = SqlServerDialect.Instance;
 
-        // Act
-        var result = dialect.ReturningIdentityClause;
-
-        // Assert
-        result.Should().NotBeNull();
-        result.Should().Be(" OUTPUT INSERTED.id AS ID");
+        dialect.ReturningIdentityClause.Should().BeNull();
+        dialect.LastInsertedIdentity.Should().Be("SCOPE_IDENTITY()");
     }
 
     [Fact]

@@ -527,37 +527,19 @@ public sealed class SqlServerDialectTest
     #region ReturningIdentityClause (OUTPUT) Tests
 
     [Fact]
-    public void ReturningIdentityClause_ReturnsOutputInsertedId()
+    public void ReturningIdentityClause_IsNull_BecauseResolverAppendsPositionIsWrongForSqlServer()
     {
-        // Act
-        var result = _sut.ReturningIdentityClause;
-
-        // Assert
-        result.Should().Be(" OUTPUT INSERTED.id AS ID");
+        // SQL Server's OUTPUT clause must sit between the column list and
+        // VALUES, but the resolver appends ReturningIdentityClause after
+        // VALUES (Postgres-style). Returning null forces the resolver to
+        // fall back to `INSERT ...; SELECT SCOPE_IDENTITY()` which is valid.
+        _sut.ReturningIdentityClause.Should().BeNull();
     }
 
     [Fact]
-    public void BuildingInsertQuery_WithOutput_GeneratesValidSql()
+    public void LastInsertedIdentity_IsScopeIdentity_ForFallbackInsert()
     {
-        // Arrange
-        var dialect = SqlServerDialect.Instance;
-        var table = dialect.TableReference("dbo", "Users");
-        var returning = dialect.ReturningIdentityClause;
-
-        // Act
-        var sql = $"INSERT INTO {table} ([Name]) VALUES (@Name){returning};";
-
-        // Assert
-        sql.Should().Be("INSERT INTO [dbo].[Users] ([Name]) VALUES (@Name) OUTPUT INSERTED.id AS ID;");
-    }
-
-    [Fact]
-    public void UsesOutputClause_NotReturning_ForInsertIdentity()
-    {
-        // Verify SQL Server uses OUTPUT clause, not RETURNING
-        _sut.ReturningIdentityClause.Should().NotBeNull();
-        _sut.ReturningIdentityClause.Should().Contain("OUTPUT");
-        _sut.ReturningIdentityClause.Should().Contain("INSERTED");
+        _sut.LastInsertedIdentity.Should().Be("SCOPE_IDENTITY()");
     }
 
     #endregion

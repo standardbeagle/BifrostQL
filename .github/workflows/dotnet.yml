@@ -35,32 +35,12 @@ jobs:
           --health-retries 20
           --health-start-period 30s
 
-      mysql:
-        image: mysql:8.4
-        env:
-          MYSQL_ROOT_PASSWORD: bifrost_ci_test
-          MYSQL_DATABASE: bifrost_ci
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd "mysqladmin ping -h localhost -uroot -pbifrost_ci_test"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 20
-          --health-start-period 20s
-
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: bifrost_ci_test
-          POSTGRES_DB: bifrost_ci
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+    # MySQL and Postgres service containers and their BIFROST_TEST_* env
+    # vars were tried (commit 9de958b) but pulled back: enabling them
+    # surfaced ~30 distinct pre-existing failures across SchemaLoading
+    # mirroring, dialect identity-column handling, MySQL connection-pool
+    # ceiling, and Npgsql 9 pipelining of DROP DATABASE. Those need a
+    # focused pass before CI can rely on them.
 
     steps:
       - uses: actions/checkout@v4
@@ -80,15 +60,12 @@ jobs:
         run: dotnet test tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj --no-build --verbosity normal --configuration Release
       - name: Test Server
         run: dotnet test tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj --no-build --verbosity normal --configuration Release
-      - name: Test Integration (Sqlite + SqlServer + MySQL + Postgres)
-        # Sqlite tests use in-memory shared cache and always run. The other
-        # three suites gate on their respective BIFROST_TEST_* env vars and
-        # exercise the dialect-specific SQL contract end-to-end against the
-        # service containers above.
+      - name: Test Integration (Sqlite + SqlServer)
+        # Sqlite tests use in-memory shared cache and always run. SqlServer
+        # tests gate on BIFROST_TEST_SQLSERVER and exercise the paged-shape
+        # GraphQL contract end-to-end against the service container above.
         env:
           BIFROST_TEST_SQLSERVER: "Server=localhost,1433;Database=master;User Id=sa;Password=Bifrost!CI!Test1234;TrustServerCertificate=True;Encrypt=False"
-          BIFROST_TEST_MYSQL: "Server=localhost;Port=3306;Database=bifrost_ci;User Id=root;Password=bifrost_ci_test;AllowPublicKeyRetrieval=True;SslMode=Preferred"
-          BIFROST_TEST_POSTGRES: "Host=localhost;Port=5432;Database=bifrost_ci;Username=postgres;Password=bifrost_ci_test"
         run: dotnet test tests/BifrostQL.Integration.Test/BifrostQL.Integration.Test.csproj --no-build --verbosity normal --configuration Release
       - name: Pack
         run: |

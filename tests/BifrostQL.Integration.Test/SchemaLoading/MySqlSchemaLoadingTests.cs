@@ -147,13 +147,13 @@ public class MySqlSchemaLoadingTests : IAsyncLifetime
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public void LoadedModel_ShouldNotBeNull()
     {
         _loadedModel.Should().NotBeNull();
     }
 
-    [Fact]
+    [SkippableFact]
     public void LoadedModel_ShouldContainAllTables()
     {
         var tableNames = _loadedModel!.Tables.Select(t => t.DbName).ToList();
@@ -167,7 +167,7 @@ public class MySqlSchemaLoadingTests : IAsyncLifetime
         tableNames.Should().Contain("NullabilityTest");
     }
 
-    [Fact]
+    [SkippableFact]
     public void DataTypesTable_ShouldHaveCorrectColumns()
     {
         var table = _loadedModel!.Tables.First(t => t.DbName == "DataTypes");
@@ -186,7 +186,7 @@ public class MySqlSchemaLoadingTests : IAsyncLifetime
         decimalCol.EffectiveDataType.Should().Be("decimal");
     }
 
-    [Fact]
+    [SkippableFact]
     public void CompositePKTable_ShouldHaveCompositePrimaryKey()
     {
         var table = _loadedModel!.Tables.First(t => t.DbName == "CompositePK");
@@ -197,7 +197,7 @@ public class MySqlSchemaLoadingTests : IAsyncLifetime
         pkColumns.Select(c => c.ColumnName).Should().Contain("UserId");
     }
 
-    [Fact]
+    [SkippableFact]
     public void OrderItemsTable_ShouldHaveForeignKeyToOrders()
     {
         var orderItemsTable = _loadedModel!.Tables.First(t => t.DbName == "OrderItems");
@@ -207,7 +207,7 @@ public class MySqlSchemaLoadingTests : IAsyncLifetime
         orderItemsTable.SingleLinks.Should().ContainKey("order");
     }
 
-    [Fact]
+    [SkippableFact]
     public void SelfReferencingTable_ShouldHaveSelfJoin()
     {
         var table = _loadedModel!.Tables.First(t => t.DbName == "SelfReferencing");
@@ -218,7 +218,7 @@ public class MySqlSchemaLoadingTests : IAsyncLifetime
         table.SingleLinks.Should().ContainKey("parentNode");
     }
 
-    [Fact]
+    [SkippableFact]
     public void IdentityColumns_ShouldBeMarkedCorrectly()
     {
         var dataTypesTable = _loadedModel!.Tables.First(t => t.DbName == "DataTypes");

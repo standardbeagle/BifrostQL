@@ -17,8 +17,14 @@ public class SqlServerFullIntegrationTests : FullIntegrationTestBase, IAsyncLife
 
     public async Task InitializeAsync()
     {
-        var masterConnString = Environment.GetEnvironmentVariable("BIFROST_TEST_SQLSERVER")
-            ?? "Server=localhost;Database=master;Trusted_Connection=True;TrustServerCertificate=True";
+        var masterConnString = Environment.GetEnvironmentVariable("BIFROST_TEST_SQLSERVER");
+        if (masterConnString == null)
+        {
+            // Skip the entire SQL Server suite when no server is available
+            // (mirrors the MySQL/Postgres conventions for env-gated suites).
+            Skip.If(true, "BIFROST_TEST_SQLSERVER environment variable not set");
+            return;
+        }
 
         _testDbName = $"BifrostFullInt_{Guid.NewGuid():N}";
 
@@ -144,7 +150,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
 
     #region Basic Queries
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_AllProducts_ShouldReturnAllProducts()
     {
         var query = @"
@@ -167,7 +173,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         products.Should().HaveCount(5);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_SingleProduct_ShouldReturnCorrectProduct()
     {
         var query = @"
@@ -194,7 +200,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
 
     #region Filtering
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByPrice_ShouldReturnMatchingProducts()
     {
         var query = @"
@@ -216,7 +222,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         products!.All(p => decimal.Parse(p["price"].ToString()!) < 50).Should().BeTrue();
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByMultipleConditions_ShouldReturnMatchingProducts()
     {
         var query = @"
@@ -248,7 +254,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
 
     #region Sorting
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_SortByPrice_ShouldReturnSortedProducts()
     {
         var query = @"
@@ -270,7 +276,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         prices.Should().BeInAscendingOrder();
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_SortByNameDescending_ShouldReturnSortedProducts()
     {
         var query = @"
@@ -295,7 +301,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
 
     #region Pagination
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_WithLimit_ShouldReturnLimitedResults()
     {
         var query = @"
@@ -316,7 +322,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         products.Should().HaveCount(2);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_WithOffsetAndLimit_ShouldReturnCorrectPage()
     {
         var query = @"
@@ -342,7 +348,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
 
     #region Joins - Single Links
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_ProductWithCategory_ShouldReturnJoinedData()
     {
         var query = @"
@@ -369,7 +375,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         category!["name"].ToString().Should().Be("Electronics");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_OrderWithCustomer_ShouldReturnJoinedData()
     {
         var query = @"
@@ -400,7 +406,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
 
     #region Joins - Multi Links
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_CategoryWithProducts_ShouldReturnOneToMany()
     {
         var query = @"
@@ -426,7 +432,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         products.Should().HaveCountGreaterThan(0);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_OrderWithItems_ShouldReturnNestedData()
     {
         var query = @"
@@ -459,7 +465,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
 
     #region Mutations - Insert
 
-    [Fact]
+    [SkippableFact]
     public async Task Mutation_InsertProduct_ShouldCreateNewRecord()
     {
         var mutation = @"
@@ -502,7 +508,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
 
     #region Mutations - Update
 
-    [Fact]
+    [SkippableFact]
     public async Task Mutation_UpdateProduct_ShouldModifyRecord()
     {
         var mutation = @"
@@ -541,7 +547,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
 
     #region Mutations - Delete
 
-    [Fact]
+    [SkippableFact]
     public async Task Mutation_DeleteProduct_ShouldRemoveRecord()
     {
         var mutation = @"
@@ -576,7 +582,7 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
 
     #region Complex Queries
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_ComplexFilterSortJoin_ShouldReturnCorrectData()
     {
         var query = @"

@@ -167,13 +167,13 @@ CREATE TABLE test_schema.custom_schema_table (
         await cmd.ExecuteNonQueryAsync();
     }
 
-    [Fact]
+    [SkippableFact]
     public void LoadedModel_ShouldNotBeNull()
     {
         _loadedModel.Should().NotBeNull();
     }
 
-    [Fact]
+    [SkippableFact]
     public void LoadedModel_ShouldContainAllTables()
     {
         var tableNames = _loadedModel!.Tables.Select(t => t.DbName.ToLowerInvariant()).ToList();
@@ -188,7 +188,7 @@ CREATE TABLE test_schema.custom_schema_table (
         tableNames.Should().Contain("custom_schema_table");
     }
 
-    [Fact]
+    [SkippableFact]
     public void DataTypesTable_ShouldHaveCorrectColumns()
     {
         var table = _loadedModel!.Tables.First(t => t.DbName.ToLowerInvariant() == "datatypes");
@@ -207,7 +207,7 @@ CREATE TABLE test_schema.custom_schema_table (
         decimalCol.EffectiveDataType.Should().Be("numeric");
     }
 
-    [Fact]
+    [SkippableFact]
     public void CompositePKTable_ShouldHaveCompositePrimaryKey()
     {
         var table = _loadedModel!.Tables.First(t => t.DbName.ToLowerInvariant() == "composite_pk");
@@ -218,7 +218,7 @@ CREATE TABLE test_schema.custom_schema_table (
         pkColumns.Select(c => c.ColumnName).Should().Contain("user_id");
     }
 
-    [Fact]
+    [SkippableFact]
     public void OrderItemsTable_ShouldHaveForeignKeyToOrders()
     {
         var orderItemsTable = _loadedModel!.Tables.First(t => t.DbName.ToLowerInvariant() == "order_items");
@@ -228,7 +228,7 @@ CREATE TABLE test_schema.custom_schema_table (
         orderItemsTable.SingleLinks.Should().ContainKey("order");
     }
 
-    [Fact]
+    [SkippableFact]
     public void SelfReferencingTable_ShouldHaveSelfJoin()
     {
         var table = _loadedModel!.Tables.First(t => t.DbName.ToLowerInvariant() == "self_referencing");
@@ -239,7 +239,7 @@ CREATE TABLE test_schema.custom_schema_table (
         table.SingleLinks.Should().ContainKey("parentNode");
     }
 
-    [Fact]
+    [SkippableFact]
     public void IdentityColumns_ShouldBeMarkedCorrectly()
     {
         var dataTypesTable = _loadedModel!.Tables.First(t => t.DbName.ToLowerInvariant() == "datatypes");

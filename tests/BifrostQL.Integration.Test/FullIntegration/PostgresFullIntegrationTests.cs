@@ -192,7 +192,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
     // Schema Reading
     // =============================================================
 
-    [Fact]
+    [SkippableFact]
     public void Schema_ShouldLoadAllTables()
     {
         Model.Should().NotBeNull();
@@ -204,7 +204,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         tableNames.Should().Contain("orderitems");
     }
 
-    [Fact]
+    [SkippableFact]
     public void Schema_ShouldDetectColumns()
     {
         var productsTable = Model.Tables.First(t => t.DbName == "products");
@@ -217,7 +217,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         columnNames.Should().Contain("isactive");
     }
 
-    [Fact]
+    [SkippableFact]
     public void Schema_ShouldDetectPrimaryKeys()
     {
         var productsTable = Model.Tables.First(t => t.DbName == "products");
@@ -225,7 +225,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         pkCol.IsPrimaryKey.Should().BeTrue();
     }
 
-    [Fact]
+    [SkippableFact]
     public void Schema_IdentityColumns_ShouldBeDetectedViaNextval()
     {
         var productsTable = Model.Tables.First(t => t.DbName == "products");
@@ -236,7 +236,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         ordersTable.Columns.First(c => c.ColumnName == "orderid").IsIdentity.Should().BeTrue();
     }
 
-    [Fact]
+    [SkippableFact]
     public void Schema_ShouldDetectForeignKeyLinks()
     {
         var productsTable = Model.Tables.First(t => t.DbName == "products");
@@ -249,7 +249,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         orderitemsTable.SingleLinks.Should().NotBeEmpty("orderitems has FK to orders and products");
     }
 
-    [Fact]
+    [SkippableFact]
     public void Schema_ShouldDetectNullableColumns()
     {
         var customersTable = Model.Tables.First(t => t.DbName == "customers");
@@ -257,7 +257,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         customersTable.Columns.First(c => c.ColumnName == "name").IsNullable.Should().BeFalse();
     }
 
-    [Fact]
+    [SkippableFact]
     public void Schema_TypeMapper_ShouldMapPostgresTypesCorrectly()
     {
         Model.TypeMapper.Should().BeOfType<PostgresTypeMapper>();
@@ -270,7 +270,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
     // Queries - Basic SELECT
     // =============================================================
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_AllProducts_ShouldReturnAllRows()
     {
         var query = "query { products { data { productid name price } } }";
@@ -278,7 +278,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         products.Should().HaveCount(5);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByEquality_ShouldReturnMatchingRows()
     {
         var query = @"query { products(filter: { name: { _eq: ""Laptop"" } }) { data { productid name price } } }";
@@ -287,7 +287,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         Str(products[0]["name"]).Should().Be("Laptop");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByIntEquality_ShouldWork()
     {
         var query = "query { products(filter: { productid: { _eq: 1 } }) { data { productid name } } }";
@@ -297,7 +297,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         Str(products[0]["name"]).Should().Be("Laptop");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByLessThan_ShouldReturnCheapProducts()
     {
         var query = "query { products(filter: { price: { _lt: 50 } }) { data { name price } } }";
@@ -306,7 +306,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         products.All(p => Dbl(p["price"]) < 50).Should().BeTrue();
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByGreaterThan_ShouldReturnExpensiveProducts()
     {
         var query = "query { products(filter: { price: { _gt: 100 } }) { data { name price } } }";
@@ -315,7 +315,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         Str(products[0]["name"]).Should().Be("Laptop");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByIn_ShouldReturnMatchingStatuses()
     {
         var query = @"query { orders(filter: { status: { _in: [""Delivered"", ""Shipped""] } }) { data { orderid status } } }";
@@ -328,7 +328,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         }).Should().BeTrue();
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByNullCity_ShouldReturnNullRows()
     {
         var query = "query { customers(filter: { city: { _eq: null } }) { data { name city } } }";
@@ -337,7 +337,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         Str(customers[0]["name"]).Should().Be("Bob Wilson");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByBoolean_ShouldWork()
     {
         var query = "query { products(filter: { isactive: { _eq: true } }) { data { name isactive } } }";
@@ -350,7 +350,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
     // LIKE Patterns with || Concatenation
     // =============================================================
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByContains_LikeWithConcatenation()
     {
         var query = @"query { products(filter: { name: { _contains: ""top"" } }) { data { name } } }";
@@ -359,7 +359,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         Str(products[0]["name"]).Should().Be("Laptop");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByStartsWith_LikeWithConcatenation()
     {
         var query = @"query { products(filter: { name: { _starts_with: ""De"" } }) { data { name } } }";
@@ -368,7 +368,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         Str(products[0]["name"]).Should().Be("Design Patterns");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByEndsWith_LikeWithConcatenation()
     {
         var query = @"query { products(filter: { name: { _ends_with: ""Code"" } }) { data { name } } }";
@@ -381,7 +381,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
     // Pagination - LIMIT/OFFSET
     // =============================================================
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_WithLimit_ShouldReturnLimitedRows()
     {
         var query = "query { products(sort: [productid_asc], limit: 2) { data { productid name } } }";
@@ -389,7 +389,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         products.Should().HaveCount(2);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_WithOffset_ShouldSkipRows()
     {
         var query = "query { products(sort: [productid_asc], offset: 2, limit: 2) { data { productid name } } }";
@@ -398,7 +398,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         Str(products[0]["name"]).Should().Be("Clean Code");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_PageThrough_ShouldCoverAllRows()
     {
         var page1 = ExtractPagedData(await ExecuteQueryAsync(
@@ -414,7 +414,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         allIds.Distinct().Should().HaveCount(5);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_OffsetBeyondData_ShouldReturnEmpty()
     {
         var query = "query { products(sort: [productid_asc], offset: 100, limit: 10) { data { productid } } }";
@@ -426,7 +426,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
     // Sorting
     // =============================================================
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_SortByPriceAsc_ShouldReturnSorted()
     {
         var query = "query { products(sort: [price_asc]) { data { name price } } }";
@@ -435,7 +435,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         prices.Should().BeInAscendingOrder();
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_SortByNameDesc_ShouldReturnSorted()
     {
         var query = "query { products(sort: [name_desc]) { data { name } } }";
@@ -448,7 +448,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
     // Joins Across Tables
     // =============================================================
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_ProductWithCategory_ManyToOne()
     {
         var query = "query { products(filter: { productid: { _eq: 1 } }) { data { name categories { name description } } } }";
@@ -461,7 +461,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         Str(category["description"]).Should().Be("Electronic devices");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_CategoryWithProducts_OneToMany()
     {
         var query = "query { categories(filter: { categoryid: { _eq: 1 } }) { data { name products { name price } } } }";
@@ -473,7 +473,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         products.Should().HaveCount(2);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_OrderWithNestedJoins_ThreeLevels()
     {
         var query = @"query {
@@ -501,7 +501,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         items.Should().HaveCount(2);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_CustomerWithOrders_ShouldReturnMultipleOrders()
     {
         var query = "query { customers(filter: { customerid: { _eq: 1 } }) { data { name orders { status totalamount } } } }";
@@ -517,7 +517,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
     // Mutations - INSERT
     // =============================================================
 
-    [Fact]
+    [SkippableFact]
     public async Task Mutation_InsertProduct_ShouldCreateRecord()
     {
         var mutation = @"mutation { products(insert: { categoryid: 1, name: ""Keyboard"", price: 79.99, stock: 25, isactive: true }) }";
@@ -531,7 +531,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         Dbl(products[0]["price"]).Should().BeApproximately(79.99, 0.01);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Mutation_InsertProduct_SequenceIdentity_ShouldAutoIncrement()
     {
         var mutation1 = @"mutation { products(insert: { categoryid: 2, name: ""Book A"", price: 19.99, stock: 10, isactive: true }) }";
@@ -556,7 +556,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
     // Mutations - UPDATE
     // =============================================================
 
-    [Fact]
+    [SkippableFact]
     public async Task Mutation_UpdateProduct_ShouldModifyRecord()
     {
         var mutation = @"mutation { products(update: { productid: 1, categoryid: 1, name: ""Laptop"", price: 899.99, stock: 15, isactive: true }) }";
@@ -574,7 +574,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
     // Mutations - DELETE
     // =============================================================
 
-    [Fact]
+    [SkippableFact]
     public async Task Mutation_DeleteProduct_ShouldRemoveRecord()
     {
         var mutation = "mutation { products(delete: { productid: 5 }) }";
@@ -590,7 +590,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
     // Combined: Filter + Sort + Paginate
     // =============================================================
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterSortPaginate_Combined()
     {
         var query = @"query { products(
@@ -605,7 +605,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         Str(products[0]["name"]).Should().Be("Laptop");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterSortPaginate_SecondPage()
     {
         var query = @"query { products(

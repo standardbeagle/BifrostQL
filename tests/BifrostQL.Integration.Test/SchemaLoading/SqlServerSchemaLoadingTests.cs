@@ -19,8 +19,12 @@ public class SqlServerSchemaLoadingTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        var masterConnString = Environment.GetEnvironmentVariable("BIFROST_TEST_SQLSERVER")
-            ?? "Server=localhost;Database=master;Trusted_Connection=True;TrustServerCertificate=True";
+        var masterConnString = Environment.GetEnvironmentVariable("BIFROST_TEST_SQLSERVER");
+        if (masterConnString == null)
+        {
+            Skip.If(true, "BIFROST_TEST_SQLSERVER environment variable not set");
+            return;
+        }
 
         _testDbName = $"BifrostSchemaTest_{Guid.NewGuid():N}";
 
@@ -157,13 +161,13 @@ CREATE TABLE TestSchema.CustomSchemaTable (
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public void LoadedModel_ShouldNotBeNull()
     {
         _loadedModel.Should().NotBeNull();
     }
 
-    [Fact]
+    [SkippableFact]
     public void LoadedModel_ShouldContainAllTables()
     {
         var tableNames = _loadedModel!.Tables.Select(t => t.DbName).ToList();
@@ -178,7 +182,7 @@ CREATE TABLE TestSchema.CustomSchemaTable (
         tableNames.Should().Contain("TestSchema.CustomSchemaTable");
     }
 
-    [Fact]
+    [SkippableFact]
     public void DataTypesTable_ShouldHaveCorrectColumns()
     {
         var table = _loadedModel!.Tables.First(t => t.DbName == "DataTypes");
@@ -203,7 +207,7 @@ CREATE TABLE TestSchema.CustomSchemaTable (
         decimalCol.EffectiveDataType.Should().Be("decimal");
     }
 
-    [Fact]
+    [SkippableFact]
     public void CompositePKTable_ShouldHaveCompositePrimaryKey()
     {
         var table = _loadedModel!.Tables.First(t => t.DbName == "CompositePK");
@@ -214,7 +218,7 @@ CREATE TABLE TestSchema.CustomSchemaTable (
         pkColumns.Select(c => c.ColumnName).Should().Contain("UserId");
     }
 
-    [Fact]
+    [SkippableFact]
     public void OrderItemsTable_ShouldHaveForeignKeyToOrders()
     {
         var orderItemsTable = _loadedModel!.Tables.First(t => t.DbName == "OrderItems");
@@ -227,7 +231,7 @@ CREATE TABLE TestSchema.CustomSchemaTable (
         link.ParentTable.DbName.Should().Be("Orders");
     }
 
-    [Fact]
+    [SkippableFact]
     public void SelfReferencingTable_ShouldHaveSelfJoin()
     {
         var table = _loadedModel!.Tables.First(t => t.DbName == "SelfReferencing");
@@ -242,7 +246,7 @@ CREATE TABLE TestSchema.CustomSchemaTable (
         link.ChildTable.DbName.Should().Be("SelfReferencing");
     }
 
-    [Fact]
+    [SkippableFact]
     public void NullabilityTest_ShouldCorrectlyIdentifyNullableColumns()
     {
         var table = _loadedModel!.Tables.First(t => t.DbName == "NullabilityTest");
@@ -255,7 +259,7 @@ CREATE TABLE TestSchema.CustomSchemaTable (
         table.Columns.First(c => c.ColumnName == "OptionalDecimal").IsNullable.Should().BeTrue();
     }
 
-    [Fact]
+    [SkippableFact]
     public void CustomSchemaTable_ShouldBeLoadedWithSchemaQualification()
     {
         var table = _loadedModel!.Tables.FirstOrDefault(t => t.DbName == "TestSchema.CustomSchemaTable");
@@ -265,7 +269,7 @@ CREATE TABLE TestSchema.CustomSchemaTable (
         table.DbName.Should().Be("CustomSchemaTable");
     }
 
-    [Fact]
+    [SkippableFact]
     public void IdentityColumns_ShouldBeMarkedCorrectly()
     {
         var dataTypesTable = _loadedModel!.Tables.First(t => t.DbName == "DataTypes");
@@ -279,7 +283,7 @@ CREATE TABLE TestSchema.CustomSchemaTable (
         compositePKTable.Columns.Should().NotContain(c => c.IsIdentity);
     }
 
-    [Fact]
+    [SkippableFact]
     public void OrdersTable_ShouldHaveMultiLinkToOrderItems()
     {
         var ordersTable = _loadedModel!.Tables.First(t => t.DbName == "Orders");
@@ -291,7 +295,7 @@ CREATE TABLE TestSchema.CustomSchemaTable (
         link.ParentTable.DbName.Should().Be("Orders");
     }
 
-    [Fact]
+    [SkippableFact]
     public void AllTables_ShouldHaveKeyColumns()
     {
         foreach (var table in _loadedModel!.Tables)

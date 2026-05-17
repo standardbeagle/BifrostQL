@@ -1,6 +1,8 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Sqlite;
 using FluentAssertions;
+using GraphQL;
+using GraphQL.SystemTextJson;
 using Microsoft.Data.Sqlite;
 using System.Text.Json;
 
@@ -18,7 +20,7 @@ public class SqliteFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetim
 
     public async Task InitializeAsync()
     {
-        _connectionString = "Data Source=bifrost_full_test;Mode=Memory;Cache=Shared";
+        _connectionString = $"Data Source=bifrost_full_test_{Guid.NewGuid():N};Mode=Memory;Cache=Shared";
         _keepAliveConnection = new SqliteConnection(_connectionString);
         await _keepAliveConnection.OpenAsync();
 
@@ -103,15 +105,18 @@ public class SqliteFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetim
         }
     }
 
+    // Top-level table queries return `<table>_paged { data: [...] total offset limit }`,
+    // so test selections wrap the column list in `data { ... }` and extractions
+    // hop through ["data"] before deserializing the row list.
+
     [Fact]
     public async Task Query_AllProducts_ShouldReturnAllProducts()
     {
-        var query = "query { products { productId name price stock } }";
+        var query = "query { products { data { productId name price stock } } }";
         var result = await ExecuteQueryAsync(query);
 
         result.Errors.Should().BeNullOrEmpty();
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)result.Data!)["products"]));
+        var products = UnwrapPagedRows(result, "products");
 
         products.Should().HaveCount(3);
     }
@@ -119,12 +124,11 @@ public class SqliteFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetim
     [Fact]
     public async Task Query_FilterByPrice_ShouldReturnMatchingProducts()
     {
-        var query = "query { products(filter: { price: { _lt: 50 } }) { name price } }";
+        var query = "query { products(filter: { price: { _lt: 50 } }) { data { name price } } }";
         var result = await ExecuteQueryAsync(query);
 
         result.Errors.Should().BeNullOrEmpty();
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)result.Data!)["products"]));
+        var products = UnwrapPagedRows(result, "products");
 
         products.Should().HaveCountGreaterThan(0);
         products!.All(p => double.Parse(p["price"].ToString()!) < 50).Should().BeTrue();
@@ -133,12 +137,13 @@ public class SqliteFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetim
     [Fact]
     public async Task Query_SortByPrice_ShouldReturnSortedProducts()
     {
-        var query = "query { products(sort: { price: asc }) { name price } }";
+        // `sort` is a list of `<table>SortEnum` values (e.g. `price_asc`),
+        // not an object literal — schema generator emits one enum per column.
+        var query = "query { products(sort: [price_asc]) { data { name price } } }";
         var result = await ExecuteQueryAsync(query);
 
         result.Errors.Should().BeNullOrEmpty();
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)result.Data!)["products"]));
+        var products = UnwrapPagedRows(result, "products");
 
         var prices = products!.Select(p => double.Parse(p["price"].ToString()!)).ToList();
         prices.Should().BeInAscendingOrder();
@@ -147,12 +152,11 @@ public class SqliteFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetim
     [Fact]
     public async Task Query_WithPagination_ShouldReturnCorrectPage()
     {
-        var query = "query { products(sort: { productId: asc }, offset: 1, limit: 2) { productId name } }";
+        var query = "query { products(sort: [productId_asc], offset: 1, limit: 2) { data { productId name } } }";
         var result = await ExecuteQueryAsync(query);
 
         result.Errors.Should().BeNullOrEmpty();
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)result.Data!)["products"]));
+        var products = UnwrapPagedRows(result, "products");
 
         products.Should().HaveCount(2);
     }
@@ -160,28 +164,30 @@ public class SqliteFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetim
     [Fact]
     public async Task Query_ProductWithCategory_ShouldReturnJoinedData()
     {
-        var query = "query { products(filter: { productId: { _eq: 1 } }) { name category { name description } } }";
+        // Single-link FK joins (forward FK) use the parent table's GraphQL
+        // name, which is the pluralized table name — `categories`, not `category`.
+        var query = "query { products(filter: { productId: { _eq: 1 } }) { data { name categories { name description } } } }";
         var result = await ExecuteQueryAsync(query);
 
         result.Errors.Should().BeNullOrEmpty();
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)result.Data!)["products"]));
+        var products = UnwrapPagedRows(result, "products");
 
         var category = JsonSerializer.Deserialize<Dictionary<string, object>>(
-            JsonSerializer.Serialize(products![0]["category"]));
+            JsonSerializer.Serialize(products![0]["categories"]));
         category!["name"].ToString().Should().Be("Electronics");
     }
 
     [Fact]
     public async Task Query_CategoryWithProducts_ShouldReturnOneToMany()
     {
-        var query = "query { categories(filter: { categoryId: { _eq: 1 } }) { name products { name price } } }";
+        var query = "query { categories(filter: { categoryId: { _eq: 1 } }) { data { name products { name price } } } }";
         var result = await ExecuteQueryAsync(query);
 
         result.Errors.Should().BeNullOrEmpty();
-        var categories = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)result.Data!)["categories"]));
+        var categories = UnwrapPagedRows(result, "categories");
 
+        // Reverse-FK collection joins (MultiLinks) return a flat `[Type]` list,
+        // not a paged wrapper, so no extra hop is needed.
         var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
             JsonSerializer.Serialize(categories![0]["products"]));
         products.Should().HaveCountGreaterThan(0);
@@ -192,11 +198,13 @@ public class SqliteFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetim
     {
         var query = @"query {
             orders(filter: { orderId: { _eq: 1 } }) {
-                orderDate
-                customer { name email }
-                orderItems {
-                    quantity
-                    product { name category { name } }
+                data {
+                    orderDate
+                    customers { name email }
+                    orderItems {
+                        quantity
+                        products { name categories { name } }
+                    }
                 }
             }
         }";
@@ -204,11 +212,10 @@ public class SqliteFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetim
         var result = await ExecuteQueryAsync(query);
 
         result.Errors.Should().BeNullOrEmpty();
-        var orders = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)result.Data!)["orders"]));
+        var orders = UnwrapPagedRows(result, "orders");
 
         var customer = JsonSerializer.Deserialize<Dictionary<string, object>>(
-            JsonSerializer.Serialize(orders![0]["customer"]));
+            JsonSerializer.Serialize(orders![0]["customers"]));
         customer!["name"].ToString().Should().Be("John Doe");
 
         var items = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
@@ -223,23 +230,24 @@ public class SqliteFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetim
         var result = await ExecuteQueryAsync(mutation);
 
         result.Errors.Should().BeNullOrEmpty();
-        var insertedId = int.Parse(result.Data!.ToString()!);
+        var insertedId = GetMutationScalar(result, "products");
         insertedId.Should().BeGreaterThan(0);
     }
 
     [Fact]
     public async Task Mutation_UpdateProduct_ShouldModifyRecord()
     {
-        var mutation = @"mutation { products(update: { productId: 1, price: 899.99, stock: 15 }) }";
+        // Update input type repeats every non-null column as required (schema
+        // generator does not distinguish update from insert nullability), so
+        // tests must resupply name/categoryId even when only price changes.
+        var mutation = @"mutation { products(update: { productId: 1, categoryId: 1, name: ""Laptop"", price: 899.99, stock: 15 }) }";
         var result = await ExecuteQueryAsync(mutation);
 
         result.Errors.Should().BeNullOrEmpty();
 
-        // Verify
-        var verifyQuery = "query { products(filter: { productId: { _eq: 1 } }) { price stock } }";
+        var verifyQuery = "query { products(filter: { productId: { _eq: 1 } }) { data { price stock } } }";
         var verifyResult = await ExecuteQueryAsync(verifyQuery);
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)verifyResult.Data!)["products"]));
+        var products = UnwrapPagedRows(verifyResult, "products");
 
         double.Parse(products![0]["price"].ToString()!).Should().BeApproximately(899.99, 0.01);
         int.Parse(products[0]["stock"].ToString()!).Should().Be(15);
@@ -248,17 +256,46 @@ public class SqliteFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetim
     [Fact]
     public async Task Mutation_DeleteProduct_ShouldRemoveRecord()
     {
-        var mutation = @"mutation { products(delete: { productId: 3 }) }";
-        var result = await ExecuteQueryAsync(mutation);
+        // Seeded products 1-3 are referenced by OrderItems, so deleting them
+        // violates the FK constraint. Insert a fresh, unreferenced row and
+        // delete that to exercise the delete path cleanly.
+        var insert = @"mutation { products(insert: { categoryId: 1, name: ""Disposable"", price: 1.00, stock: 1 }) }";
+        var insertResult = await ExecuteQueryAsync(insert);
+        insertResult.Errors.Should().BeNullOrEmpty();
+        var newId = GetMutationScalar(insertResult, "products");
 
+        var mutation = $"mutation {{ products(delete: {{ productId: {newId} }}) }}";
+        var result = await ExecuteQueryAsync(mutation);
         result.Errors.Should().BeNullOrEmpty();
 
-        // Verify deletion
-        var verifyQuery = "query { products(filter: { productId: { _eq: 3 } }) { productId } }";
+        var verifyQuery = $"query {{ products(filter: {{ productId: {{ _eq: {newId} }} }}) {{ data {{ productId }} }} }}";
         var verifyResult = await ExecuteQueryAsync(verifyQuery);
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            JsonSerializer.Serialize(((Dictionary<string, object?>)verifyResult.Data!)["products"]));
+        var products = UnwrapPagedRows(verifyResult, "products");
 
         products.Should().BeEmpty();
+    }
+
+    // GraphQL .NET returns ExecutionResult.Data as a RootExecutionNode whose
+    // JSON shape can only be produced by GraphQLSerializer (System.Text.Json
+    // cannot walk the node tree directly). The serializer writes the standard
+    // `{ "data": { ... } }` envelope, which we then deserialize and navigate.
+    private static List<Dictionary<string, object>>? UnwrapPagedRows(ExecutionResult result, string field)
+    {
+        var dataElement = SerializeDataElement(result);
+        var paged = dataElement.GetProperty(field);
+        return JsonSerializer.Deserialize<List<Dictionary<string, object>>>(paged.GetProperty("data").GetRawText());
+    }
+
+    private static int GetMutationScalar(ExecutionResult result, string field)
+    {
+        var dataElement = SerializeDataElement(result);
+        return dataElement.GetProperty(field).GetInt32();
+    }
+
+    private static JsonElement SerializeDataElement(ExecutionResult result)
+    {
+        var json = new GraphQLSerializer().Serialize(result);
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.GetProperty("data").Clone();
     }
 }

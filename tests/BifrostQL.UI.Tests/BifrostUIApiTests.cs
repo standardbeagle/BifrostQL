@@ -311,11 +311,20 @@ public class BifrostUITemplateTests
         _output = output;
     }
 
+    // Resolves src/BifrostQL.UI/Program.cs relative to the test source file
+    // so the suite works regardless of where the repo is cloned (previous
+    // absolute path hardcoded /home/beagle/work/core/bifrost/...).
+    private static string ProgramCsPath([System.Runtime.CompilerServices.CallerFilePath] string sourceFile = "")
+    {
+        var repoRoot = System.IO.Path.GetFullPath(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(sourceFile)!, "..", ".."));
+        return System.IO.Path.Combine(repoRoot, "src", "BifrostQL.UI", "Program.cs");
+    }
+
     [Fact]
     public void NorthwindSchema_ContainsRequiredTables()
     {
         // Test schemas by parsing Program.cs file content
-        var programCs = System.IO.File.ReadAllText("/home/beagle/work/core/bifrost/src/BifrostQL.UI/Program.cs");
+        var programCs = System.IO.File.ReadAllText(ProgramCsPath());
 
         Assert.Contains("CREATE TABLE Categories", programCs);
         Assert.Contains("CREATE TABLE Products", programCs);
@@ -329,7 +338,7 @@ public class BifrostUITemplateTests
     [Fact]
     public void NorthwindSchema_ContainsForeignKeyRelationships()
     {
-        var programCs = System.IO.File.ReadAllText("/home/beagle/work/core/bifrost/src/BifrostQL.UI/Program.cs");
+        var programCs = System.IO.File.ReadAllText(ProgramCsPath());
 
         Assert.Contains("FOREIGN KEY", programCs);
         Assert.Contains("REFERENCES", programCs);
@@ -340,7 +349,7 @@ public class BifrostUITemplateTests
     [Fact]
     public void AdventureWorksLiteSchema_ContainsRequiredTables()
     {
-        var programCs = System.IO.File.ReadAllText("/home/beagle/work/core/bifrost/src/BifrostQL.UI/Program.cs");
+        var programCs = System.IO.File.ReadAllText(ProgramCsPath());
 
         Assert.Contains("CREATE TABLE Departments", programCs);
         Assert.Contains("CREATE TABLE Employees", programCs);
@@ -353,7 +362,7 @@ public class BifrostUITemplateTests
     [Fact]
     public void SimpleBlogSchema_ContainsRequiredTables()
     {
-        var programCs = System.IO.File.ReadAllText("/home/beagle/work/core/bifrost/src/BifrostQL.UI/Program.cs");
+        var programCs = System.IO.File.ReadAllText(ProgramCsPath());
 
         Assert.Contains("CREATE TABLE Users", programCs);
         Assert.Contains("CREATE TABLE Posts", programCs);
@@ -367,7 +376,7 @@ public class BifrostUITemplateTests
     [Fact]
     public void SimpleBlogSchema_ContainsManyToManyRelationship()
     {
-        var programCs = System.IO.File.ReadAllText("/home/beagle/work/core/bifrost/src/BifrostQL.UI/Program.cs");
+        var programCs = System.IO.File.ReadAllText(ProgramCsPath());
 
         // PostTags table should exist for many-to-many relationship
         Assert.Contains("PostTags", programCs);
@@ -379,7 +388,7 @@ public class BifrostUITemplateTests
     [Fact]
     public void NorthwindData_ContainsSampleRecords()
     {
-        var programCs = System.IO.File.ReadAllText("/home/beagle/work/core/bifrost/src/BifrostQL.UI/Program.cs");
+        var programCs = System.IO.File.ReadAllText(ProgramCsPath());
 
         Assert.Contains("INSERT INTO Categories", programCs);
         Assert.Contains("INSERT INTO Products", programCs);
@@ -391,7 +400,7 @@ public class BifrostUITemplateTests
     [Fact]
     public void SimpleBlogData_ContainsSampleRecords()
     {
-        var programCs = System.IO.File.ReadAllText("/home/beagle/work/core/bifrost/src/BifrostQL.UI/Program.cs");
+        var programCs = System.IO.File.ReadAllText(ProgramCsPath());
 
         Assert.Contains("INSERT INTO Users", programCs);
         Assert.Contains("INSERT INTO Posts", programCs);
@@ -403,7 +412,7 @@ public class BifrostUITemplateTests
     [Fact]
     public void AllSchemas_UseProperSQLSyntax()
     {
-        var programCs = System.IO.File.ReadAllText("/home/beagle/work/core/bifrost/src/BifrostQL.UI/Program.cs");
+        var programCs = System.IO.File.ReadAllText(ProgramCsPath());
 
         Assert.Contains("CREATE TABLE", programCs);
         Assert.Contains("PRIMARY KEY", programCs);

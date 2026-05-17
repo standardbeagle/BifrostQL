@@ -177,7 +177,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
     // Schema Reading (information_schema)
     // =============================================================
 
-    [Fact]
+    [SkippableFact]
     public void Schema_ShouldLoadAllTables()
     {
         Model.Should().NotBeNull();
@@ -189,7 +189,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         tableNames.Should().Contain("orderitems");
     }
 
-    [Fact]
+    [SkippableFact]
     public void Schema_ShouldDetectColumns()
     {
         var productsTable = Model.Tables.First(t => t.DbName == "products");
@@ -202,7 +202,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         columnNames.Should().Contain("isactive");
     }
 
-    [Fact]
+    [SkippableFact]
     public void Schema_ShouldDetectPrimaryKeys()
     {
         var productsTable = Model.Tables.First(t => t.DbName == "products");
@@ -210,7 +210,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         pkCol.IsPrimaryKey.Should().BeTrue();
     }
 
-    [Fact]
+    [SkippableFact]
     public void Schema_AutoIncrementColumns_ShouldBeDetectedAsIdentity()
     {
         var productsTable = Model.Tables.First(t => t.DbName == "products");
@@ -221,7 +221,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         ordersTable.Columns.First(c => c.ColumnName == "orderid").IsIdentity.Should().BeTrue();
     }
 
-    [Fact]
+    [SkippableFact]
     public void Schema_ShouldDetectForeignKeyLinks()
     {
         var productsTable = Model.Tables.First(t => t.DbName == "products");
@@ -234,7 +234,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         orderitemsTable.SingleLinks.Should().NotBeEmpty("orderitems has FK to orders and products");
     }
 
-    [Fact]
+    [SkippableFact]
     public void Schema_ShouldDetectNullableColumns()
     {
         var customersTable = Model.Tables.First(t => t.DbName == "customers");
@@ -242,7 +242,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         customersTable.Columns.First(c => c.ColumnName == "name").IsNullable.Should().BeFalse();
     }
 
-    [Fact]
+    [SkippableFact]
     public void Schema_TypeMapper_ShouldMapMySqlTypesCorrectly()
     {
         Model.TypeMapper.Should().BeOfType<MySqlTypeMapper>();
@@ -255,7 +255,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
     // Queries - Basic SELECT (backtick escaping)
     // =============================================================
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_AllProducts_ShouldReturnAllRows()
     {
         var query = "query { products { data { productid name price } } }";
@@ -263,7 +263,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         products.Should().HaveCount(5);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByEquality_ShouldReturnMatchingRows()
     {
         var query = @"query { products(filter: { name: { _eq: ""Laptop"" } }) { data { productid name price } } }";
@@ -272,7 +272,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         Str(products[0]["name"]).Should().Be("Laptop");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByIntEquality_ShouldWork()
     {
         var query = "query { products(filter: { productid: { _eq: 1 } }) { data { productid name } } }";
@@ -282,7 +282,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         Str(products[0]["name"]).Should().Be("Laptop");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByLessThan_ShouldReturnCheapProducts()
     {
         var query = "query { products(filter: { price: { _lt: 50 } }) { data { name price } } }";
@@ -291,7 +291,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         products.All(p => Dbl(p["price"]) < 50).Should().BeTrue();
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByGreaterThan_ShouldReturnExpensiveProducts()
     {
         var query = "query { products(filter: { price: { _gt: 100 } }) { data { name price } } }";
@@ -300,7 +300,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         Str(products[0]["name"]).Should().Be("Laptop");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByIn_ShouldReturnMatchingStatuses()
     {
         var query = @"query { orders(filter: { status: { _in: [""Delivered"", ""Shipped""] } }) { data { orderid status } } }";
@@ -313,7 +313,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         }).Should().BeTrue();
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByNullCity_ShouldReturnNullRows()
     {
         var query = "query { customers(filter: { city: { _eq: null } }) { data { name city } } }";
@@ -322,7 +322,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         Str(customers[0]["name"]).Should().Be("Bob Wilson");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByBoolean_ShouldWork()
     {
         var query = "query { products(filter: { isactive: { _eq: true } }) { data { name isactive } } }";
@@ -335,7 +335,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
     // LIKE Patterns with CONCAT()
     // =============================================================
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByContains_LikeWithConcat()
     {
         var query = @"query { products(filter: { name: { _contains: ""top"" } }) { data { name } } }";
@@ -344,7 +344,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         Str(products[0]["name"]).Should().Be("Laptop");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByStartsWith_LikeWithConcat()
     {
         var query = @"query { products(filter: { name: { _starts_with: ""De"" } }) { data { name } } }";
@@ -353,7 +353,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         Str(products[0]["name"]).Should().Be("Design Patterns");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterByEndsWith_LikeWithConcat()
     {
         var query = @"query { products(filter: { name: { _ends_with: ""Code"" } }) { data { name } } }";
@@ -366,7 +366,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
     // Pagination - LIMIT/OFFSET
     // =============================================================
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_WithLimit_ShouldReturnLimitedRows()
     {
         var query = "query { products(sort: [productid_asc], limit: 2) { data { productid name } } }";
@@ -374,7 +374,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         products.Should().HaveCount(2);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_WithOffset_ShouldSkipRows()
     {
         var query = "query { products(sort: [productid_asc], offset: 2, limit: 2) { data { productid name } } }";
@@ -383,7 +383,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         Str(products[0]["name"]).Should().Be("Clean Code");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_PageThrough_ShouldCoverAllRows()
     {
         var page1 = ExtractPagedData(await ExecuteQueryAsync(
@@ -399,7 +399,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         allIds.Distinct().Should().HaveCount(5);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_OffsetBeyondData_ShouldReturnEmpty()
     {
         var query = "query { products(sort: [productid_asc], offset: 100, limit: 10) { data { productid } } }";
@@ -411,7 +411,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
     // Sorting
     // =============================================================
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_SortByPriceAsc_ShouldReturnSorted()
     {
         var query = "query { products(sort: [price_asc]) { data { name price } } }";
@@ -420,7 +420,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         prices.Should().BeInAscendingOrder();
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_SortByNameDesc_ShouldReturnSorted()
     {
         var query = "query { products(sort: [name_desc]) { data { name } } }";
@@ -433,7 +433,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
     // Joins Across Tables
     // =============================================================
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_ProductWithCategory_ManyToOne()
     {
         var query = "query { products(filter: { productid: { _eq: 1 } }) { data { name categories { name description } } } }";
@@ -446,7 +446,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         Str(category["description"]).Should().Be("Electronic devices");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_CategoryWithProducts_OneToMany()
     {
         var query = "query { categories(filter: { categoryid: { _eq: 1 } }) { data { name products { name price } } } }";
@@ -458,7 +458,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         products.Should().HaveCount(2);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_OrderWithNestedJoins_ThreeLevels()
     {
         var query = @"query {
@@ -486,7 +486,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         items.Should().HaveCount(2);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_CustomerWithOrders_ShouldReturnMultipleOrders()
     {
         var query = "query { customers(filter: { customerid: { _eq: 1 } }) { data { name orders { status totalamount } } } }";
@@ -502,7 +502,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
     // Mutations - INSERT
     // =============================================================
 
-    [Fact]
+    [SkippableFact]
     public async Task Mutation_InsertProduct_ShouldCreateRecord()
     {
         var mutation = @"mutation { products(insert: { categoryid: 1, name: ""Keyboard"", price: 79.99, stock: 25, isactive: true }) }";
@@ -516,7 +516,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         Dbl(products[0]["price"]).Should().BeApproximately(79.99, 0.01);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Mutation_InsertProduct_AutoIncrement_ShouldAutoIncrement()
     {
         var mutation1 = @"mutation { products(insert: { categoryid: 2, name: ""Book A"", price: 19.99, stock: 10, isactive: true }) }";
@@ -541,7 +541,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
     // Mutations - UPDATE
     // =============================================================
 
-    [Fact]
+    [SkippableFact]
     public async Task Mutation_UpdateProduct_ShouldModifyRecord()
     {
         var mutation = @"mutation { products(update: { productid: 1, categoryid: 1, name: ""Laptop"", price: 899.99, stock: 15, isactive: true }) }";
@@ -559,7 +559,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
     // Mutations - DELETE
     // =============================================================
 
-    [Fact]
+    [SkippableFact]
     public async Task Mutation_DeleteProduct_ShouldRemoveRecord()
     {
         var mutation = "mutation { products(delete: { productid: 5 }) }";
@@ -575,7 +575,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
     // Combined: Filter + Sort + Paginate
     // =============================================================
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterSortPaginate_Combined()
     {
         var query = @"query { products(
@@ -590,7 +590,7 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         Str(products[0]["name"]).Should().Be("Laptop");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Query_FilterSortPaginate_SecondPage()
     {
         var query = @"query { products(

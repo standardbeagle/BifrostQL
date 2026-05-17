@@ -178,9 +178,10 @@ public sealed class SshTunnelManager : IDisposable
         if (string.IsNullOrWhiteSpace(trimmed))
             throw new InvalidOperationException("WP-CLI returned empty output");
         
-        // Check if output starts with [ (expected JSON array)
+        // Check if output starts with [ (expected JSON array). Anything else
+        // is the wrong format even if it parses as JSON (e.g. a bare object).
         if (!trimmed.StartsWith("["))
-            throw new InvalidOperationException($"WP-CLI returned non-JSON output: {trimmed[..Math.Min(100, trimmed.Length)]}");
+            throw new InvalidOperationException($"WP-CLI returned wrong format (expected JSON array): {trimmed[..Math.Min(100, trimmed.Length)]}");
         
         JsonElement entries;
         try

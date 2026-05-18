@@ -79,3 +79,58 @@ A Membership Manager application tracks `members`, `households`, `dues`, and `ev
 - **Relationships** — `members → households` (foreign-key selector), `members → dues` (child collection), `events → households` — every target resolves to another overlay entity by qualified table name.
 
 The result: a client can describe and render all four entities purely from the overlay JSON, with no hardcoded forms or grids.
+
+## Reference
+
+### File format
+
+The overlay JSON is a single top-level object with one key — `entities` — whose value is a map from **qualified table name** (e.g. `main.members`) to an `EntityMetadata` document. Every key is camelCase. Every field is optional; a missing field falls back to a sensible default.
+
+```jsonc
+{
+  "entities": {
+    "<schema>.<table>": {
+      "label":         "Display name",                  // string, default = table name
+      "icon":          "person",                        // material/lucide icon hint
+      "navPlacement":  "main" | "secondary" | "hidden", // SPA nav slot
+      "displayFields": [ "first_name", "last_name" ],   // for relationship pickers
+      "fields": {
+        "<col>": {
+          "widget":     "text" | "select" | "datepicker" | "fk-lookup" | "…",
+          "group":      "Identity",                     // form-section label
+          "validation": "email" | "url" | "…",
+          "visible":    true,                           // default true
+          "readOnly":   false,
+          "helpText":   "Free-form help text"
+        }
+      },
+      "grid": {
+        "defaultColumns": [ "first_name", "last_name", "email" ],
+        "defaultSort":    [ "last_name asc" ],
+        "defaultFilters": [ "status = active" ],
+        "savedViews": {
+          "<viewId>": { "name": "Display label", "filters": [ "status = inactive" ] }
+        },
+        "bulkActions": [ "export", "email" ]
+      },
+      "relationships": {
+        "<relName>": {
+          "label":         "Household",
+          "targetEntity":  "main.households",
+          "kind":          "foreignKeySelector" | "childCollection" | "nestedPanel",
+          "foreignKey":    "household_id",
+          "displayColumns": [ "name" ]
+        }
+      }
+    }
+  }
+}
+```
+
+### Endpoint contract
+
+`GET /_app-metadata` returns the loaded overlay verbatim in the shape above. The path is configurable via `BifrostAppMetadataOptions.Path`; the response is always JSON (`application/json; charset=utf-8`). When no overlay sources are registered, the endpoint returns `{ "entities": {} }` — never 404 — so clients can treat the contract as stable.
+
+### Reference sample
+
+A complete real-world overlay lives at [`samples/HostedSpa/membership-manager.appmetadata.json`](https://github.com/standardbeagle/BifrostQL/blob/main/samples/HostedSpa/membership-manager.appmetadata.json). It exercises every documented key — form widgets, grouped fields, hidden admin-only columns, grid saved views, foreign-key and child-collection relationships — for the Membership Manager sample.

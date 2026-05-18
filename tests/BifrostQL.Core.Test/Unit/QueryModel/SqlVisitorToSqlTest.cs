@@ -193,43 +193,15 @@ namespace BifrostQL.Core.QueryModel
 
         }
 
-        [Fact(Skip = "Top-level `__agg_<table>` aggregate field is not yet implemented in SqlVisitor; the GraphQL parser even rejects the malformed test query without a closing brace. Re-enable when aggregate codegen ships.")]
-        public async Task SimpleAggQuerySuccess()
-        {
-            var ctx = new SqlContext();
-            var visitor = new SqlVisitor();
-
-            var model = new DbModel { Tables = GetFakeTables() };
-            var ast = Parser.Parse("query { __agg_work__shops(operation: count value:id)");
-            await visitor.VisitAsync(ast, ctx);
-            var sqls = GetSqls(ctx, model);
-            sqls.Should().ContainSingle()
-                .Which.Should().Equal(new Dictionary<string, string> {
-                    { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY"},
-                    { "work__shops=>count", "SELECT COUNT(*) FROM [dbo].[work shops]"},
-                    { "work__shops->sess", "SELECT [a].[JoinId] [src_id], [b].[sid] AS [id],[b].[status] AS [status] FROM (SELECT DISTINCT [id] AS [JoinId] FROM [work shops]) [a] INNER JOIN [sessions] [b] ON [a].[JoinId] != [b].[workshopid] ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY" },
-                });
-
-        }
-
-        [Fact(Skip = "Combines unimplemented `__agg_<table>` + `_join_<table>` dynamic join field; both are still beta and the generated SQL does not match the expected fixture. Re-enable with the aggregate codegen work.")]
-        public async Task SimpleAggAndJoinQuerySuccess()
-        {
-            var ctx = new SqlContext();
-            var visitor = new SqlVisitor();
-
-            var model = new DbModel { Tables = GetFakeTables() };
-            var ast = Parser.Parse("query { __agg_work__shops(operation: count value:id) work__shops { data { id sess:_join_sessions(on: {id: {_neq: workshopid}}) { id status } } } }");
-            await visitor.VisitAsync(ast, ctx);
-            var sqls = GetSqls(ctx, model);
-            sqls.Should().ContainSingle()
-                .Which.Should().Equal(new Dictionary<string, string> {
-                    { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY"},
-                    { "work__shops=>count", "SELECT COUNT(*) FROM [dbo].[work shops]"},
-                    { "work__shops->sess", "SELECT [a].[JoinId] [src_id], [b].[sid] AS [id],[b].[status] AS [status] FROM (SELECT DISTINCT [id] AS [JoinId] FROM [work shops]) [a] INNER JOIN [sessions] [b] ON [a].[JoinId] != [b].[workshopid] ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY" },
-                });
-
-        }
+        // SimpleAggQuerySuccess + SimpleAggAndJoinQuerySuccess removed:
+        // they asserted SQL for a top-level `__agg_<table>(operation:
+        // count value: id)` aggregate field that was never implemented.
+        // No call sites in src/, no schema generation path, and the
+        // original test queries themselves were malformed (missing
+        // closing brace). The nested-join `_agg(value:{joinTable:{column:
+        // ...}})` form covers the same use case and is verified end-to-
+        // end against all four engines in the *FullIntegrationTests
+        // (Aggregate_NestedJoinCount/Sum/Avg).
 
         [Fact]
         public async Task SimpleJoinNonStandardColumnQuerySuccess()

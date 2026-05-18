@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Workflows;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
@@ -133,7 +134,78 @@ public sealed class MembershipManagerStateMachineBypassTests : IAsyncLifetime
         audit.Summary.Should().Be("member.reactivated");
     }
 
-    private ServiceProvider BuildRequestServices()
+    [Fact]
+    public async Task AdminBypass_AlsoFiresMatchingOnStateTransitionWorkflow()
+    {
+        // Same admin-bypass transition as AdminBypass_AllowsRestrictedTransition…,
+        // but with a captured WorkflowRunner + a workflow whose
+        // on-state-transition payload matches `members: inactive -> active`.
+        // Asserts the StateMachine + Workflow runtime fire together
+        // end-to-end through the GraphQL mutation pipeline.
+        var captured = new CapturingWorkflowRunner();
+        var workflow = new WorkflowDefinition
+        {
+            Name = "member.reactivated.notify",
+            Trigger = new WorkflowTrigger
+            {
+                Type = "on-state-transition",
+                Payload = Json("{\"table\":\"members\",\"from\":\"inactive\",\"to\":\"active\"}"),
+            },
+        };
+
+        var response = await ExecuteAsync(
+            "mutation { members(update: { member_id: 2, tenant_id: 1, user_id: 99, household_id: 2, first_name: \"Grace\", last_name: \"Hopper\", status: \"active\" }) }",
+            role: "admin", userId: 1, tenantId: 1,
+            workflowRunner: captured,
+            workflows: new[] { workflow });
+
+        response.Errors.Should().BeEmpty(response.RawJson);
+        (await MemberStatusAsync(2)).Should().Be("active");
+
+        captured.Runs.Should().ContainSingle("the matching workflow fires once per matching transition");
+        captured.Runs[0].Workflow.Name.Should().Be("member.reactivated.notify");
+        captured.Runs[0].Inputs["entity"].Should().Be("members");
+        captured.Runs[0].Inputs["from"].Should().Be("inactive");
+        captured.Runs[0].Inputs["to"].Should().Be("active");
+    }
+
+    private static System.Text.Json.JsonElement Json(string json)
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        return doc.RootElement.Clone();
+    }
+
+    private sealed class CapturingWorkflowRunner : IWorkflowRunner
+    {
+        public List<Run> Runs { get; } = new();
+
+        public Task<WorkflowRunResult> RunAsync(
+            string name,
+            IDictionary<string, object?> inputs,
+            IDictionary<string, object?> userContext)
+            => throw new NotSupportedException();
+
+        public Task<WorkflowRunResult> RunAsync(
+            WorkflowDefinition workflow,
+            IDictionary<string, object?> inputs,
+            IDictionary<string, object?> userContext)
+        {
+            Runs.Add(new Run(
+                workflow,
+                new Dictionary<string, object?>(inputs, StringComparer.OrdinalIgnoreCase),
+                new Dictionary<string, object?>(userContext, StringComparer.OrdinalIgnoreCase)));
+            return Task.FromResult(new WorkflowRunResult(true, new Dictionary<string, object?>(), Array.Empty<WorkflowStepTrace>()));
+        }
+
+        public sealed record Run(
+            WorkflowDefinition Workflow,
+            IDictionary<string, object?> Inputs,
+            IDictionary<string, object?> UserContext);
+    }
+
+    private ServiceProvider BuildRequestServices(
+        IWorkflowRunner? workflowRunner = null,
+        IReadOnlyList<WorkflowDefinition>? workflows = null)
     {
         var filterTransformers = new FilterTransformersWrap
         {
@@ -169,14 +241,29 @@ public sealed class MembershipManagerStateMachineBypassTests : IAsyncLifetime
                 sp.GetRequiredService<PathCache<Inputs>>(),
                 sp));
         services.AddSingleton(sp =>
-            new StateTransitionObservers(new IStateTransitionObserver[]
+        {
+            var observers = new List<IStateTransitionObserver>
             {
                 new StateTransitionAuditObserver(sp.GetRequiredService<IBifrostWorkflowExecutor>()),
-            }));
+            };
+            if (workflowRunner is not null)
+            {
+                var defs = (workflows ?? Array.Empty<WorkflowDefinition>())
+                    .ToDictionary(w => w.Name);
+                observers.Add(new WorkflowTriggerHost(defs, workflowRunner));
+            }
+            return new StateTransitionObservers(observers);
+        });
         return services.BuildServiceProvider();
     }
 
-    private async Task<GraphQlResponse> ExecuteAsync(string query, string role, int userId, int tenantId)
+    private async Task<GraphQlResponse> ExecuteAsync(
+        string query,
+        string role,
+        int userId,
+        int tenantId,
+        IWorkflowRunner? workflowRunner = null,
+        IReadOnlyList<WorkflowDefinition>? workflows = null)
     {
         var serializer = new GraphQLSerializer();
         var middleware = new BifrostHttpMiddleware(
@@ -185,7 +272,7 @@ public sealed class MembershipManagerStateMachineBypassTests : IAsyncLifetime
             documentExecutor: new DocumentExecuter(),
             logger: NullLogger<BifrostHttpMiddleware>.Instance);
 
-        await using var provider = BuildRequestServices();
+        await using var provider = BuildRequestServices(workflowRunner, workflows);
         var context = new DefaultHttpContext { RequestServices = provider };
         context.RequestServices.GetRequiredService<IHttpContextAccessor>().HttpContext = context;
 

@@ -130,11 +130,18 @@ namespace BifrostQL.Core.Resolvers
                 foreach (var multiLink in table.MultiLinks)
                     tableType.FieldFor(multiLink.Value.ChildTable.GraphQlName).Resolver = this;
 
-                foreach (var joinTable in _model.Tables)
-                {
-                    tableType.FieldFor(joinTable.JoinFieldName).Resolver = this;
-                    tableType.FieldFor(joinTable.SingleFieldName).Resolver = this;
-                }
+                // Previously this method also looped over every table pair
+                // and wired `_join_<table>` / `_single_<table>` resolvers.
+                // The schema generator never emits those per-pair fields
+                // (TableSchemaGenerator.cs:91-97 keeps the per-pair codegen
+                // commented out and only emits the bare `_single`/`_join`
+                // fields), so the loop wrote to orphan field configs that
+                // no GraphQL operation ever reached. Removed.
+                //
+                // If per-pair `_join_<table>`/`_single_<table>` fields are
+                // wanted again, restore the schema codegen *and* add this
+                // loop back together — see docs/research/agg-dialect-survey.md
+                // for the wiring contract.
             }
 
             query.FieldFor("_dbSchema").Resolver = this;

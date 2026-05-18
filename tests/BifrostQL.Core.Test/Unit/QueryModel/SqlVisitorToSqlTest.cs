@@ -330,7 +330,7 @@ namespace BifrostQL.Core.QueryModel
                 });
         }
 
-        [Fact(Skip = "Paging on linked tables is not yet wired: SqlVisitor builds the linked sub-query without forwarding the parent table's paged join-key set, so the linked join returns rows for the unpaged universe. Re-enable when the paging-on-linked-tables task lands.")]
+        [Fact]
         public async Task PageBaseQuerySuccess()
         {
             var ctx = new SqlContext();

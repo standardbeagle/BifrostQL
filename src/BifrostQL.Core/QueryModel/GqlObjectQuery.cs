@@ -141,7 +141,25 @@ namespace BifrostQL.Core.QueryModel
             {
                 var filter = query.FromTable.GetFilterSqlParameterized(dbModel, dialect, parameters);
                 var sqlText = $"SELECT DISTINCT {dialect.EscapeIdentifier(query.Join.FromColumn)} AS {dialect.EscapeIdentifier("JoinId")} FROM {dialect.EscapeIdentifier(query.FromTable.TableName)}";
-                return new ParameterizedSql(sqlText, Array.Empty<SqlParameterInfo>()).Append(filter);
+                var rootSql = new ParameterizedSql(sqlText, Array.Empty<SqlParameterInfo>()).Append(filter);
+
+                // Forward the parent table's pagination into the linked
+                // sub-query so the joined rows stay aligned with the paged
+                // parent set. Without this, the linked SQL distinct-selects
+                // the unpaged universe and the join returns rows for parents
+                // outside the current page.
+                if (query.FromTable.Offset.HasValue || query.FromTable.Limit.HasValue)
+                {
+                    var sortCols = query.FromTable.Sort.Any() ? query.FromTable.Sort.Select(s => s switch
+                    {
+                        { } when s.EndsWith("_asc") => dialect.EscapeIdentifier(s[..^4]) + " asc",
+                        { } when s.EndsWith("_desc") => dialect.EscapeIdentifier(s[..^5]) + " desc",
+                        _ => throw new NotSupportedException()
+                    }) : null;
+                    var pagination = dialect.Pagination(sortCols, query.FromTable.Offset, query.FromTable.Limit);
+                    rootSql = rootSql.Append(pagination);
+                }
+                return rootSql;
             }
 
             var ea = dialect.EscapeIdentifier("a");

@@ -201,8 +201,10 @@ namespace BifrostQL.Core.QueryModel
                         Name = link.GraphQlName,
                         ConnectedTable = link,
                         ConnectedColumn = multiLink.ChildId.ColumnName,
+                        ConnectedColumns = multiLink.ChildIds.Select(c => c.ColumnName).ToArray(),
                         FromTable = this,
                         FromColumn = multiLink.ParentId.ColumnName,
+                        FromColumns = multiLink.ParentIds.Select(c => c.ColumnName).ToArray(),
                         QueryType = QueryType.Join,
                     };
                     Joins.Add(join);
@@ -217,8 +219,10 @@ namespace BifrostQL.Core.QueryModel
                         Name = link.GraphQlName,
                         ConnectedTable = link,
                         ConnectedColumn = singleLink.ParentId.ColumnName,
+                        ConnectedColumns = singleLink.ParentIds.Select(c => c.ColumnName).ToArray(),
                         FromTable = this,
                         FromColumn = singleLink.ChildId.ColumnName,
+                        FromColumns = singleLink.ChildIds.Select(c => c.ColumnName).ToArray(),
                         QueryType = QueryType.Single,
                     };
                     Joins.Add(join);

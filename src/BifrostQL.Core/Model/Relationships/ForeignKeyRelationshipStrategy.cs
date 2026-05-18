@@ -27,6 +27,15 @@ namespace BifrostQL.Core.Model.Relationships
 
             foreach (var fk in foreignKeys)
             {
+                // Composite FKs are now carried through the model
+                // (TableLinkDto.ChildIds/ParentIds) but the SQL emission
+                // pipeline still emits single-column ON clauses through
+                // GqlObjectQuery + ReaderEnum. Linking a composite FK
+                // here would produce a join that only matches on the
+                // first column pair — silently incorrect. Until the SQL
+                // emitter and reader handle multi-column join keys, keep
+                // the explicit skip so the gap is visible rather than
+                // a wrong result. Tracked in worktrack workspace `bifrostql`.
                 if (fk.IsComposite)
                     continue;
 
@@ -35,25 +44,40 @@ namespace BifrostQL.Core.Model.Relationships
                 if (!tablesByDbName.TryGetValue((fk.ParentTableSchema, fk.ParentTableName), out var parentTable))
                     continue;
 
-                var childColumnName = fk.ChildColumnNames[0];
-                var parentColumnName = fk.ParentColumnNames[0];
+                // Resolve every column on both sides of the FK; if any column
+                // is unknown to the loaded model, skip the whole FK so we
+                // never produce a half-formed link.
+                var childColumns = new List<ColumnDto>(fk.ChildColumnNames.Count);
+                var parentColumns = new List<ColumnDto>(fk.ParentColumnNames.Count);
+                var resolved = true;
+                for (var i = 0; i < fk.ChildColumnNames.Count; i++)
+                {
+                    if (!childTable.ColumnLookup.TryGetValue(fk.ChildColumnNames[i], out var childCol)
+                        || !parentTable.ColumnLookup.TryGetValue(fk.ParentColumnNames[i], out var parentCol))
+                    {
+                        resolved = false;
+                        break;
+                    }
+                    childColumns.Add(childCol);
+                    parentColumns.Add(parentCol);
+                }
+                if (!resolved) continue;
 
-                if (!childTable.ColumnLookup.TryGetValue(childColumnName, out var childColumn))
-                    continue;
-                if (!parentTable.ColumnLookup.TryGetValue(parentColumnName, out var parentColumn))
-                    continue;
-
-                // Avoid duplicate links
+                // Avoid duplicate links keyed by parent's GraphQL name.
                 if (childTable.SingleLinks.ContainsKey(parentTable.GraphQlName))
                     continue;
 
-                // Create single-link (child -> parent)
+                // Create single-link (child -> parent). ChildId/ParentId
+                // remain the first column for back-compat; the full ordered
+                // lists power multi-column ON-clauses in SQL emission.
                 childTable.SingleLinks.Add(parentTable.GraphQlName,
                     new TableLinkDto
                     {
                         Name = parentTable.GraphQlName,
-                        ChildId = childColumn,
-                        ParentId = parentColumn,
+                        ChildId = childColumns[0],
+                        ParentId = parentColumns[0],
+                        ChildIds = childColumns,
+                        ParentIds = parentColumns,
                         ChildTable = childTable,
                         ParentTable = parentTable
                     });
@@ -65,8 +89,10 @@ namespace BifrostQL.Core.Model.Relationships
                         new TableLinkDto
                         {
                             Name = childTable.GraphQlName,
-                            ChildId = childColumn,
-                            ParentId = parentColumn,
+                            ChildId = childColumns[0],
+                            ParentId = parentColumns[0],
+                            ChildIds = childColumns,
+                            ParentIds = parentColumns,
                             ChildTable = childTable,
                             ParentTable = parentTable
                         });

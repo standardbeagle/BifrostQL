@@ -395,10 +395,34 @@ namespace BifrostQL.Core.Model
         public IDbTable ParentTable { get; init; } = null!;
         /// <summary>Child table always refers to the many in one to many relations in database joins</summary>
         public IDbTable ChildTable { get; init; } = null!;
-        /// <summary>Parent id always refers to the one in one to many relations in database joins</summary>
+        /// <summary>Parent id always refers to the one in one to many relations in database joins. For composite-key FKs this is the first column; the full ordered list is on <see cref="ParentIds"/>.</summary>
         public ColumnDto ParentId { get; init; } = null!;
-        /// <summary>Child id always refers to the many in one to many relations in database joins</summary>
+        /// <summary>Child id always refers to the many in one to many relations in database joins. For composite-key FKs this is the first column; the full ordered list is on <see cref="ChildIds"/>.</summary>
         public ColumnDto ChildId { get; init; } = null!;
+        /// <summary>
+        /// Full ordered list of parent-side columns for the link. Single-column
+        /// FKs populate exactly one entry that matches <see cref="ParentId"/>.
+        /// Defaults to a singleton over <see cref="ParentId"/> when callers
+        /// only set the single-column properties (back-compat).
+        /// </summary>
+        public IReadOnlyList<ColumnDto> ParentIds
+        {
+            get => _parentIds ?? (ParentId is null ? Array.Empty<ColumnDto>() : new[] { ParentId });
+            init => _parentIds = value;
+        }
+        private readonly IReadOnlyList<ColumnDto>? _parentIds;
+        /// <summary>
+        /// Full ordered list of child-side columns for the link. Single-column
+        /// FKs populate exactly one entry that matches <see cref="ChildId"/>.
+        /// </summary>
+        public IReadOnlyList<ColumnDto> ChildIds
+        {
+            get => _childIds ?? (ChildId is null ? Array.Empty<ColumnDto>() : new[] { ChildId });
+            init => _childIds = value;
+        }
+        private readonly IReadOnlyList<ColumnDto>? _childIds;
+        /// <summary>True when the FK spans more than one column pair.</summary>
+        public bool IsComposite => ChildIds.Count > 1;
 
         public string GetSqlSourceTableRef(QueryModel.ISqlDialect dialect, LinkDirection direction)
         {

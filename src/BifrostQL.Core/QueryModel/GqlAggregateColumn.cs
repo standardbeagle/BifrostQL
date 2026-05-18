@@ -1,4 +1,5 @@
 ﻿using BifrostQL.Core.Schema;
+using BifrostQL.Core.Resolvers;
 using GraphQLParser.AST;
 using System;
 using System.Collections.Generic;
@@ -30,6 +31,13 @@ namespace BifrostQL.Core.QueryModel
 
         public ParameterizedSql ToSqlParameterized(ISqlDialect dialect, ParameterizedSql filterSql)
         {
+            if (Links.Count == 0)
+                throw new BifrostExecutionError(
+                    "Aggregate value must include at least one nested-FK link (e.g. " +
+                    "`value: { joinTable: { column: foo } }`); bare-column aggregates " +
+                    "without a join are not supported on `_agg` inside the per-row " +
+                    "`data` selection.");
+
             var src = dialect.EscapeIdentifier("src");
             var next = dialect.EscapeIdentifier("next");
             var joinId = dialect.EscapeIdentifier("joinId");

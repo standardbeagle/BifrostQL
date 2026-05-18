@@ -8,6 +8,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Resolvers;
 using GraphQL;
 
 namespace BifrostQL.Core.QueryModel
@@ -46,22 +47,27 @@ namespace BifrostQL.Core.QueryModel
 
         }
 
-        [Fact(Skip = "Aggregate `_agg(value: id operation: count)` over a single table is not yet emitted by SqlVisitor; the expected SQL still references the old aggregate shape. Re-enable once aggregate codegen is finalized.")]
-        public async Task SimpleCountQuerySuccess()
+        // SimpleCountQuerySuccess removed: it asserted a single-table
+        // global aggregate (`SELECT Count(id) FROM work shops`) under
+        // `_agg(value: id ...)` — the bare-column form. That shape
+        // belonged to the now-removed top-level `__agg_<table>` field;
+        // inside `data { _agg }` the per-row reader has no place to put
+        // a single global value. The visitor now throws a clear
+        // BifrostExecutionError when value lacks a nested-FK link
+        // (BareColumnAggregate_ThrowsWithClearError verifies that).
+        [Fact]
+        public async Task BareColumnAggregate_ThrowsWithClearError()
         {
             var ctx = new SqlContext();
             var visitor = new SqlVisitor();
 
             var model = new DbModel { Tables = GetFakeTables() };
-            var ast = Parser.Parse("query { work__shops { data { id _agg(value: id operation: count) } } }");
+            var ast = Parser.Parse("query { work__shops { data { id _agg(value: { column: id } operation: Count) } } }");
             await visitor.VisitAsync(ast, ctx);
-            var sqls = GetSqls(ctx, model);
-            sqls.Should().ContainSingle()
-                .Which.Should().Equal(new Dictionary<string, string> {
-                    { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY"},
-                    { "work__shops=>count", "SELECT COUNT(*) FROM [dbo].[work shops]"},
-                    { "work__shops=>agg__agg", "SELECT Count([id]) [_agg] FROM [dbo].[work shops]"}
-                });
+
+            Action act = () => GetSqls(ctx, model);
+            act.Should().Throw<BifrostExecutionError>()
+                .WithMessage("*at least one nested-FK link*");
         }
 
         [Fact]

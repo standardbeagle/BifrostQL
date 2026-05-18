@@ -142,9 +142,8 @@ public class DbModelForeignKeyTests
     }
 
     [Fact]
-    public void ForeignKey_Composite_IsSkipped()
+    public void ForeignKey_Composite_LinksWithFullColumnLists()
     {
-        // Composite FKs cannot be represented as single-column TableLinkDto
         var model = DbModelTestFixture.Create()
             .WithTable("Tenants", t => t
                 .WithSchema("dbo")
@@ -162,8 +161,13 @@ public class DbModelForeignKeyTests
             .Build();
 
         var users = model.GetTableFromDbName("Users");
-        // Composite FK is skipped, no links created from it
-        users.SingleLinks.Should().NotContainKey("Tenants");
+        var tenants = model.GetTableFromDbName("Tenants");
+        var parentKey = tenants.GraphQlName;
+        users.SingleLinks.Should().ContainKey(parentKey);
+        var link = users.SingleLinks[parentKey];
+        link.IsComposite.Should().BeTrue();
+        link.ChildIds.Select(c => c.ColumnName).Should().Equal("TenantId", "RegionId");
+        link.ParentIds.Select(c => c.ColumnName).Should().Equal("TenantId", "RegionId");
     }
 
     [Fact]

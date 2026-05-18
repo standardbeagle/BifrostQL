@@ -75,7 +75,7 @@ public sealed class CompositeForeignKeyTests
     }
 
     [Fact]
-    public void ForeignKeyRelationshipStrategy_SkipsCompositeFKs_UntilSqlEmitterSupportsThem()
+    public void ForeignKeyRelationshipStrategy_LinksCompositeFK_WithFullColumnLists()
     {
         var (model, childTable, parentTable) = BuildTwoTableModel();
         var compositeFk = new DbForeignKey
@@ -91,9 +91,18 @@ public sealed class CompositeForeignKeyTests
 
         new ForeignKeyRelationshipStrategy().DiscoverRelationships(model, new[] { compositeFk });
 
-        childTable.SingleLinks.Should().BeEmpty(
-            "composite FKs are detected by the loader but not yet linked — the SQL emitter still produces single-column ON clauses");
-        parentTable.MultiLinks.Should().BeEmpty();
+        var parentKey = parentTable.GraphQlName;
+        childTable.SingleLinks.Should().ContainKey(parentKey);
+        var link = childTable.SingleLinks[parentKey];
+        link.IsComposite.Should().BeTrue();
+        link.ChildIds.Select(c => c.ColumnName).Should().Equal("CustomerId", "TenantId");
+        link.ParentIds.Select(c => c.ColumnName).Should().Equal("Id", "TenantId");
+
+        parentTable.MultiLinks.Should().ContainKey(childTable.GraphQlName);
+        var multi = parentTable.MultiLinks[childTable.GraphQlName];
+        multi.IsComposite.Should().BeTrue();
+        multi.ChildIds.Should().HaveCount(2);
+        multi.ParentIds.Should().HaveCount(2);
     }
 
     [Fact]
@@ -123,6 +132,78 @@ public sealed class CompositeForeignKeyTests
         link.ChildIds.Should().ContainSingle();
         link.ParentIds.Should().ContainSingle();
         link.IsComposite.Should().BeFalse();
+    }
+
+    [Fact]
+    public void CompositeJoin_EmitsAndedOnClause_WithSuffixedJoinIds()
+    {
+        // Build a minimal model with a composite FK and emit the SQL for
+        // a top-level "child { parents { … } }" join through SqlVisitor's
+        // helpers. The inner DISTINCT must project suffixed `JoinId_<i>`
+        // columns; the outer ON must AND every per-column equality;
+        // the wrap `src_id_<i>` projection must match.
+        var (model, _, _) = BuildTwoTableModel();
+        new ForeignKeyRelationshipStrategy().DiscoverRelationships(model, new[]
+        {
+            new DbForeignKey
+            {
+                ConstraintName = "FK_Orders_Customers_Composite",
+                ChildTableSchema = "",
+                ChildTableName = "Orders",
+                ChildColumnNames = new[] { "CustomerId", "TenantId" },
+                ParentTableSchema = "",
+                ParentTableName = "Customers",
+                ParentColumnNames = new[] { "Id", "TenantId" },
+            }
+        });
+        var orders = model.GetTableFromDbName("Orders");
+        var customers = model.GetTableFromDbName("Customers");
+
+        // Stand up GqlObjectQuery wiring by hand: parent Orders, link to Customers.
+        var ordersQuery = new BifrostQL.Core.QueryModel.GqlObjectQuery
+        {
+            DbTable = orders,
+            TableName = "Orders",
+            SchemaName = "",
+            GraphQlName = "Orders",
+            Path = "Orders",
+            QueryType = BifrostQL.Core.QueryModel.QueryType.Standard,
+            ScalarColumns = { new BifrostQL.Core.QueryModel.GqlObjectColumn("OrderId") },
+        };
+        var customersLink = new BifrostQL.Core.QueryModel.GqlObjectQuery
+        {
+            DbTable = customers,
+            TableName = "Customers",
+            SchemaName = "",
+            GraphQlName = customers.GraphQlName,
+            Path = $"Orders->{customers.GraphQlName}",
+            QueryType = BifrostQL.Core.QueryModel.QueryType.Single,
+            ScalarColumns = { new BifrostQL.Core.QueryModel.GqlObjectColumn("Name") },
+        };
+        ordersQuery.Links.Add(customersLink);
+        ordersQuery.ConnectLinks(model);
+
+        var dialect = BifrostQL.Core.QueryModel.SqlServerDialect.Instance;
+        var parameters = new BifrostQL.Core.QueryModel.SqlParameterCollection();
+        var sqls = new Dictionary<string, BifrostQL.Core.QueryModel.ParameterizedSql>();
+        ordersQuery.AddSqlParameterized(model, dialect, sqls, parameters);
+
+        var linkKey = $"Orders->{customers.GraphQlName}";
+        sqls.Should().ContainKey(linkKey);
+        var sql = sqls[linkKey].Sql;
+
+        // Inner restricted DISTINCT projects suffixed JoinId aliases.
+        sql.Should().Contain("[CustomerId] AS [JoinId_0]");
+        sql.Should().Contain("[TenantId] AS [JoinId_1]");
+
+        // Outer ON ANDs every per-column equality with suffix.
+        sql.Should().Contain("[a].[JoinId_0] = [b].[Id]");
+        sql.Should().Contain("[a].[JoinId_1] = [b].[TenantId]");
+        sql.Should().Contain(" AND ");
+
+        // Wrap projects suffixed src_id aliases.
+        sql.Should().Contain("[a].[JoinId_0] [src_id_0]");
+        sql.Should().Contain("[a].[JoinId_1] [src_id_1]");
     }
 
     private static (IDbModel model, IDbTable orders, IDbTable customers) BuildTwoTableModel()

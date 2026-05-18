@@ -51,25 +51,65 @@ namespace BifrostQL.Core.Resolvers
 
         private ValueTask<object?> GetJoinResult((IDictionary<string, int> index, IList<object?[]> data) table, int row, TableJoin join)
         {
-            var keyFound = table.index.TryGetValue(join.FromColumn, out int keyIndex);
-            if (!keyFound)
-                throw new BifrostExecutionError("join column not found.");
-
-            var key = table.data[row][keyIndex];
-            if (key == null)
-                throw new BifrostExecutionError("key value is null");
+            // Resolve every source-side column the join references; for
+            // single-column FKs this is exactly `join.FromColumn`, for
+            // composite FKs the ordered list lives on `join.FromColumns`.
+            // A null in any component means the parent row is unjoinable.
+            var fromColumns = join.FromColumns;
+            var key = new object?[fromColumns.Count];
+            for (var i = 0; i < fromColumns.Count; i++)
+            {
+                if (!table.index.TryGetValue(fromColumns[i], out int keyIndex))
+                    throw new BifrostExecutionError("join column not found.");
+                key[i] = table.data[row][keyIndex];
+                if (key[i] == null)
+                    throw new BifrostExecutionError("key value is null");
+            }
 
             var tableData = _tables[join.JoinName];
             if (join.QueryType == QueryType.Join)
                 return ValueTask.FromResult<object?>(new SubTableEnumerable(this, key, tableData));
             if (join.QueryType == QueryType.Single)
             {
-                var srcIdIndex = tableData.index["src_id"];
-                var data = tableData.data.FirstOrDefault(r => Equals(r[srcIdIndex], key));
+                var data = FindRowByCompositeSrcId(tableData, key);
                 return ValueTask.FromResult<object?>(data == null ? null : new SingleRowLookup(data, tableData.index, this));
             }
 
             throw new BifrostExecutionError("unexpected Join type: " + join.JoinName);
+        }
+
+        /// <summary>
+        /// Find the row in <paramref name="tableData"/> whose `src_id`
+        /// (single-column case) or `src_id_0`..`src_id_N` (composite case)
+        /// matches every element of <paramref name="key"/>.
+        /// </summary>
+        internal static object?[]? FindRowByCompositeSrcId(
+            (IDictionary<string, int> index, IList<object?[]> data) tableData,
+            object?[] key)
+        {
+            var keyIndices = ResolveSrcIdIndices(tableData.index, key.Length);
+            return tableData.data.FirstOrDefault(r => RowMatchesKey(r, keyIndices, key));
+        }
+
+        internal static int[] ResolveSrcIdIndices(IDictionary<string, int> index, int keyCount)
+        {
+            if (keyCount <= 1)
+                return new[] { index["src_id"] };
+
+            var result = new int[keyCount];
+            for (var i = 0; i < keyCount; i++)
+                result[i] = index[$"src_id_{i}"];
+            return result;
+        }
+
+        internal static bool RowMatchesKey(object?[] row, int[] keyIndices, object?[] key)
+        {
+            for (var i = 0; i < keyIndices.Length; i++)
+            {
+                if (!Equals(row[keyIndices[i]], key[i]))
+                    return false;
+            }
+            return true;
         }
 
         public IEnumerator<object?> GetEnumerator()
@@ -139,14 +179,13 @@ namespace BifrostQL.Core.Resolvers
     {
         private readonly (IDictionary<string, int> index, IList<object?[]> data) _table;
         private readonly List<object?[]> _data;
-        private readonly int _keyIndex;
         private readonly ReaderEnum _root;
-        public SubTableEnumerable(ReaderEnum root, object key, (IDictionary<string, int> index, IList<object?[]> data) @table)
+        public SubTableEnumerable(ReaderEnum root, object?[] key, (IDictionary<string, int> index, IList<object?[]> data) @table)
         {
             _root = root;
             _table = table;
-            _keyIndex = table.index["src_id"];
-            _data = table.data.Where(r => Equals(r[_keyIndex], key)).ToList();
+            var keyIndices = ReaderEnum.ResolveSrcIdIndices(table.index, key.Length);
+            _data = table.data.Where(r => ReaderEnum.RowMatchesKey(r, keyIndices, key)).ToList();
         }
 
         public IEnumerator<object?> GetEnumerator()

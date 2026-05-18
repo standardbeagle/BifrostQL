@@ -27,18 +27,6 @@ namespace BifrostQL.Core.Model.Relationships
 
             foreach (var fk in foreignKeys)
             {
-                // Composite FKs are now carried through the model
-                // (TableLinkDto.ChildIds/ParentIds) but the SQL emission
-                // pipeline still emits single-column ON clauses through
-                // GqlObjectQuery + ReaderEnum. Linking a composite FK
-                // here would produce a join that only matches on the
-                // first column pair — silently incorrect. Until the SQL
-                // emitter and reader handle multi-column join keys, keep
-                // the explicit skip so the gap is visible rather than
-                // a wrong result. Tracked in worktrack workspace `bifrostql`.
-                if (fk.IsComposite)
-                    continue;
-
                 if (!tablesByDbName.TryGetValue((fk.ChildTableSchema, fk.ChildTableName), out var childTable))
                     continue;
                 if (!tablesByDbName.TryGetValue((fk.ParentTableSchema, fk.ParentTableName), out var parentTable))

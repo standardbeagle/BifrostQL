@@ -30,22 +30,27 @@ namespace BifrostQL.Core.QueryModel
 
         public ParameterizedSql ToSqlParameterized(ISqlDialect dialect, ParameterizedSql filterSql)
         {
+            var src = dialect.EscapeIdentifier("src");
+            var next = dialect.EscapeIdentifier("next");
+            var joinId = dialect.EscapeIdentifier("joinId");
+            var srcId = dialect.EscapeIdentifier("srcId");
+
             var (firstDirection, firstLink) = Links[0];
-            var sql = $"SELECT {firstLink.GetSqlSourceColumns(firstDirection, columnName: "joinId")}, {firstLink.GetSqlSourceColumns(firstDirection, columnName: "srcId")} FROM {firstLink.GetSqlSourceTableRef(firstDirection)}{filterSql.Sql}";
+            var sql = $"SELECT {firstLink.GetSqlSourceColumns(dialect, firstDirection, columnName: "joinId")}, {firstLink.GetSqlSourceColumns(dialect, firstDirection, columnName: "srcId")} FROM {firstLink.GetSqlSourceTableRef(dialect, firstDirection)}{filterSql.Sql}";
 
             for (var i = 0; i < Links.Count; ++i)
             {
                 var (direction, link) = Links[i];
-                var fromSql = $" FROM ({sql}) [src] INNER JOIN {link.GetSqlDestTableRef(direction)} [next] ON [src].[joinId] = [next].[{link.GetSqlDestJoinColumn(direction)}]";
+                var fromSql = $" FROM ({sql}) {src} INNER JOIN {link.GetSqlDestTableRef(dialect, direction)} {next} ON {src}.{joinId} = {next}.{dialect.EscapeIdentifier(link.GetSqlDestJoinColumn(direction))}";
                 var selectSql = (i, Links.Count - i) switch
                 {
-                    (_, 1) => $"SELECT [src].[srcId], {AggregateType}([next].{dialect.EscapeIdentifier(FinalColumnName)}) {dialect.EscapeIdentifier(FinalColumnGraphQlName)}",
-                    _ => $"SELECT {link.GetSqlSourceColumns(direction, columnName: "joinId", tableName: "next")}, [src].[srcId]",
+                    (_, 1) => $"SELECT {src}.{srcId}, {AggregateType}({next}.{dialect.EscapeIdentifier(FinalColumnName)}) {dialect.EscapeIdentifier(FinalColumnGraphQlName)}",
+                    _ => $"SELECT {link.GetSqlSourceColumns(dialect, direction, columnName: "joinId", tableName: "next")}, {src}.{srcId}",
                 };
                 sql = selectSql + fromSql;
             }
 
-            return new ParameterizedSql(sql + " GROUP BY [src].[srcId]", filterSql.Parameters);
+            return new ParameterizedSql(sql + $" GROUP BY {src}.{srcId}", filterSql.Parameters);
         }
     }
     public enum LinkDirection

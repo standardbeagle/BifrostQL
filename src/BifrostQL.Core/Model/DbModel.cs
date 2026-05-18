@@ -400,18 +400,16 @@ namespace BifrostQL.Core.Model
         /// <summary>Child id always refers to the many in one to many relations in database joins</summary>
         public ColumnDto ChildId { get; init; } = null!;
 
-        public string GetSqlSourceTableRef(LinkDirection direction)
+        public string GetSqlSourceTableRef(QueryModel.ISqlDialect dialect, LinkDirection direction)
         {
-            if (direction == LinkDirection.ManyToOne)
-                return ChildTable.DbTableRef;
-            return ParentTable.DbTableRef;
+            var table = direction == LinkDirection.ManyToOne ? ChildTable : ParentTable;
+            return dialect.TableReference(table.TableSchema, table.DbName);
         }
 
-        public string GetSqlDestTableRef(LinkDirection direction)
+        public string GetSqlDestTableRef(QueryModel.ISqlDialect dialect, LinkDirection direction)
         {
-            if (direction == LinkDirection.ManyToOne)
-                return ParentTable.DbTableRef;
-            return ChildTable.DbTableRef;
+            var table = direction == LinkDirection.ManyToOne ? ParentTable : ChildTable;
+            return dialect.TableReference(table.TableSchema, table.DbName);
         }
 
         public string GetSqlDestJoinColumn(LinkDirection direction)
@@ -421,23 +419,23 @@ namespace BifrostQL.Core.Model
             return ChildId.DbName;
         }
 
-        public string GetSqlSourceColumns(LinkDirection direction, string? tableName = null, string? columnName = null)
+        public string GetSqlSourceColumns(QueryModel.ISqlDialect dialect, LinkDirection direction, string? tableName = null, string? columnName = null)
         {
             var builder = new StringBuilder();
             if (!string.IsNullOrWhiteSpace(tableName))
-                builder.Append($"[{tableName}].");
+                builder.Append($"{dialect.EscapeIdentifier(tableName)}.");
             else if (direction == LinkDirection.ManyToOne)
-                builder.Append($"[{ChildTable.DbName}].");
+                builder.Append($"{dialect.EscapeIdentifier(ChildTable.DbName)}.");
             else
-                builder.Append($"[{ParentTable.DbName}].");
+                builder.Append($"{dialect.EscapeIdentifier(ParentTable.DbName)}.");
 
             if (direction == LinkDirection.ManyToOne)
-                builder.Append($"[{ChildId.DbName}]");
+                builder.Append(dialect.EscapeIdentifier(ChildId.DbName));
             else
-                builder.Append($"[{ParentId.DbName}]");
+                builder.Append(dialect.EscapeIdentifier(ParentId.DbName));
 
             if (!string.IsNullOrWhiteSpace(columnName))
-                builder.Append($" AS [{columnName}]");
+                builder.Append($" AS {dialect.EscapeIdentifier(columnName)}");
 
             return builder.ToString();
         }

@@ -275,6 +275,76 @@ public class SqliteFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetim
         products.Should().BeEmpty();
     }
 
+    // _agg coverage — exercises the nested-join aggregate against real Sqlite.
+    // Seeded: Electronics(1) has Laptop+Mouse, Books(2) has Book — counts 2/1.
+    // Prices: Electronics 999.99+29.99 (sum 1029.98, avg 514.99); Books 49.99.
+
+    [Fact]
+    public async Task Aggregate_NestedJoinCount_ShouldReturnTotal()
+    {
+        var query = @"
+            query {
+                categories {
+                    data {
+                        categoryId
+                        _agg(value: { products: { column: productId } } operation: Count)
+                    }
+                }
+            }
+        ";
+        var result = await ExecuteQueryAsync(query);
+
+        result.Errors.Should().BeNullOrEmpty();
+        var categories = UnwrapPagedRows(result, "categories");
+        var byId = categories!.ToDictionary(c => int.Parse(c["categoryId"].ToString()!));
+        double.Parse(byId[1]["_agg"].ToString()!).Should().Be(2);
+        double.Parse(byId[2]["_agg"].ToString()!).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Aggregate_NestedJoinSum_ShouldReturnTotalPrice()
+    {
+        var query = @"
+            query {
+                categories {
+                    data {
+                        categoryId
+                        _agg(value: { products: { column: price } } operation: Sum)
+                    }
+                }
+            }
+        ";
+        var result = await ExecuteQueryAsync(query);
+
+        result.Errors.Should().BeNullOrEmpty();
+        var categories = UnwrapPagedRows(result, "categories");
+        var byId = categories!.ToDictionary(c => int.Parse(c["categoryId"].ToString()!));
+        double.Parse(byId[1]["_agg"].ToString()!).Should().BeApproximately(1029.98, 0.01);
+        double.Parse(byId[2]["_agg"].ToString()!).Should().BeApproximately(49.99, 0.01);
+    }
+
+    [Fact]
+    public async Task Aggregate_NestedJoinAvg_ShouldReturnMeanPrice()
+    {
+        var query = @"
+            query {
+                categories {
+                    data {
+                        categoryId
+                        _agg(value: { products: { column: price } } operation: Avg)
+                    }
+                }
+            }
+        ";
+        var result = await ExecuteQueryAsync(query);
+
+        result.Errors.Should().BeNullOrEmpty();
+        var categories = UnwrapPagedRows(result, "categories");
+        var byId = categories!.ToDictionary(c => int.Parse(c["categoryId"].ToString()!));
+        double.Parse(byId[1]["_agg"].ToString()!).Should().BeApproximately(514.99, 0.01);
+        double.Parse(byId[2]["_agg"].ToString()!).Should().BeApproximately(49.99, 0.01);
+    }
+
     // GraphQL .NET returns ExecutionResult.Data as a RootExecutionNode whose
     // JSON shape can only be produced by GraphQLSerializer (System.Text.Json
     // cannot walk the node tree directly). The serializer writes the standard

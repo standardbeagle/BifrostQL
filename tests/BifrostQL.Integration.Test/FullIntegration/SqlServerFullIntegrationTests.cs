@@ -456,6 +456,38 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
     }
 
     [SkippableFact]
+    public async Task Aggregate_NestedJoinCount_ShouldReturnTotal()
+    {
+        // RED: verifies `_agg(value: { products: productId } operation: count)`
+        // returns the correct count of products per category. Seeded categories:
+        //   1 Electronics => 3 products (Laptop, Mouse, Keyboard)
+        //   2 Books       => 1 product  (Programming Book)
+        //   3 Clothing    => 1 product  (T-Shirt)
+        var query = @"
+            query {
+                categories {
+                    data {
+                        categoryId
+                        name
+                        _agg(value: { products: { column: productId } } operation: Count)
+                    }
+                }
+            }
+        ";
+
+        var result = await ExecuteQueryAsync(query);
+
+        result.Errors.Should().BeNullOrEmpty();
+        var categories = UnwrapPagedRows(result, "categories");
+        categories.Should().NotBeNull();
+
+        var byId = categories!.ToDictionary(c => int.Parse(c["categoryId"].ToString()!));
+        double.Parse(byId[1]["_agg"].ToString()!).Should().Be(3, "Electronics has 3 seeded products");
+        double.Parse(byId[2]["_agg"].ToString()!).Should().Be(1, "Books has 1 seeded product");
+        double.Parse(byId[3]["_agg"].ToString()!).Should().Be(1, "Clothing has 1 seeded product");
+    }
+
+    [SkippableFact]
     public async Task Query_OrderWithItems_ShouldReturnNestedData()
     {
         var query = @"

@@ -619,4 +619,68 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         products.Should().ContainSingle();
         Str(products[0]["name"]).Should().Be("Mouse");
     }
+
+    // _agg nested-join coverage. Seeded: Electronics(1) 2 products
+    // (Laptop 999.99, Mouse 29.99), Books(2) 2 products (Clean Code 49.99,
+    // Design Patterns 44.99), Sports(3) 1 product (Basketball 24.99).
+
+    [SkippableFact]
+    public async Task Aggregate_NestedJoinCount_ShouldReturnTotal()
+    {
+        var query = @"
+            query {
+                categories {
+                    data {
+                        categoryid
+                        _agg(value: { products: { column: productid } } operation: Count)
+                    }
+                }
+            }
+        ";
+        var rows = ExtractPagedData(await ExecuteQueryAsync(query), "categories");
+        var byId = rows.ToDictionary(c => Int(c["categoryid"]));
+        Dbl(byId[1]["_agg"]).Should().Be(2);
+        Dbl(byId[2]["_agg"]).Should().Be(2);
+        Dbl(byId[3]["_agg"]).Should().Be(1);
+    }
+
+    [SkippableFact]
+    public async Task Aggregate_NestedJoinSum_ShouldReturnTotalPrice()
+    {
+        var query = @"
+            query {
+                categories {
+                    data {
+                        categoryid
+                        _agg(value: { products: { column: price } } operation: Sum)
+                    }
+                }
+            }
+        ";
+        var rows = ExtractPagedData(await ExecuteQueryAsync(query), "categories");
+        var byId = rows.ToDictionary(c => Int(c["categoryid"]));
+        Dbl(byId[1]["_agg"]).Should().BeApproximately(1029.98, 0.01);
+        Dbl(byId[2]["_agg"]).Should().BeApproximately(94.98, 0.01);
+        Dbl(byId[3]["_agg"]).Should().BeApproximately(24.99, 0.01);
+    }
+
+    [SkippableFact]
+    public async Task Aggregate_NestedJoinAvg_ShouldReturnMeanPrice()
+    {
+        var query = @"
+            query {
+                categories {
+                    data {
+                        categoryid
+                        _agg(value: { products: { column: price } } operation: Avg)
+                    }
+                }
+            }
+        ";
+        var rows = ExtractPagedData(await ExecuteQueryAsync(query), "categories");
+        var byId = rows.ToDictionary(c => Int(c["categoryid"]));
+        Dbl(byId[1]["_agg"]).Should().BeApproximately(514.99, 0.01);
+        Dbl(byId[2]["_agg"]).Should().BeApproximately(47.49, 0.01);
+        Dbl(byId[3]["_agg"]).Should().BeApproximately(24.99, 0.01);
+    }
 }

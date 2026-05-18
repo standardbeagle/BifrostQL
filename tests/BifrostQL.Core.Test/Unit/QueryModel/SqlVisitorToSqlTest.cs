@@ -46,7 +46,7 @@ namespace BifrostQL.Core.QueryModel
 
         }
 
-        [Fact(Skip = "Same table???")]
+        [Fact(Skip = "Aggregate `_agg(value: id operation: count)` over a single table is not yet emitted by SqlVisitor; the expected SQL still references the old aggregate shape. Re-enable once aggregate codegen is finalized.")]
         public async Task SimpleCountQuerySuccess()
         {
             var ctx = new SqlContext();
@@ -193,7 +193,7 @@ namespace BifrostQL.Core.QueryModel
 
         }
 
-        [Fact(Skip = "aggregate still beta")]
+        [Fact(Skip = "Top-level `__agg_<table>` aggregate field is not yet implemented in SqlVisitor; the GraphQL parser even rejects the malformed test query without a closing brace. Re-enable when aggregate codegen ships.")]
         public async Task SimpleAggQuerySuccess()
         {
             var ctx = new SqlContext();
@@ -212,7 +212,7 @@ namespace BifrostQL.Core.QueryModel
 
         }
 
-        [Fact(Skip = "aggregate still beta")]
+        [Fact(Skip = "Combines unimplemented `__agg_<table>` + `_join_<table>` dynamic join field; both are still beta and the generated SQL does not match the expected fixture. Re-enable with the aggregate codegen work.")]
         public async Task SimpleAggAndJoinQuerySuccess()
         {
             var ctx = new SqlContext();
@@ -352,7 +352,7 @@ namespace BifrostQL.Core.QueryModel
                 });
         }
 
-        [Fact(Skip = "implement paging on linked tables.")]
+        [Fact(Skip = "Paging on linked tables is not yet wired: SqlVisitor builds the linked sub-query without forwarding the parent table's paged join-key set, so the linked join returns rows for the unpaged universe. Re-enable when the paging-on-linked-tables task lands.")]
         public async Task PageBaseQuerySuccess()
         {
             var ctx = new SqlContext();

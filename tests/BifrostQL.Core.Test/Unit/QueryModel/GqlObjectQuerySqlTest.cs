@@ -424,7 +424,7 @@ public sealed class GqlObjectQuerySqlTest
     }
 
     [Fact]
-    public void AddSqlParameterized_WithInvalidSortSuffix_ThrowsNotSupportedException()
+    public void AddSqlParameterized_WithInvalidSortSuffix_ThrowsBifrostExecutionError()
     {
         // Arrange
         var dbModel = StandardTestFixtures.SimpleUsers();
@@ -438,9 +438,10 @@ public sealed class GqlObjectQuerySqlTest
         var sqls = new Dictionary<string, ParameterizedSql>();
         var parameters = new SqlParameterCollection();
 
-        // Act & Assert
+        // Act & Assert — message names the offending token + supported suffixes.
         Action act = () => query.AddSqlParameterized(dbModel, Dialect, sqls, parameters);
-        act.Should().Throw<NotSupportedException>();
+        act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
+            .WithMessage("*Name_invalid*_asc*_desc*");
     }
 
     #endregion

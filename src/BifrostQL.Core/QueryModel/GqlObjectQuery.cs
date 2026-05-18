@@ -59,7 +59,7 @@ namespace BifrostQL.Core.QueryModel
                 {
                     { } when s.EndsWith("_asc") => dialect.EscapeIdentifier(s[..^4]) + " asc",
                     { } when s.EndsWith("_desc") => dialect.EscapeIdentifier(s[..^5]) + " desc",
-                    _ => throw new NotSupportedException()
+                    _ => throw new BifrostExecutionError($"Unsupported sort token '{s}'; expected suffix '_asc' or '_desc'.")
                 }) : null;
                 var pagination = dialect.Pagination(sortCols, Offset, Limit);
 
@@ -126,7 +126,7 @@ namespace BifrostQL.Core.QueryModel
             {
                 { } when s.EndsWith("_asc") => dialect.EscapeIdentifier(s[..^4]) + " asc",
                 { } when s.EndsWith("_desc") => dialect.EscapeIdentifier(s[..^5]) + " desc",
-                _ => throw new NotSupportedException()
+                _ => throw new BifrostExecutionError($"Unsupported sort token '{s}'; expected suffix '_asc' or '_desc'.")
             }) : null;
             var pagination = dialect.Pagination(sortCols, tableJoin.ConnectedTable.Offset, tableJoin.ConnectedTable.Limit);
 
@@ -161,7 +161,7 @@ namespace BifrostQL.Core.QueryModel
                     {
                         { } when s.EndsWith("_asc") => dialect.EscapeIdentifier(s[..^4]) + " asc",
                         { } when s.EndsWith("_desc") => dialect.EscapeIdentifier(s[..^5]) + " desc",
-                        _ => throw new NotSupportedException()
+                        _ => throw new BifrostExecutionError($"Unsupported sort token '{s}'; expected suffix '_asc' or '_desc'.")
                     }) : null;
                     var pagination = dialect.Pagination(sortCols, query.FromTable.Offset, query.FromTable.Limit);
                     rootSql = rootSql.Append(pagination);

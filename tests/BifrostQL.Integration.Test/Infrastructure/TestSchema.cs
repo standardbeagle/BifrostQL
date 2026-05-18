@@ -65,9 +65,26 @@ public static class TestSchema
             FOREIGN KEY (OrderId) REFERENCES Orders(Id),
             FOREIGN KEY (ProductId) REFERENCES Products(Id)
         );
+
+        CREATE TABLE IF NOT EXISTS TenantLocations (
+            TenantId INTEGER NOT NULL,
+            LocationId INTEGER NOT NULL,
+            Name TEXT NOT NULL,
+            PRIMARY KEY (TenantId, LocationId)
+        );
+
+        CREATE TABLE IF NOT EXISTS TenantInventory (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            TenantId INTEGER NOT NULL,
+            LocationId INTEGER NOT NULL,
+            Stock INTEGER NOT NULL,
+            FOREIGN KEY (TenantId, LocationId) REFERENCES TenantLocations(TenantId, LocationId)
+        );
         """;
 
     private const string SqlServerCreateTables = """
+        IF OBJECT_ID('TenantInventory', 'U') IS NOT NULL DROP TABLE TenantInventory;
+        IF OBJECT_ID('TenantLocations', 'U') IS NOT NULL DROP TABLE TenantLocations;
         IF OBJECT_ID('OrderItems', 'U') IS NOT NULL DROP TABLE OrderItems;
         IF OBJECT_ID('Orders', 'U') IS NOT NULL DROP TABLE Orders;
         IF OBJECT_ID('Customers', 'U') IS NOT NULL DROP TABLE Customers;
@@ -114,9 +131,26 @@ public static class TestSchema
             FOREIGN KEY (OrderId) REFERENCES Orders(Id),
             FOREIGN KEY (ProductId) REFERENCES Products(Id)
         );
+
+        CREATE TABLE TenantLocations (
+            TenantId INT NOT NULL,
+            LocationId INT NOT NULL,
+            Name NVARCHAR(100) NOT NULL,
+            CONSTRAINT PK_TenantLocations PRIMARY KEY (TenantId, LocationId)
+        );
+
+        CREATE TABLE TenantInventory (
+            Id INT IDENTITY(1,1) PRIMARY KEY,
+            TenantId INT NOT NULL,
+            LocationId INT NOT NULL,
+            Stock INT NOT NULL,
+            CONSTRAINT FK_TenantInventory_Loc FOREIGN KEY (TenantId, LocationId) REFERENCES TenantLocations(TenantId, LocationId)
+        );
         """;
 
     private const string PostgresCreateTables = """
+        DROP TABLE IF EXISTS "TenantInventory" CASCADE;
+        DROP TABLE IF EXISTS "TenantLocations" CASCADE;
         DROP TABLE IF EXISTS "OrderItems" CASCADE;
         DROP TABLE IF EXISTS "Orders" CASCADE;
         DROP TABLE IF EXISTS "Customers" CASCADE;
@@ -159,9 +193,26 @@ public static class TestSchema
             "Quantity" INTEGER NOT NULL,
             "UnitPrice" DECIMAL(18,2) NOT NULL
         );
+
+        CREATE TABLE "TenantLocations" (
+            "TenantId" INTEGER NOT NULL,
+            "LocationId" INTEGER NOT NULL,
+            "Name" VARCHAR(100) NOT NULL,
+            PRIMARY KEY ("TenantId", "LocationId")
+        );
+
+        CREATE TABLE "TenantInventory" (
+            "Id" SERIAL PRIMARY KEY,
+            "TenantId" INTEGER NOT NULL,
+            "LocationId" INTEGER NOT NULL,
+            "Stock" INTEGER NOT NULL,
+            FOREIGN KEY ("TenantId", "LocationId") REFERENCES "TenantLocations"("TenantId", "LocationId")
+        );
         """;
 
     private const string MySqlCreateTables = """
+        DROP TABLE IF EXISTS `TenantInventory`;
+        DROP TABLE IF EXISTS `TenantLocations`;
         DROP TABLE IF EXISTS `OrderItems`;
         DROP TABLE IF EXISTS `Orders`;
         DROP TABLE IF EXISTS `Customers`;
@@ -207,6 +258,21 @@ public static class TestSchema
             `UnitPrice` DECIMAL(18,2) NOT NULL,
             FOREIGN KEY (`OrderId`) REFERENCES `Orders`(`Id`),
             FOREIGN KEY (`ProductId`) REFERENCES `Products`(`Id`)
+        );
+
+        CREATE TABLE `TenantLocations` (
+            `TenantId` INT NOT NULL,
+            `LocationId` INT NOT NULL,
+            `Name` VARCHAR(100) NOT NULL,
+            PRIMARY KEY (`TenantId`, `LocationId`)
+        );
+
+        CREATE TABLE `TenantInventory` (
+            `Id` INT AUTO_INCREMENT PRIMARY KEY,
+            `TenantId` INT NOT NULL,
+            `LocationId` INT NOT NULL,
+            `Stock` INT NOT NULL,
+            FOREIGN KEY (`TenantId`, `LocationId`) REFERENCES `TenantLocations`(`TenantId`, `LocationId`)
         );
         """;
 
@@ -323,6 +389,45 @@ public static class TestSchema
                 await cmd.ExecuteNonQueryAsync();
             }
         }
+
+        // Composite-FK fixture: 4 locations across 2 tenants.
+        // (1,10) Acme/North, (1,20) Acme/South, (2,10) Globex/North, (2,30) Globex/East.
+        // The (TenantId=10) collision between two different tenants is critical —
+        // a single-column join would crosswire Acme's location 10 with Globex's location 10.
+        var locations = new (int tenantId, int locationId, string name)[]
+        {
+            (1, 10, "Acme/North"),
+            (1, 20, "Acme/South"),
+            (2, 10, "Globex/North"),
+            (2, 30, "Globex/East"),
+        };
+        foreach (var loc in locations)
+        {
+            var cmd = conn.CreateCommand();
+            cmd.CommandText = $"INSERT INTO {dialect.EscapeIdentifier("TenantLocations")} ({dialect.EscapeIdentifier("TenantId")}, {dialect.EscapeIdentifier("LocationId")}, {dialect.EscapeIdentifier("Name")}) VALUES ({prefix}tid, {prefix}lid, {prefix}name)";
+            AddParam(cmd, $"{prefix}tid", loc.tenantId);
+            AddParam(cmd, $"{prefix}lid", loc.locationId);
+            AddParam(cmd, $"{prefix}name", loc.name);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        // 8 inventory rows: 2 per location, varying stock.
+        var inventory = new (int tenantId, int locationId, int stock)[]
+        {
+            (1, 10, 100), (1, 10, 110),
+            (1, 20, 200), (1, 20, 210),
+            (2, 10, 300), (2, 10, 310),
+            (2, 30, 400), (2, 30, 410),
+        };
+        foreach (var inv in inventory)
+        {
+            var cmd = conn.CreateCommand();
+            cmd.CommandText = $"INSERT INTO {dialect.EscapeIdentifier("TenantInventory")} ({dialect.EscapeIdentifier("TenantId")}, {dialect.EscapeIdentifier("LocationId")}, {dialect.EscapeIdentifier("Stock")}) VALUES ({prefix}tid, {prefix}lid, {prefix}stock)";
+            AddParam(cmd, $"{prefix}tid", inv.tenantId);
+            AddParam(cmd, $"{prefix}lid", inv.locationId);
+            AddParam(cmd, $"{prefix}stock", inv.stock);
+            await cmd.ExecuteNonQueryAsync();
+        }
     }
 
     private static void AddParam(DbCommand cmd, string name, object? value)
@@ -385,6 +490,19 @@ public static class TestSchema
                 Col("Quantity", "int"),
                 Col("UnitPrice", "decimal"),
             });
+            var tenantLocations = BuildTable("TenantLocations", "", new[]
+            {
+                Col("TenantId", "int", isPrimaryKey: true),
+                Col("LocationId", "int", isPrimaryKey: true),
+                Col("Name", "nvarchar"),
+            });
+            var tenantInventory = BuildTable("TenantInventory", "", new[]
+            {
+                Col("Id", "int", isPrimaryKey: true),
+                Col("TenantId", "int"),
+                Col("LocationId", "int"),
+                Col("Stock", "int"),
+            });
 
             // SingleLinks (ManyToOne: child -> parent)
             products.SingleLinks["category"] = new TableLinkDto
@@ -446,7 +564,39 @@ public static class TestSchema
                 ChildId = orders.ColumnLookup["CustomerId"],
             };
 
-            var allTables = new IDbTable[] { categories, products, customers, orders, orderItems };
+            // Composite-FK link (TenantId, LocationId): inventory → location.
+            var invChildIds = new[]
+            {
+                tenantInventory.ColumnLookup["TenantId"],
+                tenantInventory.ColumnLookup["LocationId"],
+            };
+            var locParentIds = new[]
+            {
+                tenantLocations.ColumnLookup["TenantId"],
+                tenantLocations.ColumnLookup["LocationId"],
+            };
+            tenantInventory.SingleLinks["location"] = new TableLinkDto
+            {
+                Name = "TenantInventory->TenantLocations",
+                ChildTable = tenantInventory,
+                ChildId = invChildIds[0],
+                ChildIds = invChildIds,
+                ParentTable = tenantLocations,
+                ParentId = locParentIds[0],
+                ParentIds = locParentIds,
+            };
+            tenantLocations.MultiLinks["inventory"] = new TableLinkDto
+            {
+                Name = "TenantLocations->TenantInventory",
+                ParentTable = tenantLocations,
+                ParentId = locParentIds[0],
+                ParentIds = locParentIds,
+                ChildTable = tenantInventory,
+                ChildId = invChildIds[0],
+                ChildIds = invChildIds,
+            };
+
+            var allTables = new IDbTable[] { categories, products, customers, orders, orderItems, tenantLocations, tenantInventory };
             Tables = allTables;
             _tablesByDbName = allTables.ToDictionary(t => t.DbName, t => t);
             _tablesByGraphQlName = allTables.ToDictionary(t => t.GraphQlName, t => t);
@@ -511,5 +661,7 @@ public static class TestSchema
         public const int ProductsPerCategory = 4;
         public const int OrdersPerCustomer = 3;
         public const int ItemsPerOrder = 2;
+        public const int TenantLocations = 4;
+        public const int TenantInventory = 8;
     }
 }

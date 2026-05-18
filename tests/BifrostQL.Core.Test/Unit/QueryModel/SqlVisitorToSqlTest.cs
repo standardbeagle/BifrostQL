@@ -451,9 +451,9 @@ namespace BifrostQL.Core.QueryModel
         public static List<DbTable> GetFakeTables()
         {
             var workshopColumns = new Dictionary<string, ColumnDto> {
-                { "id", new ColumnDto { TableName = "work shops", ColumnName= "id", IsPrimaryKey= true } },
-                { "number", new ColumnDto { TableName = "work shops", ColumnName= "number", IsPrimaryKey= false } },
-                { "percentage%", new ColumnDto { TableName = "work shops", ColumnName= "percentage%", IsPrimaryKey= false } },
+                { "id", new ColumnDto { TableName = "work shops", ColumnName= "id", GraphQlName= "id", IsPrimaryKey= true } },
+                { "number", new ColumnDto { TableName = "work shops", ColumnName= "number", GraphQlName= "number", IsPrimaryKey= false } },
+                { "percentage%", new ColumnDto { TableName = "work shops", ColumnName= "percentage%", GraphQlName= "percentage%", IsPrimaryKey= false } },
             };
             var workshops = new DbTable
             {
@@ -465,10 +465,10 @@ namespace BifrostQL.Core.QueryModel
                 GraphQlLookup = workshopColumns.ToNormalized().ToGraphQlLookup(),
             };
             var sessionColumns = new Dictionary<string, ColumnDto> {
-                { "id", new ColumnDto { TableName = "sessions", ColumnName= "sid", IsPrimaryKey= true } },
-                { "status", new ColumnDto { TableName = "sessions", ColumnName= "status", IsPrimaryKey= false } },
-                { "workshopid", new ColumnDto { TableName = "sessions", ColumnName= "workshopid", IsPrimaryKey= false } },
-                { "percentage%", new ColumnDto { TableName = "sessions", ColumnName= "percentage%", IsPrimaryKey= false } },
+                { "id", new ColumnDto { TableName = "sessions", ColumnName= "sid", GraphQlName= "id", IsPrimaryKey= true } },
+                { "status", new ColumnDto { TableName = "sessions", ColumnName= "status", GraphQlName= "status", IsPrimaryKey= false } },
+                { "workshopid", new ColumnDto { TableName = "sessions", ColumnName= "workshopid", GraphQlName= "workshopid", IsPrimaryKey= false } },
+                { "percentage%", new ColumnDto { TableName = "sessions", ColumnName= "percentage%", GraphQlName= "percentage%", IsPrimaryKey= false } },
             };
             var sessions = new DbTable
             {
@@ -480,11 +480,11 @@ namespace BifrostQL.Core.QueryModel
                 GraphQlLookup = sessionColumns.ToNormalized().ToGraphQlLookup(),
             };
             var participantColumns = new Dictionary<string, ColumnDto> {
-                { "id", new ColumnDto { TableName = "participants table", ColumnName= "sid", IsPrimaryKey= true } },
-                { "status code", new ColumnDto { TableName = "participants table", ColumnName= "status code", IsPrimaryKey= false } },
-                { "firstname", new ColumnDto { TableName = "participants table", ColumnName= "firstname", IsPrimaryKey= false } },
-                { "lastname", new ColumnDto { TableName = "participants table", ColumnName= "lastname", IsPrimaryKey= false } },
-                { "workshopid", new ColumnDto { TableName = "participants table", ColumnName= "workshopid", IsPrimaryKey= false } },
+                { "id", new ColumnDto { TableName = "participants table", ColumnName= "sid", GraphQlName= "id", IsPrimaryKey= true } },
+                { "status code", new ColumnDto { TableName = "participants table", ColumnName= "status code", GraphQlName= "status code", IsPrimaryKey= false } },
+                { "firstname", new ColumnDto { TableName = "participants table", ColumnName= "firstname", GraphQlName= "firstname", IsPrimaryKey= false } },
+                { "lastname", new ColumnDto { TableName = "participants table", ColumnName= "lastname", GraphQlName= "lastname", IsPrimaryKey= false } },
+                { "workshopid", new ColumnDto { TableName = "participants table", ColumnName= "workshopid", GraphQlName= "workshopid", IsPrimaryKey= false } },
             };
             var participants = new DbTable
             {
@@ -496,9 +496,9 @@ namespace BifrostQL.Core.QueryModel
                 GraphQlLookup = participantColumns.ToNormalized().ToGraphQlLookup(),
             };
             var entryColumns = new Dictionary<string, ColumnDto> {
-                { "id", new ColumnDto { TableName = "entry", ColumnName="id", IsPrimaryKey= true } },
-                { "value", new ColumnDto { TableName = "entry", ColumnName= "value", IsPrimaryKey= false } },
-                { "session_id", new ColumnDto { TableName = "entry", ColumnName= "session_id", IsPrimaryKey= false } },
+                { "id", new ColumnDto { TableName = "entry", ColumnName="id", GraphQlName= "id", IsPrimaryKey= true } },
+                { "value", new ColumnDto { TableName = "entry", ColumnName= "value", GraphQlName= "value", IsPrimaryKey= false } },
+                { "session_id", new ColumnDto { TableName = "entry", ColumnName= "session_id", GraphQlName= "session_id", IsPrimaryKey= false } },
             };
             var entries = new DbTable
             {
@@ -571,6 +571,7 @@ namespace BifrostQL.Core.QueryModel
                 TableName = kv.Value.TableName,
                 ColumnName = kv.Value.ColumnName,
                 NormalizedName = kv.Value.ColumnName,
+                GraphQlName = System.Text.RegularExpressions.Regex.Replace(kv.Value.GraphQlName ?? kv.Key, "[^A-Za-z0-9_]", "_"),
                 IsPrimaryKey = kv.Value.IsPrimaryKey
             });
         }
@@ -581,6 +582,7 @@ namespace BifrostQL.Core.QueryModel
                 TableName = kv.Value.TableName,
                 ColumnName = kv.Value.ColumnName,
                 NormalizedName = kv.Value.NormalizedName,
+                GraphQlName = System.Text.RegularExpressions.Regex.Replace(kv.Value.GraphQlName ?? kv.Key, "[^A-Za-z0-9_]", "_"),
                 IsPrimaryKey = kv.Value.IsPrimaryKey
             });
         }

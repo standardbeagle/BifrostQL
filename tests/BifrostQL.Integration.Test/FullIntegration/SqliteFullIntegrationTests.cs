@@ -345,6 +345,51 @@ public class SqliteFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetim
         double.Parse(byId[2]["_agg"].ToString()!).Should().BeApproximately(49.99, 0.01);
     }
 
+    [Fact]
+    public async Task Aggregate_NestedJoinMin_ShouldReturnMinPrice()
+    {
+        var query = @"
+            query {
+                categories {
+                    data {
+                        categoryId
+                        _agg(value: { products: { column: price } } operation: Min)
+                    }
+                }
+            }
+        ";
+        var result = await ExecuteQueryAsync(query);
+
+        result.Errors.Should().BeNullOrEmpty();
+        var byId = UnwrapPagedRows(result, "categories")!
+            .ToDictionary(c => int.Parse(c["categoryId"].ToString()!));
+        // Electronics: Laptop 999.99, Mouse 29.99 -> min 29.99; Books: Book 49.99
+        double.Parse(byId[1]["_agg"].ToString()!).Should().BeApproximately(29.99, 0.01);
+        double.Parse(byId[2]["_agg"].ToString()!).Should().BeApproximately(49.99, 0.01);
+    }
+
+    [Fact]
+    public async Task Aggregate_NestedJoinMax_ShouldReturnMaxPrice()
+    {
+        var query = @"
+            query {
+                categories {
+                    data {
+                        categoryId
+                        _agg(value: { products: { column: price } } operation: Max)
+                    }
+                }
+            }
+        ";
+        var result = await ExecuteQueryAsync(query);
+
+        result.Errors.Should().BeNullOrEmpty();
+        var byId = UnwrapPagedRows(result, "categories")!
+            .ToDictionary(c => int.Parse(c["categoryId"].ToString()!));
+        double.Parse(byId[1]["_agg"].ToString()!).Should().BeApproximately(999.99, 0.01);
+        double.Parse(byId[2]["_agg"].ToString()!).Should().BeApproximately(49.99, 0.01);
+    }
+
     // GraphQL .NET returns ExecutionResult.Data as a RootExecutionNode whose
     // JSON shape can only be produced by GraphQLSerializer (System.Text.Json
     // cannot walk the node tree directly). The serializer writes the standard

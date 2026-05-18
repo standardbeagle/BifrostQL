@@ -535,6 +535,52 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
     }
 
     [SkippableFact]
+    public async Task Aggregate_NestedJoinMin_ShouldReturnMinPrice()
+    {
+        // Min prices: Electronics (Mouse 29.99), Books 49.99, Clothing 19.99.
+        var query = @"
+            query {
+                categories {
+                    data {
+                        categoryId
+                        _agg(value: { products: { column: price } } operation: Min)
+                    }
+                }
+            }
+        ";
+        var result = await ExecuteQueryAsync(query);
+        result.Errors.Should().BeNullOrEmpty();
+        var byId = UnwrapPagedRows(result, "categories")!
+            .ToDictionary(c => int.Parse(c["categoryId"].ToString()!));
+        double.Parse(byId[1]["_agg"].ToString()!).Should().BeApproximately(29.99, 0.01);
+        double.Parse(byId[2]["_agg"].ToString()!).Should().BeApproximately(49.99, 0.01);
+        double.Parse(byId[3]["_agg"].ToString()!).Should().BeApproximately(19.99, 0.01);
+    }
+
+    [SkippableFact]
+    public async Task Aggregate_NestedJoinMax_ShouldReturnMaxPrice()
+    {
+        // Max prices: Electronics 999.99 (Laptop), Books 49.99, Clothing 19.99.
+        var query = @"
+            query {
+                categories {
+                    data {
+                        categoryId
+                        _agg(value: { products: { column: price } } operation: Max)
+                    }
+                }
+            }
+        ";
+        var result = await ExecuteQueryAsync(query);
+        result.Errors.Should().BeNullOrEmpty();
+        var byId = UnwrapPagedRows(result, "categories")!
+            .ToDictionary(c => int.Parse(c["categoryId"].ToString()!));
+        double.Parse(byId[1]["_agg"].ToString()!).Should().BeApproximately(999.99, 0.01);
+        double.Parse(byId[2]["_agg"].ToString()!).Should().BeApproximately(49.99, 0.01);
+        double.Parse(byId[3]["_agg"].ToString()!).Should().BeApproximately(19.99, 0.01);
+    }
+
+    [SkippableFact]
     public async Task Query_OrderWithItems_ShouldReturnNestedData()
     {
         var query = @"

@@ -683,4 +683,44 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         Dbl(byId[2]["_agg"]).Should().BeApproximately(47.49, 0.01);
         Dbl(byId[3]["_agg"]).Should().BeApproximately(24.99, 0.01);
     }
+
+    [SkippableFact]
+    public async Task Aggregate_NestedJoinMin_ShouldReturnMinPrice()
+    {
+        var query = @"
+            query {
+                categories {
+                    data {
+                        categoryid
+                        _agg(value: { products: { column: price } } operation: Min)
+                    }
+                }
+            }
+        ";
+        var rows = ExtractPagedData(await ExecuteQueryAsync(query), "categories");
+        var byId = rows.ToDictionary(c => Int(c["categoryid"]));
+        Dbl(byId[1]["_agg"]).Should().BeApproximately(29.99, 0.01);
+        Dbl(byId[2]["_agg"]).Should().BeApproximately(44.99, 0.01);
+        Dbl(byId[3]["_agg"]).Should().BeApproximately(24.99, 0.01);
+    }
+
+    [SkippableFact]
+    public async Task Aggregate_NestedJoinMax_ShouldReturnMaxPrice()
+    {
+        var query = @"
+            query {
+                categories {
+                    data {
+                        categoryid
+                        _agg(value: { products: { column: price } } operation: Max)
+                    }
+                }
+            }
+        ";
+        var rows = ExtractPagedData(await ExecuteQueryAsync(query), "categories");
+        var byId = rows.ToDictionary(c => Int(c["categoryid"]));
+        Dbl(byId[1]["_agg"]).Should().BeApproximately(999.99, 0.01);
+        Dbl(byId[2]["_agg"]).Should().BeApproximately(49.99, 0.01);
+        Dbl(byId[3]["_agg"]).Should().BeApproximately(24.99, 0.01);
+    }
 }

@@ -488,6 +488,53 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
     }
 
     [SkippableFact]
+    public async Task Aggregate_NestedJoinSum_ShouldReturnTotalPrice()
+    {
+        // Sum prices per category: Electronics 999.99+29.99+79.99=1109.97,
+        // Books 49.99, Clothing 19.99.
+        var query = @"
+            query {
+                categories {
+                    data {
+                        categoryId
+                        _agg(value: { products: { column: price } } operation: Sum)
+                    }
+                }
+            }
+        ";
+        var result = await ExecuteQueryAsync(query);
+        result.Errors.Should().BeNullOrEmpty();
+        var byId = UnwrapPagedRows(result, "categories")!
+            .ToDictionary(c => int.Parse(c["categoryId"].ToString()!));
+        double.Parse(byId[1]["_agg"].ToString()!).Should().BeApproximately(1109.97, 0.01);
+        double.Parse(byId[2]["_agg"].ToString()!).Should().BeApproximately(49.99, 0.01);
+        double.Parse(byId[3]["_agg"].ToString()!).Should().BeApproximately(19.99, 0.01);
+    }
+
+    [SkippableFact]
+    public async Task Aggregate_NestedJoinAvg_ShouldReturnMeanPrice()
+    {
+        // Avg prices: Electronics 1109.97/3 = 369.99, Books 49.99, Clothing 19.99.
+        var query = @"
+            query {
+                categories {
+                    data {
+                        categoryId
+                        _agg(value: { products: { column: price } } operation: Avg)
+                    }
+                }
+            }
+        ";
+        var result = await ExecuteQueryAsync(query);
+        result.Errors.Should().BeNullOrEmpty();
+        var byId = UnwrapPagedRows(result, "categories")!
+            .ToDictionary(c => int.Parse(c["categoryId"].ToString()!));
+        double.Parse(byId[1]["_agg"].ToString()!).Should().BeApproximately(369.99, 0.01);
+        double.Parse(byId[2]["_agg"].ToString()!).Should().BeApproximately(49.99, 0.01);
+        double.Parse(byId[3]["_agg"].ToString()!).Should().BeApproximately(19.99, 0.01);
+    }
+
+    [SkippableFact]
     public async Task Query_OrderWithItems_ShouldReturnNestedData()
     {
         var query = @"

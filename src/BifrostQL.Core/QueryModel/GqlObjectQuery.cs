@@ -148,7 +148,14 @@ namespace BifrostQL.Core.QueryModel
                 // parent set. Without this, the linked SQL distinct-selects
                 // the unpaged universe and the join returns rows for parents
                 // outside the current page.
-                if (query.FromTable.Offset.HasValue || query.FromTable.Limit.HasValue)
+                //
+                // Skip when the parent is unbounded — `Limit == -1` is the
+                // explicit "no limit" sentinel and `Offset` of 0 (or null)
+                // means "from the start", so the linked sub-query already
+                // matches the parent universe.
+                var hasOffset = query.FromTable.Offset.HasValue && query.FromTable.Offset.Value > 0;
+                var hasLimit = query.FromTable.Limit.HasValue && query.FromTable.Limit.Value > 0;
+                if (hasOffset || hasLimit)
                 {
                     var sortCols = query.FromTable.Sort.Any() ? query.FromTable.Sort.Select(s => s switch
                     {

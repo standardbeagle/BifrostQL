@@ -58,3 +58,6 @@ app.UseBifrostQL();
 
 
 await app.RunAsync();
+
+// Exposed for WebApplicationFactory<Program> in integration tests.
+public partial class Program;

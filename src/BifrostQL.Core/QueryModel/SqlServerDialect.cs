@@ -24,6 +24,9 @@ public sealed class SqlServerDialect : SqlDialectBase
     /// SQL Server requires ORDER BY for OFFSET/FETCH. When no sort columns are provided,
     /// ORDER BY (SELECT NULL) is used as a no-op ordering to satisfy the syntax requirement.
     /// </remarks>
+    /// <inheritdoc />
+    public override bool SupportsNativePivot => true;
+
     public override string Pagination(IEnumerable<string>? sortColumns, int? offset, int? limit)
     {
         var orderBy = sortColumns?.Any() == true

@@ -119,6 +119,9 @@ public abstract class SqlDialectBase : ISqlDialect
     /// <inheritdoc />
     public virtual string? UpsertSql(string tableRef, IReadOnlyList<string> keyColumns, IReadOnlyList<string> allColumns, IReadOnlyList<string> updateColumns)
         => null;
+
+    /// <inheritdoc />
+    public virtual bool SupportsNativePivot => false;
 }
 
 /// <summary>

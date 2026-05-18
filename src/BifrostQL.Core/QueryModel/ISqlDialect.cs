@@ -108,4 +108,11 @@ public interface ISqlDialect
     /// </returns>
     string? UpsertSql(string tableRef, IReadOnlyList<string> keyColumns, IReadOnlyList<string> allColumns, IReadOnlyList<string> updateColumns)
         => null;
+
+    /// <summary>
+    /// Whether this dialect supports the native `PIVOT (... FOR ... IN (...))`
+    /// operator. Only SQL Server (and Oracle, not implemented) ship a native
+    /// PIVOT; every other dialect uses the CASE WHEN cross-tab fallback.
+    /// </summary>
+    bool SupportsNativePivot => false;
 }

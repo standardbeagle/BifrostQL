@@ -629,4 +629,73 @@ public sealed class PivotQueryTests
     }
 
     #endregion
+
+    #region Dialect-Aware Dispatch
+
+    [Fact]
+    public void GeneratePivot_OnSqlServer_RoutesToNativePivot()
+    {
+        var config = PivotQueryConfig.Create("Status", "Amount", "sum", new[] { "Region" });
+        var pivotValues = new List<object?> { "Open", "Closed" };
+
+        var result = PivotSqlGenerator.GeneratePivot(
+            BifrostQL.Core.QueryModel.SqlServerDialect.Instance, config, "[dbo].[T]", pivotValues);
+
+        result.Sql.Should().Contain("PIVOT (");
+        result.Sql.Should().NotContain("CASE WHEN");
+    }
+
+    [Fact]
+    public void GeneratePivot_OnSqlite_RoutesToCaseWhen()
+    {
+        var config = PivotQueryConfig.Create("Status", "Amount", "sum", new[] { "Region" });
+        var pivotValues = new List<object?> { "Open", "Closed" };
+
+        var result = PivotSqlGenerator.GeneratePivot(
+            BifrostQL.Sqlite.SqliteDialect.Instance, config, "\"T\"", pivotValues);
+
+        result.Sql.Should().Contain("CASE WHEN");
+        result.Sql.Should().NotContain("PIVOT (");
+        // Sqlite uses double-quoted identifiers, not brackets.
+        result.Sql.Should().Contain("\"Status\"");
+    }
+
+    [Fact]
+    public void GeneratePivot_OnPostgres_RoutesToCaseWhen()
+    {
+        var config = PivotQueryConfig.Create("Status", "Amount", "sum", new[] { "Region" });
+        var pivotValues = new List<object?> { "Open", "Closed" };
+
+        var result = PivotSqlGenerator.GeneratePivot(
+            BifrostQL.Ngsql.PostgresDialect.Instance, config, "\"public\".\"T\"", pivotValues);
+
+        result.Sql.Should().Contain("CASE WHEN");
+        result.Sql.Should().NotContain("PIVOT (");
+        result.Sql.Should().Contain("\"Status\"");
+    }
+
+    [Fact]
+    public void GeneratePivot_OnMySql_RoutesToCaseWhen()
+    {
+        var config = PivotQueryConfig.Create("Status", "Amount", "sum", new[] { "Region" });
+        var pivotValues = new List<object?> { "Open", "Closed" };
+
+        var result = PivotSqlGenerator.GeneratePivot(
+            BifrostQL.MySql.MySqlDialect.Instance, config, "`T`", pivotValues);
+
+        result.Sql.Should().Contain("CASE WHEN");
+        result.Sql.Should().NotContain("PIVOT (");
+        result.Sql.Should().Contain("`Status`");
+    }
+
+    [Fact]
+    public void SupportsNativePivot_OnlySqlServerReturnsTrue()
+    {
+        BifrostQL.Core.QueryModel.SqlServerDialect.Instance.SupportsNativePivot.Should().BeTrue();
+        BifrostQL.Sqlite.SqliteDialect.Instance.SupportsNativePivot.Should().BeFalse();
+        BifrostQL.Ngsql.PostgresDialect.Instance.SupportsNativePivot.Should().BeFalse();
+        BifrostQL.MySql.MySqlDialect.Instance.SupportsNativePivot.Should().BeFalse();
+    }
+
+    #endregion
 }

@@ -7,6 +7,23 @@ namespace BifrostQL.Core.QueryModel;
 public static class PivotSqlGenerator
 {
     /// <summary>
+    /// Dialect-aware entry point. Routes to native PIVOT when
+    /// <see cref="ISqlDialect.SupportsNativePivot"/> is true, otherwise
+    /// emits the CASE WHEN cross-tab fallback. Use this in preference to
+    /// the per-shape methods below so callers don't have to know which
+    /// dialects ship a PIVOT operator.
+    /// </summary>
+    public static ParameterizedSql GeneratePivot(
+        ISqlDialect dialect,
+        PivotQueryConfig config,
+        string tableRef,
+        IReadOnlyList<object?> pivotValues,
+        ParameterizedSql? filter = null)
+        => dialect.SupportsNativePivot
+            ? GenerateSqlServerPivot(dialect, config, tableRef, pivotValues, filter)
+            : GenerateCaseWhenPivot(dialect, config, tableRef, pivotValues, filter);
+
+    /// <summary>
     /// Generates a SQL Server native PIVOT query.
     /// </summary>
     /// <param name="dialect">SQL dialect for identifier escaping.</param>

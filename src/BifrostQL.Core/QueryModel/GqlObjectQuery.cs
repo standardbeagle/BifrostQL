@@ -111,12 +111,8 @@ namespace BifrostQL.Core.QueryModel
             var joinColumnSql = string.Join(",",
                 tableJoin.ConnectedTable.FullColumnNames.Select(c => $"{eb}.{dialect.EscapeIdentifier(c.DbDbName)} AS {dialect.EscapeIdentifier(c.GraphQlDbName)}"));
 
-            // Single-column joins keep the historical `JoinId` / `src_id`
-            // names so existing unit tests and ReaderEnum lookups stay
-            // unchanged. Composite joins suffix every alias with `_<index>`
-            // and AND every per-column equality into the ON clause.
-            var (relationSql, relationParams) = BuildJoinRelation(dialect, parameters, tableJoin);
-            var srcProjection = BuildSrcProjection(dialect, tableJoin, "a");
+            var (relationSql, relationParams) = tableJoin.EmitOnClause(dialect, parameters, "a", "b");
+            var srcProjection = tableJoin.EmitSrcProjection(dialect, "a");
 
             var wrap = $"SELECT {srcProjection}, {joinColumnSql} FROM ({main.Sql}) {ea}";
             wrap += $" INNER JOIN {dialect.EscapeIdentifier(tableJoin.ConnectedTable.TableName)} {eb} ON {relationSql}";
@@ -138,75 +134,12 @@ namespace BifrostQL.Core.QueryModel
                 .Append(pagination);
         }
 
-        /// <summary>
-        /// Build the ON-clause SQL connecting the inner DISTINCT sub-query
-        /// (alias `a`, key columns aliased `JoinId` / `JoinId_<i>`) to the
-        /// connected table (alias `b`). Single-column joins produce one
-        /// equality; composite joins AND every per-column pair.
-        /// </summary>
-        private static (string Sql, IReadOnlyList<SqlParameterInfo> Parameters) BuildJoinRelation(
-            ISqlDialect dialect,
-            SqlParameterCollection parameters,
-            TableJoin tableJoin)
-        {
-            var connectedCols = tableJoin.ConnectedColumns;
-            if (connectedCols.Count <= 1)
-            {
-                var single = TableFilter.GetSingleFilterParameterized(dialect, parameters, "a", "JoinId", tableJoin.Operator,
-                    new FieldRef() { TableName = "b", ColumnName = tableJoin.ConnectedColumn });
-                return (single.Sql, single.Parameters);
-            }
-
-            var collected = new List<SqlParameterInfo>();
-            var clauses = new List<string>(connectedCols.Count);
-            for (var i = 0; i < connectedCols.Count; i++)
-            {
-                var perCol = TableFilter.GetSingleFilterParameterized(dialect, parameters, "a", $"JoinId_{i}", tableJoin.Operator,
-                    new FieldRef() { TableName = "b", ColumnName = connectedCols[i] });
-                clauses.Add(perCol.Sql);
-                collected.AddRange(perCol.Parameters);
-            }
-            return (string.Join(" AND ", clauses), collected);
-        }
-
-        /// <summary>
-        /// Build the `a.JoinId src_id` projection (single column) or
-        /// `a.JoinId_0 src_id_0, …, a.JoinId_N src_id_N` projection
-        /// (composite) used by the wrap `SELECT` in
-        /// <see cref="ToConnectedSqlParameterized"/>.
-        /// </summary>
-        private static string BuildSrcProjection(ISqlDialect dialect, TableJoin tableJoin, string innerAlias)
-        {
-            var ea = dialect.EscapeIdentifier(innerAlias);
-            if (tableJoin.FromColumns.Count <= 1)
-                return $"{ea}.{dialect.EscapeIdentifier("JoinId")} {dialect.EscapeIdentifier("src_id")}";
-
-            return string.Join(", ", Enumerable.Range(0, tableJoin.FromColumns.Count).Select(i =>
-                $"{ea}.{dialect.EscapeIdentifier($"JoinId_{i}")} {dialect.EscapeIdentifier($"src_id_{i}")}"));
-        }
-
-        /// <summary>
-        /// Build the `SELECT DISTINCT FromCol AS JoinId` projection (single
-        /// column) or `FromCol_0 AS JoinId_0, …` projection (composite)
-        /// used by <see cref="GetRestrictedSqlParameterized"/> and by the
-        /// recursive parent-restricted join layer.
-        /// </summary>
-        private static string BuildJoinIdProjection(ISqlDialect dialect, TableJoin tableJoin, string? tableAlias = null)
-        {
-            var prefix = tableAlias is null ? string.Empty : $"{dialect.EscapeIdentifier(tableAlias)}.";
-            if (tableJoin.FromColumns.Count <= 1)
-                return $"{prefix}{dialect.EscapeIdentifier(tableJoin.FromColumn)} AS {dialect.EscapeIdentifier("JoinId")}";
-
-            return string.Join(", ", tableJoin.FromColumns.Select((col, i) =>
-                $"{prefix}{dialect.EscapeIdentifier(col)} AS {dialect.EscapeIdentifier($"JoinId_{i}")}"));
-        }
-
         public static ParameterizedSql GetRestrictedSqlParameterized(IDbModel dbModel, ISqlDialect dialect, SqlParameterCollection parameters, QueryLink query)
         {
             if (query.Parent == null)
             {
                 var filter = query.FromTable.GetFilterSqlParameterized(dbModel, dialect, parameters);
-                var projection = BuildJoinIdProjection(dialect, query.Join);
+                var projection = query.Join.EmitJoinIdProjection(dialect);
                 var sqlText = $"SELECT DISTINCT {projection} FROM {dialect.EscapeIdentifier(query.FromTable.TableName)}";
                 var rootSql = new ParameterizedSql(sqlText, Array.Empty<SqlParameterInfo>()).Append(filter);
 
@@ -242,34 +175,15 @@ namespace BifrostQL.Core.QueryModel
             var filterSql = query.FromTable.GetFilterSqlParameterized(dbModel, dialect, parameters, "a");
 
             // The recursive `b` sub-query exposes the parent's join-key
-            // columns as `JoinId` / `JoinId_<i>`. Match them against this
+            // columns as JoinKeyNames.JoinIdAt — match them against this
             // layer's `a` row using the parent's ConnectedColumns.
-            var parentConnected = query.Parent.Join.ConnectedColumns;
-            string relationSql;
-            IReadOnlyList<SqlParameterInfo> relationParams;
-            if (parentConnected.Count <= 1)
-            {
-                var single = TableFilter.GetSingleFilterParameterized(dialect, parameters, "b", "JoinId", query.Join.Operator,
-                    new FieldRef() { TableName = "a", ColumnName = query.Parent.Join.ConnectedColumn });
-                relationSql = single.Sql;
-                relationParams = single.Parameters;
-            }
-            else
-            {
-                var collected = new List<SqlParameterInfo>();
-                var clauses = new List<string>(parentConnected.Count);
-                for (var i = 0; i < parentConnected.Count; i++)
-                {
-                    var perCol = TableFilter.GetSingleFilterParameterized(dialect, parameters, "b", $"JoinId_{i}", query.Join.Operator,
-                        new FieldRef() { TableName = "a", ColumnName = parentConnected[i] });
-                    clauses.Add(perCol.Sql);
-                    collected.AddRange(perCol.Parameters);
-                }
-                relationSql = string.Join(" AND ", clauses);
-                relationParams = collected;
-            }
+            var (relationSql, relationParams) = query.Join.EmitOnClause(
+                dialect, parameters,
+                leftAlias: "b",
+                rightAlias: "a",
+                rightColumns: query.Parent.Join.ConnectedColumns);
 
-            var nestedProjection = BuildJoinIdProjection(dialect, query.Join, "a");
+            var nestedProjection = query.Join.EmitJoinIdProjection(dialect, "a");
             var querySql = $"SELECT DISTINCT {nestedProjection} FROM {dialect.EscapeIdentifier(query.FromTable.TableName)} {ea} INNER JOIN ({baseSql.Sql}) {eb} ON {relationSql}";
             return new ParameterizedSql(querySql, baseSql.Parameters.Concat(relationParams).ToList()).Append(filterSql);
         }

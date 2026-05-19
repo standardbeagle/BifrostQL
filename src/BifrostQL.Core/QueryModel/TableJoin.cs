@@ -1,4 +1,4 @@
-﻿using BifrostQL.Core.Model;
+using BifrostQL.Core.Model;
 using BifrostQL.Model;
 
 namespace BifrostQL.Core.QueryModel
@@ -47,6 +47,65 @@ namespace BifrostQL.Core.QueryModel
         public string Operator { get; init; } = null!;
         public GqlObjectQuery FromTable { get; init; } = null!;
         public GqlObjectQuery ConnectedTable { get; init; } = null!;
+
+        /// <summary>
+        /// Emits <c>SELECT DISTINCT FromCol AS JoinId</c> (single column)
+        /// or the suffixed multi-column projection used by the inner
+        /// restricted sub-query. Pass a table alias when the columns must
+        /// be qualified (nested join layer).
+        /// </summary>
+        public string EmitJoinIdProjection(ISqlDialect dialect, string? tableAlias = null)
+        {
+            var prefix = tableAlias is null ? string.Empty : $"{dialect.EscapeIdentifier(tableAlias)}.";
+            return string.Join(", ", FromColumns.Select((col, i) =>
+                $"{prefix}{dialect.EscapeIdentifier(col)} AS {dialect.EscapeIdentifier(JoinKeyNames.JoinIdAt(i, FromColumns.Count))}"));
+        }
+
+        /// <summary>
+        /// Emits the <c>a.JoinId src_id</c> projection (single column) or
+        /// the suffixed multi-column projection used by the outer wrap
+        /// <c>SELECT</c> in <see cref="GqlObjectQuery.ToConnectedSqlParameterized"/>.
+        /// </summary>
+        public string EmitSrcProjection(ISqlDialect dialect, string innerAlias)
+        {
+            var ea = dialect.EscapeIdentifier(innerAlias);
+            return string.Join(", ", Enumerable.Range(0, FromColumns.Count).Select(i =>
+                $"{ea}.{dialect.EscapeIdentifier(JoinKeyNames.JoinIdAt(i, FromColumns.Count))} {dialect.EscapeIdentifier(JoinKeyNames.SrcIdAt(i, FromColumns.Count))}"));
+        }
+
+        /// <summary>
+        /// Emits the ON-clause connecting the inner sub-query (alias
+        /// <paramref name="leftAlias"/>, key columns aliased as
+        /// <see cref="JoinKeyNames.JoinIdAt"/>) to the connected table
+        /// (alias <paramref name="rightAlias"/>). Single-column joins
+        /// produce one equality; composite joins AND every per-column pair.
+        /// The matched destination columns come from
+        /// <paramref name="rightColumns"/> — defaults to
+        /// <see cref="ConnectedColumns"/> but the parent-restricted
+        /// recursion passes its own parent ConnectedColumns instead.
+        /// </summary>
+        public (string Sql, IReadOnlyList<SqlParameterInfo> Parameters) EmitOnClause(
+            ISqlDialect dialect,
+            SqlParameterCollection parameters,
+            string leftAlias,
+            string rightAlias,
+            IReadOnlyList<string>? rightColumns = null)
+        {
+            var rightCols = rightColumns ?? ConnectedColumns;
+            var collected = new List<SqlParameterInfo>();
+            var clauses = new List<string>(rightCols.Count);
+            for (var i = 0; i < rightCols.Count; i++)
+            {
+                var clause = TableFilter.GetSingleFilterParameterized(
+                    dialect, parameters,
+                    leftAlias, JoinKeyNames.JoinIdAt(i, rightCols.Count),
+                    Operator,
+                    new FieldRef { TableName = rightAlias, ColumnName = rightCols[i] });
+                clauses.Add(clause.Sql);
+                collected.AddRange(clause.Parameters);
+            }
+            return (string.Join(" AND ", clauses), collected);
+        }
 
         public override string ToString()
         {

@@ -51,65 +51,18 @@ namespace BifrostQL.Core.Resolvers
 
         private ValueTask<object?> GetJoinResult((IDictionary<string, int> index, IList<object?[]> data) table, int row, TableJoin join)
         {
-            // Resolve every source-side column the join references; for
-            // single-column FKs this is exactly `join.FromColumn`, for
-            // composite FKs the ordered list lives on `join.FromColumns`.
-            // A null in any component means the parent row is unjoinable.
-            var fromColumns = join.FromColumns;
-            var key = new object?[fromColumns.Count];
-            for (var i = 0; i < fromColumns.Count; i++)
-            {
-                if (!table.index.TryGetValue(fromColumns[i], out int keyIndex))
-                    throw new BifrostExecutionError("join column not found.");
-                key[i] = table.data[row][keyIndex];
-                if (key[i] == null)
-                    throw new BifrostExecutionError("key value is null");
-            }
-
+            var key = JoinKeyValues.FromParentRow(join, table, row);
             var tableData = _tables[join.JoinName];
+
             if (join.QueryType == QueryType.Join)
                 return ValueTask.FromResult<object?>(new SubTableEnumerable(this, key, tableData));
             if (join.QueryType == QueryType.Single)
             {
-                var data = FindRowByCompositeSrcId(tableData, key);
+                var data = JoinKeyMatcher.FindRow(tableData, key);
                 return ValueTask.FromResult<object?>(data == null ? null : new SingleRowLookup(data, tableData.index, this));
             }
 
             throw new BifrostExecutionError("unexpected Join type: " + join.JoinName);
-        }
-
-        /// <summary>
-        /// Find the row in <paramref name="tableData"/> whose `src_id`
-        /// (single-column case) or `src_id_0`..`src_id_N` (composite case)
-        /// matches every element of <paramref name="key"/>.
-        /// </summary>
-        internal static object?[]? FindRowByCompositeSrcId(
-            (IDictionary<string, int> index, IList<object?[]> data) tableData,
-            object?[] key)
-        {
-            var keyIndices = ResolveSrcIdIndices(tableData.index, key.Length);
-            return tableData.data.FirstOrDefault(r => RowMatchesKey(r, keyIndices, key));
-        }
-
-        internal static int[] ResolveSrcIdIndices(IDictionary<string, int> index, int keyCount)
-        {
-            if (keyCount <= 1)
-                return new[] { index["src_id"] };
-
-            var result = new int[keyCount];
-            for (var i = 0; i < keyCount; i++)
-                result[i] = index[$"src_id_{i}"];
-            return result;
-        }
-
-        internal static bool RowMatchesKey(object?[] row, int[] keyIndices, object?[] key)
-        {
-            for (var i = 0; i < keyIndices.Length; i++)
-            {
-                if (!Equals(row[keyIndices[i]], key[i]))
-                    return false;
-            }
-            return true;
         }
 
         public IEnumerator<object?> GetEnumerator()
@@ -175,17 +128,85 @@ namespace BifrostQL.Core.Resolvers
         }
     }
 
+    /// <summary>
+    /// Extracts join-key values from a parent row using a TableJoin's
+    /// FromColumns. Single-column joins yield a one-element array;
+    /// composite joins yield one element per FK column.
+    /// </summary>
+    internal static class JoinKeyValues
+    {
+        public static object?[] FromParentRow(
+            TableJoin join,
+            (IDictionary<string, int> index, IList<object?[]> data) table,
+            int row)
+        {
+            var cols = join.FromColumns;
+            var values = new object?[cols.Count];
+            for (var i = 0; i < cols.Count; i++)
+            {
+                if (!table.index.TryGetValue(cols[i], out var idx))
+                    throw new BifrostExecutionError("join column not found.");
+                values[i] = table.data[row][idx];
+                if (values[i] == null)
+                    throw new BifrostExecutionError("key value is null");
+            }
+            return values;
+        }
+    }
+
+    /// <summary>
+    /// Matches join-key value arrays against join-result rows using the
+    /// <see cref="JoinKeyNames"/> alias scheme. Single source of truth for
+    /// composite-key lookups — both <see cref="SubTableEnumerable"/> and
+    /// <see cref="ReaderEnum.GetJoinResult"/> route through here so the
+    /// single-column / composite branching never escapes this class.
+    /// </summary>
+    internal static class JoinKeyMatcher
+    {
+        public static IList<object?[]> FilterRows(
+            (IDictionary<string, int> index, IList<object?[]> data) tableData,
+            object?[] key) =>
+            tableData.data
+                .Where(r => MatchesKey(r, ResolveSrcIdIndices(tableData.index, key.Length), key))
+                .ToList();
+
+        public static object?[]? FindRow(
+            (IDictionary<string, int> index, IList<object?[]> data) tableData,
+            object?[] key)
+        {
+            var indices = ResolveSrcIdIndices(tableData.index, key.Length);
+            return tableData.data.FirstOrDefault(r => MatchesKey(r, indices, key));
+        }
+
+        private static int[] ResolveSrcIdIndices(IDictionary<string, int> index, int keyCount)
+        {
+            var result = new int[keyCount];
+            for (var i = 0; i < keyCount; i++)
+                result[i] = index[JoinKeyNames.SrcIdAt(i, keyCount)];
+            return result;
+        }
+
+        private static bool MatchesKey(object?[] row, int[] keyIndices, object?[] key)
+        {
+            for (var i = 0; i < keyIndices.Length; i++)
+            {
+                if (!Equals(row[keyIndices[i]], key[i]))
+                    return false;
+            }
+            return true;
+        }
+    }
+
     public sealed class SubTableEnumerable : IEnumerable<object?>
     {
         private readonly (IDictionary<string, int> index, IList<object?[]> data) _table;
-        private readonly List<object?[]> _data;
+        private readonly IList<object?[]> _data;
         private readonly ReaderEnum _root;
         public SubTableEnumerable(ReaderEnum root, object?[] key, (IDictionary<string, int> index, IList<object?[]> data) @table)
         {
             _root = root;
             _table = table;
-            var keyIndices = ReaderEnum.ResolveSrcIdIndices(table.index, key.Length);
-            _data = table.data.Where(r => ReaderEnum.RowMatchesKey(r, keyIndices, key)).ToList();
+            _data = JoinKeyMatcher.FilterRows(table, key);
         }
 
         public IEnumerator<object?> GetEnumerator()

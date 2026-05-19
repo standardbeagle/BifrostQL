@@ -4,6 +4,28 @@ All notable changes to BifrostQL after `3c42a60` (`[DART-xDCKBXmI5qsv] add app-b
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); pre-1.0 BifrostQL still uses CommitsSinceBaseline-style versioning.
 
+## 0.4.1 — 2026-05-18
+
+### Added — composite foreign keys
+
+- `TableLinkDto` carries `ChildIds`/`ParentIds` ordered column lists alongside the back-compat scalar `ChildId`/`ParentId`; `IsComposite` shortcut on both `TableLinkDto` and `TableJoin`.
+- `ForeignKeyRelationshipStrategy` now resolves and links composite FKs across all four dialects (previously skipped).
+- SQL emitter routes single-column joins through the historical `JoinId` / `src_id` aliases and composite joins through suffixed `JoinId_<i>` / `src_id_<i>` aliases. Multi-column ON-clauses AND every per-column equality.
+- `ReaderEnum` resolves composite join keys via `JoinKeyValues.FromParentRow` + `JoinKeyMatcher.FilterRows`/`FindRow`. Both `Single` and `Join` query types pass through one path.
+- New `JoinKeyNames` is the single source of truth for the join-alias convention.
+- `TableJoin` owns its own SQL emission (`EmitJoinIdProjection`, `EmitSrcProjection`, `EmitOnClause`); `GqlObjectQuery` shrinks ~60 LOC and no longer knows the alias scheme.
+
+### Added — local dev infra
+
+- `docker-compose.test.yml` stands up sqlserver 2022 + postgres 16 + mysql 8.4 with the same images, ports, and creds as `.github/workflows/dotnet.yml`.
+- `scripts/test-env.sh` exports `BIFROST_TEST_{SQLSERVER,POSTGRES,MYSQL}` matching CI byte-for-byte.
+
+### Added — tests
+
+- 8 new composite-FK integration tests (2 per dialect × sqlite/sqlserver/postgres/mysql) exercising child→parent and parent→children navigation against a `TenantInventory`→`TenantLocations` fixture with a colliding `LocationId=10` across tenants. A single-column join would crosswire those rows; the composite emission keeps them isolated.
+- New `CompositeJoin_EmitsAndedOnClause_WithSuffixedJoinIds` Core unit test asserts the suffixed-alias SQL shape.
+- `ForeignKey_Composite_IsSkipped` flipped to `ForeignKey_Composite_LinksWithFullColumnLists`.
+
 ## Unreleased
 
 ### Added — state-machine + workflow

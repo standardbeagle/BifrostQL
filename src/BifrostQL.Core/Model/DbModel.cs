@@ -423,6 +423,12 @@ namespace BifrostQL.Core.Model
         private readonly IReadOnlyList<ColumnDto>? _childIds;
         /// <summary>True when the FK spans more than one column pair.</summary>
         public bool IsComposite => ChildIds.Count > 1;
+        /// <summary>The GraphQL field name used when navigating from child to parent.</summary>
+        public string ParentFieldName => ParentTable.GraphQlName;
+        /// <summary>The GraphQL field name used when navigating from parent to child.</summary>
+        public string ChildFieldName => string.Equals(ParentTable.GraphQlName, ChildTable.GraphQlName, StringComparison.OrdinalIgnoreCase)
+            ? $"{ChildTable.GraphQlName}_children"
+            : ChildTable.GraphQlName;
 
         public string GetSqlSourceTableRef(QueryModel.ISqlDialect dialect, LinkDirection direction)
         {

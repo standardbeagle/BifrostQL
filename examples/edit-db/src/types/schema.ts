@@ -93,11 +93,13 @@ export interface Column {
  * @interface Join
  */
 export interface Join {
-  /** Name of the join relationship */
+  /** Descriptive relationship name retained for compatibility; do not use it as the query field. */
   name: string;
+  /** GraphQL selection field for this relationship on the source table. May differ from destinationTable for aliases such as self-FK child collections. */
+  fieldName?: string;
   /** Column names in the source table */
   sourceColumnNames: string[];
-  /** Target table name */
+  /** Target table/type name. Use for schema lookup and navigation, not as the relationship selection field when fieldName is present. */
   destinationTable: string;
   /** Column names in the target table */
   destinationColumnNames: string[];

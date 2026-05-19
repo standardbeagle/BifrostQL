@@ -18,6 +18,11 @@ export interface ColumnFilterValue {
     value: unknown;
 }
 
+interface ColumnWithJoin extends Column {
+    joinTable?: Join;
+    joinLabelColumn?: string;
+}
+
 export interface ColumnFilterResult {
     variables: Record<string, unknown>;
     params: string[];
@@ -32,11 +37,6 @@ export interface PkTypeInfo {
 interface RowData {
     id?: number | string | null;
     [key: string]: unknown;
-}
-
-interface ColumnWithJoin extends Column {
-    joinTable?: Join;
-    joinLabelColumn?: string;
 }
 
 const columnFilterOperators: Record<string, string[]> = {
@@ -229,7 +229,7 @@ function buildMultiJoinFields(schema: Schema, multiJoins: Join[]): string {
             const destPks = joinSchema?.primaryKeys?.length ? joinSchema.primaryKeys : ['id'];
             const fields = [...destPks];
             if (labelCol && !fields.includes(labelCol)) fields.push(labelCol);
-            return `${j.destinationTable} { ${fields.join(' ')} }`;
+            return `${j.fieldName ?? j.destinationTable} { ${fields.join(' ')} }`;
         })
         .join(' ');
 }
@@ -268,6 +268,11 @@ export function buildQuery(
         filterText = "";
     }
 
+    // For composite FKs, anchor the nested sub-query on the FIRST source column so
+    // we only emit one FK block. The other member columns render as plain scalars
+    // (their values still come back on the parent row — useful for rebuilding a
+    // composite-eq filter on the destination later).
+    const emittedJoinSources = new Set<string>();
     const dataColumns = table.columns
         .filter((x: Column) => (x as ColumnWithJoin)?.joinTable === undefined)
         .map((x: Column): ColumnWithJoin => {
@@ -279,7 +284,23 @@ export function buildQuery(
         })
         .map((x: ColumnWithJoin) => {
             if (x?.joinTable) {
-                return x.name + ` ${x.joinTable.destinationTable} { id: ${x.joinTable.destinationColumnNames?.[0]} label: ${x.joinLabelColumn} }`;
+                emittedJoinSources.add(x.name);
+                const joinSchema = schema.findTable(x.joinTable.destinationTable);
+                const destPks = joinSchema?.primaryKeys?.length
+                    ? joinSchema.primaryKeys
+                    : x.joinTable.destinationColumnNames;
+                const labelCol = x.joinLabelColumn ?? 'id';
+                const labelField = labelCol && !destPks.includes(labelCol)
+                    ? ` label: ${labelCol}`
+                    : '';
+                if (destPks.length === 1) {
+                    // Single-PK destination — keep the legacy `id: <destCol>` alias
+                    // so cell renderers can read `joined.id` without composite awareness.
+                    return `${x.name} ${x.joinTable.destinationTable} { id: ${destPks[0]}${labelField} }`;
+                }
+                // Composite-PK destination — emit every PK column verbatim so callers
+                // can recompose a composite route via rowIdOf.
+                return `${x.name} ${x.joinTable.destinationTable} { ${destPks.join(' ')}${labelField} }`;
             }
             return x.name;
         })

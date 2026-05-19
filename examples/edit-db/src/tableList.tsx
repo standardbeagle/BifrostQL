@@ -118,9 +118,9 @@ interface TableNameCellProps {
  */
 function TableNameCell({ table, stats, maxRowCount }: TableNameCellProps) {
   return (
-    <Link 
-      to={`/${table.name}`} 
-      className="block no-underline text-foreground hover:text-primary py-1.5 px-2 text-xs font-medium group"
+    <Link
+      to={`/${table.name}`}
+      className="plain-link block no-underline text-foreground hover:text-primary py-1.5 px-2 text-xs font-medium group"
     >
       <div className="flex flex-col gap-0.5">
         <span className="truncate">{table.label}</span>

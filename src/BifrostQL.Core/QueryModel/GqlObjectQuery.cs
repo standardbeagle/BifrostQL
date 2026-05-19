@@ -19,6 +19,7 @@ namespace BifrostQL.Core.QueryModel
         public IDbTable DbTable { get; init; } = null!;
         public string SchemaName { get; set; } = "";
         public string TableName { get; set; } = "";
+        public string FieldName { get; set; } = "";
         public string GraphQlName { get; set; } = "";
         public string? Alias { get; set; }
         public string Path { get; set; } = "";
@@ -199,31 +200,14 @@ namespace BifrostQL.Core.QueryModel
             foreach (var link in Links)
             {
                 var thisDto = dbModel.GetTableFromDbName(TableName);
-                if (thisDto.MultiLinks.TryGetValue(link.GraphQlName, out var multiLink))
-                {
-                    link.TableName = multiLink.ChildTable.DbName;
-                    var join = new TableJoin
-                    {
-                        Alias = link.Alias,
-                        Name = link.GraphQlName,
-                        ConnectedTable = link,
-                        ConnectedColumn = multiLink.ChildId.ColumnName,
-                        ConnectedColumns = multiLink.ChildIds.Select(c => c.ColumnName).ToArray(),
-                        FromTable = this,
-                        FromColumn = multiLink.ParentId.ColumnName,
-                        FromColumns = multiLink.ParentIds.Select(c => c.ColumnName).ToArray(),
-                        QueryType = QueryType.Join,
-                    };
-                    Joins.Add(join);
-                    continue;
-                }
-                if (thisDto.SingleLinks.TryGetValue(link.GraphQlName, out var singleLink))
+                if (thisDto.SingleLinks.TryGetValue(link.FieldName, out var singleLink)
+                    || (singleLink = thisDto.SingleLinks.Values.FirstOrDefault(l => string.Equals(l.ParentFieldName, link.FieldName, StringComparison.OrdinalIgnoreCase))) != null)
                 {
                     link.TableName = singleLink.ParentTable.DbName;
                     var join = new TableJoin
                     {
                         Alias = link.Alias,
-                        Name = link.GraphQlName,
+                        Name = link.FieldName,
                         ConnectedTable = link,
                         ConnectedColumn = singleLink.ParentId.ColumnName,
                         ConnectedColumns = singleLink.ParentIds.Select(c => c.ColumnName).ToArray(),
@@ -231,6 +215,25 @@ namespace BifrostQL.Core.QueryModel
                         FromColumn = singleLink.ChildId.ColumnName,
                         FromColumns = singleLink.ChildIds.Select(c => c.ColumnName).ToArray(),
                         QueryType = QueryType.Single,
+                    };
+                    Joins.Add(join);
+                    continue;
+                }
+                if (thisDto.MultiLinks.TryGetValue(link.FieldName, out var multiLink)
+                    || (multiLink = thisDto.MultiLinks.Values.FirstOrDefault(l => string.Equals(l.ChildFieldName, link.FieldName, StringComparison.OrdinalIgnoreCase))) != null)
+                {
+                    link.TableName = multiLink.ChildTable.DbName;
+                    var join = new TableJoin
+                    {
+                        Alias = link.Alias,
+                        Name = link.FieldName,
+                        ConnectedTable = link,
+                        ConnectedColumn = multiLink.ChildId.ColumnName,
+                        ConnectedColumns = multiLink.ChildIds.Select(c => c.ColumnName).ToArray(),
+                        FromTable = this,
+                        FromColumn = multiLink.ParentId.ColumnName,
+                        FromColumns = multiLink.ParentIds.Select(c => c.ColumnName).ToArray(),
+                        QueryType = QueryType.Join,
                     };
                     Joins.Add(join);
                     continue;

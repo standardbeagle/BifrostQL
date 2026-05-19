@@ -99,16 +99,22 @@ namespace BifrostQL.Core.Resolvers
                             multiJoins = t.MultiLinks.Values.Select(j => new
                             {
                                 name = j.Name,
-                                sourceColumnNames = new[] { j.ParentId.GraphQlName },
+                                // fieldName is the GraphQL selection field on the source table;
+                                // destinationTable remains the target table/type name.
+                                fieldName = j.ChildFieldName,
+                                sourceColumnNames = j.ParentIds.Select(p => p.GraphQlName).ToArray(),
                                 destinationTable = j.ChildTable.GraphQlName,
-                                destinationColumnNames = new[] { j.ChildId.GraphQlName },
+                                destinationColumnNames = j.ChildIds.Select(c => c.GraphQlName).ToArray(),
                             }),
                             singleJoins = t.SingleLinks.Values.Select(j => new
                             {
                                 name = j.Name,
-                                sourceColumnNames = new[] { j.ChildId.GraphQlName },
+                                // fieldName is the GraphQL selection field on the source table;
+                                // destinationTable remains the target table/type name.
+                                fieldName = j.ParentFieldName,
+                                sourceColumnNames = j.ChildIds.Select(c => c.GraphQlName).ToArray(),
                                 destinationTable = j.ParentTable.GraphQlName,
-                                destinationColumnNames = new[] { j.ParentId.GraphQlName },
+                                destinationColumnNames = j.ParentIds.Select(p => p.GraphQlName).ToArray(),
                             })
                         };
                     })

@@ -63,17 +63,25 @@ namespace BifrostQL.Core.Schema
             }
 
             builder.AppendLine($"_agg(operation: AggregateOperations! value: {_table.AggregateValueTypeName}!) : Float");
+            // Track emitted relationship field names so self-referential tables
+            // (single-link + multi-link both keyed by the same GraphQlName) don't
+            // double-register the same field and crash schema build.
+            var emittedLinkFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var link in _table.SingleLinks)
             {
-                builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : {link.Value.ParentTable.GraphQlName}");
+                var fieldName = link.Value.ParentFieldName;
+                if (!emittedLinkFields.Add(fieldName)) continue;
+                builder.AppendLine($"\t{fieldName} : {link.Value.ParentTable.GraphQlName}");
             }
             foreach (var link in _table.MultiLinks)
             {
-                builder.AppendLine($"\t{link.Value.ChildTable.GraphQlName}(filter: {link.Value.ChildTable.TableFilterTypeName}) : [{link.Value.ChildTable.GraphQlName}]");
+                var fieldName = link.Value.ChildFieldName;
+                if (!emittedLinkFields.Add(fieldName)) continue;
+                builder.AppendLine($"\t{fieldName}(filter: {link.Value.ChildTable.TableFilterTypeName}) : [{link.Value.ChildTable.GraphQlName}]");
             }
             foreach (var link in _table.ManyToManyLinks)
             {
-                if (_table.SingleLinks.ContainsKey(link.Key) || _table.MultiLinks.ContainsKey(link.Key))
+                if (!emittedLinkFields.Add(link.Value.TargetTable.GraphQlName))
                     continue;
                 builder.AppendLine($"\t{link.Value.TargetTable.GraphQlName}(filter: {link.Value.TargetTable.TableFilterTypeName}) : [{link.Value.TargetTable.GraphQlName}]");
             }
@@ -222,15 +230,22 @@ namespace BifrostQL.Core.Schema
             var builder = new StringBuilder();
             builder.AppendLine($"input {_table.AggregateValueTypeName} {{");
             builder.AppendLine($"column : {_table.ColumnEnumTypeName}");
+            // Self-FK tables have a single-link and multi-link both keyed by the
+            // same GraphQlName; dedupe so we don't re-register the same field.
+            var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var link in _table.MultiLinks)
             {
                 //For multi-links _table is the ParentTable
-                builder.AppendLine($"\t{link.Value.ChildTable.GraphQlName} : {link.Value.ChildTable.AggregateValueTypeName}");
+                var fieldName = link.Value.ChildFieldName;
+                if (!emitted.Add(fieldName)) continue;
+                builder.AppendLine($"\t{fieldName} : {link.Value.ChildTable.AggregateValueTypeName}");
             }
             foreach (var link in _table.SingleLinks)
             {
                 //For single links _table is the ChildTable
-                builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : {link.Value.ParentTable.AggregateValueTypeName}");
+                var fieldName = link.Value.ParentFieldName;
+                if (!emitted.Add(fieldName)) continue;
+                builder.AppendLine($"\t{fieldName} : {link.Value.ParentTable.AggregateValueTypeName}");
             }
             builder.AppendLine("}");
 

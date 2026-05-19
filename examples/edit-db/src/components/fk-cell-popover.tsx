@@ -3,7 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
 import { useSchema } from "../hooks/useSchema";
 import { useFetcher } from "../common/fetcher";
-import type { Column } from "../types/schema";
+import type { Column, Join, Table } from "../types/schema";
+import { buildFkEqFilter, isComposite } from "../lib/fk";
 
 const MAX_PREVIEW_COLUMNS = 5;
 const HOVER_OPEN_DELAY = 400;
@@ -18,6 +19,17 @@ interface FkCellPopoverProps {
      * "primary key" column here is wrong for composite-PK and denormalized-FK targets.
      */
     filterColumn: string;
+    /**
+     * The full join descriptor. When the join is composite, the popover ignores
+     * `recordId`/`filterColumn` and builds an `{and: [...]}` filter from every
+     * `sourceColumnNames` value on `sourceRow`. Single-FK callers can omit this.
+     */
+    join?: Join;
+    /**
+     * The host row that owns the FK cell. Required only for composite FKs so that
+     * the popover can read all source-side column values to rebuild the filter.
+     */
+    sourceRow?: Record<string, unknown>;
     children: ReactNode;
 }
 
@@ -27,10 +39,15 @@ function getPreviewColumns(columns: Column[]): Column[] {
         .slice(0, MAX_PREVIEW_COLUMNS);
 }
 
-function buildPreviewQuery(tableName: string, columns: Column[], pkColumn: string, pkType: string): string {
+function buildSinglePreviewQuery(tableName: string, columns: Column[], pkColumn: string, pkType: string): string {
     const fields = columns.map((c) => c.name).join(" ");
     const gqlType = pkType === "Int" || pkType === "Int!" ? "Int" : "String";
     return `query FkPreview($id: ${gqlType}) { ${tableName}(filter: { ${pkColumn}: { _eq: $id } } limit: 1) { data { ${fields} } } }`;
+}
+
+function buildCompositePreviewQuery(tableName: string, columns: Column[], paramsDecl: string, filterText: string): string {
+    const fields = columns.map((c) => c.name).join(" ");
+    return `query FkPreview(${paramsDecl}) { ${tableName}(filter: ${filterText} limit: 1) { data { ${fields} } } }`;
 }
 
 function formatValue(value: unknown): string {
@@ -41,26 +58,58 @@ function formatValue(value: unknown): string {
     return str;
 }
 
-export function FkCellPopover({ tableName, recordId, filterColumn, children }: FkCellPopoverProps) {
+interface PreviewPlan {
+    query: string;
+    variables: Record<string, unknown>;
+    cacheKey: unknown;
+}
+
+function buildPreviewPlan(
+    tableName: string,
+    destTable: Table,
+    previewColumns: Column[],
+    join: Join | undefined,
+    sourceRow: Record<string, unknown> | undefined,
+    recordId: string | number,
+    filterColumn: string,
+): PreviewPlan | null {
+    if (previewColumns.length === 0) return null;
+    if (join && isComposite(join) && sourceRow) {
+        const f = buildFkEqFilter(sourceRow, join, destTable);
+        if (!f) return null;
+        const paramsDecl = f.params.join(", ");
+        return {
+            query: buildCompositePreviewQuery(tableName, previewColumns, paramsDecl, f.filterText),
+            variables: f.variables,
+            cacheKey: f.variables,
+        };
+    }
+    const lookupType = destTable.columns.find((c) => c.name === filterColumn)?.paramType ?? "Int";
+    const numericLookupTypes = ["Int", "Int!", "Float", "Float!"];
+    const variables = { id: numericLookupTypes.includes(lookupType) ? Number(recordId) : recordId };
+    return {
+        query: buildSinglePreviewQuery(tableName, previewColumns, filterColumn, lookupType),
+        variables,
+        cacheKey: recordId,
+    };
+}
+
+export function FkCellPopover({ tableName, recordId, filterColumn, join, sourceRow, children }: FkCellPopoverProps) {
     const [open, setOpen] = useState(false);
     const schema = useSchema();
     const fetcher = useFetcher();
 
     const table = schema.findTable(tableName);
-    const lookupType = table?.columns.find((c) => c.name === filterColumn)?.paramType ?? "Int";
     const previewColumns = table ? getPreviewColumns(table.columns) : [];
 
-    const query = table && previewColumns.length > 0
-        ? buildPreviewQuery(tableName, previewColumns, filterColumn, lookupType)
+    const plan = table
+        ? buildPreviewPlan(tableName, table, previewColumns, join, sourceRow, recordId, filterColumn)
         : null;
 
-    const numericLookupTypes = ["Int", "Int!", "Float", "Float!"];
-    const variables = { id: numericLookupTypes.includes(lookupType) ? Number(recordId) : recordId };
-
     const { data, isLoading } = useQuery({
-        queryKey: ["fkPreview", tableName, recordId],
-        queryFn: () => fetcher.query<Record<string, { data: Record<string, unknown>[] }>>(query!, variables),
-        enabled: open && !!query,
+        queryKey: ["fkPreview", tableName, plan?.cacheKey],
+        queryFn: () => fetcher.query<Record<string, { data: Record<string, unknown>[] }>>(plan!.query, plan!.variables),
+        enabled: open && !!plan,
         staleTime: 5 * 60 * 1000,
     });
 

@@ -25,7 +25,7 @@ async function runQuickstart(page: Page, schema: string, dataSize = 'Sample') {
 
 async function navigateToTable(page: Page, tableName: string) {
   await page.locator('a.plain-link').filter({ hasText: tableName }).first().click();
-  await expect(page.getByText(`Table: ${tableName}`, { exact: false })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("heading", { name: tableName, level: 2 })).toBeVisible({ timeout: 10_000 });
 }
 
 test.describe('Edit Functionality', () => {
@@ -150,12 +150,12 @@ test.describe('Sidebar Layout', () => {
     await navigateToTable(page, 'posts');
 
     // Verify we see posts data
-    await expect(page.getByText('Table: posts', { exact: false })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "posts", level: 2 })).toBeVisible();
 
     // Click a different table in the sidebar
     await page.locator('a.plain-link').filter({ hasText: 'authors' }).first().click();
 
     // Should now show authors data
-    await expect(page.getByText('Table: authors', { exact: false })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("heading", { name: "authors", level: 2 })).toBeVisible({ timeout: 10_000 });
   });
 });

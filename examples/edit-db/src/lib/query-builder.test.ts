@@ -726,3 +726,95 @@ describe('buildQuery — composite primary keys', () => {
         expect(q).toContain('{ enrollment: {and: [{student_id: {_eq: $pk_student_id}}, {course_id: {_eq: $pk_course_id}}]}}');
     });
 });
+
+// ── Composite foreign-key support ──────────────────────────────
+
+describe('buildQuery — composite foreign keys', () => {
+    // Parent has a composite PK (tenant_id, order_id). Child references that
+    // composite PK via a composite FK (tenant_id, order_id).
+    const orders = makeTable({
+        name: 'orders',
+        graphQlName: 'orders',
+        labelColumn: 'description',
+        primaryKeys: ['tenant_id', 'order_id'],
+        columns: [
+            makeColumn({ name: 'tenant_id', paramType: 'Int!', isPrimaryKey: true }),
+            makeColumn({ name: 'order_id', paramType: 'String!', isPrimaryKey: true }),
+            makeColumn({ name: 'description', paramType: 'String' }),
+        ],
+    });
+
+    const lines = makeTable({
+        name: 'order_lines',
+        graphQlName: 'order_lines',
+        primaryKeys: ['line_id'],
+        columns: [
+            makeColumn({ name: 'line_id', paramType: 'Int!', isPrimaryKey: true }),
+            makeColumn({ name: 'tenant_id', paramType: 'Int' }),
+            makeColumn({ name: 'order_id', paramType: 'String' }),
+            makeColumn({ name: 'qty', paramType: 'Int' }),
+        ],
+        singleJoins: [{
+            name: 'orders',
+            sourceColumnNames: ['tenant_id', 'order_id'],
+            destinationTable: 'orders',
+            destinationColumnNames: ['tenant_id', 'order_id'],
+        }],
+    });
+
+    const schema = makeSchema([orders, lines]);
+
+    it('emits a single FK sub-query anchored on the first composite-FK source column', () => {
+        const q = buildQuery(lines, schema, '', [])!;
+        // The FK destination block should appear exactly once.
+        const matches = q.match(/orders \{[^}]*\}/g) ?? [];
+        expect(matches).toHaveLength(1);
+    });
+
+    it('emits every destination PK column inside the FK sub-query', () => {
+        const q = buildQuery(lines, schema, '', [])!;
+        expect(q).toContain('orders { tenant_id order_id label: description }');
+    });
+
+    it('does not alias destination columns as `id` for composite-PK destinations', () => {
+        const q = buildQuery(lines, schema, '', [])!;
+        expect(q).not.toMatch(/orders \{ id:/);
+    });
+
+    it('renders the second composite-FK member column as a plain scalar field', () => {
+        const q = buildQuery(lines, schema, '', [])!;
+        // First member anchors the FK block; second member should appear
+        // outside the orders { ... } sub-query as a scalar.
+        expect(q).toMatch(/tenant_id orders \{/);
+        const outsideBlock = q.replace(/orders \{[^}]*\}/, '');
+        expect(outsideBlock).toContain('order_id');
+    });
+});
+
+describe('buildQuery — relationship field names', () => {
+    it('uses a join fieldName for multi-join selections while keeping destinationTable as the target type', () => {
+        const categories = makeTable({
+            name: 'categories',
+            graphQlName: 'categories',
+            labelColumn: 'name',
+            primaryKeys: ['id'],
+            columns: [
+                makeColumn({ name: 'id', paramType: 'Int!', isPrimaryKey: true }),
+                makeColumn({ name: 'parent_id', paramType: 'Int' }),
+                makeColumn({ name: 'name', paramType: 'String' }),
+            ],
+            multiJoins: [{
+                name: 'categories',
+                fieldName: 'categories_children',
+                sourceColumnNames: ['id'],
+                destinationTable: 'categories',
+                destinationColumnNames: ['parent_id'],
+            }],
+        });
+        const schema = makeSchema([categories]);
+
+        const q = buildQuery(categories, schema, '', [])!;
+
+        expect(q).toContain('categories_children { id name }');
+    });
+});

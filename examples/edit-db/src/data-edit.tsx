@@ -5,9 +5,11 @@ import { useSchema } from "./hooks/useSchema";
 import { Link, useParams, useNavigate } from "./hooks/usePath";
 import { Schema, Table, Column, Join } from "./types/schema";
 import { TableRefValue, useTableRef } from "./hooks/useTableRef";
+import { useCompositeTableRef } from "./hooks/useCompositeTableRef";
 import { useFetcher } from "./common/fetcher";
 import { useTableMutation } from "./hooks/useTableMutation";
 import { parsePkRoute, buildPkEqFilter } from "./lib/row-id";
+import { isComposite } from "./lib/fk";
 import {
     Dialog,
     DialogContent,
@@ -41,16 +43,40 @@ interface DataEditRouteParams {
     [key: string]: string | undefined;
 }
 
+type FkRole = 'none' | 'anchor-single' | 'anchor-composite' | 'member-composite';
+
 interface ColumnJoin {
     column: Column;
     join?: Join;
+    /**
+     * Where this column sits in its FK (if any):
+     *   - none: not part of any FK
+     *   - anchor-single: only source column of a single-column FK (legacy ParentField)
+     *   - anchor-composite: first source column of a composite FK (drives the CompositeParentField)
+     *   - member-composite: subsequent composite-FK column (form input is hidden; value driven by anchor)
+     */
+    fkRole: FkRole;
 }
 
 function useTable(schema: Schema, tableName: string) {
     return useMemo(() => {
         const table = schema?.data?.find((x: { graphQlName: string | undefined; }) => x.graphQlName == tableName)!;
         const editColumns = table.columns.filter((c: Column) => !c.isReadOnly && !c.isIdentity);
-        const editColumnsJoin = editColumns.map((c: Column) => ({ column: c, join: table.singleJoins.find((j: Join) => j.sourceColumnNames[0] === c.graphQlName) }));
+        const editColumnsJoin: ColumnJoin[] = editColumns.map((c: Column) => {
+            const anchorJoin = table.singleJoins.find((j: Join) => j.sourceColumnNames[0] === c.graphQlName);
+            if (anchorJoin) {
+                return {
+                    column: c,
+                    join: anchorJoin,
+                    fkRole: isComposite(anchorJoin) ? ('anchor-composite' as const) : ('anchor-single' as const),
+                };
+            }
+            const memberJoin = table.singleJoins.find((j: Join) => (j.sourceColumnNames ?? []).includes(c.graphQlName));
+            if (memberJoin) {
+                return { column: c, join: memberJoin, fkRole: 'member-composite' as const };
+            }
+            return { column: c, fkRole: 'none' as const };
+        });
         // idColumns is every primary-key column in declaration order. Composite PKs need them
         // all for the by-id filter and for the update mutation's WHERE clause. Previously this
         // was `c.isIdentity` which only captured auto-increment columns and silently dropped
@@ -187,11 +213,12 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
                         {/* Standard fields — responsive two-column grid */}
                         {standardFields.length > 0 && (
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
-                                {standardFields.map(({ column: ec, join }: ColumnJoin) => (
+                                {standardFields.map(({ column: ec, join, fkRole }: ColumnJoin) => (
                                     <EditField
                                         key={ec.name}
                                         column={ec}
                                         join={join}
+                                        fkRole={fkRole}
                                         form={form}
                                         schema={schema}
                                     />
@@ -273,6 +300,7 @@ type AnyFieldApi = any;
 interface EditFieldProps {
     column: Column;
     join?: Join;
+    fkRole?: FkRole;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     form: any;
     schema?: Schema;
@@ -323,9 +351,12 @@ function RangeHint({ min, max, step }: { min?: number | null; max?: number | nul
     );
 }
 
-function EditField({ column, join, form, schema }: EditFieldProps) {
+function EditField({ column, join, fkRole, form, schema }: EditFieldProps) {
     const name = column.name;
     const isRequired = !column.isNullable;
+
+    // Composite-FK member columns are driven by the anchor's CompositeParentField — hide the input.
+    if (fkRole === 'member-composite') return null;
     const isDate = dateTypes.some(t => t === column.paramType);
     const isNumeric = numericTypes.some(t => t === column.paramType);
     const showCharCounter = column.maxLength && column.maxLength > 0 && !isDate && !isNumeric;
@@ -342,6 +373,9 @@ function EditField({ column, join, form, schema }: EditFieldProps) {
     }
 
     if (join && schema) {
+        if (fkRole === 'anchor-composite') {
+            return <CompositeParentField column={column} join={join} form={form} schema={schema} isRequired={isRequired} />;
+        }
         return <ParentField column={column} join={join} form={form} schema={schema} isRequired={isRequired} />;
     }
 
@@ -591,6 +625,73 @@ function ParentField({ column, join, form, schema, isRequired }: ParentFieldProp
                 </div>
             )}
         />
+    );
+}
+
+interface CompositeParentFieldProps {
+    column: Column;
+    join: Join;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    form: any;
+    schema: Schema;
+    isRequired: boolean;
+}
+
+/**
+ * Dropdown for composite foreign keys. One <Select> per FK (rendered on the anchor
+ * column); selecting a parent row writes every `join.sourceColumnNames[i]` on the
+ * form to the matching destination column value. Member columns render no input.
+ */
+function CompositeParentField({ column, join, form, schema, isRequired }: CompositeParentFieldProps) {
+    const sourceCols = join.sourceColumnNames ?? [];
+    const destCols = join.destinationColumnNames ?? [];
+    const parents = useCompositeTableRef(schema, join.destinationTable, destCols);
+
+    // Build the currently selected route from the form state of every source column.
+    // form.useStore subscribes to the slice so the Select stays in sync if other code paths
+    // mutate any source column directly.
+    const currentRoute: string = form.useStore((s: { values: Record<string, unknown> }) => {
+        const parts: string[] = [];
+        for (const c of sourceCols) {
+            const v = s.values?.[c];
+            if (v === undefined || v === null || v === '') return '';
+            parts.push(encodeURIComponent(String(v)));
+        }
+        return parts.join('::');
+    });
+
+    const onChange = (route: string) => {
+        const match = parents.data.find((r) => r.route === route);
+        if (!match) return;
+        for (let i = 0; i < sourceCols.length; i++) {
+            const destCol = destCols[i];
+            const srcCol = sourceCols[i];
+            form.setFieldValue(srcCol, match.values[destCol]);
+        }
+    };
+
+    return (
+        <div className="grid gap-1 sm:col-span-2">
+            <Label htmlFor={column.name} className="text-xs text-muted-foreground">
+                {column.label}
+                {isRequired && <span className="text-destructive ml-0.5">*</span>}
+                <span className="ml-2 px-1 rounded bg-primary/10 text-[10px] font-medium text-primary">
+                    composite FK ({sourceCols.length} cols)
+                </span>
+            </Label>
+            <Select value={currentRoute} onValueChange={onChange}>
+                <SelectTrigger id={column.name} className="w-full h-8 text-sm">
+                    <SelectValue placeholder={`Select ${column.label}`} />
+                </SelectTrigger>
+                <SelectContent>
+                    {parents.data.map((row) => (
+                        <SelectItem key={row.route} value={row.route}>
+                            {row.label}
+                        </SelectItem>
+                    ))}
+                </SelectContent>
+            </Select>
+        </div>
     );
 }
 

@@ -47,7 +47,7 @@ async function runQuickstart(page: Page, schemaDisplayName: string) {
 
 async function navigateToTable(page: Page, tableName: string) {
   await page.locator('a.plain-link').filter({ hasText: tableName }).first().click();
-  await expect(page.getByText(`Table: ${tableName}`, { exact: false })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("heading", { name: tableName, level: 2 })).toBeVisible({ timeout: 10_000 });
 }
 
 // Tables with FK joins where labelColumn = PK (duplicate alias for same DB column).

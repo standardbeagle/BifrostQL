@@ -62,7 +62,7 @@ namespace BifrostQL.Core.QueryModel
             var path = string.IsNullOrWhiteSpace(basePath)
                 switch
             { true => GetUniqueName(), false => basePath + "->" + GetUniqueName() };
-            var tableName = NormalizeColumnName(Name);
+            var tableName = ResolveTableName(model, parent, Name);
             var dbTable = model.GetTableByFullGraphQlName(tableName);
             var rawSort = (IEnumerable<object?>?)Arguments.FirstOrDefault(a => a.Name == "sort")?.Value;
             var sort = rawSort?.Cast<string>()?.ToList() ?? new List<string>();
@@ -83,6 +83,7 @@ namespace BifrostQL.Core.QueryModel
                 DbTable = dbTable,
                 TableName = dbTable.DbName,
                 SchemaName = dbTable.TableSchema,
+                FieldName = NormalizeColumnName(Name),
                 GraphQlName = tableName,
                 Path = path,
                 QueryType = queryType,
@@ -107,6 +108,24 @@ namespace BifrostQL.Core.QueryModel
             if (parent == null)
                 result.ConnectLinks(model);
             return result;
+        }
+
+        private static string ResolveTableName(IDbModel model, IQueryField? parent, string fieldName)
+        {
+            var normalizedFieldName = NormalizeColumnName(fieldName);
+            if (parent == null)
+                return normalizedFieldName;
+
+            var parentTable = model.GetTableByFullGraphQlName(NormalizeColumnName(parent.Name));
+            if (parentTable.SingleLinks.TryGetValue(normalizedFieldName, out var singleLink)
+                || (singleLink = parentTable.SingleLinks.Values.FirstOrDefault(l => string.Equals(l.ParentFieldName, normalizedFieldName, StringComparison.OrdinalIgnoreCase))) != null)
+                return singleLink.ParentTable.GraphQlName;
+
+            if (parentTable.MultiLinks.TryGetValue(normalizedFieldName, out var multiLink)
+                || (multiLink = parentTable.MultiLinks.Values.FirstOrDefault(l => string.Equals(l.ChildFieldName, normalizedFieldName, StringComparison.OrdinalIgnoreCase))) != null)
+                return multiLink.ChildTable.GraphQlName;
+
+            return normalizedFieldName;
         }
 
         public TableJoin ToJoin(IDbModel model, GqlObjectQuery parent)
@@ -159,17 +178,20 @@ namespace BifrostQL.Core.QueryModel
                 }
 
                 var matched = false;
-                if (currentTable.MultiLinks.TryGetValue(linkName, out var multiLink))
-                {
-                    links.Add((LinkDirection.OneToMany, multiLink));
-                    currentTable = multiLink.ChildTable;
-                    matched = true;
-                }
-
-                if (currentTable.SingleLinks.TryGetValue(linkName, out var singleLink))
+                if (currentTable.SingleLinks.TryGetValue(linkName, out var singleLink)
+                    || (singleLink = currentTable.SingleLinks.Values.FirstOrDefault(l => string.Equals(l.ParentFieldName, linkName, StringComparison.OrdinalIgnoreCase))) != null)
                 {
                     links.Add((LinkDirection.ManyToOne, singleLink));
                     currentTable = singleLink.ParentTable;
+                    matched = true;
+                }
+
+                if (!matched && (currentTable.MultiLinks.TryGetValue(linkName, out var multiLink)
+                    || (multiLink = currentTable.MultiLinks.Values.FirstOrDefault(l => string.Equals(l.ChildFieldName, linkName, StringComparison.OrdinalIgnoreCase))) != null)
+                )
+                {
+                    links.Add((LinkDirection.OneToMany, multiLink));
+                    currentTable = multiLink.ChildTable;
                     matched = true;
                 }
                 if (!matched)

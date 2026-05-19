@@ -26,6 +26,8 @@ import {
     buildQuery,
     buildPkEqVariables,
 } from "../lib/query-builder";
+import { rowIdOf } from "../lib/row-id";
+import { isComposite } from "../lib/fk";
 
 // Re-export for existing filter component imports.
 export { getFilterOperators } from "../lib/query-builder";
@@ -43,44 +45,73 @@ interface ColumnWithJoin extends Column {
     joinLabelColumn?: string;
 }
 
-// Joined rows in GraphQL responses are always aliased as `{ id: destCol }` by the SDL query
-// builder, so the joined-row PK lookup is distinct from the source-row composite PK lookup.
-const getJoinedRowPkValue = (row: RowData): string => String(row?.id ?? "");
+// Joined rows in GraphQL responses are aliased as `{ id: destCol }` for single-PK destinations.
+// Composite-PK destinations come back with every PK column verbatim; produce a composite
+// route via rowIdOf so links navigate to /<table>/<pk1>::<pk2>.
+function getJoinedRowPkValue(row: RowData | undefined, joinSchema: Table | undefined): string {
+    if (!row) return "";
+    if (!joinSchema || (joinSchema.primaryKeys?.length ?? 0) <= 1) return String(row?.id ?? "");
+    return rowIdOf(row as Record<string, unknown>, joinSchema, 0);
+}
+
+export function getMultiJoinRows(row: RowData, join: Join): RowData[] {
+    const fieldName = join.fieldName ?? join.destinationTable;
+    return (row[fieldName] as RowData[] | undefined) ?? [];
+}
 
 const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: ColumnPanel) => void): ColumnDef<RowData, unknown>[] => {
     if (!table || !schema) return [];
 
     const dataColumns: ColumnDef<RowData, unknown>[] = table.columns
         .map((c: Column): ColumnDef<RowData, unknown> => {
-            const singleJoin = table.singleJoins.find((j: Join) => j.sourceColumnNames?.[0] === c.name);
+            // A column "anchors" a single-join when it is the first source column of the FK.
+            // Composite-FK members beyond the first still belong to the same join — tag them
+            // for header tooltip but render as scalar (the join data only attaches to the anchor).
+            const anchorJoin = table.singleJoins.find((j: Join) => j.sourceColumnNames?.[0] === c.name);
+            const memberJoin = !anchorJoin
+                ? table.singleJoins.find((j: Join) => (j.sourceColumnNames ?? []).includes(c.name))
+                : undefined;
             const operators = getFilterOperators(c.paramType);
 
-            if (singleJoin) {
-                const columnName = singleJoin.destinationTable;
-                const joinSchema = schema.findTable(singleJoin.destinationTable);
+            if (anchorJoin) {
+                const columnName = anchorJoin.destinationTable;
+                const joinSchema = schema.findTable(anchorJoin.destinationTable);
                 const joinLabelColumn = joinSchema?.labelColumn ?? 'id';
+                const composite = isComposite(anchorJoin);
                 // Self-referential FK: column points back at the same table
                 // (e.g. categories.parent_id -> categories.id). Label it clearly
                 // so users know the FK means "parent" rather than an unrelated
                 // join.
-                const isSelfReference = singleJoin.destinationTable === table.name;
+                const isSelfReference = anchorJoin.destinationTable === table.name;
                 const headerTitle = isSelfReference ? `Parent ${c.label}` : c.label;
                 return {
                     id: c.name,
                     accessorKey: c.name,
                     header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={headerTitle} />,
                     enableSorting: true,
-                    meta: { sortField: c.name, paramType: c.paramType, filterOperators: operators, joinTable: singleJoin.destinationTable, joinLabelColumn, joinFkColumn: singleJoin.destinationColumnNames[0], column: c, isSelfReference },
+                    meta: {
+                        sortField: c.name,
+                        paramType: c.paramType,
+                        filterOperators: operators,
+                        joinTable: anchorJoin.destinationTable,
+                        joinLabelColumn,
+                        joinFkColumn: anchorJoin.destinationColumnNames[0],
+                        column: c,
+                        isSelfReference,
+                        isCompositeFk: composite,
+                    },
                     cell: ({ row }) => {
                         const joined = row.original[columnName] as RowData | undefined;
                         if (!joined) return null;
-                        const joinedPk = getJoinedRowPkValue(joined);
+                        const joinedPk = getJoinedRowPkValue(joined, joinSchema);
                         return (
                             <span className="group/fk inline-flex items-center gap-0.5">
                                 <FkCellPopover
-                                    tableName={singleJoin.destinationTable}
+                                    tableName={anchorJoin.destinationTable}
                                     recordId={joinedPk}
-                                    filterColumn={singleJoin.destinationColumnNames[0]}
+                                    filterColumn={anchorJoin.destinationColumnNames[0]}
+                                    join={anchorJoin}
+                                    sourceRow={row.original as Record<string, unknown>}
                                 >
                                     <Link to={"/" + joinSchema?.name + "/" + joinedPk} className="text-primary hover:text-primary/80 hover:underline">
                                         {joined?.label as string}
@@ -94,7 +125,7 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                                         onClick={(e) => {
                                             e.stopPropagation();
                                             onOpenColumn({
-                                                tableName: singleJoin.destinationTable,
+                                                tableName: anchorJoin.destinationTable,
                                                 filterId: joinedPk,
                                             });
                                         }}
@@ -110,6 +141,33 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                 };
             }
 
+            if (memberJoin) {
+                // Secondary composite-FK column — value renders as a scalar but the
+                // header should advertise the FK relation so users can hover for context.
+                const joinSchema = schema.findTable(memberJoin.destinationTable);
+                const joinLabelColumn = joinSchema?.labelColumn ?? 'id';
+                const isSelfReference = memberJoin.destinationTable === table.name;
+                return {
+                    id: c.name,
+                    accessorFn: (row) => (c.name ? String(row?.[c.name] ?? "") : ""),
+                    header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
+                    enableSorting: true,
+                    meta: {
+                        sortField: c.name,
+                        paramType: c.paramType,
+                        dbType: c.dbType,
+                        filterOperators: operators,
+                        joinTable: memberJoin.destinationTable,
+                        joinLabelColumn,
+                        joinFkColumn: memberJoin.destinationColumnNames[(memberJoin.sourceColumnNames ?? []).indexOf(c.name)] ?? memberJoin.destinationColumnNames[0],
+                        column: c,
+                        isSelfReference,
+                        isCompositeFk: true,
+                        isCompositeFkMember: true,
+                    },
+                };
+            }
+
             if ((c as ColumnWithJoin)?.joinTable) {
                 return {
                     id: c.name,
@@ -121,7 +179,7 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                         const joined = row.original[c.name] as RowData | undefined;
                         if (!joined) return null;
                         return (
-                            <Link to={"/" + c.name + "/" + getJoinedRowPkValue(joined)} className="text-primary hover:text-primary/80 hover:underline">
+                            <Link to={"/" + c.name + "/" + getJoinedRowPkValue(joined, undefined)} className="text-primary hover:text-primary/80 hover:underline">
                                 {c.name}
                             </Link>
                         );
@@ -179,13 +237,13 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                 ? `Child ${joinTable?.label ?? j.destinationTable}`
                 : joinTable?.label ?? j.destinationTable;
             return {
-                id: `join_${j.destinationTable}`,
+                id: `join_${j.fieldName ?? j.destinationTable}`,
                 header: headerLabel,
                 enableSorting: false,
                 enableHiding: true,
                 cell: ({ row }) => {
                     const parentPk = getRowPkValue(row.original, table);
-                    const children = (row.original[j.destinationTable] as RowData[] | undefined) ?? [];
+                    const children = getMultiJoinRows(row.original, j);
                     const count = children.length;
                     if (count === 0) {
                         return <span className="text-muted-foreground">—</span>;
@@ -232,7 +290,11 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                                             tableName: j.destinationTable,
                                             filterTable: table.name,
                                             filterId: parentPk,
-                                            filterColumn: j.destinationColumnNames[0],
+                                            // Composite multi-joins fall back to the nested-parent
+                                            // filter path so all parent PK columns participate.
+                                            ...(isComposite(j)
+                                                ? {}
+                                                : { filterColumn: j.destinationColumnNames[0] }),
                                         });
                                     }}
                                     aria-label="Open in side column"

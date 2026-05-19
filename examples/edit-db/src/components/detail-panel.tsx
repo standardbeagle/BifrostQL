@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { ChevronDown, ChevronUp, PanelRight, X } from 'lucide-react';
 import type { ColumnPanel } from '../data-panel';
+import { isComposite } from '../lib/fk';
 
 interface DetailPanelProps {
     parentTable: Table;
@@ -66,7 +67,12 @@ export function DetailPanel({ parentTable, selectedRowId, onClose, onOpenColumn 
                                             tableName: j.destinationTable,
                                             filterTable: parentTable.name,
                                             filterId: selectedRowId,
-                                            filterColumn: j.destinationColumnNames[0],
+                                            // Single FK: pin to the direct FK column on the child.
+                                            // Composite FK: omit filterColumn so query-builder
+                                            // emits a composite-PK nested filter on the parent.
+                                            ...(isComposite(j)
+                                                ? {}
+                                                : { filterColumn: j.destinationColumnNames[0] }),
                                         })}
                                         aria-label="Open in side column"
                                         title="Open in side column"
@@ -97,7 +103,12 @@ export function DetailPanel({ parentTable, selectedRowId, onClose, onOpenColumn 
                         key={`${activeJoin.destinationTable}-${selectedRowId}`}
                         table={childTable}
                         id={selectedRowId}
-                        filterColumn={activeJoin.destinationColumnNames[0]}
+                        // Composite multi-joins route through tableFilter so the parent
+                        // composite PK becomes a nested {and: [...]} filter; single FKs
+                        // keep the legacy direct-FK-column shape.
+                        {...(isComposite(activeJoin)
+                            ? { tableFilter: parentTable.name }
+                            : { filterColumn: activeJoin.destinationColumnNames[0] })}
                     />
                 </div>
             )}

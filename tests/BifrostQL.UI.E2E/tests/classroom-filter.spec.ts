@@ -23,7 +23,7 @@ async function runQuickstart(page: Page, schema: string, dataSize = 'Sample') {
 
 async function navigateToTable(page: Page, tableName: string) {
   await page.locator('a.plain-link').filter({ hasText: tableName }).first().click();
-  await expect(page.getByText(`Table: ${tableName}`, { exact: false })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("heading", { name: tableName, level: 2 })).toBeVisible({ timeout: 10_000 });
 }
 
 test.describe('Classroom — Field Filter', () => {

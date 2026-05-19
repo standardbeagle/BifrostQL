@@ -33,7 +33,7 @@ async function navigateToTable(page: Page, tableName: string) {
   await page.locator('a.plain-link').filter({ hasText: tableName }).first().click();
 
   // Wait for the "Table: <name>" header that appears when a table is selected
-  await expect(page.getByText(`Table: ${tableName}`, { exact: false })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("heading", { name: tableName, level: 2 })).toBeVisible({ timeout: 10_000 });
 }
 
 test.describe('Blog Quickstart — Full Flow', () => {
@@ -91,7 +91,7 @@ test.describe('Blog Quickstart — Full Flow', () => {
 
       // After clicking, should navigate to related table
       await page.waitForTimeout(1_000);
-      await expect(page.getByText('Table:', { exact: false })).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByRole("heading", { level: 2 }).first()).toBeVisible({ timeout: 10_000 });
     }
   });
 

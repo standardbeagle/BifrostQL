@@ -18,7 +18,7 @@ namespace BifrostQL.Core.Resolvers
             {
                 ReaderCurrent row => row.Get(context),
                 SingleRowLookup lookup => lookup.Get(context),
-                _ => throw new BifrostExecutionError($"{context.FieldAlias ?? context.FieldName ?? "unknown"} has no data associated with it.")
+                _ => throw new BifrostExecutionError($"{context.FieldAlias ?? context.FieldName ?? "unknown"} has no data associated with source type {context.Source?.GetType().FullName ?? "null"}.")
             };
         }
 

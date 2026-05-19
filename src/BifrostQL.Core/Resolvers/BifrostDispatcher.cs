@@ -125,10 +125,10 @@ namespace BifrostQL.Core.Resolvers
                     tableType.FieldFor(column.GraphQlName).Resolver = this;
 
                 foreach (var singleLink in table.SingleLinks)
-                    tableType.FieldFor(singleLink.Value.ParentTable.GraphQlName).Resolver = this;
+                    tableType.FieldFor(singleLink.Value.ParentFieldName).Resolver = this;
 
                 foreach (var multiLink in table.MultiLinks)
-                    tableType.FieldFor(multiLink.Value.ChildTable.GraphQlName).Resolver = this;
+                    tableType.FieldFor(multiLink.Value.ChildFieldName).Resolver = this;
 
                 // Previously this method also looped over every table pair
                 // and wired `_join_<table>` / `_single_<table>` resolvers.

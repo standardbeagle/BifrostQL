@@ -4,6 +4,8 @@ import { Schema } from '../types/schema';
 import { useFetcher } from '../common/fetcher';
 import { rowIdOf } from '../lib/row-id';
 
+const COMPOSITE_REF_LIMIT = 500;
+
 export interface CompositeTableRefValue {
     /** Route-encoded composite key (`v1::v2`) suitable as a Select value. */
     route: string;
@@ -45,7 +47,7 @@ export function useCompositeTableRef(
 
     const query = useMemo(() => {
         if (schema.loading || schema.error || !destTable || destColumnNames.length === 0) return null;
-        return `query Get_${destTableName}_CompositeRef { values: ${destTableName}(limit: -1) { data { ${fields} } } }`;
+        return `query Get_${destTableName}_CompositeRef { values: ${destTableName}(limit: ${COMPOSITE_REF_LIMIT}) { data { ${fields} } } }`;
     }, [destTable, destTableName, fields, schema.loading, schema.error, destColumnNames.length]);
 
     const { isLoading, error, data } = useQuery({

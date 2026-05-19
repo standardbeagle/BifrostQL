@@ -66,12 +66,14 @@ query dbSchema {
     }
     multiJoins {
       name
+      fieldName
       sourceColumnNames
       destinationTable
       destinationColumnNames
     }
     singleJoins {
       name
+      fieldName
       sourceColumnNames
       destinationTable
       destinationColumnNames

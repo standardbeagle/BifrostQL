@@ -1,5 +1,6 @@
 using BifrostQL.Core.QueryModel.TestFixtures;
 using BifrostQL.Core.Schema;
+using BifrostQL.Core.Model;
 using FluentAssertions;
 
 namespace BifrostQL.Core.Test.Schema;
@@ -47,5 +48,40 @@ public class RelationshipFieldNameTests
         sdl.Should().Contain("categories_children(filter: TableFiltercategoriesInput) : [categories]");
         aggregate.Should().Contain("categories : categories_AggregateValue");
         aggregate.Should().Contain("categories_children : categories_AggregateValue");
+    }
+
+    [Fact]
+    public void TableTypeDefinition_UsesNumberedAliasWhenSelfFkChildrenNameAlreadyExists()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("categories", t => t
+                .WithPrimaryKey("id")
+                .WithColumn("parent_id", "int")
+                .WithColumn("name"))
+            .WithTable("categories_children", t => t
+                .WithPrimaryKey("id")
+                .WithColumn("category_id", "int")
+                .WithColumn("name"))
+            .WithSingleLink("categories", "parent_id", "categories", "id")
+            .WithMultiLink("categories", "id", "categories_children", "category_id")
+            .Build();
+        var categories = model.Tables.Single(t => t.GraphQlName == "categories");
+        var selfLink = new TableLinkDto
+        {
+            Name = "categories",
+            ParentTable = categories,
+            ChildTable = categories,
+            ParentId = categories.ColumnLookup["id"],
+            ChildId = categories.ColumnLookup["parent_id"],
+            ChildFieldNameOverride = BifrostQL.Core.Model.Relationships.ForeignKeyRelationshipStrategy
+                .ResolveChildFieldNameForTest(categories, categories),
+        };
+        categories.MultiLinks.Add(selfLink.ChildFieldName, selfLink);
+
+        var sdl = new TableSchemaGenerator(categories).GetTableTypeDefinition(model, includeDynamicJoins: false);
+
+        selfLink.ChildFieldName.Should().Be("categories_children_2");
+        sdl.Should().Contain("categories_children(filter: TableFiltercategories_childrenInput) : [categories_children]");
+        sdl.Should().Contain("categories_children_2(filter: TableFiltercategoriesInput) : [categories]");
     }
 }

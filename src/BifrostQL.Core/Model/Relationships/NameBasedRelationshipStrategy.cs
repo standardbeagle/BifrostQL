@@ -78,12 +78,14 @@ namespace BifrostQL.Core.Model.Relationships
                         ParentTable = idMatch.parent
                     });
 
-                if (!idMatch.parent.MultiLinks.ContainsKey(idMatch.table.GraphQlName))
+                var childFieldName = UniqueChildFieldName(idMatch.parent, idMatch.table);
+                if (!idMatch.parent.MultiLinks.ContainsKey(childFieldName))
                 {
-                    idMatch.parent.MultiLinks.Add(idMatch.table.GraphQlName,
+                    idMatch.parent.MultiLinks.Add(childFieldName,
                         new TableLinkDto
                         {
                             Name = idMatch.table.GraphQlName,
+                            ChildFieldNameOverride = childFieldName,
                             ChildId = idMatch.column,
                             ParentId = idMatch.parent.KeyColumns.First(),
                             ChildTable = idMatch.table,
@@ -91,6 +93,22 @@ namespace BifrostQL.Core.Model.Relationships
                         });
                 }
             }
+        }
+
+        private static string UniqueChildFieldName(IDbTable parentTable, IDbTable childTable)
+        {
+            var baseName = string.Equals(parentTable.GraphQlName, childTable.GraphQlName, StringComparison.OrdinalIgnoreCase)
+                ? $"{childTable.GraphQlName}_children"
+                : childTable.GraphQlName;
+            var name = baseName;
+            var i = 2;
+            while (parentTable.SingleLinks.ContainsKey(name)
+                || parentTable.MultiLinks.ContainsKey(name)
+                || parentTable.ManyToManyLinks.ContainsKey(name))
+            {
+                name = $"{baseName}_{i++}";
+            }
+            return name;
         }
 
         private HashSet<(string TableSchema, string TableName, string ColumnName)> GetFkLinkedColumns(

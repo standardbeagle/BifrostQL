@@ -32,6 +32,8 @@ import {
   CredentialCancelledError,
   type ConnectionInfo as BridgeConnectionInfo,
 } from './lib/credential-prompt';
+import { SqlConsole } from './SqlConsole';
+import { isSqlBridgeAvailable } from './lib/sql-bridge';
 import './connection/connection.css';
 import './app.css';
 
@@ -130,6 +132,10 @@ export default function App() {
   const [isLaunching, setIsLaunching] = useState(false);
   const [launchProgress, setLaunchProgress] = useState('');
   const [editorKey, setEditorKey] = useState(0);
+  // Editor pane toggle: GraphQL editor (default) vs raw SQL console. The SQL
+  // console rides the Photino bridge, so it's only offered inside the desktop app.
+  const [editorPane, setEditorPane] = useState<'graphql' | 'sql'>('graphql');
+  const sqlBridgeAvailable = isSqlBridgeAvailable();
   const [vaultServers, setVaultServers] = useState<VaultServer[]>([]);
 
   // Load vault servers on mount
@@ -699,6 +705,27 @@ export default function App() {
               {transportMode === 'binary' ? 'Binary probe' : 'HTTP editor'}
             </button>
           </div>
+          {sqlBridgeAvailable && (
+            <button
+              type="button"
+              onClick={() => setEditorPane((p) => (p === 'sql' ? 'graphql' : 'sql'))}
+              aria-pressed={editorPane === 'sql'}
+              title="Toggle between the GraphQL editor and the raw SQL console"
+              style={{
+                background: 'transparent',
+                border: '1px solid currentColor',
+                borderRadius: 4,
+                padding: '2px 8px',
+                marginRight: 12,
+                cursor: 'pointer',
+                font: 'inherit',
+                color: 'inherit',
+                fontSize: 12,
+              }}
+            >
+              {editorPane === 'sql' ? 'GraphQL editor' : 'SQL console'}
+            </button>
+          )}
           <button
             className="bifrost-disconnect-button"
             onClick={handleBack}
@@ -716,13 +743,17 @@ export default function App() {
           binary client via a probe and the editor stays on HTTP regardless of
           the toggle. Tracked alongside the binary transport rollout work.
         */}
-        <Editor
-          key={editorKey}
-          uri={graphqlUri}
-          onLocate={(location) => {
-            window.history.pushState(null, '', location);
-          }}
-        />
+        {editorPane === 'sql' ? (
+          <SqlConsole />
+        ) : (
+          <Editor
+            key={editorKey}
+            uri={graphqlUri}
+            onLocate={(location) => {
+              window.history.pushState(null, '', location);
+            }}
+          />
+        )}
       </div>
     );
   }

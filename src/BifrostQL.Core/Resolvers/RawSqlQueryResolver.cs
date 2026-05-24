@@ -100,38 +100,22 @@ namespace BifrostQL.Core.Resolvers
         private static async Task<List<Dictionary<string, object?>>> ExecuteQueryAsync(
             IDbConnFactory connFactory, string sql, Dictionary<string, object?>? parameters, int timeoutSeconds, int maxRows)
         {
-            await using var conn = connFactory.GetConnection();
             try
             {
-                await conn.OpenAsync();
-                await using var cmd = conn.CreateCommand();
-                cmd.CommandText = sql;
-                cmd.CommandTimeout = timeoutSeconds;
+                // Shared with the Photino SQL bridge. The executor returns a columnar
+                // result; the GraphQL field shape is a list of name-keyed rows, so we
+                // adapt here. Duplicate column names collapse (last wins) — unchanged
+                // from the original dictionary-based behavior.
+                var result = await RawSqlExecutor.ExecuteAsync(
+                    connFactory, sql, parameters, timeoutSeconds, maxRows);
 
-                if (parameters != null)
+                var results = new List<Dictionary<string, object?>>(result.Rows.Count);
+                foreach (var row in result.Rows)
                 {
-                    foreach (var (name, value) in parameters)
-                    {
-                        var p = cmd.CreateParameter();
-                        p.ParameterName = name.StartsWith("@") ? name : $"@{name}";
-                        p.Value = value ?? DBNull.Value;
-                        cmd.Parameters.Add(p);
-                    }
-                }
-
-                var results = new List<Dictionary<string, object?>>();
-                await using var reader = await cmd.ExecuteReaderAsync();
-                var rowCount = 0;
-                while (await reader.ReadAsync() && rowCount < maxRows)
-                {
-                    var row = new Dictionary<string, object?>();
-                    for (var i = 0; i < reader.FieldCount; i++)
-                    {
-                        var val = reader.GetValue(i);
-                        row[reader.GetName(i)] = val == DBNull.Value ? null : val;
-                    }
-                    results.Add(row);
-                    rowCount++;
+                    var dict = new Dictionary<string, object?>(result.Columns.Count);
+                    for (var i = 0; i < result.Columns.Count; i++)
+                        dict[result.Columns[i].Name] = row[i];
+                    results.Add(dict);
                 }
 
                 return results;

@@ -200,14 +200,18 @@ namespace BifrostQL.Core.QueryModel
             foreach (var link in Links)
             {
                 var thisDto = dbModel.GetTableFromDbName(TableName);
-                if (thisDto.SingleLinks.TryGetValue(link.FieldName, out var singleLink)
-                    || (singleLink = thisDto.SingleLinks.Values.FirstOrDefault(l => string.Equals(l.ParentFieldName, link.FieldName, StringComparison.OrdinalIgnoreCase))) != null)
+                // The real query path sets FieldName (normalized) via QueryField; links
+                // constructed directly carry only GraphQlName. Fall back so both resolve
+                // — matching the ManyToMany branch below, which keys on GraphQlName.
+                var fieldName = string.IsNullOrEmpty(link.FieldName) ? link.GraphQlName : link.FieldName;
+                if (thisDto.SingleLinks.TryGetValue(fieldName, out var singleLink)
+                    || (singleLink = thisDto.SingleLinks.Values.FirstOrDefault(l => string.Equals(l.ParentFieldName, fieldName, StringComparison.OrdinalIgnoreCase))) != null)
                 {
                     link.TableName = singleLink.ParentTable.DbName;
                     var join = new TableJoin
                     {
                         Alias = link.Alias,
-                        Name = link.FieldName,
+                        Name = fieldName,
                         ConnectedTable = link,
                         ConnectedColumn = singleLink.ParentId.ColumnName,
                         ConnectedColumns = singleLink.ParentIds.Select(c => c.ColumnName).ToArray(),
@@ -219,14 +223,14 @@ namespace BifrostQL.Core.QueryModel
                     Joins.Add(join);
                     continue;
                 }
-                if (thisDto.MultiLinks.TryGetValue(link.FieldName, out var multiLink)
-                    || (multiLink = thisDto.MultiLinks.Values.FirstOrDefault(l => string.Equals(l.ChildFieldName, link.FieldName, StringComparison.OrdinalIgnoreCase))) != null)
+                if (thisDto.MultiLinks.TryGetValue(fieldName, out var multiLink)
+                    || (multiLink = thisDto.MultiLinks.Values.FirstOrDefault(l => string.Equals(l.ChildFieldName, fieldName, StringComparison.OrdinalIgnoreCase))) != null)
                 {
                     link.TableName = multiLink.ChildTable.DbName;
                     var join = new TableJoin
                     {
                         Alias = link.Alias,
-                        Name = link.FieldName,
+                        Name = fieldName,
                         ConnectedTable = link,
                         ConnectedColumn = multiLink.ChildId.ColumnName,
                         ConnectedColumns = multiLink.ChildIds.Select(c => c.ColumnName).ToArray(),

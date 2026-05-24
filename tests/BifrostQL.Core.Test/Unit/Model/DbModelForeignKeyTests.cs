@@ -137,8 +137,13 @@ public class DbModelForeignKeyTests
         employees.SingleLinks["Employees"].ParentTable.DbName.Should().Be("Employees");
         employees.SingleLinks["Employees"].ChildTable.DbName.Should().Be("Employees");
 
-        // Self-referencing also creates a MultiLink
-        employees.MultiLinks.Should().ContainKey("Employees");
+        // Self-referencing also creates a reverse MultiLink (the "direct reports"
+        // side). Its key is suffixed to avoid colliding with the forward SingleLink
+        // field "Employees" on the same GraphQL type — both fields would otherwise
+        // be named "Employees" on Employees. See UniqueChildFieldName.
+        employees.MultiLinks.Should().ContainKey("Employees_children");
+        employees.MultiLinks["Employees_children"].ChildTable.DbName.Should().Be("Employees");
+        employees.MultiLinks["Employees_children"].ParentTable.DbName.Should().Be("Employees");
     }
 
     [Fact]

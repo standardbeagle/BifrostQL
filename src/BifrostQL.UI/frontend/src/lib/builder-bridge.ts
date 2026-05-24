@@ -15,6 +15,7 @@ import {
   sendBridgeRequest,
   type BridgeRequestOptions,
 } from "./native-bridge";
+import type { VisualQuerySpec } from "./visual-query";
 
 export interface BuilderTable {
   schema: string;
@@ -59,5 +60,50 @@ export function isBuilderBridgeAvailable(): boolean {
 export function getBuilderSchema(options?: BridgeRequestOptions): Promise<BuilderSchema> {
   return sendBridgeRequest<BuilderSchema>("get-builder-schema", undefined, {
     timeoutMs: options?.timeoutMs ?? 30_000,
+  });
+}
+
+/** Result of `buildSql`: the generated SQL and its named parameters (preview). */
+export interface BuildSqlResult {
+  sql: string;
+  parameters: Record<string, unknown>;
+}
+
+/** Result of `buildAndExec`: the generated SQL plus the columnar result set. */
+export interface BuildAndExecResult {
+  sql: string;
+  columns: { name: string; type: string }[];
+  rows: unknown[][];
+  rowsAffected: number;
+  truncated: boolean;
+}
+
+// A built query can run for many seconds; pad the bridge deadline like execSql.
+const DEFAULT_EXEC_TIMEOUT_MS = 60_000;
+
+/**
+ * Builds SQL from a spec without running it — for the designer's SQL-preview tab.
+ * Rejects with `BridgeError` on validation/connection errors.
+ */
+export function buildSql(
+  spec: VisualQuerySpec,
+  options?: BridgeRequestOptions
+): Promise<BuildSqlResult> {
+  return sendBridgeRequest<BuildSqlResult>("build-sql", spec, {
+    timeoutMs: options?.timeoutMs ?? 30_000,
+  });
+}
+
+/**
+ * Builds SQL from a spec and runs it, returning the columnar result set (plus the
+ * SQL that ran) for the grid. Rejects with `BridgeError` on validation, connection,
+ * or execution errors.
+ */
+export function buildAndExec(
+  spec: VisualQuerySpec,
+  options?: BridgeRequestOptions
+): Promise<BuildAndExecResult> {
+  return sendBridgeRequest<BuildAndExecResult>("build-and-exec", spec, {
+    timeoutMs: options?.timeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS,
   });
 }

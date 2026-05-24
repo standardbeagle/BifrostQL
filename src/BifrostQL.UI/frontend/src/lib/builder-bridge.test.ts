@@ -106,4 +106,47 @@ describe("builder-bridge", () => {
     await expect(promise).rejects.toBeInstanceOf(BridgeError);
     await expect(promise).rejects.toThrow(/no active database/i);
   });
+
+  const sampleSpec = {
+    tables: [{ table: "users" }],
+    columns: [{ table: "users", column: "id", show: true, sort: "none" as const }],
+    joins: [],
+  };
+
+  it("buildSql sends build-sql with the spec and resolves sql + parameters", async () => {
+    const fake = installFakeExternal();
+    const { buildSql } = await loadBuilderBridge();
+
+    const promise = buildSql(sampleSpec);
+
+    const sent = lastSent(fake);
+    expect(sent.kind).toBe("build-sql");
+    expect(sent.payload).toMatchObject({ tables: [{ table: "users" }] });
+
+    const result = { sql: "SELECT [t0].[id] FROM ...", parameters: {} };
+    fake.dispatch!(JSON.stringify({ id: sent.id, kind: "result", payload: result }));
+
+    await expect(promise).resolves.toEqual(result);
+  });
+
+  it("buildAndExec sends build-and-exec and resolves the columnar result", async () => {
+    const fake = installFakeExternal();
+    const { buildAndExec } = await loadBuilderBridge();
+
+    const promise = buildAndExec(sampleSpec);
+
+    const sent = lastSent(fake);
+    expect(sent.kind).toBe("build-and-exec");
+
+    const result = {
+      sql: "SELECT ...",
+      columns: [{ name: "id", type: "INTEGER" }],
+      rows: [[1]],
+      rowsAffected: 0,
+      truncated: false,
+    };
+    fake.dispatch!(JSON.stringify({ id: sent.id, kind: "result", payload: result }));
+
+    await expect(promise).resolves.toEqual(result);
+  });
 });

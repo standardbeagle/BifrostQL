@@ -907,6 +907,59 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
                 BifrostQL.UI.NativeBridge.BuilderSchemaProjection.Project(model));
         });
 
+        // Resolves the cached model + active dialect for the visual query builder
+        // handlers. Throws the same way exec-sql does when there is no connection
+        // or the schema has not loaded.
+        (IDbModel Model, BifrostQL.Core.QueryModel.ISqlDialect Dialect) ResolveModelAndDialect()
+        {
+            if (string.IsNullOrEmpty(currentConnectionString) || currentProvider is null)
+                throw new InvalidOperationException("No active database connection. Connect to a database first.");
+
+            var pathCache = app.Services.GetService<BifrostQL.Core.Schema.PathCache<GraphQL.Inputs>>();
+            var inputs = pathCache?.GetFirstValue();
+            if (inputs is null || !inputs.TryGetValue("model", out var modelObj) || modelObj is not IDbModel model)
+                throw new InvalidOperationException("Database schema is not loaded yet.");
+
+            var dialect = DbConnFactoryResolver.Create(currentConnectionString, currentProvider.Value).Dialect;
+            return (model, dialect);
+        }
+
+        // build-sql — Photino-only. Turns a VisualQuerySpec into the SQL + named
+        // parameters via the server-side dialect builder, for the designer's
+        // SQL-preview tab. No execution.
+        nativeBridge.Register("build-sql", (payload, _) =>
+        {
+            var (model, dialect) = ResolveModelAndDialect();
+            var spec = BifrostQL.UI.NativeBridge.VisualQueryBridge.Parse(payload);
+            var built = BifrostQL.Core.QueryModel.VisualQuery.VisualQueryBuilder.Build(spec, model, dialect);
+            return Task.FromResult<object?>(new { sql = built.Sql, parameters = built.Parameters });
+        });
+
+        // build-and-exec — Photino-only. Builds the SQL from the spec, runs it via
+        // RawSqlExecutor, and returns the same columnar shape as exec-sql so the
+        // existing SqlConsole grid renders it. Driver exceptions are scrubbed by
+        // NativeBridgeHost before reaching the renderer.
+        nativeBridge.Register("build-and-exec", async (payload, innerCt) =>
+        {
+            var (model, dialect) = ResolveModelAndDialect();
+            var spec = BifrostQL.UI.NativeBridge.VisualQueryBridge.Parse(payload);
+            var built = BifrostQL.Core.QueryModel.VisualQuery.VisualQueryBuilder.Build(spec, model, dialect);
+
+            var factory = DbConnFactoryResolver.Create(currentConnectionString!, currentProvider!.Value);
+            var result = await RawSqlExecutor.ExecuteAsync(
+                factory, built.Sql, built.Parameters,
+                RawSqlQueryResolver.DefaultTimeoutSeconds, RawSqlQueryResolver.DefaultMaxRows, innerCt);
+
+            return new
+            {
+                sql = built.Sql,
+                columns = result.Columns.Select(c => new { name = c.Name, type = c.Type }).ToArray(),
+                rows = result.Rows,
+                rowsAffected = result.RowsAffected,
+                truncated = result.Truncated,
+            };
+        });
+
         window.WaitForClose();
 
         // Shutdown the server and SSH tunnel when window closes
@@ -989,7 +1042,9 @@ static async Task<string[]> ListDatabasesViaPsqlAsync(string connectionString, s
 static object? JsonValueToClr(JsonElement e) => e.ValueKind switch
 {
     JsonValueKind.String => e.GetString(),
-    JsonValueKind.Number => e.TryGetInt64(out var l) ? l : e.GetDouble(),
+    // Cast the long branch to object so the conditional's type is object, not
+    // double — otherwise the long widens to double and integers bind as floats.
+    JsonValueKind.Number => e.TryGetInt64(out var l) ? (object)l : e.GetDouble(),
     JsonValueKind.True => true,
     JsonValueKind.False => false,
     JsonValueKind.Null or JsonValueKind.Undefined => null,

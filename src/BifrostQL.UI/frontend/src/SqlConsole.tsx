@@ -5,6 +5,7 @@ import {
   isSqlBridgeAvailable,
   type SqlResult,
 } from './lib/sql-bridge';
+import { ResultGrid } from './ResultGrid';
 
 /**
  * Raw SQL console backed by the Photino `exec-sql` bridge. Runs arbitrary SQL
@@ -104,7 +105,7 @@ export function SqlConsole() {
       )}
 
       {!error && result && result.columns.length > 0 && (
-        <ResultGrid result={result} />
+        <ResultGrid columns={result.columns} rows={result.rows} />
       )}
     </div>
   );
@@ -117,41 +118,6 @@ function resultSummary(result: SqlResult, elapsedMs: number | null): string {
   }
   const truncated = result.truncated ? ' (truncated)' : '';
   return `${result.rows.length} row(s)${truncated}${time}`;
-}
-
-function ResultGrid({ result }: { result: SqlResult }) {
-  return (
-    <div className="sql-console__grid" style={styles.gridWrap}>
-      <table style={styles.table}>
-        <thead>
-          <tr>
-            {result.columns.map((col, i) => (
-              <th key={i} style={styles.th} title={col.type}>
-                {col.name || `col${i + 1}`}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {result.rows.map((row, r) => (
-            <tr key={r}>
-              {row.map((cell, c) => (
-                <td key={c} style={styles.td}>
-                  {renderCell(cell)}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function renderCell(value: unknown): string {
-  if (value === null || value === undefined) return 'NULL';
-  if (typeof value === 'object') return JSON.stringify(value);
-  return String(value);
 }
 
 // Inline styles mirror the inline-style convention already used in App.tsx for
@@ -189,23 +155,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-mono, monospace)',
     fontSize: 12,
     whiteSpace: 'pre-wrap',
-  },
-  gridWrap: { flex: 1, minHeight: 0, overflow: 'auto', border: '1px solid var(--border, #d1d5db)', borderRadius: 6 },
-  table: { borderCollapse: 'collapse', width: '100%', fontSize: 13 },
-  th: {
-    position: 'sticky',
-    top: 0,
-    background: '#f3f4f6',
-    textAlign: 'left',
-    padding: '6px 10px',
-    borderBottom: '1px solid #d1d5db',
-    whiteSpace: 'nowrap',
-  },
-  td: {
-    padding: '4px 10px',
-    borderBottom: '1px solid #f0f0f0',
-    whiteSpace: 'nowrap',
-    fontFamily: 'var(--font-mono, monospace)',
   },
   unavailable: { padding: 24, color: '#6b7280' },
 };

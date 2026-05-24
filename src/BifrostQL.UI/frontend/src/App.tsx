@@ -33,6 +33,7 @@ import {
   type ConnectionInfo as BridgeConnectionInfo,
 } from './lib/credential-prompt';
 import { SqlConsole } from './SqlConsole';
+import { QueryBuilderPane } from './designer/QueryBuilderPane';
 import { isSqlBridgeAvailable } from './lib/sql-bridge';
 import './connection/connection.css';
 import './app.css';
@@ -134,7 +135,7 @@ export default function App() {
   const [editorKey, setEditorKey] = useState(0);
   // Editor pane toggle: GraphQL editor (default) vs raw SQL console. The SQL
   // console rides the Photino bridge, so it's only offered inside the desktop app.
-  const [editorPane, setEditorPane] = useState<'graphql' | 'sql'>('graphql');
+  const [editorPane, setEditorPane] = useState<'graphql' | 'sql' | 'builder'>('graphql');
   const sqlBridgeAvailable = isSqlBridgeAvailable();
   const [vaultServers, setVaultServers] = useState<VaultServer[]>([]);
 
@@ -706,25 +707,32 @@ export default function App() {
             </button>
           </div>
           {sqlBridgeAvailable && (
-            <button
-              type="button"
-              onClick={() => setEditorPane((p) => (p === 'sql' ? 'graphql' : 'sql'))}
-              aria-pressed={editorPane === 'sql'}
-              title="Toggle between the GraphQL editor and the raw SQL console"
-              style={{
-                background: 'transparent',
-                border: '1px solid currentColor',
-                borderRadius: 4,
-                padding: '2px 8px',
-                marginRight: 12,
-                cursor: 'pointer',
-                font: 'inherit',
-                color: 'inherit',
-                fontSize: 12,
-              }}
-            >
-              {editorPane === 'sql' ? 'GraphQL editor' : 'SQL console'}
-            </button>
+            <div role="group" aria-label="Editor pane" style={{ display: 'flex', gap: 4, marginRight: 12 }}>
+              {([
+                ['graphql', 'GraphQL'],
+                ['sql', 'SQL'],
+                ['builder', 'Query builder'],
+              ] as const).map(([pane, label]) => (
+                <button
+                  key={pane}
+                  type="button"
+                  onClick={() => setEditorPane(pane)}
+                  aria-pressed={editorPane === pane}
+                  style={{
+                    background: editorPane === pane ? '#2563eb' : 'transparent',
+                    color: editorPane === pane ? '#fff' : 'inherit',
+                    border: '1px solid currentColor',
+                    borderRadius: 4,
+                    padding: '2px 8px',
+                    cursor: 'pointer',
+                    font: 'inherit',
+                    fontSize: 12,
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           )}
           <button
             className="bifrost-disconnect-button"
@@ -745,6 +753,8 @@ export default function App() {
         */}
         {editorPane === 'sql' ? (
           <SqlConsole />
+        ) : editorPane === 'builder' ? (
+          <QueryBuilderPane />
         ) : (
           <Editor
             key={editorKey}

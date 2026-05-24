@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Utils;
 using BifrostQL.Server;
 using BifrostQL.MySql;
@@ -824,6 +825,88 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
             return new { saved = true, name = savedName };
         });
 
+        // Raw SQL grid execution — Photino-only channel. Runs arbitrary SQL
+        // against the currently active connection entirely in-process; results
+        // never traverse the localhost HTTP/GraphQL surface. This is a desktop
+        // database explorer, so full DML/DDL is intentionally permitted (no
+        // RawSqlValidator gate). The closure-captured currentConnectionString /
+        // currentProvider are kept in sync by /api/vault/connect and the
+        // quickstart self-bind path.
+        //
+        // Payload: { sql: string, params?: {name:value}, maxRows?: int, timeout?: int }
+        // Result:  { columns: [{name,type}], rows: [[...]], rowsAffected, truncated }
+        //
+        // Errors (including driver exceptions that may embed the connection
+        // string) are scrubbed by NativeBridgeHost before reaching the renderer.
+        nativeBridge.Register("exec-sql", async (payload, innerCt) =>
+        {
+            if (string.IsNullOrEmpty(currentConnectionString) || currentProvider is null)
+                throw new InvalidOperationException("No active database connection. Connect to a database first.");
+
+            if (payload.ValueKind != JsonValueKind.Object)
+                throw new ArgumentException("exec-sql payload must be an object");
+
+            var sql = payload.TryGetProperty("sql", out var sqlEl) && sqlEl.ValueKind == JsonValueKind.String
+                ? sqlEl.GetString()
+                : null;
+            if (string.IsNullOrWhiteSpace(sql))
+                throw new ArgumentException("sql is required");
+
+            var maxRows = payload.TryGetProperty("maxRows", out var mrEl)
+                && mrEl.ValueKind == JsonValueKind.Number && mrEl.TryGetInt32(out var mr) && mr > 0
+                ? mr
+                : RawSqlQueryResolver.DefaultMaxRows;
+
+            var timeout = payload.TryGetProperty("timeout", out var toEl)
+                && toEl.ValueKind == JsonValueKind.Number && toEl.TryGetInt32(out var to) && to > 0
+                ? to
+                : RawSqlQueryResolver.DefaultTimeoutSeconds;
+
+            Dictionary<string, object?>? sqlParams = null;
+            if (payload.TryGetProperty("params", out var paramsEl) && paramsEl.ValueKind == JsonValueKind.Object)
+            {
+                sqlParams = new Dictionary<string, object?>();
+                foreach (var prop in paramsEl.EnumerateObject())
+                    sqlParams[prop.Name] = JsonValueToClr(prop.Value);
+            }
+
+            var factory = DbConnFactoryResolver.Create(currentConnectionString, currentProvider.Value);
+            var result = await RawSqlExecutor.ExecuteAsync(factory, sql!, sqlParams, timeout, maxRows, innerCt);
+
+            return new
+            {
+                columns = result.Columns.Select(c => new { name = c.Name, type = c.Type }).ToArray(),
+                rows = result.Rows,
+                rowsAffected = result.RowsAffected,
+                truncated = result.Truncated
+            };
+        });
+
+        // Schema for the visual query builder — Photino-only. Returns the
+        // tables, columns, and FK relationships of the active connection so the
+        // designer can populate its palette/canvas without an HTTP round-trip.
+        // Sourced from the SAME cached DbModel the GraphQL pipeline uses
+        // (PathCache<Inputs>, key "model"), so relationships — including
+        // composite FKs — match query behavior exactly. GetFirstValue() lazily
+        // loads the model on first access.
+        //
+        // Result: { tables:[{schema,name,qualified}],
+        //           columns:[{table,name,type,nullable,isPrimaryKey}],
+        //           relationships:[{leftTable,leftColumns[],rightTable,rightColumns[]}] }
+        nativeBridge.Register("get-builder-schema", (_, _) =>
+        {
+            if (string.IsNullOrEmpty(currentConnectionString) || currentProvider is null)
+                throw new InvalidOperationException("No active database connection. Connect to a database first.");
+
+            var pathCache = app.Services.GetService<BifrostQL.Core.Schema.PathCache<GraphQL.Inputs>>();
+            var inputs = pathCache?.GetFirstValue();
+            if (inputs is null || !inputs.TryGetValue("model", out var modelObj) || modelObj is not IDbModel model)
+                throw new InvalidOperationException("Database schema is not loaded yet.");
+
+            return Task.FromResult<object?>(
+                BifrostQL.UI.NativeBridge.BuilderSchemaProjection.Project(model));
+        });
+
         window.WaitForClose();
 
         // Shutdown the server and SSH tunnel when window closes
@@ -898,6 +981,20 @@ static async Task<string[]> ListDatabasesViaPsqlAsync(string connectionString, s
 
     return stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 }
+
+// Converts a JSON parameter value from an exec-sql payload into a CLR value
+// suitable for a DbParameter. Numbers prefer Int64, falling back to Double.
+// Objects/arrays are passed as raw JSON text — the DB driver decides how to
+// bind them (e.g. PostgreSQL jsonb columns).
+static object? JsonValueToClr(JsonElement e) => e.ValueKind switch
+{
+    JsonValueKind.String => e.GetString(),
+    JsonValueKind.Number => e.TryGetInt64(out var l) ? l : e.GetDouble(),
+    JsonValueKind.True => true,
+    JsonValueKind.False => false,
+    JsonValueKind.Null or JsonValueKind.Undefined => null,
+    _ => e.GetRawText()
+};
 
 // Helper to format SSE event JSON consistently
 static string SseEvent(string stage, int percent, string message,

@@ -14,9 +14,11 @@ import type {
   VisualQuerySpec,
   VisualColumn,
   VisualJoin,
+  VisualJoinType,
   VisualFilter,
   VisualSort,
 } from "../lib/visual-query";
+import type { BuilderSchema } from "../lib/builder-bridge";
 
 /** A table placed on the canvas. `table` is the qualified "schema.name". */
 export interface PlacedTable {
@@ -129,6 +131,94 @@ export function toggleColumnShow(
 /** Whether a column is currently shown on the canvas. */
 export function isColumnShown(state: DesignerState, ref: string, column: string): boolean {
   return state.columns.some((c) => c.tableRef === ref && c.column === column && c.show);
+}
+
+// ---- joins ---------------------------------------------------------------
+
+function joinsEqual(a: VisualJoin, b: VisualJoin): boolean {
+  return (
+    a.leftTable === b.leftTable &&
+    a.rightTable === b.rightTable &&
+    a.leftColumns.join(",") === b.leftColumns.join(",") &&
+    a.rightColumns.join(",") === b.rightColumns.join(",")
+  );
+}
+
+/** Adds a join unless an equivalent one (same tables + columns) already exists. */
+export function addJoin(state: DesignerState, join: VisualJoin): DesignerState {
+  if (state.joins.some((j) => joinsEqual(j, join))) return state;
+  return { ...state, joins: [...state.joins, join] };
+}
+
+export function removeJoin(state: DesignerState, index: number): DesignerState {
+  return { ...state, joins: state.joins.filter((_, i) => i !== index) };
+}
+
+export function setJoinType(state: DesignerState, index: number, type: VisualJoinType): DesignerState {
+  return {
+    ...state,
+    joins: state.joins.map((j, i) => (i === index ? { ...j, type } : j)),
+  };
+}
+
+/**
+ * Finds candidate joins connecting a freshly-placed table to the tables already
+ * on the canvas, derived from the schema's FK relationships. Column references
+ * are rewritten to the placed tables' refs (alias-aware). Returns:
+ * 0 = no relationship (manual join needed), 1 = unambiguous (apply it),
+ * 2+ = ambiguous (let the user pick).
+ */
+export function autoJoinCandidates(
+  state: DesignerState,
+  schema: BuilderSchema,
+  newRef: string
+): VisualJoin[] {
+  const placedNew = state.tables.find((t) => tableRef(t) === newRef);
+  if (!placedNew) return [];
+
+  const others = state.tables.filter((t) => tableRef(t) !== newRef);
+  const candidates: VisualJoin[] = [];
+
+  for (const other of others) {
+    for (const rel of schema.relationships) {
+      const connectsForward = rel.leftTable === placedNew.table && rel.rightTable === other.table;
+      const connectsReverse = rel.leftTable === other.table && rel.rightTable === placedNew.table;
+      if (!connectsForward && !connectsReverse) continue;
+
+      const leftRef = connectsForward ? tableRef(placedNew) : tableRef(other);
+      const rightRef = connectsForward ? tableRef(other) : tableRef(placedNew);
+      candidates.push({
+        leftTable: leftRef,
+        leftColumns: [...rel.leftColumns],
+        rightTable: rightRef,
+        rightColumns: [...rel.rightColumns],
+        type: "inner",
+      });
+    }
+  }
+
+  return candidates;
+}
+
+/**
+ * Places a table and, when the schema reveals exactly one FK path to an existing
+ * table, wires that join automatically. Ambiguous (2+) or absent relationships
+ * are left for the join editor. Returns the new state plus the ambiguous
+ * candidates (empty unless the caller needs to prompt).
+ */
+export function addTableWithAutoJoin(
+  state: DesignerState,
+  schema: BuilderSchema,
+  qualified: string
+): { state: DesignerState; ambiguous: VisualJoin[] } {
+  const placed = addTable(state, qualified);
+  const newRef = tableRef(placed.tables[placed.tables.length - 1]);
+  const candidates = autoJoinCandidates(placed, schema, newRef);
+
+  if (candidates.length === 1) {
+    return { state: addJoin(placed, candidates[0]), ambiguous: [] };
+  }
+  return { state: placed, ambiguous: candidates.length > 1 ? candidates : [] };
 }
 
 /** Projects the designer state into the VisualQuerySpec sent over the bridge. */

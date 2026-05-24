@@ -16,9 +16,17 @@ import type {
   VisualJoin,
   VisualJoinType,
   VisualFilter,
+  VisualFilterOperator,
   VisualSort,
 } from "../lib/visual-query";
 import type { BuilderSchema } from "../lib/builder-bridge";
+
+/** A single criterion cell in the QBE grid (one operator + value). */
+export interface CriterionExpr {
+  operator: VisualFilterOperator;
+  /** Scalar for most ops; array for _in/_between; ignored for _null. */
+  value: unknown;
+}
 
 /** A table placed on the canvas. `table` is the qualified "schema.name". */
 export interface PlacedTable {
@@ -36,6 +44,13 @@ export interface PlacedColumn {
   sort: VisualSort;
   sortOrder: number | null;
   alias: string | null;
+  /**
+   * Criteria by OR-row index, mirroring the Access grid: index 0 is the
+   * "Criteria" row, 1+ are the "Or" rows. A null slot means no criterion for
+   * this field in that row. Criteria in the same OR-row across fields are ANDed;
+   * different OR-rows are ORed.
+   */
+  criteria: (CriterionExpr | null)[];
 }
 
 export interface DesignerState {
@@ -107,21 +122,13 @@ export function toggleColumnShow(
 ): DesignerState {
   const idx = state.columns.findIndex((c) => c.tableRef === ref && c.column === column);
   if (idx < 0) {
-    const placed: PlacedColumn = {
-      tableRef: ref,
-      column,
-      show: true,
-      sort: "none",
-      sortOrder: null,
-      alias: null,
-    };
-    return { ...state, columns: [...state.columns, placed] };
+    return { ...state, columns: [...state.columns, newColumn(ref, column, true)] };
   }
 
   const current = state.columns[idx];
-  // Unchecking a column that isn't sorted removes it; otherwise keep it for the
-  // sort but mark it hidden.
-  if (current.show && current.sort === "none") {
+  // Unchecking a column that isn't sorted and has no criteria removes it;
+  // otherwise keep it for the sort/criteria but mark it hidden.
+  if (current.show && current.sort === "none" && !hasAnyCriterion(current)) {
     return { ...state, columns: state.columns.filter((_, i) => i !== idx) };
   }
   const next = { ...current, show: !current.show };
@@ -131,6 +138,107 @@ export function toggleColumnShow(
 /** Whether a column is currently shown on the canvas. */
 export function isColumnShown(state: DesignerState, ref: string, column: string): boolean {
   return state.columns.some((c) => c.tableRef === ref && c.column === column && c.show);
+}
+
+// ---- criteria grid (sort + filter) ---------------------------------------
+
+function newColumn(ref: string, column: string, show: boolean): PlacedColumn {
+  return { tableRef: ref, column, show, sort: "none", sortOrder: null, alias: null, criteria: [] };
+}
+
+function hasAnyCriterion(c: PlacedColumn): boolean {
+  return c.criteria.some((x) => x != null);
+}
+
+function findColumn(state: DesignerState, ref: string, column: string): number {
+  return state.columns.findIndex((c) => c.tableRef === ref && c.column === column);
+}
+
+/** Ensures a column row exists in the grid (hidden by default) so it can carry sort/criteria. */
+export function ensureColumn(state: DesignerState, ref: string, column: string): DesignerState {
+  if (findColumn(state, ref, column) >= 0) return state;
+  return { ...state, columns: [...state.columns, newColumn(ref, column, false)] };
+}
+
+/**
+ * Sets a column's sort direction. Becoming sorted assigns the next sortOrder
+ * (so multi-column sort follows the order columns were sorted); clearing the
+ * sort resets the order.
+ */
+export function setColumnSort(
+  state: DesignerState,
+  ref: string,
+  column: string,
+  sort: VisualSort
+): DesignerState {
+  const ensured = ensureColumn(state, ref, column);
+  const maxOrder = ensured.columns.reduce((m, c) => Math.max(m, c.sortOrder ?? 0), 0);
+  return {
+    ...ensured,
+    columns: ensured.columns.map((c) => {
+      if (c.tableRef !== ref || c.column !== column) return c;
+      if (sort === "none") return { ...c, sort, sortOrder: null };
+      return { ...c, sort, sortOrder: c.sortOrder ?? maxOrder + 1 };
+    }),
+  };
+}
+
+/**
+ * Sets (or clears, with null) the criterion for a column at the given OR-row
+ * index. Pads the criteria array so the index is addressable.
+ */
+export function setColumnCriterion(
+  state: DesignerState,
+  ref: string,
+  column: string,
+  orIndex: number,
+  criterion: CriterionExpr | null
+): DesignerState {
+  const ensured = ensureColumn(state, ref, column);
+  return {
+    ...ensured,
+    columns: ensured.columns.map((c) => {
+      if (c.tableRef !== ref || c.column !== column) return c;
+      const criteria = c.criteria.slice();
+      while (criteria.length <= orIndex) criteria.push(null);
+      criteria[orIndex] = criterion;
+      return { ...c, criteria };
+    }),
+  };
+}
+
+/**
+ * Builds the VisualFilter tree from the grid: for each OR-row index, AND the
+ * criteria present across all columns; OR those per-row groups together. Returns
+ * null when there are no criteria, the bare group when there's only one.
+ */
+export function toFilter(state: DesignerState): VisualFilter | null {
+  const maxRows = state.columns.reduce((m, c) => Math.max(m, c.criteria.length), 0);
+
+  const groups: VisualFilter[] = [];
+  for (let orIndex = 0; orIndex < maxRows; orIndex++) {
+    const leaves: VisualFilter[] = [];
+    for (const col of state.columns) {
+      const expr = col.criteria[orIndex];
+      if (!expr) continue;
+      leaves.push({
+        op: "leaf",
+        children: null,
+        criterion: {
+          table: col.tableRef,
+          column: col.column,
+          operator: expr.operator,
+          value: expr.value,
+        },
+      });
+    }
+    if (leaves.length === 0) continue;
+    groups.push(leaves.length === 1 ? leaves[0] : { op: "and", children: leaves, criterion: null });
+  }
+
+  if (groups.length === 0) return null;
+  if (groups.length === 1) return groups[0];
+  return { op: "or", children: groups, criterion: null };
 }
 
 // ---- joins ---------------------------------------------------------------
@@ -221,6 +329,35 @@ export function addTableWithAutoJoin(
   return { state: placed, ambiguous: candidates.length > 1 ? candidates : [] };
 }
 
+function coerceScalar(text: string): unknown {
+  const t = text.trim();
+  if (t === "") return "";
+  // Numeric literal? keep as number; otherwise a string.
+  const n = Number(t);
+  return Number.isFinite(n) && t === String(n) ? n : t;
+}
+
+/**
+ * Turns a grid cell's operator + raw text into a {@link CriterionExpr} value:
+ * arrays for `_in`/`_between` (comma-separated), `true` for `_null` (IS NULL),
+ * a coerced scalar otherwise.
+ */
+export function parseCriterionValue(operator: VisualFilterOperator, text: string): unknown {
+  switch (operator) {
+    case "_null":
+      return true;
+    case "_in":
+    case "_between":
+      return text
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+        .map(coerceScalar);
+    default:
+      return coerceScalar(text);
+  }
+}
+
 /** Projects the designer state into the VisualQuerySpec sent over the bridge. */
 export function toSpec(state: DesignerState): VisualQuerySpec {
   const columns: VisualColumn[] = state.columns.map((c) => ({
@@ -236,7 +373,9 @@ export function toSpec(state: DesignerState): VisualQuerySpec {
     tables: state.tables.map((t) => ({ table: t.table, alias: t.alias })),
     columns,
     joins: state.joins,
-    filter: state.filter,
+    // Filter is derived from the criteria grid; state.filter is retained only as
+    // an escape hatch for a directly-supplied tree.
+    filter: state.filter ?? toFilter(state),
     rowLimit: state.rowLimit,
   };
 }

@@ -47,6 +47,19 @@ GraphQL Request → BifrostHttpMiddleware → BifrostDocumentExecutor
 | `DbSchemaBuilder` | GraphQL schema generation from `DbModel` |
 | `DbTableResolver` | Field resolver delegating to `SqlExecutionManager` |
 | `ISqlDialect` | Database-specific SQL generation abstraction |
+| `VisualQueryBuilder` | Access-style query designer: `VisualQuerySpec` → parameterized SQL via `ISqlDialect` (model-validated, composite-FK joins). See concept doc *Visual Query Builder*. |
+
+### Visual Query Builder (desktop)
+
+The BifrostUI desktop app ships an Access-style visual query designer. A
+`VisualQuerySpec` (C# records in `QueryModel/VisualQuery`, mirrored in the
+frontend `lib/visual-query.ts`) is assembled by the React designer and turned
+into parameterized SQL server-side by `VisualQueryBuilder` using the active
+`ISqlDialect`. It runs over the in-process Photino bridge (`build-sql`,
+`build-and-exec`, `get-builder-schema`) — never HTTP/GraphQL — reusing
+`RawSqlExecutor`. FK auto-join comes from `FkAutoJoin`. Full design: the
+*Visual Query Builder* concept doc. Note: `wwwroot` is git-ignored; run
+`pnpm build` in `src/BifrostQL.UI/frontend` to ship UI changes.
 
 ### Design Patterns Used
 

@@ -96,6 +96,15 @@ namespace BifrostQL.Server
                 if (sequence >= _received.Length)
                     throw new InvalidOperationException($"Chunk sequence {sequence} exceeds total {_received.Length}");
 
+                // Bounds-check the offset before copying. A hostile or corrupt chunk can
+                // declare an offset/length that falls outside the declared payload; reject
+                // it with a clear error rather than letting Buffer.BlockCopy throw.
+                // Compared without summing offset+length so a near-ulong.MaxValue offset
+                // cannot wrap past the guard (which would then truncate to a negative int).
+                if (offset > (ulong)_buffer.Length || (ulong)data.Length > (ulong)_buffer.Length - offset)
+                    throw new InvalidOperationException(
+                        $"Chunk at offset {offset} with length {data.Length} exceeds payload size {_buffer.Length}");
+
                 if (_received[sequence])
                     return; // Duplicate chunk; ignore
 

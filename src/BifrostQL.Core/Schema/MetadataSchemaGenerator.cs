@@ -29,6 +29,7 @@ public static class MetadataSchemaGenerator
 
         sb.AppendLine("type dbJoinSchema {");
         sb.AppendLine("\tname: String!");
+        sb.AppendLine("\tfieldName: String!");
         sb.AppendLine("\tsourceColumnNames: [String!]!");
         sb.AppendLine("\tdestinationTable: String!");
         sb.AppendLine("\tdestinationColumnNames: [String!]!");

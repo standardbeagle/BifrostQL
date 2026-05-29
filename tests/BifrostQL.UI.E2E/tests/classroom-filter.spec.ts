@@ -1,116 +1,55 @@
 import { test, expect, Page } from '@playwright/test';
+import { runQuickstart, openTable, dataRows, selectOption } from './helpers';
 
-async function runQuickstart(page: Page, schema: string, dataSize = 'Sample') {
-  await page.goto('/');
-  await expect(page.getByText('Try it now')).toBeVisible({ timeout: 15_000 });
-  await page.getByText('Try it now').click();
+/**
+ * Field-filter happy paths. The toolbar filter is a Radix combobox (pick the
+ * column) + a search input (the value) + a Filter button. Verifies numeric
+ * equality narrowing and string "contains" matching, with no GraphQL error.
+ */
 
-  const schemaCard = page.getByText(schema, { exact: false });
-  await expect(schemaCard).toBeVisible();
-  await schemaCard.click();
-
-  const sizeToggle = page.getByText(dataSize, { exact: false });
-  if (await sizeToggle.isVisible({ timeout: 2_000 }).catch(() => false)) {
-    await sizeToggle.click();
-  }
-
-  const launchButton = page.getByRole('button', { name: /launch|create|start/i });
-  await expect(launchButton).toBeVisible();
-  await launchButton.click();
-
-  await expect(page.locator('a.plain-link').first()).toBeVisible({ timeout: 30_000 });
+async function applyFilter(page: Page, columnPattern: RegExp, value: string): Promise<void> {
+  // First combobox in the table-view header is the filter-column selector.
+  const columnSelect = page.locator('header [data-slot="select-trigger"]').first();
+  await selectOption(page, columnSelect, columnPattern);
+  await page.locator('header input[type="search"]').fill(value);
+  await page.getByRole('button', { name: /^filter$/i }).click();
+  await expect(dataRows(page).first()).toBeVisible({ timeout: 10_000 });
 }
 
-async function navigateToTable(page: Page, tableName: string) {
-  await page.locator('a.plain-link').filter({ hasText: tableName }).first().click();
-  await expect(page.getByRole("heading", { name: tableName, level: 2 })).toBeVisible({ timeout: 10_000 });
+async function expectNoError(page: Page): Promise<void> {
+  await expect(page.getByText(/Cannot query field|Unable to find|GraphQL error/i)).toHaveCount(0);
 }
 
-test.describe('Classroom — Field Filter', () => {
+test.describe('Classroom field filter', () => {
   test.beforeEach(async ({ page }) => {
     await runQuickstart(page, 'Classroom');
   });
 
-  test('filter submissions by assignment_id shows filtered results', async ({ page }) => {
-    await navigateToTable(page, 'submissions');
+  test('filtering submissions by assignment narrows the result set', async ({ page }) => {
+    await openTable(page, 'submissions');
+    const before = await dataRows(page).count();
 
-    // Wait for data to load
-    const editLinks = page.locator('a').filter({ hasText: 'edit' });
-    await expect(editLinks.first()).toBeVisible({ timeout: 10_000 });
-    const totalBefore = await editLinks.count();
+    await applyFilter(page, /assignment/i, '1');
 
-    // Select assignment_id from the filter dropdown
-    const filterSelect = page.locator('header select');
-    await expect(filterSelect).toBeVisible();
-    await filterSelect.selectOption({ label: 'assignment_id' });
-
-    // Type a filter value
-    const filterInput = page.locator('header input[type="search"]');
-    await filterInput.fill('1');
-
-    // Click filter button
-    await page.getByRole('button', { name: 'filter' }).click();
-
-    // Wait for the filtered data to load
-    await page.waitForTimeout(1_000);
-    await expect(editLinks.first()).toBeVisible({ timeout: 10_000 });
-
-    // Should have fewer rows (assignment 1 has 6 submissions out of ~50 total)
-    const totalAfter = await editLinks.count();
-    expect(totalAfter).toBeLessThan(totalBefore);
-    expect(totalAfter).toBeGreaterThan(0);
-
-    // Verify no GraphQL errors appear on screen
-    const errorText = page.getByText(/error|invalid|unable/i);
-    // Filter out false positives — only check within error display areas
-    const errorPanel = page.locator('.editdb-error, [class*="error"]').filter({ hasText: /GraphQL|invalid|Unable/ });
-    await expect(errorPanel).toHaveCount(0);
+    const after = await dataRows(page).count();
+    expect(after).toBeGreaterThan(0);
+    // assignment 1 has ~6 submissions of ~50, so the visible page genuinely
+    // shrinks — a strict < proves the filter narrowed (>= would pass vacuously).
+    expect(after).toBeLessThan(before);
+    await expectNoError(page);
   });
 
-  test('filter assignments by course_id shows filtered results', async ({ page }) => {
-    await navigateToTable(page, 'assignments');
-
-    const editLinks = page.locator('a').filter({ hasText: 'edit' });
-    await expect(editLinks.first()).toBeVisible({ timeout: 10_000 });
-
-    // Select course_id from the filter dropdown
-    const filterSelect = page.locator('header select');
-    await filterSelect.selectOption({ label: 'course_id' });
-
-    const filterInput = page.locator('header input[type="search"]');
-    await filterInput.fill('1');
-
-    await page.getByRole('button', { name: 'filter' }).click();
-    await page.waitForTimeout(1_000);
-
-    // Should show data without errors
-    await expect(editLinks.first()).toBeVisible({ timeout: 10_000 });
-
-    // Verify no error message in the page content
-    const bodyText = await page.locator('.editdb-frame-layout-body').textContent();
-    expect(bodyText).not.toContain('Error:');
+  test('filtering assignments by course returns rows without error', async ({ page }) => {
+    await openTable(page, 'assignments');
+    await applyFilter(page, /course/i, '1');
+    expect(await dataRows(page).count()).toBeGreaterThan(0);
+    await expectNoError(page);
   });
 
-  test('filter students by string field uses contains', async ({ page }) => {
-    await navigateToTable(page, 'students');
-
-    const editLinks = page.locator('a').filter({ hasText: 'edit' });
-    await expect(editLinks.first()).toBeVisible({ timeout: 10_000 });
-
-    // Select first_name (String type) from the filter dropdown
-    const filterSelect = page.locator('header select');
-    await filterSelect.selectOption({ label: 'first_name' });
-
-    const filterInput = page.locator('header input[type="search"]');
-    await filterInput.fill('A');
-
-    await page.getByRole('button', { name: 'filter' }).click();
-    await page.waitForTimeout(1_000);
-
-    // Should show results containing 'A'
-    await expect(editLinks.first()).toBeVisible({ timeout: 10_000 });
-
-    const bodyText = await page.locator('.editdb-frame-layout-body').textContent();
-    expect(bodyText).not.toContain('Error:');
+  test('filtering students by first name uses contains matching', async ({ page }) => {
+    await openTable(page, 'students');
+    await applyFilter(page, /first.?name/i, 'a');
+    expect(await dataRows(page).count()).toBeGreaterThan(0);
+    await expectNoError(page);
   });
 });

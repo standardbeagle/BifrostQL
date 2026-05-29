@@ -1,4 +1,4 @@
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, spawnSync, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as net from 'net';
@@ -6,7 +6,10 @@ import * as net from 'net';
 const SERVER_URL_FILE = path.join(__dirname, '.server-url');
 const PID_FILE = path.join(__dirname, '.server-pid');
 const PROJECT_PATH = path.join(__dirname, '../../src/BifrostQL.UI/BifrostQL.UI.csproj');
-const STARTUP_TIMEOUT = 60_000;
+// Headless server readiness budget. The server itself binds in a few seconds
+// once built (see the explicit build step below), so this only needs to cover
+// runtime startup — not a cold compile.
+const STARTUP_TIMEOUT = 120_000;
 
 async function findFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -34,13 +37,25 @@ async function waitForServer(url: string, timeoutMs: number): Promise<void> {
 }
 
 export default async function globalSetup() {
+  // Build explicitly first. `dotnet run` would otherwise fold a cold compile
+  // (~20s+) into the server-readiness window, which is what made startup flaky
+  // under the old 60s cap in clean/CI environments. With the build done, the
+  // spawned `dotnet run --no-build` only needs to boot the runtime.
+  console.log('Building BifrostQL.UI...');
+  const build = spawnSync('dotnet', ['build', PROJECT_PATH, '-c', 'Debug', '--nologo', '-v', 'quiet'], {
+    stdio: 'inherit',
+  });
+  if (build.status !== 0) {
+    throw new Error(`dotnet build failed with exit code ${build.status}`);
+  }
+
   const port = await findFreePort();
   const baseUrl = `http://localhost:${port}`;
 
   console.log(`Starting BifrostQL server on port ${port}...`);
 
   const serverProcess: ChildProcess = spawn('dotnet', [
-    'run', '--project', PROJECT_PATH, '--',
+    'run', '--no-build', '--project', PROJECT_PATH, '--',
     '--headless', '--port', port.toString(),
   ], {
     stdio: ['ignore', 'pipe', 'pipe'],

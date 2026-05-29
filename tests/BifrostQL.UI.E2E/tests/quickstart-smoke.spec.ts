@@ -1,108 +1,63 @@
-import { test, expect, Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { runQuickstart, openTable, dataRows } from './helpers';
 
-const SCHEMAS: { name: string; displayName: string; expectedTables: string[] }[] = [
-  {
-    name: 'blog',
-    displayName: 'Blog',
-    expectedTables: ['authors', 'categories', 'posts', 'tags', 'post_tags', 'comments'],
-  },
-  {
-    name: 'ecommerce',
-    displayName: 'E-Commerce',
-    expectedTables: ['categories', 'customers', 'addresses', 'products', 'orders', 'order_items', 'reviews'],
-  },
-  {
-    name: 'crm',
-    displayName: 'CRM',
-    expectedTables: ['deal_stages', 'companies', 'contacts', 'deals', 'activities', 'notes'],
-  },
-  {
-    name: 'classroom',
-    displayName: 'Classroom',
-    expectedTables: ['instructors', 'courses', 'students', 'enrollments', 'assignments', 'submissions'],
-  },
-  {
-    name: 'project-tracker',
-    displayName: 'Project Tracker',
-    expectedTables: ['workspaces', 'members', 'projects', 'sections', 'tasks', 'labels', 'task_labels', 'task_assignments'],
-  },
+/**
+ * Per-schema quickstart smoke: every example database creates, binds, and
+ * renders its full table list with browseable data. Also guards the
+ * duplicate-PK join-alias rendering regression. Implicitly covers the
+ * dbJoinSchema.fieldName schema fix — without it the editor fails to render
+ * at all (introspection error), so every assertion here would fail.
+ */
+
+const SCHEMAS: { displayName: string; tables: string[] }[] = [
+  { displayName: 'Blog', tables: ['authors', 'categories', 'posts', 'tags', 'post_tags', 'comments'] },
+  { displayName: 'E-Commerce', tables: ['categories', 'customers', 'addresses', 'products', 'orders', 'order_items', 'reviews'] },
+  { displayName: 'CRM', tables: ['deal_stages', 'companies', 'contacts', 'deals', 'activities', 'notes'] },
+  { displayName: 'Classroom', tables: ['instructors', 'courses', 'students', 'enrollments', 'assignments', 'submissions'] },
+  { displayName: 'Project Tracker', tables: ['workspaces', 'members', 'projects', 'sections', 'tasks', 'labels', 'task_labels', 'task_assignments'] },
 ];
 
-async function runQuickstart(page: Page, schemaDisplayName: string) {
-  await page.goto('/');
-
-  await expect(page.getByText('Try it now')).toBeVisible({ timeout: 15_000 });
-  await page.getByText('Try it now').click();
-
-  const schemaCard = page.getByText(schemaDisplayName, { exact: false });
-  await expect(schemaCard).toBeVisible();
-  await schemaCard.click();
-
-  const launchButton = page.getByRole('button', { name: /launch|create|start/i });
-  await expect(launchButton).toBeVisible();
-  await launchButton.click();
-
-  await expect(page.locator('a.plain-link').first()).toBeVisible({ timeout: 30_000 });
-}
-
-async function navigateToTable(page: Page, tableName: string) {
-  await page.locator('a.plain-link').filter({ hasText: tableName }).first().click();
-  await expect(page.getByRole("heading", { name: tableName, level: 2 })).toBeVisible({ timeout: 10_000 });
-}
-
-// Tables with FK joins where labelColumn = PK (duplicate alias for same DB column).
-// These were broken by DistinctBy(c => c.DbDbName) dropping the second alias.
-const JOIN_ERROR_TABLES = [
-  { schema: 'Classroom', table: 'assignments', joinColumn: 'courses' },
-  { schema: 'Classroom', table: 'submissions', joinColumn: 'assignments' },
-  { schema: 'Classroom', table: 'enrollments', joinColumn: 'courses' },
-  { schema: 'Project Tracker', table: 'labels', joinColumn: 'workspaces' },
-  { schema: 'Project Tracker', table: 'task_labels', joinColumn: 'tasks' },
+// Tables whose FK label column equals the PK — these regressed when a
+// DistinctBy(c => c.DbName) dropped the duplicate alias.
+const JOIN_REGRESSION = [
+  { schema: 'Classroom', table: 'assignments' },
+  { schema: 'Classroom', table: 'submissions' },
+  { schema: 'Classroom', table: 'enrollments' },
+  { schema: 'Project Tracker', table: 'labels' },
+  { schema: 'Project Tracker', table: 'task_labels' },
 ];
-
-test.describe('Join column rendering (duplicate PK alias)', () => {
-  for (const { schema, table, joinColumn } of JOIN_ERROR_TABLES) {
-    test(`${schema} → ${table} renders ${joinColumn} join without errors`, async ({ page }) => {
-      await runQuickstart(page, schema);
-      await navigateToTable(page, table);
-
-      // Wait for data rows to render
-      await expect(page.locator('.rdt_TableRow').first()).toBeVisible({ timeout: 10_000 });
-
-      // The join column header should be present (shows the destination table name)
-      const headerTexts = await page.locator('.rdt_TableCol').allTextContents();
-      const headers = headerTexts.map(h => h.trim().toLowerCase());
-
-      // Verify no GraphQL error toast/banner appeared
-      const errorBanner = page.locator('text=/Unable to find queryField/i');
-      await expect(errorBanner).not.toBeVisible({ timeout: 2_000 });
-    });
-  }
-});
 
 for (const schema of SCHEMAS) {
-  test.describe(`${schema.displayName} Quickstart`, () => {
-
-    test('creates database and shows all expected tables', async ({ page }) => {
+  test.describe(`${schema.displayName} quickstart`, () => {
+    test('creates the database and lists every table', async ({ page }) => {
       await runQuickstart(page, schema.displayName);
-
-      const linkTexts = await page.locator('a.plain-link').allTextContents();
-      const tableNames = linkTexts.map(t => t.trim().toLowerCase());
-
-      for (const table of schema.expectedTables) {
-        expect(tableNames, `sidebar should contain '${table}'`).toContain(table);
+      for (const table of schema.tables) {
+        await expect(
+          page.locator(`a.plain-link[href="/${table}"]`),
+          `sidebar should link to '${table}'`
+        ).toHaveCount(1);
       }
     });
 
-    for (const table of schema.expectedTables) {
-      test(`loads data rows for table: ${table}`, async ({ page }) => {
+    for (const table of schema.tables) {
+      test(`loads data rows for ${table}`, async ({ page }) => {
         await runQuickstart(page, schema.displayName);
-        await navigateToTable(page, table);
-
-        await expect(page.locator('.rdt_TableRow').first()).toBeVisible({ timeout: 10_000 });
-        const rowCount = await page.locator('.rdt_TableRow').count();
-        expect(rowCount).toBeGreaterThan(0);
+        await openTable(page, table);
+        await expect(dataRows(page).first()).toBeVisible({ timeout: 10_000 });
+        expect(await dataRows(page).count()).toBeGreaterThan(0);
       });
     }
   });
 }
+
+test.describe('Join column rendering (duplicate PK alias)', () => {
+  for (const { schema, table } of JOIN_REGRESSION) {
+    test(`${schema} → ${table} renders without a GraphQL error`, async ({ page }) => {
+      await runQuickstart(page, schema);
+      await openTable(page, table);
+      await expect(dataRows(page).first()).toBeVisible({ timeout: 10_000 });
+      // No "Unable to find queryField" / introspection error surfaced.
+      await expect(page.getByText(/Unable to find queryField|Cannot query field/i)).toHaveCount(0);
+    });
+  }
+});

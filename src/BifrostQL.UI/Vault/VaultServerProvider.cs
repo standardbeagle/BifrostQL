@@ -181,21 +181,43 @@ public static class VaultServerProvider
             "sqlserver" => BuildSqlServerConnectionString(server),
             "postgres" => BuildPostgresConnectionString(server),
             "mysql" => BuildMySqlConnectionString(server),
-            "sqlite" => $"Data Source={server.Host}",
+            "sqlite" => $"Data Source={Quote(server.Host)}",
             _ => throw new ArgumentException($"Unknown provider: {server.Provider}")
         };
+    }
+
+    private static readonly char[] QuoteTriggers = [';', '=', '"', '\''];
+
+    /// <summary>
+    /// Quote a connection-string value per the ADO.NET DbConnectionString grammar so
+    /// credentials containing ';', '=', quotes, or edge whitespace cannot corrupt the
+    /// string or inject spurious keywords. Values without special characters are returned
+    /// verbatim. The output is parseable by every provider's connection-string parser
+    /// (the same grammar System.Data.Common.DbConnectionStringBuilder emits).
+    /// </summary>
+    private static string Quote(string value)
+    {
+        if (value.Length == 0) return value;
+        var needsQuoting = value[0] == ' ' || value[^1] == ' '
+            || value.IndexOfAny(QuoteTriggers) >= 0;
+        if (!needsQuoting) return value;
+        // Prefer single quotes when the value has a double quote (and no single quote);
+        // otherwise double-quote and double any embedded double quote.
+        if (value.Contains('"') && !value.Contains('\''))
+            return $"'{value}'";
+        return "\"" + value.Replace("\"", "\"\"") + "\"";
     }
 
     private static string BuildSqlServerConnectionString(VaultServer s)
     {
         var parts = new List<string>();
         var host = s.Port != 1433 ? $"{s.Host},{s.Port}" : s.Host;
-        parts.Add($"Server={host}");
-        if (!string.IsNullOrWhiteSpace(s.Database)) parts.Add($"Database={s.Database}");
+        parts.Add($"Server={Quote(host)}");
+        if (!string.IsNullOrWhiteSpace(s.Database)) parts.Add($"Database={Quote(s.Database)}");
         if (!string.IsNullOrWhiteSpace(s.Username))
         {
-            parts.Add($"User Id={s.Username}");
-            parts.Add($"Password={s.Password ?? ""}");
+            parts.Add($"User Id={Quote(s.Username)}");
+            parts.Add($"Password={Quote(s.Password ?? "")}");
         }
         else
         {
@@ -230,12 +252,12 @@ public static class VaultServerProvider
     {
         var parts = new List<string>
         {
-            $"Host={s.Host}",
+            $"Host={Quote(s.Host)}",
             $"Port={s.Port}",
         };
-        if (!string.IsNullOrWhiteSpace(s.Database)) parts.Add($"Database={s.Database}");
-        if (!string.IsNullOrWhiteSpace(s.Username)) parts.Add($"Username={s.Username}");
-        if (!string.IsNullOrWhiteSpace(s.Password)) parts.Add($"Password={s.Password}");
+        if (!string.IsNullOrWhiteSpace(s.Database)) parts.Add($"Database={Quote(s.Database)}");
+        if (!string.IsNullOrWhiteSpace(s.Username)) parts.Add($"Username={Quote(s.Username)}");
+        if (!string.IsNullOrWhiteSpace(s.Password)) parts.Add($"Password={Quote(s.Password)}");
         parts.Add($"SSL Mode={s.SslMode ?? "Prefer"}");
         return string.Join(';', parts);
     }
@@ -244,12 +266,12 @@ public static class VaultServerProvider
     {
         var parts = new List<string>
         {
-            $"Server={s.Host}",
+            $"Server={Quote(s.Host)}",
             $"Port={s.Port}",
         };
-        if (!string.IsNullOrWhiteSpace(s.Database)) parts.Add($"Database={s.Database}");
-        if (!string.IsNullOrWhiteSpace(s.Username)) parts.Add($"Uid={s.Username}");
-        if (!string.IsNullOrWhiteSpace(s.Password)) parts.Add($"Pwd={s.Password}");
+        if (!string.IsNullOrWhiteSpace(s.Database)) parts.Add($"Database={Quote(s.Database)}");
+        if (!string.IsNullOrWhiteSpace(s.Username)) parts.Add($"Uid={Quote(s.Username)}");
+        if (!string.IsNullOrWhiteSpace(s.Password)) parts.Add($"Pwd={Quote(s.Password)}");
         parts.Add($"SslMode={s.SslMode ?? "Preferred"}");
         return string.Join(';', parts);
     }

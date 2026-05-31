@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Table } from '../types/schema';
 import { useSchema } from '../hooks/useSchema';
 import { DataDataTable } from '../data-data-table';
@@ -27,10 +27,24 @@ export function DetailPanel({ parentTable, selectedRowId, onClose, onOpenColumn 
     const tabs = detailTabs(parentTable);
     const [activeKey, setActiveKey] = useState<string>(tabs[0]?.key ?? '');
     const [collapsed, setCollapsed] = useState(false);
+    // Selection within this panel's child table, used to drill the next level
+    // deeper (a nested DetailPanel beneath). Cleared whenever the parent row or
+    // active tab changes so a stale id can't filter the wrong table.
+    const [childSelectedRowId, setChildSelectedRowId] = useState<string | null>(null);
+
+    const activeTab = tabs.find((t) => t.key === activeKey) ?? tabs[0];
+
+    useEffect(() => { setChildSelectedRowId(null); }, [activeKey, selectedRowId]);
 
     if (tabs.length === 0 || !schema.data) return null;
 
-    const activeTab = tabs.find((t) => t.key === activeKey) ?? tabs[0];
+    // Child-collection tabs can recurse; m2m tabs render the junction-skipping panel.
+    const childTable = activeTab.kind === 'child'
+        ? schema.findTable(activeTab.join.destinationTable)
+        : undefined;
+    // When the child table is itself a parent of other tables, selecting one of
+    // its rows opens the next level beneath (recursion terminates at leaf tables).
+    const childHasMultiJoins = (childTable?.multiJoins?.length ?? 0) > 0;
 
     return (
         <div className="border-t-2 border-primary/20 flex flex-col min-h-0 flex-1 overflow-hidden">
@@ -103,18 +117,37 @@ export function DetailPanel({ parentTable, selectedRowId, onClose, onOpenColumn 
             {!collapsed && (
                 <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                     {activeTab.kind === 'child' ? (
-                        <DataDataTable
-                            key={`${activeTab.key}-${selectedRowId}`}
-                            table={schema.findTable(activeTab.join.destinationTable)!}
-                            id={selectedRowId}
-                            // MODEL B: always traverse the parent so the server scopes the
-                            // child rows (including any polymorphic discriminator). filterColumn
-                            // only disambiguates when several multi-joins target the same child.
-                            tableFilter={parentTable.name}
-                            {...(isComposite(activeTab.join)
-                                ? {}
-                                : { filterColumn: activeTab.join.destinationColumnNames[0] })}
-                        />
+                        <>
+                            <div className={childHasMultiJoins && childSelectedRowId
+                                ? 'flex-1 min-h-0 max-h-[50%] overflow-hidden flex flex-col'
+                                : 'flex-1 min-h-0 overflow-hidden flex flex-col'}>
+                                <DataDataTable
+                                    key={`${activeTab.key}-${selectedRowId}`}
+                                    table={childTable!}
+                                    id={selectedRowId}
+                                    // MODEL B: always traverse the parent so the server scopes the
+                                    // child rows (including any polymorphic discriminator). filterColumn
+                                    // only disambiguates when several multi-joins target the same child.
+                                    tableFilter={parentTable.name}
+                                    {...(isComposite(activeTab.join)
+                                        ? {}
+                                        : { filterColumn: activeTab.join.destinationColumnNames[0] })}
+                                    selectedRowId={childHasMultiJoins ? childSelectedRowId : undefined}
+                                    onRowSelect={childHasMultiJoins ? setChildSelectedRowId : undefined}
+                                    onOpenColumn={onOpenColumn}
+                                />
+                            </div>
+                            {childHasMultiJoins && childSelectedRowId && (
+                                <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                                    <DetailPanel
+                                        parentTable={childTable!}
+                                        selectedRowId={childSelectedRowId}
+                                        onClose={() => setChildSelectedRowId(null)}
+                                        onOpenColumn={onOpenColumn}
+                                    />
+                                </div>
+                            )}
+                        </>
                     ) : (
                         <M2mPanel
                             key={`${activeTab.key}-${selectedRowId}`}

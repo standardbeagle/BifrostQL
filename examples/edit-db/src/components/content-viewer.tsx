@@ -5,6 +5,7 @@ import {
     HoverCardTrigger,
 } from '@/components/ui/hover-card';
 import { Braces, Code, FileText, Binary, Database, Expand } from 'lucide-react';
+import { EmptyValue } from './empty-value';
 
 const kindIcons: Record<ContentKind, typeof Braces> = {
     json: Braces,
@@ -42,8 +43,9 @@ function formatForPreview(value: string, kind: ContentKind): string {
 }
 
 export function ContentViewer({ value, dbType, onExpand }: ContentViewerProps) {
-    const str = String(value ?? '');
-    if (!str) return null;
+    if (value === null || value === undefined) return <EmptyValue kind="null" />;
+    const str = String(value);
+    if (str === '') return <EmptyValue kind="empty" />;
 
     const kind = detectContentKind(str, dbType);
 

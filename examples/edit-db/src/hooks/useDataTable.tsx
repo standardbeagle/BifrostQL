@@ -12,6 +12,7 @@ import type { ColumnPanel } from "../data-panel";
 import { Button } from "../components/ui/button";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "../components/ui/hover-card";
 import { ContentViewer } from "../components/content-viewer";
+import { EmptyValue, renderScalarValue } from "../components/empty-value";
 import { isLongTextDbType, isBinaryDbType } from "../lib/content-detect";
 import {
     getFilterOperators,
@@ -102,7 +103,8 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                     },
                     cell: ({ row }) => {
                         const joined = row.original[columnName] as RowData | undefined;
-                        if (!joined) return null;
+                        // No joined row means the FK column itself is null/unset.
+                        if (!joined) return <EmptyValue kind="null" />;
                         const joinedPk = getJoinedRowPkValue(joined, joinSchema);
                         return (
                             <span className="group/fk inline-flex items-center gap-0.5">
@@ -150,6 +152,7 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                 return {
                     id: c.name,
                     accessorFn: (row) => (c.name ? String(row?.[c.name] ?? "") : ""),
+                    cell: ({ row }) => renderScalarValue(row.original[c.name]),
                     header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
                     enableSorting: true,
                     meta: {
@@ -191,6 +194,11 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                 return {
                     id: c.name,
                     accessorFn: (row) => toLocaleDate(row?.[c.name] as string),
+                    cell: ({ row }) => {
+                        const raw = row.original[c.name];
+                        if (raw === null || raw === undefined || raw === "") return <EmptyValue kind={raw === "" ? "empty" : "null"} />;
+                        return toLocaleDate(raw as string);
+                    },
                     header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
                     enableSorting: true,
                     meta: { sortField: c.name, paramType: c.paramType, dbType: c.dbType, filterOperators: operators, column: c },
@@ -219,6 +227,7 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
             return {
                 id: c.name,
                 accessorFn: (row) => (c.name ? String(row?.[c.name] ?? "") : ""),
+                cell: ({ row }) => renderScalarValue(row.original[c.name]),
                 header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
                 enableSorting: true,
                 meta: { sortField: c.name, paramType: c.paramType, dbType: c.dbType, filterOperators: operators, column: c },

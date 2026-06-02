@@ -57,6 +57,8 @@ public sealed class ManyToManyLinkTests
         usersToRoles.JunctionSourceColumn.ColumnName.Should().Be("UserId");
         usersToRoles.JunctionTargetColumn.ColumnName.Should().Be("RoleId");
         usersToRoles.TargetColumn.ColumnName.Should().Be("Id");
+        // A pure junction (PK + 2 FKs, no extra data columns) carries no payload.
+        usersToRoles.HasPayload.Should().BeFalse();
 
         roles.ManyToManyLinks.Should().ContainKey("Users");
         var rolesToUsers = roles.ManyToManyLinks["Users"];
@@ -70,8 +72,11 @@ public sealed class ManyToManyLinkTests
     }
 
     [Fact]
-    public void AutoDetect_JunctionWithExtraDataColumns_IsNotDetected()
+    public void AutoDetect_JunctionWithExtraDataColumns_IsDetectedWithPayload()
     {
+        // Skip-with-payload: a junction carrying extra (non-key, non-FK) columns
+        // is still a many-to-many bridge. It is detected like a pure junction, but
+        // flagged HasPayload so the UI can offer to reveal the payload columns.
         var model = DbModelTestFixture.Create()
             .WithTable("Users", t => t
                 .WithSchema("dbo")
@@ -92,7 +97,8 @@ public sealed class ManyToManyLinkTests
             .Build();
 
         var users = model.GetTableFromDbName("Users");
-        users.ManyToManyLinks.Should().BeEmpty();
+        users.ManyToManyLinks.Should().ContainKey("Roles");
+        users.ManyToManyLinks["Roles"].HasPayload.Should().BeTrue();
     }
 
     [Fact]
@@ -253,6 +259,34 @@ public sealed class ManyToManyLinkTests
 
         var users = model.GetTableFromDbName("Users");
         users.ManyToManyLinks.Should().ContainKey("Roles");
+    }
+
+    [Fact]
+    public void Metadata_ManyToManyConfig_WithPayloadJunction_FlagsHasPayload()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("Users", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Name", "nvarchar")
+                .WithMetadata("many-to-many", "Roles:UserRoles"))
+            .WithTable("Roles", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Label", "nvarchar"))
+            .WithTable("UserRoles", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("UserId", "int")
+                .WithColumn("RoleId", "int")
+                .WithColumn("AssignedDate", "datetime2"))
+            .WithForeignKey("FK_UserRoles_Users", "UserRoles", "UserId", "Users", "Id")
+            .WithForeignKey("FK_UserRoles_Roles", "UserRoles", "RoleId", "Roles", "Id")
+            .Build();
+
+        var users = model.GetTableFromDbName("Users");
+        users.ManyToManyLinks.Should().ContainKey("Roles");
+        users.ManyToManyLinks["Roles"].HasPayload.Should().BeTrue();
     }
 
     [Fact]

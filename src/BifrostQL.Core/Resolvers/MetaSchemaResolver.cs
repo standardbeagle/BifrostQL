@@ -115,6 +115,26 @@ namespace BifrostQL.Core.Resolvers
                                 sourceColumnNames = j.ChildIds.Select(c => c.GraphQlName).ToArray(),
                                 destinationTable = j.ParentTable.GraphQlName,
                                 destinationColumnNames = j.ParentIds.Select(p => p.GraphQlName).ToArray(),
+                            }),
+                            // Many-to-many bridges. The UI uses the junction's MultiLink for
+                            // the rows query and these fields to skip to the target entity:
+                            // junctionTargetField is the selection on the junction type that
+                            // resolves the target row; hasPayload marks junctions carrying
+                            // extra columns the UI can reveal.
+                            manyToManyJoins = t.ManyToManyLinks.Values.Select(m => new
+                            {
+                                name = m.JunctionTable.GraphQlName,
+                                targetTable = m.TargetTable.GraphQlName,
+                                junctionTable = m.JunctionTable.GraphQlName,
+                                junctionTargetField =
+                                    m.JunctionTable.SingleLinks.TryGetValue(m.TargetTable.GraphQlName, out var tl)
+                                        ? tl.ParentFieldName
+                                        : m.TargetTable.GraphQlName,
+                                sourceColumnNames = new[] { m.SourceColumn.GraphQlName },
+                                junctionSourceColumnNames = new[] { m.JunctionSourceColumn.GraphQlName },
+                                junctionTargetColumnNames = new[] { m.JunctionTargetColumn.GraphQlName },
+                                targetColumnNames = new[] { m.TargetColumn.GraphQlName },
+                                hasPayload = m.HasPayload,
                             })
                         };
                     })

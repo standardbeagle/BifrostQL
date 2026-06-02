@@ -48,6 +48,14 @@ namespace BifrostQL.Core.Model.Relationships
                             out var sourceCol, out var junctionSourceCol, out var junctionTargetCol, out var targetCol))
                         continue;
 
+                    // Payload = junction columns that are neither a primary key nor one
+                    // of the two foreign keys to source/target.
+                    var hasPayload = junctionTable.Columns
+                        .Where(c => !c.IsPrimaryKey)
+                        .Where(c => !string.Equals(c.ColumnName, junctionSourceCol.ColumnName, StringComparison.OrdinalIgnoreCase))
+                        .Where(c => !string.Equals(c.ColumnName, junctionTargetCol.ColumnName, StringComparison.OrdinalIgnoreCase))
+                        .Any();
+
                     var link = new ManyToManyLink
                     {
                         SourceTable = sourceTable,
@@ -56,7 +64,8 @@ namespace BifrostQL.Core.Model.Relationships
                         SourceColumn = sourceCol,
                         JunctionSourceColumn = junctionSourceCol,
                         JunctionTargetColumn = junctionTargetCol,
-                        TargetColumn = targetCol
+                        TargetColumn = targetCol,
+                        HasPayload = hasPayload
                     };
 
                     sourceTable.ManyToManyLinks.TryAdd(targetTable.GraphQlName, link);
@@ -90,15 +99,16 @@ namespace BifrostQL.Core.Model.Relationships
                 if (junctionTable == null)
                     continue;
 
-                // Check for extra non-key columns (junction tables should only have PK + 2 FKs)
+                // Detect payload columns (non-key, non-FK). A junction with payload is
+                // still a many-to-many bridge — skip-with-payload — so it is detected
+                // like a pure junction but flagged so the UI can reveal those columns.
                 var nonKeyColumns = junctionTable.Columns
                     .Where(c => !c.IsPrimaryKey)
                     .Where(c => !string.Equals(c.ColumnName, childFks[0].ChildColumnNames[0], StringComparison.OrdinalIgnoreCase))
                     .Where(c => !string.Equals(c.ColumnName, childFks[1].ChildColumnNames[0], StringComparison.OrdinalIgnoreCase))
                     .ToList();
 
-                if (nonKeyColumns.Count > 0)
-                    continue;
+                var hasPayload = nonKeyColumns.Count > 0;
 
                 // Get the two parent tables
                 var parentTables = childFks
@@ -128,14 +138,14 @@ namespace BifrostQL.Core.Model.Relationships
                 if (!tableA.ManyToManyLinks.ContainsKey(tableB.GraphQlName))
                 {
                     AddManyToManyLink(tableA, junctionTable, tableB,
-                        parentColA, junctionColA, junctionColB, parentColB);
+                        parentColA, junctionColA, junctionColB, parentColB, hasPayload);
                 }
 
                 // B -> junction -> A
                 if (!tableB.ManyToManyLinks.ContainsKey(tableA.GraphQlName))
                 {
                     AddManyToManyLink(tableB, junctionTable, tableA,
-                        parentColB, junctionColB, junctionColA, parentColA);
+                        parentColB, junctionColB, junctionColA, parentColA, hasPayload);
                 }
             }
         }
@@ -167,7 +177,7 @@ namespace BifrostQL.Core.Model.Relationships
         private static void AddManyToManyLink(
             IDbTable sourceTable, IDbTable junctionTable, IDbTable targetTable,
             ColumnDto sourceCol, ColumnDto junctionSourceCol,
-            ColumnDto junctionTargetCol, ColumnDto targetCol)
+            ColumnDto junctionTargetCol, ColumnDto targetCol, bool hasPayload)
         {
             var link = new ManyToManyLink
             {
@@ -177,7 +187,8 @@ namespace BifrostQL.Core.Model.Relationships
                 SourceColumn = sourceCol,
                 JunctionSourceColumn = junctionSourceCol,
                 JunctionTargetColumn = junctionTargetCol,
-                TargetColumn = targetCol
+                TargetColumn = targetCol,
+                HasPayload = hasPayload
             };
             sourceTable.ManyToManyLinks[targetTable.GraphQlName] = link;
         }

@@ -506,6 +506,14 @@ namespace BifrostQL.Core.Model
         /// <summary>The column on the target table that the junction references (typically the PK).</summary>
         public ColumnDto TargetColumn { get; init; } = null!;
 
+        /// <summary>
+        /// True when the junction table carries extra (non-key, non-FK) data columns
+        /// beyond the two foreign keys — e.g. an enrollment date or a sort order. The
+        /// link is still a many-to-many bridge; this flag lets a client reveal those
+        /// payload columns instead of hiding the junction entirely.
+        /// </summary>
+        public bool HasPayload { get; init; }
+
         public override string ToString() =>
             $"M:N[{SourceTable.DbName}.{SourceColumn.ColumnName} -> {JunctionTable.DbName}({JunctionSourceColumn.ColumnName},{JunctionTargetColumn.ColumnName}) -> {TargetTable.DbName}.{TargetColumn.ColumnName}]";
     }

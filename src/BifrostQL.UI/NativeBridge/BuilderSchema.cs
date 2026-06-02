@@ -15,11 +15,22 @@ namespace BifrostQL.UI.NativeBridge
         string LeftTable, IReadOnlyList<string> LeftColumns,
         string RightTable, IReadOnlyList<string> RightColumns);
 
+    /// <summary>A many-to-many bridge between two tables through a junction table.
+    /// The designer uses this to offer a "join through {junction}" that wires both
+    /// FK hops at once. Column lists are parallel for composite-key safety.</summary>
+    public sealed record BuilderManyToManyInfo(
+        string SourceTable, IReadOnlyList<string> SourceColumns,
+        string JunctionTable,
+        IReadOnlyList<string> JunctionSourceColumns,
+        IReadOnlyList<string> JunctionTargetColumns,
+        string TargetTable, IReadOnlyList<string> TargetColumns);
+
     /// <summary>The payload returned by the <c>get-builder-schema</c> bridge handler.</summary>
     public sealed record BuilderSchemaDto(
         IReadOnlyList<BuilderTableInfo> Tables,
         IReadOnlyList<BuilderColumnInfo> Columns,
-        IReadOnlyList<BuilderRelationshipInfo> Relationships);
+        IReadOnlyList<BuilderRelationshipInfo> Relationships,
+        IReadOnlyList<BuilderManyToManyInfo> ManyToMany);
 
     /// <summary>
     /// Projects an <see cref="IDbModel"/> into the flat tables/columns/relationships
@@ -53,7 +64,18 @@ namespace BifrostQL.UI.NativeBridge
                     link.ParentIds.Select(c => c.DbName).ToList())))
                 .ToList();
 
-            return new BuilderSchemaDto(tables, columns, relationships);
+            var manyToMany = model.Tables
+                .SelectMany(t => t.ManyToManyLinks.Values.Select(m => new BuilderManyToManyInfo(
+                    Qualified(m.SourceTable),
+                    new[] { m.SourceColumn.DbName },
+                    Qualified(m.JunctionTable),
+                    new[] { m.JunctionSourceColumn.DbName },
+                    new[] { m.JunctionTargetColumn.DbName },
+                    Qualified(m.TargetTable),
+                    new[] { m.TargetColumn.DbName })))
+                .ToList();
+
+            return new BuilderSchemaDto(tables, columns, relationships, manyToMany);
         }
 
         private static string Qualified(IDbTable t) =>

@@ -106,6 +106,34 @@ export interface Join {
 }
 
 /**
+ * Many-to-many bridge between this entity and a target entity through a
+ * junction table. Projected by the server's `_dbSchema` resolver. The UI uses
+ * the junction's own multi-join for the rows query and these fields to skip
+ * the junction for navigation, drilling straight to the target entity.
+ * @interface ManyToManyJoin
+ */
+export interface ManyToManyJoin {
+  /** Junction table GraphQL name (also the relationship name). */
+  name: string;
+  /** Target entity GraphQL type/table name. */
+  targetTable: string;
+  /** Junction table GraphQL type/table name. */
+  junctionTable: string;
+  /** Selection field on the junction type that resolves the target row. */
+  junctionTargetField: string;
+  /** Key column(s) on this (source) entity. */
+  sourceColumnNames: string[];
+  /** Junction column(s) referencing this (source) entity. */
+  junctionSourceColumnNames: string[];
+  /** Junction column(s) referencing the target entity. */
+  junctionTargetColumnNames: string[];
+  /** Key column(s) on the target entity. */
+  targetColumnNames: string[];
+  /** True when the junction carries extra (non-key) payload columns to reveal. */
+  hasPayload: boolean;
+}
+
+/**
  * Table definition from database schema introspection.
  * @interface Table
  */
@@ -132,6 +160,8 @@ export interface Table {
   multiJoins: Join[];
   /** Many-to-one relationship joins */
   singleJoins: Join[];
+  /** Many-to-many bridges through junction tables (optional; absent on older servers). */
+  manyToManyJoins?: ManyToManyJoin[];
 }
 
 /**

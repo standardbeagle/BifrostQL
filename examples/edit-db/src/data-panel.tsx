@@ -15,6 +15,7 @@ import {
     buildDrillCrumbs,
     type DrillFrame,
 } from './lib/drill-stack';
+import { detailTabs } from './lib/m2m';
 
 /**
  * A side-panel drill frame. `filterTable` + `filterId` + `filterColumn`
@@ -52,7 +53,7 @@ export function DataPanel() {
     const columnRefsMap = useRef<Map<number, HTMLElement | null>>(new Map());
 
     const table = useMemo(() => data ? getTable(data, tableName) : undefined, [data, tableName]);
-    const hasMultiJoins = (table?.multiJoins?.length ?? 0) > 0;
+    const hasMultiJoins = table ? detailTabs(table).length > 0 : false;
 
     const handleOpenColumn = useCallback((panel: ColumnPanel) => {
         setOpenColumns((prev) => pushDrillFrame(prev, panel));

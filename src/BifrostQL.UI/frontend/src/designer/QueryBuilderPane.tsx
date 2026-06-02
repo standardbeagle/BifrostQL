@@ -26,7 +26,11 @@ import {
   removeJoin,
   setJoinType,
   toSpec,
+  tableRef,
+  m2mJoinPlans,
+  applyM2mJoinPlan,
   type DesignerState,
+  type M2mJoinPlan,
 } from "./designer-state";
 
 /**
@@ -40,6 +44,7 @@ export function QueryBuilderPane() {
   const [schemaError, setSchemaError] = useState<string | null>(null);
   const [state, setState] = useState<DesignerState>(emptyDesignerState);
   const [ambiguous, setAmbiguous] = useState<VisualJoin[]>([]);
+  const [m2mPlans, setM2mPlans] = useState<M2mJoinPlan[]>([]);
   const [sqlPreview, setSqlPreview] = useState<string | null>(null);
   const [result, setResult] = useState<BuildAndExecResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +69,11 @@ export function QueryBuilderPane() {
       const { state: next, ambiguous: amb } = addTableWithAutoJoin(state, schema, qualified);
       setState(next);
       setAmbiguous(amb);
+      // Offer many-to-many bridges to the new table only when no direct FK join
+      // was auto-applied or pending — the direct path takes precedence.
+      const directJoined = next.joins.length > state.joins.length;
+      const newRef = tableRef(next.tables[next.tables.length - 1]);
+      setM2mPlans(!directJoined && amb.length === 0 ? m2mJoinPlans(next, schema, newRef) : []);
     },
     [schema, state]
   );
@@ -149,6 +159,24 @@ export function QueryBuilderPane() {
                 </button>
               ))}
               <button type="button" onClick={() => setAmbiguous([])}>Dismiss</button>
+            </div>
+          )}
+          {m2mPlans.length > 0 && (
+            <div style={styles.ambiguous} role="alert">
+              <span>Many-to-many — join through the junction table:</span>
+              {m2mPlans.map((plan, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => {
+                    setState((s) => applyM2mJoinPlan(s, plan));
+                    setM2mPlans([]);
+                  }}
+                >
+                  via {plan.junctionTable}
+                </button>
+              ))}
+              <button type="button" onClick={() => setM2mPlans([])}>Dismiss</button>
             </div>
           )}
           <JoinEditor

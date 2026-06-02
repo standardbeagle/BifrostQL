@@ -8,14 +8,41 @@ import {
   setJoinType,
   autoJoinCandidates,
   addTableWithAutoJoin,
+  m2mJoinPlans,
+  applyM2mJoinPlan,
   type DesignerState,
 } from "./designer-state";
 
-const schema = (relationships: BuilderSchema["relationships"]): BuilderSchema => ({
+const schema = (
+  relationships: BuilderSchema["relationships"],
+  manyToMany: BuilderSchema["manyToMany"] = [],
+): BuilderSchema => ({
   tables: [],
   columns: [],
   relationships,
+  manyToMany,
 });
+
+// students <-> courses through enrollments, as the host emits it (one direction
+// shown; the helper must also accept the reverse).
+const studentsToCourses = {
+  sourceTable: "dbo.students",
+  sourceColumns: ["id"],
+  junctionTable: "dbo.enrollments",
+  junctionSourceColumns: ["student_id"],
+  junctionTargetColumns: ["course_id"],
+  targetTable: "dbo.courses",
+  targetColumns: ["id"],
+};
+const coursesToStudents = {
+  sourceTable: "dbo.courses",
+  sourceColumns: ["id"],
+  junctionTable: "dbo.enrollments",
+  junctionSourceColumns: ["course_id"],
+  junctionTargetColumns: ["student_id"],
+  targetTable: "dbo.students",
+  targetColumns: ["id"],
+};
 
 const ordersToUsers = {
   leftTable: "dbo.orders",
@@ -90,5 +117,58 @@ describe("designer joins", () => {
     expect(s.joins[0].type).toBe("left");
     s = removeJoin(s, 0);
     expect(s.joins).toHaveLength(0);
+  });
+
+  it("m2mJoinPlans finds the through-junction path to an existing placed table", () => {
+    // students placed; place courses; expect a plan bridging them via enrollments.
+    let s = addTable(emptyDesignerState, "dbo.students");
+    s = addTable(s, "dbo.courses");
+    const plans = m2mJoinPlans(s, schema([], [studentsToCourses]), "dbo.courses");
+
+    expect(plans).toHaveLength(1);
+    const plan = plans[0];
+    expect(plan.junctionTable).toBe("dbo.enrollments");
+    expect(plan.joins).toHaveLength(2);
+    // hop 1: existing (students) -> junction
+    expect(plan.joins[0]).toMatchObject({
+      leftTable: "dbo.students",
+      leftColumns: ["id"],
+      rightTable: "dbo.enrollments",
+      rightColumns: ["student_id"],
+      type: "inner",
+    });
+    // hop 2: junction -> new (courses)
+    expect(plan.joins[1]).toMatchObject({
+      leftTable: "dbo.enrollments",
+      leftColumns: ["course_id"],
+      rightTable: "dbo.courses",
+      rightColumns: ["id"],
+      type: "inner",
+    });
+  });
+
+  it("m2mJoinPlans accepts the reverse direction and dedupes by junction", () => {
+    let s = addTable(emptyDesignerState, "dbo.students");
+    s = addTable(s, "dbo.courses");
+    // Both directions present (as the host emits them) — still one plan.
+    const plans = m2mJoinPlans(s, schema([], [studentsToCourses, coursesToStudents]), "dbo.courses");
+    expect(plans).toHaveLength(1);
+    expect(plans[0].junctionTable).toBe("dbo.enrollments");
+  });
+
+  it("m2mJoinPlans is empty when no m2m path connects the new table", () => {
+    let s = addTable(emptyDesignerState, "dbo.users");
+    s = addTable(s, "dbo.courses");
+    expect(m2mJoinPlans(s, schema([], [studentsToCourses]), "dbo.courses")).toHaveLength(0);
+  });
+
+  it("applyM2mJoinPlan adds the junction table and both hops", () => {
+    let s = addTable(emptyDesignerState, "dbo.students");
+    s = addTable(s, "dbo.courses");
+    const plan = m2mJoinPlans(s, schema([], [studentsToCourses]), "dbo.courses")[0];
+
+    const result = applyM2mJoinPlan(s, plan);
+    expect(result.tables.map((t) => t.table)).toContain("dbo.enrollments");
+    expect(result.joins).toHaveLength(2);
   });
 });

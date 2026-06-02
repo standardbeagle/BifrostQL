@@ -329,6 +329,97 @@ export function addTableWithAutoJoin(
   return { state: placed, ambiguous: candidates.length > 1 ? candidates : [] };
 }
 
+// ---- many-to-many (through-junction) joins -------------------------------
+
+/**
+ * A plan to connect two placed tables through a junction table: the junction to
+ * add to the canvas plus the two FK hops (existing→junction, junction→new). The
+ * designer applies this when the user opts to join across a many-to-many bridge.
+ */
+export interface M2mJoinPlan {
+  /** Qualified name of the junction table to place on the canvas. */
+  junctionTable: string;
+  /** The two hops, always oriented existing→junction→new. */
+  joins: VisualJoin[];
+}
+
+/**
+ * Finds the many-to-many bridges connecting a freshly-placed table to tables
+ * already on the canvas. Each plan adds the junction table and both FK hops.
+ * The host emits each bridge in both directions, so plans are deduped by the
+ * (existing, junction, new) triple. Column refs are alias-aware for the placed
+ * endpoints; the junction is referenced by its qualified name (it is added
+ * fresh by {@link applyM2mJoinPlan}).
+ */
+export function m2mJoinPlans(
+  state: DesignerState,
+  schema: BuilderSchema,
+  newRef: string
+): M2mJoinPlan[] {
+  const placedNew = state.tables.find((t) => tableRef(t) === newRef);
+  if (!placedNew) return [];
+
+  const links = schema.manyToMany ?? [];
+  const others = state.tables.filter((t) => tableRef(t) !== newRef);
+  const seen = new Set<string>();
+  const plans: M2mJoinPlan[] = [];
+
+  for (const other of others) {
+    for (const link of links) {
+      const forward = link.sourceTable === other.table && link.targetTable === placedNew.table;
+      const reverse = link.targetTable === other.table && link.sourceTable === placedNew.table;
+      if (!forward && !reverse) continue;
+
+      const key = `${other.table}|${link.junctionTable}|${placedNew.table}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const existingRef = tableRef(other);
+      const newRefValue = tableRef(placedNew);
+      const junctionRef = link.junctionTable;
+
+      // Columns are oriented from the existing table's side to the junction,
+      // then from the junction to the new table — regardless of how the link
+      // names its source/target.
+      const [existingToJunction, junctionToNewFrom, junctionToNewTo] = forward
+        ? [link.sourceColumns, link.junctionSourceColumns, link.junctionTargetColumns]
+        : [link.targetColumns, link.junctionTargetColumns, link.junctionSourceColumns];
+      const newColumns = forward ? link.targetColumns : link.sourceColumns;
+
+      plans.push({
+        junctionTable: link.junctionTable,
+        joins: [
+          {
+            leftTable: existingRef,
+            leftColumns: [...existingToJunction],
+            rightTable: junctionRef,
+            rightColumns: [...junctionToNewFrom],
+            type: "inner",
+          },
+          {
+            leftTable: junctionRef,
+            leftColumns: [...junctionToNewTo],
+            rightTable: newRefValue,
+            rightColumns: [...newColumns],
+            type: "inner",
+          },
+        ],
+      });
+    }
+  }
+
+  return plans;
+}
+
+/** Applies a {@link M2mJoinPlan}: places the junction table (if absent) and adds both hops. */
+export function applyM2mJoinPlan(state: DesignerState, plan: M2mJoinPlan): DesignerState {
+  let next = state.tables.some((t) => t.table === plan.junctionTable)
+    ? state
+    : addTable(state, plan.junctionTable);
+  for (const join of plan.joins) next = addJoin(next, join);
+  return next;
+}
+
 function coerceScalar(text: string): unknown {
   const t = text.trim();
   if (t === "") return "";

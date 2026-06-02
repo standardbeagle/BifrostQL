@@ -41,10 +41,25 @@ export interface BuilderRelationship {
   rightColumns: string[];
 }
 
+/** A many-to-many bridge between two tables through a junction table. Column
+ * lists are parallel for composite-key safety. Emitted in both directions by
+ * the host (source↔target), so consumers should dedupe by junction. */
+export interface BuilderManyToMany {
+  sourceTable: string;
+  sourceColumns: string[];
+  junctionTable: string;
+  junctionSourceColumns: string[];
+  junctionTargetColumns: string[];
+  targetTable: string;
+  targetColumns: string[];
+}
+
 export interface BuilderSchema {
   tables: BuilderTable[];
   columns: BuilderColumn[];
   relationships: BuilderRelationship[];
+  /** Many-to-many bridges. Optional: absent when talking to an older host. */
+  manyToMany?: BuilderManyToMany[];
 }
 
 /** Whether the builder channel is usable (i.e. running inside Photino). */

@@ -42,4 +42,38 @@ public class MetadataSchemaGeneratorTests
     {
         JoinSchemaBlock().Should().Contain(field);
     }
+
+    [Fact]
+    public void DbTableSchema_ExposesManyToManyJoins()
+    {
+        // Without this field GraphQL.NET silently drops the resolver's
+        // manyToManyJoins, so the edit-db client never learns a relationship is
+        // a junction and the skip-the-junction UI cannot engage.
+        var sdl = MetadataSchemaGenerator.Generate();
+        sdl.Should().Contain("manyToManyJoins: [dbManyToManyJoinSchema!]!");
+    }
+
+    private static string ManyToManySchemaBlock()
+    {
+        var sdl = MetadataSchemaGenerator.Generate();
+        var start = sdl.IndexOf("type dbManyToManyJoinSchema {", StringComparison.Ordinal);
+        start.Should().BeGreaterThanOrEqualTo(0, "dbManyToManyJoinSchema type should be generated");
+        var end = sdl.IndexOf('}', start);
+        end.Should().BeGreaterThan(start);
+        return sdl.Substring(start, end - start);
+    }
+
+    [Theory]
+    [InlineData("targetTable: String!")]
+    [InlineData("junctionTable: String!")]
+    [InlineData("junctionTargetField: String!")]
+    [InlineData("sourceColumnNames: [String!]!")]
+    [InlineData("junctionSourceColumnNames: [String!]!")]
+    [InlineData("junctionTargetColumnNames: [String!]!")]
+    [InlineData("targetColumnNames: [String!]!")]
+    [InlineData("hasPayload: Boolean!")]
+    public void DbManyToManyJoinSchema_DeclaresExpectedFields(string field)
+    {
+        ManyToManySchemaBlock().Should().Contain(field);
+    }
 }

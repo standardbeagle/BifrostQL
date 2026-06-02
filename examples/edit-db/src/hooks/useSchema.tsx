@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { GET_DB_SCHEMA } from "../common/schema";
 import { createContext, useContext, useMemo, ReactNode } from "react";
-import { Schema, Table, Column, TableMetadata } from '../types/schema';
+import { Schema, Table, Column, TableMetadata, ManyToManyJoin } from '../types/schema';
 import { useFetcher } from "../common/fetcher";
 import { humanizeName } from "../lib/humanize";
 
@@ -43,6 +43,7 @@ interface DbSchemaItem {
     columns: DbColumnItem[];
     multiJoins: { name: string; fieldName?: string; sourceColumnNames: string[]; destinationTable: string; destinationColumnNames: string[] }[];
     singleJoins: { name: string; fieldName?: string; sourceColumnNames: string[]; destinationTable: string; destinationColumnNames: string[] }[];
+    manyToManyJoins?: ManyToManyJoin[];
 }
 
 interface DbSchemaResponse {

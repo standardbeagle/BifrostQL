@@ -24,7 +24,20 @@ public static class MetadataSchemaGenerator
         sb.AppendLine("\tmetadata: [dbMetadataSchema!]!");
         sb.AppendLine("\tmultiJoins: [dbJoinSchema!]!");
         sb.AppendLine("\tsingleJoins: [dbJoinSchema!]!");
+        sb.AppendLine("\tmanyToManyJoins: [dbManyToManyJoinSchema!]!");
         sb.AppendLine("\tcolumns: [dbColumnSchema!]!");
+        sb.AppendLine("}");
+
+        sb.AppendLine("type dbManyToManyJoinSchema {");
+        sb.AppendLine("\tname: String!");
+        sb.AppendLine("\ttargetTable: String!");
+        sb.AppendLine("\tjunctionTable: String!");
+        sb.AppendLine("\tjunctionTargetField: String!");
+        sb.AppendLine("\tsourceColumnNames: [String!]!");
+        sb.AppendLine("\tjunctionSourceColumnNames: [String!]!");
+        sb.AppendLine("\tjunctionTargetColumnNames: [String!]!");
+        sb.AppendLine("\ttargetColumnNames: [String!]!");
+        sb.AppendLine("\thasPayload: Boolean!");
         sb.AppendLine("}");
 
         sb.AppendLine("type dbJoinSchema {");

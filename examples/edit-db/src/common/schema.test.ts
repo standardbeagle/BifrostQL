@@ -6,4 +6,10 @@ describe('GET_DB_SCHEMA', () => {
         expect(GET_DB_SCHEMA).toMatch(/multiJoins\s*{[^}]*fieldName/s);
         expect(GET_DB_SCHEMA).toMatch(/singleJoins\s*{[^}]*fieldName/s);
     });
+
+    it('requests many-to-many junction metadata for skip-the-junction rendering', () => {
+        expect(GET_DB_SCHEMA).toMatch(/manyToManyJoins\s*{[^}]*targetTable/s);
+        expect(GET_DB_SCHEMA).toMatch(/manyToManyJoins\s*{[^}]*junctionTargetField/s);
+        expect(GET_DB_SCHEMA).toMatch(/manyToManyJoins\s*{[^}]*hasPayload/s);
+    });
 });

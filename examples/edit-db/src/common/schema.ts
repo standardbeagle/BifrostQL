@@ -78,5 +78,16 @@ query dbSchema {
       destinationTable
       destinationColumnNames
     }
+    manyToManyJoins {
+      name
+      targetTable
+      junctionTable
+      junctionTargetField
+      sourceColumnNames
+      junctionSourceColumnNames
+      junctionTargetColumnNames
+      targetColumnNames
+      hasPayload
+    }
   }
 }`;

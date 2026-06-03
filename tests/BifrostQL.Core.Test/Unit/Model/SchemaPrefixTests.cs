@@ -344,6 +344,56 @@ public class SchemaPrefixTests
         orders.ColumnLookup.Should().ContainKey("Total");
     }
 
+    [Fact]
+    public void Build_TwoTablesSameGraphQlNameDifferentSchema_DeduplicatesBySchemaPrefix()
+    {
+        // Apache AGE creates one Postgres schema per graph, each containing an
+        // _ag_label_edge table -> identical GraphQlName across schemas. Without
+        // dedup the runtime schema emits duplicate types and crashes.
+        var model = DbModelTestFixture.Create()
+            .WithTable("edge_a", t => t
+                .WithSchema("graph_a")
+                .WithGraphQlName("tbl_ag_label_edge")
+                .WithPrimaryKey("Id")
+                .WithColumn("Props", "nvarchar"))
+            .WithTable("edge_b", t => t
+                .WithSchema("graph_b")
+                .WithGraphQlName("tbl_ag_label_edge")
+                .WithPrimaryKey("Id")
+                .WithColumn("Props", "nvarchar"))
+            .WithForeignKey("FK_dummy", "graph_a", "edge_a", new[] { "Id" }, "graph_a", "edge_a", new[] { "Id" })
+            .Build();
+
+        var names = model.Tables.Select(t => t.GraphQlName).ToList();
+        names.Should().OnlyHaveUniqueItems();
+        names.Should().HaveCount(2);
+        // First occurrence keeps the bare name (backward compatibility); the
+        // collision is disambiguated with its schema prefix.
+        names.Should().Contain("tbl_ag_label_edge");
+        names.Should().Contain("graph_b_tbl_ag_label_edge");
+    }
+
+    [Fact]
+    public void Build_NoGraphQlNameCollision_LeavesNamesUnchanged()
+    {
+        // Single-schema deployments (the common case) must be unaffected by the
+        // dedup pass.
+        var model = DbModelTestFixture.Create()
+            .WithTable("Users", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Name", "nvarchar"))
+            .WithTable("Orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Total", "decimal"))
+            .WithForeignKey("FK_dummy", "dbo", "Users", new[] { "Id" }, "dbo", "Users", new[] { "Id" })
+            .Build();
+
+        model.GetTableFromDbName("Users").GraphQlName.Should().Be("Users");
+        model.GetTableFromDbName("Orders").GraphQlName.Should().Be("Orders");
+    }
+
     private static IDbModel CreateModelWithSchemaPrefix(
         string defaultSchema,
         SchemaPrefixFormat format,

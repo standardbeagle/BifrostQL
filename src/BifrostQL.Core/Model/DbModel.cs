@@ -219,7 +219,8 @@ namespace BifrostQL.Core.Model
             }
 
             var schemaPrefixOptions = SchemaPrefixOptions.FromMetadata(dbMetadata);
-            var prefixedTables = tables.Select(t => t.WithSchemaPrefix(schemaPrefixOptions)).ToList();
+            var prefixedTables = DeduplicateTableGraphQlNames(
+                tables.Select(t => t.WithSchemaPrefix(schemaPrefixOptions)).ToList());
 
             var includePattern = dbMetadata.TryGetValue("sp-include", out var inc) ? inc?.ToString() : null;
             var excludePattern = dbMetadata.TryGetValue("sp-exclude", out var exc) ? exc?.ToString() : null;
@@ -310,6 +311,38 @@ namespace BifrostQL.Core.Model
 
             model.LinkTables(allForeignKeys, prefixGroups);
             return model;
+        }
+
+        /// <summary>
+        /// Ensures every table has a unique GraphQlName. Schema prefixing is optional
+        /// and disabled by default, so two tables in different schemas can still share
+        /// a name (e.g. Apache AGE creates an _ag_label_edge table in every graph
+        /// schema). Identical names would produce duplicate GraphQL types and crash the
+        /// schema build, so collisions are disambiguated with the schema prefix here —
+        /// mirroring <see cref="ColumnDto.DeduplicateGraphQlNames"/> for columns. The
+        /// first occurrence keeps its bare name for backward compatibility.
+        /// </summary>
+        private static List<DbTable> DeduplicateTableGraphQlNames(List<DbTable> tables)
+        {
+            var taken = new HashSet<string>(StringComparer.Ordinal);
+            var result = new List<DbTable>(tables.Count);
+            foreach (var table in tables)
+            {
+                if (taken.Add(table.GraphQlName))
+                {
+                    result.Add(table);
+                    continue;
+                }
+
+                var baseName = $"{table.TableSchema.ToGraphQl()}_{table.GraphQlName}";
+                var candidate = baseName;
+                var suffix = 2;
+                while (!taken.Add(candidate))
+                    candidate = $"{baseName}_{suffix++}";
+
+                result.Add(table.WithGraphQlName(candidate));
+            }
+            return result;
         }
     }
 

@@ -666,7 +666,7 @@ export default function App() {
                   ? transportConnected
                     ? 'Binary probe connected'
                     : 'Binary probe disconnected'
-                  : 'HTTP editor transport'
+                  : 'GraphQL transport'
               }
               title={
                 transportMode === 'binary'
@@ -703,7 +703,7 @@ export default function App() {
                 color: 'inherit',
               }}
             >
-              {transportMode === 'binary' ? 'Binary probe' : 'HTTP editor'}
+              {transportMode === 'binary' ? 'Binary' : 'GraphQL'}
             </button>
           </div>
           {sqlBridgeAvailable && (

@@ -31,6 +31,35 @@ public sealed class PostgresDialectTest
 
     #endregion
 
+    #region TextCast Tests
+
+    [Fact]
+    public void RequiresTextCast_UserDefinedType_ReturnsTrue()
+    {
+        // Apache AGE columns report data_type 'USER-DEFINED' (graphid, agtype);
+        // Npgsql cannot materialize them as object, so they must be cast to text.
+        _sut.RequiresTextCast("USER-DEFINED").Should().BeTrue();
+        _sut.RequiresTextCast("user-defined").Should().BeTrue();
+    }
+
+    [Fact]
+    public void RequiresTextCast_KnownType_ReturnsFalse()
+    {
+        _sut.RequiresTextCast("text").Should().BeFalse();
+        _sut.RequiresTextCast("integer").Should().BeFalse();
+        _sut.RequiresTextCast("jsonb").Should().BeFalse();
+    }
+
+    [Fact]
+    public void TextCast_WrapsExpressionInFormatOutputFunction()
+    {
+        // format('%s', ...) — not ::text — so non-scalar agtype (map/list) serializes
+        // without raising "agtype argument must resolve to a scalar value".
+        _sut.TextCast("\"properties\"").Should().Be("format('%s', \"properties\")");
+    }
+
+    #endregion
+
     #region EscapeIdentifier Tests
 
     [Fact]

@@ -53,7 +53,16 @@ namespace BifrostQL.Core.QueryModel
 
             if (fullColumns.Count > 0)
             {
-                var columnSql = string.Join(",", fullColumns.Select(n => $"{dialect.EscapeIdentifier(n.DbDbName)} {dialect.EscapeIdentifier(n.GraphQlDbName)}"));
+                var sqlTable = dbModel.Tables.FirstOrDefault(t => t.MatchName(TableName));
+                var columnSql = string.Join(",", fullColumns.Select(n =>
+                {
+                    var expr = dialect.EscapeIdentifier(n.DbDbName);
+                    if (sqlTable != null
+                        && sqlTable.ColumnLookup.TryGetValue(n.DbDbName, out var col)
+                        && dialect.RequiresTextCast(col.DataType))
+                        expr = dialect.TextCast(expr);
+                    return $"{expr} {dialect.EscapeIdentifier(n.GraphQlDbName)}";
+                }));
                 var cmdText = $"SELECT {columnSql} FROM {tableRef}";
 
                 var sortCols = Sort.Any() ? Sort.Select(s => s switch

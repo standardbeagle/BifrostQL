@@ -3,6 +3,7 @@ using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.QueryModel.TestFixtures;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Schema;
+using BifrostQL.Ngsql;
 using Xunit;
 
 namespace BifrostQL.Core.QueryModel;
@@ -14,6 +15,58 @@ namespace BifrostQL.Core.QueryModel;
 public sealed class GqlObjectQuerySqlTest
 {
     private static readonly ISqlDialect Dialect = SqlServerDialect.Instance;
+
+    #region Text-cast for unreadable column types
+
+    [Fact]
+    public void AddSqlParameterized_UserDefinedColumn_PostgresCastsToText()
+    {
+        // Apache AGE columns (graphid/agtype) report data_type 'USER-DEFINED' and
+        // cannot be read as object by Npgsql. The SELECT must cast them to text.
+        var dbModel = DbModelTestFixture.Create()
+            .WithTable("edges", t => t
+                .WithPrimaryKey("id")
+                .WithColumn("props", "USER-DEFINED")
+                .WithColumn("name", "text"))
+            .Build();
+        var table = dbModel.GetTableFromDbName("edges");
+        var query = GqlObjectQueryBuilder.Create()
+            .WithDbTable(table)
+            .WithColumns("id", "props", "name")
+            .Build();
+        var sqls = new Dictionary<string, ParameterizedSql>();
+        var parameters = new SqlParameterCollection();
+
+        query.AddSqlParameterized(dbModel, PostgresDialect.Instance, sqls, parameters);
+
+        var sql = sqls["edges"].Sql;
+        sql.Should().Contain("format('%s', \"props\") \"props\"");
+        sql.Should().NotContain("format('%s', \"name\")");
+    }
+
+    [Fact]
+    public void AddSqlParameterized_UserDefinedColumn_SqlServerDoesNotCast()
+    {
+        // Only dialects that declare a type unreadable cast it; SQL Server does not.
+        var dbModel = DbModelTestFixture.Create()
+            .WithTable("edges", t => t
+                .WithPrimaryKey("id")
+                .WithColumn("props", "USER-DEFINED"))
+            .Build();
+        var table = dbModel.GetTableFromDbName("edges");
+        var query = GqlObjectQueryBuilder.Create()
+            .WithDbTable(table)
+            .WithColumns("id", "props")
+            .Build();
+        var sqls = new Dictionary<string, ParameterizedSql>();
+        var parameters = new SqlParameterCollection();
+
+        query.AddSqlParameterized(dbModel, Dialect, sqls, parameters);
+
+        sqls["edges"].Sql.Should().Contain("[props] [props]");
+    }
+
+    #endregion
 
     #region Basic Select Tests
 

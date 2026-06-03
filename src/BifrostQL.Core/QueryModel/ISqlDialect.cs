@@ -115,4 +115,21 @@ public interface ISqlDialect
     /// PIVOT; every other dialect uses the CASE WHEN cross-tab fallback.
     /// </summary>
     bool SupportsNativePivot => false;
+
+    /// <summary>
+    /// Whether a column of the given database type cannot be materialized directly by
+    /// the provider (read as a CLR object) and must be cast to text in the SELECT.
+    /// Defaults to false. PostgreSQL returns true for 'USER-DEFINED' types such as
+    /// Apache AGE's graphid/agtype, which Npgsql refuses to read as object.
+    /// </summary>
+    /// <param name="dataType">The column's database data type (e.g. "USER-DEFINED").</param>
+    bool RequiresTextCast(string dataType) => false;
+
+    /// <summary>
+    /// Wraps a (already-escaped) column expression in a cast to the dialect's text type.
+    /// Used together with <see cref="RequiresTextCast"/> to read otherwise-unreadable
+    /// columns as strings. Default uses ANSI CAST(expr AS varchar); PostgreSQL overrides
+    /// with the (expr)::text shorthand.
+    /// </summary>
+    string TextCast(string columnExpression) => $"CAST({columnExpression} AS varchar)";
 }

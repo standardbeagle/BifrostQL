@@ -20,4 +20,23 @@ public sealed class PostgresDialect : StandardConcatDialectBase
     public PostgresDialect() : base('"', "lastval()", null)
     {
     }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// information_schema reports custom types (Apache AGE's graphid/agtype, and any
+    /// other user-defined type) as data_type 'USER-DEFINED'. Npgsql cannot read these
+    /// as object, so they are cast to text in the SELECT and surfaced as GraphQL String.
+    /// </remarks>
+    public override bool RequiresTextCast(string dataType) =>
+        dataType.Trim().Equals("user-defined", StringComparison.OrdinalIgnoreCase);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Uses format('%s', expr) rather than expr::text. The ::text cast only works on
+    /// scalar agtype — a non-scalar agtype map/list (Apache AGE node/edge properties)
+    /// raises "agtype argument must resolve to a scalar value". format('%s', ...) routes
+    /// through the type's output function, which serializes graphid, scalar agtype, and
+    /// agtype maps/lists alike (and leaves ordinary types unchanged).
+    /// </remarks>
+    public override string TextCast(string columnExpression) => $"format('%s', {columnExpression})";
 }

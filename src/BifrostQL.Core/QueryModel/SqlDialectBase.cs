@@ -122,6 +122,12 @@ public abstract class SqlDialectBase : ISqlDialect
 
     /// <inheritdoc />
     public virtual bool SupportsNativePivot => false;
+
+    /// <inheritdoc />
+    public virtual bool RequiresTextCast(string dataType) => false;
+
+    /// <inheritdoc />
+    public virtual string TextCast(string columnExpression) => $"CAST({columnExpression} AS varchar)";
 }
 
 /// <summary>

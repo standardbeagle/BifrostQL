@@ -467,6 +467,17 @@ export default function App() {
         let buffer = '';
         let connectionString = '';
 
+        const processLine = (line: string) => {
+          if (!line.startsWith('data: ')) return;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.message) setLaunchProgress(event.message);
+            if (event.connectionString) connectionString = event.connectionString;
+          } catch {
+            // skip malformed SSE data lines
+          }
+        };
+
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -474,18 +485,14 @@ export default function App() {
 
           const lines = buffer.split('\n');
           buffer = lines.pop() ?? '';
-
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            try {
-              const event = JSON.parse(line.slice(6));
-              if (event.message) setLaunchProgress(event.message);
-              if (event.connectionString) connectionString = event.connectionString;
-            } catch {
-              // skip malformed SSE data lines
-            }
-          }
+          for (const line of lines) processLine(line);
         }
+
+        // Flush the trailing line: the final `Complete!` event (which carries the
+        // connection string) often arrives without a trailing newline, so it sits
+        // in the buffer after the loop ends and would otherwise be dropped.
+        buffer += decoder.decode();
+        if (buffer.length > 0) processLine(buffer);
 
         if (connectionString) {
           // No follow-up POST needed — /api/database/create-quickstart

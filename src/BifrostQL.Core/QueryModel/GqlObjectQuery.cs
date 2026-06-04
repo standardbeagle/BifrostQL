@@ -248,6 +248,25 @@ namespace BifrostQL.Core.QueryModel
                         FromColumns = multiLink.ParentIds.Select(c => c.ColumnName).ToArray(),
                         QueryType = QueryType.Join,
                     };
+                    // Polymorphic link: constrain the child node to its discriminator
+                    // value (e.g. notes.entity_type = 'company'). Applying it to the
+                    // child node's Filter means the existing filter machinery emits it
+                    // against the child in every SQL path — both when the child is the
+                    // connected table and when it is the parent of a deeper nested join —
+                    // keeping each parent's collection isolated to its own rows.
+                    if (multiLink.TypePredicate is { } predicate)
+                    {
+                        var constFilter = TableFilter.FromObject(
+                            new Dictionary<string, object?>
+                            {
+                                [predicate.Column.GraphQlName] =
+                                    new Dictionary<string, object?> { ["_eq"] = predicate.Value }
+                            },
+                            multiLink.ChildTable.DbName);
+                        link.Filter = link.Filter == null
+                            ? constFilter
+                            : new TableFilter { FilterType = FilterType.And, And = { link.Filter, constFilter } };
+                    }
                     Joins.Add(join);
                     continue;
                 }

@@ -47,6 +47,11 @@ public static class MetadataSchemaGenerator
         sb.AppendLine("\tdestinationTable: String!");
         sb.AppendLine("\tdestinationColumnNames: [String!]!");
         sb.AppendLine("\tmetadata: [dbMetadataSchema!]!");
+        // Polymorphic child links (e.g. a shared notes table joined via a
+        // discriminator). Null on ordinary joins.
+        sb.AppendLine("\tisPolymorphic: Boolean");
+        sb.AppendLine("\tpolymorphicTypeColumn: String");
+        sb.AppendLine("\tpolymorphicTypeValue: String");
         sb.AppendLine("}");
 
         sb.AppendLine("type dbColumnSchema {");

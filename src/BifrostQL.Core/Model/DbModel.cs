@@ -458,6 +458,13 @@ namespace BifrostQL.Core.Model
         public bool IsComposite => ChildIds.Count > 1;
         /// <summary>Optional GraphQL field override used when navigating from parent to child.</summary>
         public string? ChildFieldNameOverride { get; init; }
+        /// <summary>
+        /// When set, this link is polymorphic: the child join is additionally
+        /// constrained by a constant equality (e.g. <c>notes.entity_type = 'company'</c>)
+        /// so a single shared child table surfaces as a distinct navigable
+        /// collection on each referenced parent. Null for ordinary links.
+        /// </summary>
+        public LinkConstantPredicate? TypePredicate { get; init; }
         /// <summary>The GraphQL field name used when navigating from child to parent.</summary>
         public string ParentFieldName => ParentTable.GraphQlName;
         /// <summary>The GraphQL field name used when navigating from parent to child.</summary>
@@ -507,6 +514,13 @@ namespace BifrostQL.Core.Model
         }
         public override string ToString() => $"{Name}-[{ChildId.TableName}.{ChildId.ColumnName}={ParentId.TableName}.{ParentId.ColumnName}]";
     }
+
+    /// <summary>
+    /// A constant equality predicate applied to a polymorphic child join —
+    /// the discriminator <paramref name="Column"/> on the child table must
+    /// equal <paramref name="Value"/> (e.g. <c>entity_type = "company"</c>).
+    /// </summary>
+    public sealed record LinkConstantPredicate(ColumnDto Column, object Value);
 
     /// <summary>
     /// Represents a many-to-many relationship between two tables through a junction table.

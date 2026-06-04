@@ -105,6 +105,11 @@ namespace BifrostQL.Core.Resolvers
                                 sourceColumnNames = j.ParentIds.Select(p => p.GraphQlName).ToArray(),
                                 destinationTable = j.ChildTable.GraphQlName,
                                 destinationColumnNames = j.ChildIds.Select(c => c.GraphQlName).ToArray(),
+                                // Polymorphic child links carry a discriminator predicate so
+                                // the UI can badge them and skip treating them as plain FKs.
+                                isPolymorphic = j.TypePredicate != null,
+                                polymorphicTypeColumn = j.TypePredicate?.Column.GraphQlName,
+                                polymorphicTypeValue = j.TypePredicate?.Value?.ToString(),
                             }),
                             singleJoins = t.SingleLinks.Values.Select(j => new
                             {

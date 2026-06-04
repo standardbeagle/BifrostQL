@@ -8,13 +8,16 @@ namespace BifrostQL.Core.Model.Relationships
     {
         private readonly ForeignKeyRelationshipStrategy _fkStrategy;
         private readonly ManyToManyDetectionStrategy _m2mStrategy;
+        private readonly PolymorphicRelationshipStrategy _polymorphicStrategy;
 
         public TableRelationshipOrchestrator(
             ForeignKeyRelationshipStrategy? fkStrategy = null,
-            ManyToManyDetectionStrategy? m2mStrategy = null)
+            ManyToManyDetectionStrategy? m2mStrategy = null,
+            PolymorphicRelationshipStrategy? polymorphicStrategy = null)
         {
             _fkStrategy = fkStrategy ?? new ForeignKeyRelationshipStrategy();
             _m2mStrategy = m2mStrategy ?? new ManyToManyDetectionStrategy();
+            _polymorphicStrategy = polymorphicStrategy ?? new PolymorphicRelationshipStrategy();
         }
 
         /// <summary>
@@ -40,6 +43,10 @@ namespace BifrostQL.Core.Model.Relationships
 
             // Step 4: Auto-detect many-to-many from foreign keys
             _m2mStrategy.AutoDetect(model, foreignKeys);
+
+            // Step 5: Polymorphic child links from metadata. Runs last so the
+            // unique field-name dedup sees every link the prior steps created.
+            _polymorphicStrategy.DiscoverRelationships(model);
         }
     }
 }

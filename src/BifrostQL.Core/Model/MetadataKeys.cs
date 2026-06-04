@@ -344,6 +344,28 @@ namespace BifrostQL.Core.Model
 
             /// <summary>Model-level toggle for foreign-key join discovery.</summary>
             public const string ForeignJoins = "foreign-joins";
+
+            /// <summary>
+            /// Table-level discriminator column for a polymorphic child table
+            /// (e.g. <c>entity_type</c> on a shared <c>notes</c> table).
+            /// </summary>
+            public const string PolymorphicTypeCol = "polymorphic-type-column";
+
+            /// <summary>
+            /// Table-level id column for a polymorphic child table — holds the
+            /// referenced parent's primary-key value (e.g. <c>entity_id</c>).
+            /// </summary>
+            public const string PolymorphicIdCol = "polymorphic-id-column";
+
+            /// <summary>
+            /// Table-level polymorphic parent map. Format:
+            /// <c>"typeValue=parentTableDbName[, typeValue=parentTableDbName...]"</c>
+            /// where <c>typeValue</c> is the literal stored in the discriminator
+            /// column and <c>parentTableDbName</c> is the referenced table.
+            /// Uses <c>=</c> and <c>,</c> only (the metadata parser splits values
+            /// on <c>:</c>, so colons are not allowed in the value).
+            /// </summary>
+            public const string PolymorphicMap = "polymorphic-map";
         }
 
         /// <summary>

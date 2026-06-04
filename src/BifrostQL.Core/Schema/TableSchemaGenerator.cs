@@ -189,6 +189,44 @@ namespace BifrostQL.Core.Schema
             return result.ToString();
         }
 
+        /// <summary>
+        /// The GraphQL input type name for a nested ("tree") insert rooted at this table.
+        /// </summary>
+        public string NestedSyncInsertTypeName => $"{_table.GraphQlName}_sync_insert";
+
+        /// <summary>
+        /// Emits the nested-insert input type: insertable scalar columns (all
+        /// optional — foreign keys and polymorphic discriminators are auto-filled
+        /// from the parent at execution) plus one child-collection field per
+        /// multi-link referencing the child's own nested-insert type. Input types
+        /// may reference each other cyclically, so no depth bound is needed in the
+        /// schema; <see cref="Modules.TreeSyncOptions.MaxDepth"/> bounds runtime.
+        /// </summary>
+        public string GetNestedSyncInputType()
+        {
+            var result = new StringBuilder();
+            result.AppendLine($"input {NestedSyncInsertTypeName} {{");
+            foreach (var column in _table.Columns)
+            {
+                if (column.IsComputed)
+                    continue;
+                // Primary keys are included (optional): a row with a key is
+                // reconciled against the existing row (update / orphan-detect);
+                // a row without one is inserted.
+                result.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetGraphQlInsertTypeName(column.EffectiveDataType, true, _typeMapper)}");
+            }
+            // Child collections — dedupe self-FK fields that share a GraphQlName.
+            var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var link in _table.MultiLinks)
+            {
+                var fieldName = link.Value.ChildFieldName;
+                if (!emitted.Add(fieldName)) continue;
+                result.AppendLine($"\t{fieldName} : [{link.Value.ChildTable.GraphQlName}_sync_insert!]");
+            }
+            result.AppendLine("}");
+            return result.ToString();
+        }
+
         public string GetBatchMutationParameterType()
         {
             var result = new StringBuilder();
@@ -276,7 +314,7 @@ namespace BifrostQL.Core.Schema
             var result = new StringBuilder();
 
             result.AppendLine(
-                $"\t{_table.GraphQlName}(insert: {_table.GetActionTypeName(MutateActions.Insert)}, update: {_table.GetActionTypeName(MutateActions.Update)}, upsert: {_table.GetActionTypeName(MutateActions.Upsert)}, delete: {_table.GetActionTypeName(MutateActions.Delete)}, _primaryKey: [String]) : Int");
+                $"\t{_table.GraphQlName}(insert: {_table.GetActionTypeName(MutateActions.Insert)}, update: {_table.GetActionTypeName(MutateActions.Update)}, upsert: {_table.GetActionTypeName(MutateActions.Upsert)}, delete: {_table.GetActionTypeName(MutateActions.Delete)}, sync: {NestedSyncInsertTypeName}, _primaryKey: [String]) : Int");
 
             result.AppendLine($"{_table.GraphQlName}_batch(actions: [batch_{_table.GraphQlName}!]!) : Int");
             return result.ToString();

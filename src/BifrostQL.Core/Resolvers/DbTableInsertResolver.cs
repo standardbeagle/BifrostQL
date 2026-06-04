@@ -29,6 +29,10 @@ namespace BifrostQL.Core.Resolvers
             var modules = context.RequestServices!.GetRequiredService<IMutationModules>();
             var mutationTransformers = context.RequestServices!.GetRequiredService<IMutationTransformers>();
 
+            if (context.HasArgument("sync"))
+            {
+                return await SyncObject(context, table, model, conFactory, dialect);
+            }
             if (context.HasArgument("insert"))
             {
                 return await InsertObject(context, table, modules, mutationTransformers, model, conFactory, dialect);
@@ -224,6 +228,52 @@ namespace BifrostQL.Core.Resolvers
             await NotifyMutationAsync(context.RequestServices, table, MutationType.Update, propertyInfo.data, result, context.UserContext);
             await NotifyStateTransitionAsync(context.RequestServices, transformResult.StateTransition, context.UserContext);
             return propertyInfo.keyData.Values.First();
+        }
+
+        // Nested ("tree") sync: accepts a parent object with nested child
+        // collections and reconciles it against current database state — inserting
+        // new rows, updating changed rows, and deleting orphaned rows — in one
+        // transaction. When the root carries a primary key, its existing subtree is
+        // loaded and diffed; otherwise the whole tree is a fresh insert.
+        //
+        // Child links are auto-wired: a conventional FK receives the parent's PK,
+        // and a polymorphic link additionally gets its discriminator stamped, so a
+        // note synced under a company resolves back through that company's notes.
+        // Orphan loading/deletion is scoped per parent (and per discriminator for
+        // polymorphic links), so reconciling one parent never touches another's.
+        //
+        // NOTE (v1 scope): the nested path bypasses the mutation transformer /
+        // module pipeline — no policy gating, no audit-populate. Columns relying on
+        // populate metadata must have a database default. Tracked as follow-up.
+        private static async Task<object?> SyncObject(IBifrostFieldContext context, IDbTable table,
+            IDbModel model, IDbConnFactory conFactory, ISqlDialect dialect)
+        {
+            var tree = context.GetArgument<Dictionary<string, object?>>("sync") ?? new();
+            if (tree.Count == 0)
+                return null;
+
+            var loader = new TreeSyncStateLoader(dialect);
+            var existing = await loader.LoadAsync(table, tree, conFactory);
+
+            var engine = new TreeSyncEngine(model);
+            var operations = engine.ComputeOperations(table, tree, existing);
+
+            var executor = new TreeSyncExecutor(dialect);
+            var rootId = await executor.ExecuteAsync(operations, conFactory);
+            // On a pure insert the executor returns the generated PK; on an update
+            // the root already has one, so fall back to the submitted key value.
+            rootId ??= RootKeyValue(table, tree);
+            await NotifyMutationAsync(context.RequestServices, table, MutationType.Insert, tree, rootId, context.UserContext);
+            return rootId;
+        }
+
+        private static object? RootKeyValue(IDbTable table, Dictionary<string, object?> tree)
+        {
+            var keys = table.KeyColumns.ToList();
+            if (keys.Count != 1)
+                return null;
+            var data = new Dictionary<string, object?>(tree, StringComparer.OrdinalIgnoreCase);
+            return data.TryGetValue(keys[0].ColumnName, out var v) ? v : null;
         }
 
         private async Task<object?> InsertObject(IBifrostFieldContext context, IDbTable table, IMutationModules modules,

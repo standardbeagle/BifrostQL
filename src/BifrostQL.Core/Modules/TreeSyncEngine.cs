@@ -101,7 +101,7 @@ public sealed class TreeSyncEngine
         Dictionary<string, object?>? existing)
     {
         var operations = new List<TreeSyncOperation>();
-        DiffNode(table, submitted, existing, depth: 0, parentTableGraphQlName: null, operations);
+        DiffNode(table, submitted, existing, depth: 0, parentLink: null, parentKnownId: null, operations);
         return OrderOperations(operations);
     }
 
@@ -110,7 +110,8 @@ public sealed class TreeSyncEngine
         Dictionary<string, object?> submitted,
         Dictionary<string, object?>? existing,
         int depth,
-        string? parentTableGraphQlName,
+        TableLinkDto? parentLink,
+        object? parentKnownId,
         List<TreeSyncOperation> operations)
     {
         if (depth >= _options.MaxDepth)
@@ -143,35 +144,70 @@ public sealed class TreeSyncEngine
         }
         else
         {
-            AddInsertOperation(table, scalarData, parentTableGraphQlName, depth, operations);
+            AddInsertOperation(table, scalarData, parentLink, parentKnownId, depth, operations);
         }
 
-        DiffChildren(table, submitted, existing, depth, operations);
+        // The PK to hand down to children: a freshly inserted parent has none yet
+        // (children defer their FK to it), but an existing/PK-bearing parent does.
+        var thisKnownId = GetSingleKeyValue(table, scalarData)
+            ?? (existing != null ? GetSingleKeyValue(table, ExtractScalarData(table, existing)) : null);
+
+        DiffChildren(table, submitted, existing, depth, thisKnownId, operations);
     }
 
     private static void AddInsertOperation(
         IDbTable table,
         Dictionary<string, object?> scalarData,
-        string? parentTableGraphQlName,
+        TableLinkDto? parentLink,
+        object? parentKnownId,
         int depth,
         List<TreeSyncOperation> operations)
     {
+        var data = new Dictionary<string, object?>(scalarData);
         var fkAssignments = new Dictionary<string, string>();
-        if (parentTableGraphQlName != null)
+        if (parentLink != null)
         {
-            var fkColumn = FindForeignKeyColumn(table, parentTableGraphQlName);
+            var parentGraphQlName = parentLink.ParentTable.GraphQlName;
+            // The child link column receives the parent's PK. A conventional FK
+            // exposes it as a SingleLink; a polymorphic link has none, so fall
+            // back to the link's own child id column (e.g. notes.entity_id).
+            var fkColumn = FindForeignKeyColumn(table, parentGraphQlName)
+                ?? parentLink.ChildId?.ColumnName;
             if (fkColumn != null)
-                fkAssignments[fkColumn] = parentTableGraphQlName;
+            {
+                // Existing parent: write its known PK directly. New parent: defer
+                // until the parent insert produces a PK (resolved by the executor).
+                if (parentKnownId != null)
+                    data[fkColumn] = parentKnownId;
+                else
+                    fkAssignments[fkColumn] = parentGraphQlName;
+            }
+
+            // Polymorphic link: stamp the discriminator constant (e.g.
+            // entity_type = 'company') so the child row resolves back through
+            // the same polymorphic collection it was inserted under.
+            if (parentLink.TypePredicate is { } predicate)
+                data[predicate.Column.ColumnName] = predicate.Value;
         }
 
         operations.Add(new TreeSyncOperation
         {
             Table = table,
             OperationType = TreeSyncOperationType.Insert,
-            Data = new Dictionary<string, object?>(scalarData),
+            Data = data,
             ForeignKeyAssignments = fkAssignments,
             Depth = depth,
         });
+    }
+
+    // Returns the single-column primary-key value if present and non-null,
+    // otherwise null (composite keys and missing values yield null).
+    private static object? GetSingleKeyValue(IDbTable table, Dictionary<string, object?> data)
+    {
+        var keys = table.KeyColumns.ToList();
+        if (keys.Count != 1)
+            return null;
+        return data.TryGetValue(keys[0].ColumnName, out var val) ? val : null;
     }
 
     private void DiffChildren(
@@ -179,6 +215,7 @@ public sealed class TreeSyncEngine
         Dictionary<string, object?> submitted,
         Dictionary<string, object?>? existing,
         int depth,
+        object? knownId,
         List<TreeSyncOperation> operations)
     {
         foreach (var multiLink in table.MultiLinks)
@@ -205,7 +242,7 @@ public sealed class TreeSyncEngine
                     existingByKey.Remove(childKey);
                 }
 
-                DiffNode(childTable, submittedChild, matchingExisting, depth + 1, table.GraphQlName, operations);
+                DiffNode(childTable, submittedChild, matchingExisting, depth + 1, link, knownId, operations);
             }
 
             if (_options.DeleteOrphans)

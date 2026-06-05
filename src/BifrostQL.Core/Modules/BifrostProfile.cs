@@ -36,6 +36,14 @@ public sealed class BifrostProfile
     public string[]? Modules { get; init; }
 
     /// <summary>
+    /// Metadata rules (same grammar as the BifrostQL:Metadata config section) that
+    /// define this profile's shape: visible tables/columns, opt-in joins, and the
+    /// per-table configuration its modules read. Null/empty = no overlay (the raw
+    /// base schema). Applied when building this profile's schema.
+    /// </summary>
+    public IReadOnlyList<string>? Metadata { get; init; }
+
+    /// <summary>
     /// Role required to use this profile. Null means no authorization required.
     /// When set, the user must have this role in their claims to select this profile.
     /// </summary>

@@ -120,11 +120,17 @@ namespace BifrostQL.Server
             if (setupOptions != null && !setupOptions.HasConnectionString)
                 return Task.FromResult(new ExecutionResult { Errors = new ExecutionErrors { new ExecutionError("No database connection configured. Set a connection string first.") } });
 
-            // Resolve profile if configured
+            // Resolve the active profile. A null/empty/"default" name resolves to the empty
+            // default profile (raw base schema, no opt-in modules). A named profile that is
+            // non-null, non-"default", and absent from the registry is an error. Auth/role
+            // requirements on a named profile are enforced here.
             var profileRegistry = options.RequestServices!.GetService<BifrostProfileRegistry>();
             var profileResult = ResolveProfile(profileRegistry, context);
             if (profileResult.Error != null)
                 return Task.FromResult(new ExecutionResult { Errors = new ExecutionErrors { profileResult.Error } });
+            var profileName = profileResult.ProfileName;
+            var activeProfile = profileResult.Profile
+                ?? new BifrostProfile { Name = "default", Modules = System.Array.Empty<string>() };
 
             // app.Map() strips the matched prefix from Path and moves it to PathBase,
             // so we need to check PathBase (where the endpoint path lives after routing)
@@ -151,30 +157,38 @@ namespace BifrostQL.Server
                     }
                 });
             }
-            var model = (IDbModel)(sharedExtensions["model"] ?? throw new InvalidDataException("dbSchema not configured"));
-            options.Schema = (ISchema)(sharedExtensions["dbSchema"] ?? throw new InvalidDataException("dbSchema not configured"));
+            // Build (or fetch cached) the model+schema for the active profile. The empty
+            // default profile yields the raw base schema; named profiles fold their own
+            // metadata into the model and schema.
+            var profileCache = (ProfileModelCache)(sharedExtensions["profileModelCache"]
+                ?? throw new InvalidDataException("profileModelCache not configured"));
+            var (model, schema) = profileCache.GetFor(profileName);
+            options.Schema = schema;
 
             // Inject correlation ID from ASP.NET Core's TraceIdentifier
             if (options.UserContext is IDictionary<string, object?> userContext && !userContext.ContainsKey("_correlationId"))
                 userContext["_correlationId"] = context?.TraceIdentifier ?? Guid.NewGuid().ToString("N");
 
-            // Apply profile filtering to transformers and observers
-            var activeProfile = profileResult.Profile;
-            if (activeProfile != null)
-            {
-                var filterTransformers = options.RequestServices!.GetRequiredService<IFilterTransformers>();
-                var filteredTransformers = BifrostProfileRegistry.FilterBy(filterTransformers, activeProfile);
-                transformerService = new QueryTransformerService(filteredTransformers);
-                observers = observers != null ? BifrostProfileRegistry.FilterBy(observers, activeProfile) : null;
+            // Always filter transformers/observers by the active profile. The empty default
+            // profile filters out all opt-in transformers (soft-delete, tenant, etc.).
+            var filterTransformers = options.RequestServices!.GetRequiredService<IFilterTransformers>();
+            var filteredTransformers = BifrostProfileRegistry.FilterBy(filterTransformers, activeProfile);
+            transformerService = new QueryTransformerService(filteredTransformers);
+            observers = observers != null ? BifrostProfileRegistry.FilterBy(observers, activeProfile) : null;
 
-                // Store profile in UserContext so mutation resolvers can filter their modules
-                if (options.UserContext is IDictionary<string, object?> uc)
-                    uc[BifrostProfile.UserContextKey] = activeProfile;
-            }
+            // Store profile in UserContext so mutation resolvers can filter their modules.
+            if (options.UserContext is IDictionary<string, object?> uc)
+                uc[BifrostProfile.UserContextKey] = activeProfile;
 
+            // Override "model" with the per-profile model so request-time readers
+            // (IBifrostContext, resolvers) see the same model the schema was built from.
             options.Extensions = Combine(
                 sharedExtensions,
-                new Dictionary<string, object?> { { "tableReaderFactory", new SqlExecutionManager(model, options.Schema, transformerService, observers) } }
+                new Dictionary<string, object?>
+                {
+                    { "model", model },
+                    { "tableReaderFactory", new SqlExecutionManager(model, options.Schema, transformerService, observers) },
+                }
             );
             var result = _documentExecutor.ExecuteAsync(options);
             return result;
@@ -182,20 +196,20 @@ namespace BifrostQL.Server
 
         private static ProfileResolution ResolveProfile(BifrostProfileRegistry? registry, HttpContext? context)
         {
-            if (registry == null || !registry.HasProfiles || context == null)
-                return new ProfileResolution();
+            var profileName = context != null ? ResolveProfileName(context) : null;
 
-            var profileName = ResolveProfileName(context);
+            // No name, or the explicit "default" → empty default profile (raw schema).
             if (profileName == null || string.Equals(profileName, "default", StringComparison.OrdinalIgnoreCase))
-                return new ProfileResolution();
+                return new ProfileResolution { ProfileName = profileName };
 
-            var profile = registry.Get(profileName);
+            // A named profile requires a registry that knows it.
+            var profile = registry?.Get(profileName);
             if (profile == null)
                 return new ProfileResolution { Error = new ExecutionError($"Unknown profile '{profileName}'.") };
 
             if (profile.RequireRole != null)
             {
-                var user = context.User;
+                var user = context!.User;
                 if (user?.Identity?.IsAuthenticated != true)
                     return new ProfileResolution { Error = new ExecutionError($"Profile '{profileName}' requires authentication.") };
 
@@ -203,7 +217,7 @@ namespace BifrostQL.Server
                     return new ProfileResolution { Error = new ExecutionError($"Profile '{profileName}' requires role '{profile.RequireRole}'.") };
             }
 
-            return new ProfileResolution { Profile = profile };
+            return new ProfileResolution { ProfileName = profileName, Profile = profile };
         }
 
         private static string? ResolveProfileName(HttpContext context)
@@ -236,6 +250,7 @@ namespace BifrostQL.Server
 
         private readonly struct ProfileResolution
         {
+            public string? ProfileName { get; init; }
             public BifrostProfile? Profile { get; init; }
             public ExecutionError? Error { get; init; }
         }
@@ -264,11 +279,12 @@ namespace BifrostQL.Server
             var dict = new Dictionary<string, object?>();
             foreach (var kv in input1)
             {
-                dict.Add(kv.Key, kv.Value);
+                dict[kv.Key] = kv.Value;
             }
+            // Values from input2 override input1 (e.g. the per-profile "model").
             foreach (var kv in input2)
             {
-                dict.Add(kv.Key, kv.Value);
+                dict[kv.Key] = kv.Value;
             }
             return new Inputs(dict);
         }

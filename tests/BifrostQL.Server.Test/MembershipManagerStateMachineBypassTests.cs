@@ -32,6 +32,13 @@ public sealed class MembershipManagerStateMachineBypassTests : IAsyncLifetime
     private SqliteDbConnFactory _connFactory = null!;
     private IDbModel _model = null!;
     private ISchema _schema = null!;
+    private ProfileModelCache _profileCache = null!;
+    private BifrostProfileRegistry _profileRegistry = null!;
+
+    // The "policy" profile activates the built-in policy + state-machine
+    // transformers. The empty default profile runs raw (no opt-in modules), so
+    // these end-to-end proofs select a profile that lists those modules.
+    private const string ProfileName = "policy";
 
     private static readonly string[] Metadata =
     {
@@ -83,8 +90,19 @@ public sealed class MembershipManagerStateMachineBypassTests : IAsyncLifetime
 
         var metadataLoader = new MetadataLoader(Metadata);
         var loader = new DbModelLoader(_connFactory, metadataLoader);
-        _model = await loader.LoadAsync();
-        _schema = DbSchema.FromModel(_model);
+
+        _profileRegistry = new BifrostProfileRegistry();
+        _profileRegistry.Add(new BifrostProfile
+        {
+            Name = ProfileName,
+            Modules = new[] { "policy", "state-machine" },
+        });
+
+        // The middleware now resolves the model+schema per profile from a shared DB
+        // read; build that cache once and select the profile per request.
+        var read = await loader.ReadAsync();
+        _profileCache = new ProfileModelCache(loader, read, Metadata, null, _profileRegistry);
+        (_model, _schema) = _profileCache.GetFor(ProfileName);
     }
 
     public async Task DisposeAsync()
@@ -218,9 +236,11 @@ public sealed class MembershipManagerStateMachineBypassTests : IAsyncLifetime
             { "connFactory", _connFactory },
             { "model", _model },
             { "dbSchema", _schema },
+            { "profileModelCache", _profileCache },
         }));
 
         var services = new ServiceCollection();
+        services.AddSingleton(_profileRegistry);
         services.AddSingleton<IFilterTransformers>(filterTransformers);
         services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = Array.Empty<IMutationModule>() });
         services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap
@@ -278,6 +298,7 @@ public sealed class MembershipManagerStateMachineBypassTests : IAsyncLifetime
 
         context.Request.Method = HttpMethods.Post;
         context.Request.Path = GraphQlPath;
+        context.Request.QueryString = new QueryString($"?profile={ProfileName}");
         context.Request.ContentType = "application/json";
         var body = JsonSerializer.Serialize(new { query });
         context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(body));

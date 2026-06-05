@@ -38,6 +38,13 @@ public sealed class BifrostWorkflowExecutorTests : IAsyncLifetime
     private SqliteDbConnFactory _connFactory = null!;
     private IDbModel _model = null!;
     private ISchema _schema = null!;
+    private ProfileModelCache _profileCache = null!;
+    private BifrostProfileRegistry _profileRegistry = null!;
+
+    // The "policy" profile activates the built-in policy + tenant transformers.
+    // The empty default profile runs raw (no opt-in modules), so these executor
+    // proofs select a profile that lists those modules.
+    private const string ProfileName = "policy";
 
     // Orders permits read + update and denies the "delete" action; it is
     // tenant-scoped for non-admins. audit_log is read-only to clients
@@ -82,10 +89,22 @@ public sealed class BifrostWorkflowExecutorTests : IAsyncLifetime
 
         var metadataLoader = new MetadataLoader(PolicyMetadata);
         var loader = new DbModelLoader(_connFactory, metadataLoader);
-        _model = await loader.LoadAsync();
+
+        _profileRegistry = new BifrostProfileRegistry();
+        _profileRegistry.Add(new BifrostProfile
+        {
+            Name = ProfileName,
+            Modules = new[] { "policy", "tenant-filter" },
+        });
+
+        // The executor drives the same per-profile pipeline as the HTTP endpoint;
+        // build the shared-read cache once and apply the row-scope expression to
+        // the cached profile model ('{ }' is reserved in the rule grammar).
+        var read = await loader.ReadAsync();
+        _profileCache = new ProfileModelCache(loader, read, PolicyMetadata, null, _profileRegistry);
+        (_model, _schema) = _profileCache.GetFor(ProfileName);
         _model.GetTableFromDbName("Orders")
             .Metadata[MetadataKeys.Policy.RowScope] = "tenant_id = {tenant_id}";
-        _schema = DbSchema.FromModel(_model);
     }
 
     public async Task DisposeAsync()
@@ -114,9 +133,11 @@ public sealed class BifrostWorkflowExecutorTests : IAsyncLifetime
             { "connFactory", _connFactory },
             { "model", _model },
             { "dbSchema", _schema },
+            { "profileModelCache", _profileCache },
         }));
 
         var services = new ServiceCollection();
+        services.AddSingleton(_profileRegistry);
         services.AddSingleton<IFilterTransformers>(filterTransformers);
         services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = Array.Empty<IMutationModule>() });
         services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap
@@ -141,8 +162,11 @@ public sealed class BifrostWorkflowExecutorTests : IAsyncLifetime
         BuildExecutor(string role, int tenantId)
     {
         var provider = BuildRequestServices();
-        provider.GetRequiredService<IHttpContextAccessor>().HttpContext =
-            new DefaultHttpContext { RequestServices = provider };
+        var httpContext = new DefaultHttpContext { RequestServices = provider };
+        // The middleware resolves the active profile from the request; the workflow
+        // executor reuses this HttpContext, so select the policy profile here.
+        httpContext.Request.QueryString = new QueryString($"?profile={ProfileName}");
+        provider.GetRequiredService<IHttpContextAccessor>().HttpContext = httpContext;
 
         var executor = new BifrostWorkflowExecutor(
             new DocumentExecuter(),

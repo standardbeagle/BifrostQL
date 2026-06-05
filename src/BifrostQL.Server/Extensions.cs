@@ -498,11 +498,13 @@ namespace BifrostQL.Server
                 throw new InvalidOperationException("At least one endpoint must be configured. Call AddEndpoint.");
 
             var extensionsLoader = new PathCache<Inputs>();
+            var registry = _profileRegistry.HasProfiles ? _profileRegistry : null;
             foreach (var endpoint in _endpoints)
             {
                 var connStr = endpoint.ConnectionString;
                 var providerName = endpoint.Provider;
-                var metadataLoader = new MetadataLoader(endpoint.Metadata);
+                var endpointMetadataRules = endpoint.Metadata as IReadOnlyList<string>
+                    ?? endpoint.Metadata.ToArray();
                 var metadataSources = endpoint.MetadataSources;
                 extensionsLoader.AddLoader(endpoint.Path, () =>
                 {
@@ -516,14 +518,18 @@ namespace BifrostQL.Server
                         ? (BifrostDbProvider?)null
                         : DbConnFactoryResolver.ParseProviderName(providerName);
                     var connFactory = DbConnFactoryResolver.Create(connStr, provider);
-                    var loader = new DbModelLoader(connFactory, metadataLoader);
-                    var model = loader.LoadAsync(additionalMetadata).Result;
-                    var schema = DbSchema.FromModel(model);
+                    // Read once, then build a model+schema per profile from the shared read.
+                    var loader = new DbModelLoader(connFactory, new MetadataLoader(endpointMetadataRules));
+                    var read = loader.ReadAsync().Result;
+                    var profileCache = new ProfileModelCache(
+                        loader, read, endpointMetadataRules, additionalMetadata, registry);
+                    var (model, schema) = profileCache.GetFor(null);
                     return new Inputs(new Dictionary<string, object?>
                     {
                         { "model", model },
                         { "connFactory", connFactory },
                         { "dbSchema", schema },
+                        { "profileModelCache", profileCache },
                     });
                 });
             }
@@ -845,8 +851,15 @@ namespace BifrostQL.Server
             if (_bifrostConfig == null) throw new InvalidOperationException("bifrostConfig not specified");
 
             var path = EndpointPath;
-            var metadataLoader = new MetadataLoader(_bifrostConfig, "Metadata");
             var metadataSources = _metadataSources;
+            // Base metadata rule strings — the same rules MetadataLoader(_bifrostConfig, "Metadata")
+            // would consume. Captured once so the ProfileModelCache can compose them with each
+            // profile's own metadata without re-reading config.
+            var configMetadataRules = _bifrostConfig.GetSection("Metadata").GetChildren()
+                .Where(c => c.Value != null)
+                .Select(c => c.Value!)
+                .ToArray();
+            var profileRegistry = _profileRegistry.HasProfiles ? _profileRegistry : null;
             var extensionsLoader = new PathCache<Inputs>();
             extensionsLoader.AddLoader(path, () =>
             {
@@ -862,14 +875,20 @@ namespace BifrostQL.Server
                 var connFactory = DbConnFactoryResolver.Create(
                     _connectionString ?? throw new InvalidOperationException("Connection string has not been configured."),
                     provider);
-                var loader = new DbModelLoader(connFactory, metadataLoader);
-                var model = loader.LoadAsync(additionalMetadata).Result;
-                var schema = DbSchema.FromModel(model);
+                // Read the DB schema once; ProfileModelCache builds a model+schema per profile
+                // from this shared read, varying only the metadata (CPU-only, memoized).
+                var loader = new DbModelLoader(connFactory, new MetadataLoader(configMetadataRules));
+                var read = loader.ReadAsync().Result;
+                var profileCache = new ProfileModelCache(
+                    loader, read, configMetadataRules, additionalMetadata, profileRegistry);
+                // Default/base build (null → empty default profile) for back-compat extensions.
+                var (model, schema) = profileCache.GetFor(null);
                 return new Inputs(new Dictionary<string, object?>
                 {
                     { "model", model},
                     { "connFactory", connFactory },
                     { "dbSchema", schema },
+                    { "profileModelCache", profileCache },
                 });
             });
 

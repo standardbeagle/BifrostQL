@@ -50,6 +50,13 @@ public sealed class PolicyBypassPreventionTests : IAsyncLifetime
     private SqliteDbConnFactory _connFactory = null!;
     private IDbModel _model = null!;
     private ISchema _schema = null!;
+    private ProfileModelCache _profileCache = null!;
+    private BifrostProfileRegistry _profileRegistry = null!;
+
+    // The "policy" profile activates the built-in policy transformers. Under the
+    // per-profile model the empty default profile runs raw (no opt-in modules), so
+    // these end-to-end policy proofs select a profile that lists the policy module.
+    private const string ProfileName = "policy";
 
     // Documents is read-denied entirely; Orders permits read + update, denies
     // the "secret" column for read and write, and scopes non-admin rows by
@@ -96,10 +103,18 @@ public sealed class PolicyBypassPreventionTests : IAsyncLifetime
 
         var metadataLoader = new MetadataLoader(PolicyMetadata);
         var loader = new DbModelLoader(_connFactory, metadataLoader);
-        _model = await loader.LoadAsync();
+
+        _profileRegistry = new BifrostProfileRegistry();
+        _profileRegistry.Add(new BifrostProfile { Name = ProfileName, Modules = new[] { "policy" } });
+
+        // The middleware now resolves the model+schema per profile from a shared DB
+        // read. Build that cache once, then apply the row-scope expression directly
+        // to the cached profile model ('{ }' is reserved in the rule grammar).
+        var read = await loader.ReadAsync();
+        _profileCache = new ProfileModelCache(loader, read, PolicyMetadata, null, _profileRegistry);
+        (_model, _schema) = _profileCache.GetFor(ProfileName);
         _model.GetTableFromDbName("Orders")
             .Metadata[MetadataKeys.Policy.RowScope] = "tenant_id = {tenant_id}";
-        _schema = DbSchema.FromModel(_model);
     }
 
     public async Task DisposeAsync()
@@ -125,6 +140,7 @@ public sealed class PolicyBypassPreventionTests : IAsyncLifetime
             { "connFactory", _connFactory },
             { "model", _model },
             { "dbSchema", _schema },
+            { "profileModelCache", _profileCache },
         }));
 
         var services = new ServiceCollection();
@@ -136,6 +152,7 @@ public sealed class PolicyBypassPreventionTests : IAsyncLifetime
         });
         services.AddSingleton<IQueryTransformerService>(new QueryTransformerService(filterTransformers));
         services.AddSingleton(pathCache);
+        services.AddSingleton(_profileRegistry);
         services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
         return services.BuildServiceProvider();
     }
@@ -159,6 +176,7 @@ public sealed class PolicyBypassPreventionTests : IAsyncLifetime
 
         context.Request.Method = HttpMethods.Post;
         context.Request.Path = GraphQlPath;
+        context.Request.QueryString = new QueryString($"?profile={ProfileName}");
         context.Request.ContentType = "application/json";
         var body = JsonSerializer.Serialize(new { query });
         context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(body));

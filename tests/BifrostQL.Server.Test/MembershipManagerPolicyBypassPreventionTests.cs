@@ -64,6 +64,13 @@ public sealed class MembershipManagerPolicyBypassPreventionTests : IAsyncLifetim
     private SqliteDbConnFactory _connFactory = null!;
     private IDbModel _model = null!;
     private ISchema _schema = null!;
+    private ProfileModelCache _profileCache = null!;
+    private BifrostProfileRegistry _profileRegistry = null!;
+
+    // The "policy" profile activates the built-in policy transformers. Under the
+    // per-profile model the empty default profile runs raw (no opt-in modules), so
+    // these end-to-end policy proofs select a profile that lists the policy module.
+    private const string ProfileName = "policy";
 
     // The verbatim Membership Manager policy configuration documented in the
     // membership-manager seed-sample SQL headers. Row scope cannot be expressed
@@ -145,16 +152,20 @@ public sealed class MembershipManagerPolicyBypassPreventionTests : IAsyncLifetim
 
         var metadataLoader = new MetadataLoader(PolicyMetadata);
         var loader = new DbModelLoader(_connFactory, metadataLoader);
-        _model = await loader.LoadAsync();
 
-        // Row scope: '{ }' is reserved in the rule grammar, so the expressions
-        // are applied directly to the loaded tables' metadata.
+        _profileRegistry = new BifrostProfileRegistry();
+        _profileRegistry.Add(new BifrostProfile { Name = ProfileName, Modules = new[] { "policy" } });
+
+        // The middleware now resolves the model+schema per profile from a shared DB
+        // read. Build that cache once, then apply the row-scope expressions directly
+        // to the cached profile model ('{ }' is reserved in the rule grammar).
+        var read = await loader.ReadAsync();
+        _profileCache = new ProfileModelCache(loader, read, PolicyMetadata, null, _profileRegistry);
+        (_model, _schema) = _profileCache.GetFor(ProfileName);
         _model.GetTableFromDbName("members")
             .Metadata[MetadataKeys.Policy.RowScope] = "user_id = {user_id}";
         _model.GetTableFromDbName("households")
             .Metadata[MetadataKeys.Policy.RowScope] = "household_id = {household_id}";
-
-        _schema = DbSchema.FromModel(_model);
     }
 
     public async Task DisposeAsync()
@@ -180,6 +191,7 @@ public sealed class MembershipManagerPolicyBypassPreventionTests : IAsyncLifetim
             { "connFactory", _connFactory },
             { "model", _model },
             { "dbSchema", _schema },
+            { "profileModelCache", _profileCache },
         }));
 
         var services = new ServiceCollection();
@@ -191,6 +203,7 @@ public sealed class MembershipManagerPolicyBypassPreventionTests : IAsyncLifetim
         });
         services.AddSingleton<IQueryTransformerService>(new QueryTransformerService(filterTransformers));
         services.AddSingleton(pathCache);
+        services.AddSingleton(_profileRegistry);
         services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
         return services.BuildServiceProvider();
     }
@@ -218,6 +231,7 @@ public sealed class MembershipManagerPolicyBypassPreventionTests : IAsyncLifetim
 
         context.Request.Method = HttpMethods.Post;
         context.Request.Path = GraphQlPath;
+        context.Request.QueryString = new QueryString($"?profile={ProfileName}");
         context.Request.ContentType = "application/json";
         var body = JsonSerializer.Serialize(new { query });
         context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(body));

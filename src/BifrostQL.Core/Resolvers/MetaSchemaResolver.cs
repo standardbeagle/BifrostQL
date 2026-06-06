@@ -49,7 +49,9 @@ namespace BifrostQL.Core.Resolvers
                             primaryKeys = t.Columns.Where(c => c.IsPrimaryKey == true).Select(pk => pk.GraphQlName),
                             isEditable = t.Columns.Any(c => c.IsPrimaryKey == true),
                             metadata = t.Metadata,
-                            columns = t.Columns.Select(c =>
+                            columns = t.Columns
+                                .Where(c => !c.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden))
+                                .Select(c =>
                             {
                                 // Extract maxLength from VARCHAR(255) or NVARCHAR(100) style dbType
                                 int? maxLength = ExtractMaxLength(c.DataType);

@@ -24,6 +24,19 @@ namespace BifrostQL.Core.Schema
             _typeMapper = typeMapper;
         }
 
+        /// <summary>
+        /// A column is emitted to the GraphQL surface unless its visibility
+        /// metadata marks it hidden — mirroring the table-level hide rule
+        /// (<c>visibility: hidden</c>) applied in <see cref="Model.DbModel.FromTables"/>.
+        /// Hidden columns remain in the model (joins, SQL, identity still use them);
+        /// only schema emission omits them. Because per-profile models are built
+        /// from each profile's metadata, this yields per-profile reduced column sets.
+        /// </summary>
+        private static bool IsColumnVisible(ColumnDto col) =>
+            !col.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden);
+
+        private IEnumerable<ColumnDto> VisibleColumns => _table.Columns.Where(IsColumnVisible);
+
         public string GetTableFieldDefinition()
         {
             var hasSoftDelete = _table.Metadata.TryGetValue(MetadataKeys.SoftDelete.Column, out var sdVal) && sdVal != null;
@@ -57,7 +70,7 @@ namespace BifrostQL.Core.Schema
         {
             var builder = new StringBuilder();
             builder.AppendLine($"type {_table.GraphQlName} {{");
-            foreach (var column in _table.Columns)
+            foreach (var column in VisibleColumns)
             {
                 builder.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetGraphQlTypeName(column.EffectiveDataType, column.IsNullable, _typeMapper)}");
             }
@@ -126,7 +139,7 @@ namespace BifrostQL.Core.Schema
         {
             var sb = new StringBuilder();
             sb.AppendLine($"enum {_table.ColumnEnumTypeName} {{");
-            foreach (var column in _table.Columns)
+            foreach (var column in VisibleColumns)
             {
                 sb.AppendLine($"    {column.GraphQlName},");
             }
@@ -138,7 +151,7 @@ namespace BifrostQL.Core.Schema
         {
             var sb = new StringBuilder();
             sb.AppendLine($"enum {_table.TableColumnSortEnumName} {{");
-            foreach (var column in _table.Columns)
+            foreach (var column in VisibleColumns)
             {
                 sb.AppendLine($"    {column.GraphQlName}_asc,");
                 sb.AppendLine($"    {column.GraphQlName}_desc,");
@@ -159,6 +172,8 @@ namespace BifrostQL.Core.Schema
             result.AppendLine($"input {name} {{");
             foreach (var column in _table.Columns)
             {
+                if (!IsColumnVisible(column))
+                    continue;
                 if (identityType == IdentityType.None && column.IsIdentity)
                     continue;
                 if (column.IsComputed)
@@ -208,6 +223,8 @@ namespace BifrostQL.Core.Schema
             result.AppendLine($"input {NestedSyncInsertTypeName} {{");
             foreach (var column in _table.Columns)
             {
+                if (!IsColumnVisible(column))
+                    continue;
                 if (column.IsComputed)
                     continue;
                 // Primary keys are included (optional): a row with a key is
@@ -246,7 +263,7 @@ namespace BifrostQL.Core.Schema
             foreach (var joinTable in model.Tables)
             {
                 builder.AppendLine($"input {_table.GetJoinTypeName(joinTable)} {{");
-                foreach (var column in _table.Columns)
+                foreach (var column in VisibleColumns)
                 {
                     builder.AppendLine($"\t{column.GraphQlName} : {joinTable.ColumnFilterTypeName}");
                 }
@@ -294,7 +311,7 @@ namespace BifrostQL.Core.Schema
         {
             StringBuilder builder = new StringBuilder();
             builder.AppendLine($"input {_table.TableFilterTypeName} {{");
-            foreach (var column in _table.Columns)
+            foreach (var column in VisibleColumns)
             {
                 builder.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetFilterInputTypeName(column.EffectiveDataType, _typeMapper)}");
             }

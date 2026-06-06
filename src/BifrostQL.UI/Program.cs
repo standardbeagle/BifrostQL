@@ -106,7 +106,12 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     {
         bifrostOptions = options;
         options.BindConnectionString(connectionString)
-               .BindConfiguration(builder.Configuration.GetSection("BifrostQL"));
+               .BindConfiguration(builder.Configuration.GetSection("BifrostQL"))
+               .AddFilterTransformers(new IFilterTransformer[]
+               {
+                   new SoftDeleteFilterTransformer(),
+                   new TenantFilterTransformer(),
+               });
     });
 
     builder.Services.AddCors();

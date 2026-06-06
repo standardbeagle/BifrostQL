@@ -5,10 +5,11 @@
       "label": "Sales (curated)",
       "metadata": [
         "*.notes { polymorphic-type-column: entity_type; polymorphic-id-column: entity_id; polymorphic-map: company=companies, contact=contacts, deal=deals }",
+        "*.deals { soft-delete: deleted_at }",
         "*.companies.phone { visibility: hidden }",
         "*.companies.address { visibility: hidden }"
       ],
-      "modules": ["polymorphic"]
+      "modules": ["polymorphic", "soft-delete"]
     },
     {
       "name": "admin",

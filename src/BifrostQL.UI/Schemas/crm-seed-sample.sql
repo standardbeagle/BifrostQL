@@ -119,6 +119,12 @@ INSERT INTO deals (title, value, currency, deal_stage_id, company_id, contact_id
 ('Pinnacle Student Analytics', 85000.00, 'USD', 4, 12, 48, '2024-12-31', NULL, 0.75, '2024-05-01 09:00:00', '2024-08-10 10:00:00'),
 ('Nimbus API Gateway', 38000.00, 'USD', 3, 16, 29, '2025-03-31', NULL, 0.50, '2024-07-20 10:00:00', '2024-08-20 10:00:00');
 
+-- Soft-deleted deals (3) -- hidden when soft-delete shaping is active
+INSERT INTO deals (title, value, currency, deal_stage_id, company_id, contact_id, expected_close_date, actual_close_date, probability, created_at, updated_at, deleted_at) VALUES
+('Acme Legacy Migration (cancelled)', 90000.00, 'USD', 6, 1, 1, '2024-04-30', NULL, 0.00, '2024-01-05 09:00:00', '2024-04-10 10:00:00', '2024-04-12 09:00:00'),
+('TechNova Abandoned POC', 25000.00, 'USD', 6, 4, 6, '2024-06-30', NULL, 0.00, '2024-02-15 10:00:00', '2024-05-20 09:00:00', '2024-05-22 14:00:00'),
+('Orbit Dropped Engagement', 60000.00, 'USD', 6, 8, 14, '2024-09-30', NULL, 0.00, '2024-03-01 09:00:00', '2024-07-01 10:00:00', '2024-07-05 11:00:00');
+
 -- Activities (50)
 INSERT INTO activities (type, subject, description, contact_id, deal_id, company_id, due_date, completed_at, created_at) VALUES
 ('call', 'Initial discovery call', 'Discussed pain points and current ERP system.', 1, 1, 1, '2023-11-05', '2023-11-05 10:30:00', '2023-11-01 09:00:00'),

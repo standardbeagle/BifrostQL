@@ -1519,6 +1519,12 @@ INSERT INTO deals (title, value, currency, deal_stage_id, company_id, contact_id
 ('Expansion Training Program', 359738.01, 'USD', 3, 171, 103, '2025-05-23', NULL, 0.50, '2024-10-17 00:00:00', '2025-03-16 00:00:00'),
 ('Strategic Monitoring System', 524751.26, 'USD', 4, 107, 436, '2023-12-13', NULL, 0.75, '2023-10-30 00:00:00', '2024-04-02 00:00:00');
 
+-- Soft-deleted deals (3) -- hidden when soft-delete shaping is active
+INSERT INTO deals (title, value, currency, deal_stage_id, company_id, contact_id, expected_close_date, actual_close_date, probability, created_at, updated_at, deleted_at) VALUES
+('Cancelled Platform Migration', 312000.00, 'USD', 6, 57, 457, '2024-08-16', NULL, 0.00, '2024-05-31 00:00:00', '2024-07-04 00:00:00', '2024-07-06 00:00:00'),
+('Abandoned Integration Suite', 188500.00, 'USD', 6, 126, 326, '2025-01-02', NULL, 0.00, '2024-11-05 00:00:00', '2025-01-10 00:00:00', '2025-01-12 00:00:00'),
+('Dropped Security Audit', 95000.00, 'USD', 6, 99, 382, '2023-12-05', NULL, 0.00, '2023-06-13 00:00:00', '2023-12-16 00:00:00', '2023-12-18 00:00:00');
+
 -- Activities (1000)
 INSERT INTO activities (type, subject, description, contact_id, deal_id, company_id, due_date, completed_at, created_at) VALUES
 ('task', 'Update CRM', 'Confirmed stakeholder alignment for next phase.', 399, 156, 9, '2025-04-12', NULL, '2025-03-22 00:00:00'),

@@ -48,7 +48,8 @@ CREATE TABLE deals (
     actual_close_date TEXT,
     probability REAL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    deleted_at TEXT
 );
 
 CREATE TABLE activities (

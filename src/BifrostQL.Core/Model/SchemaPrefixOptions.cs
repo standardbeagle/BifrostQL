@@ -72,19 +72,19 @@ namespace BifrostQL.Core.Model
         /// </summary>
         public static SchemaPrefixOptions FromMetadata(IDictionary<string, object?> metadata)
         {
-            var enabled = metadata.TryGetValue("schema-prefix", out var enabledVal)
+            var enabled = metadata.TryGetValue(MetadataKeys.Schema.Prefix, out var enabledVal)
                 && string.Equals(enabledVal?.ToString(), "enabled", StringComparison.OrdinalIgnoreCase);
 
             if (!enabled)
                 return Disabled;
 
-            var defaultSchema = metadata.TryGetValue("schema-prefix-default", out var defaultVal)
+            var defaultSchema = metadata.TryGetValue(MetadataKeys.Schema.PrefixDefault, out var defaultVal)
                 && !string.IsNullOrWhiteSpace(defaultVal?.ToString())
                     ? defaultVal!.ToString()!
                     : "dbo";
 
             var format = SchemaPrefixFormat.Underscore;
-            if (metadata.TryGetValue("schema-prefix-format", out var formatVal)
+            if (metadata.TryGetValue(MetadataKeys.Schema.PrefixFormat, out var formatVal)
                 && string.Equals(formatVal?.ToString(), "camelcase", StringComparison.OrdinalIgnoreCase))
             {
                 format = SchemaPrefixFormat.CamelCase;

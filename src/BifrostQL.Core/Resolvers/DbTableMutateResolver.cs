@@ -7,6 +7,7 @@ using BifrostQL.Model;
 using GraphQL;
 using GraphQL.Resolvers;
 using Microsoft.Extensions.DependencyInjection;
+using static BifrostQL.Core.Resolvers.DbParameterBinder;
 
 namespace BifrostQL.Core.Resolvers
 {
@@ -371,32 +372,6 @@ namespace BifrostQL.Core.Resolvers
             }
         }
 
-        private static void AddParameters(DbCommand cmd, Dictionary<string, object?> data)
-        {
-            foreach (var kv in data)
-            {
-                var p = cmd.CreateParameter();
-                p.ParameterName = $"@{kv.Key}";
-                p.Value = kv.Value ?? DBNull.Value;
-                cmd.Parameters.Add(p);
-            }
-        }
-
-        // Binds the parameters carried by a rendered AdditionalFilter. Their
-        // names (@p0, @p1, …) come from SqlParameterCollection and cannot
-        // collide with the @columnName parameters AddParameters binds.
-        private static void AddExtraParameters(DbCommand cmd, IReadOnlyList<SqlParameterInfo>? parameters)
-        {
-            if (parameters == null) return;
-            foreach (var info in parameters)
-            {
-                var p = cmd.CreateParameter();
-                p.ParameterName = info.Name;
-                p.Value = info.Value ?? DBNull.Value;
-                cmd.Parameters.Add(p);
-            }
-        }
-
         // Renders MutationTransformResult.AdditionalFilter into an AND-prefixed
         // WHERE suffix and its bound parameters. Returns an empty suffix when no
         // transformer contributed a filter.
@@ -468,15 +443,5 @@ namespace BifrostQL.Core.Resolvers
             }
         }
 
-        public object? HandleDecimals(object? obj)
-        {
-            if (obj == null)
-                return obj;
-            return obj switch
-            {
-                decimal d => Convert.ToInt64(d),
-                _ => obj,
-            };
-        }
     }
 }

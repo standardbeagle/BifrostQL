@@ -1,4 +1,5 @@
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.Sqlite;
 
@@ -80,7 +81,7 @@ public sealed class SqliteTypeMapper : ITypeMapper
 
     private static string StripPrecision(string dataType)
     {
-        var normalized = dataType.ToLowerInvariant().Trim();
+        var normalized = StringNormalizer.NormalizeType(dataType);
         var parenIdx = normalized.IndexOf('(');
         return parenIdx >= 0 ? normalized.Substring(0, parenIdx).TrimEnd() : normalized;
     }

@@ -311,26 +311,26 @@ public class BifrostUITemplateTests
         _output = output;
     }
 
-    // Resolves src/BifrostQL.UI/Program.cs relative to the test source file
-    // so the suite works regardless of where the repo is cloned (previous
-    // absolute path hardcoded /home/beagle/work/core/bifrost/...).
-    private static string ProgramCsPath([System.Runtime.CompilerServices.CallerFilePath] string sourceFile = "")
+    // Resolves src/BifrostQL.UI/TestDatabaseSchemas.cs relative to the test source
+    // file so the suite works regardless of where the repo is cloned. The test
+    // database schemas live in TestDatabaseSchemas.cs (split out of Program.cs).
+    private static string SchemaSourcePath([System.Runtime.CompilerServices.CallerFilePath] string sourceFile = "")
     {
         var repoRoot = System.IO.Path.GetFullPath(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(sourceFile)!, "..", ".."));
-        return System.IO.Path.Combine(repoRoot, "src", "BifrostQL.UI", "Program.cs");
+        return System.IO.Path.Combine(repoRoot, "src", "BifrostQL.UI", "TestDatabaseSchemas.cs");
     }
 
     [Fact]
     public void NorthwindSchema_ContainsRequiredTables()
     {
         // Test schemas by parsing Program.cs file content
-        var programCs = System.IO.File.ReadAllText(ProgramCsPath());
+        var schemaSource = System.IO.File.ReadAllText(SchemaSourcePath());
 
-        Assert.Contains("CREATE TABLE Categories", programCs);
-        Assert.Contains("CREATE TABLE Products", programCs);
-        Assert.Contains("CREATE TABLE Customers", programCs);
-        Assert.Contains("CREATE TABLE Orders", programCs);
-        Assert.Contains("CREATE TABLE OrderDetails", programCs);
+        Assert.Contains("CREATE TABLE Categories", schemaSource);
+        Assert.Contains("CREATE TABLE Products", schemaSource);
+        Assert.Contains("CREATE TABLE Customers", schemaSource);
+        Assert.Contains("CREATE TABLE Orders", schemaSource);
+        Assert.Contains("CREATE TABLE OrderDetails", schemaSource);
 
         _output.WriteLine("Northwind schema contains all required tables.");
     }
@@ -338,10 +338,10 @@ public class BifrostUITemplateTests
     [Fact]
     public void NorthwindSchema_ContainsForeignKeyRelationships()
     {
-        var programCs = System.IO.File.ReadAllText(ProgramCsPath());
+        var schemaSource = System.IO.File.ReadAllText(SchemaSourcePath());
 
-        Assert.Contains("FOREIGN KEY", programCs);
-        Assert.Contains("REFERENCES", programCs);
+        Assert.Contains("FOREIGN KEY", schemaSource);
+        Assert.Contains("REFERENCES", schemaSource);
 
         _output.WriteLine("Northwind schema contains foreign key relationships.");
     }
@@ -349,12 +349,12 @@ public class BifrostUITemplateTests
     [Fact]
     public void AdventureWorksLiteSchema_ContainsRequiredTables()
     {
-        var programCs = System.IO.File.ReadAllText(ProgramCsPath());
+        var schemaSource = System.IO.File.ReadAllText(SchemaSourcePath());
 
-        Assert.Contains("CREATE TABLE Departments", programCs);
-        Assert.Contains("CREATE TABLE Employees", programCs);
-        Assert.Contains("CREATE TABLE Shifts", programCs);
-        Assert.Contains("CREATE TABLE EmployeeDepartmentHistory", programCs);
+        Assert.Contains("CREATE TABLE Departments", schemaSource);
+        Assert.Contains("CREATE TABLE Employees", schemaSource);
+        Assert.Contains("CREATE TABLE Shifts", schemaSource);
+        Assert.Contains("CREATE TABLE EmployeeDepartmentHistory", schemaSource);
 
         _output.WriteLine("AdventureWorks Lite schema contains all required tables.");
     }
@@ -362,13 +362,13 @@ public class BifrostUITemplateTests
     [Fact]
     public void SimpleBlogSchema_ContainsRequiredTables()
     {
-        var programCs = System.IO.File.ReadAllText(ProgramCsPath());
+        var schemaSource = System.IO.File.ReadAllText(SchemaSourcePath());
 
-        Assert.Contains("CREATE TABLE Users", programCs);
-        Assert.Contains("CREATE TABLE Posts", programCs);
-        Assert.Contains("CREATE TABLE Comments", programCs);
-        Assert.Contains("CREATE TABLE Tags", programCs);
-        Assert.Contains("CREATE TABLE PostTags", programCs);
+        Assert.Contains("CREATE TABLE Users", schemaSource);
+        Assert.Contains("CREATE TABLE Posts", schemaSource);
+        Assert.Contains("CREATE TABLE Comments", schemaSource);
+        Assert.Contains("CREATE TABLE Tags", schemaSource);
+        Assert.Contains("CREATE TABLE PostTags", schemaSource);
 
         _output.WriteLine("Simple Blog schema contains all required tables.");
     }
@@ -376,11 +376,11 @@ public class BifrostUITemplateTests
     [Fact]
     public void SimpleBlogSchema_ContainsManyToManyRelationship()
     {
-        var programCs = System.IO.File.ReadAllText(ProgramCsPath());
+        var schemaSource = System.IO.File.ReadAllText(SchemaSourcePath());
 
         // PostTags table should exist for many-to-many relationship
-        Assert.Contains("PostTags", programCs);
-        Assert.Contains("FOREIGN KEY", programCs);
+        Assert.Contains("PostTags", schemaSource);
+        Assert.Contains("FOREIGN KEY", schemaSource);
 
         _output.WriteLine("Simple Blog schema contains many-to-many relationship.");
     }
@@ -388,11 +388,11 @@ public class BifrostUITemplateTests
     [Fact]
     public void NorthwindData_ContainsSampleRecords()
     {
-        var programCs = System.IO.File.ReadAllText(ProgramCsPath());
+        var schemaSource = System.IO.File.ReadAllText(SchemaSourcePath());
 
-        Assert.Contains("INSERT INTO Categories", programCs);
-        Assert.Contains("INSERT INTO Products", programCs);
-        Assert.Contains("INSERT INTO Customers", programCs);
+        Assert.Contains("INSERT INTO Categories", schemaSource);
+        Assert.Contains("INSERT INTO Products", schemaSource);
+        Assert.Contains("INSERT INTO Customers", schemaSource);
 
         _output.WriteLine("Northwind data contains sample INSERT statements.");
     }
@@ -400,11 +400,11 @@ public class BifrostUITemplateTests
     [Fact]
     public void SimpleBlogData_ContainsSampleRecords()
     {
-        var programCs = System.IO.File.ReadAllText(ProgramCsPath());
+        var schemaSource = System.IO.File.ReadAllText(SchemaSourcePath());
 
-        Assert.Contains("INSERT INTO Users", programCs);
-        Assert.Contains("INSERT INTO Posts", programCs);
-        Assert.Contains("INSERT INTO Comments", programCs);
+        Assert.Contains("INSERT INTO Users", schemaSource);
+        Assert.Contains("INSERT INTO Posts", schemaSource);
+        Assert.Contains("INSERT INTO Comments", schemaSource);
 
         _output.WriteLine("Simple Blog data contains sample INSERT statements.");
     }
@@ -412,10 +412,10 @@ public class BifrostUITemplateTests
     [Fact]
     public void AllSchemas_UseProperSQLSyntax()
     {
-        var programCs = System.IO.File.ReadAllText(ProgramCsPath());
+        var schemaSource = System.IO.File.ReadAllText(SchemaSourcePath());
 
-        Assert.Contains("CREATE TABLE", programCs);
-        Assert.Contains("PRIMARY KEY", programCs);
+        Assert.Contains("CREATE TABLE", schemaSource);
+        Assert.Contains("PRIMARY KEY", schemaSource);
 
         _output.WriteLine("All schemas use proper SQL CREATE TABLE syntax.");
     }

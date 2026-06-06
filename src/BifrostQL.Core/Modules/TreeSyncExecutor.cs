@@ -2,6 +2,7 @@ using System.Data.Common;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
+using static BifrostQL.Core.Resolvers.DbParameterBinder;
 
 namespace BifrostQL.Core.Modules;
 
@@ -158,22 +159,4 @@ public sealed class TreeSyncExecutor
 
     private static bool IsKey(IDbTable table, string column)
         => table.ColumnLookup.TryGetValue(column, out var col) && col.IsPrimaryKey;
-
-    private static void AddParameters(DbCommand cmd, Dictionary<string, object?> data)
-    {
-        foreach (var kv in data)
-        {
-            var p = cmd.CreateParameter();
-            p.ParameterName = $"@{kv.Key}";
-            p.Value = kv.Value ?? DBNull.Value;
-            cmd.Parameters.Add(p);
-        }
-    }
-
-    private static object? HandleDecimals(object? value) => value switch
-    {
-        null => null,
-        decimal d => Convert.ToInt64(d),
-        _ => value,
-    };
 }

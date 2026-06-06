@@ -1,4 +1,5 @@
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.MySql;
 
@@ -35,7 +36,7 @@ public sealed class MySqlTypeMapper : ITypeMapper
     /// </remarks>
     public string GetGraphQlType(string dataType)
     {
-        return dataType.ToLowerInvariant().Trim() switch
+        return StringNormalizer.NormalizeType(dataType) switch
         {
             "int" or "integer" or "mediumint" => "Int",
             "smallint" => "Short",
@@ -60,7 +61,7 @@ public sealed class MySqlTypeMapper : ITypeMapper
     /// </remarks>
     public string GetGraphQlInsertTypeName(string dataType, bool isNullable = false)
     {
-        var normalized = dataType.ToLowerInvariant().Trim();
+        var normalized = StringNormalizer.NormalizeType(dataType);
         if (normalized is "datetime" or "timestamp")
             return $"String{(isNullable ? "" : "!")}";
 
@@ -73,5 +74,5 @@ public sealed class MySqlTypeMapper : ITypeMapper
 
     /// <inheritdoc />
     public bool IsSupported(string dataType)
-        => KnownTypes.Contains(dataType.ToLowerInvariant().Trim());
+        => KnownTypes.Contains(StringNormalizer.NormalizeType(dataType));
 }

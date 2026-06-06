@@ -173,30 +173,14 @@ public abstract class DatabaseResolverBase : ResolverBase
     }
 
     /// <summary>
-    /// Adds parameters to a database command from a dictionary.
+    /// Adds <c>@columnName</c> parameters to a command from a dictionary.
     /// </summary>
     protected static void AddParameters(DbCommand cmd, Dictionary<string, object?> parameters)
-    {
-        foreach (var kv in parameters)
-        {
-            var p = cmd.CreateParameter();
-            p.ParameterName = $"@{kv.Key}";
-            p.Value = kv.Value ?? DBNull.Value;
-            cmd.Parameters.Add(p);
-        }
-    }
+        => DbParameterBinder.AddParameters(cmd, parameters);
 
     /// <summary>
-    /// Handles decimal to long conversion for identity values.
+    /// Coerces decimal identity values to long.
     /// </summary>
     protected static object? HandleDecimals(object? obj)
-    {
-        if (obj == null)
-            return obj;
-        return obj switch
-        {
-            decimal d => Convert.ToInt64(d),
-            _ => obj,
-        };
-    }
+        => DbParameterBinder.HandleDecimals(obj);
 }

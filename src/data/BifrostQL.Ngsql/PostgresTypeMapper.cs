@@ -1,4 +1,5 @@
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.Ngsql;
 
@@ -45,7 +46,7 @@ public sealed class PostgresTypeMapper : ITypeMapper
     /// </remarks>
     public string GetGraphQlType(string dataType)
     {
-        return dataType.ToLowerInvariant().Trim() switch
+        return StringNormalizer.NormalizeType(dataType) switch
         {
             "integer" or "int" or "int4" or "serial" => "Int",
             "smallint" or "int2" or "smallserial" => "Short",
@@ -70,7 +71,7 @@ public sealed class PostgresTypeMapper : ITypeMapper
     /// </remarks>
     public string GetGraphQlInsertTypeName(string dataType, bool isNullable = false)
     {
-        var normalized = dataType.ToLowerInvariant().Trim();
+        var normalized = StringNormalizer.NormalizeType(dataType);
         if (normalized is "timestamp without time zone" or "timestamp" or
             "timestamp with time zone" or "timestamptz")
             return $"String{(isNullable ? "" : "!")}";
@@ -84,5 +85,5 @@ public sealed class PostgresTypeMapper : ITypeMapper
 
     /// <inheritdoc />
     public bool IsSupported(string dataType)
-        => KnownTypes.Contains(dataType.ToLowerInvariant().Trim());
+        => KnownTypes.Contains(StringNormalizer.NormalizeType(dataType));
 }

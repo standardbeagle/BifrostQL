@@ -35,6 +35,14 @@ import {
 import { SqlConsole } from './SqlConsole';
 import { QueryBuilderPane } from './designer/QueryBuilderPane';
 import { isSqlBridgeAvailable } from './lib/sql-bridge';
+import { ProfileDropdown } from './profiles/ProfileDropdown';
+import {
+  fetchProfiles,
+  resolveActiveProfile,
+  saveActiveProfileId,
+  DEFAULT_PROFILES,
+} from './profiles/profiles';
+import type { ApiProfile } from './profiles/types';
 import './connection/connection.css';
 import './app.css';
 
@@ -133,6 +141,12 @@ export default function App() {
   const [isLaunching, setIsLaunching] = useState(false);
   const [launchProgress, setLaunchProgress] = useState('');
   const [editorKey, setEditorKey] = useState(0);
+  // API profiles (slice 6a endpoint). The picker re-points the embedded editor
+  // at `?profile=<serverProfile>` so the server serves that profile's schema.
+  const [apiProfiles, setApiProfiles] = useState<ApiProfile[]>(DEFAULT_PROFILES);
+  const [activeProfileId, setActiveProfileId] = useState<string>(
+    () => resolveActiveProfile(DEFAULT_PROFILES).id,
+  );
   // Editor pane toggle: GraphQL editor (default) vs raw SQL console. The SQL
   // console rides the Photino bridge, so it's only offered inside the desktop app.
   const [editorPane, setEditorPane] = useState<'graphql' | 'sql' | 'builder'>('graphql');
@@ -248,7 +262,34 @@ export default function App() {
     return () => clearInterval(id);
   }, [currentView]);
 
-  const graphqlUri = `${window.location.origin}/graphql`;
+  // Refresh the profile list whenever the active connection changes. The
+  // server schema is connection-scoped, so each connection may expose a
+  // different set of module profiles. On failure fetchProfiles() falls back to
+  // DEFAULT_PROFILES (single raw entry → picker disabled).
+  const connectionKey = connectionInfo?.id ?? null;
+  useEffect(() => {
+    let cancelled = false;
+    fetchProfiles().then((fetched) => {
+      if (cancelled) return;
+      setApiProfiles(fetched);
+      setActiveProfileId(resolveActiveProfile(fetched).id);
+      setEditorKey((k) => k + 1);
+    });
+    return () => { cancelled = true; };
+  }, [connectionKey]);
+
+  const handleSelectProfile = useCallback((id: string) => {
+    saveActiveProfileId(id);
+    setActiveProfileId(id);
+    // Remount the editor so it re-introspects the newly selected profile's
+    // schema from the profile-scoped GraphQL endpoint.
+    setEditorKey((k) => k + 1);
+  }, []);
+
+  const activeProfile = apiProfiles.find((p) => p.id === activeProfileId) ?? apiProfiles[0];
+  const graphqlUri = activeProfile.serverProfile
+    ? `${window.location.origin}/graphql?profile=${encodeURIComponent(activeProfile.serverProfile)}`
+    : `${window.location.origin}/graphql`;
 
   const activateSavedVaultEntry = useCallback(async (
     vaultName: string,
@@ -655,6 +696,11 @@ export default function App() {
             <span className="bifrost-database-info">{connectionInfo.name}</span>
           </>}
           <div className="bifrost-header__spacer" />
+          <ProfileDropdown
+            profiles={apiProfiles}
+            activeId={activeProfileId}
+            onSelect={handleSelectProfile}
+          />
           <div
             className="bifrost-transport-toggle"
             role="group"

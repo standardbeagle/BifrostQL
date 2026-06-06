@@ -15,7 +15,9 @@ project {
 
 scripts {
     dev-lib {
-        run "npx vite build --watch"
+        // Use pnpx (not npx): npx mis-resolves vite under the pnpm workspace
+        // ("vite: not found"); pnpx resolves the workspace bin correctly.
+        run "pnpx vite build --watch"
         cwd "examples/edit-db"
         autostart true
     }
@@ -27,7 +29,7 @@ scripts {
         url-matchers "Now listening on {url}"
     }
     dev-frontend {
-        run "npx vite"
+        run "pnpx vite"
         cwd "src/BifrostQL.UI/frontend"
         autostart true
         depends-on "dev-backend"

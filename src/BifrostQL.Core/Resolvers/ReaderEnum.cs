@@ -55,7 +55,25 @@ namespace BifrostQL.Core.Resolvers
             var tableData = _tables[join.JoinName];
 
             if (join.QueryType == QueryType.Join)
-                return ValueTask.FromResult<object?>(new SubTableEnumerable(this, key, tableData));
+            {
+                var subTable = new SubTableEnumerable(this, key, tableData);
+                // Paged nested collections (multi-links) surface the same
+                // wrapper as top-level queries: {total, offset, limit, data}.
+                // The per-parent total is carried on the window column; read it
+                // from the first matched row, or 0 when the parent has none.
+                if (join.ConnectedTable.IncludeResult)
+                {
+                    var total = ReadPerParentTotal(tableData, key);
+                    return ValueTask.FromResult<object?>(new TableResult
+                    {
+                        Total = total,
+                        Offset = join.ConnectedTable.Offset,
+                        Limit = join.ConnectedTable.Limit,
+                        Data = subTable,
+                    });
+                }
+                return ValueTask.FromResult<object?>(subTable);
+            }
             if (join.QueryType == QueryType.Single)
             {
                 var data = JoinKeyMatcher.FindRow(tableData, key);
@@ -63,6 +81,18 @@ namespace BifrostQL.Core.Resolvers
             }
 
             throw new BifrostExecutionError("unexpected Join type: " + join.JoinName);
+        }
+
+        private static int ReadPerParentTotal(
+            (IDictionary<string, int> index, IList<object?[]> data) tableData,
+            object?[] key)
+        {
+            if (!tableData.index.TryGetValue(QueryModel.PagedKeys.Total, out var totalIdx))
+                return 0;
+            var row = JoinKeyMatcher.FindRow(tableData, key);
+            if (row == null) return 0;
+            var raw = row[totalIdx];
+            return raw is null or DBNull ? 0 : Convert.ToInt32(raw);
         }
 
         public IEnumerator<object?> GetEnumerator()

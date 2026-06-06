@@ -124,13 +124,53 @@ namespace BifrostQL.Core.QueryModel
             var (relationSql, relationParams) = tableJoin.EmitOnClause(dialect, parameters, "a", "b");
             var srcProjection = tableJoin.EmitSrcProjection(dialect, "a");
 
-            var wrap = $"SELECT {srcProjection}, {joinColumnSql} FROM ({main.Sql}) {ea}";
-            wrap += $" INNER JOIN {dialect.EscapeIdentifier(tableJoin.ConnectedTable.TableName)} {eb} ON {relationSql}";
+            var projection = $"{srcProjection}, {joinColumnSql}";
+            var fromClause = $"FROM ({main.Sql}) {ea}"
+                + $" INNER JOIN {dialect.EscapeIdentifier(tableJoin.ConnectedTable.TableName)} {eb} ON {relationSql}";
+            var wrap = $"SELECT {projection} {fromClause}";
 
             if (tableJoin.QueryType == QueryType.Single)
                 return new ParameterizedSql(wrap, main.Parameters.Concat(relationParams).ToList());
 
             var filter = tableJoin.ConnectedTable.GetFilterSqlParameterized(dbModel, dialect, parameters, "b");
+
+            // Per-parent paged collection: compute a window partitioned by the
+            // parent join-id columns so each parent gets its own row-number and
+            // total, then filter on the row number. This keeps parent A's limit
+            // from consuming parent B's rows — a flat global LIMIT cannot do
+            // that. The non-paged path (single-link or m2m array) keeps the
+            // historical global pagination.
+            if (tableJoin.ConnectedTable.IncludeResult)
+            {
+                // Partition by the parent key columns as exposed by the inner
+                // `a` sub-query (JoinId / JoinId_<i>). Order by the child sort
+                // columns against the `b` alias — both are valid at the join
+                // level where the window is computed.
+                var srcCount = tableJoin.FromColumns.Count;
+                var partitionCols = Enumerable.Range(0, srcCount)
+                    .Select(i => $"{ea}.{dialect.EscapeIdentifier(JoinKeyNames.JoinIdAt(i, srcCount))}");
+                var windowOrder = tableJoin.ConnectedTable.Sort.Any()
+                    ? tableJoin.ConnectedTable.Sort.Select(s => s switch
+                    {
+                        { } when s.EndsWith("_asc") => $"{eb}.{dialect.EscapeIdentifier(s[..^4])} asc",
+                        { } when s.EndsWith("_desc") => $"{eb}.{dialect.EscapeIdentifier(s[..^5])} desc",
+                        _ => throw new BifrostExecutionError($"Unsupported sort token '{s}'; expected suffix '_asc' or '_desc'.")
+                    })
+                    : null;
+
+                var pagedSql = dialect.ConnectedPaging(
+                    projection,
+                    fromClause + filter.Sql,
+                    partitionCols,
+                    windowOrder,
+                    PagedKeys.RowNumber,
+                    PagedKeys.Total,
+                    tableJoin.ConnectedTable.Offset,
+                    tableJoin.ConnectedTable.Limit);
+
+                return new ParameterizedSql(pagedSql, main.Parameters.Concat(relationParams).Concat(filter.Parameters).ToList());
+            }
+
             var sortCols = tableJoin.ConnectedTable.Sort.Any() ? tableJoin.ConnectedTable.Sort.Select(s => s switch
             {
                 { } when s.EndsWith("_asc") => dialect.EscapeIdentifier(s[..^4]) + " asc",

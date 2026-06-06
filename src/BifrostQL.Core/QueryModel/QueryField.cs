@@ -66,6 +66,16 @@ namespace BifrostQL.Core.QueryModel
             var dbTable = model.GetTableByFullGraphQlName(tableName);
             var rawSort = (IEnumerable<object?>?)Arguments.FirstOrDefault(a => a.Name == "sort")?.Value;
             var sort = rawSort?.Cast<string>()?.ToList() ?? new List<string>();
+
+            // Nested multi-link collections now carry the same paged contract as
+            // top-level queries: a `<child>_paged` wrapper with a `data` selection
+            // plus `total/offset/limit`. Flagging IncludeResult here makes the
+            // child node emit a per-parent total and routes its `data` sub-selection
+            // through the same unwrapping the top-level query uses below.
+            // Single-links keep their bare object shape; many-to-many keep arrays.
+            if (parent != null && IsMultiLink(model, parent, Name))
+                IncludeResult = true;
+
             var dataFields = Fields.FirstOrDefault(f => f.Name == "data")?.Fields ?? new List<IQueryField>();
             var queryFields = (IncludeResult ? dataFields : Fields);
             var standardFields = queryFields.Where(f => f.Type != FieldType.System).ToList();
@@ -108,6 +118,19 @@ namespace BifrostQL.Core.QueryModel
             if (parent == null)
                 result.ConnectLinks(model);
             return result;
+        }
+
+        private static bool IsMultiLink(IDbModel model, IQueryField parent, string fieldName)
+        {
+            var normalizedFieldName = NormalizeColumnName(fieldName);
+            var parentTable = model.GetTableByFullGraphQlName(NormalizeColumnName(parent.Name));
+            // A single-link sharing the field name (self-referential FK) takes
+            // precedence — it stays a bare object, so don't treat it as paged.
+            if (parentTable.SingleLinks.TryGetValue(normalizedFieldName, out _)
+                || parentTable.SingleLinks.Values.Any(l => string.Equals(l.ParentFieldName, normalizedFieldName, StringComparison.OrdinalIgnoreCase)))
+                return false;
+            return parentTable.MultiLinks.TryGetValue(normalizedFieldName, out _)
+                || parentTable.MultiLinks.Values.Any(l => string.Equals(l.ChildFieldName, normalizedFieldName, StringComparison.OrdinalIgnoreCase));
         }
 
         private static string ResolveTableName(IDbModel model, IQueryField? parent, string fieldName)

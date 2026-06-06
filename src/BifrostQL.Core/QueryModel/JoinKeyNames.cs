@@ -22,4 +22,17 @@ namespace BifrostQL.Core.QueryModel
         public static string SrcIdAt(int index, int count) =>
             count <= 1 ? SrcIdSingle : $"{SrcIdSingle}_{index}";
     }
+
+    /// <summary>
+    /// Column aliases carried by per-parent paged nested collections. The
+    /// window-paging SQL projects these alongside the child columns; the
+    /// result reader strips them from the surfaced rows and reads
+    /// <see cref="Total"/> for the paged wrapper. Single source of truth so the
+    /// SQL emitter and ReaderEnum stay in sync.
+    /// </summary>
+    public static class PagedKeys
+    {
+        public const string RowNumber = "__rn";
+        public const string Total = "__total";
+    }
 }

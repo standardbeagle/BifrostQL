@@ -51,6 +51,57 @@ public interface ISqlDialect
     string Pagination(IEnumerable<string>? sortColumns, int? offset, int? limit);
 
     /// <summary>
+    /// Builds a per-parent paged connected-collection query. Each parent gets
+    /// its own paged window: a per-parent row number (for offset/limit) and a
+    /// per-parent total carried as a column. The window columns are computed at
+    /// the join level — where the source (<paramref name="partitionColumns"/>)
+    /// and child (<paramref name="orderColumns"/>) columns are directly
+    /// available — then an outer SELECT filters on the row number. This keeps
+    /// parent A's limit from consuming parent B's rows; a flat global LIMIT
+    /// cannot do that.
+    ///
+    /// All four supported dialects implement the SQL:2003 window functions
+    /// (ROW_NUMBER / COUNT OVER) identically, so the default suffices for every
+    /// dialect; override only if a dialect needs different syntax.
+    /// </summary>
+    /// <param name="projection">The inner SELECT column list (source ids + child columns).</param>
+    /// <param name="fromAndWhere">The FROM/JOIN/WHERE body (no SELECT, no ORDER BY/LIMIT).</param>
+    /// <param name="partitionColumns">Partition-by expressions valid in the inner FROM (parent join-id columns).</param>
+    /// <param name="orderColumns">ORDER BY expressions valid in the inner FROM, or null for a stable fallback.</param>
+    /// <param name="rowNumberAlias">Alias for the per-parent row number column.</param>
+    /// <param name="totalAlias">Alias for the per-parent total column.</param>
+    /// <param name="offset">Rows to skip per parent (null → 0).</param>
+    /// <param name="limit">Max rows per parent (null → 100 default, -1 → unlimited).</param>
+    string ConnectedPaging(
+        string projection,
+        string fromAndWhere,
+        IEnumerable<string> partitionColumns,
+        IEnumerable<string>? orderColumns,
+        string rowNumberAlias,
+        string totalAlias,
+        int? offset,
+        int? limit)
+    {
+        var partition = string.Join(", ", partitionColumns);
+        var order = orderColumns?.Any() == true
+            ? string.Join(", ", orderColumns)
+            : "(SELECT 1)";
+        var rn = EscapeIdentifier(rowNumberAlias);
+        var total = EscapeIdentifier(totalAlias);
+        var window =
+            $"SELECT {projection}, ROW_NUMBER() OVER (PARTITION BY {partition} ORDER BY {order}) AS {rn}, " +
+            $"COUNT(*) OVER (PARTITION BY {partition}) AS {total} {fromAndWhere}";
+
+        var actualLimit = limit switch { null => 100, -1 => (int?)null, _ => limit };
+        var actualOffset = offset ?? 0;
+        var lower = actualOffset + 1;
+        var rnFilter = actualLimit.HasValue
+            ? $"{rn} BETWEEN {lower} AND {actualOffset + actualLimit.Value}"
+            : $"{rn} >= {lower}";
+        return $"SELECT * FROM ({window}) {EscapeIdentifier("p")} WHERE {rnFilter}";
+    }
+
+    /// <summary>
     /// The prefix character for parameterized query parameters. All dialects use "@".
     /// </summary>
     string ParameterPrefix { get; }

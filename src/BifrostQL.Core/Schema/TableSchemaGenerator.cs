@@ -90,7 +90,8 @@ namespace BifrostQL.Core.Schema
             {
                 var fieldName = link.Value.ChildFieldName;
                 if (!emittedLinkFields.Add(fieldName)) continue;
-                builder.AppendLine($"\t{fieldName}(filter: {link.Value.ChildTable.TableFilterTypeName}) : [{link.Value.ChildTable.GraphQlName}]");
+                var child = link.Value.ChildTable;
+                builder.AppendLine($"\t{fieldName}(filter: {child.TableFilterTypeName}, limit: Int, offset: Int, sort: [{child.TableColumnSortEnumName}!]) : {child.GraphQlName}_paged");
             }
             foreach (var link in _table.ManyToManyLinks)
             {

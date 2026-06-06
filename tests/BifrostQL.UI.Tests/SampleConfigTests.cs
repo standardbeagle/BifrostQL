@@ -11,33 +11,39 @@ namespace BifrostQL.UI.Tests;
 public class SampleConfigTests
 {
     [Fact]
-    public void LoadSampleConfig_Crm_ParsesSalesAndAdminProfiles()
+    public void LoadSampleConfig_Crm_ParsesShowcaseProfile()
     {
         // Act
         var json = QuickstartSchemas.LoadSampleConfig("crm");
 
-        // Assert: the embedded resource exists and deserializes to two profiles.
+        // Assert: the embedded resource exists and deserializes to a single
+        // config-driven showcase profile (the dropdown prepends the synthesized
+        // raw default, so the user sees exactly two options).
         json.Should().NotBeNull();
 
         var doc = JsonDocument.Parse(json!);
         var profiles = doc.RootElement.GetProperty("profiles");
-        profiles.GetArrayLength().Should().Be(2);
+        profiles.GetArrayLength().Should().Be(1);
 
-        var names = profiles.EnumerateArray()
-            .Select(p => p.GetProperty("name").GetString())
-            .ToArray();
-        names.Should().BeEquivalentTo("sales", "admin");
+        var showcase = profiles.EnumerateArray().Single();
+        showcase.GetProperty("name").GetString().Should().Be("showcase");
 
-        // The sales profile hides curated columns and opts into the notes join.
-        var sales = profiles.EnumerateArray()
-            .Single(p => p.GetProperty("name").GetString() == "sales");
-        var salesMetadata = sales.GetProperty("metadata")
+        // The showcase profile demonstrates the database-level config capabilities:
+        // a polymorphic join, soft-delete shaping, and hidden columns.
+        var metadata = showcase.GetProperty("metadata")
             .EnumerateArray()
             .Select(m => m.GetString())
             .ToArray();
 
-        salesMetadata.Should().Contain(m => m!.Contains("visibility: hidden"));
-        salesMetadata.Should().Contain(m => m!.Contains("polymorphic-map: company=companies"));
+        metadata.Should().Contain(m => m!.Contains("polymorphic-map: company=companies"));
+        metadata.Should().Contain(m => m!.Contains("soft-delete: deleted_at"));
+        metadata.Should().Contain(m => m!.Contains("visibility: hidden"));
+
+        var modules = showcase.GetProperty("modules")
+            .EnumerateArray()
+            .Select(m => m.GetString())
+            .ToArray();
+        modules.Should().BeEquivalentTo("polymorphic", "soft-delete");
     }
 
     [Fact]

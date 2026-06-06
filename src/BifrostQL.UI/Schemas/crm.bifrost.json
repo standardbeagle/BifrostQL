@@ -1,23 +1,17 @@
 {
   "profiles": [
     {
-      "name": "sales",
-      "label": "Sales (curated)",
+      "name": "showcase",
+      "label": "Showcase (config-driven)",
       "metadata": [
         "*.notes { polymorphic-type-column: entity_type; polymorphic-id-column: entity_id; polymorphic-map: company=companies, contact=contacts, deal=deals }",
         "*.deals { soft-delete: deleted_at }",
-        "*.companies.phone { visibility: hidden }",
-        "*.companies.address { visibility: hidden }"
+        "*.companies.created_at { visibility: hidden }",
+        "*.companies.updated_at { visibility: hidden }",
+        "*.contacts.created_at { visibility: hidden }",
+        "*.contacts.updated_at { visibility: hidden }"
       ],
       "modules": ["polymorphic", "soft-delete"]
-    },
-    {
-      "name": "admin",
-      "label": "Admin (full)",
-      "metadata": [
-        "*.notes { polymorphic-type-column: entity_type; polymorphic-id-column: entity_id; polymorphic-map: company=companies, contact=contacts, deal=deals }"
-      ],
-      "modules": ["polymorphic"]
     }
   ]
 }

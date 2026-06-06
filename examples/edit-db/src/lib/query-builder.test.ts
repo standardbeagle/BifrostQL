@@ -518,6 +518,78 @@ describe('buildQuery', () => {
         expect(q).toContain('course_id: { _eq: $id}');
     });
 
+    it('scopes a polymorphic child drill-down by the discriminator', () => {
+        // Arrange: parent (companies) owns a polymorphic multi-join to the shared notes table
+        const companies = makeTable({
+            name: 'companies',
+            graphQlName: 'companies',
+            primaryKeys: ['id'],
+            columns: [makeColumn({ name: 'id', paramType: 'Int!', isPrimaryKey: true })],
+            multiJoins: [{
+                name: 'notes',
+                sourceColumnNames: ['id'],
+                destinationTable: 'notes',
+                destinationColumnNames: ['entity_id'],
+                isPolymorphic: true,
+                polymorphicTypeColumn: 'entity_type',
+                polymorphicTypeValue: 'company',
+            }],
+        });
+        const notes = makeTable({
+            name: 'notes',
+            graphQlName: 'notes',
+            primaryKeys: ['note_id'],
+            columns: [
+                makeColumn({ name: 'note_id', paramType: 'Int!', isPrimaryKey: true }),
+                makeColumn({ name: 'entity_id', paramType: 'Int' }),
+                makeColumn({ name: 'entity_type', paramType: 'String' }),
+                makeColumn({ name: 'body', paramType: 'String' }),
+            ],
+        });
+        const polySchema = makeSchema([companies, notes]);
+
+        // Act: drill into companies.notes from company id=5 via the entity_id column
+        const q = buildQuery(notes, polySchema, '', [], '5', 'companies', 'entity_id')!;
+
+        // Assert: both the id and the discriminator predicate are present
+        expect(q).toContain('entity_id: { _eq: $id}');
+        expect(q).toContain('entity_type: {_eq: "company"}');
+        expect(q).toContain('{and: [{ entity_id: { _eq: $id}}, {entity_type: {_eq: "company"}}]}');
+    });
+
+    it('leaves a non-polymorphic child drill-down unchanged', () => {
+        // Arrange: parent multi-join WITHOUT polymorphic flags
+        const orders = makeTable({
+            name: 'orders',
+            graphQlName: 'orders',
+            primaryKeys: ['order_id'],
+            columns: [
+                makeColumn({ name: 'order_id', paramType: 'Int!', isPrimaryKey: true }),
+                makeColumn({ name: 'customer_id', paramType: 'Int' }),
+            ],
+        });
+        const customers = makeTable({
+            name: 'customers',
+            graphQlName: 'customers',
+            primaryKeys: ['customer_id'],
+            columns: [makeColumn({ name: 'customer_id', paramType: 'Int!', isPrimaryKey: true })],
+            multiJoins: [{
+                name: 'orders',
+                sourceColumnNames: ['customer_id'],
+                destinationTable: 'orders',
+                destinationColumnNames: ['customer_id'],
+            }],
+        });
+        const plainSchema = makeSchema([customers, orders]);
+
+        // Act
+        const q = buildQuery(orders, plainSchema, '', [], '7', 'customers', 'customer_id')!;
+
+        // Assert: id-only filter, no discriminator
+        expect(q).toContain('{ customer_id: { _eq: $id}}');
+        expect(q).not.toContain('entity_type');
+    });
+
     it('includes multi-join child fields', () => {
         const assignments = makeTable({
             name: 'assignments',

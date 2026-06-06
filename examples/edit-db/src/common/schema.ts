@@ -70,6 +70,9 @@ query dbSchema {
       sourceColumnNames
       destinationTable
       destinationColumnNames
+      isPolymorphic
+      polymorphicTypeColumn
+      polymorphicTypeValue
     }
     singleJoins {
       name

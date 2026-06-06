@@ -103,6 +103,16 @@ export interface Join {
   destinationTable: string;
   /** Column names in the target table */
   destinationColumnNames: string[];
+  /**
+   * True when the target is a shared polymorphic child table keyed by a
+   * discriminator column plus an id column (e.g. notes keyed by entity_type +
+   * entity_id). Only present on multi-joins; absent/false on plain FK joins.
+   */
+  isPolymorphic?: boolean;
+  /** Discriminator column on the child table (e.g. "entity_type"). Set when isPolymorphic. */
+  polymorphicTypeColumn?: string;
+  /** Discriminator value identifying this parent's rows (e.g. "company"). Set when isPolymorphic. */
+  polymorphicTypeValue?: string;
 }
 
 /**

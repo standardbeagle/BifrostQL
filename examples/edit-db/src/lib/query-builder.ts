@@ -6,6 +6,7 @@
 import type { Table, Column, Join, Schema } from '../types/schema';
 import type { ColumnFiltersState } from '@tanstack/react-table';
 import { rowIdOf, buildPkEqFilter, parsePkRoute } from './row-id';
+import { buildChildDrillDownFilter, findChildMultiJoin } from './polymorphic';
 
 export interface FilterResult {
     variables: Record<string, unknown>;
@@ -327,12 +328,19 @@ export function buildQuery(
         const idType = fkCol ? getGraphQlType(fkCol.paramType) : "Int";
 
         if (fkColumn) {
-            // Direct FK filter — still a single column on the child side
+            // Direct FK filter — single column on the child side. For a POLYMORPHIC
+            // child (shared table keyed by discriminator + id) the id column alone
+            // leaks other parents' rows that share the id value, so add the parent
+            // table's discriminator predicate when the relationship is polymorphic.
             param = `, $id: ${idType}` + param;
+            const parentMultiJoin = tableFilter
+                ? findChildMultiJoin(schema.findTable(tableFilter)?.multiJoins, table.graphQlName, fkColumn)
+                : undefined;
+            const childFilter = buildChildDrillDownFilter(fkColumn, parentMultiJoin ?? {});
             if (filterText)
-                filterText = `{and: [${filterText}, { ${fkColumn}: { _eq: $id}} ]}`;
+                filterText = `{and: [${filterText}, ${childFilter} ]}`;
             else
-                filterText = `{ ${fkColumn}: { _eq: $id}}`;
+                filterText = childFilter;
         } else {
             // Fallback: nested filter through join using the parent table's PK
             const parentTable = schema.findTable(tableFilter!);

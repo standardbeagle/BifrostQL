@@ -130,6 +130,9 @@ namespace BifrostQL.Core.Resolvers
                 foreach (var multiLink in table.MultiLinks)
                     tableType.FieldFor(multiLink.Value.ChildFieldName).Resolver = this;
 
+                foreach (var m2mLink in table.ManyToManyLinks)
+                    tableType.FieldFor(m2mLink.Value.TargetTable.GraphQlName).Resolver = this;
+
                 // Previously this method also looped over every table pair
                 // and wired `_join_<table>` / `_single_<table>` resolvers.
                 // The schema generator never emits those per-pair fields

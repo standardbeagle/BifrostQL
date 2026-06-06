@@ -121,12 +121,32 @@ namespace BifrostQL.Core.QueryModel
             var joinColumnSql = string.Join(",",
                 tableJoin.ConnectedTable.FullColumnNames.Select(c => $"{eb}.{dialect.EscapeIdentifier(c.DbDbName)} AS {dialect.EscapeIdentifier(c.GraphQlDbName)}"));
 
-            var (relationSql, relationParams) = tableJoin.EmitOnClause(dialect, parameters, "a", "b");
             var srcProjection = tableJoin.EmitSrcProjection(dialect, "a");
-
             var projection = $"{srcProjection}, {joinColumnSql}";
-            var fromClause = $"FROM ({main.Sql}) {ea}"
-                + $" INNER JOIN {dialect.EscapeIdentifier(tableJoin.ConnectedTable.TableName)} {eb} ON {relationSql}";
+
+            string fromClause;
+            IReadOnlyList<SqlParameterInfo> relationParams;
+            if (tableJoin.Bridge is { } bridge)
+            {
+                // Many-to-many: bridge source -> junction -> target. src_id stays
+                // the source key (a.JoinId), so the collection is keyed and
+                // window-paged per source parent just like a multi-link.
+                var ej = dialect.EscapeIdentifier("j");
+                var srcOnClause = string.Join(" AND ", Enumerable.Range(0, tableJoin.FromColumns.Count)
+                    .Select(i => $"{ea}.{dialect.EscapeIdentifier(JoinKeyNames.JoinIdAt(i, tableJoin.FromColumns.Count))} = {ej}.{dialect.EscapeIdentifier(bridge.JunctionSourceColumn)}"));
+                var tgtOnClause = $"{ej}.{dialect.EscapeIdentifier(bridge.JunctionTargetColumn)} = {eb}.{dialect.EscapeIdentifier(tableJoin.ConnectedColumn)}";
+                fromClause = $"FROM ({main.Sql}) {ea}"
+                    + $" INNER JOIN {dialect.EscapeIdentifier(bridge.JunctionTable)} {ej} ON {srcOnClause}"
+                    + $" INNER JOIN {dialect.EscapeIdentifier(tableJoin.ConnectedTable.TableName)} {eb} ON {tgtOnClause}";
+                relationParams = Array.Empty<SqlParameterInfo>();
+            }
+            else
+            {
+                var (relationSql, rp) = tableJoin.EmitOnClause(dialect, parameters, "a", "b");
+                relationParams = rp;
+                fromClause = $"FROM ({main.Sql}) {ea}"
+                    + $" INNER JOIN {dialect.EscapeIdentifier(tableJoin.ConnectedTable.TableName)} {eb} ON {relationSql}";
+            }
             var wrap = $"SELECT {projection} {fromClause}";
 
             if (tableJoin.QueryType == QueryType.Single)
@@ -312,41 +332,30 @@ namespace BifrostQL.Core.QueryModel
                 }
                 if (thisDto.ManyToManyLinks.TryGetValue(link.GraphQlName, out var m2mLink))
                 {
-                    // Create a junction query that selects the FK column to the target
-                    var junctionQuery = new GqlObjectQuery
-                    {
-                        DbTable = m2mLink.JunctionTable,
-                        TableName = m2mLink.JunctionTable.DbName,
-                        SchemaName = m2mLink.JunctionTable.TableSchema,
-                        GraphQlName = m2mLink.JunctionTable.GraphQlName,
-                        Path = $"{Path}->{m2mLink.JunctionTable.GraphQlName}",
-                        QueryType = QueryType.Standard,
-                        ScalarColumns = { new GqlObjectColumn(m2mLink.JunctionTargetColumn.ColumnName) },
-                    };
-                    // First hop: source -> junction (OneToMany)
-                    var junctionJoin = new TableJoin
-                    {
-                        Name = m2mLink.JunctionTable.GraphQlName,
-                        ConnectedTable = junctionQuery,
-                        ConnectedColumn = m2mLink.JunctionSourceColumn.ColumnName,
-                        FromTable = this,
-                        FromColumn = m2mLink.SourceColumn.ColumnName,
-                        QueryType = QueryType.Join,
-                    };
-                    // Second hop: junction -> target (ManyToOne via junction FK)
+                    // Single source->target join that bridges through the junction
+                    // table. Keying by the source key (src_id = source column) keeps
+                    // the collection per-parent and lets the same window-paging the
+                    // multi-link path uses partition by the source — a two-node
+                    // junction->target chain would instead key by the target row
+                    // and lose the source partition.
                     link.TableName = m2mLink.TargetTable.DbName;
-                    var targetJoin = new TableJoin
+                    var join = new TableJoin
                     {
                         Alias = link.Alias,
                         Name = link.GraphQlName,
                         ConnectedTable = link,
                         ConnectedColumn = m2mLink.TargetColumn.ColumnName,
-                        FromTable = junctionQuery,
-                        FromColumn = m2mLink.JunctionTargetColumn.ColumnName,
+                        FromTable = this,
+                        FromColumn = m2mLink.SourceColumn.ColumnName,
                         QueryType = QueryType.Join,
+                        Bridge = new JunctionBridge
+                        {
+                            JunctionTable = m2mLink.JunctionTable.DbName,
+                            JunctionSourceColumn = m2mLink.JunctionSourceColumn.ColumnName,
+                            JunctionTargetColumn = m2mLink.JunctionTargetColumn.ColumnName,
+                        },
                     };
-                    junctionQuery.Joins.Add(targetJoin);
-                    Joins.Add(junctionJoin);
+                    Joins.Add(join);
                     continue;
                 }
                 throw new BifrostExecutionError($"Unable to find join {link.GraphQlName} on table {TableName}");

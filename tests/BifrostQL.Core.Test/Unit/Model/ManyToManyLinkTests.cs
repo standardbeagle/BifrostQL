@@ -473,19 +473,17 @@ public sealed class ManyToManyLinkTests
 
         query.ConnectLinks(model);
 
-        // First hop: Users -> UserRoles (junction)
+        // Single source->target join keyed by the source key, with the junction
+        // hop carried on the bridge so the collection pages per source parent.
         query.Joins.Should().ContainSingle();
-        var junctionJoin = query.Joins[0];
-        junctionJoin.ConnectedTable.TableName.Should().Be("UserRoles");
-        junctionJoin.FromColumn.Should().Be("Id");
-        junctionJoin.ConnectedColumn.Should().Be("UserId");
-
-        // Second hop: UserRoles -> Roles (target)
-        junctionJoin.ConnectedTable.Joins.Should().ContainSingle();
-        var targetJoin = junctionJoin.ConnectedTable.Joins[0];
-        targetJoin.ConnectedTable.TableName.Should().Be("Roles");
-        targetJoin.FromColumn.Should().Be("RoleId");
-        targetJoin.ConnectedColumn.Should().Be("Id");
+        var join = query.Joins[0];
+        join.ConnectedTable.TableName.Should().Be("Roles");
+        join.FromColumn.Should().Be("Id");            // source key (Users.Id)
+        join.ConnectedColumn.Should().Be("Id");       // target key (Roles.Id)
+        join.Bridge.Should().NotBeNull();
+        join.Bridge!.JunctionTable.Should().Be("UserRoles");
+        join.Bridge.JunctionSourceColumn.Should().Be("UserId");
+        join.Bridge.JunctionTargetColumn.Should().Be("RoleId");
     }
 
     [Fact]
@@ -529,7 +527,7 @@ public sealed class ManyToManyLinkTests
         query.ConnectLinks(model);
 
         // The target query (Roles) should have the user-requested columns
-        var targetQuery = query.Joins[0].ConnectedTable.Joins[0].ConnectedTable;
+        var targetQuery = query.Joins[0].ConnectedTable;
         targetQuery.ScalarColumns.Should().Contain(c => c.DbDbName == "Id");
         targetQuery.ScalarColumns.Should().Contain(c => c.DbDbName == "Label");
     }
@@ -574,8 +572,8 @@ public sealed class ManyToManyLinkTests
 
         query.ConnectLinks(model);
 
-        // The alias should be on the target join (second hop), not the junction
-        var targetJoin = query.Joins[0].ConnectedTable.Joins[0];
+        // The alias should be on the source->target join.
+        var targetJoin = query.Joins[0];
         targetJoin.Alias.Should().Be("assignedRoles");
     }
 
@@ -632,17 +630,14 @@ public sealed class ManyToManyLinkTests
         sqls.Should().ContainKey("Users");
         sqls["Users"].Sql.Should().Contain("[Users]");
 
-        // Junction join: Users -> UserRoles
-        var junctionKey = sqls.Keys.FirstOrDefault(k => k.Contains("UserRoles"));
-        junctionKey.Should().NotBeNull();
-        sqls[junctionKey!].Sql.Should().Contain("[UserRoles]");
-        sqls[junctionKey!].Sql.Should().Contain("INNER JOIN");
-
-        // Target join: UserRoles -> Roles
-        var rolesKey = sqls.Keys.FirstOrDefault(k => k.Contains("Roles") && k != junctionKey);
+        // Single source->target join bridges through the junction in one query:
+        // the FROM joins the junction and the target, keyed by the source.
+        var rolesKey = sqls.Keys.FirstOrDefault(k => k.Contains("Roles"));
         rolesKey.Should().NotBeNull();
-        sqls[rolesKey!].Sql.Should().Contain("[Roles]");
-        sqls[rolesKey!].Sql.Should().Contain("INNER JOIN");
+        var rolesSql = sqls[rolesKey!].Sql;
+        rolesSql.Should().Contain("[UserRoles]");   // junction bridge
+        rolesSql.Should().Contain("[Roles]");       // target
+        rolesSql.Should().Contain("INNER JOIN");
     }
 
     #endregion
@@ -671,8 +666,9 @@ public sealed class ManyToManyLinkTests
 
         var schema = GetSchemaText(model);
 
-        // The Users type should have a Roles field returning [Roles]
-        schema.Should().Contain("Roles(filter: TableFilterRolesInput) : [Roles]");
+        // The Users type should have a paged Roles field (per-parent contract,
+        // consistent with multi-link nested collections).
+        schema.Should().Contain("Roles(filter: TableFilterRolesInput, limit: Int, offset: Int, sort: [RolesSortEnum!]) : Roles_paged");
     }
 
     [Fact]

@@ -97,7 +97,8 @@ namespace BifrostQL.Core.Schema
             {
                 if (!emittedLinkFields.Add(link.Value.TargetTable.GraphQlName))
                     continue;
-                builder.AppendLine($"\t{link.Value.TargetTable.GraphQlName}(filter: {link.Value.TargetTable.TableFilterTypeName}) : [{link.Value.TargetTable.GraphQlName}]");
+                var target = link.Value.TargetTable;
+                builder.AppendLine($"\t{target.GraphQlName}(filter: {target.TableFilterTypeName}, limit: Int, offset: Int, sort: [{target.TableColumnSortEnumName}!]) : {target.GraphQlName}_paged");
             }
 
             // Add _meta field if this table is an EAV parent

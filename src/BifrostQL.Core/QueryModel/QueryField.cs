@@ -129,8 +129,13 @@ namespace BifrostQL.Core.QueryModel
             if (parentTable.SingleLinks.TryGetValue(normalizedFieldName, out _)
                 || parentTable.SingleLinks.Values.Any(l => string.Equals(l.ParentFieldName, normalizedFieldName, StringComparison.OrdinalIgnoreCase)))
                 return false;
-            return parentTable.MultiLinks.TryGetValue(normalizedFieldName, out _)
-                || parentTable.MultiLinks.Values.Any(l => string.Equals(l.ChildFieldName, normalizedFieldName, StringComparison.OrdinalIgnoreCase));
+            if (parentTable.MultiLinks.TryGetValue(normalizedFieldName, out _)
+                || parentTable.MultiLinks.Values.Any(l => string.Equals(l.ChildFieldName, normalizedFieldName, StringComparison.OrdinalIgnoreCase)))
+                return true;
+            // Many-to-many target collections page per source parent exactly like
+            // multi-links (the junction hop is transparent to the contract).
+            return parentTable.ManyToManyLinks.TryGetValue(normalizedFieldName, out _)
+                || parentTable.ManyToManyLinks.Values.Any(l => string.Equals(l.TargetTable.GraphQlName, normalizedFieldName, StringComparison.OrdinalIgnoreCase));
         }
 
         private static string ResolveTableName(IDbModel model, IQueryField? parent, string fieldName)

@@ -49,6 +49,15 @@ namespace BifrostQL.Core.QueryModel
         public GqlObjectQuery ConnectedTable { get; init; } = null!;
 
         /// <summary>
+        /// Set for many-to-many joins. The source-to-target hop passes through
+        /// a junction table: the join FROM emits an extra INNER JOIN against
+        /// <see cref="JunctionBridge.JunctionTable"/> so the collection is keyed
+        /// by the source parent (src_id = source key) rather than the junction
+        /// or target row. Null for plain single-/multi-link joins.
+        /// </summary>
+        public JunctionBridge? Bridge { get; init; }
+
+        /// <summary>
         /// Emits <c>SELECT DISTINCT FromCol AS JoinId</c> (single column)
         /// or the suffixed multi-column projection used by the inner
         /// restricted sub-query. Pass a table alias when the columns must
@@ -111,6 +120,22 @@ namespace BifrostQL.Core.QueryModel
         {
             return $"{JoinName}";
         }
+    }
+
+    /// <summary>
+    /// Describes the junction hop for a many-to-many join. The join FROM clause
+    /// becomes <c>(source) a JOIN junction j ON a.JoinId = j.JunctionSourceColumn
+    /// JOIN target b ON j.JunctionTargetColumn = b.ConnectedColumn</c>, so the
+    /// surfaced rows stay keyed by the source parent (src_id) and the per-parent
+    /// window paging partitions by the source key — identical to multi-links.
+    /// </summary>
+    public sealed class JunctionBridge
+    {
+        public string JunctionTable { get; init; } = null!;
+        /// <summary>Junction column referencing the source (matched to source JoinId).</summary>
+        public string JunctionSourceColumn { get; init; } = null!;
+        /// <summary>Junction column referencing the target (matched to target ConnectedColumn).</summary>
+        public string JunctionTargetColumn { get; init; } = null!;
     }
 
     public class FieldRef

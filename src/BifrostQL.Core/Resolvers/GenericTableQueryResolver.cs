@@ -198,13 +198,7 @@ namespace BifrostQL.Core.Resolvers
                     await using var reader = await dataCmd.ExecuteReaderAsync();
                     while (await reader.ReadAsync())
                     {
-                        var row = new Dictionary<string, object?>();
-                        for (var i = 0; i < reader.FieldCount; i++)
-                        {
-                            var val = reader.GetValue(i);
-                            row[reader.GetName(i)] = val == DBNull.Value ? null : val;
-                        }
-                        rows.Add(row);
+                        rows.Add(DbReaderExtensions.ReadRow(reader));
                     }
                 }
 

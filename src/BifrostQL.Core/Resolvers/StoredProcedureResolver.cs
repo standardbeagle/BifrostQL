@@ -47,13 +47,7 @@ namespace BifrostQL.Core.Resolvers
                         var resultSet = new List<Dictionary<string, object?>>();
                         while (await reader.ReadAsync())
                         {
-                            var row = new Dictionary<string, object?>();
-                            for (var i = 0; i < reader.FieldCount; i++)
-                            {
-                                var value = reader.GetValue(i);
-                                row[reader.GetName(i)] = value == DBNull.Value ? null : value;
-                            }
-                            resultSet.Add(row);
+                            resultSet.Add(DbReaderExtensions.ReadRow(reader));
                         }
                         if (resultSet.Count > 0 || reader.FieldCount > 0)
                             resultSets.Add(resultSet);

@@ -39,6 +39,8 @@ namespace BifrostQL.Core.Resolvers
                 var p = cmd.CreateParameter();
                 p.ParameterName = info.Name;
                 p.Value = info.Value ?? DBNull.Value;
+                if (info.DbType != null)
+                    p.DbType = Enum.Parse<System.Data.DbType>(info.DbType);
                 cmd.Parameters.Add(p);
             }
         }

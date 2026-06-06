@@ -2,6 +2,7 @@ using System.Data.Common;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Model.AppSchema;
 using BifrostQL.Core.QueryModel;
+using BifrostQL.Core.Resolvers;
 
 namespace BifrostQL.Core.Modules.Eav;
 
@@ -68,13 +69,7 @@ public sealed class EavModule
         using (var command = connection.CreateCommand())
         {
             command.CommandText = discoverySql.Sql;
-            foreach (var param in discoverySql.Parameters)
-            {
-                var dbParam = command.CreateParameter();
-                dbParam.ParameterName = param.Name;
-                dbParam.Value = param.Value ?? DBNull.Value;
-                command.Parameters.Add(dbParam);
-            }
+            DbParameterBinder.AddExtraParameters(command, discoverySql.Parameters);
 
             await using var reader = await command.ExecuteReaderAsync();
             while (await reader.ReadAsync())
@@ -113,25 +108,12 @@ public sealed class EavModule
         using (var command = connection.CreateCommand())
         {
             command.CommandText = mainSql.Sql;
-            foreach (var param in mainSql.Parameters)
-            {
-                var dbParam = command.CreateParameter();
-                dbParam.ParameterName = param.Name;
-                dbParam.Value = param.Value ?? DBNull.Value;
-                command.Parameters.Add(dbParam);
-            }
+            DbParameterBinder.AddExtraParameters(command, mainSql.Parameters);
 
             await using var reader = await command.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
-                var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-                for (var i = 0; i < reader.FieldCount; i++)
-                {
-                    var name = reader.GetName(i);
-                    var value = reader.GetValue(i);
-                    row[name] = value == DBNull.Value ? null : value;
-                }
-                results.Add(row);
+                results.Add(DbReaderExtensions.ReadRow(reader, StringComparer.OrdinalIgnoreCase));
             }
         }
 
@@ -141,13 +123,7 @@ public sealed class EavModule
             var countSql = transformer.GenerateCountSql(query.FlattenedTable, query.Filter);
             using var command = connection.CreateCommand();
             command.CommandText = countSql.Sql;
-            foreach (var param in countSql.Parameters)
-            {
-                var dbParam = command.CreateParameter();
-                dbParam.ParameterName = param.Name;
-                dbParam.Value = param.Value ?? DBNull.Value;
-                command.Parameters.Add(dbParam);
-            }
+            DbParameterBinder.AddExtraParameters(command, countSql.Parameters);
 
             var countResult = await command.ExecuteScalarAsync();
             totalCount = countResult != null ? Convert.ToInt32(countResult) : 0;

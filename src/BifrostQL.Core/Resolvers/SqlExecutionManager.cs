@@ -153,18 +153,7 @@ namespace BifrostQL.Core.Resolvers
                 var command = conn.CreateCommand();
                 command.CommandText = sql;
 
-                // Add all parameters
-                foreach (var param in parameters.Parameters)
-                {
-                    var dbParam = command.CreateParameter();
-                    dbParam.ParameterName = param.Name;
-                    dbParam.Value = param.Value ?? DBNull.Value;
-                    if (param.DbType != null)
-                    {
-                        dbParam.DbType = (System.Data.DbType)Enum.Parse(typeof(System.Data.DbType), param.DbType);
-                    }
-                    command.Parameters.Add(dbParam);
-                }
+                DbParameterBinder.AddExtraParameters(command, parameters.Parameters);
 
                 await using var reader = await command.ExecuteReaderAsync();
                 var results = new Dictionary<string, (IDictionary<string, int> index, IList<object?[]> data)>();

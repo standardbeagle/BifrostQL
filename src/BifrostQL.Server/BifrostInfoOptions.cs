@@ -135,7 +135,7 @@ namespace BifrostQL.Server
             var response = new BifrostInfoResponse
             {
                 Version = BifrostHeaderMiddleware.GetVersion(),
-                DatabaseType = DetectDatabaseType(context.RequestServices),
+                DatabaseType = await DetectDatabaseTypeAsync(context.RequestServices),
                 Uptime = FormatUptime(DateTimeOffset.UtcNow - clock.StartTime),
                 SchemaCacheStatus = DetectSchemaCacheStatus(context.RequestServices),
                 EnabledModules = modules,
@@ -192,12 +192,12 @@ namespace BifrostQL.Server
             return names;
         }
 
-        private static string DetectDatabaseType(IServiceProvider services)
+        private static async Task<string> DetectDatabaseTypeAsync(IServiceProvider services)
         {
             var cache = services.GetService<Core.Schema.PathCache<GraphQL.Inputs>>();
             if (cache != null)
             {
-                var firstValue = cache.GetFirstValue();
+                var firstValue = await cache.GetFirstValueAsync();
                 if (firstValue != null && firstValue.TryGetValue("connFactory", out var factoryObj) && factoryObj is Core.Model.IDbConnFactory factory)
                 {
                     return factory.Dialect.GetType().Name.Replace("Dialect", "");

@@ -166,7 +166,7 @@ public class AppMetadataLoaderTests
     }
 
     [Fact]
-    public void AddBifrostAppMetadata_RegistersOverlayModel_AsSingleton()
+    public async Task AddBifrostAppMetadata_RegistersOverlayModel_AsSingleton()
     {
         var source = new InMemoryAppMetadataSource(0, new Dictionary<string, EntityMetadata>
         {
@@ -177,10 +177,10 @@ public class AppMetadataLoaderTests
         services.AddBifrostAppMetadata(source);
         using var provider = services.BuildServiceProvider();
 
-        var model = provider.GetRequiredService<AppMetadataModel>();
+        var model = await provider.GetRequiredService<Lazy<Task<AppMetadataModel>>>().Value;
         model.Entities.Should().ContainKey("dbo.users");
-        // Singleton: resolving again returns the same instance.
-        provider.GetRequiredService<AppMetadataModel>().Should().BeSameAs(model);
+        // Singleton: resolving again returns the same memoized instance.
+        (await provider.GetRequiredService<Lazy<Task<AppMetadataModel>>>().Value).Should().BeSameAs(model);
     }
 
     [Fact]
@@ -198,7 +198,7 @@ public class AppMetadataLoaderTests
         using var provider = services.BuildServiceProvider();
 
         provider.GetRequiredService<object>().Should().BeSameAs(sentinel);
-        provider.GetService<AppMetadataModel>().Should().NotBeNull();
+        provider.GetService<Lazy<Task<AppMetadataModel>>>().Should().NotBeNull();
         provider.GetService<AppMetadataLoader>().Should().NotBeNull();
     }
 }

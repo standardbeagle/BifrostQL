@@ -103,7 +103,7 @@ namespace BifrostQL.Server
 
         public async Task<BifrostResult> ExecuteAsync(BifrostRequest request, string endpointPath)
         {
-            var sharedExtensions = _pathCache.GetValue(endpointPath);
+            var sharedExtensions = await _pathCache.GetValueAsync(endpointPath);
             var model = (IDbModel)(sharedExtensions["model"]
                 ?? throw new InvalidDataException("model not configured for endpoint: " + endpointPath));
             var schema = (ISchema)(sharedExtensions["dbSchema"]

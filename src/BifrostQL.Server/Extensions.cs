@@ -508,13 +508,13 @@ namespace BifrostQL.Server
                 var endpointMetadataRules = endpoint.Metadata as IReadOnlyList<string>
                     ?? endpoint.Metadata.ToArray();
                 var metadataSources = endpoint.MetadataSources;
-                extensionsLoader.AddLoader(endpoint.Path, () =>
+                extensionsLoader.AddLoader(endpoint.Path, async () =>
                 {
                     IDictionary<string, IDictionary<string, object?>>? additionalMetadata = null;
                     if (metadataSources.Count > 0)
                     {
                         var composite = new CompositeMetadataSource(metadataSources);
-                        additionalMetadata = composite.LoadTableMetadataAsync().Result;
+                        additionalMetadata = await composite.LoadTableMetadataAsync();
                     }
                     var provider = string.IsNullOrWhiteSpace(providerName)
                         ? (BifrostDbProvider?)null
@@ -522,7 +522,7 @@ namespace BifrostQL.Server
                     var connFactory = DbConnFactoryResolver.Create(connStr, provider);
                     // Read once, then build a model+schema per profile from the shared read.
                     var loader = new DbModelLoader(connFactory, new MetadataLoader(endpointMetadataRules));
-                    var read = loader.ReadAsync().Result;
+                    var read = await loader.ReadAsync();
                     var profileCache = new ProfileModelCache(
                         loader, read, endpointMetadataRules, additionalMetadata, registry);
                     var (model, schema) = profileCache.GetFor(null);
@@ -873,13 +873,13 @@ namespace BifrostQL.Server
             // raw default profile, preserving existing behavior.
             var profileRegistry = _profileRegistry;
             var extensionsLoader = new PathCache<Inputs>();
-            extensionsLoader.AddLoader(path, () =>
+            extensionsLoader.AddLoader(path, async () =>
             {
                 IDictionary<string, IDictionary<string, object?>>? additionalMetadata = null;
                 if (metadataSources.Count > 0)
                 {
                     var composite = new CompositeMetadataSource(metadataSources);
-                    additionalMetadata = composite.LoadTableMetadataAsync().Result;
+                    additionalMetadata = await composite.LoadTableMetadataAsync();
                 }
                 var provider = string.IsNullOrWhiteSpace(_provider)
                     ? (BifrostDbProvider?)null
@@ -890,7 +890,7 @@ namespace BifrostQL.Server
                 // Read the DB schema once; ProfileModelCache builds a model+schema per profile
                 // from this shared read, varying only the metadata (CPU-only, memoized).
                 var loader = new DbModelLoader(connFactory, new MetadataLoader(configMetadataRules));
-                var read = loader.ReadAsync().Result;
+                var read = await loader.ReadAsync();
                 var profileCache = new ProfileModelCache(
                     loader, read, configMetadataRules, additionalMetadata, profileRegistry);
                 // Default/base build (null → empty default profile) for back-compat extensions.

@@ -115,7 +115,7 @@ public static class MembershipWorkflowEndpoints
         // Pre-flight gate: reject the whole workflow before any write, using the
         // SAME evaluator and TablePolicy the mutation pipeline uses. dues_payments
         // is created, so the gating action is Create.
-        if (!CanAct(schemaCache, "dues_payments", PolicyAction.Create, userContext))
+        if (!await CanActAsync(schemaCache, "dues_payments", PolicyAction.Create, userContext))
             return Results.Forbid();
 
         var summary = $"Payment of {request.AmountCents} cents recorded against invoice {request.InvoiceId}";
@@ -156,7 +156,7 @@ public static class MembershipWorkflowEndpoints
 
         // Pre-flight gate: the workflow updates member_memberships, so the
         // gating action is Update.
-        if (!CanAct(schemaCache, "member_memberships", PolicyAction.Update, userContext))
+        if (!await CanActAsync(schemaCache, "member_memberships", PolicyAction.Update, userContext))
             return Results.Forbid();
 
         var result = await workflows.RunAsync("renew-membership", new Dictionary<string, object?>
@@ -195,7 +195,7 @@ public static class MembershipWorkflowEndpoints
         // Pre-flight gate: reject the whole workflow before any write, using the
         // SAME evaluator and TablePolicy the mutation pipeline uses.
         // event_attendance is created, so the gating action is Create.
-        if (!CanAct(schemaCache, "event_attendance", PolicyAction.Create, userContext))
+        if (!await CanActAsync(schemaCache, "event_attendance", PolicyAction.Create, userContext))
             return Results.Forbid();
 
         var checkedInAt = string.IsNullOrWhiteSpace(request.CheckedInAt)
@@ -234,7 +234,7 @@ public static class MembershipWorkflowEndpoints
         // Pre-flight gate: the workflow updates members, so the gating action is
         // Update. Linking an identity is a privileged operation — it must be
         // policy-gated, not open to any caller.
-        if (!CanAct(schemaCache, "members", PolicyAction.Update, userContext))
+        if (!await CanActAsync(schemaCache, "members", PolicyAction.Update, userContext))
             return Results.Forbid();
 
         var result = await workflows.RunAsync("link-identity", new Dictionary<string, object?>
@@ -256,11 +256,11 @@ public static class MembershipWorkflowEndpoints
     /// evaluated, so the pipeline's per-mutation policy check remains the
     /// backstop).
     /// </summary>
-    private static bool CanAct(
+    private static async Task<bool> CanActAsync(
         PathCache<Inputs> schemaCache, string table, PolicyAction action,
         IDictionary<string, object?> userContext)
     {
-        var extensions = schemaCache.GetFirstValue();
+        var extensions = await schemaCache.GetFirstValueAsync();
         if (extensions?["model"] is not IDbModel model)
             return true;
 

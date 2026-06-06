@@ -968,30 +968,29 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         // Result: { tables:[{schema,name,qualified}],
         //           columns:[{table,name,type,nullable,isPrimaryKey}],
         //           relationships:[{leftTable,leftColumns[],rightTable,rightColumns[]}] }
-        nativeBridge.Register("get-builder-schema", (_, _) =>
+        nativeBridge.Register("get-builder-schema", async (_, _) =>
         {
             if (string.IsNullOrEmpty(currentConnectionString) || currentProvider is null)
                 throw new InvalidOperationException("No active database connection. Connect to a database first.");
 
             var pathCache = app.Services.GetService<BifrostQL.Core.Schema.PathCache<GraphQL.Inputs>>();
-            var inputs = pathCache?.GetFirstValue();
+            var inputs = pathCache is null ? null : await pathCache.GetFirstValueAsync();
             if (inputs is null || !inputs.TryGetValue("model", out var modelObj) || modelObj is not IDbModel model)
                 throw new InvalidOperationException("Database schema is not loaded yet.");
 
-            return Task.FromResult<object?>(
-                BifrostQL.UI.NativeBridge.BuilderSchemaProjection.Project(model));
+            return (object?)BifrostQL.UI.NativeBridge.BuilderSchemaProjection.Project(model);
         });
 
         // Resolves the cached model + active dialect for the visual query builder
         // handlers. Throws the same way exec-sql does when there is no connection
         // or the schema has not loaded.
-        (IDbModel Model, BifrostQL.Core.QueryModel.ISqlDialect Dialect) ResolveModelAndDialect()
+        async Task<(IDbModel Model, BifrostQL.Core.QueryModel.ISqlDialect Dialect)> ResolveModelAndDialectAsync()
         {
             if (string.IsNullOrEmpty(currentConnectionString) || currentProvider is null)
                 throw new InvalidOperationException("No active database connection. Connect to a database first.");
 
             var pathCache = app.Services.GetService<BifrostQL.Core.Schema.PathCache<GraphQL.Inputs>>();
-            var inputs = pathCache?.GetFirstValue();
+            var inputs = pathCache is null ? null : await pathCache.GetFirstValueAsync();
             if (inputs is null || !inputs.TryGetValue("model", out var modelObj) || modelObj is not IDbModel model)
                 throw new InvalidOperationException("Database schema is not loaded yet.");
 
@@ -1002,12 +1001,12 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         // build-sql — Photino-only. Turns a VisualQuerySpec into the SQL + named
         // parameters via the server-side dialect builder, for the designer's
         // SQL-preview tab. No execution.
-        nativeBridge.Register("build-sql", (payload, _) =>
+        nativeBridge.Register("build-sql", async (payload, _) =>
         {
-            var (model, dialect) = ResolveModelAndDialect();
+            var (model, dialect) = await ResolveModelAndDialectAsync();
             var spec = BifrostQL.UI.NativeBridge.VisualQueryBridge.Parse(payload);
             var built = BifrostQL.Core.QueryModel.VisualQuery.VisualQueryBuilder.Build(spec, model, dialect);
-            return Task.FromResult<object?>(new { sql = built.Sql, parameters = built.Parameters });
+            return (object?)new { sql = built.Sql, parameters = built.Parameters };
         });
 
         // build-and-exec — Photino-only. Builds the SQL from the spec, runs it via
@@ -1016,7 +1015,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         // NativeBridgeHost before reaching the renderer.
         nativeBridge.Register("build-and-exec", async (payload, innerCt) =>
         {
-            var (model, dialect) = ResolveModelAndDialect();
+            var (model, dialect) = await ResolveModelAndDialectAsync();
             var spec = BifrostQL.UI.NativeBridge.VisualQueryBridge.Parse(payload);
             var built = BifrostQL.Core.QueryModel.VisualQuery.VisualQueryBuilder.Build(spec, model, dialect);
 

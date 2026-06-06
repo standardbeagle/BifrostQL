@@ -83,7 +83,7 @@ public sealed class AppMetadataEndpointTests
         var overlay = SampleOverlay();
         using var host = await BuildHost(overlay);
 
-        host.Services.GetService<AppMetadataModel>().Should().NotBeNull();
+        host.Services.GetService<Lazy<Task<AppMetadataModel>>>().Should().NotBeNull();
         host.Services.GetService<BifrostQL.Core.Model.IDbModel>().Should().BeNull(
             "the overlay endpoint does not depend on the schema-metadata pipeline");
     }

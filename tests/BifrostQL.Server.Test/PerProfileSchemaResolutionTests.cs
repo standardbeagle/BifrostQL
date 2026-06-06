@@ -104,13 +104,13 @@ public sealed class PerProfileSchemaResolutionTests : IAsyncLifetime
 
         var pathCache = new PathCache<Inputs>();
         var (model, schema) = _profileCache.GetFor(null);
-        pathCache.AddLoader(GraphQlPath, () => new Inputs(new Dictionary<string, object?>
+        pathCache.AddLoader(GraphQlPath, () => Task.FromResult(new Inputs(new Dictionary<string, object?>
         {
             { "connFactory", _connFactory },
             { "model", model },
             { "dbSchema", schema },
             { "profileModelCache", _profileCache },
-        }));
+        })));
 
         var services = new ServiceCollection();
         services.AddSingleton<IFilterTransformers>(filterTransformers);

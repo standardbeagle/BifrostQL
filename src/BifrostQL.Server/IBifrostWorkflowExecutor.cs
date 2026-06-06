@@ -53,7 +53,7 @@ namespace BifrostQL.Server
             if (id is null) throw new ArgumentNullException(nameof(id));
             if (userContext is null) throw new ArgumentNullException(nameof(userContext));
 
-            var dbTable = ResolveTable(table);
+            var dbTable = await ResolveTableAsync(table);
             var columns = dbTable.Columns.Select(c => c.GraphQlName);
             var query =
                 $"query {{ {dbTable.GraphQlName}(_primaryKey: [{ToGraphQlString(id.ToString())}]) " +
@@ -77,7 +77,7 @@ namespace BifrostQL.Server
             if (values is null) throw new ArgumentNullException(nameof(values));
             if (userContext is null) throw new ArgumentNullException(nameof(userContext));
 
-            var dbTable = ResolveTable(table);
+            var dbTable = await ResolveTableAsync(table);
             var fields = ToFieldMap(values, dbTable);
             if (fields.Count == 0)
                 throw new ArgumentException($"No writable columns supplied for '{table}'.", nameof(values));
@@ -107,9 +107,9 @@ namespace BifrostQL.Server
         /// uses, so the workflow executor and the GraphQL endpoint always agree
         /// on the schema.
         /// </summary>
-        private IDbTable ResolveTable(string table)
+        private async Task<IDbTable> ResolveTableAsync(string table)
         {
-            var extensions = _extensionsLoader.GetFirstValue()
+            var extensions = await _extensionsLoader.GetFirstValueAsync()
                 ?? throw new InvalidOperationException(
                     "No BifrostQL schemas are configured. Set a connection string first.");
             var model = (IDbModel)(extensions["model"]

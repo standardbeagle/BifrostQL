@@ -8,7 +8,6 @@ namespace BifrostQL.Core.Model;
 /// SQL Server implementation of schema reader using INFORMATION_SCHEMA views.
 /// Queries CONSTRAINT_COLUMN_USAGE, COLUMNS, and TABLES views in a single batch.
 /// Identity columns are detected via COLUMNPROPERTY(..., 'IsIdentity').
-/// This is the Core package version; an identical copy exists in BifrostQL.SqlServer.
 /// </summary>
 public sealed class SqlServerSchemaReader : ISchemaReader
 {

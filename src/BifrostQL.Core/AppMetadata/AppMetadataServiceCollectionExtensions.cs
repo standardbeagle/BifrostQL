@@ -6,9 +6,10 @@ namespace BifrostQL.Core.AppMetadata
     /// Dependency-injection registration for the app-metadata overlay.
     ///
     /// <see cref="AddBifrostAppMetadata"/> registers the overlay as a separate,
-    /// coexisting service: it adds an <see cref="AppMetadataModel"/> singleton
-    /// (and the <see cref="AppMetadataLoader"/> that built it) without touching
-    /// any service registered by <c>AddBifrostQL</c>. The overlay can therefore
+    /// coexisting service: it adds a lazily-loaded <see cref="AppMetadataModel"/>
+    /// (as <c>Lazy&lt;Task&lt;AppMetadataModel&gt;&gt;</c>, loaded once off the
+    /// request thread) and the <see cref="AppMetadataLoader"/> that builds it,
+    /// without touching any service registered by <c>AddBifrostQL</c>. The overlay can therefore
     /// be added before or after <c>AddBifrostQL</c>, or omitted entirely, with
     /// no effect on the schema-metadata pipeline.
     /// </summary>
@@ -39,7 +40,9 @@ namespace BifrostQL.Core.AppMetadata
             var loader = new AppMetadataLoader(source);
 
             services.AddSingleton(loader);
-            services.AddSingleton(_ => loader.LoadAsync().GetAwaiter().GetResult());
+            // Memoize the overlay load as a Lazy<Task<>> so it runs once, lazily,
+            // off the request thread — never blocking with GetAwaiter().GetResult().
+            services.AddSingleton(_ => new Lazy<Task<AppMetadataModel>>(() => loader.LoadAsync()));
 
             return services;
         }

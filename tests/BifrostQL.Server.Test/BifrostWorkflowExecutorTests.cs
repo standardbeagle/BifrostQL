@@ -128,13 +128,13 @@ public sealed class BifrostWorkflowExecutorTests : IAsyncLifetime
         };
 
         var pathCache = new PathCache<Inputs>();
-        pathCache.AddLoader(GraphQlPath, () => new Inputs(new Dictionary<string, object?>
+        pathCache.AddLoader(GraphQlPath, () => Task.FromResult(new Inputs(new Dictionary<string, object?>
         {
             { "connFactory", _connFactory },
             { "model", _model },
             { "dbSchema", _schema },
             { "profileModelCache", _profileCache },
-        }));
+        })));
 
         var services = new ServiceCollection();
         services.AddSingleton(_profileRegistry);

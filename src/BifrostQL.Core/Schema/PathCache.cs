@@ -1,8 +1,6 @@
-﻿using GraphQL.Types;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace BifrostQL.Core.Schema
@@ -12,35 +10,36 @@ namespace BifrostQL.Core.Schema
         private readonly Dictionary<string, Cache<T>> _schemas = new();
         public PathCache() { }
 
-        public void AddLoader(string path, Func<T> loader)
+        public void AddLoader(string path, Func<Task<T>> loader)
         {
             _schemas.Add(path, new Cache<T>(loader));
         }
 
-        public T GetValue(string path)
-        {
-            return _schemas.TryGetValue(path, out var cache) ? cache.Value : throw new ArgumentOutOfRangeException(nameof(path), "Path cache not configured for path:" + path);
-        }
+        /// <summary>
+        /// True if a loader is registered for the path. Does not trigger loading.
+        /// </summary>
+        public bool HasPath(string path) => _schemas.ContainsKey(path);
 
-        public bool TryGetValue(string path, out T? value)
+        /// <summary>
+        /// Returns the cached value for a path, loading it on first access.
+        /// </summary>
+        public Task<T> GetValueAsync(string path)
         {
-            if (_schemas.TryGetValue(path, out var cache))
-            {
-                value = cache.Value;
-                return true;
-            }
-            value = default;
-            return false;
+            return _schemas.TryGetValue(path, out var cache)
+                ? cache.GetValueAsync()
+                : throw new ArgumentOutOfRangeException(nameof(path), "Path cache not configured for path:" + path);
         }
 
         /// <summary>
         /// Returns the first cached value, or default if no loaders are registered.
         /// Triggers lazy loading of the first entry if not yet loaded.
         /// </summary>
-        public T? GetFirstValue()
+        public async Task<T?> GetFirstValueAsync()
         {
             var first = _schemas.Values.FirstOrDefault();
-            return first != null ? first.Value : default;
+            if (first is null)
+                return default;
+            return await first.GetValueAsync();
         }
 
         /// <summary>
@@ -64,15 +63,40 @@ namespace BifrostQL.Core.Schema
 
     internal sealed class Cache<T>
     {
-        private T? _schema;
-        private readonly Func<T> _loader;
-        public Cache(Func<T> loader)
+        private readonly Func<Task<T>> _loader;
+        private readonly object _gate = new();
+        private Task<T>? _task;
+
+        public Cache(Func<Task<T>> loader)
         {
             _loader = loader;
         }
 
-        public T Value => _schema ??= _loader();
+        /// <summary>
+        /// Memoizes the loader's task. The fast path is lock-free once a successful
+        /// task is published; a faulted or canceled task is discarded so the next
+        /// caller retries (preserving the original retry-on-failure behavior).
+        /// </summary>
+        public Task<T> GetValueAsync()
+        {
+            var current = _task;
+            if (current is { IsFaulted: false, IsCanceled: false })
+                return current;
 
-        public void Reset() => _schema = default;
+            lock (_gate)
+            {
+                if (_task is null || _task.IsFaulted || _task.IsCanceled)
+                    _task = _loader();
+                return _task;
+            }
+        }
+
+        public void Reset()
+        {
+            lock (_gate)
+            {
+                _task = null;
+            }
+        }
     }
 }

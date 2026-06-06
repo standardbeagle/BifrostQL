@@ -107,7 +107,7 @@ namespace BifrostQL.Server
             _documentExecutor = documentExecutor ?? throw new ArgumentNullException(nameof(documentExecutor));
         }
 
-        public Task<ExecutionResult> ExecuteAsync(ExecutionOptions options)
+        public async Task<ExecutionResult> ExecuteAsync(ExecutionOptions options)
         {
             var contextAccessor = options.RequestServices!.GetRequiredService<IHttpContextAccessor>();
             var context = contextAccessor.HttpContext;
@@ -118,7 +118,7 @@ namespace BifrostQL.Server
             // Check if a connection string is configured before trying to load the schema
             var setupOptions = options.RequestServices!.GetService<BifrostSetupOptions>();
             if (setupOptions != null && !setupOptions.HasConnectionString)
-                return Task.FromResult(new ExecutionResult { Errors = new ExecutionErrors { new ExecutionError("No database connection configured. Set a connection string first.") } });
+                return new ExecutionResult { Errors = new ExecutionErrors { new ExecutionError("No database connection configured. Set a connection string first.") } };
 
             // Resolve the active profile. A null/empty/"default" name resolves to the empty
             // default profile (raw base schema, no opt-in modules). A named profile that is
@@ -127,7 +127,7 @@ namespace BifrostQL.Server
             var profileRegistry = options.RequestServices!.GetService<BifrostProfileRegistry>();
             var profileResult = ResolveProfile(profileRegistry, context);
             if (profileResult.Error != null)
-                return Task.FromResult(new ExecutionResult { Errors = new ExecutionErrors { profileResult.Error } });
+                return new ExecutionResult { Errors = new ExecutionErrors { profileResult.Error } };
             var profileName = profileResult.ProfileName;
             var activeProfile = profileResult.Profile
                 ?? new BifrostProfile { Name = "default", Modules = System.Array.Empty<string>() };
@@ -138,7 +138,7 @@ namespace BifrostQL.Server
             Inputs sharedExtensions;
             try
             {
-                sharedExtensions = ResolveExtensions(extensionsLoader, context);
+                sharedExtensions = await ResolveExtensionsAsync(extensionsLoader, context);
             }
             catch (Exception ex)
             {
@@ -149,13 +149,13 @@ namespace BifrostQL.Server
                 var logger = options.RequestServices!.GetService<ILogger<BifrostDocumentExecutor>>();
                 logger?.LogError(ex, "Schema resolution failed: {Message}", innerMessage);
                 
-                return Task.FromResult(new ExecutionResult
+                return new ExecutionResult
                 {
                     Errors = new ExecutionErrors
                     {
                         new ExecutionError($"Database connection failed: {innerMessage}")
                     }
-                });
+                };
             }
             // Build (or fetch cached) the model+schema for the active profile. The empty
             // default profile yields the raw base schema; named profiles fold their own
@@ -190,8 +190,7 @@ namespace BifrostQL.Server
                     { "tableReaderFactory", new SqlExecutionManager(model, options.Schema, transformerService, observers) },
                 }
             );
-            var result = _documentExecutor.ExecuteAsync(options);
-            return result;
+            return await _documentExecutor.ExecuteAsync(options);
         }
 
         private static ProfileResolution ResolveProfile(BifrostProfileRegistry? registry, HttpContext? context)
@@ -255,7 +254,7 @@ namespace BifrostQL.Server
             public ExecutionError? Error { get; init; }
         }
 
-        private static Inputs ResolveExtensions(PathCache<Inputs> cache, HttpContext? context)
+        private static async Task<Inputs> ResolveExtensionsAsync(PathCache<Inputs> cache, HttpContext? context)
         {
             if (context?.Request == null)
                 throw new ArgumentNullException("context", "HttpContext.Request is null");
@@ -263,14 +262,14 @@ namespace BifrostQL.Server
             // When using app.Map(), the matched path moves to PathBase and Path becomes the remainder.
             // Try PathBase first (where app.Map puts the endpoint path), then Path, then first registered.
             var pathBase = context.Request.PathBase.Value;
-            if (!string.IsNullOrEmpty(pathBase) && cache.TryGetValue(pathBase, out var result))
-                return result!;
+            if (!string.IsNullOrEmpty(pathBase) && cache.HasPath(pathBase))
+                return await cache.GetValueAsync(pathBase);
 
             var path = context.Request.Path.Value;
-            if (!string.IsNullOrEmpty(path) && cache.TryGetValue(path, out result))
-                return result!;
+            if (!string.IsNullOrEmpty(path) && cache.HasPath(path))
+                return await cache.GetValueAsync(path);
 
-            return cache.GetFirstValue()
+            return await cache.GetFirstValueAsync()
                 ?? throw new InvalidOperationException("No BifrostQL schemas are configured. Set a connection string first.");
         }
 

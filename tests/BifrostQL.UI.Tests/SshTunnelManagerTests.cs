@@ -9,7 +9,7 @@ namespace BifrostQL.UI.Tests;
 /// Unit tests for SshTunnelManager — tests the state machine, argument building,
 /// WP-CLI JSON parsing, and port allocation without requiring an actual SSH server.
 /// </summary>
-public sealed class SshTunnelManagerTests : IDisposable
+public sealed class SshTunnelManagerTests : IAsyncLifetime
 {
     private readonly SshTunnelManager _manager = new();
 
@@ -105,22 +105,24 @@ public sealed class SshTunnelManagerTests : IDisposable
     }
 
     [Fact]
-    public void Dispose_WhenNotStarted_DoesNotThrow()
+    public async Task DisposeAsync_WhenNotStarted_DoesNotThrow()
     {
-        using var manager = new SshTunnelManager();
-        manager.Dispose();
+        await using var manager = new SshTunnelManager();
+        await manager.DisposeAsync();
     }
 
     [Fact]
-    public void Dispose_CalledTwice_DoesNotThrow()
+    public async Task DisposeAsync_CalledTwice_DoesNotThrow()
     {
         var manager = new SshTunnelManager();
-        manager.Dispose();
-        var act = () => manager.Dispose();
-        act.Should().NotThrow();
+        await manager.DisposeAsync();
+        var act = async () => await manager.DisposeAsync();
+        await act.Should().NotThrowAsync();
     }
 
-    public void Dispose() => _manager.Dispose();
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync() => await _manager.DisposeAsync();
 }
 
 /// <summary>

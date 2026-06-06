@@ -88,7 +88,7 @@ namespace BifrostQL.Core.Resolvers
             var conFactory = bifrost.ConnFactory;
 
             var sw = Stopwatch.StartNew();
-            var (data, sql) = LoadDataParameterized(table, conFactory);
+            var (data, sql) = await LoadDataParameterizedAsync(table, conFactory);
             sw.Stop();
 
             // Notify AfterExecute phase with timing data
@@ -136,7 +136,7 @@ namespace BifrostQL.Core.Resolvers
             return newTables;
         }
 
-        private (IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> results, string sql) LoadDataParameterized(GqlObjectQuery query, IDbConnFactory connFactory)
+        private async Task<(IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> results, string sql)> LoadDataParameterizedAsync(GqlObjectQuery query, IDbConnFactory connFactory)
         {
             var dialect = connFactory.Dialect;
             var parameters = new QueryModel.SqlParameterCollection();
@@ -146,10 +146,10 @@ namespace BifrostQL.Core.Resolvers
             var resultNames = sqlList.Keys.ToArray();
             string sql = string.Join(";\r\n", sqlList.Values.Select(p => p.Sql));
 
-            using var conn = connFactory.GetConnection();
+            await using var conn = connFactory.GetConnection();
             try
             {
-                conn.Open();
+                await conn.OpenAsync();
                 var command = conn.CreateCommand();
                 command.CommandText = sql;
 
@@ -166,7 +166,7 @@ namespace BifrostQL.Core.Resolvers
                     command.Parameters.Add(dbParam);
                 }
 
-                using var reader = command.ExecuteReader();
+                await using var reader = await command.ExecuteReaderAsync();
                 var results = new Dictionary<string, (IDictionary<string, int> index, IList<object?[]> data)>();
                 var resultIndex = 0;
                 do
@@ -175,7 +175,7 @@ namespace BifrostQL.Core.Resolvers
                     var index = Enumerable.Range(0, reader.FieldCount).Select(i => (i, reader.GetName(i)))
                         .ToDictionary(x => x.Item2, x => x.i, StringComparer.OrdinalIgnoreCase);
                     var result = new List<object?[]>();
-                    while (reader.Read())
+                    while (await reader.ReadAsync())
                     {
                         var row = new object?[reader.FieldCount];
                         reader.GetValues(row!);
@@ -186,7 +186,7 @@ namespace BifrostQL.Core.Resolvers
                         (index, new List<object?[]>()) :
                         (index, result);
                     results.Add(resultName, currentResult);
-                } while (reader.NextResult());
+                } while (await reader.NextResultAsync());
                 return (results, sql);
             }
             catch (Exception ex)

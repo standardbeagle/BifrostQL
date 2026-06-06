@@ -54,7 +54,7 @@ public static class VaultCommands
             sslModeOpt, sshHostOpt, sshPortOpt, sshUserOpt, sshIdentityOpt, tagOpt
         };
 
-        cmd.SetAction((parseResult, _) =>
+        cmd.SetAction(async (parseResult, _) =>
         {
             var vaultPath = parseResult.GetValue(vaultPathOption);
             var name = parseResult.GetValue(nameArg)!;
@@ -88,7 +88,7 @@ public static class VaultCommands
                 {
                     case PasswordSourceKind.Error:
                         Console.Error.WriteLine(resolution.ErrorMessage);
-                        return Task.FromResult(1);
+                        return 1;
 
                     case PasswordSourceKind.Interactive:
                         password = ReadPassword("Password: ");
@@ -112,15 +112,15 @@ public static class VaultCommands
 
             var server = new VaultServer(name, provider, host, port, database, username, password, sslMode, ssh, [.. tags]);
 
-            var vault = VaultStore.Load(vaultPath);
+            var vault = await VaultStore.Load(vaultPath);
             // Replace existing server with same name
             var servers = vault.Servers.Where(s => !s.Name.Equals(name, StringComparison.OrdinalIgnoreCase)).ToList();
             servers.Add(server);
             vault = vault with { Servers = servers };
-            VaultStore.Save(vault, vaultPath);
+            await VaultStore.Save(vault, vaultPath);
 
             Console.WriteLine($"Added '{name}' ({provider} @ {host}:{port})");
-            return Task.FromResult(0);
+            return 0;
         });
 
         return cmd;
@@ -133,13 +133,13 @@ public static class VaultCommands
 
         var cmd = new Command("list", "List saved servers") { tagOpt, jsonOpt };
 
-        cmd.SetAction((parseResult, _) =>
+        cmd.SetAction(async (parseResult, _) =>
         {
             var vaultPath = parseResult.GetValue(vaultPathOption);
             var tagFilter = parseResult.GetValue(tagOpt);
             var asJson = parseResult.GetValue(jsonOpt);
 
-            var servers = VaultServerProvider.LoadServers(vaultPath);
+            var servers = await VaultServerProvider.LoadServers(vaultPath);
 
             if (tagFilter is not null)
                 servers = servers.Where(s => s.Server.Tags.Contains(tagFilter, StringComparer.OrdinalIgnoreCase)).ToList();
@@ -148,13 +148,13 @@ public static class VaultCommands
             {
                 var jsonServers = servers.Select(s => s.Server).ToList();
                 Console.WriteLine(JsonSerializer.Serialize(jsonServers, PrettyJson));
-                return Task.CompletedTask;
+                return;
             }
 
             if (servers.Count == 0)
             {
                 Console.WriteLine("No saved servers.");
-                return Task.CompletedTask;
+                return;
             }
 
             // Table output
@@ -171,8 +171,6 @@ public static class VaultCommands
                 var tags = server.Tags.Count > 0 ? string.Join(", ", server.Tags) : "";
                 Console.WriteLine($"{server.Name.PadRight(nameWidth)}  {server.Provider.PadRight(provWidth)}  {addr.PadRight(addrWidth)}  {source,-6}  {tags}");
             }
-
-            return Task.CompletedTask;
         });
 
         return cmd;
@@ -183,25 +181,24 @@ public static class VaultCommands
         var nameArg = new Argument<string>("name") { Description = "Server name to remove" };
         var cmd = new Command("remove", "Remove a server from the vault") { nameArg };
 
-        cmd.SetAction((parseResult, _) =>
+        cmd.SetAction(async (parseResult, _) =>
         {
             var vaultPath = parseResult.GetValue(vaultPathOption);
             var name = parseResult.GetValue(nameArg)!;
 
-            var vault = VaultStore.Load(vaultPath);
+            var vault = await VaultStore.Load(vaultPath);
             var before = vault.Servers.Count;
             var servers = vault.Servers.Where(s => !s.Name.Equals(name, StringComparison.OrdinalIgnoreCase)).ToList();
 
             if (servers.Count == before)
             {
                 Console.Error.WriteLine($"Server '{name}' not found in vault.");
-                return Task.CompletedTask;
+                return;
             }
 
             vault = vault with { Servers = servers };
-            VaultStore.Save(vault, vaultPath);
+            await VaultStore.Save(vault, vaultPath);
             Console.WriteLine($"Removed '{name}'.");
-            return Task.CompletedTask;
         });
 
         return cmd;
@@ -214,13 +211,13 @@ public static class VaultCommands
 
         var cmd = new Command("export", "Export servers for deployment") { nameArg, formatOpt };
 
-        cmd.SetAction((parseResult, _) =>
+        cmd.SetAction(async (parseResult, _) =>
         {
             var vaultPath = parseResult.GetValue(vaultPathOption);
             var name = parseResult.GetValue(nameArg);
             var format = parseResult.GetValue(formatOpt)!.ToLowerInvariant();
 
-            var allServers = VaultServerProvider.LoadServers(vaultPath);
+            var allServers = await VaultServerProvider.LoadServers(vaultPath);
             var servers = name is not null
                 ? allServers.Where(s => s.Server.Name.Equals(name, StringComparison.OrdinalIgnoreCase)).ToList()
                 : allServers;
@@ -228,7 +225,7 @@ public static class VaultCommands
             if (servers.Count == 0)
             {
                 Console.Error.WriteLine(name is not null ? $"Server '{name}' not found." : "No servers to export.");
-                return Task.CompletedTask;
+                return;
             }
 
             if (format == "env")
@@ -246,8 +243,6 @@ public static class VaultCommands
                 var json = JsonSerializer.Serialize(jsonServers, PrettyJson);
                 Console.WriteLine($"export BIFROST_SERVERS='{json}'");
             }
-
-            return Task.CompletedTask;
         });
 
         return cmd;

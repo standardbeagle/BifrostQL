@@ -10,7 +10,7 @@ namespace BifrostQL.Core.Model
     /// impersonation or session context SQL. On dispose, it reverts impersonation.
     /// All user-supplied values are passed as SQL parameters to prevent injection.
     /// </summary>
-    public sealed class DbAuthConnectionWrapper : IDisposable
+    public sealed class DbAuthConnectionWrapper : IAsyncDisposable
     {
         private readonly SqlConnection _connection;
         private readonly DbAuthConfig _config;
@@ -30,7 +30,7 @@ namespace BifrostQL.Core.Model
 
         /// <summary>
         /// The underlying connection. The caller should use this for executing queries
-        /// after calling <see cref="OpenWithAuthAsync"/> or <see cref="OpenWithAuth"/>.
+        /// after calling <see cref="OpenWithAuthAsync"/>.
         /// </summary>
         public SqlConnection Connection => _connection;
 
@@ -43,17 +43,6 @@ namespace BifrostQL.Core.Model
                 await _connection.OpenAsync();
 
             await ApplyAuthContextAsync();
-        }
-
-        /// <summary>
-        /// Synchronous version of <see cref="OpenWithAuthAsync"/>.
-        /// </summary>
-        public void OpenWithAuth()
-        {
-            if (_connection.State != ConnectionState.Open)
-                _connection.Open();
-
-            ApplyAuthContext();
         }
 
         private async Task ApplyAuthContextAsync()
@@ -76,41 +65,12 @@ namespace BifrostQL.Core.Model
             }
         }
 
-        private void ApplyAuthContext()
-        {
-            switch (_config.Mode)
-            {
-                case DbAuthMode.SharedConnection:
-                    break;
-
-                case DbAuthMode.Impersonation:
-                    ExecuteImpersonation();
-                    break;
-
-                case DbAuthMode.SessionContext:
-                    ExecuteSessionContext();
-                    break;
-
-                case DbAuthMode.PerUser:
-                    break;
-            }
-        }
-
         private async Task ExecuteImpersonationAsync()
         {
             var userName = ResolveClaimValue(_config.ImpersonationClaimKey!);
             using var cmd = new SqlCommand("EXECUTE AS USER = @userName", _connection);
             cmd.Parameters.Add(new SqlParameter("@userName", SqlDbType.NVarChar, 128) { Value = userName });
             await cmd.ExecuteNonQueryAsync();
-            _impersonationActive = true;
-        }
-
-        private void ExecuteImpersonation()
-        {
-            var userName = ResolveClaimValue(_config.ImpersonationClaimKey!);
-            using var cmd = new SqlCommand("EXECUTE AS USER = @userName", _connection);
-            cmd.Parameters.Add(new SqlParameter("@userName", SqlDbType.NVarChar, 128) { Value = userName });
-            cmd.ExecuteNonQuery();
             _impersonationActive = true;
         }
 
@@ -131,23 +91,6 @@ namespace BifrostQL.Core.Model
             }
         }
 
-        private void ExecuteSessionContext()
-        {
-            foreach (var mapping in _config.ClaimMappings)
-            {
-                var contextKey = mapping.Key;
-                var claimValue = ResolveClaimValue(mapping.Value);
-
-                using var cmd = new SqlCommand(
-                    "EXEC sp_set_session_context @key, @value, @read_only",
-                    _connection);
-                cmd.Parameters.Add(new SqlParameter("@key", SqlDbType.NVarChar, 128) { Value = contextKey });
-                cmd.Parameters.Add(new SqlParameter("@value", SqlDbType.NVarChar, 4000) { Value = (object)claimValue ?? DBNull.Value });
-                cmd.Parameters.Add(new SqlParameter("@read_only", SqlDbType.Bit) { Value = true });
-                cmd.ExecuteNonQuery();
-            }
-        }
-
         private string ResolveClaimValue(string claimKey)
         {
             if (!_userContext.TryGetValue(claimKey, out var value))
@@ -156,15 +99,15 @@ namespace BifrostQL.Core.Model
             return value;
         }
 
-        private void RevertImpersonation()
+        private async Task RevertImpersonationAsync()
         {
             if (!_impersonationActive || _connection.State != ConnectionState.Open)
                 return;
 
             try
             {
-                using var cmd = new SqlCommand("REVERT", _connection);
-                cmd.ExecuteNonQuery();
+                await using var cmd = new SqlCommand("REVERT", _connection);
+                await cmd.ExecuteNonQueryAsync();
                 _impersonationActive = false;
             }
             catch (SqlException)
@@ -173,13 +116,13 @@ namespace BifrostQL.Core.Model
             }
         }
 
-        public void Dispose()
+        public async ValueTask DisposeAsync()
         {
             if (_disposed) return;
             _disposed = true;
 
-            RevertImpersonation();
-            _connection.Dispose();
+            await RevertImpersonationAsync();
+            await _connection.DisposeAsync();
         }
 
         /// <summary>

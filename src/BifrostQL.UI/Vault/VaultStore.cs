@@ -78,18 +78,18 @@ public static class VaultStore
     /// <summary>
     /// Load and decrypt the vault. Returns empty vault if file doesn't exist.
     /// </summary>
-    public static VaultData Load(string? vaultPath = null)
+    public static async Task<VaultData> Load(string? vaultPath = null)
     {
         var path = vaultPath ?? DefaultVaultPath;
         if (!File.Exists(path))
             return new VaultData();
 
         var keyPath = KeyPathFor(path);
-        var key = File.ReadAllBytes(keyPath);
+        var key = await File.ReadAllBytesAsync(keyPath);
         if (key.Length != KeySize)
             throw new InvalidOperationException($"Master key at {keyPath} is corrupt (expected {KeySize} bytes, got {key.Length})");
 
-        var data = File.ReadAllBytes(path);
+        var data = await File.ReadAllBytesAsync(path);
         if (data.Length < NonceSize + TagSize)
             throw new InvalidOperationException($"Vault file at {path} is corrupt (too small)");
 
@@ -108,15 +108,15 @@ public static class VaultStore
     /// <summary>
     /// Encrypt and save the vault. Atomic write via temp file + rename.
     /// </summary>
-    public static void Save(VaultData vault, string? vaultPath = null)
+    public static async Task Save(VaultData vault, string? vaultPath = null)
     {
         var path = vaultPath ?? DefaultVaultPath;
         var dir = Path.GetDirectoryName(path)!;
         Directory.CreateDirectory(dir);
 
         var keyPath = KeyPathFor(path);
-        EnsureMasterKey(keyPath);
-        var key = File.ReadAllBytes(keyPath);
+        await EnsureMasterKey(keyPath);
+        var key = await File.ReadAllBytesAsync(keyPath);
 
         var plaintext = JsonSerializer.SerializeToUtf8Bytes(vault, JsonOptions);
         var nonce = new byte[NonceSize];
@@ -135,7 +135,7 @@ public static class VaultStore
 
         // Atomic write: write to temp, then rename
         var tmpPath = path + ".tmp";
-        File.WriteAllBytes(tmpPath, output);
+        await File.WriteAllBytesAsync(tmpPath, output);
         SetFilePermissions(tmpPath);
         File.Move(tmpPath, path, overwrite: true);
     }
@@ -143,7 +143,7 @@ public static class VaultStore
     /// <summary>
     /// Generate master key if it doesn't exist. Sets chmod 600.
     /// </summary>
-    public static void EnsureMasterKey(string? keyPath = null)
+    public static async Task EnsureMasterKey(string? keyPath = null)
     {
         var path = keyPath ?? DefaultKeyPath;
         if (File.Exists(path)) return;
@@ -154,7 +154,7 @@ public static class VaultStore
         var key = new byte[KeySize];
         RandomNumberGenerator.Fill(key);
 
-        File.WriteAllBytes(path, key);
+        await File.WriteAllBytesAsync(path, key);
         SetFilePermissions(path);
     }
 

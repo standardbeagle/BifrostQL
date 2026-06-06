@@ -15,7 +15,7 @@ public sealed class ServeCommand : ICommand
 
     public async Task<int> ExecuteAsync(ToolConfig config, OutputFormatter output)
     {
-        var resolved = ResolveConnectionString(config, output);
+        var resolved = await ResolveConnectionString(config, output);
         if (resolved == null)
             return 1;
 
@@ -65,12 +65,12 @@ public sealed class ServeCommand : ICommand
         return 0;
     }
 
-    private static ResolvedConnection? ResolveConnectionString(ToolConfig config, OutputFormatter output)
+    private static async Task<ResolvedConnection?> ResolveConnectionString(ToolConfig config, OutputFormatter output)
     {
         // Priority 1: Explicit --connection-string flag
         if (!string.IsNullOrWhiteSpace(config.ConnectionString))
         {
-            return new ResolvedConnection(config.ConnectionString, LoadConfigFile(config.ConfigPath));
+            return new ResolvedConnection(config.ConnectionString, await LoadConfigFile(config.ConfigPath));
         }
 
         // Priority 2: Positional args (server + database)
@@ -83,11 +83,11 @@ public sealed class ServeCommand : ICommand
             {
                 var password = ReadPasswordSecurely($"Password for {config.User}@{server}: ");
                 var connStr = $"Server={server};Database={database};User Id={config.User};Password={password};TrustServerCertificate=True";
-                return new ResolvedConnection(connStr, LoadConfigFile(config.ConfigPath));
+                return new ResolvedConnection(connStr, await LoadConfigFile(config.ConfigPath));
             }
 
             var trustedConnStr = $"Server={server};Database={database};Trusted_Connection=True;TrustServerCertificate=True";
-            return new ResolvedConnection(trustedConnStr, LoadConfigFile(config.ConfigPath));
+            return new ResolvedConnection(trustedConnStr, await LoadConfigFile(config.ConfigPath));
         }
 
         // Priority 2b: Single positional arg — disambiguate file vs error
@@ -96,7 +96,7 @@ public sealed class ServeCommand : ICommand
             var arg = config.CommandArgs[0];
             if (File.Exists(arg))
             {
-                return LoadFromConfigFile(arg, output);
+                return await LoadFromConfigFile(arg, output);
             }
 
             WriteConnectionError(output, $"'{arg}' is not a recognized file.");
@@ -107,14 +107,14 @@ public sealed class ServeCommand : ICommand
         var configPath = config.ConfigPath ?? FindLocalConfigFile();
         if (configPath != null)
         {
-            return LoadFromConfigFile(configPath, output);
+            return await LoadFromConfigFile(configPath, output);
         }
 
         WriteConnectionError(output);
         return null;
     }
 
-    private static ResolvedConnection? LoadFromConfigFile(string path, OutputFormatter output)
+    private static async Task<ResolvedConnection?> LoadFromConfigFile(string path, OutputFormatter output)
     {
         if (!File.Exists(path))
         {
@@ -127,7 +127,7 @@ public sealed class ServeCommand : ICommand
             return null;
         }
 
-        var json = File.ReadAllText(path);
+        var json = await File.ReadAllTextAsync(path);
         var connStr = ConfigFileReader.ReadConnectionString(json);
         if (string.IsNullOrWhiteSpace(connStr))
         {
@@ -145,13 +145,13 @@ public sealed class ServeCommand : ICommand
         return new ResolvedConnection(connStr, section);
     }
 
-    private static BifrostConfigSection? LoadConfigFile(string? configPath)
+    private static async Task<BifrostConfigSection?> LoadConfigFile(string? configPath)
     {
         var path = configPath ?? FindLocalConfigFile();
         if (path == null || !File.Exists(path))
             return null;
 
-        var json = File.ReadAllText(path);
+        var json = await File.ReadAllTextAsync(path);
         var section = ConfigFileReader.ReadBifrostSection(json);
         section.ConfigFilePath = Path.GetFullPath(path);
         return section;

@@ -22,7 +22,7 @@ public sealed class EavResolver : IBifrostResolver, IFieldResolver
         _flattenedTable = flattenedTable;
     }
 
-    public ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
+    public async ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
     {
         // Get query parameters
         var limit = context.HasArgument("limit") ? context.GetArgument<int?>("limit") : null;
@@ -39,19 +39,19 @@ public sealed class EavResolver : IBifrostResolver, IFieldResolver
         };
 
         var bifrost = new BifrostContextAdapter(context);
-        using var connection = bifrost.ConnFactory.GetConnection();
-        connection.Open();
+        await using var connection = bifrost.ConnFactory.GetConnection();
+        await connection.OpenAsync();
 
-        var result = _module.ExecuteQuery(query, connection);
+        var result = await _module.ExecuteQueryAsync(query, connection);
 
         // Return paged result
-        return ValueTask.FromResult<object?>(new EavPagedResult
+        return new EavPagedResult
         {
             Data = result.Rows,
             Total = result.TotalCount ?? 0,
             Offset = offset,
             Limit = limit,
-        });
+        };
     }
 
     async ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
@@ -74,12 +74,12 @@ public sealed class EavSingleResolver : IBifrostResolver, IFieldResolver
         _flattenedTable = flattenedTable;
     }
 
-    public ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
+    public async ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
     {
         // Get the parent entity's primary key from context
         var parentPk = GetParentPrimaryKey(context);
         if (parentPk == null)
-            return ValueTask.FromResult<object?>(null);
+            return null;
 
         // Build filter for specific entity
         var filter = new TableFilter
@@ -105,12 +105,12 @@ public sealed class EavSingleResolver : IBifrostResolver, IFieldResolver
         };
 
         var bifrost = new BifrostContextAdapter(context);
-        using var connection = bifrost.ConnFactory.GetConnection();
-        connection.Open();
+        await using var connection = bifrost.ConnFactory.GetConnection();
+        await connection.OpenAsync();
 
-        var result = _module.ExecuteQuery(query, connection);
+        var result = await _module.ExecuteQueryAsync(query, connection);
 
-        return ValueTask.FromResult<object?>(result.Rows.FirstOrDefault());
+        return result.Rows.FirstOrDefault();
     }
 
     async ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
@@ -196,21 +196,21 @@ public sealed class EavFieldExtensionResolver : IBifrostResolver
         _module = module;
     }
 
-    public ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
+    public async ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
     {
         // Get the parent table from context
         var parentTableName = GetParentTableName(context);
         if (parentTableName == null)
-            return ValueTask.FromResult<object?>(null);
+            return null;
 
         var flattenedTable = _module.GetFlattenedTable(parentTableName);
         if (flattenedTable == null)
-            return ValueTask.FromResult<object?>(null);
+            return null;
 
         // Get the parent entity's primary key
         var parentPk = GetParentPrimaryKey(context, flattenedTable.ParentTable);
         if (parentPk == null)
-            return ValueTask.FromResult<object?>(null);
+            return null;
 
         // Query for this specific entity's EAV data
         var query = new EavFlattenedQuery
@@ -222,10 +222,10 @@ public sealed class EavFieldExtensionResolver : IBifrostResolver
         };
 
         var bifrost = new BifrostContextAdapter(context);
-        using var connection = bifrost.ConnFactory.GetConnection();
-        connection.Open();
+        await using var connection = bifrost.ConnFactory.GetConnection();
+        await connection.OpenAsync();
 
-        var result = _module.ExecuteQuery(query, connection);
+        var result = await _module.ExecuteQueryAsync(query, connection);
 
         // Find the row matching the parent PK
         var pkColumnName = flattenedTable.ParentTable.KeyColumns.First().ColumnName;
@@ -236,7 +236,7 @@ public sealed class EavFieldExtensionResolver : IBifrostResolver
             return false;
         });
 
-        return ValueTask.FromResult<object?>(row);
+        return row;
     }
 
     private string? GetParentTableName(IBifrostFieldContext context)

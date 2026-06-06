@@ -21,7 +21,7 @@ public static class VaultServerProvider
     /// Load all servers from vault + environment variables, with env vars taking priority.
     /// Returns tuples of (server, source) where source is "vault" or "env".
     /// </summary>
-    public static List<(VaultServer Server, string Source)> LoadServers(string? vaultPathOverride = null)
+    public static async Task<List<(VaultServer Server, string Source)>> LoadServers(string? vaultPathOverride = null)
     {
         var servers = new List<(VaultServer Server, string Source)>();
 
@@ -29,7 +29,7 @@ public static class VaultServerProvider
         var vaultPath = vaultPathOverride ?? VaultStore.DefaultVaultPath;
         try
         {
-            var vault = VaultStore.Load(vaultPath);
+            var vault = await VaultStore.Load(vaultPath);
             servers.AddRange(vault.Servers.Select(s => (s, "vault")));
         }
         catch

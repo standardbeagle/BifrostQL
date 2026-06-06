@@ -126,13 +126,13 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     // schema rebuild (fresh ProfileModelCache) sees the current profile set.
     // An arbitrary DB (vault/direct connect) gets no named profiles — only the
     // synthesized raw default — so we Clear() there.
-    void RebindProfiles(string? schema)
+    async Task RebindProfiles(string? schema)
     {
         var registry = app.Services.GetService<BifrostProfileRegistry>();
         if (registry == null)
             return;
 
-        var json = schema != null ? QuickstartSchemas.LoadSampleConfig(schema) : null;
+        var json = schema != null ? await QuickstartSchemas.LoadSampleConfig(schema) : null;
         if (json == null)
         {
             registry.Clear();
@@ -330,7 +330,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
 
             yield return SseEvent("Loading schema", 20, $"Reading {request.Schema} schema definition");
 
-            var ddlSql = QuickstartSchemas.LoadSchemaSql(request.Schema);
+            var ddlSql = await QuickstartSchemas.LoadSchemaSql(request.Schema);
             if (ddlSql == null)
             {
                 yield return SseEvent("Error", 0, $"Schema '{request.Schema}' not found in embedded resources", error: true);
@@ -363,7 +363,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
 
             yield return SseEvent("Loading seed data", 75, $"Loading {dataSize} dataset");
 
-            var seedSql = QuickstartSchemas.LoadSeedSql(request.Schema, dataSize);
+            var seedSql = await QuickstartSchemas.LoadSeedSql(request.Schema, dataSize);
 
             if (seedSql != null)
             {
@@ -409,7 +409,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
             bifrostOptions?.BindProvider("sqlite");
             // Rebind profiles from this schema's bundled <schema>.bifrost.json BEFORE
             // ResetSchema, so the next schema rebuild picks up the new profile set.
-            RebindProfiles(request.Schema);
+            await RebindProfiles(request.Schema);
             bifrostOptions?.ResetSchema(app.Services);
 
             yield return SseEvent("Complete!", 100, "Quickstart database created successfully",
@@ -480,11 +480,11 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     });
 
     // GET /api/vault/servers — List saved servers (metadata only, no passwords)
-    app.MapGet("/api/vault/servers", () =>
+    app.MapGet("/api/vault/servers", async () =>
     {
         try
         {
-            var servers = VaultServerProvider.LoadServers(activeVaultPath);
+            var servers = await VaultServerProvider.LoadServers(activeVaultPath);
             var result = servers.Select(s => new
             {
                 name = s.Server.Name,
@@ -510,7 +510,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     {
         try
         {
-            var servers = VaultServerProvider.LoadServers(activeVaultPath);
+            var servers = await VaultServerProvider.LoadServers(activeVaultPath);
             var match = servers.FirstOrDefault(s => s.Server.Name.Equals(request.Name, StringComparison.OrdinalIgnoreCase));
             if (match.Server is null)
                 return Results.NotFound(new { success = false, error = $"Server '{request.Name}' not found" });
@@ -598,7 +598,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
             bifrostOptions?.BindProvider(provider.ToString().ToLowerInvariant());
             // Arbitrary vault DB — no bundled profile config, so only the synthesized
             // raw default is offered. Clear any profiles left over from a prior connect.
-            RebindProfiles(null);
+            await RebindProfiles(null);
             bifrostOptions?.ResetSchema(app.Services);
 
             return Results.Ok(new
@@ -680,7 +680,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     {
         Console.WriteLine("Running in headless mode. Press Ctrl+C to stop.");
         await serverTask;
-        sshTunnel.Dispose();
+        await sshTunnel.DisposeAsync();
     }
     else
     {
@@ -838,22 +838,22 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
                 Tags: tags);
         }
 
-        void UpsertVaultServer(BifrostQL.UI.Vault.VaultServer server)
+        async Task UpsertVaultServer(BifrostQL.UI.Vault.VaultServer server)
         {
-            var vault = BifrostQL.UI.Vault.VaultStore.Load(activeVaultPath);
+            var vault = await BifrostQL.UI.Vault.VaultStore.Load(activeVaultPath);
             var servers = vault.Servers
                 .Where(s => !s.Name.Equals(server.Name, StringComparison.OrdinalIgnoreCase))
                 .ToList();
             servers.Add(server);
             vault = vault with { Servers = servers };
-            BifrostQL.UI.Vault.VaultStore.Save(vault, activeVaultPath);
+            await BifrostQL.UI.Vault.VaultStore.Save(vault, activeVaultPath);
         }
 
-        nativeBridge.Register("save-vault-entry", (payload, _) =>
+        nativeBridge.Register("save-vault-entry", async (payload, _) =>
         {
             var server = BuildVaultServerFromPayload(payload, null, null);
-            UpsertVaultServer(server);
-            return Task.FromResult<object?>(new { saved = true, name = server.Name });
+            await UpsertVaultServer(server);
+            return (object?)new { saved = true, name = server.Name };
         });
 
         nativeBridge.Register("request-credential", async (payload, innerCt) =>
@@ -887,7 +887,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
             var savedName = server.Name;
 
             // Load + upsert + save, same as the CLI `vault add` path.
-            UpsertVaultServer(server);
+            await UpsertVaultServer(server);
 
             // Drop all references to the password ASAP. The VaultServer
             // `server` local still has it, so null both the local and the
@@ -1038,7 +1038,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         window.WaitForClose();
 
         // Shutdown the server and SSH tunnel when window closes
-        sshTunnel.Dispose();
+        await sshTunnel.DisposeAsync();
         await app.StopAsync();
     }
 
@@ -1190,23 +1190,23 @@ public static class QuickstartSchemas
 {
     private static readonly Assembly ResourceAssembly = typeof(QuickstartSchemas).Assembly;
 
-    public static string? LoadSchemaSql(string schemaName)
+    public static Task<string?> LoadSchemaSql(string schemaName)
     {
-        return LoadEmbeddedResource($"BifrostQL.UI.Schemas.{schemaName}.sql");
+        return LoadEmbeddedResourceAsync($"BifrostQL.UI.Schemas.{schemaName}.sql");
     }
 
-    public static string? LoadSeedSql(string schemaName, string dataSize)
+    public static Task<string?> LoadSeedSql(string schemaName, string dataSize)
     {
-        return LoadEmbeddedResource($"BifrostQL.UI.Schemas.{schemaName}-seed-{dataSize}.sql");
+        return LoadEmbeddedResourceAsync($"BifrostQL.UI.Schemas.{schemaName}-seed-{dataSize}.sql");
     }
 
     /// <summary>
     /// Loads the bundled per-connection profile config (<c>&lt;schema&gt;.bifrost.json</c>)
     /// for a quickstart schema, or null when none is embedded.
     /// </summary>
-    public static string? LoadSampleConfig(string schema)
+    public static Task<string?> LoadSampleConfig(string schema)
     {
-        return LoadEmbeddedResource($"BifrostQL.UI.Schemas.{schema}.bifrost.json");
+        return LoadEmbeddedResourceAsync($"BifrostQL.UI.Schemas.{schema}.bifrost.json");
     }
 
     public static async Task ExecuteStatementsAsync(IDbConnFactory factory, string[] statements, CancellationToken ct)
@@ -1225,12 +1225,12 @@ public static class QuickstartSchemas
         }
     }
 
-    private static string? LoadEmbeddedResource(string resourceName)
+    private static async Task<string?> LoadEmbeddedResourceAsync(string resourceName)
     {
-        using var stream = ResourceAssembly.GetManifestResourceStream(resourceName);
+        await using var stream = ResourceAssembly.GetManifestResourceStream(resourceName);
         if (stream == null) return null;
         using var reader = new StreamReader(stream, Encoding.UTF8);
-        return reader.ReadToEnd();
+        return await reader.ReadToEndAsync();
     }
 }
 

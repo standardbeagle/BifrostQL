@@ -59,7 +59,7 @@ public class QuickStartEndToEndTests : IDisposable
         var (connectionString, _) = CreateTempDb(schema);
         var factory = DbConnFactoryResolver.Create(connectionString, BifrostDbProvider.Sqlite);
 
-        var ddlSql = QuickstartSchemas.LoadSchemaSql(schema);
+        var ddlSql = await QuickstartSchemas.LoadSchemaSql(schema);
         ddlSql.Should().NotBeNull($"schema '{schema}' DDL should exist as embedded resource");
 
         var ddlStatements = ddlSql!.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -68,7 +68,7 @@ public class QuickStartEndToEndTests : IDisposable
         ddlStatements.Should().NotBeEmpty($"schema '{schema}' should have DDL statements");
         await QuickstartSchemas.ExecuteStatementsAsync(factory, ddlStatements, CancellationToken.None);
 
-        var seedSql = QuickstartSchemas.LoadSeedSql(schema, dataSize);
+        var seedSql = await QuickstartSchemas.LoadSeedSql(schema, dataSize);
         if (seedSql != null)
         {
             var seedStatements = seedSql.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -89,12 +89,12 @@ public class QuickStartEndToEndTests : IDisposable
         var (connectionString, dbPath) = CreateTempDb(schema);
         var factory = DbConnFactoryResolver.Create(connectionString, BifrostDbProvider.Sqlite);
 
-        var ddlSql = QuickstartSchemas.LoadSchemaSql(schema)!;
+        var ddlSql = (await QuickstartSchemas.LoadSchemaSql(schema))!;
         var ddlStatements = ddlSql.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
         await QuickstartSchemas.ExecuteStatementsAsync(factory, ddlStatements, CancellationToken.None);
 
-        var seedSql = QuickstartSchemas.LoadSeedSql(schema, dataSize);
+        var seedSql = await QuickstartSchemas.LoadSeedSql(schema, dataSize);
         if (seedSql != null)
         {
             var seedStatements = seedSql.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -185,9 +185,9 @@ public class QuickStartEndToEndTests : IDisposable
     [InlineData("crm")]
     [InlineData("classroom")]
     [InlineData("project-tracker")]
-    public void Schema_DDL_ExistsAsEmbeddedResource(string schema)
+    public async Task Schema_DDL_ExistsAsEmbeddedResource(string schema)
     {
-        var sql = QuickstartSchemas.LoadSchemaSql(schema);
+        var sql = await QuickstartSchemas.LoadSchemaSql(schema);
         sql.Should().NotBeNull($"DDL for '{schema}' should be an embedded resource");
         sql.Should().Contain("CREATE TABLE", $"DDL for '{schema}' should create tables");
     }
@@ -203,9 +203,9 @@ public class QuickStartEndToEndTests : IDisposable
     [InlineData("classroom", "full")]
     [InlineData("project-tracker", "sample")]
     [InlineData("project-tracker", "full")]
-    public void Schema_SeedData_ExistsAsEmbeddedResource(string schema, string dataSize)
+    public async Task Schema_SeedData_ExistsAsEmbeddedResource(string schema, string dataSize)
     {
-        var sql = QuickstartSchemas.LoadSeedSql(schema, dataSize);
+        var sql = await QuickstartSchemas.LoadSeedSql(schema, dataSize);
         sql.Should().NotBeNull($"seed data for '{schema}/{dataSize}' should be an embedded resource");
         sql.Should().Contain("INSERT INTO", $"seed data for '{schema}/{dataSize}' should insert rows");
     }
@@ -346,16 +346,16 @@ public class QuickStartEndToEndTests : IDisposable
     // ══════════════════════════════════════════════════════════
 
     [Fact]
-    public void Schema_InvalidName_ReturnsNull()
+    public async Task Schema_InvalidName_ReturnsNull()
     {
-        QuickstartSchemas.LoadSchemaSql("nonexistent").Should().BeNull();
-        QuickstartSchemas.LoadSeedSql("nonexistent", "sample").Should().BeNull();
+        (await QuickstartSchemas.LoadSchemaSql("nonexistent")).Should().BeNull();
+        (await QuickstartSchemas.LoadSeedSql("nonexistent", "sample")).Should().BeNull();
     }
 
     [Fact]
-    public void Schema_InvalidDataSize_ReturnsNull()
+    public async Task Schema_InvalidDataSize_ReturnsNull()
     {
-        QuickstartSchemas.LoadSeedSql("blog", "huge").Should().BeNull();
+        (await QuickstartSchemas.LoadSeedSql("blog", "huge")).Should().BeNull();
     }
 
     // ══════════════════════════════════════════════════════════

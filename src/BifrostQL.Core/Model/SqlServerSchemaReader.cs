@@ -103,36 +103,36 @@ ORDER BY SCHEMA_NAME(fk.schema_id), OBJECT_NAME(fkc.parent_object_id), fk.name, 
 
         await using var reader = await cmd.ExecuteReaderAsync();
 
-        var columnConstraints = GetDtos(reader, ColumnConstraintDto.FromReader)
+        var columnConstraints = (await ReadDtosAsync(reader, ColumnConstraintDto.FromReader))
             .GroupBy(k => new ColumnRef(k.TableCatalog, k.TableSchema, k.TableName, k.ColumnName))
             .ToDictionary(g => g.Key, g => g.ToList());
 
         await reader.NextResultAsync();
 
-        var rawColumns = GetDtos(reader, r => ColumnDto.FromReader(r, columnConstraints)).ToArray();
+        var rawColumns = (await ReadDtosAsync(reader, r => ColumnDto.FromReader(r, columnConstraints))).ToArray();
         var columns = rawColumns
             .GroupBy(c => new TableRef(c.TableCatalog, c.TableSchema, c.TableName))
             .ToDictionary(g => g.Key, g => ColumnDto.DeduplicateGraphQlNames(g).ToArray());
 
         await reader.NextResultAsync();
 
-        var tables = GetDtos(reader, r => DbTable.FromReader(
+        var tables = (await ReadDtosAsync(reader, r => DbTable.FromReader(
                 r,
-                columns[new TableRef((string)reader["TABLE_CATALOG"], (string)reader["TABLE_SCHEMA"], (string)reader["TABLE_NAME"])]))
+                columns[new TableRef((string)reader["TABLE_CATALOG"], (string)reader["TABLE_SCHEMA"], (string)reader["TABLE_NAME"])])))
             .ToList();
 
         await reader.NextResultAsync();
 
-        var foreignKeys = ReadForeignKeys(reader);
+        var foreignKeys = await ReadForeignKeysAsync(reader);
 
         return new SchemaData(columnConstraints, rawColumns, tables.Cast<IDbTable>().ToList(), foreignKeys);
     }
 
-    private static IReadOnlyList<DbForeignKey> ReadForeignKeys(DbDataReader reader)
+    private static async Task<IReadOnlyList<DbForeignKey>> ReadForeignKeysAsync(DbDataReader reader)
     {
         var rows = new List<(string ConstraintName, string ChildSchema, string ChildTable, string ChildCol,
             string ParentSchema, string ParentTable, string ParentCol)>();
-        while (reader.Read())
+        while (await reader.ReadAsync())
         {
             rows.Add((
                 (string)reader["constraint_name"],
@@ -158,11 +158,13 @@ ORDER BY SCHEMA_NAME(fk.schema_id), OBJECT_NAME(fkc.parent_object_id), fk.name, 
             .ToList();
     }
 
-    private static IEnumerable<T> GetDtos<T>(IDataReader reader, Func<IDataReader, T> getDto)
+    private static async Task<List<T>> ReadDtosAsync<T>(DbDataReader reader, Func<IDataReader, T> getDto)
     {
-        while (reader.Read())
+        var list = new List<T>();
+        while (await reader.ReadAsync())
         {
-            yield return getDto(reader);
+            list.Add(getDto(reader));
         }
+        return list;
     }
 }

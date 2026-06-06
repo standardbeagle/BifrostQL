@@ -41,29 +41,29 @@ public sealed class VaultStoreTests : IDisposable
     };
 
     [Fact]
-    public void Save_ThenLoad_RoundTripsAllFields()
+    public async Task Save_ThenLoad_RoundTripsAllFields()
     {
         var original = SampleVault();
 
-        VaultStore.Save(original, VaultPath);
-        var loaded = VaultStore.Load(VaultPath);
+        await VaultStore.Save(original, VaultPath);
+        var loaded = await VaultStore.Load(VaultPath);
 
         loaded.Should().BeEquivalentTo(original);
     }
 
     [Fact]
-    public void Load_MissingFile_ReturnsEmptyVault()
+    public async Task Load_MissingFile_ReturnsEmptyVault()
     {
-        var loaded = VaultStore.Load(VaultPath);
+        var loaded = await VaultStore.Load(VaultPath);
 
         loaded.Servers.Should().BeEmpty();
         loaded.Version.Should().Be(1);
     }
 
     [Fact]
-    public void EncryptedFile_DoesNotContainPlaintextSecret()
+    public async Task EncryptedFile_DoesNotContainPlaintextSecret()
     {
-        VaultStore.Save(SampleVault(), VaultPath);
+        await VaultStore.Save(SampleVault(), VaultPath);
 
         var bytes = File.ReadAllBytes(VaultPath);
         var asText = System.Text.Encoding.UTF8.GetString(bytes);
@@ -72,15 +72,15 @@ public sealed class VaultStoreTests : IDisposable
     }
 
     [Fact]
-    public void Save_GeneratesFreshNoncePerSave()
+    public async Task Save_GeneratesFreshNoncePerSave()
     {
         // GCM security collapses if a (key, nonce) pair is ever reused. Two saves
         // of identical plaintext under the same key must produce different nonces
         // (first 12 bytes) and therefore different ciphertext.
-        VaultStore.Save(SampleVault(), VaultPath);
+        await VaultStore.Save(SampleVault(), VaultPath);
         var first = File.ReadAllBytes(VaultPath);
 
-        VaultStore.Save(SampleVault(), VaultPath);
+        await VaultStore.Save(SampleVault(), VaultPath);
         var second = File.ReadAllBytes(VaultPath);
 
         first.AsSpan(0, 12).ToArray().Should().NotEqual(second.AsSpan(0, 12).ToArray());
@@ -88,74 +88,74 @@ public sealed class VaultStoreTests : IDisposable
     }
 
     [Fact]
-    public void Save_ReusesExistingMasterKey()
+    public async Task Save_ReusesExistingMasterKey()
     {
-        VaultStore.Save(SampleVault(), VaultPath);
+        await VaultStore.Save(SampleVault(), VaultPath);
         var key1 = File.ReadAllBytes(KeyPath);
 
-        VaultStore.Save(SampleVault(), VaultPath);
+        await VaultStore.Save(SampleVault(), VaultPath);
         var key2 = File.ReadAllBytes(KeyPath);
 
         key2.Should().Equal(key1);
     }
 
     [Fact]
-    public void Load_TamperedCiphertext_ThrowsCryptographic()
+    public async Task Load_TamperedCiphertext_ThrowsCryptographic()
     {
-        VaultStore.Save(SampleVault(), VaultPath);
+        await VaultStore.Save(SampleVault(), VaultPath);
         var bytes = File.ReadAllBytes(VaultPath);
         // Flip a bit inside the ciphertext region (past the 12-byte nonce).
         bytes[20] ^= 0xFF;
         File.WriteAllBytes(VaultPath, bytes);
 
-        var act = () => VaultStore.Load(VaultPath);
+        var act = async () => await VaultStore.Load(VaultPath);
 
-        act.Should().Throw<CryptographicException>();
+        await act.Should().ThrowAsync<CryptographicException>();
     }
 
     [Fact]
-    public void Load_TamperedTag_ThrowsCryptographic()
+    public async Task Load_TamperedTag_ThrowsCryptographic()
     {
-        VaultStore.Save(SampleVault(), VaultPath);
+        await VaultStore.Save(SampleVault(), VaultPath);
         var bytes = File.ReadAllBytes(VaultPath);
         // Flip a bit in the trailing 16-byte GCM tag.
         bytes[^1] ^= 0xFF;
         File.WriteAllBytes(VaultPath, bytes);
 
-        var act = () => VaultStore.Load(VaultPath);
+        var act = async () => await VaultStore.Load(VaultPath);
 
-        act.Should().Throw<CryptographicException>();
+        await act.Should().ThrowAsync<CryptographicException>();
     }
 
     [Fact]
-    public void Load_CorruptKeySize_Throws()
+    public async Task Load_CorruptKeySize_Throws()
     {
-        VaultStore.Save(SampleVault(), VaultPath);
+        await VaultStore.Save(SampleVault(), VaultPath);
         File.WriteAllBytes(KeyPath, new byte[10]); // not 32 bytes
 
-        var act = () => VaultStore.Load(VaultPath);
+        var act = async () => await VaultStore.Load(VaultPath);
 
-        act.Should().Throw<InvalidOperationException>().WithMessage("*corrupt*");
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*corrupt*");
     }
 
     [Fact]
-    public void Load_TruncatedVaultFile_Throws()
+    public async Task Load_TruncatedVaultFile_Throws()
     {
-        VaultStore.EnsureMasterKey(KeyPath);
+        await VaultStore.EnsureMasterKey(KeyPath);
         File.WriteAllBytes(VaultPath, new byte[10]); // smaller than nonce+tag (28)
 
-        var act = () => VaultStore.Load(VaultPath);
+        var act = async () => await VaultStore.Load(VaultPath);
 
-        act.Should().Throw<InvalidOperationException>().WithMessage("*too small*");
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*too small*");
     }
 
     [Fact]
-    public void Save_SetsOwnerOnlyPermissions_OnUnix()
+    public async Task Save_SetsOwnerOnlyPermissions_OnUnix()
     {
         if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
             return; // chmod is a no-op on Windows
 
-        VaultStore.Save(SampleVault(), VaultPath);
+        await VaultStore.Save(SampleVault(), VaultPath);
 
         var expected = UnixFileMode.UserRead | UnixFileMode.UserWrite;
         File.GetUnixFileMode(VaultPath).Should().Be(expected, "vault file must be chmod 600");
@@ -163,12 +163,12 @@ public sealed class VaultStoreTests : IDisposable
     }
 
     [Fact]
-    public void EnsureMasterKey_IsIdempotent()
+    public async Task EnsureMasterKey_IsIdempotent()
     {
-        VaultStore.EnsureMasterKey(KeyPath);
+        await VaultStore.EnsureMasterKey(KeyPath);
         var key1 = File.ReadAllBytes(KeyPath);
 
-        VaultStore.EnsureMasterKey(KeyPath);
+        await VaultStore.EnsureMasterKey(KeyPath);
         var key2 = File.ReadAllBytes(KeyPath);
 
         key1.Should().HaveCount(32);

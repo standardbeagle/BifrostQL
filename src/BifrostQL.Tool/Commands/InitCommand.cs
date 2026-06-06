@@ -31,7 +31,7 @@ public sealed class InitCommand : ICommand
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
 
-    public Task<int> ExecuteAsync(ToolConfig config, OutputFormatter output)
+    public async Task<int> ExecuteAsync(ToolConfig config, OutputFormatter output)
     {
         var targetPath = Path.Combine(Directory.GetCurrentDirectory(), "bifrostql.json");
 
@@ -40,27 +40,27 @@ public sealed class InitCommand : ICommand
             if (output.IsJsonMode)
             {
                 output.WriteJson(new { success = false, error = "bifrostql.json already exists", path = targetPath });
-                return Task.FromResult(1);
+                return 1;
             }
 
             output.WriteError("bifrostql.json already exists in the current directory.");
             output.WriteInfo($"  Path: {targetPath}");
-            return Task.FromResult(1);
+            return 1;
         }
 
         var json = JsonSerializer.Serialize(DefaultConfig, WriteOptions);
-        File.WriteAllText(targetPath, json);
+        await File.WriteAllTextAsync(targetPath, json);
 
         if (output.IsJsonMode)
         {
             output.WriteJson(new { success = true, path = targetPath });
-            return Task.FromResult(0);
+            return 0;
         }
 
         output.WriteSuccess("Created bifrostql.json");
         output.WriteInfo($"  Path: {targetPath}");
         output.WriteInfo("  Edit the connection string and run 'bifrost test' to verify.");
-        return Task.FromResult(0);
+        return 0;
     }
 
     /// <summary>

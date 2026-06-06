@@ -22,7 +22,7 @@ public record WpCredentials(string DbName, string DbUser, string DbPassword, str
 /// Manages an SSH tunnel by spawning the system <c>ssh</c> binary with <c>-L</c> local port forwarding.
 /// Uses the system SSH agent, config, and known_hosts automatically.
 /// </summary>
-public sealed class SshTunnelManager : IDisposable
+public sealed class SshTunnelManager : IAsyncDisposable
 {
     private Process? _process;
     private readonly SemaphoreSlim _lock = new(1, 1);
@@ -303,13 +303,13 @@ public sealed class SshTunnelManager : IDisposable
 
     private int _disposed;
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        _lock.Wait();
+        await _lock.WaitAsync();
         try
         {
-            StopInternalAsync().GetAwaiter().GetResult();
+            await StopInternalAsync();
         }
         finally
         {

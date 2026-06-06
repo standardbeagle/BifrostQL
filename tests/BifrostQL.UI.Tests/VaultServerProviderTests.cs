@@ -150,7 +150,7 @@ public sealed class VaultServerProviderTests
     }
 
     [Fact]
-    public void LoadServers_FromVaultOverride_ReturnsVaultEntriesTaggedVault()
+    public async Task LoadServers_FromVaultOverride_ReturnsVaultEntriesTaggedVault()
     {
         var dir = Path.Combine(Path.GetTempPath(), "bifrost-vsp-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
@@ -158,12 +158,12 @@ public sealed class VaultServerProviderTests
         try
         {
             var name = "vsp-" + Guid.NewGuid().ToString("N")[..8];
-            VaultStore.Save(new VaultData
+            await VaultStore.Save(new VaultData
             {
                 Servers = { new VaultServer(name, "postgres", "h", 5432, "d", "u", "p", null, null, []) },
             }, vaultPath);
 
-            var loaded = VaultServerProvider.LoadServers(vaultPath);
+            var loaded = await VaultServerProvider.LoadServers(vaultPath);
 
             loaded.Should().ContainSingle(e => e.Server.Name == name && e.Source == "vault");
         }

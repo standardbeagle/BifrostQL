@@ -11,10 +11,10 @@ namespace BifrostQL.UI.Tests;
 public class SampleConfigTests
 {
     [Fact]
-    public void LoadSampleConfig_Crm_ParsesShowcaseProfile()
+    public async Task LoadSampleConfig_Crm_ParsesShowcaseProfile()
     {
         // Act
-        var json = QuickstartSchemas.LoadSampleConfig("crm");
+        var json = await QuickstartSchemas.LoadSampleConfig("crm");
 
         // Assert: the embedded resource exists and deserializes to a single
         // config-driven showcase profile (the dropdown prepends the synthesized
@@ -47,9 +47,9 @@ public class SampleConfigTests
     }
 
     [Fact]
-    public void LoadSampleConfig_Blog_ReturnsNull()
+    public async Task LoadSampleConfig_Blog_ReturnsNull()
     {
         // The blog quickstart ships no bundled profile config.
-        QuickstartSchemas.LoadSampleConfig("blog").Should().BeNull();
+        (await QuickstartSchemas.LoadSampleConfig("blog")).Should().BeNull();
     }
 }

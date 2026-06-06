@@ -53,7 +53,7 @@ public sealed class EavModule
     /// Discovers dynamic columns for a flattened table from the database.
     /// Uses caching to avoid repeated queries.
     /// </summary>
-    public IReadOnlyList<EavColumn> DiscoverColumns(EavFlattenedTable table, DbConnection connection)
+    public async Task<IReadOnlyList<EavColumn>> DiscoverColumnsAsync(EavFlattenedTable table, DbConnection connection)
     {
         // Check cache first
         var cached = _cache.GetColumns(table.MetaTable.DbName);
@@ -76,8 +76,8 @@ public sealed class EavModule
                 command.Parameters.Add(dbParam);
             }
 
-            using var reader = command.ExecuteReader();
-            while (reader.Read())
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
             {
                 var key = reader.GetValue(0)?.ToString();
                 if (!string.IsNullOrEmpty(key))
@@ -94,12 +94,12 @@ public sealed class EavModule
     /// <summary>
     /// Executes a query on a flattened EAV table.
     /// </summary>
-    public EavQueryResult ExecuteQuery(
+    public async Task<EavQueryResult> ExecuteQueryAsync(
         EavFlattenedQuery query,
         DbConnection connection,
         IReadOnlyList<EavColumn>? columns = null)
     {
-        columns ??= DiscoverColumns(query.FlattenedTable, connection);
+        columns ??= await DiscoverColumnsAsync(query.FlattenedTable, connection);
 
         var transformer = new EavQueryTransformer(_dialect);
 
@@ -121,8 +121,8 @@ public sealed class EavModule
                 command.Parameters.Add(dbParam);
             }
 
-            using var reader = command.ExecuteReader();
-            while (reader.Read())
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
             {
                 var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
                 for (var i = 0; i < reader.FieldCount; i++)
@@ -149,7 +149,7 @@ public sealed class EavModule
                 command.Parameters.Add(dbParam);
             }
 
-            var countResult = command.ExecuteScalar();
+            var countResult = await command.ExecuteScalarAsync();
             totalCount = countResult != null ? Convert.ToInt32(countResult) : 0;
         }
 

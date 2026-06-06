@@ -8,7 +8,7 @@ namespace BifrostQL.Core.Storage
     {
         public string ProviderType => "local";
 
-        public Task<string> UploadAsync(
+        public async Task<string> UploadAsync(
             StorageBucketConfig bucketConfig,
             string fileKey,
             byte[] content,
@@ -23,26 +23,23 @@ namespace BifrostQL.Core.Storage
                 Directory.CreateDirectory(directory);
             }
 
-            return Task.Run(() =>
-            {
-                File.WriteAllBytes(fullPath, content);
-                return Task.FromResult(fullPath);
-            }, cancellationToken);
+            await File.WriteAllBytesAsync(fullPath, content, cancellationToken);
+            return fullPath;
         }
 
-        public Task<byte[]> DownloadAsync(
+        public async Task<byte[]> DownloadAsync(
             StorageBucketConfig bucketConfig,
             string fileKey,
             CancellationToken cancellationToken = default)
         {
             var fullPath = GetFullFilePath(bucketConfig, fileKey);
-            
+
             if (!File.Exists(fullPath))
             {
                 throw new FileNotFoundException($"File not found: {fileKey}", fullPath);
             }
 
-            return Task.Run(() => File.ReadAllBytes(fullPath), cancellationToken);
+            return await File.ReadAllBytesAsync(fullPath, cancellationToken);
         }
 
         public Task DeleteAsync(
@@ -51,14 +48,13 @@ namespace BifrostQL.Core.Storage
             CancellationToken cancellationToken = default)
         {
             var fullPath = GetFullFilePath(bucketConfig, fileKey);
-            
-            return Task.Run(() =>
+
+            // File.Delete is a metadata syscall with no async API; invoke directly.
+            if (File.Exists(fullPath))
             {
-                if (File.Exists(fullPath))
-                {
-                    File.Delete(fullPath);
-                }
-            }, cancellationToken);
+                File.Delete(fullPath);
+            }
+            return Task.CompletedTask;
         }
 
         public Task<bool> ExistsAsync(

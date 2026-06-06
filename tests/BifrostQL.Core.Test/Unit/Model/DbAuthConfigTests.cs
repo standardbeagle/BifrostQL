@@ -329,32 +329,32 @@ public class DbAuthConnectionWrapperImpersonationTests
     }
 
     [Fact]
-    public void Connection_ExposesUnderlyingConnection()
+    public async Task Connection_ExposesUnderlyingConnection()
     {
         var conn = new Microsoft.Data.SqlClient.SqlConnection();
         var config = new DbAuthConfig();
         var context = new Dictionary<string, string>();
 
-        using var wrapper = new DbAuthConnectionWrapper(conn, config, context);
+        await using var wrapper = new DbAuthConnectionWrapper(conn, config, context);
 
         wrapper.Connection.Should().BeSameAs(conn);
     }
 
     [Fact]
-    public void Dispose_CanBeCalledMultipleTimes()
+    public async Task DisposeAsync_CanBeCalledMultipleTimes()
     {
         var conn = new Microsoft.Data.SqlClient.SqlConnection();
         var config = new DbAuthConfig();
         var context = new Dictionary<string, string>();
 
         var wrapper = new DbAuthConnectionWrapper(conn, config, context);
-        var act = () =>
+        var act = async () =>
         {
-            wrapper.Dispose();
-            wrapper.Dispose();
+            await wrapper.DisposeAsync();
+            await wrapper.DisposeAsync();
         };
 
-        act.Should().NotThrow();
+        await act.Should().NotThrowAsync();
     }
 }
 

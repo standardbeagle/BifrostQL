@@ -43,7 +43,7 @@ public sealed class SoftDeleteShapeTests
 
         foreach (var (schema, size) in new[] { ("crm", (string?)null), ("crm", "sample") })
         {
-            var sql = size == null ? QuickstartSchemas.LoadSchemaSql(schema)! : QuickstartSchemas.LoadSeedSql(schema, size)!;
+            var sql = (size == null ? await QuickstartSchemas.LoadSchemaSql(schema) : await QuickstartSchemas.LoadSeedSql(schema, size))!;
             var stmts = sql.Split(';', System.StringSplitOptions.RemoveEmptyEntries | System.StringSplitOptions.TrimEntries)
                 .Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
             await QuickstartSchemas.ExecuteStatementsAsync(factory, stmts, default);

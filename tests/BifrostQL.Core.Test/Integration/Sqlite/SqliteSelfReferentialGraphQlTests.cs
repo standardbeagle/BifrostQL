@@ -76,7 +76,7 @@ public sealed class SqliteSelfReferentialGraphQlTests : IAsyncLifetime
                       id
                       name
                       categories { id name }
-                      categories_children { id name }
+                      categories_children { data { id name } }
                     }
                   }
                 }
@@ -103,7 +103,7 @@ public sealed class SqliteSelfReferentialGraphQlTests : IAsyncLifetime
         rows[0].GetProperty("categories").ValueKind.Should().Be(JsonValueKind.Null);
         rows[1].GetProperty("categories").GetProperty("name").GetString().Should().Be("Root");
 
-        var rootChildren = rows[0].GetProperty("categories_children").EnumerateArray().ToList();
+        var rootChildren = rows[0].GetProperty("categories_children").GetProperty("data").EnumerateArray().ToList();
         rootChildren.Should().ContainSingle();
         rootChildren[0].GetProperty("name").GetString().Should().Be("Child");
     }

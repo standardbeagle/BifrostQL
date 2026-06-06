@@ -435,8 +435,10 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
                     data {
                         name
                         products {
-                            name
-                            price
+                            data {
+                                name
+                                price
+                            }
                         }
                     }
                 }
@@ -448,10 +450,12 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         result.Errors.Should().BeNullOrEmpty();
         var categories = UnwrapPagedRows(result, "categories");
 
-        // Reverse-FK collection joins (MultiLinks) return a flat `[Type]` list,
-        // not a paged wrapper, so no extra hop is needed.
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
+        // Reverse-FK collection joins (MultiLinks) are now per-parent paged
+        // wrappers: unwrap the `data` member.
+        var productsPaged = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
             JsonSerializer.Serialize(categories![0]["products"]));
+        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
+            productsPaged!["data"].GetRawText());
         products.Should().HaveCountGreaterThan(0);
     }
 
@@ -589,10 +593,12 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
                     data {
                         orderDate
                         orderItems {
-                            quantity
-                            unitPrice
-                            products {
-                                name
+                            data {
+                                quantity
+                                unitPrice
+                                products {
+                                    name
+                                }
                             }
                         }
                     }
@@ -605,8 +611,11 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
         result.Errors.Should().BeNullOrEmpty();
         var orders = UnwrapPagedRows(result, "orders");
 
-        var items = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
+        // orderItems is a per-parent paged collection — unwrap `data`.
+        var itemsPaged = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
             JsonSerializer.Serialize(orders![0]["orderItems"]));
+        var items = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
+            itemsPaged!["data"].GetRawText());
         items.Should().HaveCount(2);
     }
 
@@ -765,11 +774,13 @@ INSERT INTO OrderItems (OrderId, ProductId, Quantity, UnitPrice) VALUES (3, 4, 1
                             country
                         }
                         orderItems {
-                            quantity
-                            products {
-                                name
-                                categories {
+                            data {
+                                quantity
+                                products {
                                     name
+                                    categories {
+                                        name
+                                    }
                                 }
                             }
                         }

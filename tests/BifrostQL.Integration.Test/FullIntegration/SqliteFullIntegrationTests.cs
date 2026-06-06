@@ -180,16 +180,18 @@ public class SqliteFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetim
     [Fact]
     public async Task Query_CategoryWithProducts_ShouldReturnOneToMany()
     {
-        var query = "query { categories(filter: { categoryId: { _eq: 1 } }) { data { name products { name price } } } }";
+        var query = "query { categories(filter: { categoryId: { _eq: 1 } }) { data { name products { data { name price } } } } }";
         var result = await ExecuteQueryAsync(query);
 
         result.Errors.Should().BeNullOrEmpty();
         var categories = UnwrapPagedRows(result, "categories");
 
-        // Reverse-FK collection joins (MultiLinks) return a flat `[Type]` list,
-        // not a paged wrapper, so no extra hop is needed.
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
+        // Reverse-FK collection joins (MultiLinks) are now per-parent paged
+        // wrappers: unwrap the `data` member.
+        var productsPaged = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
             JsonSerializer.Serialize(categories![0]["products"]));
+        var products = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
+            productsPaged!["data"].GetRawText());
         products.Should().HaveCountGreaterThan(0);
     }
 
@@ -202,8 +204,10 @@ public class SqliteFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetim
                     orderDate
                     customers { name email }
                     orderItems {
-                        quantity
-                        products { name categories { name } }
+                        data {
+                            quantity
+                            products { name categories { name } }
+                        }
                     }
                 }
             }
@@ -218,8 +222,11 @@ public class SqliteFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetim
             JsonSerializer.Serialize(orders![0]["customers"]));
         customer!["name"].ToString().Should().Be("John Doe");
 
-        var items = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
+        // orderItems is a per-parent paged collection — unwrap `data`.
+        var itemsPaged = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
             JsonSerializer.Serialize(orders[0]["orderItems"]));
+        var items = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
+            itemsPaged!["data"].GetRawText());
         items.Should().HaveCount(2);
     }
 

@@ -73,7 +73,7 @@ public sealed class PolymorphicLeakRepro
             { "model", model },
             { "tableReaderFactory", executor },
         };
-        var query = $"query {{ companies(filter: {{ company_id: {{ _eq: 1 }} }}) {{ data {{ company_id {notesField} {{ entity_type entity_id content }} }} }} }}";
+        var query = $"query {{ companies(filter: {{ company_id: {{ _eq: 1 }} }}) {{ data {{ company_id {notesField} {{ data {{ entity_type entity_id content }} }} }} }} }}";
         var result = await new DocumentExecuter().ExecuteAsync(o =>
         {
             o.Schema = schema2;
@@ -89,7 +89,8 @@ public sealed class PolymorphicLeakRepro
         var paged = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json)!;
         var rows = paged["data"].EnumerateArray().ToList();
         rows.Should().HaveCount(1);
-        var notes = rows[0].GetProperty(notesField).EnumerateArray().ToList();
+        // Nested multi-link collections are now paged wrappers: unwrap `.data`.
+        var notes = rows[0].GetProperty(notesField).GetProperty("data").EnumerateArray().ToList();
         var types = notes.Select(n => n.GetProperty("entity_type").GetString()).ToList();
         _out.WriteLine("returned note entity_types: " + string.Join(", ", types));
 

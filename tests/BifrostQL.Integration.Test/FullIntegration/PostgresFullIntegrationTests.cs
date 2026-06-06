@@ -482,8 +482,10 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
                     orderdate
                     customers { name email }
                     orderitems {
-                        quantity
-                        products { name categories { name } }
+                        data {
+                            quantity
+                            products { name categories { name } }
+                        }
                     }
                 }
             }
@@ -496,7 +498,8 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         var customer = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(custJson)!;
         Str(customer["name"]).Should().Be("John Doe");
 
-        var itemsJson = orders[0]["orderitems"].GetRawText();
+        // orderitems is a per-parent paged collection — unwrap `data`.
+        var itemsJson = orders[0]["orderitems"].GetProperty("data").GetRawText();
         var items = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(itemsJson)!;
         items.Should().HaveCount(2);
     }
@@ -504,11 +507,12 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
     [SkippableFact]
     public async Task Query_CustomerWithOrders_ShouldReturnMultipleOrders()
     {
-        var query = "query { customers(filter: { customerid: { _eq: 1 } }) { data { name orders { status totalamount } } } }";
+        var query = "query { customers(filter: { customerid: { _eq: 1 } }) { data { name orders { data { status totalamount } } } } }";
         var customers = ExtractPagedData(await ExecuteQueryAsync(query), "customers");
         customers.Should().ContainSingle();
 
-        var ordersJson = customers[0]["orders"].GetRawText();
+        // Nested multi-link collections are paged: unwrap the `data` member.
+        var ordersJson = customers[0]["orders"].GetProperty("data").GetRawText();
         var orders = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(ordersJson)!;
         orders.Should().HaveCount(2);
     }

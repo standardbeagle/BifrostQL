@@ -267,7 +267,7 @@ namespace BifrostQL.Core.QueryModel
             var ctx = new SqlContext();
             var sut = new SqlVisitor();
 
-            var ast = Parser.Parse("query { work__shops { data { id sessions { id status } number participants__table { firstname lastname } } } }");
+            var ast = Parser.Parse("query { work__shops { data { id sessions { data { id status } } number participants__table { data { firstname lastname } } } } }");
             await sut.VisitAsync(ast, ctx);
             var tables = ctx.GetFinalQueries(GetFakeModel());
 

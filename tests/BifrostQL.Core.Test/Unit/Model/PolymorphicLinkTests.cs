@@ -181,8 +181,9 @@ public sealed class PolymorphicLinkTests
         schema.Should().Contain("type companies {");
         schema.Should().Contain("type contacts {");
         schema.Should().Contain("type deals {");
-        // The polymorphic notes collection is emitted like any multi-link.
-        schema.Should().Contain("notes(filter: TableFilternotesInput) : [notes]");
+        // The polymorphic notes collection is emitted like any multi-link:
+        // a per-parent paged collection with limit/offset/sort args.
+        schema.Should().Contain("notes(filter: TableFilternotesInput, limit: Int, offset: Int, sort: [notesSortEnum!]) : notes_paged");
     }
 
     #endregion

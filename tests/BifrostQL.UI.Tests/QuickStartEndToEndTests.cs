@@ -794,16 +794,21 @@ public class QuickStartEndToEndTests : IDisposable
 
             foreach (var (linkName, link) in table.MultiLinks)
             {
-                var childTable = link.ChildTable.GraphQlName;
+                // Use the emitted field name (self-FK collections are aliased,
+                // e.g. `categories_children`, to avoid colliding with the
+                // same-named single link).
+                var childField = link.ChildFieldName;
                 var childPk = link.ChildTable.Columns.First(c => c.IsPrimaryKey).GraphQlName;
                 var pk = table.Columns.First(c => c.IsPrimaryKey).GraphQlName;
 
-                var query = $"query {{ {table.GraphQlName} {{ data {{ {pk} {childTable} {{ {childPk} }} }} }} }}";
-                _output.WriteLine($"[{schema}] {table.GraphQlName} ← {childTable}: {query}");
+                // Nested multi-link collections are now paged: select via the
+                // `data` sub-field of the child's `_paged` wrapper.
+                var query = $"query {{ {table.GraphQlName} {{ data {{ {pk} {childField} {{ data {{ {childPk} }} }} }} }} }}";
+                _output.WriteLine($"[{schema}] {table.GraphQlName} ← {childField}: {query}");
 
                 var result = await ctx.ExecuteAsync(query);
                 result.Errors.Should().BeNullOrEmpty(
-                    $"multi-link join from '{table.GraphQlName}' to '{childTable}' should work");
+                    $"multi-link join from '{table.GraphQlName}' to '{childField}' should work");
 
                 var rows = ExtractPagedData(result, table.GraphQlName);
                 rows.Should().NotBeEmpty();

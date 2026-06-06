@@ -24,7 +24,7 @@ public class RelationshipFieldNameTests
         var sdl = new TableSchemaGenerator(users).GetTableTypeDefinition(model, includeDynamicJoins: false);
         var aggregate = new TableSchemaGenerator(users).GetAggregateLinkDefinitions();
 
-        sdl.Should().Contain("orders(filter: TableFilterordersInput) : [orders]");
+        sdl.Should().Contain("orders(filter: TableFilterordersInput, limit: Int, offset: Int, sort: [ordersSortEnum!]) : orders_paged");
         aggregate.Should().Contain("orders : orders_AggregateValue");
     }
 
@@ -45,7 +45,7 @@ public class RelationshipFieldNameTests
         var aggregate = new TableSchemaGenerator(categories).GetAggregateLinkDefinitions();
 
         sdl.Should().Contain("categories : categories");
-        sdl.Should().Contain("categories_children(filter: TableFiltercategoriesInput) : [categories]");
+        sdl.Should().Contain("categories_children(filter: TableFiltercategoriesInput, limit: Int, offset: Int, sort: [categoriesSortEnum!]) : categories_paged");
         aggregate.Should().Contain("categories : categories_AggregateValue");
         aggregate.Should().Contain("categories_children : categories_AggregateValue");
     }
@@ -81,7 +81,7 @@ public class RelationshipFieldNameTests
         var sdl = new TableSchemaGenerator(categories).GetTableTypeDefinition(model, includeDynamicJoins: false);
 
         selfLink.ChildFieldName.Should().Be("categories_children_2");
-        sdl.Should().Contain("categories_children(filter: TableFiltercategories_childrenInput) : [categories_children]");
-        sdl.Should().Contain("categories_children_2(filter: TableFiltercategoriesInput) : [categories]");
+        sdl.Should().Contain("categories_children(filter: TableFiltercategories_childrenInput, limit: Int, offset: Int, sort: [categories_childrenSortEnum!]) : categories_children_paged");
+        sdl.Should().Contain("categories_children_2(filter: TableFiltercategoriesInput, limit: Int, offset: Int, sort: [categoriesSortEnum!]) : categories_paged");
     }
 }

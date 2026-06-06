@@ -246,8 +246,10 @@ public class SqliteUnderscoreFkJoinTests : FullIntegrationTestBase, IAsyncLifeti
                     workspace_id
                     name
                     members {
-                        member_id
-                        name
+                        data {
+                            member_id
+                            name
+                        }
                     }
                 }
             }
@@ -257,9 +259,9 @@ public class SqliteUnderscoreFkJoinTests : FullIntegrationTestBase, IAsyncLifeti
 
         rows.Should().HaveCount(2);
 
-        // Acme Corp has 2 members
+        // Acme Corp has 2 members (nested multi-link is now a paged wrapper)
         var acme = rows.First(r => Str(r["name"]) == "Acme Corp");
-        var members = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(acme["members"].GetRawText())!;
+        var members = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(acme["members"].GetProperty("data").GetRawText())!;
         members.Should().HaveCount(2);
     }
 
@@ -272,8 +274,10 @@ public class SqliteUnderscoreFkJoinTests : FullIntegrationTestBase, IAsyncLifeti
                     workspace_id
                     name
                     projects {
-                        project_id
-                        name
+                        data {
+                            project_id
+                            name
+                        }
                     }
                 }
             }
@@ -282,7 +286,7 @@ public class SqliteUnderscoreFkJoinTests : FullIntegrationTestBase, IAsyncLifeti
         var rows = ExtractPagedData(await ExecuteQueryAsync(query), "workspaces");
 
         var acme = rows.First(r => Str(r["name"]) == "Acme Corp");
-        var projects = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(acme["projects"].GetRawText())!;
+        var projects = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(acme["projects"].GetProperty("data").GetRawText())!;
         projects.Should().HaveCount(2);
     }
 
@@ -327,10 +331,12 @@ public class SqliteUnderscoreFkJoinTests : FullIntegrationTestBase, IAsyncLifeti
             workspaces(filter: { workspace_id: { _eq: 1 } }) {
                 data {
                     name
-                    members { member_id name }
+                    members { data { member_id name } }
                     projects {
-                        name
-                        tasks { task_id name }
+                        data {
+                            name
+                            tasks { data { task_id name } }
+                        }
                     }
                 }
             }
@@ -341,14 +347,15 @@ public class SqliteUnderscoreFkJoinTests : FullIntegrationTestBase, IAsyncLifeti
         rows.Should().HaveCount(1);
         Str(rows[0]["name"]).Should().Be("Acme Corp");
 
-        var members = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(rows[0]["members"].GetRawText())!;
+        // Nested multi-link collections are now paged wrappers — unwrap `data`.
+        var members = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(rows[0]["members"].GetProperty("data").GetRawText())!;
         members.Should().HaveCount(2);
 
-        var projects = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(rows[0]["projects"].GetRawText())!;
+        var projects = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(rows[0]["projects"].GetProperty("data").GetRawText())!;
         projects.Should().HaveCount(2);
 
         var website = projects.First(p => Str(p["name"]) == "Website");
-        var tasks = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(website["tasks"].GetRawText())!;
+        var tasks = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(website["tasks"].GetProperty("data").GetRawText())!;
         tasks.Should().HaveCount(2);
     }
 

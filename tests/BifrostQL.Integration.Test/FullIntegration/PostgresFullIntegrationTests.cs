@@ -464,12 +464,13 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
     [SkippableFact]
     public async Task Query_CategoryWithProducts_OneToMany()
     {
-        var query = "query { categories(filter: { categoryid: { _eq: 1 } }) { data { name products { name price } } } }";
+        var query = "query { categories(filter: { categoryid: { _eq: 1 } }) { data { name products { data { name price } } } } }";
         var categories = ExtractPagedData(await ExecuteQueryAsync(query), "categories");
         categories.Should().ContainSingle();
 
-        var prodsJson = categories[0]["products"].GetRawText();
-        var products = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(prodsJson)!;
+        // Nested multi-link collections are now paged: { data, total, offset, limit }.
+        var prodsPaged = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(categories[0]["products"].GetRawText())!;
+        var products = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(prodsPaged["data"].GetRawText())!;
         products.Should().HaveCount(2);
     }
 

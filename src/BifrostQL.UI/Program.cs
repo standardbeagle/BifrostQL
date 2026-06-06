@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Utils;
 using BifrostQL.Server;
@@ -96,7 +97,8 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     {
         ["BifrostQL:DisableAuth"] = "true",
         ["BifrostQL:Path"] = "/graphql",
-        ["BifrostQL:Playground"] = "/graphiql"
+        ["BifrostQL:Playground"] = "/graphiql",
+        ["BifrostQL:ExposeProfiles"] = "true"
     });
 
     // Always register BifrostQL services — connection string may be set later via API
@@ -111,6 +113,39 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     builder.Services.AddEndpointsApiExplorer();
 
     var app = builder.Build();
+
+    // Per-connection profile rebind. Profiles are bound from the connected
+    // database's bundled <schema>.bifrost.json: each profile carries its own
+    // metadata (rule strings) + modules and becomes a selectable API shape.
+    // Called after a connection is bound and before ResetSchema, so the next
+    // schema rebuild (fresh ProfileModelCache) sees the current profile set.
+    // An arbitrary DB (vault/direct connect) gets no named profiles — only the
+    // synthesized raw default — so we Clear() there.
+    void RebindProfiles(string? schema)
+    {
+        var registry = app.Services.GetService<BifrostProfileRegistry>();
+        if (registry == null)
+            return;
+
+        var json = schema != null ? QuickstartSchemas.LoadSampleConfig(schema) : null;
+        if (json == null)
+        {
+            registry.Clear();
+            return;
+        }
+
+        var cfg = JsonSerializer.Deserialize<SampleConfig>(
+            json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        var defs = cfg?.Profiles ?? Array.Empty<ProfileDef>();
+        registry.ReplaceAll(defs.Select(d => new BifrostProfile
+        {
+            Name = d.Name,
+            Label = d.Label,
+            Modules = d.Modules,
+            Metadata = d.Metadata,
+            RequireRole = d.RequireRole,
+        }));
+    }
 
     app.UseDeveloperExceptionPage();
     app.UseCors(x => x
@@ -136,6 +171,35 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
                 _ => p.ToString()
             }
         });
+        return Results.Ok(result);
+    });
+
+    // GET /api/profiles - Lists the selectable API shapes for the current
+    // connection: a synthesized raw default first, then each registry profile.
+    // Gated behind BifrostQL:ExposeProfiles so non-desktop hosts stay closed.
+    app.MapGet("/api/profiles", (HttpContext http) =>
+    {
+        var config = http.RequestServices.GetRequiredService<IConfiguration>();
+        if (!config.GetValue("BifrostQL:ExposeProfiles", false))
+            return Results.NotFound();
+
+        var registry = http.RequestServices.GetService<BifrostProfileRegistry>();
+        var result = new List<object>
+        {
+            new { id = "default", label = "Database (raw)", serverProfile = (string?)null },
+        };
+        if (registry != null)
+        {
+            foreach (var profile in registry.All)
+            {
+                result.Add(new
+                {
+                    id = profile.Name,
+                    label = profile.Label ?? profile.Name,
+                    serverProfile = profile.Name,
+                });
+            }
+        }
         return Results.Ok(result);
     });
 
@@ -338,6 +402,9 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
             currentProvider = BifrostDbProvider.Sqlite;
             bifrostOptions?.BindConnectionString(sqliteConnectionString);
             bifrostOptions?.BindProvider("sqlite");
+            // Rebind profiles from this schema's bundled <schema>.bifrost.json BEFORE
+            // ResetSchema, so the next schema rebuild picks up the new profile set.
+            RebindProfiles(request.Schema);
             bifrostOptions?.ResetSchema(app.Services);
 
             yield return SseEvent("Complete!", 100, "Quickstart database created successfully",
@@ -524,6 +591,9 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
 
             bifrostOptions?.BindConnectionString(connStr);
             bifrostOptions?.BindProvider(provider.ToString().ToLowerInvariant());
+            // Arbitrary vault DB — no bundled profile config, so only the synthesized
+            // raw default is offered. Clear any profiles left over from a prior connect.
+            RebindProfiles(null);
             bifrostOptions?.ResetSchema(app.Services);
 
             return Results.Ok(new
@@ -1093,6 +1163,23 @@ record VaultConnectRequest(string Name);
 record CreateDatabaseRequest(string Template, string? ConnectionString);
 record QuickstartRequest(string Schema, string? DataSize = "sample");
 
+// Per-connection profile config, deserialized from the bundled
+// <schema>.bifrost.json. Each profile carries its own metadata rule strings
+// and module names — its own API shape over the same database.
+record ProfileDef
+{
+    public string Name { get; init; } = "";
+    public string? Label { get; init; }
+    public string[]? Modules { get; init; }
+    public string[]? Metadata { get; init; }
+    public string? RequireRole { get; init; }
+}
+
+record SampleConfig
+{
+    public ProfileDef[]? Profiles { get; init; }
+}
+
 // Embedded resource loader for quickstart schemas
 public static class QuickstartSchemas
 {
@@ -1106,6 +1193,15 @@ public static class QuickstartSchemas
     public static string? LoadSeedSql(string schemaName, string dataSize)
     {
         return LoadEmbeddedResource($"BifrostQL.UI.Schemas.{schemaName}-seed-{dataSize}.sql");
+    }
+
+    /// <summary>
+    /// Loads the bundled per-connection profile config (<c>&lt;schema&gt;.bifrost.json</c>)
+    /// for a quickstart schema, or null when none is embedded.
+    /// </summary>
+    public static string? LoadSampleConfig(string schema)
+    {
+        return LoadEmbeddedResource($"BifrostQL.UI.Schemas.{schema}.bifrost.json");
     }
 
     public static async Task ExecuteStatementsAsync(IDbConnFactory factory, string[] statements, CancellationToken ct)

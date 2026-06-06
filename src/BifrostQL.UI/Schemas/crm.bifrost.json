@@ -1,0 +1,22 @@
+{
+  "profiles": [
+    {
+      "name": "sales",
+      "label": "Sales (curated)",
+      "metadata": [
+        "*.notes { polymorphic-type-column: entity_type; polymorphic-id-column: entity_id; polymorphic-map: company=companies, contact=contacts, deal=deals }",
+        "*.companies.phone { visibility: hidden }",
+        "*.companies.address { visibility: hidden }"
+      ],
+      "modules": ["polymorphic"]
+    },
+    {
+      "name": "admin",
+      "label": "Admin (full)",
+      "metadata": [
+        "*.notes { polymorphic-type-column: entity_type; polymorphic-id-column: entity_id; polymorphic-map: company=companies, contact=contacts, deal=deals }"
+      ],
+      "modules": ["polymorphic"]
+    }
+  ]
+}

@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Schemas\*.sql" />
+    <EmbeddedResource Include="Schemas\*.bifrost.json" />
   </ItemGroup>
 
   <!-- Ensure wwwroot is copied to output for desktop app (content root = binary dir) -->

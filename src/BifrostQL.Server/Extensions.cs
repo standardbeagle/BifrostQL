@@ -498,7 +498,9 @@ namespace BifrostQL.Server
                 throw new InvalidOperationException("At least one endpoint must be configured. Call AddEndpoint.");
 
             var extensionsLoader = new PathCache<Inputs>();
-            var registry = _profileRegistry.HasProfiles ? _profileRegistry : null;
+            // Always pass the registry so a runtime ReplaceAll is honored on the next
+            // schema rebuild even when it starts empty (resolves to the raw default).
+            var registry = _profileRegistry;
             foreach (var endpoint in _endpoints)
             {
                 var connStr = endpoint.ConnectionString;
@@ -562,8 +564,9 @@ namespace BifrostQL.Server
                     sp.GetRequiredService<WorkflowTriggerHost>(),
                 }));
 
-            if (_profileRegistry.HasProfiles)
-                services.AddSingleton(_profileRegistry);
+            // Register unconditionally so a runtime ReplaceAll on this same instance
+            // is visible even if it starts empty.
+            services.AddSingleton(_profileRegistry);
 
             if (_moduleLoader != null)
                 services.AddSingleton<IMutationModules>(sp => new ModulesWrap { Modules = _moduleLoader(sp) });
@@ -836,6 +839,11 @@ namespace BifrostQL.Server
         /// </summary>
         public void ResetSchema(IServiceProvider services)
         {
+            // ResetAll drops the cached Inputs (which own the ProfileModelCache), so the
+            // next request re-runs the loader and builds a fresh ProfileModelCache. That
+            // cache reads the singleton BifrostProfileRegistry — the same instance a
+            // prior ReplaceAll/Clear mutated in place — so rebound profiles are picked up
+            // without any extra cache invalidation here.
             var pathCache = services.GetService<PathCache<Inputs>>();
             pathCache?.ResetAll();
         }
@@ -859,7 +867,11 @@ namespace BifrostQL.Server
                 .Where(c => c.Value != null)
                 .Select(c => c.Value!)
                 .ToArray();
-            var profileRegistry = _profileRegistry.HasProfiles ? _profileRegistry : null;
+            // Always pass the registry to the profile cache so a runtime ReplaceAll
+            // (desktop per-connection rebind) is picked up on the next schema rebuild,
+            // even when the registry started empty. An empty registry resolves to the
+            // raw default profile, preserving existing behavior.
+            var profileRegistry = _profileRegistry;
             var extensionsLoader = new PathCache<Inputs>();
             extensionsLoader.AddLoader(path, () =>
             {
@@ -922,8 +934,9 @@ namespace BifrostQL.Server
                     sp.GetRequiredService<WorkflowTriggerHost>(),
                 }));
 
-            if (_profileRegistry.HasProfiles)
-                services.AddSingleton(_profileRegistry);
+            // Register unconditionally so a runtime ReplaceAll on this same instance
+            // is visible to /api/profiles and the schema rebuild even if it starts empty.
+            services.AddSingleton(_profileRegistry);
 
             services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = _modules });
             if (_moduleLoader != null)

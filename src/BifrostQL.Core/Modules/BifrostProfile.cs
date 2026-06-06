@@ -30,6 +30,12 @@ public sealed class BifrostProfile
     public string Name { get; init; } = "default";
 
     /// <summary>
+    /// Human-friendly display label for this profile (e.g., "Sales (curated)").
+    /// Null falls back to <see cref="Name"/> for presentation.
+    /// </summary>
+    public string? Label { get; init; }
+
+    /// <summary>
     /// Module names enabled for this profile. Empty means no modules active.
     /// Null means all modules active (default profile behavior).
     /// </summary>
@@ -81,14 +87,56 @@ public sealed class BifrostProfile
 /// </summary>
 public sealed class BifrostProfileRegistry
 {
-    private readonly Dictionary<string, BifrostProfile> _profiles = new(StringComparer.OrdinalIgnoreCase);
+    // Atomic snapshot: reads are lock-free against the current immutable snapshot;
+    // mutations build a fresh dictionary under the write lock and swap the volatile
+    // reference, so an in-flight request always sees one consistent set of profiles
+    // (never a half-applied rebind). Used by the desktop's per-connection rebind.
+    private readonly object _writeLock = new();
+    private volatile IReadOnlyDictionary<string, BifrostProfile> _profiles =
+        new Dictionary<string, BifrostProfile>(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Registers a profile. Overwrites any existing profile with the same name.
     /// </summary>
     public void Add(BifrostProfile profile)
     {
-        _profiles[profile.Name] = profile;
+        lock (_writeLock)
+        {
+            var next = new Dictionary<string, BifrostProfile>(_profiles, StringComparer.OrdinalIgnoreCase)
+            {
+                [profile.Name] = profile,
+            };
+            _profiles = next;
+        }
+    }
+
+    /// <summary>
+    /// Atomically replaces the entire profile set with the supplied profiles.
+    /// Old profiles not present in the new set are removed. Safe against in-flight
+    /// reads (snapshot swap).
+    /// </summary>
+    public void ReplaceAll(IEnumerable<BifrostProfile> profiles)
+    {
+        var next = new Dictionary<string, BifrostProfile>(StringComparer.OrdinalIgnoreCase);
+        foreach (var profile in profiles)
+            next[profile.Name] = profile;
+
+        lock (_writeLock)
+        {
+            _profiles = next;
+        }
+    }
+
+    /// <summary>
+    /// Atomically clears all profiles, returning the registry to its empty state
+    /// (no named profiles ⇒ default raw-schema behavior).
+    /// </summary>
+    public void Clear()
+    {
+        lock (_writeLock)
+        {
+            _profiles = new Dictionary<string, BifrostProfile>(StringComparer.OrdinalIgnoreCase);
+        }
     }
 
     /// <summary>
@@ -98,6 +146,11 @@ public sealed class BifrostProfileRegistry
     {
         return _profiles.TryGetValue(name, out var profile) ? profile : null;
     }
+
+    /// <summary>
+    /// A consistent snapshot of all registered profiles.
+    /// </summary>
+    public IReadOnlyCollection<BifrostProfile> All => _profiles.Values.ToArray();
 
     /// <summary>
     /// Whether any profiles have been explicitly configured.

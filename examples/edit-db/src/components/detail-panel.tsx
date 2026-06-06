@@ -69,9 +69,10 @@ export function DetailPanel({ parentTable, selectedRowId, onClose, onOpenColumn 
                                             tableName: tab.join.destinationTable,
                                             filterTable: parentTable.name,
                                             filterId: selectedRowId,
-                                            // Single FK: pin to the direct FK column on the child.
-                                            // Composite FK: omit filterColumn so query-builder
-                                            // emits a composite-PK nested filter on the parent.
+                                            // filterColumn (the child destination column) only
+                                            // disambiguates when the parent has multiple
+                                            // multi-joins to the same child; the MODEL B
+                                            // traversal scopes by the parent PK regardless.
                                             ...(isComposite(tab.join)
                                                 ? {}
                                                 : { filterColumn: tab.join.destinationColumnNames[0] }),
@@ -106,11 +107,12 @@ export function DetailPanel({ parentTable, selectedRowId, onClose, onOpenColumn 
                             key={`${activeTab.key}-${selectedRowId}`}
                             table={schema.findTable(activeTab.join.destinationTable)!}
                             id={selectedRowId}
-                            // Composite multi-joins route through tableFilter so the parent
-                            // composite PK becomes a nested {and: [...]} filter; single FKs
-                            // keep the legacy direct-FK-column shape.
+                            // MODEL B: always traverse the parent so the server scopes the
+                            // child rows (including any polymorphic discriminator). filterColumn
+                            // only disambiguates when several multi-joins target the same child.
+                            tableFilter={parentTable.name}
                             {...(isComposite(activeTab.join)
-                                ? { tableFilter: parentTable.name }
+                                ? {}
                                 : { filterColumn: activeTab.join.destinationColumnNames[0] })}
                         />
                     ) : (

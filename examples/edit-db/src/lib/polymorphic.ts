@@ -1,77 +1,41 @@
 /**
- * Pure helpers for scoping standalone child drill-down queries against
- * polymorphic child tables.
+ * Pure helper for locating the parent multi-join that a parent→child
+ * related-records drill-down targets.
  *
- * A polymorphic child (e.g. `notes`) is a shared table keyed by a discriminator
- * column (`entity_type`) plus an id column (`entity_id`). The nested-relationship
- * path (`companies { notes }`) is scoped server-side by both columns, but the
- * editor's separate drill-down query filters by the id column ALONE. For a
- * polymorphic child that leaks other parents' rows that share the id value, so
- * the discriminator predicate must be added to the drill-down filter.
+ * Drill-downs use MODEL B: the query traverses the PARENT and selects the
+ * child collection field, so the server injects any polymorphic discriminator
+ * (entity_type) automatically — the client only matches on the parent PK and
+ * never sends the discriminator. To build that query the client needs the
+ * child field name on the parent type, which is the matching multi-join's
+ * `fieldName` (falling back to `destinationTable`).
  */
 
 import type { Join } from '../types/schema';
 
 /**
- * Minimal descriptor of the parent→child relationship needed to decide whether
- * (and how) to scope a polymorphic drill-down. Mirrors the polymorphic fields
- * projected onto a multi-join by the server's `_dbSchema` resolver.
+ * Locate the parent table's multi-join that targets a given child table. When
+ * the parent has more than one multi-join to the same child (e.g. a polymorphic
+ * shared table mapped under several parents, or a self-FK alias), `idColumn`
+ * (the child destination column) disambiguates. Returns `undefined` when no
+ * matching multi-join exists.
  */
-export interface PolymorphicDescriptor {
-    isPolymorphic?: boolean;
-    polymorphicTypeColumn?: string;
-    polymorphicTypeValue?: string;
-}
-
-/** Escape a value for embedding as a GraphQL string literal. */
-function gqlStringLiteral(value: string): string {
-    return JSON.stringify(value);
-}
-
-/**
- * Build the discriminator filter clause for a polymorphic child drill-down, or
- * `null` when the relationship is not polymorphic (or lacks discriminator info).
- *
- * Returns a single filter object clause string such as
- * `{entity_type: {_eq: "company"}}` ready to be combined with the id predicate.
- */
-export function buildPolymorphicClause(rel: PolymorphicDescriptor): string | null {
-    if (!rel.isPolymorphic) return null;
-    if (!rel.polymorphicTypeColumn || rel.polymorphicTypeValue == null) return null;
-    return `{${rel.polymorphicTypeColumn}: {_eq: ${gqlStringLiteral(rel.polymorphicTypeValue)}}}`;
-}
-
-/**
- * Build the complete drill-down filter for a parent→child relationship,
- * combining the id predicate with the polymorphic discriminator when present.
- *
- * - Non-polymorphic: `{<idColumn>: {_eq: $id}}` (unchanged legacy shape).
- * - Polymorphic: `{and: [{<idColumn>: {_eq: $id}}, {<typeColumn>: {_eq: "<typeValue>"}}]}`.
- *
- * `idVar` defaults to `$id` to match `buildQuery`'s variable naming.
- */
-export function buildChildDrillDownFilter(
-    idColumn: string,
-    rel: PolymorphicDescriptor,
-    idVar = '$id',
-): string {
-    const idClause = `{ ${idColumn}: { _eq: ${idVar}}}`;
-    const typeClause = buildPolymorphicClause(rel);
-    if (!typeClause) return idClause;
-    return `{and: [${idClause}, ${typeClause}]}`;
-}
-
-/**
- * Locate the parent table's multi-join that targets a given child via a given
- * destination (id) column, so the drill-down can read its polymorphic fields.
- * Returns `undefined` when no matching multi-join exists.
- */
-export function findChildMultiJoin(
+export function resolveChildJoin(
     parentMultiJoins: Join[] | undefined,
     childTable: string,
-    idColumn: string,
+    idColumn?: string,
 ): Join | undefined {
-    return parentMultiJoins?.find(
-        (j) => j.destinationTable === childTable && j.destinationColumnNames?.[0] === idColumn,
-    );
+    if (!parentMultiJoins) return undefined;
+    const matches = parentMultiJoins.filter((j) => j.destinationTable === childTable);
+    if (matches.length === 0) return undefined;
+    if (matches.length === 1) return matches[0];
+    if (idColumn) {
+        const byColumn = matches.find((j) => j.destinationColumnNames?.[0] === idColumn);
+        if (byColumn) return byColumn;
+    }
+    return matches[0];
+}
+
+/** The child collection field name on the parent type for a given join. */
+export function childFieldName(join: Join): string {
+    return join.fieldName ?? join.destinationTable;
 }

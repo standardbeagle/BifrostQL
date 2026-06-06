@@ -12,6 +12,8 @@ import {
     getPkTypes,
     buildPkEqVariables,
     buildQuery,
+    resolveDrillDown,
+    unwrapDrillDownPage,
     type ColumnFilterValue,
 } from './query-builder';
 import type { Table, Schema, Column, Join } from '../types/schema';
@@ -485,10 +487,11 @@ describe('buildQuery', () => {
         expect(q).toContain('{ course_id: { _eq: $id}}');
     });
 
-    it('generates FK filter for child table view', () => {
+    it('drills a child collection by traversing the parent (MODEL B)', () => {
         const childTable = makeTable({
             name: 'assignments',
             graphQlName: 'assignments',
+            labelColumn: 'title',
             columns: [
                 makeColumn({ name: 'assignment_id', paramType: 'Int!', isPrimaryKey: true }),
                 makeColumn({ name: 'course_id', paramType: 'Int' }),
@@ -497,42 +500,33 @@ describe('buildQuery', () => {
             primaryKeys: ['assignment_id'],
             singleJoins: [{ name: 'courses', sourceColumnNames: ['course_id'], destinationTable: 'courses', destinationColumnNames: ['course_id'] }],
         });
-        const childSchema = makeSchema([table, childTable]);
-        const q = buildQuery(childTable, childSchema, '', [], '5', 'courses')!;
-        expect(q).toContain('$id: Int');
-        expect(q).toContain('{ course_id: { _eq: $id}}');
-    });
-
-    it('generates FK filter with explicit filterColumn', () => {
-        const childTable = makeTable({
-            name: 'enrollments',
-            graphQlName: 'enrollments',
-            columns: [
-                makeColumn({ name: 'enrollment_id', paramType: 'Int!', isPrimaryKey: true }),
-                makeColumn({ name: 'course_id', paramType: 'Int' }),
-            ],
-            primaryKeys: ['enrollment_id'],
+        const parent = makeTable({
+            ...table,
+            multiJoins: [{ name: 'assignments', sourceColumnNames: ['course_id'], destinationTable: 'assignments', destinationColumnNames: ['course_id'] }],
         });
-        const childSchema = makeSchema([table, childTable]);
-        const q = buildQuery(childTable, childSchema, '', [], '5', 'courses', 'course_id')!;
-        expect(q).toContain('course_id: { _eq: $id}');
+        const childSchema = makeSchema([parent, childTable]);
+        const q = buildQuery(childTable, childSchema, '', [], '5', 'courses')!;
+
+        // Parent traversal: select the parent filtered by its PK, then the child paged field.
+        expect(q).toContain('courses(filter: { course_id: { _eq: $id}})');
+        expect(q).toContain('$id: Int');
+        expect(q).toMatch(/assignments\(limit: \$limit offset: \$offset sort: \$sort\) \{ total offset limit data \{/);
+        // The discriminator is no longer emitted client-side.
+        expect(q).not.toContain('entity_type');
     });
 
-    it('scopes a polymorphic child drill-down by the discriminator', () => {
-        // Arrange: parent (companies) owns a polymorphic multi-join to the shared notes table
+    it('emits the discriminator-free parent-traversal query for a polymorphic child', () => {
+        // Arrange: parent (companies) owns a polymorphic multi-join to the shared notes table.
         const companies = makeTable({
             name: 'companies',
             graphQlName: 'companies',
-            primaryKeys: ['id'],
-            columns: [makeColumn({ name: 'id', paramType: 'Int!', isPrimaryKey: true })],
+            primaryKeys: ['company_id'],
+            columns: [makeColumn({ name: 'company_id', paramType: 'Int!', isPrimaryKey: true })],
             multiJoins: [{
                 name: 'notes',
-                sourceColumnNames: ['id'],
+                sourceColumnNames: ['company_id'],
                 destinationTable: 'notes',
                 destinationColumnNames: ['entity_id'],
-                isPolymorphic: true,
-                polymorphicTypeColumn: 'entity_type',
-                polymorphicTypeValue: 'company',
             }],
         });
         const notes = makeTable({
@@ -541,53 +535,85 @@ describe('buildQuery', () => {
             primaryKeys: ['note_id'],
             columns: [
                 makeColumn({ name: 'note_id', paramType: 'Int!', isPrimaryKey: true }),
-                makeColumn({ name: 'entity_id', paramType: 'Int' }),
                 makeColumn({ name: 'entity_type', paramType: 'String' }),
-                makeColumn({ name: 'body', paramType: 'String' }),
+                makeColumn({ name: 'content', paramType: 'String' }),
             ],
         });
         const polySchema = makeSchema([companies, notes]);
 
-        // Act: drill into companies.notes from company id=5 via the entity_id column
+        // Act: drill into companies.notes from company company_id=5 via the entity_id column.
         const q = buildQuery(notes, polySchema, '', [], '5', 'companies', 'entity_id')!;
 
-        // Assert: both the id and the discriminator predicate are present
-        expect(q).toContain('entity_id: { _eq: $id}');
-        expect(q).toContain('entity_type: {_eq: "company"}');
-        expect(q).toContain('{and: [{ entity_id: { _eq: $id}}, {entity_type: {_eq: "company"}}]}');
+        // Assert: parent-traversal query — server scopes the discriminator, client sends none.
+        expect(q).toContain('companies(filter: { company_id: { _eq: $id}})');
+        expect(q).toMatch(/notes\(limit: \$limit offset: \$offset sort: \$sort\) \{ total offset limit data \{/);
+        expect(q).not.toContain('entity_type: {_eq:');
+        expect(q).not.toContain('entity_id: { _eq:');
     });
 
-    it('leaves a non-polymorphic child drill-down unchanged', () => {
-        // Arrange: parent multi-join WITHOUT polymorphic flags
-        const orders = makeTable({
+    it('uses the parent multi-join fieldName for the nested child field', () => {
+        const child = makeTable({
+            name: 'categories',
+            graphQlName: 'categories',
+            labelColumn: 'name',
+            primaryKeys: ['id'],
+            columns: [
+                makeColumn({ name: 'id', paramType: 'Int!', isPrimaryKey: true }),
+                makeColumn({ name: 'parent_id', paramType: 'Int' }),
+                makeColumn({ name: 'name', paramType: 'String' }),
+            ],
+            multiJoins: [{
+                name: 'categories',
+                fieldName: 'categories_children',
+                sourceColumnNames: ['id'],
+                destinationTable: 'categories',
+                destinationColumnNames: ['parent_id'],
+            }],
+        });
+        const schema = makeSchema([child]);
+        const q = buildQuery(child, schema, '', [], '3', 'categories', 'parent_id')!;
+        expect(q).toContain('categories(filter: { id: { _eq: $id}})');
+        expect(q).toContain('categories_children(limit: $limit offset: $offset sort: $sort)');
+    });
+
+    it('pushes grid filters into the nested child field args', () => {
+        const child = makeTable({
+            name: 'assignments',
+            graphQlName: 'assignments',
+            labelColumn: 'title',
+            primaryKeys: ['assignment_id'],
+            columns: [
+                makeColumn({ name: 'assignment_id', paramType: 'Int!', isPrimaryKey: true }),
+                makeColumn({ name: 'title', paramType: 'String' }),
+                makeColumn({ name: 'credits', paramType: 'Int' }),
+            ],
+        });
+        const parent = makeTable({
+            ...table,
+            multiJoins: [{ name: 'assignments', sourceColumnNames: ['course_id'], destinationTable: 'assignments', destinationColumnNames: ['course_id'] }],
+        });
+        const schema = makeSchema([parent, child]);
+        const cf = [{ id: 'credits', value: { operator: '_gt', value: 3 } as ColumnFilterValue }];
+        const q = buildQuery(child, schema, '', cf, '5', 'courses')!;
+        expect(q).toContain('$cf_credits: Int');
+        // The child filter rides inside the nested field, not the parent.
+        expect(q).toMatch(/assignments\(limit: \$limit offset: \$offset sort: \$sort filter: \{credits: \{_gt: \$cf_credits\}\}\)/);
+    });
+
+    it('falls back to the standard query when no parent multi-join targets the child', () => {
+        // Parent has no multi-join to the child — MODEL B cannot apply.
+        const child = makeTable({
             name: 'orders',
             graphQlName: 'orders',
             primaryKeys: ['order_id'],
-            columns: [
-                makeColumn({ name: 'order_id', paramType: 'Int!', isPrimaryKey: true }),
-                makeColumn({ name: 'customer_id', paramType: 'Int' }),
-            ],
+            columns: [makeColumn({ name: 'order_id', paramType: 'Int!', isPrimaryKey: true })],
         });
-        const customers = makeTable({
-            name: 'customers',
-            graphQlName: 'customers',
-            primaryKeys: ['customer_id'],
-            columns: [makeColumn({ name: 'customer_id', paramType: 'Int!', isPrimaryKey: true })],
-            multiJoins: [{
-                name: 'orders',
-                sourceColumnNames: ['customer_id'],
-                destinationTable: 'orders',
-                destinationColumnNames: ['customer_id'],
-            }],
-        });
-        const plainSchema = makeSchema([customers, orders]);
-
-        // Act
-        const q = buildQuery(orders, plainSchema, '', [], '7', 'customers', 'customer_id')!;
-
-        // Assert: id-only filter, no discriminator
-        expect(q).toContain('{ customer_id: { _eq: $id}}');
-        expect(q).not.toContain('entity_type');
+        const parent = makeTable({ name: 'customers', graphQlName: 'customers', primaryKeys: ['customer_id'], columns: [makeColumn({ name: 'customer_id', paramType: 'Int!', isPrimaryKey: true })] });
+        const schema = makeSchema([parent, child]);
+        const q = buildQuery(child, schema, '', [], '7', 'customers', 'customer_id')!;
+        // Standard top-level query (no parent traversal).
+        expect(q).toContain('orders(sort: $sort');
+        expect(q).not.toContain('customers(filter:');
     });
 
     it('includes multi-join child fields', () => {
@@ -774,7 +800,7 @@ describe('buildQuery — composite primary keys', () => {
         expect(q).toContain('enrollment { student_id course_id grade }');
     });
 
-    it('handles a nested parent-table filter with a composite parent PK', () => {
+    it('traverses a composite-PK parent for a child collection drill-down', () => {
         const parent = makeTable({
             name: 'enrollment',
             graphQlName: 'enrollment',
@@ -783,6 +809,12 @@ describe('buildQuery — composite primary keys', () => {
                 makeColumn({ name: 'student_id', paramType: 'Int!', isPrimaryKey: true }),
                 makeColumn({ name: 'course_id', paramType: 'String!', isPrimaryKey: true }),
             ],
+            multiJoins: [{
+                name: 'grades',
+                sourceColumnNames: ['student_id', 'course_id'],
+                destinationTable: 'grades',
+                destinationColumnNames: ['student_id', 'course_id'],
+            }],
         });
         const child = makeTable({
             name: 'grades',
@@ -791,11 +823,14 @@ describe('buildQuery — composite primary keys', () => {
             columns: [makeColumn({ name: 'grade_id', paramType: 'Int!', isPrimaryKey: true })],
         });
         const parentSchema = makeSchema([parent, child]);
-        // tableFilter='enrollment' but no filterColumn or matching singleJoin — falls into the nested-parent path.
+        // Composite multi-join routes through tableFilter='enrollment' (no filterColumn).
         const q = buildQuery(child, parentSchema, '', [], '1::cs-101', 'enrollment')!;
+        // One $pk_${col} per parent PK column.
         expect(q).toContain('$pk_student_id: Int');
         expect(q).toContain('$pk_course_id: String');
-        expect(q).toContain('{ enrollment: {and: [{student_id: {_eq: $pk_student_id}}, {course_id: {_eq: $pk_course_id}}]}}');
+        // Parent traversal with a composite-PK match, then the child paged field.
+        expect(q).toContain('enrollment(filter: {and: [{student_id: {_eq: $pk_student_id}}, {course_id: {_eq: $pk_course_id}}]})');
+        expect(q).toContain('grades(limit: $limit offset: $offset sort: $sort)');
     });
 });
 
@@ -888,5 +923,86 @@ describe('buildQuery — relationship field names', () => {
         const q = buildQuery(categories, schema, '', [])!;
 
         expect(q).toContain('categories_children { id name }');
+    });
+});
+
+// ── MODEL B drill-down resolution + result unwrap ──────────────
+
+describe('resolveDrillDown', () => {
+    const notes = makeTable({
+        name: 'notes',
+        graphQlName: 'notes',
+        primaryKeys: ['note_id'],
+        columns: [makeColumn({ name: 'note_id', paramType: 'Int!', isPrimaryKey: true })],
+    });
+    const companies = makeTable({
+        name: 'companies',
+        graphQlName: 'companies',
+        primaryKeys: ['company_id'],
+        columns: [makeColumn({ name: 'company_id', paramType: 'Int!', isPrimaryKey: true })],
+        multiJoins: [{
+            name: 'notes',
+            sourceColumnNames: ['company_id'],
+            destinationTable: 'notes',
+            destinationColumnNames: ['entity_id'],
+        }],
+    });
+    const schema = makeSchema([companies, notes]);
+
+    it('resolves the parent table and child field from tableFilter', () => {
+        const drill = resolveDrillDown(notes, schema, 'companies');
+        expect(drill?.parentTable.name).toBe('companies');
+        expect(drill?.childField).toBe('notes');
+    });
+
+    it('returns null when the parent has no multi-join to the child', () => {
+        const orphan = makeSchema([
+            makeTable({ name: 'companies', graphQlName: 'companies', primaryKeys: ['company_id'], columns: [makeColumn({ name: 'company_id', paramType: 'Int!' })] }),
+            notes,
+        ]);
+        expect(resolveDrillDown(notes, orphan, 'companies')).toBeNull();
+    });
+
+    it('uses the multi-join fieldName as the child field when aliased', () => {
+        const cats = makeTable({
+            name: 'categories',
+            graphQlName: 'categories',
+            primaryKeys: ['id'],
+            columns: [makeColumn({ name: 'id', paramType: 'Int!', isPrimaryKey: true })],
+            multiJoins: [{
+                name: 'categories',
+                fieldName: 'categories_children',
+                sourceColumnNames: ['id'],
+                destinationTable: 'categories',
+                destinationColumnNames: ['parent_id'],
+            }],
+        });
+        const drill = resolveDrillDown(cats, makeSchema([cats]), 'categories', 'parent_id');
+        expect(drill?.childField).toBe('categories_children');
+    });
+});
+
+describe('unwrapDrillDownPage', () => {
+    it('extracts the nested child page from parent.data[0].<childField>', () => {
+        const response = {
+            companies: {
+                data: [
+                    { notes: { total: 7, offset: 0, limit: 50, data: [{ note_id: 1 }, { note_id: 2 }] } },
+                ],
+            },
+        };
+        const page = unwrapDrillDownPage(response, 'companies', 'notes');
+        expect(page.total).toBe(7);
+        expect(page.data).toHaveLength(2);
+    });
+
+    it('returns an empty page when the parent row is missing', () => {
+        expect(unwrapDrillDownPage({ companies: { data: [] } }, 'companies', 'notes')).toEqual({ data: [], total: 0, offset: 0, limit: 0 });
+        expect(unwrapDrillDownPage({}, 'companies', 'notes')).toEqual({ data: [], total: 0, offset: 0, limit: 0 });
+        expect(unwrapDrillDownPage(null, 'companies', 'notes')).toEqual({ data: [], total: 0, offset: 0, limit: 0 });
+    });
+
+    it('returns an empty page when the child field is absent', () => {
+        expect(unwrapDrillDownPage({ companies: { data: [{}] } }, 'companies', 'notes')).toEqual({ data: [], total: 0, offset: 0, limit: 0 });
     });
 });

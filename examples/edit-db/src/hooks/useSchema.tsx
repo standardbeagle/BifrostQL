@@ -41,7 +41,7 @@ interface DbSchemaItem {
     isEditable: boolean;
     metadata: MetadataItem[];
     columns: DbColumnItem[];
-    multiJoins: { name: string; fieldName?: string; sourceColumnNames: string[]; destinationTable: string; destinationColumnNames: string[]; isPolymorphic?: boolean; polymorphicTypeColumn?: string; polymorphicTypeValue?: string }[];
+    multiJoins: { name: string; fieldName?: string; sourceColumnNames: string[]; destinationTable: string; destinationColumnNames: string[] }[];
     singleJoins: { name: string; fieldName?: string; sourceColumnNames: string[]; destinationTable: string; destinationColumnNames: string[] }[];
     manyToManyJoins?: ManyToManyJoin[];
 }

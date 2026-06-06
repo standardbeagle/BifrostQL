@@ -19,13 +19,13 @@ import {
     getFilterObj,
     toLocaleDate,
     getRowPkValue,
-    getGraphQlType,
-    getPkTypes,
     buildColumnFilters,
     serializeColumnFilters,
     deserializeColumnFilters,
     buildQuery,
     buildPkEqVariables,
+    resolveDrillDown,
+    unwrapDrillDownPage,
 } from "../lib/query-builder";
 import { rowIdOf } from "../lib/row-id";
 import { isComposite } from "../lib/fk";
@@ -33,8 +33,6 @@ import { isComposite } from "../lib/fk";
 // Re-export for existing filter component imports.
 export { getFilterOperators } from "../lib/query-builder";
 export type { ColumnFilterValue } from "../lib/query-builder";
-
-const numericTypes = ["Int", "Int!", "Float", "Float!"];
 
 interface RowData {
     id?: number | string;
@@ -326,9 +324,9 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
  * for the current table + filter context:
  *
  * - By own PK (composite-aware): `{id: ...}` for single PK, `{pk_${col}: ...}` per column.
- * - FK column path: `{id: coerced-to-fk-type}`.
- * - Nested parent filter (single parent PK): `{id: coerced-to-parent-pk-type}`.
- * - Nested parent filter (composite parent PK): `{pk_${col}: ...}` per parent PK column.
+ * - MODEL B drill-down: the query traverses the PARENT, so the lookup variable is the
+ *   PARENT primary key — `{id: ...}` for a single parent PK, `{pk_${col}: ...}` per
+ *   column for a composite parent PK.
  */
 function buildIdLookupVariables(
     id: string,
@@ -341,35 +339,17 @@ function buildIdLookupVariables(
         return buildPkEqVariables(id, table);
     }
 
-    const tableSchema = schema.findTable(table.graphQlName) ?? table;
-    const fkColumn = filterColumn
-        ?? tableSchema.singleJoins.find((j: Join) => j.destinationTable === filterTable)?.sourceColumnNames?.[0];
-
-    if (fkColumn) {
-        const fkCol = table.columns.find((c) => c.name === fkColumn);
-        const coerced = fkCol && numericTypes.includes(fkCol.paramType) ? Number(id) : id;
-        return { id: coerced };
+    const drill = resolveDrillDown(table, schema, filterTable, filterColumn);
+    if (drill) {
+        return buildPkEqVariables(id, drill.parentTable);
     }
 
-    const parentTable = schema.findTable(filterTable!);
-    if (parentTable && (parentTable.primaryKeys?.length ?? 0) > 1) {
-        return buildPkEqVariables(id, parentTable);
-    }
-    const parentPkType = parentTable ? getPkTypes(parentTable)[0]?.gqlType : undefined;
-    const isNumeric = parentPkType ? numericTypes.includes(parentPkType) : true;
-    return { id: isNumeric ? Number(id) : id };
+    // No parent multi-join resolved — fall back to own-PK variables so the
+    // standard query (which buildQuery also falls back to) still binds.
+    return buildPkEqVariables(id, table);
 }
 
-interface TableQueryData {
-    data: RowData[];
-    total: number;
-    offset: number;
-    limit: number;
-}
-
-interface QueryData {
-    [tableName: string]: TableQueryData;
-}
+type QueryData = Record<string, unknown>;
 
 /**
  * Return type for the useDataTable hook.
@@ -501,9 +481,27 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         [table, schema, onExpandContent, onOpenColumn]
     );
 
-    const tableData = data?.[table?.name ?? ''];
-    const rows = tableData?.data ?? [];
-    const totalRows = tableData?.total ?? 0;
+    // MODEL B drill-down: the response is keyed by the PARENT field and the child
+    // page is nested under parent.data[0].<childField>. Unwrap it to the same
+    // {data,total} shape a top-level paged result provides.
+    const drill = useMemo(
+        () => (id && (filterTable || filterColumn) && table)
+            ? resolveDrillDown(table, schema, filterTable, filterColumn)
+            : null,
+        [id, filterTable, filterColumn, table, schema]
+    );
+
+    let rows: RowData[];
+    let totalRows: number;
+    if (drill) {
+        const page = unwrapDrillDownPage(data, drill.parentTable.name, drill.childField);
+        rows = page.data as RowData[];
+        totalRows = page.total;
+    } else {
+        const tableData = data?.[table?.name ?? ''] as { data?: RowData[]; total?: number } | undefined;
+        rows = tableData?.data ?? [];
+        totalRows = tableData?.total ?? 0;
+    }
     const pageCount = Math.max(1, Math.ceil(totalRows / pageSize));
 
     const syncFiltersToUrl = useCallback((filters: ColumnFiltersState) => {

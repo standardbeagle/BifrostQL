@@ -6,7 +6,7 @@
 import type { Table, Column, Join, Schema } from '../types/schema';
 import type { ColumnFiltersState } from '@tanstack/react-table';
 import { rowIdOf, buildPkEqFilter, parsePkRoute } from './row-id';
-import { buildChildDrillDownFilter, findChildMultiJoin } from './polymorphic';
+import { resolveChildJoin, childFieldName } from './polymorphic';
 
 export interface FilterResult {
     variables: Record<string, unknown>;
@@ -310,6 +310,37 @@ export function buildQuery(
     const multiJoinFields = buildMultiJoinFields(schema, tableSchema.multiJoins);
     const allFields = multiJoinFields ? `${dataColumns} ${multiJoinFields}` : dataColumns;
 
+    if (id && (filterColumn || tableFilter)) {
+        // MODEL B parent→child drill-down: traverse the PARENT and select the
+        // child collection (paged) field. The server scopes the child rows to
+        // this parent — including any polymorphic discriminator — so the client
+        // only matches on the parent PK and never sends a discriminator. This
+        // also handles multi-column FK relationships (parent PK match, no child
+        // FK column needed). Grid filter/column-filters/sort/paging are pushed
+        // INTO the nested child field args so server paging drives the grid.
+        const drill = resolveDrillDown(table, schema, tableFilter, filterColumn);
+        if (drill) {
+            // Grid filters (filter string + column filters) now scope the CHILD.
+            const childFilterArg = filterText ? ` filter: ${filterText}` : '';
+            const childField = `${drill.childField}(limit: $limit offset: $offset sort: $sort${childFilterArg}) { total offset limit data {${allFields}} }`;
+
+            const parentPkTypes = getPkTypes(drill.parentTable);
+            if (parentPkTypes.length <= 1) {
+                const parentPk = parentPkTypes[0]?.name ?? "id";
+                const parentPkType = parentPkTypes[0]?.gqlType ?? "Int";
+                param = `, $id: ${parentPkType}` + param;
+                const parentFilter = `{ ${parentPk}: { _eq: $id}}`;
+                return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${drill.parentTable.name}(filter: ${parentFilter}) { data { ${childField} } } }`;
+            }
+            // Composite parent PK — one $pk_${name} variable per parent PK column.
+            const pkParamDecls = parentPkTypes.map((t) => `$pk_${t.name}: ${t.gqlType}`).join(', ');
+            param = `, ${pkParamDecls}` + param;
+            const clauses = parentPkTypes.map((t) => `{${t.name}: {_eq: $pk_${t.name}}}`);
+            const parentFilter = `{and: [${clauses.join(', ')}]}`;
+            return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${drill.parentTable.name}(filter: ${parentFilter}) { data { ${childField} } } }`;
+        }
+    }
+
     if (id && !tableFilter && !filterColumn) {
         if (pkTypes.length <= 1) {
             // Single PK (or no PK) — byte-identical with the legacy shape
@@ -321,47 +352,68 @@ export function buildQuery(
             const clauses = pkTypes.map((t) => `{${t.name}: {_eq: $pk_${t.name}}}`);
             filterText = `{and: [${clauses.join(', ')}]}`;
         }
-    } else if (id && (filterColumn || tableFilter)) {
-        const fkColumn = filterColumn
-            ?? tableSchema.singleJoins.find((j: Join) => j.destinationTable === tableFilter)?.sourceColumnNames?.[0];
-        const fkCol = table.columns.find((c: Column) => c.name === fkColumn);
-        const idType = fkCol ? getGraphQlType(fkCol.paramType) : "Int";
-
-        if (fkColumn) {
-            // Direct FK filter — single column on the child side. For a POLYMORPHIC
-            // child (shared table keyed by discriminator + id) the id column alone
-            // leaks other parents' rows that share the id value, so add the parent
-            // table's discriminator predicate when the relationship is polymorphic.
-            param = `, $id: ${idType}` + param;
-            const parentMultiJoin = tableFilter
-                ? findChildMultiJoin(schema.findTable(tableFilter)?.multiJoins, table.graphQlName, fkColumn)
-                : undefined;
-            const childFilter = buildChildDrillDownFilter(fkColumn, parentMultiJoin ?? {});
-            if (filterText)
-                filterText = `{and: [${filterText}, ${childFilter} ]}`;
-            else
-                filterText = childFilter;
-        } else {
-            // Fallback: nested filter through join using the parent table's PK
-            const parentTable = schema.findTable(tableFilter!);
-            const parentPkTypes = getPkTypes(parentTable!);
-            if (parentPkTypes.length <= 1) {
-                const parentPk = parentPkTypes[0]?.name ?? "id";
-                param = `, $id: ${idType}` + param;
-                const wrapped = `{ ${tableFilter}: { ${parentPk}: { _eq: $id}}}`;
-                filterText = filterText ? `{and: [${filterText}, ${wrapped} ]}` : wrapped;
-            } else {
-                // Composite parent PK — one $pk_${name} per parent PK column
-                const pkParamDecls = parentPkTypes.map((t) => `$pk_${t.name}: ${t.gqlType}`).join(', ');
-                param = `, ${pkParamDecls}` + param;
-                const clauses = parentPkTypes.map((t) => `{${t.name}: {_eq: $pk_${t.name}}}`);
-                const nestedAnd = `{and: [${clauses.join(', ')}]}`;
-                const wrapped = `{ ${tableFilter}: ${nestedAnd}}`;
-                filterText = filterText ? `{and: [${filterText}, ${wrapped} ]}` : wrapped;
-            }
-        }
     }
 
     if (filterText) filterText = `filter: ${filterText}`;
     return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${table.name}(sort: $sort limit: $limit offset: $offset ${filterText}) { total offset limit data {${allFields}}}}`;
+}
+
+export interface DrillDownTarget {
+    /** The parent table whose row owns the child collection. */
+    parentTable: Table;
+    /** The child collection field name on the parent type. */
+    childField: string;
+}
+
+/**
+ * Resolve the parent table + child collection field for a parent→child
+ * related-records drill-down. The child is `table`; the parent is `tableFilter`
+ * (or the destination of `table`'s single-join named `tableFilter` when the
+ * relationship is described from the child side). `filterColumn` (the child
+ * destination column) disambiguates when the parent has several multi-joins to
+ * the same child. Returns `null` when no parent multi-join targets the child —
+ * the caller then falls back to the standard (non-traversal) query.
+ */
+export interface PagedResult {
+    data: unknown[];
+    total: number;
+    offset: number;
+    limit: number;
+}
+
+const EMPTY_PAGE: PagedResult = { data: [], total: 0, offset: 0, limit: 0 };
+
+/**
+ * Unwrap the nested paged child collection from a MODEL B drill-down response.
+ *
+ * The query shape is `{ <parentField>: { data: [ { <childField>: <paged> } ] } }`.
+ * Returns the child's `{total,offset,limit,data}` page, or an empty page when the
+ * parent row was not found (no children / unknown id).
+ */
+export function unwrapDrillDownPage(
+    response: Record<string, unknown> | null | undefined,
+    parentField: string,
+    childField: string,
+): PagedResult {
+    const parent = response?.[parentField] as { data?: unknown[] } | undefined;
+    const parentRow = parent?.data?.[0] as Record<string, unknown> | undefined;
+    const page = parentRow?.[childField] as PagedResult | undefined;
+    if (!page || !Array.isArray(page.data)) return EMPTY_PAGE;
+    return page;
+}
+
+export function resolveDrillDown(
+    table: Table,
+    schema: Schema,
+    tableFilter?: string,
+    filterColumn?: string,
+): DrillDownTarget | null {
+    const parentName = tableFilter
+        ?? schema.findTable(table.graphQlName)?.singleJoins.find((j: Join) => j.destinationTable === filterColumn)?.destinationTable;
+    if (!parentName) return null;
+    const parentTable = schema.findTable(parentName);
+    if (!parentTable) return null;
+    const childJoin = resolveChildJoin(parentTable.multiJoins, table.graphQlName, filterColumn);
+    if (!childJoin) return null;
+    return { parentTable, childField: childFieldName(childJoin) };
 }

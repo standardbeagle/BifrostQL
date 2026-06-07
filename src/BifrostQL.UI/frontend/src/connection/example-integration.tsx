@@ -69,8 +69,8 @@ function App() {
     setCurrentConnection(connectionInfo);
     setAppState('connected');
 
-    // In a real implementation, you would trigger the backend connection here
-    console.log('Connecting with:', connectionString);
+    // In a real implementation, you would trigger the backend connection here.
+    console.log('Connecting with:', { provider: request.provider, server, database });
   }, [recentConnections]);
 
   // Handle test connection (optional - requires backend API)

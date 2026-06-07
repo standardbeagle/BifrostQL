@@ -27,6 +27,12 @@ function memStorage(): Storage {
 const g = globalThis as any;
 const KEY = 'bifrostql_recent_connections';
 const conn = (name: string) => ({ id: name, name, connectionString: `cs-${name}`, provider: 'sqlite' });
+const connWithSecret = () => ({
+  id: 'secret',
+  name: 'secret',
+  connectionString: 'Server=db;User Id=sa;Password=swordfish;Pwd=short;Database=prod',
+  provider: 'sqlserver',
+});
 
 beforeEach(() => {
   g.window = {};
@@ -42,6 +48,24 @@ describe('recent-connections', () => {
     const items = [conn('a'), conn('b')];
     saveRecentConnections(items as any);
     expect(loadRecentConnections()).toEqual(items);
+  });
+
+  it('redacts password-like connection string values on save', () => {
+    saveRecentConnections([connWithSecret() as any]);
+
+    expect(loadRecentConnections()[0].connectionString).toBe(
+      'Server=db;User Id=sa;Password=<redacted>;Pwd=<redacted>;Database=prod'
+    );
+  });
+
+  it('redacts password-like connection string values from existing storage', () => {
+    g.localStorage.setItem(KEY, JSON.stringify([connWithSecret()]));
+
+    expect(loadRecentConnections()[0].connectionString).toBe(
+      'Server=db;User Id=sa;Password=<redacted>;Pwd=<redacted>;Database=prod'
+    );
+    expect(g.localStorage.getItem(KEY)).not.toContain('swordfish');
+    expect(g.localStorage.getItem(KEY)).not.toContain('short');
   });
 
   it('returns empty array when nothing stored', () => {

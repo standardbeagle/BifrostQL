@@ -20,6 +20,12 @@ function memStorage(): Storage {
 const g = globalThis as any;
 const KEY = 'bifrostql_active_session';
 const info = { id: '1', name: 'prod', connectionString: 'cs', provider: 'postgres' };
+const infoWithSecret = {
+  id: '2',
+  name: 'prod',
+  connectionString: 'Host=db;Username=app;Password=secret;Database=prod',
+  provider: 'postgres',
+};
 
 beforeEach(() => { g.sessionStorage = memStorage(); });
 afterEach(() => { delete g.sessionStorage; });
@@ -28,6 +34,23 @@ describe('session', () => {
   it('round-trips a saved session', () => {
     saveSession(info as any);
     expect(loadSession()).toEqual(info);
+  });
+
+  it('redacts password-like connection string values on save', () => {
+    saveSession(infoWithSecret as any);
+
+    expect(loadSession()?.connectionString).toBe(
+      'Host=db;Username=app;Password=<redacted>;Database=prod'
+    );
+  });
+
+  it('redacts password-like connection string values from existing storage', () => {
+    g.sessionStorage.setItem(KEY, JSON.stringify(infoWithSecret));
+
+    expect(loadSession()?.connectionString).toBe(
+      'Host=db;Username=app;Password=<redacted>;Database=prod'
+    );
+    expect(g.sessionStorage.getItem(KEY)).not.toContain('secret');
   });
 
   it('returns null when no session stored', () => {

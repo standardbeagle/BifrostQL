@@ -14,7 +14,7 @@ namespace BifrostQL.Core.Schema
         {
             var builder = new StringBuilder();
             var typeMapper = model.TypeMapper;
-            var tableGenerators = model.Tables.Select(t => new TableSchemaGenerator(t, typeMapper)).ToList();
+            var tableGenerators = model.Tables.Select(t => new TableSchemaGenerator(t, typeMapper, model.EnumColumns)).ToList();
             var spGenerators = model.StoredProcedures.Select(p => new StoredProcedureSchemaGenerator(p)).ToList();
             var readOnlySpGenerators = model.StoredProcedures
                 .Where(p => p.IsReadOnly)

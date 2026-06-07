@@ -13,15 +13,17 @@ namespace BifrostQL.Core.Schema
     {
         private readonly IDbTable _table;
         private readonly ITypeMapper _typeMapper;
+        private readonly EnumColumnMap? _enumColumns;
 
         public TableSchemaGenerator(IDbTable table) : this(table, SchemaGenerator.DefaultTypeMapper)
         {
         }
 
-        public TableSchemaGenerator(IDbTable table, ITypeMapper typeMapper)
+        public TableSchemaGenerator(IDbTable table, ITypeMapper typeMapper, EnumColumnMap? enumColumns = null)
         {
             _table = table;
             _typeMapper = typeMapper;
+            _enumColumns = enumColumns;
         }
 
         /// <summary>
@@ -72,7 +74,10 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine($"type {_table.GraphQlName} {{");
             foreach (var column in VisibleColumns)
             {
-                builder.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetGraphQlTypeName(column.EffectiveDataType, column.IsNullable, _typeMapper)}");
+                string fieldType = _enumColumns != null && _enumColumns.TryGetEnumType(_table.DbName, column.ColumnName, out var en)
+                    ? (column.IsNullable ? en : en + "!")
+                    : SchemaGenerator.GetGraphQlTypeName(column.EffectiveDataType, column.IsNullable, _typeMapper);
+                builder.AppendLine($"\t{column.GraphQlName} : {fieldType}");
             }
 
             builder.AppendLine($"_agg(operation: AggregateOperations! value: {_table.AggregateValueTypeName}!) : Float");
@@ -315,7 +320,10 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine($"input {_table.TableFilterTypeName} {{");
             foreach (var column in VisibleColumns)
             {
-                builder.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetFilterInputTypeName(column.EffectiveDataType, _typeMapper)}");
+                string filterType = _enumColumns != null && _enumColumns.TryGetEnumType(_table.DbName, column.ColumnName, out var fe)
+                    ? $"FilterType{fe}Input"
+                    : SchemaGenerator.GetFilterInputTypeName(column.EffectiveDataType, _typeMapper);
+                builder.AppendLine($"\t{column.GraphQlName} : {filterType}");
             }
             foreach (var link in _table.SingleLinks)
             {

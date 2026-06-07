@@ -523,8 +523,12 @@ namespace BifrostQL.Server
                     // Read once, then build a model+schema per profile from the shared read.
                     var loader = new DbModelLoader(connFactory, new MetadataLoader(endpointMetadataRules));
                     var read = await loader.ReadAsync();
+                    // Pre-load enum lookup values once (async DB read) so the
+                    // synchronous per-profile cache can attach the enum map.
+                    var baseModel = loader.BuildModel(read, new MetadataLoader(endpointMetadataRules), additionalMetadata);
+                    var enumValues = await loader.LoadEnumValuesAsync(baseModel);
                     var profileCache = new ProfileModelCache(
-                        loader, read, endpointMetadataRules, additionalMetadata, registry);
+                        loader, read, endpointMetadataRules, additionalMetadata, registry, enumValues);
                     var (model, schema) = profileCache.GetFor(null);
                     return new Inputs(new Dictionary<string, object?>
                     {

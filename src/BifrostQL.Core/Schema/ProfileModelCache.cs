@@ -25,6 +25,7 @@ namespace BifrostQL.Core.Schema
         private readonly IReadOnlyList<string> _baseMetadataRules;
         private readonly IDictionary<string, IDictionary<string, object?>>? _additionalMetadata;
         private readonly BifrostProfileRegistry? _registry;
+        private readonly EnumValueLoader.LoadResult? _enumValues;
 
         private readonly object _lock = new();
         private readonly Dictionary<string, (IDbModel Model, ISchema Schema)> _memo =
@@ -35,13 +36,15 @@ namespace BifrostQL.Core.Schema
             SchemaData read,
             IReadOnlyList<string> baseMetadataRules,
             IDictionary<string, IDictionary<string, object?>>? additionalMetadata,
-            BifrostProfileRegistry? registry)
+            BifrostProfileRegistry? registry,
+            EnumValueLoader.LoadResult? enumValues = null)
         {
             _loader = loader ?? throw new ArgumentNullException(nameof(loader));
             _read = read ?? throw new ArgumentNullException(nameof(read));
             _baseMetadataRules = baseMetadataRules ?? Array.Empty<string>();
             _additionalMetadata = additionalMetadata;
             _registry = registry;
+            _enumValues = enumValues;
         }
 
         /// <summary>
@@ -93,6 +96,12 @@ namespace BifrostQL.Core.Schema
                 : (IReadOnlyCollection<string>)_baseMetadataRules;
 
             var model = _loader.BuildModel(_read, new MetadataLoader(rules), _additionalMetadata);
+
+            // Attach the pre-loaded enum map BEFORE schema emission so enum-aware
+            // schema generation and request-time code can read it off the model.
+            if (_enumValues != null && model is DbModel dbm)
+                dbm.EnumColumns = EnumColumnMap.Build(model, _enumValues.Values, _enumValues.ValueColumns);
+
             var schema = DbSchema.FromModel(model, profile);
             return (model, schema);
         }

@@ -37,6 +37,14 @@ namespace BifrostQL.Model
         }
 
         /// <summary>
+        /// Loads the DISTINCT values of every <c>enum:</c>-marked lookup table once,
+        /// over a single shared connection, so the (async) schema-loader body can
+        /// pre-load them and hand the result to the (synchronous) per-profile cache.
+        /// </summary>
+        public Task<BifrostQL.Core.Schema.EnumValueLoader.LoadResult> LoadEnumValuesAsync(IDbModel model)
+            => BifrostQL.Core.Schema.EnumValueLoader.LoadAsync(model, _connFactory);
+
+        /// <summary>
         /// Reads the database schema once. The result can drive many
         /// <see cref="BuildModel"/> calls with different metadata loaders, so
         /// per-profile metadata can vary without re-reading the database.

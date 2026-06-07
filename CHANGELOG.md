@@ -35,6 +35,10 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - `Workflows/` runtime: `IWorkflowRunner`, `IWorkflowDataExecutor`, `WorkflowDefinition`, `WorkflowScheduler`, `WorkflowTriggerHost`, `WorkflowConfigCollector`. Membership-manager sample wires it via `HostedSpa`.
 - `DbTableBatchResolver` collects a `BatchActionOutcome` per action and notifies the observer chain after the batch transaction commits — previously batch insert/update/delete/upsert produced no notifications.
 
+### Added — lookup-table enums
+
+- Lookup-table enums: tables marked `enum:` emit GraphQL enum types (`{Table}Values`); FK / `enum-ref` columns are typed, filterable, and writable as enums with value↔name mapping across all four engines (value-valued / Approach A). Soft-deleted lookup rows are excluded from membership; membership is per-connection (not tenant-scoped); the redundant FK navigation field is suppressed when its column is an enum. Drift reads as `null` with a logged warning. See `concepts/lookup-table-enums`.
+
 ### Added — dialect support
 
 - `ISqlDialect.SupportsNativePivot` (default `false`, `true` on SqlServer). `PivotSqlGenerator.GeneratePivot` is the dialect-aware entry point that routes to SqlServer native PIVOT or the engine-agnostic CASE WHEN cross-tab.

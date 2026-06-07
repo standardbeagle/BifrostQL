@@ -85,12 +85,55 @@ public class ReaderEnumEnumMappingTests
         return new ReaderEnum(query, tables, map);
     }
 
-    private static IBifrostFieldContext FieldContext(string fieldName)
+    private static IBifrostFieldContext FieldContext(string fieldName, string? alias = null)
     {
         var ctx = Substitute.For<IBifrostFieldContext>();
         ctx.FieldName.Returns(fieldName);
-        ctx.FieldAlias.Returns((string?)null);
+        ctx.FieldAlias.Returns(alias);
         return ctx;
+    }
+
+    /// <summary>
+    /// Builds a ReaderEnum where the enum column is projected under an alias
+    /// (e.g. query <c>{ orders { current: status } }</c>). The data index is
+    /// keyed by the projected alias (<c>AS current</c>), while enum resolution
+    /// must still key on the SCHEMA field name (<c>status</c>).
+    /// </summary>
+    private static ReaderEnum BuildAliasedReader(IDbModel model, EnumColumnMap map)
+    {
+        var orders = model.GetTableFromDbName("Orders");
+        var query = GqlObjectQueryBuilder.Create()
+            .WithDbTable(orders)
+            .Build();
+
+        var index = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["id"] = 0,
+            ["current"] = 1,
+        };
+        var data = new List<object?[]>
+        {
+            new object?[] { 5, "active" },
+        };
+        var tables = new Dictionary<string, (IDictionary<string, int> index, IList<object?[]> data)>
+        {
+            [query.KeyName] = (index, data),
+        };
+
+        return new ReaderEnum(query, tables, map);
+    }
+
+    [Fact]
+    public async Task Get_AliasedEnumColumn_MapsToEnumName()
+    {
+        var model = BuildModel();
+        var reader = BuildAliasedReader(model, BuildMap(model));
+
+        // Field "status" aliased as "current"; data index is keyed by the alias,
+        // enum resolution must key on the un-aliased schema field name.
+        var result = await reader.Get(0, FieldContext("status", alias: "current"));
+
+        result.Should().Be("ACTIVE");
     }
 
     [Fact]

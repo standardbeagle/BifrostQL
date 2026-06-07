@@ -33,7 +33,7 @@ namespace BifrostQL.Core.Resolvers
             if (found)
             {
                 var raw = DbConvert(table.data[row][index]);
-                return ValueTask.FromResult(MapEnumValueOrRaw(_tableSql.DbTable.DbName, alias ?? name, raw));
+                return ValueTask.FromResult(MapEnumValueOrRaw(_tableSql.DbTable.DbName, name, raw));
             }
             return GetDataForMissingColumn(context, table, row);
         }
@@ -304,7 +304,7 @@ namespace BifrostQL.Core.Resolvers
             }
 
             var raw = ReaderEnum.DbConvert(_data[row][index]);
-            return ValueTask.FromResult(_root.MapEnumValueOrRaw(_tableDbName, lookup, raw));
+            return ValueTask.FromResult(_root.MapEnumValueOrRaw(_tableDbName, column, raw));
         }
 
 
@@ -357,7 +357,7 @@ namespace BifrostQL.Core.Resolvers
             var name = context.FieldName;
             var alias = context.FieldAlias;
             if (_index.TryGetValue(alias ?? name, out var index))
-                return ValueTask.FromResult(_root.MapEnumValueOrRaw(_tableDbName, alias ?? name, ReaderEnum.DbConvert(_row[index])));
+                return ValueTask.FromResult(_root.MapEnumValueOrRaw(_tableDbName, name, ReaderEnum.DbConvert(_row[index])));
             if (_index.TryGetValue(name, out var index2))
                 return ValueTask.FromResult(_root.MapEnumValueOrRaw(_tableDbName, name, ReaderEnum.DbConvert(_row[index2])));
 

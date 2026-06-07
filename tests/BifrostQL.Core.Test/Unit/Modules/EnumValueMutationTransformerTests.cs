@@ -112,6 +112,36 @@ public class EnumValueMutationTransformerTests
     }
 
     [Fact]
+    public void Transform_Delete_RewritesEnumNameToDbValue()
+    {
+        var transformer = new EnumValueMutationTransformer();
+        var model = BuildModelWithEnums();
+        var statusField = StatusGraphQlName(model);
+        var data = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            [statusField] = "ACTIVE",
+        };
+
+        var result = transformer.Transform(
+            model.GetTableFromDbName("Orders"), MutationType.Delete, data, Context(model));
+
+        result.Errors.Should().BeEmpty();
+        result.Data[statusField].Should().Be("active");
+    }
+
+    [Fact]
+    public void AppliesTo_ReturnsTrue_OnDelete_WhenTableHasEnumColumns()
+    {
+        var transformer = new EnumValueMutationTransformer();
+        var model = BuildModelWithEnums();
+
+        var applies = transformer.AppliesTo(
+            model.GetTableFromDbName("Orders"), MutationType.Delete, Context(model));
+
+        applies.Should().BeTrue();
+    }
+
+    [Fact]
     public void AppliesTo_ReturnsFalse_WhenModelHasNoEnumColumnsForTable()
     {
         var transformer = new EnumValueMutationTransformer();

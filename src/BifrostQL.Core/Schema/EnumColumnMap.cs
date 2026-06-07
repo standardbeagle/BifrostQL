@@ -178,7 +178,9 @@ public sealed class EnumColumnMap
     /// </summary>
     public bool IsEnumLink(string tableDbName, TableLinkDto link) =>
         link != null
-        && link.ChildIds.Any(c => TryGetEnumType(tableDbName, c.ColumnName, out _));
+        && link.ChildIds.Any(c =>
+            TryResolveEnumTable(tableDbName, c.ColumnName, out var enumTableDb)
+            && string.Equals(enumTableDb, link.ParentTable.DbName, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Rewrites enum-name operands to database values in place across the filter

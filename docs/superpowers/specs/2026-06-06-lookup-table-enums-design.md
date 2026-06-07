@@ -33,7 +33,7 @@ between the GraphQL enum name and the stored database value.
 | Column→enum mapping model | **A — value-valued.** Columns hold the value string; map `value ↔ sanitized-name`. No id translation. FK-by-id (Approach B) is out of scope, documented as a follow-up. |
 | Column opt-in | **FK detection + metadata override.** A column renders as the enum when its FK targets the enum table's value column, OR it carries `enum-ref: dbo.<table>` metadata. Override wins over detection. |
 | Unknown stored value (read) | **Null + structured warning.** The field resolves to null, a warning is logged; the rest of the row is unaffected. |
-| Security | **Full.** Enum value loading runs through the same filter-transformer pipeline as a normal read (tenant scoping + soft-delete apply). Enum membership is therefore per-connection/profile. |
+| Security | **Soft-delete only; not tenant-scoped (shipped).** Enum membership loads once globally with soft-delete applied. It cannot be tenant-scoped because the enum type is baked into the shared schema. Row-level tenant filtering still applies to data queries. |
 | GraphQL surface | Enum type + filter-input type + enum-typed columns + read/filter/write value mapping. |
 
 ## Components
@@ -102,12 +102,12 @@ band; they consult `EnumColumnMap` from the request's resolved model.
 
 ## Security
 
-`EnumValueLoader` issues its distinct-value queries through the same
-filter-transformer pipeline as a normal table read, so tenant-filter and
-soft-delete WHERE clauses apply. Consequence (intended): enum membership is
-scoped per connection/profile — a tenant only sees its own enum members. This
-aligns with the existing per-connection `ProfileModelCache` lifetime; no new
-caching model is introduced.
+Enum membership is loaded **once globally** at schema-build time, with **only
+soft-delete** applied (soft-deleted lookup rows are excluded). Membership is
+**not** tenant-scoped: the enum type is baked into the shared GraphQL schema, so
+its members cannot vary per connection/profile. Row-level tenant filtering still
+applies to ordinary data queries — only the set of declared enum members is
+shared. This avoids a per-tenant schema and keeps a single emitted enum type.
 
 ## Error handling
 
@@ -134,8 +134,9 @@ caching model is introduced.
     filter-by-enum returns the right rows, insert/update by enum name persists
     the underlying value, and a value absent from the snapshot resolves to
     null + warning.
-  - Security: with a tenant-filter active, enum membership reflects only the
-    tenant's rows.
+  - Security: soft-deleted lookup rows are excluded from enum membership;
+    membership is global (not tenant-scoped), while row-level tenant filtering
+    still applies to data queries.
 
 ## Out of scope (follow-ups)
 

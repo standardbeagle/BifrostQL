@@ -7,7 +7,8 @@ namespace BifrostQL.Core.Modules
 {
     /// <summary>
     /// Rewrites enum-named input values to their stored DB values for enum columns
-    /// on insert/update/upsert. An unknown enum name produces an error result.
+    /// on insert/update/upsert and delete-by-key. An unknown enum name produces an
+    /// error result.
     /// </summary>
     public sealed class EnumValueMutationTransformer : IMutationTransformer, IModuleNamed
     {
@@ -20,7 +21,7 @@ namespace BifrostQL.Core.Modules
         {
             if (table is null) throw new ArgumentNullException(nameof(table));
             if (context is null) throw new ArgumentNullException(nameof(context));
-            return mutationType is MutationType.Insert or MutationType.Update
+            return mutationType is MutationType.Insert or MutationType.Update or MutationType.Delete
                 && context.Model.EnumColumns?.HasAnyFor(table.DbName) == true;
         }
 

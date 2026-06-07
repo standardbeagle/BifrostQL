@@ -215,6 +215,67 @@ public class EnumColumnMapTests
         filter.Or[1].Next!.Value.Should().Be("pending");
     }
 
+    /// <summary>
+    /// A link whose parent table is the resolved enum table is a redundant
+    /// Approach-A navigation and must be suppressed.
+    /// </summary>
+    [Fact]
+    public void IsEnumLink_LinkParentIsResolvedEnumTable_ReturnsTrue()
+    {
+        var model = BuildModel();
+        var map = BuildMap(model);
+
+        var orders = model.GetTableFromDbName("Orders");
+        var enumTable = model.GetTableFromDbName(EnumTable);
+        var statusCode = orders.Columns.First(c =>
+            string.Equals(c.ColumnName, "StatusCode", StringComparison.OrdinalIgnoreCase));
+
+        var link = new TableLinkDto
+        {
+            Name = "status",
+            ChildTable = orders,
+            ParentTable = enumTable,
+            ChildId = statusCode,
+            ParentId = enumTable.Columns.First(c =>
+                string.Equals(c.ColumnName, ValueColumn, StringComparison.OrdinalIgnoreCase)),
+        };
+
+        map.IsEnumLink("Orders", link).Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Contrived case: a column resolves to enum table A (via enum-ref) but the
+    /// navigation link targets a DIFFERENT table B. The old check suppressed any
+    /// link whose FK column hit ANY enum; the tightened check only suppresses when
+    /// the resolved enum table equals the link's parent table — so this legitimate
+    /// navigation to B must NOT be suppressed.
+    /// </summary>
+    [Fact]
+    public void IsEnumLink_ColumnEnumButLinkParentIsDifferentTable_ReturnsFalse()
+    {
+        var model = BuildModel();
+        var map = BuildMap(model);
+
+        var orders = model.GetTableFromDbName("Orders");
+        var customers = model.GetTableFromDbName("Customers");
+        // PriorityName carries enum-ref → resolves to the OrderStatus enum table,
+        // but this link navigates to Customers (a different, non-enum table).
+        var priorityName = orders.Columns.First(c =>
+            string.Equals(c.ColumnName, "PriorityName", StringComparison.OrdinalIgnoreCase));
+
+        var link = new TableLinkDto
+        {
+            Name = "customer",
+            ChildTable = orders,
+            ParentTable = customers,
+            ChildId = priorityName,
+            ParentId = customers.Columns.First(c =>
+                string.Equals(c.ColumnName, "Id", StringComparison.OrdinalIgnoreCase)),
+        };
+
+        map.IsEnumLink("Orders", link).Should().BeFalse();
+    }
+
     [Fact]
     public void HasAnyFor_NoEnumColumns_ReturnsFalse()
     {

@@ -340,17 +340,21 @@ namespace BifrostQL.Core.Resolvers
                 return new BatchActionOutcome(softAffected, MutationType.Update, transformResult.Data, transformResult.StateTransition);
             }
 
-            var deleteModuleSql = modules.Delete(data, table, userContext, model);
+            // Adopt the (possibly rewritten) data so transformer output (e.g.
+            // enum-name → DB-value mapping on a predicate column) reaches the
+            // WHERE clause and parameters, mirroring the soft-delete branch above.
+            var deleteData = transformResult.Data;
+            var deleteModuleSql = modules.Delete(deleteData, table, userContext, model);
             var deleteTableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var deleteWhereClause = string.Join(" AND ", data.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+            var deleteWhereClause = string.Join(" AND ", deleteData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause}{additionalFilter.WhereSuffix};";
             await using var deleteCmd = conn.CreateCommand();
             deleteCmd.CommandText = Join(deleteSql, deleteModuleSql);
             deleteCmd.Transaction = transaction;
-            AddParameters(deleteCmd, data);
+            AddParameters(deleteCmd, deleteData);
             AddExtraParameters(deleteCmd, additionalFilter.Parameters);
             var deleteAffected = await deleteCmd.ExecuteNonQueryAsync();
-            return new BatchActionOutcome(deleteAffected, MutationType.Delete, data, transformResult.StateTransition);
+            return new BatchActionOutcome(deleteAffected, MutationType.Delete, deleteData, transformResult.StateTransition);
         }
 
         private static async Task<BatchActionOutcome?> ExecuteUpsert(

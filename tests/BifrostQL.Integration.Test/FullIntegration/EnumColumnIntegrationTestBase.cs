@@ -106,6 +106,31 @@ public abstract class EnumColumnIntegrationTestBase : FullIntegrationTestBase
     }
 
     [SkippableFact]
+    public async Task Delete_ByEnumName_MatchesUnderlyingValue()
+    {
+        // The delete predicate carries the primary key plus an enum-column
+        // guard. The guard's enum name must be rewritten to the DB value
+        // ('inactive') so the row matches — otherwise WHERE ... AND
+        // status='INACTIVE' matches nothing and the delete silently reports 0.
+        var target = QueryRows(
+            await ExecuteQueryAsync("query { orders(filter: { status: { _eq: INACTIVE } }, limit: 1) { data { id status } } }"),
+            "orders");
+        target.Should().NotBeEmpty();
+        var id = target[0]["id"].GetInt32();
+
+        var delete = await ExecuteQueryAsync($"mutation {{ orders(delete: {{ id: {id}, status: INACTIVE }}) }}");
+        delete.Errors.Should().BeNullOrEmpty();
+        var affected = MutationScalar(delete, "orders");
+        affected.Should().Be(1);
+
+        // The targeted row is gone.
+        var remaining = QueryRows(
+            await ExecuteQueryAsync($"query {{ orders(filter: {{ id: {{ _eq: {id} }} }}) {{ data {{ id }} }} }}"),
+            "orders");
+        remaining.Should().BeEmpty();
+    }
+
+    [SkippableFact]
     public async Task Read_UnknownStoredValue_ResolvesNullWithWarning()
     {
         // Introduce drift: add a lookup value AND a referencing row AFTER the

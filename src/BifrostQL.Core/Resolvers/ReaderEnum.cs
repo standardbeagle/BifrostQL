@@ -33,7 +33,7 @@ namespace BifrostQL.Core.Resolvers
             if (found)
             {
                 var raw = DbConvert(table.data[row][index]);
-                return ValueTask.FromResult(MapEnumValue(alias ?? name, raw));
+                return ValueTask.FromResult(MapEnumValueOrRaw(_tableSql.DbTable.DbName, alias ?? name, raw));
             }
             return GetDataForMissingColumn(context, table, row);
         }
@@ -42,13 +42,16 @@ namespace BifrostQL.Core.Resolvers
         /// Maps a stored enum-column value to its GraphQL enum name. Non-enum
         /// columns pass through untouched. A stored value that is not a declared
         /// enum member (drift) resolves to null and emits a structured warning.
+        /// Shared by the top-level read and by nested projections
+        /// (<see cref="SingleRowLookup"/>, <see cref="SubTableEnumerable"/>),
+        /// which pass their own table DbName so the single mapping/drift policy
+        /// applies uniformly regardless of read depth.
         /// </summary>
-        private object? MapEnumValue(string field, object? raw)
+        internal object? MapEnumValueOrRaw(string tableDbName, string field, object? raw)
         {
             if (_enumColumns == null)
                 return raw;
 
-            var tableDbName = _tableSql.DbTable.DbName;
             if (!_enumColumns.TryGetEnumType(tableDbName, field, out _))
                 return raw;
 
@@ -91,10 +94,11 @@ namespace BifrostQL.Core.Resolvers
         {
             var key = JoinKeyValues.FromParentRow(join, table, row);
             var tableData = _tables[join.JoinName];
+            var connectedDbName = join.ConnectedTable.DbTable.DbName;
 
             if (join.QueryType == QueryType.Join)
             {
-                var subTable = new SubTableEnumerable(this, key, tableData);
+                var subTable = new SubTableEnumerable(this, key, tableData, connectedDbName);
                 // Paged nested collections (multi-links) surface the same
                 // wrapper as top-level queries: {total, offset, limit, data}.
                 // The per-parent total is carried on the window column; read it
@@ -115,7 +119,7 @@ namespace BifrostQL.Core.Resolvers
             if (join.QueryType == QueryType.Single)
             {
                 var data = JoinKeyMatcher.FindRow(tableData, key);
-                return ValueTask.FromResult<object?>(data == null ? null : new SingleRowLookup(data, tableData.index, this));
+                return ValueTask.FromResult<object?>(data == null ? null : new SingleRowLookup(data, tableData.index, this, connectedDbName));
             }
 
             throw new BifrostExecutionError("unexpected Join type: " + join.JoinName);
@@ -270,10 +274,12 @@ namespace BifrostQL.Core.Resolvers
         private readonly (IDictionary<string, int> index, IList<object?[]> data) _table;
         private readonly IList<object?[]> _data;
         private readonly ReaderEnum _root;
-        public SubTableEnumerable(ReaderEnum root, object?[] key, (IDictionary<string, int> index, IList<object?[]> data) @table)
+        private readonly string _tableDbName;
+        public SubTableEnumerable(ReaderEnum root, object?[] key, (IDictionary<string, int> index, IList<object?[]> data) @table, string tableDbName)
         {
             _root = root;
             _table = table;
+            _tableDbName = tableDbName;
             _data = JoinKeyMatcher.FilterRows(table, key);
         }
 
@@ -297,7 +303,8 @@ namespace BifrostQL.Core.Resolvers
                 return _root.GetDataForMissingColumn(context, _table, row);
             }
 
-            return ValueTask.FromResult(ReaderEnum.DbConvert(_data[row][index]));
+            var raw = ReaderEnum.DbConvert(_data[row][index]);
+            return ValueTask.FromResult(_root.MapEnumValueOrRaw(_tableDbName, lookup, raw));
         }
 
 
@@ -334,13 +341,15 @@ namespace BifrostQL.Core.Resolvers
         private readonly object?[] _row;
         private readonly IDictionary<string, int> _index;
         private readonly ReaderEnum _root;
+        private readonly string _tableDbName;
         private List<object?[]>? _data;
 
-        public SingleRowLookup(object?[] row, IDictionary<string, int> index, ReaderEnum root)
+        public SingleRowLookup(object?[] row, IDictionary<string, int> index, ReaderEnum root, string tableDbName)
         {
             _row = row;
             _index = index;
             _root = root;
+            _tableDbName = tableDbName;
         }
 
         public ValueTask<object?> Get(IBifrostFieldContext context)
@@ -348,9 +357,9 @@ namespace BifrostQL.Core.Resolvers
             var name = context.FieldName;
             var alias = context.FieldAlias;
             if (_index.TryGetValue(alias ?? name, out var index))
-                return ValueTask.FromResult(ReaderEnum.DbConvert(_row[index]));
+                return ValueTask.FromResult(_root.MapEnumValueOrRaw(_tableDbName, alias ?? name, ReaderEnum.DbConvert(_row[index])));
             if (_index.TryGetValue(name, out var index2))
-                return ValueTask.FromResult(ReaderEnum.DbConvert(_row[index2]));
+                return ValueTask.FromResult(_root.MapEnumValueOrRaw(_tableDbName, name, ReaderEnum.DbConvert(_row[index2])));
 
             _data ??= new List<object?[]> { _row };
 

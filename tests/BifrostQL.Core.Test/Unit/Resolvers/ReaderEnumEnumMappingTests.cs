@@ -125,4 +125,44 @@ public class ReaderEnumEnumMappingTests
 
         result.Should().Be(5);
     }
+
+    /// <summary>
+    /// A single-link (many-to-one) projection reads scalar columns through
+    /// <see cref="SingleRowLookup"/>, which carries the connected table's DbName
+    /// and routes scalar reads through the parent ReaderEnum's mapping. The same
+    /// value→name mapping and drift→null policy must apply at this depth.
+    /// </summary>
+    private static SingleRowLookup BuildSingleLink(ReaderEnum root, object? statusValue)
+    {
+        var index = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["status"] = 0,
+        };
+        var row = new object?[] { statusValue };
+        return new SingleRowLookup(row, index, root, "Orders");
+    }
+
+    [Fact]
+    public async Task Nested_SingleLink_DeclaredEnumValue_MapsToEnumName()
+    {
+        var model = BuildModel();
+        var root = BuildReader(model, BuildMap(model));
+        var nested = BuildSingleLink(root, "active");
+
+        var result = await nested.Get(FieldContext("status"));
+
+        result.Should().Be("ACTIVE");
+    }
+
+    [Fact]
+    public async Task Nested_SingleLink_DriftValue_ResolvesToNull()
+    {
+        var model = BuildModel();
+        var root = BuildReader(model, BuildMap(model));
+        var nested = BuildSingleLink(root, "gone");
+
+        var result = await nested.Get(FieldContext("status"));
+
+        result.Should().BeNull();
+    }
 }

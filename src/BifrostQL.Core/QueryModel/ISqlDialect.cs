@@ -177,10 +177,24 @@ public interface ISqlDialect
     bool RequiresTextCast(string dataType) => false;
 
     /// <summary>
+    /// Whether a column of the given database type and resolved GraphQL type must be
+    /// cast to text in the SELECT before GraphQL serialization.
+    /// </summary>
+    /// <param name="dataType">The column's database data type.</param>
+    /// <param name="graphQlType">The resolved GraphQL type without nullability suffix.</param>
+    bool RequiresTextCast(string dataType, string graphQlType) => RequiresTextCast(dataType);
+
+    /// <summary>
     /// Wraps a (already-escaped) column expression in a cast to the dialect's text type.
     /// Used together with <see cref="RequiresTextCast"/> to read otherwise-unreadable
-    /// columns as strings. Default uses ANSI CAST(expr AS varchar); PostgreSQL overrides
-    /// with the (expr)::text shorthand.
+    /// columns as strings. Default uses ANSI CAST(expr AS varchar); providers can
+    /// override with dialect-specific text extraction.
     /// </summary>
     string TextCast(string columnExpression) => $"CAST({columnExpression} AS varchar)";
+
+    /// <summary>
+    /// Wraps a column expression in a data-type-aware cast to text. Dialects can
+    /// override this when some types need different text extraction than the default.
+    /// </summary>
+    string TextCast(string columnExpression, string dataType) => TextCast(columnExpression);
 }

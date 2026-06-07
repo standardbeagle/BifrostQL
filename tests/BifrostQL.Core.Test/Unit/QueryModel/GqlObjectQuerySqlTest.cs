@@ -45,6 +45,57 @@ public sealed class GqlObjectQuerySqlTest
     }
 
     [Fact]
+    public void AddSqlParameterized_PostgresTemporalColumn_UsesJsonTextExtraction()
+    {
+        var dbModel = DbModelTestFixture.Create()
+            .WithTable("events", t => t
+                .WithPrimaryKey("id")
+                .WithColumn("starts_at", "timestamp with time zone")
+                .WithColumn("name", "text"))
+            .Build();
+        var table = dbModel.GetTableFromDbName("events");
+        var query = GqlObjectQueryBuilder.Create()
+            .WithDbTable(table)
+            .WithColumns("id", "starts_at", "name")
+            .Build();
+        var sqls = new Dictionary<string, ParameterizedSql>();
+        var parameters = new SqlParameterCollection();
+
+        query.AddSqlParameterized(dbModel, PostgresDialect.Instance, sqls, parameters);
+
+        var sql = sqls["events"].Sql;
+        sql.Should().Contain("to_jsonb(\"starts_at\") #>> '{}' \"starts_at\"");
+        sql.Should().NotContain("format('%s', \"starts_at\")");
+        sql.Should().NotContain("format('%s', \"name\")");
+    }
+
+    [Fact]
+    public void AddSqlParameterized_PostgresStringMappedNonStringColumn_CastsToText()
+    {
+        var dbModel = DbModelTestFixture.Create()
+            .WithTable("hosts", t => t
+                .WithPrimaryKey("id")
+                .WithColumn("address", "inet")
+                .WithColumn("external_id", "uuid")
+                .WithColumn("name", "text"))
+            .Build();
+        var table = dbModel.GetTableFromDbName("hosts");
+        var query = GqlObjectQueryBuilder.Create()
+            .WithDbTable(table)
+            .WithColumns("id", "address", "external_id", "name")
+            .Build();
+        var sqls = new Dictionary<string, ParameterizedSql>();
+        var parameters = new SqlParameterCollection();
+
+        query.AddSqlParameterized(dbModel, PostgresDialect.Instance, sqls, parameters);
+
+        var sql = sqls["hosts"].Sql;
+        sql.Should().Contain("format('%s', \"address\") \"address\"");
+        sql.Should().Contain("format('%s', \"external_id\") \"external_id\"");
+        sql.Should().NotContain("format('%s', \"name\")");
+    }
+
+    [Fact]
     public void AddSqlParameterized_UserDefinedColumn_SqlServerDoesNotCast()
     {
         // Only dialects that declare a type unreadable cast it; SQL Server does not.

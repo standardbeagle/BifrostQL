@@ -41,8 +41,8 @@ public sealed class PostgresTypeMapper : ITypeMapper
     /// Type mapping: integer/int/int4/serial->Int, smallint/int2/smallserial->Short,
     /// bigint/int8/bigserial->BigInt, decimal/numeric->Decimal,
     /// real/float4/double precision/float8->Float, boolean/bool->Boolean,
-    /// timestamp (without tz)->DateTime, timestamptz->DateTimeOffset,
-    /// json/jsonb->JSON. All other types (text, varchar, uuid, inet, etc.) map to String.
+    /// temporal types->String, json/jsonb->JSON. All other types (text, varchar,
+    /// uuid, inet, etc.) map to String.
     /// </remarks>
     public string GetGraphQlType(string dataType)
     {
@@ -54,8 +54,11 @@ public sealed class PostgresTypeMapper : ITypeMapper
             "decimal" or "numeric" => "Decimal",
             "real" or "float4" or "double precision" or "float8" => "Float",
             "boolean" or "bool" => "Boolean",
-            "timestamp without time zone" or "timestamp" => "DateTime",
-            "timestamp with time zone" or "timestamptz" => "DateTimeOffset",
+            "date" or "time" or "timetz"
+                or "time with time zone" or "time without time zone"
+                or "timestamp" or "timestamptz"
+                or "timestamp with time zone" or "timestamp without time zone"
+                or "interval" => "String",
             "json" or "jsonb" => "JSON",
             _ => "String",
         };
@@ -67,13 +70,12 @@ public sealed class PostgresTypeMapper : ITypeMapper
 
     /// <inheritdoc />
     /// <remarks>
-    /// Timestamp types are mapped to String for mutations to allow flexible date format input.
+    /// Temporal types are mapped to String for mutations to allow flexible date format input.
     /// </remarks>
     public string GetGraphQlInsertTypeName(string dataType, bool isNullable = false)
     {
         var normalized = StringNormalizer.NormalizeType(dataType);
-        if (normalized is "timestamp without time zone" or "timestamp" or
-            "timestamp with time zone" or "timestamptz")
+        if (PostgresDialect.IsTemporalType(normalized))
             return $"String{(isNullable ? "" : "!")}";
 
         return $"{GetGraphQlType(dataType)}{(isNullable ? "" : "!")}";

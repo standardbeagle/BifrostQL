@@ -59,8 +59,8 @@ namespace BifrostQL.Core.QueryModel
                     var expr = dialect.EscapeIdentifier(n.DbDbName);
                     if (sqlTable != null
                         && sqlTable.ColumnLookup.TryGetValue(n.DbDbName, out var col)
-                        && dialect.RequiresTextCast(col.DataType))
-                        expr = dialect.TextCast(expr);
+                        && dialect.RequiresTextCast(col.DataType, dbModel.TypeMapper.GetGraphQlType(col.EffectiveDataType)))
+                        expr = dialect.TextCast(expr, col.DataType);
                     return $"{expr} {dialect.EscapeIdentifier(n.GraphQlDbName)}";
                 }));
                 var cmdText = $"SELECT {columnSql} FROM {tableRef}";

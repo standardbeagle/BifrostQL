@@ -43,9 +43,32 @@ public sealed class PostgresDialectTest
     }
 
     [Fact]
+    public void RequiresTextCast_TemporalTypes_ReturnsTrue()
+    {
+        _sut.RequiresTextCast("date").Should().BeTrue();
+        _sut.RequiresTextCast("time with time zone").Should().BeTrue();
+        _sut.RequiresTextCast("timestamp without time zone").Should().BeTrue();
+        _sut.RequiresTextCast("timestamptz").Should().BeTrue();
+        _sut.RequiresTextCast("interval").Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("uuid")]
+    [InlineData("inet")]
+    [InlineData("macaddr")]
+    [InlineData("bit")]
+    [InlineData("tsvector")]
+    [InlineData("bytea")]
+    public void RequiresTextCast_GraphQlStringWithNonStringProviderTypes_ReturnsTrue(string dataType)
+    {
+        _sut.RequiresTextCast(dataType, "String").Should().BeTrue();
+    }
+
+    [Fact]
     public void RequiresTextCast_KnownType_ReturnsFalse()
     {
         _sut.RequiresTextCast("text").Should().BeFalse();
+        _sut.RequiresTextCast("varchar").Should().BeFalse();
         _sut.RequiresTextCast("integer").Should().BeFalse();
         _sut.RequiresTextCast("jsonb").Should().BeFalse();
     }
@@ -56,6 +79,12 @@ public sealed class PostgresDialectTest
         // format('%s', ...) — not ::text — so non-scalar agtype (map/list) serializes
         // without raising "agtype argument must resolve to a scalar value".
         _sut.TextCast("\"properties\"").Should().Be("format('%s', \"properties\")");
+    }
+
+    [Fact]
+    public void TextCast_TemporalType_UsesJsonTextExtraction()
+    {
+        _sut.TextCast("\"started_at\"", "timestamptz").Should().Be("to_jsonb(\"started_at\") #>> '{}'");
     }
 
     #endregion

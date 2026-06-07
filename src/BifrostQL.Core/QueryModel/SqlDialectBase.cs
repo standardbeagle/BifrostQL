@@ -127,7 +127,13 @@ public abstract class SqlDialectBase : ISqlDialect
     public virtual bool RequiresTextCast(string dataType) => false;
 
     /// <inheritdoc />
+    public virtual bool RequiresTextCast(string dataType, string graphQlType) => RequiresTextCast(dataType);
+
+    /// <inheritdoc />
     public virtual string TextCast(string columnExpression) => $"CAST({columnExpression} AS varchar)";
+
+    /// <inheritdoc />
+    public virtual string TextCast(string columnExpression, string dataType) => TextCast(columnExpression);
 }
 
 /// <summary>

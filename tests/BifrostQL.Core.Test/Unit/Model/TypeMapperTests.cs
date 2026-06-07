@@ -161,10 +161,10 @@ public class TypeMapperTests
         [InlineData("float8", "Float")]
         [InlineData("boolean", "Boolean")]
         [InlineData("bool", "Boolean")]
-        [InlineData("timestamp without time zone", "DateTime")]
-        [InlineData("timestamp", "DateTime")]
-        [InlineData("timestamp with time zone", "DateTimeOffset")]
-        [InlineData("timestamptz", "DateTimeOffset")]
+        [InlineData("timestamp without time zone", "String")]
+        [InlineData("timestamp", "String")]
+        [InlineData("timestamp with time zone", "String")]
+        [InlineData("timestamptz", "String")]
         [InlineData("json", "JSON")]
         [InlineData("jsonb", "JSON")]
         [InlineData("character varying", "String")]
@@ -189,8 +189,11 @@ public class TypeMapperTests
         [InlineData("timestamp without time zone", false, "String!")]
         [InlineData("timestamp with time zone", false, "String!")]
         [InlineData("timestamptz", true, "String")]
+        [InlineData("date", false, "String!")]
+        [InlineData("time with time zone", true, "String")]
+        [InlineData("interval", false, "String!")]
         [InlineData("integer", false, "Int!")]
-        public void GetGraphQlInsertTypeName_TimestampsUseString(string dbType, bool isNullable, string expected)
+        public void GetGraphQlInsertTypeName_TemporalsUseString(string dbType, bool isNullable, string expected)
         {
             Assert.Equal(expected, _mapper.GetGraphQlInsertTypeName(dbType, isNullable));
         }
@@ -214,8 +217,8 @@ public class TypeMapperTests
         [Theory]
         [InlineData("INTEGER", "Int")]
         [InlineData("Int", "Int")]
-        [InlineData("TIMESTAMP", "DateTime")]
-        [InlineData("TimeStampTZ", "DateTimeOffset")]
+        [InlineData("TIMESTAMP", "String")]
+        [InlineData("TimeStampTZ", "String")]
         [InlineData("JSONB", "JSON")]
         [InlineData("VARCHAR", "String")]
         public void GetGraphQlType_IsCaseInsensitive(string dbType, string expected)

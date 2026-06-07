@@ -31,6 +31,7 @@ public class EnumColumnMapTests
                 .WithColumn("Name", "nvarchar"))
             .WithTable(EnumTable, t => t
                 .WithSchema("dbo")
+                .WithMetadata(EnumTableConfig.MetadataKey, ValueColumn)
                 .WithColumn("Id", "int", isPrimaryKey: true)
                 .WithColumn("Code", "varchar")
                 .WithColumn("Label", "nvarchar"))
@@ -166,5 +167,78 @@ public class EnumColumnMapTests
         inNode.RelationName.Should().Be("_in");
         inNode.Value.Should().BeAssignableTo<IEnumerable<object?>>();
         ((IEnumerable<object?>)inNode.Value!).Should().BeEquivalentTo(new object?[] { "pending", "on hold" });
+    }
+
+    [Fact]
+    public void RewriteFilterValues_UnknownName_LeftUnchanged()
+    {
+        var map = BuildMap(BuildModel());
+
+        // { StatusCode: { _eq: BOGUS } } — BOGUS is not a known enum name.
+        var filter = TableFilter.FromObject(new Dictionary<string, object?>
+        {
+            ["StatusCode"] = new Dictionary<string, object?> { ["_eq"] = "BOGUS" },
+        }, "Orders");
+
+        map.RewriteFilterValues(filter, "Orders");
+
+        var eqNode = filter.Next!;
+        eqNode.RelationName.Should().Be("_eq");
+        eqNode.Value.Should().Be("BOGUS");
+    }
+
+    [Fact]
+    public void RewriteFilterValues_TranslatesOperandsInsideOrBranch()
+    {
+        var map = BuildMap(BuildModel());
+
+        // { or: [ { StatusCode: { _eq: ACTIVE } },
+        //         { StatusCode: { _eq: PENDING } } ] }
+        var filter = TableFilter.FromObject(new Dictionary<string, object?>
+        {
+            ["or"] = new List<object?>
+            {
+                new Dictionary<string, object?>
+                {
+                    ["StatusCode"] = new Dictionary<string, object?> { ["_eq"] = "ACTIVE" },
+                },
+                new Dictionary<string, object?>
+                {
+                    ["StatusCode"] = new Dictionary<string, object?> { ["_eq"] = "PENDING" },
+                },
+            },
+        }, "Orders");
+
+        map.RewriteFilterValues(filter, "Orders");
+
+        filter.Or[0].Next!.Value.Should().Be("active");
+        filter.Or[1].Next!.Value.Should().Be("pending");
+    }
+
+    [Fact]
+    public void HasAnyFor_NoEnumColumns_ReturnsFalse()
+    {
+        var map = BuildMap(BuildModel());
+
+        // Customers has no enum columns.
+        map.HasAnyFor("Customers").Should().BeFalse();
+    }
+
+    [Fact]
+    public void ValueToName_NonStringDbValue_GoesThroughToString()
+    {
+        var map = BuildMap(BuildModel());
+
+        // A non-string db value is coerced via .ToString(); "active" -> ACTIVE.
+        // (Custom type whose ToString yields a known database value.)
+        map.ValueToName("Orders", "StatusCode", new Stringy("active")).Should().Be("ACTIVE");
+
+        // An int has no matching database value, so it resolves to null without throwing.
+        map.ValueToName("Orders", "StatusCode", 42).Should().BeNull();
+    }
+
+    private sealed record Stringy(string Text)
+    {
+        public override string ToString() => Text;
     }
 }

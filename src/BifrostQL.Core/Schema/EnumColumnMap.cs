@@ -63,7 +63,11 @@ public sealed class EnumColumnMap
         {
             if (!enumValues.TryGetValue(table.DbName, out var entries) || entries.Count == 0)
                 continue;
-            enumTables[table.DbName] = ($"{table.GraphQlName}Values", entries);
+            // Single source of truth for the enum type name — the same authority
+            // schema emission uses, so column references can never diverge from the
+            // emitted enum type. The entries-presence gate guarantees this table is
+            // enum-configured, so FromTable is non-null here.
+            enumTables[table.DbName] = (EnumTableConfig.FromTable(table)!.GraphQlEnumName, entries);
         }
 
         var columnEnums = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
@@ -157,12 +161,7 @@ public sealed class EnumColumnMap
         if (name == null || !TryResolveEnumTable(tableDbName, columnDbName, out var enumTableDb))
             return null;
 
-        foreach (var entry in _enumTables[enumTableDb].Entries)
-        {
-            if (string.Equals(entry.GraphQlName, name, StringComparison.Ordinal))
-                return entry.DatabaseValue;
-        }
-        return null;
+        return NameToValueFromTable(enumTableDb, name);
     }
 
     /// <summary>True when at least one column on the named table is a lookup-table enum.</summary>

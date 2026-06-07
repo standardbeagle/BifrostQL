@@ -33,6 +33,13 @@ namespace BifrostQL.Core.Model
         /// that returns all meta rows as a JSON object.
         /// </summary>
         IReadOnlyList<EavConfig> EavConfigs => Array.Empty<EavConfig>();
+
+        /// <summary>
+        /// Enum column mappings for lookup-table enums (Approach A). When present,
+        /// allows translating between database values and GraphQL enum names for
+        /// columns that reference enum tables.
+        /// </summary>
+        BifrostQL.Core.Schema.EnumColumnMap? EnumColumns => null;
     }
 
     public sealed class DbModel : IDbModel
@@ -43,6 +50,7 @@ namespace BifrostQL.Core.Model
         public IDictionary<string, object?> Metadata { get; init; } = null!;
         public ITypeMapper TypeMapper { get; set; } = SqlServerTypeMapper.Instance;
         public IReadOnlyList<EavConfig> EavConfigs { get; set; } = Array.Empty<EavConfig>();
+        public BifrostQL.Core.Schema.EnumColumnMap? EnumColumns { get; set; }
         public string? GetMetadataValue(string property) => Metadata.TryGetValue(property, out var v) ? v?.ToString() : null;
         public bool GetMetadataBool(string property, bool defaultValue) => (!Metadata.TryGetValue(property, out var v) || v?.ToString() == null) ? defaultValue : v.ToString() == "true";
         public bool CompareMetadata(string property, string value)

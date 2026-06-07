@@ -28,11 +28,9 @@ public static class EnumValueLoader
     /// </summary>
     /// <param name="model">The database model whose enum tables are loaded.</param>
     /// <param name="connFactory">Connection + dialect provider.</param>
-    /// <param name="whereByTable">Optional per-table WHERE SQL (security; wired later).</param>
     public static async Task<LoadResult> LoadAsync(
         IDbModel model,
-        IDbConnFactory connFactory,
-        IReadOnlyDictionary<string, string>? whereByTable = null)
+        IDbConnFactory connFactory)
     {
         var values = new Dictionary<string, IReadOnlyList<EnumValueEntry>>();
         var valueColumns = new Dictionary<string, string>();
@@ -56,7 +54,7 @@ public static class EnumValueLoader
             try
             {
                 values[table.DbName] = await LoadTableAsync(
-                    conn, dialect, table, valueColumn, whereByTable);
+                    conn, dialect, table, valueColumn);
             }
             catch (DbException)
             {
@@ -72,18 +70,20 @@ public static class EnumValueLoader
         DbConnection conn,
         QueryModel.ISqlDialect dialect,
         IDbTable table,
-        string valueColumn,
-        IReadOnlyDictionary<string, string>? whereByTable)
+        string valueColumn)
     {
         var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
         var escapedColumn = dialect.EscapeIdentifier(valueColumn);
         var sql = $"SELECT DISTINCT {escapedColumn} FROM {tableRef}";
 
-        if (whereByTable != null
-            && whereByTable.TryGetValue(table.DbName, out var where)
-            && !string.IsNullOrEmpty(where))
+        // Soft-delete is a context-free predicate, so it is intrinsic to enum
+        // membership: soft-deleted lookup rows must not become enum members.
+        var softDeleteColumn = table.GetMetadataValue(MetadataKeys.SoftDelete.Column);
+        if (!string.IsNullOrWhiteSpace(softDeleteColumn)
+            && table.ColumnLookup.ContainsKey(softDeleteColumn))
         {
-            sql += $" WHERE {where}";
+            var escapedSoftDelete = dialect.EscapeIdentifier(softDeleteColumn);
+            sql += $" WHERE {escapedSoftDelete} IS NULL";
         }
 
         await using var cmd = conn.CreateCommand();

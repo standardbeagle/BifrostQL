@@ -99,7 +99,8 @@ describe('parseFilter', () => {
 });
 
 describe('writeToUrl', () => {
-  let replaceStateMock: ReturnType<typeof vi.fn>;
+  type ReplaceState = typeof window.history.replaceState;
+  let replaceStateMock: ReturnType<typeof vi.fn<ReplaceState>>;
   let originalReplaceState: typeof window.history.replaceState;
 
   beforeEach(() => {
@@ -108,7 +109,7 @@ describe('writeToUrl', () => {
       value: { href: 'http://localhost/users', search: '' },
     });
     originalReplaceState = window.history.replaceState;
-    replaceStateMock = vi.fn();
+    replaceStateMock = vi.fn<ReplaceState>();
     window.history.replaceState = replaceStateMock;
   });
 

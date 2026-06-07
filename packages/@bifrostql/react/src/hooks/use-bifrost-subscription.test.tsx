@@ -20,11 +20,14 @@ function createMockWebSocket() {
     sent: string[];
     readyState: number;
     close: ReturnType<typeof vi.fn>;
+    send: ReturnType<typeof vi.fn>;
   }> = [];
 
-  const MockWebSocket = vi
-    .fn()
-    .mockImplementation((url: string, protocol: string) => {
+  const MockWebSocket = vi.fn(function MockWebSocket(
+    this: unknown,
+    url: string,
+    protocol: string,
+  ) {
       const handler: WsHandler = {
         onopen: null,
         onmessage: null,
@@ -92,7 +95,10 @@ function createMockEventSource() {
     close: ReturnType<typeof vi.fn>;
   }> = [];
 
-  const MockEventSource = vi.fn().mockImplementation((url: string) => {
+  const MockEventSource = vi.fn(function MockEventSource(
+    this: unknown,
+    url: string,
+  ) {
     const handler: SseHandler = {
       onopen: null,
       onmessage: null,

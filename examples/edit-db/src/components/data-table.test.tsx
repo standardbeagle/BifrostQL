@@ -96,8 +96,8 @@ describe('DataTable composite primary key rendering', () => {
     it('renders a junction table with no React duplicate-key warnings', () => {
         renderDataTable();
 
-        const duplicateKeyWarnings = errorSpy.mock.calls.filter((call) =>
-            call.some((arg) => typeof arg === 'string' && arg.includes('same key')),
+        const duplicateKeyWarnings = errorSpy.mock.calls.filter((call: unknown[]) =>
+            call.some((arg: unknown) => typeof arg === 'string' && arg.includes('same key')),
         );
         expect(duplicateKeyWarnings).toEqual([]);
     });
@@ -113,8 +113,8 @@ describe('DataTable composite primary key rendering', () => {
     it('renders rows without crashing when the table has no primary keys (fallback row-${index})', () => {
         renderDataTable({ primaryKeys: [] });
 
-        const duplicateKeyWarnings = errorSpy.mock.calls.filter((call) =>
-            call.some((arg) => typeof arg === 'string' && arg.includes('same key')),
+        const duplicateKeyWarnings = errorSpy.mock.calls.filter((call: unknown[]) =>
+            call.some((arg: unknown) => typeof arg === 'string' && arg.includes('same key')),
         );
         expect(duplicateKeyWarnings).toEqual([]);
         expect(screen.getByTestId('grade-1-cs-101')).toBeInTheDocument();

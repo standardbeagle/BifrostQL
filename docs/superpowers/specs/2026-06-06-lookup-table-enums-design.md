@@ -40,14 +40,13 @@ between the GraphQL enum name and the stored database value.
 
 ### New
 - **`EnumValueLoader`** (`src/BifrostQL.Core/Schema/`)
-  - Input: `IDbModel` + `IDbConnFactory` (+ the filter-transformer context used
-    for normal reads).
+  - Input: `IDbModel` + `IDbConnFactory`.
   - For each table where `EnumTableConfig.FromTable(table)` is non-null: build a
-    `SELECT DISTINCT {valueColumn}[, {labelColumn}] FROM {table}` through the
-    **filter-transformer pipeline** (so tenant-filter / soft-delete WHERE
-    clauses are injected), execute it, pass raw values to
-    `EnumValueSanitizer.SanitizeAll`, and collect the resulting
-    `IReadOnlyList<EnumValueEntry>`.
+    `SELECT DISTINCT {valueColumn} FROM {table}`, appending a soft-delete
+    `WHERE {col} IS NULL` predicate when the table declares a soft-delete column
+    (context-free; **no** tenant scoping — see Security). Execute it (fully
+    async), pass raw values to `EnumValueSanitizer.SanitizeAll`, and collect the
+    resulting `IReadOnlyList<EnumValueEntry>`.
   - Output: `IReadOnlyDictionary<string, IReadOnlyList<EnumValueEntry>>` keyed by
     table DbName. A table whose distinct values are empty or all unsanitizable
     is omitted (its columns stay scalar).

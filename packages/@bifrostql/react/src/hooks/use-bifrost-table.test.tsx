@@ -959,8 +959,10 @@ describe('useBifrostTable', () => {
         result.current.sorting.toggleSort('name');
       });
 
-      // Give time for any debounced calls
-      await new Promise((r) => setTimeout(r, 600));
+      // Give time for any debounced calls.
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 600));
+      });
 
       expect(replaceStateSpy).not.toHaveBeenCalled();
     });

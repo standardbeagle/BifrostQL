@@ -27,6 +27,7 @@ export default defineConfig(({ mode }) => ({
     rollupOptions: {
       external: ['react', 'react-dom', '@tanstack/react-query'],
       output: {
+        exports: 'named',
         globals: {
           react: 'React',
           'react-dom': 'ReactDOM',

@@ -42,6 +42,15 @@ export default defineConfig({
   build: {
     outDir: path.resolve(__dirname, '../wwwroot'),
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          const normalized = id.split(path.sep).join('/');
+          if (normalized.includes('/examples/edit-db/')) return 'edit-db';
+          if (normalized.includes('/node_modules/')) return 'vendor';
+        },
+      },
+    },
   },
   server: {
     fs: {

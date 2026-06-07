@@ -9,7 +9,9 @@
     "test": "tests"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "pnpm -r --if-present --sort build",
+    "test": "dotnet test BifrostQL.sln --no-restore && pnpm test:js",
+    "test:js": "pnpm --filter @bifrostql/codegen --filter @bifrostql/binary-client --filter @bifrostql/types --filter @bifrostql/react --filter @bifrostql/app-shell --filter @standardbeagle/edit-db --filter bifrostql-ui-frontend --if-present test",
     "dev": "bash dev-ui.sh",
     "dev:ui": "bash dev-ui.sh",
     "dev:lib": "pnpm --dir examples/edit-db exec vite build --watch",

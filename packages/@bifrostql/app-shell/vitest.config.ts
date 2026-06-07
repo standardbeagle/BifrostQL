@@ -1,8 +1,23 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react-swc';
+import path from 'node:path';
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: {
+      '@bifrostql/react/server': path.resolve(
+        __dirname,
+        '../react/src/server/index.ts',
+      ),
+      '@bifrostql/react': path.resolve(__dirname, '../react/src/index.ts'),
+      '@bifrostql/types/generated': path.resolve(
+        __dirname,
+        '../types/src/generated/index.ts',
+      ),
+      '@bifrostql/types': path.resolve(__dirname, '../types/src/index.ts'),
+    },
+  },
   test: {
     globals: true,
     environment: 'jsdom',

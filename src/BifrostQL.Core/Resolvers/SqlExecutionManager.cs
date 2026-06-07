@@ -71,6 +71,10 @@ namespace BifrostQL.Core.Resolvers
 
             _transformerService.ApplyTransformers(table, _dbModel, userContext);
 
+            // Rewrite enum-name filter operands to their stored DB values before
+            // SQL is generated, for the root table and every nested join.
+            ApplyEnumFilterRewrite(table);
+
             // Notify Transformed phase
             if (_observers is { Count: > 0 })
             {
@@ -129,6 +133,25 @@ namespace BifrostQL.Core.Resolvers
                 };
             }
             return new ReaderEnum(table, data, enumColumns, logger);
+        }
+
+        /// <summary>
+        /// Rewrites enum-name filter operands (e.g. <c>status: { _eq: ACTIVE }</c>) to
+        /// their stored database values across the query tree — the root table and
+        /// every nested join's connected table (<see cref="GqlObjectQuery.RecurseJoins"/>
+        /// flattens the join tree). No-op when the model carries no enum columns.
+        /// </summary>
+        private void ApplyEnumFilterRewrite(GqlObjectQuery table)
+        {
+            if (_dbModel.EnumColumns is not { } enumCols)
+                return;
+
+            enumCols.RewriteFilterValues(table.Filter, table.DbTable.DbName);
+            foreach (var join in table.RecurseJoins)
+            {
+                var connected = join.ConnectedTable;
+                enumCols.RewriteFilterValues(connected.Filter, connected.DbTable.DbName);
+            }
         }
 
         private async Task<List<GqlObjectQuery>> GetAllObjectQueries(IBifrostFieldContext context)

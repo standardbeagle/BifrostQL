@@ -528,6 +528,31 @@ public class MetadataSourceTests
         source.Priority.Should().Be(100);
     }
 
+    [Fact]
+    public void DatabaseMetadataSource_SplitConfigTableName_SeparatesSchemaQualifiedName()
+    {
+        var (schema, table) = DatabaseMetadataSource.SplitConfigTableName("dbo._custom_config");
+
+        schema.Should().Be("dbo");
+        table.Should().Be("_custom_config");
+    }
+
+    [Fact]
+    public void DatabaseMetadataSource_QuoteSqlServerTableReference_EscapesBrackets()
+    {
+        var tableRef = DatabaseMetadataSource.QuoteSqlServerTableReference("dbo", "config]table");
+
+        tableRef.Should().Be("[dbo].[config]]table]");
+    }
+
+    [Fact]
+    public void DatabaseMetadataSource_EmptyConfigTableName_ThrowsArgument()
+    {
+        var act = () => new DatabaseMetadataSource("Server=fake;Database=fake;", " ");
+
+        act.Should().Throw<ArgumentException>();
+    }
+
     #endregion
 
     #region End-to-End Priority

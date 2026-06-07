@@ -4,6 +4,7 @@ import {
     detailTabs,
     payloadColumns,
     m2mRowsQuery,
+    m2mTargetPickerPlan,
     attachJunctionDetail,
     targetDisplay,
 } from './m2m';
@@ -152,6 +153,26 @@ describe('m2mRowsQuery', () => {
         // Nested target selection by the junction's target field, with target key + label.
         expect(query).toMatch(/courses\s*\{[^}]*\btitle\b/);
         expect(variables.id).toBe(42);
+    });
+});
+
+describe('m2mTargetPickerPlan', () => {
+    it('builds a target picker query with an enum sort value', () => {
+        const target = table('courses', { labelColumn: 'title', primaryKeys: ['id'] });
+        const { query, idColumn } = m2mTargetPickerPlan(target, m2m);
+
+        expect(idColumn).toBe('id');
+        expect(query).toContain('sort: [title_asc]');
+        expect(query).not.toContain('sort: ["title_asc"]');
+        expect(query).toContain('data { id label: title }');
+    });
+
+    it('falls back to the id column when the target has no label column', () => {
+        const target = table('courses', { labelColumn: '', primaryKeys: ['id'] });
+        const { query } = m2mTargetPickerPlan(target, m2m);
+
+        expect(query).toContain('sort: [id_asc]');
+        expect(query).toContain('data { id }');
     });
 });
 

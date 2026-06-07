@@ -11,6 +11,7 @@
 
 import type { Column, Join, ManyToManyJoin, Table } from '../types/schema';
 import { rowIdOf } from './row-id';
+import { getPkTypes } from './query-builder';
 
 /** A tab in the detail panel: an ordinary child collection or a m2m bridge. */
 export type DetailTab =
@@ -89,6 +90,24 @@ export function m2mRowsQuery(
         `{ total offset limit data { ${fields} } } }`;
 
     return { query, variables: { id: coerceId(parentId, idType) } };
+}
+
+export interface M2mTargetPickerPlan {
+    query: string;
+    idColumn: string;
+}
+
+/**
+ * Build the target-list query used when adding a many-to-many link.
+ * Sort values are BifrostQL enum literals, so they must not be quoted.
+ */
+export function m2mTargetPickerPlan(target: Table, m2m: ManyToManyJoin): M2mTargetPickerPlan {
+    const idColumn = getPkTypes(target)[0]?.name ?? m2m.targetColumnNames[0];
+    const labelColumn = target.labelColumn || idColumn;
+    const fields = labelColumn !== idColumn ? `${idColumn} label: ${labelColumn}` : idColumn;
+    const query = `query PickTarget($limit: Int) { ${target.name}(limit: $limit sort: [${labelColumn}_asc]) { data { ${fields} } } }`;
+
+    return { query, idColumn };
 }
 
 /**

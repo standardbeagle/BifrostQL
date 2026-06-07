@@ -7,9 +7,8 @@ import { useSchema } from '../hooks/useSchema';
 import { useFetcher } from '../common/fetcher';
 import { useTableMutation } from '../hooks/useTableMutation';
 import { useDeleteMutation } from '../hooks/useDeleteMutation';
-import { m2mRowsQuery, payloadColumns, targetDisplay, attachJunctionDetail } from '../lib/m2m';
+import { m2mRowsQuery, payloadColumns, targetDisplay, attachJunctionDetail, m2mTargetPickerPlan } from '../lib/m2m';
 import { pkFilterFor } from '../lib/row-id';
-import { getPkTypes } from '../lib/query-builder';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -202,10 +201,7 @@ function TargetPicker({ target, junction, m2m, parentRowId, onClose, onLinked }:
     const attach = useTableMutation(junction, fkColumns, []);
     const [search, setSearch] = useState('');
 
-    const idCol = getPkTypes(target)[0]?.name ?? m2m.targetColumnNames[0];
-    const labelCol = target.labelColumn;
-    const fields = labelCol && labelCol !== idCol ? `${idCol} label: ${labelCol}` : `${idCol}`;
-    const query = `query PickTarget($limit: Int) { ${target.name}(limit: $limit sort: ["${labelCol ?? idCol}_asc"]) { data { ${fields} } } }`;
+    const { query, idColumn } = m2mTargetPickerPlan(target, m2m);
 
     const { data, isLoading } = useQuery({
         queryKey: ['m2mTargets', target.name],
@@ -215,7 +211,7 @@ function TargetPicker({ target, junction, m2m, parentRowId, onClose, onLinked }:
     const allRows = data?.[target.name]?.data ?? [];
     const term = search.trim().toLowerCase();
     const rows = term
-        ? allRows.filter((r) => String(r.label ?? r[idCol] ?? '').toLowerCase().includes(term))
+        ? allRows.filter((r) => String(r.label ?? r[idColumn] ?? '').toLowerCase().includes(term))
         : allRows;
 
     const handlePick = useCallback(async (targetId: string) => {
@@ -245,7 +241,7 @@ function TargetPicker({ target, junction, m2m, parentRowId, onClose, onLinked }:
                         <div className="p-3 text-sm text-muted-foreground">No matches.</div>
                     )}
                     {rows.map((r, i) => {
-                        const id = String(r[idCol] ?? '');
+                        const id = String(r[idColumn] ?? '');
                         const label = r.label != null ? String(r.label) : id;
                         return (
                             <button

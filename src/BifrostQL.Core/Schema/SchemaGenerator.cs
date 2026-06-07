@@ -59,6 +59,18 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine(generator.GetPagedTableTypeDefinition());
             }
 
+            if (model.EnumColumns != null)
+            {
+                foreach (var kv in model.EnumColumns.EnumTables)
+                {
+                    var table = model.Tables.First(t => string.Equals(t.DbName, kv.Key, StringComparison.OrdinalIgnoreCase));
+                    var cfg = EnumTableConfig.FromTable(table)!;
+                    var gen = new EnumTableSchemaGenerator(cfg, kv.Value.Entries);
+                    builder.AppendLine(gen.GetEnumTypeDefinition());
+                    builder.AppendLine(gen.GetFilterTypeDefinition());
+                }
+            }
+
             builder.Append(GetInputAndArgumentTypes(model, tableGenerators, mutatingSpGenerators));
 
             foreach (var generator in spGenerators)

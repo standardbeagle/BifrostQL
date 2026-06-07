@@ -297,6 +297,9 @@ namespace BifrostQL.Server
             if (!configured.Any(t => t is StateMachineMutationTransformer))
                 combined.Add(new StateMachineMutationTransformer());
 
+            if (!configured.Any(t => t is EnumValueMutationTransformer))
+                combined.Add(new EnumValueMutationTransformer());
+
             combined.AddRange(configured);
             return combined;
         }

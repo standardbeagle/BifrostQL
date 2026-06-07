@@ -5,6 +5,8 @@ using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
 using GraphQL.Types;
 using GraphQL.Validation;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Core.Resolvers
 {
@@ -113,6 +115,9 @@ namespace BifrostQL.Core.Resolvers
             var countObj = data.First(kv => kv.Key == (table.KeyName + "=>count")).Value.data[0][0];
             var count = countObj != null ? (int?)Convert.ToInt32(countObj) : null;
 
+            var enumColumns = _dbModel.EnumColumns;
+            var logger = context.RequestServices?.GetService<ILogger<SqlExecutionManager>>();
+
             if (table.IncludeResult)
             {
                 return new TableResult
@@ -120,10 +125,10 @@ namespace BifrostQL.Core.Resolvers
                     Total = count ?? 0,
                     Offset = table.Offset,
                     Limit = table.Limit,
-                    Data = new ReaderEnum(table, data)
+                    Data = new ReaderEnum(table, data, enumColumns, logger)
                 };
             }
-            return new ReaderEnum(table, data);
+            return new ReaderEnum(table, data, enumColumns, logger);
         }
 
         private async Task<List<GqlObjectQuery>> GetAllObjectQueries(IBifrostFieldContext context)

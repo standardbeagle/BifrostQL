@@ -1,5 +1,7 @@
 using System.Collections;
 using BifrostQL.Core.QueryModel;
+using BifrostQL.Core.Schema;
+using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Core.Resolvers
 {
@@ -7,11 +9,19 @@ namespace BifrostQL.Core.Resolvers
     {
         private readonly IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> _tables;
         private readonly GqlObjectQuery _tableSql;
+        private readonly EnumColumnMap? _enumColumns;
+        private readonly ILogger? _logger;
 
-        public ReaderEnum(GqlObjectQuery gqlObjectQuery, IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> tableData)
+        public ReaderEnum(
+            GqlObjectQuery gqlObjectQuery,
+            IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> tableData,
+            EnumColumnMap? enumColumns = null,
+            ILogger? logger = null)
         {
             _tableSql = gqlObjectQuery;
             _tables = tableData;
+            _enumColumns = enumColumns;
+            _logger = logger;
         }
 
         public ValueTask<object?> Get(int row, IBifrostFieldContext context)
@@ -21,8 +31,36 @@ namespace BifrostQL.Core.Resolvers
             var alias = context.FieldAlias;
             var found = table.index.TryGetValue(alias ?? name, out var index);
             if (found)
-                return ValueTask.FromResult(DbConvert(table.data[row][index]));
+            {
+                var raw = DbConvert(table.data[row][index]);
+                return ValueTask.FromResult(MapEnumValue(alias ?? name, raw));
+            }
             return GetDataForMissingColumn(context, table, row);
+        }
+
+        /// <summary>
+        /// Maps a stored enum-column value to its GraphQL enum name. Non-enum
+        /// columns pass through untouched. A stored value that is not a declared
+        /// enum member (drift) resolves to null and emits a structured warning.
+        /// </summary>
+        private object? MapEnumValue(string field, object? raw)
+        {
+            if (_enumColumns == null)
+                return raw;
+
+            var tableDbName = _tableSql.DbTable.DbName;
+            if (!_enumColumns.TryGetEnumType(tableDbName, field, out _))
+                return raw;
+
+            var mapped = _enumColumns.ValueToName(tableDbName, field, raw);
+            if (mapped != null)
+                return mapped;
+
+            if (raw != null)
+                _logger?.LogWarning(
+                    "Enum drift: value '{Value}' on {Table}.{Field} is not a declared enum member; returning null.",
+                    raw, tableDbName, field);
+            return null;
         }
         public ValueTask<object?> GetDataForMissingColumn(IBifrostFieldContext context, (IDictionary<string, int> index, IList<object?[]> data) table, int row)
         {

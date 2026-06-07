@@ -125,7 +125,15 @@ namespace BifrostQL.Core.Resolvers
                     tableType.FieldFor(column.GraphQlName).Resolver = this;
 
                 foreach (var singleLink in table.SingleLinks)
+                {
+                    // Enum-FK single-links are not emitted to the schema (the FK
+                    // column surfaces as the enum scalar instead), so there is no
+                    // navigation field to wire — mirror TableSchemaGenerator.
+                    if (_model.EnumColumns != null
+                        && singleLink.Value.ChildIds.Any(c => _model.EnumColumns.TryGetEnumType(table.DbName, c.ColumnName, out _)))
+                        continue;
                     tableType.FieldFor(singleLink.Value.ParentFieldName).Resolver = this;
+                }
 
                 foreach (var multiLink in table.MultiLinks)
                     tableType.FieldFor(multiLink.Value.ChildFieldName).Resolver = this;

@@ -220,13 +220,21 @@ namespace BifrostQL.Core.Resolvers
             // replaces — the primary-key predicate.
             var additionalFilter = RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
 
-            var moduleSql = modules.Update(propertyInfo.data, table, context.UserContext, model);
+            // Adopt the (possibly rewritten) data so transformer output — e.g.
+            // enum-name → DB-value mapping — reaches the SQL. Keys are split anew
+            // against the (unchanged) primary-key set; enum columns are non-key.
+            var updatedData = transformResult.Data;
+            var standardData = updatedData
+                .Where(d => !propertyInfo.keyData.ContainsKey(d.Key))
+                .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+
+            var moduleSql = modules.Update(updatedData, table, context.UserContext, model);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var setClause = string.Join(",", propertyInfo.standardData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+            var setClause = string.Join(",", standardData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var whereClause = string.Join(" AND ", propertyInfo.keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
-            var result = await ExecuteNonQuery(conFactory, Join(sql, moduleSql), propertyInfo.data, additionalFilter.Parameters);
-            await NotifyMutationAsync(context.RequestServices, table, MutationType.Update, propertyInfo.data, result, context.UserContext);
+            var result = await ExecuteNonQuery(conFactory, Join(sql, moduleSql), updatedData, additionalFilter.Parameters);
+            await NotifyMutationAsync(context.RequestServices, table, MutationType.Update, updatedData, result, context.UserContext);
             await NotifyStateTransitionAsync(context.RequestServices, transformResult.StateTransition, context.UserContext);
             return propertyInfo.keyData.Values.First();
         }
@@ -289,6 +297,11 @@ namespace BifrostQL.Core.Resolvers
             var transformResult = mutationTransformers.Transform(table, MutationType.Insert, data, transformContext);
             if (transformResult.Errors.Length > 0)
                 throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
+
+            // Adopt the (possibly rewritten) data so transformer output — e.g.
+            // enum-name → DB-value mapping — actually reaches the SQL. Mirrors the
+            // delete path; equals the original data when no transformer applies.
+            data = transformResult.Data;
 
             var moduleSql = modules.Insert(data, table, context.UserContext, model);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);

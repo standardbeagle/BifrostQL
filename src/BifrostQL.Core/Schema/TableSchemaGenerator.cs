@@ -39,6 +39,17 @@ namespace BifrostQL.Core.Schema
 
         private IEnumerable<ColumnDto> VisibleColumns => _table.Columns.Where(IsColumnVisible);
 
+        /// <summary>
+        /// True when a single-link's FK column(s) on this table resolve to a
+        /// lookup-table enum. Under Approach A the FK column already surfaces as the
+        /// enum scalar, so the redundant parent navigation must be suppressed —
+        /// otherwise it re-registers a field whose name (the parent table's GraphQL
+        /// name) collides with the enum column's field and crashes schema build.
+        /// </summary>
+        private bool IsEnumColumnLink(TableLinkDto link) =>
+            _enumColumns != null
+            && link.ChildIds.Any(c => _enumColumns.TryGetEnumType(_table.DbName, c.ColumnName, out _));
+
         public string GetTableFieldDefinition()
         {
             var hasSoftDelete = _table.Metadata.TryGetValue(MetadataKeys.SoftDelete.Column, out var sdVal) && sdVal != null;
@@ -87,6 +98,7 @@ namespace BifrostQL.Core.Schema
             var emittedLinkFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var link in _table.SingleLinks)
             {
+                if (IsEnumColumnLink(link.Value)) continue;
                 var fieldName = link.Value.ParentFieldName;
                 if (!emittedLinkFields.Add(fieldName)) continue;
                 builder.AppendLine($"\t{fieldName} : {link.Value.ParentTable.GraphQlName}");
@@ -205,7 +217,10 @@ namespace BifrostQL.Core.Schema
                 //All columns except primary keys are nullable for delete
                 if (isDelete) isNullable = column.IsPrimaryKey == false;
 
-                result.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetGraphQlInsertTypeName(column.EffectiveDataType, isNullable, _typeMapper)}");
+                string insertType = _enumColumns != null && _enumColumns.TryGetEnumType(_table.DbName, column.ColumnName, out var ie)
+                    ? (isNullable ? ie : ie + "!")
+                    : SchemaGenerator.GetGraphQlInsertTypeName(column.EffectiveDataType, isNullable, _typeMapper);
+                result.AppendLine($"\t{column.GraphQlName} : {insertType}");
             }
             result.AppendLine("}");
             return result.ToString();
@@ -237,7 +252,10 @@ namespace BifrostQL.Core.Schema
                 // Primary keys are included (optional): a row with a key is
                 // reconciled against the existing row (update / orphan-detect);
                 // a row without one is inserted.
-                result.AppendLine($"\t{column.GraphQlName} : {SchemaGenerator.GetGraphQlInsertTypeName(column.EffectiveDataType, true, _typeMapper)}");
+                string syncType = _enumColumns != null && _enumColumns.TryGetEnumType(_table.DbName, column.ColumnName, out var se)
+                    ? se
+                    : SchemaGenerator.GetGraphQlInsertTypeName(column.EffectiveDataType, true, _typeMapper);
+                result.AppendLine($"\t{column.GraphQlName} : {syncType}");
             }
             // Child collections — dedupe self-FK fields that share a GraphQlName.
             var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -280,6 +298,7 @@ namespace BifrostQL.Core.Schema
 
                 foreach (var link in _table.SingleLinks)
                 {
+                    if (IsEnumColumnLink(link.Value)) continue;
                     builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : {_table.GetJoinTypeName(link.Value.ParentTable)}");
                 }
                 builder.AppendLine("}");
@@ -305,6 +324,7 @@ namespace BifrostQL.Core.Schema
             foreach (var link in _table.SingleLinks)
             {
                 //For single links _table is the ChildTable
+                if (IsEnumColumnLink(link.Value)) continue;
                 var fieldName = link.Value.ParentFieldName;
                 if (!emitted.Add(fieldName)) continue;
                 builder.AppendLine($"\t{fieldName} : {link.Value.ParentTable.AggregateValueTypeName}");
@@ -327,6 +347,7 @@ namespace BifrostQL.Core.Schema
             }
             foreach (var link in _table.SingleLinks)
             {
+                if (IsEnumColumnLink(link.Value)) continue;
                 builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : {link.Value.ParentTable.TableFilterTypeName}");
             }
             builder.AppendLine($"and: [{_table.TableFilterTypeName}!]");

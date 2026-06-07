@@ -23,7 +23,7 @@ public abstract class FullIntegrationTestBase
     private IDbConnFactory _connFactory = null!;
     private ServiceProvider? _serviceProvider;
 
-    protected async Task InitializeAsync(IDbConnFactory connFactory, Func<DbConnection, Task> createSchema, Func<DbConnection, Task> seedData)
+    protected async Task InitializeAsync(IDbConnFactory connFactory, Func<DbConnection, Task> createSchema, Func<DbConnection, Task> seedData, IReadOnlyList<string>? metadataRules = null)
     {
         _connFactory = connFactory;
         Connection = connFactory.GetConnection();
@@ -33,17 +33,28 @@ public abstract class FullIntegrationTestBase
         await createSchema(Connection);
 
         // Load schema using DbModelLoader
-        var metadataLoader = new MetadataLoader(Array.Empty<string>());
+        var metadataLoader = new MetadataLoader(metadataRules ?? Array.Empty<string>());
         var loader = new DbModelLoader(connFactory, metadataLoader);
         Model = await loader.LoadAsync();
+
+        // Attach enum columns (mirrors ProfileModelCache.Build in production).
+        // No-ops when no table is marked `enum:`, so non-enum suites are unaffected.
+        var enumValues = await loader.LoadEnumValuesAsync(Model);
+        if (Model is BifrostQL.Core.Model.DbModel dbm && enumValues.Values.Count > 0)
+            dbm.EnumColumns = BifrostQL.Core.Schema.EnumColumnMap.Build(Model, enumValues.Values, enumValues.ValueColumns);
 
         // Build GraphQL schema from loaded model
         GraphQLSchema = DbSchema.FromModel(Model);
 
-        // Build service provider for mutation support
+        // Build service provider for mutation support. The built-in
+        // EnumValueMutationTransformer no-ops when the model has no enum
+        // columns, so it is safe for non-enum suites.
         var services = new ServiceCollection();
         services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = Array.Empty<IMutationModule>() });
-        services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap { Transformers = Array.Empty<IMutationTransformer>() });
+        services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap
+        {
+            Transformers = new IMutationTransformer[] { new EnumValueMutationTransformer() }
+        });
         _serviceProvider = services.BuildServiceProvider();
 
         // Seed test data

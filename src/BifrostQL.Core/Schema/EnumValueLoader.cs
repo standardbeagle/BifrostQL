@@ -1,6 +1,5 @@
 using System.Data.Common;
 using BifrostQL.Core.Model;
-using BifrostQL.Core.Utils;
 
 namespace BifrostQL.Core.Schema;
 
@@ -21,34 +20,6 @@ public static class EnumValueLoader
     public sealed record LoadResult(
         IReadOnlyDictionary<string, IReadOnlyList<EnumValueEntry>> Values,
         IReadOnlyDictionary<string, string> ValueColumns);
-
-    /// <summary>
-    /// Resolves the effective value column for an enum table:
-    /// the explicitly configured column when present, otherwise the first non-PK
-    /// string column (type contains "char" or "text"). Returns null when the
-    /// table is not enum-configured or no suitable column exists.
-    /// </summary>
-    public static string? ResolveValueColumn(IDbTable table)
-    {
-        var cfg = EnumTableConfig.FromTable(table);
-        if (cfg == null)
-            return null;
-
-        if (!string.IsNullOrEmpty(cfg.ValueColumn))
-            return cfg.ValueColumn;
-
-        foreach (var column in table.Columns)
-        {
-            if (column.IsPrimaryKey)
-                continue;
-
-            var type = StringNormalizer.NormalizeType(column.EffectiveDataType);
-            if (type.Contains("char") || type.Contains("text"))
-                return column.ColumnName;
-        }
-
-        return null;
-    }
 
     /// <summary>
     /// Loads the DISTINCT values of every enum lookup table over a single shared
@@ -72,7 +43,11 @@ public static class EnumValueLoader
 
         foreach (var table in model.Tables)
         {
-            var valueColumn = ResolveValueColumn(table);
+            var cfg = EnumTableConfig.FromTable(table);
+            if (cfg == null)
+                continue;
+
+            var valueColumn = cfg.ResolveValueColumn(table);
             if (valueColumn == null)
                 continue;
 

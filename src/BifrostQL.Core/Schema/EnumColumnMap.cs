@@ -169,6 +169,18 @@ public sealed class EnumColumnMap
         _columnEnums.TryGetValue(tableDbName, out var cols) && cols.Count > 0;
 
     /// <summary>
+    /// True if this single-link's FK column(s) resolve to a lookup-table enum
+    /// (Approach A). Under Approach A the FK column already surfaces as the enum
+    /// scalar, so the parent navigation is redundant and must be suppressed both
+    /// from schema emission and from resolver wiring (otherwise the navigation
+    /// field collides with the enum column's field and crashes schema build).
+    /// Single source of truth shared by TableSchemaGenerator and BifrostDispatcher.
+    /// </summary>
+    public bool IsEnumLink(string tableDbName, TableLinkDto link) =>
+        link != null
+        && link.ChildIds.Any(c => TryGetEnumType(tableDbName, c.ColumnName, out _));
+
+    /// <summary>
     /// Rewrites enum-name operands to database values in place across the filter
     /// tree, recursing through <see cref="TableFilter.Next"/>,
     /// <see cref="TableFilter.And"/> and <see cref="TableFilter.Or"/>. Both scalar

@@ -128,9 +128,10 @@ namespace BifrostQL.Core.Resolvers
                 {
                     // Enum-FK single-links are not emitted to the schema (the FK
                     // column surfaces as the enum scalar instead), so there is no
-                    // navigation field to wire — mirror TableSchemaGenerator.
+                    // navigation field to wire — mirror TableSchemaGenerator via the
+                    // shared EnumColumnMap.IsEnumLink predicate.
                     if (_model.EnumColumns != null
-                        && singleLink.Value.ChildIds.Any(c => _model.EnumColumns.TryGetEnumType(table.DbName, c.ColumnName, out _)))
+                        && _model.EnumColumns.IsEnumLink(table.DbName, singleLink.Value))
                         continue;
                     tableType.FieldFor(singleLink.Value.ParentFieldName).Resolver = this;
                 }

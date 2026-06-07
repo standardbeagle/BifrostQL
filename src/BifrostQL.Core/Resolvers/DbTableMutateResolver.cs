@@ -60,12 +60,27 @@ namespace BifrostQL.Core.Resolvers
 
                 if (upsertSql != null)
                 {
-                    var moduleSql = modules.Insert(propertyInfo.data, table, context.UserContext, model);
+                    // An upsert that resolves to a single statement is gated as an
+                    // update: it targets an existing or new row keyed by primary key.
+                    // Run the transformer pipeline so rewriting transformers (e.g.
+                    // enum-name → DB-value mapping) actually reach the SQL; non-empty
+                    // Errors abort it. The key/non-key split (and therefore the
+                    // already-built upsertSql) is unaffected because transformers
+                    // rewrite values, not the primary-key membership. When no
+                    // transformer applies, Transform returns the same data reference,
+                    // so adopting transformResult.Data is an exact no-op.
+                    var upsertTransformContext = new MutationTransformContext { Model = model, UserContext = context.UserContext };
+                    var transformResult = mutationTransformers.Transform(table, MutationType.Update, propertyInfo.data, upsertTransformContext);
+                    if (transformResult.Errors.Length > 0)
+                        throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
+
+                    var upsertData = transformResult.Data;
+                    var moduleSql = modules.Insert(upsertData, table, context.UserContext, model);
                     var returning = dialect.ReturningIdentityClause;
                     var identitySql = returning != null
                         ? upsertSql.TrimEnd(';') + returning + ";"
                         : upsertSql + $"SELECT {dialect.LastInsertedIdentity} ID;";
-                    return HandleDecimals(await ExecuteScalar(conFactory, Join(identitySql, moduleSql), propertyInfo.data));
+                    return HandleDecimals(await ExecuteScalar(conFactory, Join(identitySql, moduleSql), upsertData));
                 }
 
                 if (propertyInfo.keyData.Any())

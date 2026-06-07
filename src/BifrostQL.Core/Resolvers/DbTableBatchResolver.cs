@@ -185,6 +185,11 @@ namespace BifrostQL.Core.Resolvers
             if (transformResult.Errors.Length > 0)
                 throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
+            // Adopt the (possibly rewritten) data so transformer output — e.g.
+            // enum-name → DB-value mapping — reaches the SQL. When no transformer
+            // applies, Transform returns the same data reference, so this is a no-op.
+            data = transformResult.Data;
+
             var moduleSql = modules.Insert(data, table, userContext, model);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var columns = string.Join(",", data.Keys.Select(k => dialect.EscapeIdentifier(k)));
@@ -241,7 +246,17 @@ namespace BifrostQL.Core.Resolvers
             // replaces — the primary-key predicate.
             var additionalFilter = RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
 
-            var moduleSql = modules.Update(caseData, table, userContext, model);
+            // Adopt the (possibly rewritten) data so transformer output — e.g.
+            // enum-name → DB-value mapping — reaches the SQL. The non-key SET split
+            // is recomputed against the (unchanged) primary-key set; enum columns are
+            // non-key. When no transformer applies, Transform returns the same data
+            // reference, so standardData is re-derived identically (no-op).
+            var updatedData = transformResult.Data;
+            standardData = updatedData
+                .Where(d => !keyData.ContainsKey(d.Key))
+                .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+
+            var moduleSql = modules.Update(updatedData, table, userContext, model);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var setClause = string.Join(",", standardData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
@@ -249,10 +264,10 @@ namespace BifrostQL.Core.Resolvers
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = Join(sql, moduleSql);
             cmd.Transaction = transaction;
-            AddParameters(cmd, caseData);
+            AddParameters(cmd, updatedData);
             AddExtraParameters(cmd, additionalFilter.Parameters);
             var affected = await cmd.ExecuteNonQueryAsync();
-            return new BatchActionOutcome(affected, MutationType.Update, caseData, transformResult.StateTransition);
+            return new BatchActionOutcome(affected, MutationType.Update, updatedData, transformResult.StateTransition);
         }
 
         private static async Task<IReadOnlyDictionary<string, object?>?> LoadCurrentStateMachineRow(
@@ -366,13 +381,19 @@ namespace BifrostQL.Core.Resolvers
                 if (transformResult.Errors.Length > 0)
                     throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
-                var moduleSql = modules.Insert(caseData, table, userContext, model);
+                // Adopt the (possibly rewritten) data so transformer output — e.g.
+                // enum-name → DB-value mapping — reaches the SQL. The key/non-key
+                // split (and therefore upsertSql) is unaffected because transformers
+                // rewrite values, not primary-key membership. When no transformer
+                // applies, Transform returns the same data reference (no-op).
+                var upsertData = transformResult.Data;
+                var moduleSql = modules.Insert(upsertData, table, userContext, model);
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = Join(upsertSql, moduleSql);
                 cmd.Transaction = transaction;
-                AddParameters(cmd, caseData);
+                AddParameters(cmd, upsertData);
                 var affected = await cmd.ExecuteNonQueryAsync();
-                return new BatchActionOutcome(affected, MutationType.Update, caseData, transformResult.StateTransition);
+                return new BatchActionOutcome(affected, MutationType.Update, upsertData, transformResult.StateTransition);
             }
 
             if (keyColumns.Count > 0)

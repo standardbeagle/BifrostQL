@@ -41,14 +41,12 @@ namespace BifrostQL.Core.Schema
 
         /// <summary>
         /// True when a single-link's FK column(s) on this table resolve to a
-        /// lookup-table enum. Under Approach A the FK column already surfaces as the
-        /// enum scalar, so the redundant parent navigation must be suppressed —
-        /// otherwise it re-registers a field whose name (the parent table's GraphQL
-        /// name) collides with the enum column's field and crashes schema build.
+        /// lookup-table enum. Delegates to <see cref="EnumColumnMap.IsEnumLink"/>
+        /// (single source of truth shared with <c>BifrostDispatcher</c>) so the
+        /// suppression rule cannot drift between schema emission and resolver wiring.
         /// </summary>
         private bool IsEnumColumnLink(TableLinkDto link) =>
-            _enumColumns != null
-            && link.ChildIds.Any(c => _enumColumns.TryGetEnumType(_table.DbName, c.ColumnName, out _));
+            _enumColumns != null && _enumColumns.IsEnumLink(_table.DbName, link);
 
         public string GetTableFieldDefinition()
         {

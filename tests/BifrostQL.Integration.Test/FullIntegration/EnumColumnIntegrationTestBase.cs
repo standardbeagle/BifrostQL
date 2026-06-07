@@ -67,6 +67,45 @@ public abstract class EnumColumnIntegrationTestBase : FullIntegrationTestBase
     }
 
     [SkippableFact]
+    public async Task Update_ByEnumName_PersistsUnderlyingValue()
+    {
+        // Flip an existing ACTIVE order to INACTIVE through the update path.
+        var existing = QueryRows(
+            await ExecuteQueryAsync("query { orders(filter: { status: { _eq: ACTIVE } }, limit: 1) { data { id status } } }"),
+            "orders");
+        existing.Should().NotBeEmpty();
+        var id = existing[0]["id"].GetInt32();
+
+        var update = await ExecuteQueryAsync($"mutation {{ orders(update: {{ id: {id}, status: INACTIVE }}) }}");
+        update.Errors.Should().BeNullOrEmpty();
+
+        // The write transformer must map the enum name back to the DB value:
+        // the raw stored string is 'inactive', not 'INACTIVE'.
+        var raw = await ReadRawStatusAsync(id);
+        raw.Should().Be("inactive");
+    }
+
+    [SkippableFact]
+    public async Task Upsert_ByEnumName_PersistsUnderlyingValue()
+    {
+        // Upsert (keyed by primary key) an existing ACTIVE order to INACTIVE.
+        // Exercises the native single-statement upsert path as well as the
+        // update/insert fallback (dialect-dependent); both must map the enum.
+        var existing = QueryRows(
+            await ExecuteQueryAsync("query { orders(filter: { status: { _eq: ACTIVE } }, limit: 1) { data { id status } } }"),
+            "orders");
+        existing.Should().NotBeEmpty();
+        var id = existing[0]["id"].GetInt32();
+
+        var upsert = await ExecuteQueryAsync($"mutation {{ orders(upsert: {{ id: {id}, status: INACTIVE }}) }}");
+        upsert.Errors.Should().BeNullOrEmpty();
+
+        // The raw stored string must be the mapped DB value, never the enum name.
+        var raw = await ReadRawStatusAsync(id);
+        raw.Should().Be("inactive");
+    }
+
+    [SkippableFact]
     public async Task Read_UnknownStoredValue_ResolvesNullWithWarning()
     {
         // Introduce drift: add a lookup value AND a referencing row AFTER the

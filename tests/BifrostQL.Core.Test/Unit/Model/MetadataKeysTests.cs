@@ -113,6 +113,7 @@ namespace BifrostQL.Core.Test.Model
         [Theory]
         [InlineData(MetadataKeys.Enum.Values, "enum-values")]
         [InlineData(MetadataKeys.Enum.Labels, "enum-labels")]
+        [InlineData(MetadataKeys.Enum.Ref, "enum-ref")]
         public void EnumKeys_HaveCorrectValues(string actual, string expected)
         {
             actual.Should().Be(expected);

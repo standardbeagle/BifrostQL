@@ -159,6 +159,9 @@ namespace BifrostQL.Core.Model
 
             /// <summary>Comma-separated list of display labels for enum values.</summary>
             public const string Labels = "enum-labels";
+
+            /// <summary>Column metadata: forces the column to render as a lookup-table enum, e.g. "enum-ref: dbo.status".</summary>
+            public const string Ref = "enum-ref";
         }
 
         /// <summary>

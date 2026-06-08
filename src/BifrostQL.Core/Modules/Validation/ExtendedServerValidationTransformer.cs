@@ -36,7 +36,7 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
     {
         var errors = new List<string>();
 
-        if (IsTableValidationEnabled(table))
+        if (IsTableValidationEnabled(table) || table.Columns.Any(IsColumnValidationEnabled))
             ValidateStandardMetadata(table, mutationType, data, errors);
 
         RunPluginValidators(table, mutationType, data, context, errors);

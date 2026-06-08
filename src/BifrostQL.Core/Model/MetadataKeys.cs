@@ -49,6 +49,12 @@ namespace BifrostQL.Core.Model
 
             /// <summary>Accepted file types (MIME type pattern).</summary>
             public const string Accept = "accept";
+
+            /// <summary>
+            /// Table-level virtual folder columns for CMS/DAM-style file listings.
+            /// Format: <c>field:JSON:local:folder=assets/{Id},depends=Id</c>.
+            /// </summary>
+            public const string Folder = "file-folder";
         }
 
         /// <summary>

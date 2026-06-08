@@ -4,7 +4,7 @@ namespace BifrostQL.Core.Storage
     /// Local filesystem storage provider for file storage.
     /// Stores files in a directory structure on the local filesystem.
     /// </summary>
-    public sealed class LocalStorageProvider : IStorageProvider
+    public sealed class LocalStorageProvider : IStorageProvider, IStorageFolderProvider
     {
         public string ProviderType => "local";
 
@@ -78,6 +78,69 @@ namespace BifrostQL.Core.Storage
             return Task.FromResult($"file://{fullPath}");
         }
 
+        public Task<IReadOnlyList<FileFolderEntry>> ListFolderAsync(
+            StorageBucketConfig bucketConfig,
+            string folderKey,
+            bool recursive = false,
+            CancellationToken cancellationToken = default)
+        {
+            var fullPath = GetFullFolderPath(bucketConfig, folderKey);
+            if (!Directory.Exists(fullPath))
+                return Task.FromResult<IReadOnlyList<FileFolderEntry>>(Array.Empty<FileFolderEntry>());
+
+            var search = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
+            var entries = new List<FileFolderEntry>();
+
+            foreach (var directory in Directory.EnumerateDirectories(fullPath, "*", search))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var info = new DirectoryInfo(directory);
+                entries.Add(new FileFolderEntry
+                {
+                    Name = info.Name,
+                    Key = ToStorageKey(bucketConfig, directory),
+                    IsFolder = true,
+                    LastModified = info.LastWriteTimeUtc,
+                    Url = $"file://{directory}",
+                });
+            }
+
+            foreach (var file in Directory.EnumerateFiles(fullPath, "*", search))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var info = new FileInfo(file);
+                entries.Add(new FileFolderEntry
+                {
+                    Name = info.Name,
+                    Key = ToStorageKey(bucketConfig, file),
+                    IsFolder = false,
+                    Size = info.Length,
+                    LastModified = info.LastWriteTimeUtc,
+                    Url = $"file://{file}",
+                });
+            }
+
+            return Task.FromResult<IReadOnlyList<FileFolderEntry>>(
+                entries.OrderBy(e => e.IsFolder ? 0 : 1).ThenBy(e => e.Key, StringComparer.OrdinalIgnoreCase).ToArray());
+        }
+
+        private static string GetFullFolderPath(StorageBucketConfig bucketConfig, string folderKey)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(bucketConfig.BucketName);
+
+            var basePath = Path.GetFullPath(bucketConfig.BucketName);
+            var prefixedKey = string.IsNullOrWhiteSpace(folderKey)
+                ? bucketConfig.PathPrefix ?? ""
+                : bucketConfig.GetFullPath(folderKey);
+
+            if (Path.IsPathRooted(prefixedKey))
+                throw new InvalidOperationException("Folder key must be relative to the storage bucket.");
+
+            var fullPath = Path.GetFullPath(Path.Combine(basePath, prefixedKey));
+            EnsureUnderBase(basePath, fullPath);
+            return fullPath;
+        }
+
         private static string GetFullFilePath(StorageBucketConfig bucketConfig, string fileKey)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(bucketConfig.BucketName);
@@ -90,14 +153,29 @@ namespace BifrostQL.Core.Storage
                 throw new InvalidOperationException("File key must be relative to the storage bucket.");
 
             var fullPath = Path.GetFullPath(Path.Combine(basePath, prefixedKey));
+            EnsureUnderBase(basePath, fullPath);
+            return fullPath;
+        }
+
+        private static void EnsureUnderBase(string basePath, string fullPath)
+        {
             var normalizedBase = Path.EndsInDirectorySeparator(basePath)
                 ? basePath
                 : basePath + Path.DirectorySeparatorChar;
 
-            if (!fullPath.StartsWith(normalizedBase, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("File key resolves outside the storage bucket.");
+            if (!string.Equals(fullPath, basePath, StringComparison.OrdinalIgnoreCase)
+                && !fullPath.StartsWith(normalizedBase, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Storage key resolves outside the storage bucket.");
+        }
 
-            return fullPath;
+        private static string ToStorageKey(StorageBucketConfig bucketConfig, string fullPath)
+        {
+            var basePath = Path.GetFullPath(bucketConfig.BucketName);
+            var relative = Path.GetRelativePath(basePath, fullPath).Replace(Path.DirectorySeparatorChar, '/');
+            var prefix = bucketConfig.PathPrefix?.Trim('/').Replace('\\', '/');
+            return !string.IsNullOrWhiteSpace(prefix) && relative.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase)
+                ? relative[(prefix.Length + 1)..]
+                : relative;
         }
     }
 }

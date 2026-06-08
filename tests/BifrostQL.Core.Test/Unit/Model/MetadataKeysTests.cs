@@ -22,6 +22,7 @@ namespace BifrostQL.Core.Test.Model
         [InlineData(MetadataKeys.FileStorage.ContentTypeColumn, "content-type-column")]
         [InlineData(MetadataKeys.FileStorage.FileNameColumn, "file-name-column")]
         [InlineData(MetadataKeys.FileStorage.Accept, "accept")]
+        [InlineData(MetadataKeys.FileStorage.Folder, "file-folder")]
         public void FileStorageKeys_HaveCorrectValues(string actual, string expected)
         {
             actual.Should().Be(expected);

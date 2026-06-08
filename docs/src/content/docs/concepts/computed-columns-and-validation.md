@@ -54,6 +54,34 @@ public sealed class ShippingEstimateProvider : IComputedColumnProvider
 
 Provider fields are computed after the database query returns. If no `depends=` list is supplied, BifrostQL projects the table primary key columns so the provider has row identity.
 
+## File folder columns
+
+Use `file-folder` table metadata to expose a storage folder as a read-only JSON column. This is useful for CMS, DAM, and other blob-backed content models where the database row owns a folder of files.
+
+```text
+dbo.pages {
+  storage: bucket:/srv/cms;provider:local
+  file-folder: assets:JSON:local:folder=assets/{Id},depends=Id,recursive=false
+}
+```
+
+The emitted `assets` field returns file/folder entries with `name`, `key`, `isFolder`, `size`, `lastModified`, `contentType`, and `url` fields. The folder template can reference projected row values with `{ColumnName}` placeholders.
+
+Built-in providers:
+
+- `local` / `file-folder-local` — lists folders from the local filesystem storage bucket.
+- `s3` / `file-folder-s3` — lists objects and common prefixes from S3 or S3-compatible storage.
+
+You can configure the folder column inline:
+
+```text
+dbo.assets {
+  file-folder: files:JSON:s3:folder=tenant/{tenant_id}/assets,depends=tenant_id,bucket=my-bucket,region=us-east-1,prefix=prod
+}
+```
+
+Or use table/database `storage` metadata as the default bucket config and keep the folder column focused on the row-specific path.
+
 ## Server validation
 
 Set `server-validation: enabled` on a table or column to enforce validation metadata during insert and update mutations:

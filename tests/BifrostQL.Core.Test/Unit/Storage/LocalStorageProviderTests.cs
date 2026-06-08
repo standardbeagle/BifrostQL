@@ -104,6 +104,46 @@ public class LocalStorageProviderTests : IDisposable
 
     #endregion
 
+    #region ListFolderAsync
+
+    [Fact]
+    public async Task ListFolderAsync_ReturnsFilesAndFolders()
+    {
+        var config = new StorageBucketConfig { BucketName = _tempDir };
+        Directory.CreateDirectory(Path.Combine(_tempDir, "assets", "42", "images"));
+        await File.WriteAllTextAsync(Path.Combine(_tempDir, "assets", "42", "hero.jpg"), "jpg");
+
+        var entries = await _provider.ListFolderAsync(config, "assets/42");
+
+        Assert.Contains(entries, e => e is { Name: "images", IsFolder: true });
+        Assert.Contains(entries, e => e is { Name: "hero.jpg", IsFolder: false, Size: 3 });
+    }
+
+    [Fact]
+    public async Task ListFolderAsync_WithPrefix_ReturnsKeysRelativeToPrefix()
+    {
+        var config = new StorageBucketConfig { BucketName = _tempDir, PathPrefix = "cms" };
+        Directory.CreateDirectory(Path.Combine(_tempDir, "cms", "assets"));
+        await File.WriteAllTextAsync(Path.Combine(_tempDir, "cms", "assets", "file.txt"), "data");
+
+        var entries = await _provider.ListFolderAsync(config, "assets");
+
+        Assert.Contains(entries, e => e.Key == "assets/file.txt");
+    }
+
+    [Theory]
+    [InlineData("../outside")]
+    [InlineData("/tmp/outside")]
+    public async Task ListFolderAsync_WithTraversalPath_Throws(string folderKey)
+    {
+        var config = new StorageBucketConfig { BucketName = _tempDir };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _provider.ListFolderAsync(config, folderKey));
+    }
+
+    #endregion
+
     #region DownloadAsync
 
     [Fact]

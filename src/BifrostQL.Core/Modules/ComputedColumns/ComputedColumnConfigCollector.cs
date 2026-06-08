@@ -1,4 +1,5 @@
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Storage;
 
 namespace BifrostQL.Core.Modules.ComputedColumns;
 
@@ -9,6 +10,7 @@ public static class ComputedColumnConfigCollector
         var result = new List<ComputedColumnDefinition>();
         result.AddRange(ParseSql(table.GetMetadataValue(MetadataKeys.Computed.Sql)));
         result.AddRange(ParseProvider(table.GetMetadataValue(MetadataKeys.Computed.Provider)));
+        result.AddRange(FileFolderComputedColumnCollector.FromTable(table));
         return result;
     }
 

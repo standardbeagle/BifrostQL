@@ -36,7 +36,7 @@ public sealed class ComputedColumnProviders : IComputedColumnProviders
         _providers = providers.ToArray();
         _lookup = _providers
             .GroupBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+            .ToDictionary(g => g.Key, g => g.Last(), StringComparer.OrdinalIgnoreCase);
     }
 
     public int Count => _providers.Count;

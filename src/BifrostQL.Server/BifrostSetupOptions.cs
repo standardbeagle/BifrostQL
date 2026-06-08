@@ -14,6 +14,7 @@ using BifrostQL.Core.Modules.ComputedColumns;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
+using BifrostQL.Core.Storage;
 using BifrostQL.Core.Workflows;
 using BifrostQL.Server.Logging;
 using Microsoft.Extensions.Logging;
@@ -340,6 +341,8 @@ namespace BifrostQL.Server
 
             // Register query transformer service
             services.AddSingleton<IQueryTransformerService, QueryTransformerService>();
+            services.AddSingleton<IComputedColumnProvider, LocalFileFolderComputedColumnProvider>();
+            services.AddSingleton<IComputedColumnProvider, S3FileFolderComputedColumnProvider>();
             services.AddSingleton<IComputedColumnProviders>(sp => new ComputedColumnProviders(sp.GetServices<IComputedColumnProvider>()));
 
             var isAuthEnabled = !_bifrostConfig.GetValue<bool>("DisableAuth", true);

@@ -11,6 +11,7 @@ namespace BifrostQL.Core.Storage
         {
             // Register default providers
             RegisterProvider(new LocalStorageProvider());
+            RegisterProvider(new S3StorageProvider());
         }
 
         /// <summary>

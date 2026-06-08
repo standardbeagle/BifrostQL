@@ -16,7 +16,8 @@ public sealed record ComputedColumnDefinition(
     string GraphQlType,
     ComputedColumnKind Kind,
     string ExpressionOrProvider,
-    IReadOnlyList<string> Dependencies)
+    IReadOnlyList<string> Dependencies,
+    IReadOnlyDictionary<string, string>? Options = null)
 {
     private static readonly Regex PlaceholderPattern = new(@"\{(?<name>[A-Za-z_][A-Za-z0-9_]*)\}", RegexOptions.Compiled);
     private static readonly Regex GraphQlNamePattern = new(@"^[_A-Za-z][_0-9A-Za-z]*$", RegexOptions.Compiled);

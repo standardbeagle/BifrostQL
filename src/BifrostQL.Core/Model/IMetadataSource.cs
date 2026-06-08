@@ -186,6 +186,7 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Ui.Visibility,
             MetadataKeys.Relationships.ManyToMany,
             MetadataKeys.Ui.Label,
+            MetadataKeys.FileStorage.Folder,
             MetadataKeys.Relationships.Join,
             MetadataKeys.Batch.MaxSize,
             MetadataKeys.DataType.Type,

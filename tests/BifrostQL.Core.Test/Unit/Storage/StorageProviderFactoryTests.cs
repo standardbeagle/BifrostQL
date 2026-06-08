@@ -12,6 +12,7 @@ public class StorageProviderFactoryTests
         var factory = new StorageProviderFactory();
 
         Assert.True(factory.IsSupported("local"));
+        Assert.True(factory.IsSupported("s3"));
     }
 
     #endregion
@@ -111,7 +112,7 @@ public class StorageProviderFactoryTests
     {
         var factory = new StorageProviderFactory();
 
-        Assert.False(factory.IsSupported("s3"));
+        Assert.False(factory.IsSupported("unsupported"));
     }
 
     #endregion

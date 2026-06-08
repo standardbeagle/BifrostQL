@@ -1,4 +1,5 @@
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules.ComputedColumns;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Schema;
 using BifrostQL.Core.Storage;
@@ -123,6 +124,9 @@ namespace BifrostQL.Core.Resolvers
 
                 foreach (var column in table.Columns)
                     tableType.FieldFor(column.GraphQlName).Resolver = this;
+
+                foreach (var column in ComputedColumnConfigCollector.FromTable(table))
+                    tableType.FieldFor(column.Name).Resolver = this;
 
                 foreach (var singleLink in table.SingleLinks)
                 {

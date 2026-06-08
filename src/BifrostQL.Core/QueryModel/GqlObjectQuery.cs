@@ -39,9 +39,22 @@ namespace BifrostQL.Core.QueryModel
         public IEnumerable<TableJoin> RecurseJoins => Joins.Concat(Joins.SelectMany(j => j.ConnectedTable.RecurseJoins));
 
         public IEnumerable<GqlObjectColumn> FullColumnNames =>
-            ScalarColumns.Where(c => c.GraphQlDbName.StartsWith("__") == false)
+            ScalarColumns
+            .Where(c => c.GraphQlDbName.StartsWith("__") == false && !c.IsProviderComputed)
+            .Concat(ScalarColumns
+                .Where(c => c.IsProviderComputed)
+                .SelectMany(c => ProviderDependencies(c).Select(d => new GqlObjectColumn(d))))
             .Concat(Joins.Select(j => new GqlObjectColumn(j.FromColumn)))
             .DistinctBy(c => c.GraphQlDbName, SqlNameComparer.Instance);
+
+        private IEnumerable<string> ProviderDependencies(GqlObjectColumn column)
+        {
+            var dependencies = column.ComputedColumn!.Dependencies;
+            if (dependencies.Count == 0)
+                return DbTable.KeyColumns.Select(c => c.DbName);
+
+            return dependencies.Select(d => Modules.ComputedColumns.ComputedColumnDefinition.ResolveDependencyColumn(DbTable, d));
+        }
 
         public void AddSqlParameterized(IDbModel dbModel, ISqlDialect dialect, IDictionary<string, ParameterizedSql> sqls, SqlParameterCollection parameters, QueryLink? queryLink = null)
         {
@@ -53,16 +66,7 @@ namespace BifrostQL.Core.QueryModel
 
             if (fullColumns.Count > 0)
             {
-                var sqlTable = dbModel.Tables.FirstOrDefault(t => t.MatchName(TableName));
-                var columnSql = string.Join(",", fullColumns.Select(n =>
-                {
-                    var expr = dialect.EscapeIdentifier(n.DbDbName);
-                    if (sqlTable != null
-                        && sqlTable.ColumnLookup.TryGetValue(n.DbDbName, out var col)
-                        && dialect.RequiresTextCast(col.DataType, dbModel.TypeMapper.GetGraphQlType(col.EffectiveDataType)))
-                        expr = dialect.TextCast(expr, col.DataType);
-                    return $"{expr} {dialect.EscapeIdentifier(n.GraphQlDbName)}";
-                }));
+                var columnSql = string.Join(",", fullColumns.Select(n => n.ToSelectSql(dbModel, DbTable, dialect)));
                 var cmdText = $"SELECT {columnSql} FROM {tableRef}";
 
                 var sortCols = Sort.Any() ? Sort.Select(s => s switch
@@ -119,7 +123,7 @@ namespace BifrostQL.Core.QueryModel
             var ea = dialect.EscapeIdentifier("a");
             var eb = dialect.EscapeIdentifier("b");
             var joinColumnSql = string.Join(",",
-                tableJoin.ConnectedTable.FullColumnNames.Select(c => $"{eb}.{dialect.EscapeIdentifier(c.DbDbName)} AS {dialect.EscapeIdentifier(c.GraphQlDbName)}"));
+                tableJoin.ConnectedTable.FullColumnNames.Select(c => c.ToSelectSql(dbModel, connectedDbTable, dialect, "b", useAsKeyword: true)));
 
             var srcProjection = tableJoin.EmitSrcProjection(dialect, "a");
             var projection = $"{srcProjection}, {joinColumnSql}";

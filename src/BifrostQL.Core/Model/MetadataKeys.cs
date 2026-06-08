@@ -147,6 +147,30 @@ namespace BifrostQL.Core.Model
 
             /// <summary>Whether the field is required.</summary>
             public const string Required = "required";
+
+            /// <summary>Enables server-side enforcement of validation metadata.</summary>
+            public const string Server = "server-validation";
+
+            /// <summary>Comma-separated server validation provider names.</summary>
+            public const string Plugin = "validation-plugin";
+        }
+
+        /// <summary>
+        /// Metadata keys for virtual computed GraphQL columns.
+        /// </summary>
+        public static class Computed
+        {
+            /// <summary>
+            /// Table-level SQL computed columns. Format:
+            /// <c>name:GraphQlType:{column} + {other}; other:String:{first} || ' ' || {last}</c>.
+            /// </summary>
+            public const string Sql = "computed-sql";
+
+            /// <summary>
+            /// Table-level provider computed columns. Format:
+            /// <c>name:GraphQlType:provider:depends=id,email</c>.
+            /// </summary>
+            public const string Provider = "computed-plugin";
         }
 
         /// <summary>

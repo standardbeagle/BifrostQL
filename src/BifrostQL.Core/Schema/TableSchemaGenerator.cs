@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules.ComputedColumns;
 
 namespace BifrostQL.Core.Schema
 {
@@ -38,6 +39,7 @@ namespace BifrostQL.Core.Schema
             !col.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden);
 
         private IEnumerable<ColumnDto> VisibleColumns => _table.Columns.Where(IsColumnVisible);
+        private IEnumerable<ComputedColumnDefinition> ComputedColumns => ComputedColumnConfigCollector.FromTable(_table);
 
         /// <summary>
         /// True when a single-link's FK column(s) on this table resolve to a
@@ -87,6 +89,11 @@ namespace BifrostQL.Core.Schema
                     ? (column.IsNullable ? en : en + "!")
                     : SchemaGenerator.GetGraphQlTypeName(column.EffectiveDataType, column.IsNullable, _typeMapper);
                 builder.AppendLine($"\t{column.GraphQlName} : {fieldType}");
+            }
+
+            foreach (var column in ComputedColumns)
+            {
+                builder.AppendLine($"\t{column.Name} : {column.GraphQlType}");
             }
 
             builder.AppendLine($"_agg(operation: AggregateOperations! value: {_table.AggregateValueTypeName}!) : Float");

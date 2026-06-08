@@ -193,6 +193,10 @@ namespace BifrostQL.Core.Model
             MetadataKeys.StateMachine.InitialState,
             MetadataKeys.StateMachine.States,
             MetadataKeys.StateMachine.Transitions,
+            MetadataKeys.Computed.Sql,
+            MetadataKeys.Computed.Provider,
+            MetadataKeys.Validation.Server,
+            MetadataKeys.Validation.Plugin,
         };
 
         private static readonly HashSet<string> KnownColumnKeys = new(StringComparer.OrdinalIgnoreCase)
@@ -200,6 +204,17 @@ namespace BifrostQL.Core.Model
             MetadataKeys.AutoPopulate.Marker,
             MetadataKeys.DataType.Type,
             MetadataKeys.Relationships.Join,
+            MetadataKeys.Validation.Min,
+            MetadataKeys.Validation.Max,
+            MetadataKeys.Validation.Step,
+            MetadataKeys.Validation.MinLength,
+            MetadataKeys.Validation.MaxLength,
+            MetadataKeys.Validation.Pattern,
+            MetadataKeys.Validation.PatternMessage,
+            MetadataKeys.Validation.InputType,
+            MetadataKeys.Validation.Required,
+            MetadataKeys.Validation.Server,
+            MetadataKeys.Validation.Plugin,
         };
 
         private static readonly HashSet<string> KnownDatabaseKeys = new(StringComparer.OrdinalIgnoreCase)

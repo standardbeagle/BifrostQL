@@ -39,7 +39,7 @@ namespace BifrostQL.Core.Resolvers
                 throw new BifrostExecutionError($"Batch size {actions.Count} exceeds maximum allowed size of {maxBatchSize}.");
 
             var userContext = context.UserContext;
-            var transformContext = new MutationTransformContext { Model = model, UserContext = userContext };
+            var transformContext = new MutationTransformContext { Model = model, UserContext = userContext, Services = context.RequestServices };
 
             await using var conn = conFactory.GetConnection();
             await conn.OpenAsync();
@@ -233,6 +233,7 @@ namespace BifrostQL.Core.Resolvers
                     Model = transformContext.Model,
                     UserContext = transformContext.UserContext,
                     CurrentRow = currentRow,
+                    Services = transformContext.Services,
                 };
 
             // Mutation transformers (e.g. the authorization policy engine) gate

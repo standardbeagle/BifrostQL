@@ -1,0 +1,50 @@
+using BifrostQL.Core.Model;
+
+namespace BifrostQL.Core.Modules.ComputedColumns;
+
+public sealed class ComputedColumnContext
+{
+    public required IDbModel Model { get; init; }
+    public required IDbTable Table { get; init; }
+    public required ComputedColumnDefinition Column { get; init; }
+    public required IReadOnlyDictionary<string, object?> Row { get; init; }
+    public required IDictionary<string, object?> UserContext { get; init; }
+    public IServiceProvider? Services { get; init; }
+}
+
+public interface IComputedColumnProvider
+{
+    string Name { get; }
+
+    ValueTask<object?> ComputeAsync(ComputedColumnContext context, CancellationToken cancellationToken = default);
+}
+
+public interface IComputedColumnProviders : IReadOnlyCollection<IComputedColumnProvider>
+{
+    bool TryGet(string name, out IComputedColumnProvider provider);
+}
+
+public sealed class ComputedColumnProviders : IComputedColumnProviders
+{
+    public static ComputedColumnProviders Empty { get; } = new(Array.Empty<IComputedColumnProvider>());
+
+    private readonly IReadOnlyList<IComputedColumnProvider> _providers;
+    private readonly Dictionary<string, IComputedColumnProvider> _lookup;
+
+    public ComputedColumnProviders(IEnumerable<IComputedColumnProvider> providers)
+    {
+        _providers = providers.ToArray();
+        _lookup = _providers
+            .GroupBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+    }
+
+    public int Count => _providers.Count;
+
+    public bool TryGet(string name, out IComputedColumnProvider provider)
+        => _lookup.TryGetValue(name, out provider!);
+
+    public IEnumerator<IComputedColumnProvider> GetEnumerator() => _providers.GetEnumerator();
+
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+}

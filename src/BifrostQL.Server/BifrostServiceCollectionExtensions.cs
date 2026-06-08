@@ -15,6 +15,8 @@ using System.IdentityModel.Tokens.Jwt;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Modules;
+using BifrostQL.Core.Modules.ComputedColumns;
+using BifrostQL.Core.Modules.Validation;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
@@ -287,7 +289,8 @@ namespace BifrostQL.Server
         /// (e.g. one configured with a non-default admin role) takes precedence.
         /// </summary>
         internal static IReadOnlyCollection<IMutationTransformer> WithBuiltInMutationTransformers(
-            IReadOnlyCollection<IMutationTransformer> configured)
+            IReadOnlyCollection<IMutationTransformer> configured,
+            IServiceProvider? services = null)
         {
             var combined = new List<IMutationTransformer>();
 
@@ -299,6 +302,10 @@ namespace BifrostQL.Server
 
             if (!configured.Any(t => t is EnumValueMutationTransformer))
                 combined.Add(new EnumValueMutationTransformer());
+
+            if (!configured.Any(t => t is ExtendedServerValidationTransformer))
+                combined.Add(new ExtendedServerValidationTransformer(
+                    services?.GetServices<IServerValidationProvider>() ?? Array.Empty<IServerValidationProvider>()));
 
             combined.AddRange(configured);
             return combined;
@@ -586,9 +593,9 @@ namespace BifrostQL.Server
                 services.AddSingleton<IFilterTransformers>(new FilterTransformersWrap { Transformers = BifrostServiceCollectionExtensions.WithBuiltInFilterTransformers(_filterTransformers) });
 
             if (_mutationTransformerLoader != null)
-                services.AddSingleton<IMutationTransformers>(sp => new MutationTransformersWrap { Transformers = BifrostServiceCollectionExtensions.WithBuiltInMutationTransformers(_mutationTransformerLoader(sp)) });
+                services.AddSingleton<IMutationTransformers>(sp => new MutationTransformersWrap { Transformers = BifrostServiceCollectionExtensions.WithBuiltInMutationTransformers(_mutationTransformerLoader(sp), sp) });
             else
-                services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap { Transformers = BifrostServiceCollectionExtensions.WithBuiltInMutationTransformers(_mutationTransformers) });
+                services.AddSingleton<IMutationTransformers>(sp => new MutationTransformersWrap { Transformers = BifrostServiceCollectionExtensions.WithBuiltInMutationTransformers(_mutationTransformers, sp) });
 
             services.AddSingleton<IQueryObservers>(sp =>
             {
@@ -612,6 +619,7 @@ namespace BifrostQL.Server
             });
 
             services.AddSingleton<IQueryTransformerService, QueryTransformerService>();
+            services.AddSingleton<IComputedColumnProviders>(sp => new ComputedColumnProviders(sp.GetServices<IComputedColumnProvider>()));
 
             var isAuthEnabled = IsUsingAuth;
 

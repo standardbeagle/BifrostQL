@@ -2,6 +2,7 @@ using System.Data.Common;
 using System.Diagnostics;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
+using BifrostQL.Core.Modules.ComputedColumns;
 using BifrostQL.Core.QueryModel;
 using GraphQL.Types;
 using GraphQL.Validation;
@@ -95,6 +96,7 @@ namespace BifrostQL.Core.Resolvers
 
             var sw = Stopwatch.StartNew();
             var (data, sql) = await LoadDataParameterizedAsync(table, conFactory);
+            await ApplyProviderComputedColumnsAsync(table, data, context);
             sw.Stop();
 
             // Notify AfterExecute phase with timing data
@@ -210,6 +212,84 @@ namespace BifrostQL.Core.Resolvers
             {
                 throw new BifrostExecutionError(ex.Message, ex);
             }
+        }
+
+        private async ValueTask ApplyProviderComputedColumnsAsync(
+            GqlObjectQuery query,
+            IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> results,
+            IBifrostFieldContext context)
+        {
+            var providers = context.RequestServices?.GetService<IComputedColumnProviders>() ?? ComputedColumnProviders.Empty;
+            await ApplyProviderComputedColumnsForQueryAsync(query, query.KeyName, results, providers, context);
+
+            foreach (var join in query.RecurseJoins)
+                await ApplyProviderComputedColumnsForQueryAsync(join.ConnectedTable, join.JoinName, results, providers, context);
+        }
+
+        private async ValueTask ApplyProviderComputedColumnsForQueryAsync(
+            GqlObjectQuery query,
+            string resultName,
+            IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> results,
+            IComputedColumnProviders providers,
+            IBifrostFieldContext context)
+        {
+            var providerColumns = query.ScalarColumns
+                .Where(c => c.ComputedColumn is { Kind: ComputedColumnKind.Provider })
+                .ToArray();
+            if (providerColumns.Length == 0)
+                return;
+
+            if (!results.TryGetValue(resultName, out var tableData))
+                return;
+
+            foreach (var column in providerColumns)
+            {
+                if (!providers.TryGet(column.ComputedColumn!.ExpressionOrProvider, out var provider))
+                    throw new BifrostExecutionError($"Computed column provider '{column.ComputedColumn.ExpressionOrProvider}' is not registered.");
+
+                if (tableData.index.ContainsKey(column.GraphQlDbName))
+                    continue;
+
+                var newIndex = tableData.index.Count;
+                tableData.index[column.GraphQlDbName] = newIndex;
+
+                for (var rowIndex = 0; rowIndex < tableData.data.Count; rowIndex++)
+                {
+                    var row = tableData.data[rowIndex];
+                    var rowMap = ToRowMap(row, tableData.index, skipColumn: column.GraphQlDbName);
+                    var value = await provider.ComputeAsync(new ComputedColumnContext
+                    {
+                        Model = _dbModel,
+                        Table = query.DbTable,
+                        Column = column.ComputedColumn,
+                        Row = rowMap,
+                        UserContext = context.UserContext,
+                        Services = context.RequestServices,
+                    });
+
+                    var expanded = new object?[tableData.index.Count];
+                    Array.Copy(row, expanded, row.Length);
+                    expanded[newIndex] = value;
+                    tableData.data[rowIndex] = expanded;
+                }
+            }
+        }
+
+        private static IReadOnlyDictionary<string, object?> ToRowMap(
+            object?[] row,
+            IDictionary<string, int> index,
+            string skipColumn)
+        {
+            var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kv in index)
+            {
+                if (string.Equals(kv.Key, skipColumn, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (kv.Value >= row.Length)
+                    continue;
+                result[kv.Key] = ReaderEnum.DbConvert(row[kv.Value]);
+            }
+            return result;
         }
     }
 }

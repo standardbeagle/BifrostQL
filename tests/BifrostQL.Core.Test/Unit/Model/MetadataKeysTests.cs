@@ -105,7 +105,17 @@ namespace BifrostQL.Core.Test.Model
         [InlineData(MetadataKeys.Validation.PatternMessage, "pattern-message")]
         [InlineData(MetadataKeys.Validation.InputType, "input-type")]
         [InlineData(MetadataKeys.Validation.Required, "required")]
+        [InlineData(MetadataKeys.Validation.Server, "server-validation")]
+        [InlineData(MetadataKeys.Validation.Plugin, "validation-plugin")]
         public void ValidationKeys_HaveCorrectValues(string actual, string expected)
+        {
+            actual.Should().Be(expected);
+        }
+
+        [Theory]
+        [InlineData(MetadataKeys.Computed.Sql, "computed-sql")]
+        [InlineData(MetadataKeys.Computed.Provider, "computed-plugin")]
+        public void ComputedKeys_HaveCorrectValues(string actual, string expected)
         {
             actual.Should().Be(expected);
         }

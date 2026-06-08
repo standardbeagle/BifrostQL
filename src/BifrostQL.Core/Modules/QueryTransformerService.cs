@@ -1,4 +1,5 @@
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules.ComputedColumns;
 using BifrostQL.Core.QueryModel;
 
 namespace BifrostQL.Core.Modules;
@@ -86,8 +87,9 @@ public sealed class QueryTransformerService : IQueryTransformerService
     private void EnforceColumnReadGuards(GqlObjectQuery query, QueryTransformContext context)
     {
         var requestedColumns = query.ScalarColumns
-            .Select(c => c.DbDbName)
+            .SelectMany(c => ReadGuardColumnNames(query.DbTable, c))
             .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
         if (requestedColumns.Length == 0)
@@ -95,6 +97,21 @@ public sealed class QueryTransformerService : IQueryTransformerService
 
         foreach (var guard in _filterTransformers.OfType<IColumnReadGuard>())
             guard.AssertColumnsReadable(query.DbTable, requestedColumns, context);
+    }
+
+    private static IEnumerable<string> ReadGuardColumnNames(IDbTable table, GqlObjectColumn column)
+    {
+        yield return column.DbDbName;
+
+        if (column.ComputedColumn == null)
+            yield break;
+
+        var dependencies = column.ComputedColumn.Dependencies.Count == 0
+            ? table.KeyColumns.Select(c => c.DbName)
+            : column.ComputedColumn.Dependencies.Select(d => ComputedColumnDefinition.ResolveDependencyColumn(table, d));
+
+        foreach (var dependency in dependencies)
+            yield return dependency;
     }
 }
 

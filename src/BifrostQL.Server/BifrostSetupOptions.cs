@@ -10,6 +10,7 @@ using System.Security.Claims;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Modules;
+using BifrostQL.Core.Modules.ComputedColumns;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
@@ -311,9 +312,9 @@ namespace BifrostQL.Server
 
             // Register mutation transformers
             if (_mutationTransformerLoader != null)
-                services.AddSingleton<IMutationTransformers>(sp => new MutationTransformersWrap { Transformers = BifrostServiceCollectionExtensions.WithBuiltInMutationTransformers(_mutationTransformerLoader(sp)) });
+                services.AddSingleton<IMutationTransformers>(sp => new MutationTransformersWrap { Transformers = BifrostServiceCollectionExtensions.WithBuiltInMutationTransformers(_mutationTransformerLoader(sp), sp) });
             else
-                services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap { Transformers = BifrostServiceCollectionExtensions.WithBuiltInMutationTransformers(_mutationTransformers) });
+                services.AddSingleton<IMutationTransformers>(sp => new MutationTransformersWrap { Transformers = BifrostServiceCollectionExtensions.WithBuiltInMutationTransformers(_mutationTransformers, sp) });
 
             // Register query observers with built-in logging observer and error callback
             services.AddSingleton<IQueryObservers>(sp =>
@@ -339,6 +340,7 @@ namespace BifrostQL.Server
 
             // Register query transformer service
             services.AddSingleton<IQueryTransformerService, QueryTransformerService>();
+            services.AddSingleton<IComputedColumnProviders>(sp => new ComputedColumnProviders(sp.GetServices<IComputedColumnProvider>()));
 
             var isAuthEnabled = !_bifrostConfig.GetValue<bool>("DisableAuth", true);
 

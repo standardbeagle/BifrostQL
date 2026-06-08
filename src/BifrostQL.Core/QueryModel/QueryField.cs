@@ -1,4 +1,5 @@
 ﻿using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules.ComputedColumns;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
 
@@ -182,6 +183,10 @@ namespace BifrostQL.Core.QueryModel
 
         public GqlObjectColumn ToScalarSql(IDbTable dbTable)
         {
+            var computed = ComputedColumnConfigCollector.Find(dbTable, Name);
+            if (computed != null)
+                return new GqlObjectColumn(computed, RefName);
+
             return new GqlObjectColumn(dbTable.GraphQlLookup[Name].DbName, RefName);
         }
 

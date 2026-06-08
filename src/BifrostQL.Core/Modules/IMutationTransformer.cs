@@ -77,6 +77,7 @@ public sealed class MutationTransformContext
     public required IDbModel Model { get; init; }
     public required IDictionary<string, object?> UserContext { get; init; }
     public IReadOnlyDictionary<string, object?>? CurrentRow { get; init; }
+    public IServiceProvider? Services { get; init; }
 }
 
 /// <summary>

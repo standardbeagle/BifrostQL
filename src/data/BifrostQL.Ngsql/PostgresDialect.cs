@@ -48,13 +48,18 @@ public sealed class PostgresDialect : StandardConcatDialectBase
     /// parameter, so <c>SET started_at = $1</c> (assignment) and <c>week_of = $1</c>
     /// (comparison) both fail with a string value ("expression is of type text" /
     /// "operator does not exist: date = text") even though the equivalent literal succeeds.
-    /// Casting the reference to the column's real type (<c>$1::date</c>) restores the
-    /// literal-like behavior for every affected type — temporal, uuid, json/jsonb, numeric,
-    /// boolean, etc. Drives both <see cref="ISqlDialect.AssignmentPlaceholder"/> (writes)
-    /// and WHERE-clause filter parameters (reads).
+    /// Casting the reference to the column's type (<c>$1::date</c>) restores the literal-like
+    /// behavior. Drives both <see cref="ISqlDialect.AssignmentPlaceholder"/> (writes) and
+    /// WHERE-clause filter parameters (reads).
     ///
-    /// Native string columns need no cast; user-defined (Apache AGE agtype) and array
-    /// types can't be reached by a plain text <c>::</c> cast, so both stay bare.
+    /// Uses an allow-list of types that (a) genuinely need the cast — Postgres won't
+    /// implicitly compare/assign them against a text parameter — and (b) name a real
+    /// Postgres type. Anything else stays bare: string types (text/varchar) compare to a
+    /// text parameter fine, and an unrecognised type name (e.g. a model carrying the
+    /// SqlServer-style <c>nvarchar</c> for a column that is really <c>text</c> in PG) must
+    /// NOT be emitted as <c>::nvarchar</c> — that raises 42704 "type does not exist".
+    /// The cast target is the normalized type, which for these entries is always valid PG
+    /// syntax (e.g. <c>timestamp with time zone</c>, <c>uuid</c>, <c>jsonb</c>).
     /// </remarks>
     public override string CastParameterReference(string placeholder, string? dataType)
     {
@@ -62,11 +67,22 @@ public sealed class PostgresDialect : StandardConcatDialectBase
             return placeholder;
 
         var t = StringNormalizer.NormalizeType(dataType);
-        if (IsNativeStringType(t) || t is "user-defined" or "array")
-            return placeholder;
-
-        return $"{placeholder}::{dataType}";
+        return NeedsParameterCast(t) ? $"{placeholder}::{t}" : placeholder;
     }
+
+    /// <summary>
+    /// Whether a text-bound parameter must be cast to compare against / assign to a column
+    /// of this (normalized) Postgres type. Restricted to real PG type names so the cast is
+    /// always valid SQL; unknown/string/user-defined/array types return false (stay bare).
+    /// </summary>
+    internal static bool NeedsParameterCast(string normalizedType) =>
+        IsTemporalType(normalizedType)
+        || normalizedType is "uuid"
+            or "json" or "jsonb"
+            or "boolean" or "bool"
+            or "smallint" or "integer" or "int" or "int2" or "int4" or "int8" or "bigint"
+            or "numeric" or "decimal" or "real" or "double precision" or "float4" or "float8"
+            or "money" or "bytea" or "inet" or "cidr" or "macaddr";
 
     /// <inheritdoc />
     /// <remarks>

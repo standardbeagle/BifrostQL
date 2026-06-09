@@ -32,9 +32,22 @@ public sealed class FilterParameterCastTests
     [InlineData("text")]
     [InlineData("USER-DEFINED")]
     [InlineData("ARRAY")]
+    // Regression: a model may carry a SqlServer-style type name for a column that is really
+    // `text` in PG. Casting to ::nvarchar raised 42704 "type does not exist" and broke every
+    // string filter. Unknown type names must stay bare.
+    [InlineData("nvarchar")]
+    [InlineData("nchar")]
     public void Postgres_CastParameterReference_LeavesUncastableBare(string dataType)
     {
         PostgresDialect.Instance.CastParameterReference("@p0", dataType).Should().Be("@p0");
+    }
+
+    [Theory]
+    [InlineData("integer", "@p0::integer")]
+    [InlineData("bigint", "@p0::bigint")]
+    public void Postgres_CastParameterReference_CastsIntegerTypes(string dataType, string expected)
+    {
+        PostgresDialect.Instance.CastParameterReference("@p0", dataType).Should().Be(expected);
     }
 
     [Fact]

@@ -230,7 +230,10 @@ function buildMultiJoinFields(schema: Schema, multiJoins: Join[]): string {
             const destPks = joinSchema?.primaryKeys?.length ? joinSchema.primaryKeys : ['id'];
             const fields = [...destPks];
             if (labelCol && !fields.includes(labelCol)) fields.push(labelCol);
-            return `${j.fieldName ?? j.destinationTable} { ${fields.join(' ')} }`;
+            // Multi-joins return a paged type (`<table>_paged`), so the row
+            // selection must live under `data {}` — selecting fields directly
+            // fails server validation (FIELDS_ON_CORRECT_TYPE).
+            return `${j.fieldName ?? j.destinationTable} { data { ${fields.join(' ')} } }`;
         })
         .join(' ');
 }

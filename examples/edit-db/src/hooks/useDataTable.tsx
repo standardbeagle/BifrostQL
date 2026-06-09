@@ -55,7 +55,10 @@ function getJoinedRowPkValue(row: RowData | undefined, joinSchema: Table | undef
 
 export function getMultiJoinRows(row: RowData, join: Join): RowData[] {
     const fieldName = join.fieldName ?? join.destinationTable;
-    return (row[fieldName] as RowData[] | undefined) ?? [];
+    // Multi-join fields come back as a paged page object ({ data: [...] }),
+    // not a bare array — see buildMultiJoinFields.
+    const page = row[fieldName] as { data?: RowData[] } | undefined;
+    return page?.data ?? [];
 }
 
 const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: ColumnPanel) => void): ColumnDef<RowData, unknown>[] => {

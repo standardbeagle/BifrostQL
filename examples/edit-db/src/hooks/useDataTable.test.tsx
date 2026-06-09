@@ -13,8 +13,8 @@ describe('getMultiJoinRows', () => {
         };
         const row = {
             id: 1,
-            categories: [{ id: 99, name: 'wrong field' }],
-            categories_children: [{ id: 2, name: 'Child' }],
+            categories: { data: [{ id: 99, name: 'wrong field' }] },
+            categories_children: { data: [{ id: 2, name: 'Child' }] },
         };
 
         expect(getMultiJoinRows(row, join)).toEqual([{ id: 2, name: 'Child' }]);
@@ -29,7 +29,7 @@ describe('getMultiJoinRows', () => {
         };
         const row = {
             id: 1,
-            orders: [{ id: 10 }],
+            orders: { data: [{ id: 10 }] },
         };
 
         expect(getMultiJoinRows(row, join)).toEqual([{ id: 10 }]);

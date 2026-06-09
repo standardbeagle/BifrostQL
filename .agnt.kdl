@@ -15,9 +15,12 @@ project {
 
 scripts {
     dev-lib {
-        // Use pnpx (not npx): npx mis-resolves vite under the pnpm workspace
-        // ("vite: not found"); pnpx resolves the workspace bin correctly.
-        run "pnpx vite build --watch"
+        // Use `pnpm exec` (not pnpx/npx): pnpx fetches the latest vite (8.x,
+        // rolldown-based) from the registry, ignoring the workspace's pinned
+        // vite 7. Vite 8's rolldown bundler emits a runtime `require()` shim
+        // for CJS transitive deps (react-is, use-sync-external-store) that
+        // throws in the browser. `pnpm exec` resolves the local vite 7 bin.
+        run "pnpm exec vite build --watch"
         cwd "examples/edit-db"
         autostart true
     }
@@ -26,10 +29,14 @@ scripts {
         // silently misses file changes, leaving `dotnet watch` stuck on stale code.
         run "DOTNET_USE_POLLING_FILE_WATCHER=true dotnet watch run --no-hot-reload --project src/BifrostQL.UI/BifrostQL.UI.csproj -- --headless --port 5000"
         autostart true
-        url-matchers "Now listening on {url}"
+        url-matchers "Now listening on: {url}"
     }
     dev-frontend {
-        run "pnpx vite"
+        // pnpm exec (not pnpx): pnpx fetches vite 8 from the registry, whose
+        // oxc-based HMR chokes reloading the @fs edit-db lib files ("oxc
+        // transform error", failed reloads). pnpm exec uses the frontend's
+        // pinned vite 7.
+        run "pnpm exec vite"
         cwd "src/BifrostQL.UI/frontend"
         autostart true
         depends-on "dev-backend"
@@ -47,10 +54,16 @@ proxies {
         // seconds) produces ECONNREFUSED 127.0.0.1:5000 in get_errors.
         // With the gate, incoming requests get a 503 with the
         // agnt_proxy_not_ready sentinel (filtered by get_errors) until
-        // dev-backend is actually up. dev-lib must also be ready because
-        // the frontend's watch-workspace-lib plugin reloads on dist/
-        // rebuilds and expects the lib to have produced its first build.
-        wait-for "dev-backend" "dev-lib"
+        // dev-backend is actually up.
+        //
+        // wait-for ONLY lists scripts that emit a URL (url-matchers fire).
+        // dev-lib is `vite build --watch` — a build watcher that never emits
+        // a URL, so it can never satisfy a URL-keyed wait-for; listing it
+        // here left the scan loop searching forever and the proxy never
+        // autostarted. The frontend's watch-workspace-lib plugin reloads on
+        // dist/ rebuilds anyway, so the lib's first build is a soft race, not
+        // a proxy gate.
+        wait-for "dev-backend"
         fallback-port 5173
     }
 }

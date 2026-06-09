@@ -34,6 +34,7 @@ import {
 } from './lib/credential-prompt';
 import { SqlConsole } from './SqlConsole';
 import { QueryBuilderPane } from './designer/QueryBuilderPane';
+import { FormBuilderPane } from './forms/FormBuilderPane';
 import { isSqlBridgeAvailable } from './lib/sql-bridge';
 import { ProfileDropdown } from './profiles/ProfileDropdown';
 import {
@@ -149,7 +150,7 @@ export default function App() {
   );
   // Editor pane toggle: GraphQL editor (default) vs raw SQL console. The SQL
   // console rides the Photino bridge, so it's only offered inside the desktop app.
-  const [editorPane, setEditorPane] = useState<'graphql' | 'sql' | 'builder'>('graphql');
+  const [editorPane, setEditorPane] = useState<'graphql' | 'sql' | 'builder' | 'forms'>('graphql');
   const sqlBridgeAvailable = isSqlBridgeAvailable();
   const [vaultServers, setVaultServers] = useState<VaultServer[]>([]);
 
@@ -765,6 +766,7 @@ export default function App() {
                 ['graphql', 'GraphQL'],
                 ['sql', 'SQL'],
                 ['builder', 'Query builder'],
+                ['forms', 'Form builder'],
               ] as const).map(([pane, label]) => (
                 <button
                   key={pane}
@@ -808,6 +810,8 @@ export default function App() {
           <SqlConsole />
         ) : editorPane === 'builder' ? (
           <QueryBuilderPane />
+        ) : editorPane === 'forms' ? (
+          <FormBuilderPane />
         ) : (
           <Editor
             key={editorKey}

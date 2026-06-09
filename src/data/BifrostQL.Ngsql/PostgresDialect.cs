@@ -44,27 +44,28 @@ public sealed class PostgresDialect : StandardConcatDialectBase
     /// <inheritdoc />
     /// <remarks>
     /// Npgsql binds a CLR string parameter as an explicit <c>text</c> type. Postgres
-    /// applies an assignment cast to an <em>unknown</em>-typed literal but NOT to a
-    /// text-typed bind parameter, so <c>SET started_at = $1</c> with a string value
-    /// fails ("column is of type timestamp with time zone but expression is of type text")
-    /// even though the equivalent literal succeeds. Casting the placeholder to the
-    /// column's real type (<c>$1::timestamp with time zone</c>) restores the literal-like
-    /// behavior for every affected type — temporal, uuid, json/jsonb, numeric, boolean, etc.
+    /// applies a cast to an <em>unknown</em>-typed literal but NOT to a text-typed bind
+    /// parameter, so <c>SET started_at = $1</c> (assignment) and <c>week_of = $1</c>
+    /// (comparison) both fail with a string value ("expression is of type text" /
+    /// "operator does not exist: date = text") even though the equivalent literal succeeds.
+    /// Casting the reference to the column's real type (<c>$1::date</c>) restores the
+    /// literal-like behavior for every affected type — temporal, uuid, json/jsonb, numeric,
+    /// boolean, etc. Drives both <see cref="ISqlDialect.AssignmentPlaceholder"/> (writes)
+    /// and WHERE-clause filter parameters (reads).
     ///
     /// Native string columns need no cast; user-defined (Apache AGE agtype) and array
     /// types can't be reached by a plain text <c>::</c> cast, so both stay bare.
     /// </remarks>
-    public override string AssignmentPlaceholder(string columnName, string? dataType)
+    public override string CastParameterReference(string placeholder, string? dataType)
     {
-        var bare = $"{ParameterPrefix}{columnName}";
         if (string.IsNullOrWhiteSpace(dataType))
-            return bare;
+            return placeholder;
 
         var t = StringNormalizer.NormalizeType(dataType);
         if (IsNativeStringType(t) || t is "user-defined" or "array")
-            return bare;
+            return placeholder;
 
-        return $"{bare}::{dataType}";
+        return $"{placeholder}::{dataType}";
     }
 
     /// <inheritdoc />

@@ -104,7 +104,8 @@ namespace BifrostQL.Core.QueryModel
             string? table,
             string field,
             string op,
-            object? value)
+            object? value,
+            string? columnType = null)
         {
             var columnRef = table == null
                 ? dialect.EscapeIdentifier(field)
@@ -153,13 +154,15 @@ namespace BifrostQL.Core.QueryModel
                     parameters.Parameters.TakeLast(1).ToList());
             }
 
-            // IN clause
+            // IN clause. Each parameter is cast to the column type (Postgres: a text-bound
+            // value won't compare against e.g. a date column — see CastParameterReference).
             if (op is "_in" or "_nin")
             {
                 var values = (value as IEnumerable<object?>) ?? Array.Empty<object?>();
-                var paramNames = parameters.AddParameters(values);
-                return new ParameterizedSql($"{columnRef} {sqlOp} ({paramNames})",
-                    parameters.Parameters.TakeLast(values.Count()).ToList());
+                parameters.AddParameters(values);
+                var added = parameters.Parameters.TakeLast(values.Count()).ToList();
+                var paramRefs = string.Join(",", added.Select(p => dialect.CastParameterReference(p.Name, columnType)));
+                return new ParameterizedSql($"{columnRef} {sqlOp} ({paramRefs})", added);
             }
 
             // BETWEEN clause
@@ -168,15 +171,15 @@ namespace BifrostQL.Core.QueryModel
                 var values = ((value as IEnumerable<object?>) ?? Array.Empty<object?>()).ToArray();
                 if (values.Length >= 2)
                 {
-                    var p1 = parameters.AddParameter(values[0]);
-                    var p2 = parameters.AddParameter(values[1]);
+                    var p1 = dialect.CastParameterReference(parameters.AddParameter(values[0]), columnType);
+                    var p2 = dialect.CastParameterReference(parameters.AddParameter(values[1]), columnType);
                     return new ParameterizedSql($"{columnRef} {sqlOp} {p1} AND {p2}",
                         parameters.Parameters.TakeLast(2).ToList());
                 }
             }
 
             // Simple comparison (default)
-            var param = parameters.AddParameter(value);
+            var param = dialect.CastParameterReference(parameters.AddParameter(value), columnType);
             return new ParameterizedSql($"{columnRef} {sqlOp} {param}",
                 parameters.Parameters.TakeLast(1).ToList());
         }
@@ -250,7 +253,7 @@ namespace BifrostQL.Core.QueryModel
             if (Next.Next == null)
             {
                 var lookup = table.GraphQlLookup;
-                return GetSingleFilterParameterized(dialect, parameters, alias ?? TableName, lookup[ColumnName].DbName, Next.RelationName, Next.Value);
+                return GetSingleFilterParameterized(dialect, parameters, alias ?? TableName, lookup[ColumnName].DbName, Next.RelationName, Next.Value, lookup[ColumnName].DataType);
             }
 
             // For complex joins, use parameterized SQL throughout
@@ -297,7 +300,8 @@ namespace BifrostQL.Core.QueryModel
                         }
                         else
                         {
-                            var filterResult = GetSingleFilterParameterized(dialect, parameters, link.ParentTable.DbName, filter.ColumnName, filter.Next!.RelationName, filter.Next.Value);
+                            var parentColumnType = link.ParentTable.ColumnLookup.TryGetValue(filter.ColumnName, out var pcol) ? pcol.DataType : null;
+                            var filterResult = GetSingleFilterParameterized(dialect, parameters, link.ParentTable.DbName, filter.ColumnName, filter.Next!.RelationName, filter.Next.Value, parentColumnType);
                             return (
                                 $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid} FROM {dialect.EscapeIdentifier(link.ParentTable.DbName)} WHERE {filterResult.Sql}",
                                 filterResult.Parameters.ToList());

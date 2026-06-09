@@ -171,7 +171,21 @@ public interface ISqlDialect
     /// <param name="columnName">The unescaped column name (also the parameter name).</param>
     /// <param name="dataType">The column's SQL data type, or null when unknown.</param>
     /// <returns>The placeholder SQL fragment, e.g. <c>@started_at</c> or <c>@started_at::timestamp with time zone</c>.</returns>
-    string AssignmentPlaceholder(string columnName, string? dataType) => $"{ParameterPrefix}{columnName}";
+    string AssignmentPlaceholder(string columnName, string? dataType)
+        => CastParameterReference($"{ParameterPrefix}{columnName}", dataType);
+
+    /// <summary>
+    /// Casts an already-rendered bound-parameter reference to a column's SQL type when the
+    /// dialect's driver would otherwise bind a string value as text — the same problem
+    /// <see cref="AssignmentPlaceholder"/> solves for writes, applied to any context that
+    /// compares or assigns a parameter (e.g. a WHERE-clause filter <c>week_of = @p0</c>,
+    /// which Postgres rejects with "operator does not exist: date = text"). The default
+    /// returns the reference unchanged; PostgreSQL overrides it to append <c>::&lt;type&gt;</c>.
+    /// </summary>
+    /// <param name="placeholder">The full parameter reference, e.g. <c>@p0</c> or <c>@started_at</c>.</param>
+    /// <param name="dataType">The target column's SQL data type, or null when unknown (no cast).</param>
+    /// <returns>The (possibly cast) parameter reference, e.g. <c>@p0::date</c>.</returns>
+    string CastParameterReference(string placeholder, string? dataType) => placeholder;
 
     /// <summary>
     /// Generates an atomic upsert SQL statement that inserts a row or updates it if a

@@ -193,7 +193,7 @@ namespace BifrostQL.Core.Resolvers
             var moduleSql = modules.Insert(data, table, userContext, model);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var columns = string.Join(",", data.Keys.Select(k => dialect.EscapeIdentifier(k)));
-            var values = string.Join(",", data.Keys.Select(k => $"@{k}"));
+            var values = string.Join(",", data.Keys.Select(k => ValuePlaceholder(dialect, table, k)));
             var sql = $"INSERT INTO {tableRef}({columns}) VALUES({values});";
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = Join(sql, moduleSql);
@@ -259,7 +259,7 @@ namespace BifrostQL.Core.Resolvers
 
             var moduleSql = modules.Update(updatedData, table, userContext, model);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var setClause = string.Join(",", standardData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+            var setClause = string.Join(",", standardData.Select(kv => SetAssignment(dialect, table, kv.Key)));
             var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
             await using var cmd = conn.CreateCommand();
@@ -329,7 +329,7 @@ namespace BifrostQL.Core.Resolvers
                     .ToDictionary(kv => kv.Key, kv => kv.Value);
                 var setData = transformResult.Data.Where(d => !table.ColumnLookup.ContainsKey(d.Key) || !table.ColumnLookup[d.Key].IsPrimaryKey)
                     .ToDictionary(kv => kv.Key, kv => kv.Value);
-                var setClause = string.Join(",", setData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+                var setClause = string.Join(",", setData.Select(kv => SetAssignment(dialect, table, kv.Key)));
                 var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
                 var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
                 await using var cmd = conn.CreateCommand();

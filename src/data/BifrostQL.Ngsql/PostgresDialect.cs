@@ -43,6 +43,32 @@ public sealed class PostgresDialect : StandardConcatDialectBase
 
     /// <inheritdoc />
     /// <remarks>
+    /// Npgsql binds a CLR string parameter as an explicit <c>text</c> type. Postgres
+    /// applies an assignment cast to an <em>unknown</em>-typed literal but NOT to a
+    /// text-typed bind parameter, so <c>SET started_at = $1</c> with a string value
+    /// fails ("column is of type timestamp with time zone but expression is of type text")
+    /// even though the equivalent literal succeeds. Casting the placeholder to the
+    /// column's real type (<c>$1::timestamp with time zone</c>) restores the literal-like
+    /// behavior for every affected type — temporal, uuid, json/jsonb, numeric, boolean, etc.
+    ///
+    /// Native string columns need no cast; user-defined (Apache AGE agtype) and array
+    /// types can't be reached by a plain text <c>::</c> cast, so both stay bare.
+    /// </remarks>
+    public override string AssignmentPlaceholder(string columnName, string? dataType)
+    {
+        var bare = $"{ParameterPrefix}{columnName}";
+        if (string.IsNullOrWhiteSpace(dataType))
+            return bare;
+
+        var t = StringNormalizer.NormalizeType(dataType);
+        if (IsNativeStringType(t) || t is "user-defined" or "array")
+            return bare;
+
+        return $"{bare}::{dataType}";
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
     /// information_schema reports custom types (Apache AGE's graphid/agtype, and any
     /// other user-defined type) as data_type 'USER-DEFINED'. Npgsql cannot read these
     /// as object, so they are cast to text in the SELECT and surfaced as GraphQL String.

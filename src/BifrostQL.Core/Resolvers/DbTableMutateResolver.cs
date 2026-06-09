@@ -181,7 +181,7 @@ namespace BifrostQL.Core.Resolvers
                 var setData = transformResult.Data.Where(d => !table.ColumnLookup.ContainsKey(d.Key) || !table.ColumnLookup[d.Key].IsPrimaryKey)
                     .ToDictionary(kv => kv.Key, kv => kv.Value);
 
-                var setClause = string.Join(",", setData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+                var setClause = string.Join(",", setData.Select(kv => SetAssignment(dialect, table, kv.Key)));
                 var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
                 var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
                 var result = await ExecuteNonQuery(conFactory, Join(sql, moduleSql), transformResult.Data, additionalFilter.Parameters);
@@ -250,7 +250,7 @@ namespace BifrostQL.Core.Resolvers
 
             var moduleSql = modules.Update(updatedData, table, context.UserContext, model);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var setClause = string.Join(",", standardData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+            var setClause = string.Join(",", standardData.Select(kv => SetAssignment(dialect, table, kv.Key)));
             var whereClause = string.Join(" AND ", propertyInfo.keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
             var result = await ExecuteNonQuery(conFactory, Join(sql, moduleSql), updatedData, additionalFilter.Parameters);
@@ -326,7 +326,7 @@ namespace BifrostQL.Core.Resolvers
             var moduleSql = modules.Insert(data, table, context.UserContext, model);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var columns = string.Join(",", data.Keys.Select(k => dialect.EscapeIdentifier(k)));
-            var values = string.Join(",", data.Keys.Select(k => $"@{k}"));
+            var values = string.Join(",", data.Keys.Select(k => ValuePlaceholder(dialect, table, k)));
             var returning = dialect.ReturningIdentityClauseFor(table.KeyColumns.Select(k => k.ColumnName).ToList());
             var sql = returning != null
                 ? $"INSERT INTO {tableRef}({columns}) VALUES({values}){returning};"

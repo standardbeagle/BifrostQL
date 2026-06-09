@@ -111,7 +111,7 @@ public sealed class TreeSyncExecutor
     {
         var tableRef = _dialect.TableReference(op.Table.TableSchema, op.Table.DbName);
         var columns = string.Join(",", op.Data.Keys.Select(k => _dialect.EscapeIdentifier(k)));
-        var values = string.Join(",", op.Data.Keys.Select(k => $"@{k}"));
+        var values = string.Join(",", op.Data.Keys.Select(k => ValuePlaceholder(_dialect, op.Table, k)));
         var returning = _dialect.ReturningIdentityClauseFor(op.Table.KeyColumns.Select(k => k.ColumnName).ToList());
         var sql = returning != null
             ? $"INSERT INTO {tableRef}({columns}) VALUES({values}){returning};"
@@ -132,7 +132,7 @@ public sealed class TreeSyncExecutor
             return;
 
         var tableRef = _dialect.TableReference(op.Table.TableSchema, op.Table.DbName);
-        var setClause = string.Join(",", setData.Select(kv => $"{_dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+        var setClause = string.Join(",", setData.Select(kv => SetAssignment(_dialect, op.Table, kv.Key)));
         var whereClause = string.Join(" AND ", keyData.Select(kv => $"{_dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
 
         await using var cmd = conn.CreateCommand();

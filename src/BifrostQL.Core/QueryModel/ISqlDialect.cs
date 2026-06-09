@@ -160,6 +160,20 @@ public interface ISqlDialect
     string? ReturningIdentityClauseFor(IReadOnlyList<string> keyColumns) => ReturningIdentityClause;
 
     /// <summary>
+    /// Renders the bound-parameter placeholder for an assignment context (INSERT VALUES /
+    /// UPDATE SET) targeting a column of the given SQL type. The default returns the bare
+    /// <c>@column</c>. Dialects whose driver binds string values as an explicit text type —
+    /// and which therefore get no implicit assignment cast (PostgreSQL: a text-typed bind
+    /// parameter is rejected for a <c>timestamptz</c>/<c>uuid</c>/<c>jsonb</c>/… column even
+    /// though the equivalent literal succeeds) — override this to append a cast so the value
+    /// lands in the column's real type.
+    /// </summary>
+    /// <param name="columnName">The unescaped column name (also the parameter name).</param>
+    /// <param name="dataType">The column's SQL data type, or null when unknown.</param>
+    /// <returns>The placeholder SQL fragment, e.g. <c>@started_at</c> or <c>@started_at::timestamp with time zone</c>.</returns>
+    string AssignmentPlaceholder(string columnName, string? dataType) => $"{ParameterPrefix}{columnName}";
+
+    /// <summary>
     /// Generates an atomic upsert SQL statement that inserts a row or updates it if a
     /// conflict occurs on the specified key columns. Returns null if the dialect does not
     /// support native upsert syntax, in which case the caller should fall back to

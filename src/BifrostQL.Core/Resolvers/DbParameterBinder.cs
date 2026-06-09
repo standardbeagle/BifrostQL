@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Data.Common;
+using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 
 namespace BifrostQL.Core.Resolvers
@@ -12,6 +13,25 @@ namespace BifrostQL.Core.Resolvers
     /// </summary>
     internal static class DbParameterBinder
     {
+        /// <summary>
+        /// Renders a <c>"col"=&lt;placeholder&gt;</c> assignment for an UPDATE SET list,
+        /// letting the dialect cast the bound parameter to the column's real type when its
+        /// driver would otherwise bind it as text (PostgreSQL). See
+        /// <see cref="ISqlDialect.AssignmentPlaceholder"/>.
+        /// </summary>
+        public static string SetAssignment(ISqlDialect dialect, IDbTable table, string column)
+            => $"{dialect.EscapeIdentifier(column)}={dialect.AssignmentPlaceholder(column, ColumnType(table, column))}";
+
+        /// <summary>
+        /// Renders the value placeholder for an INSERT VALUES list, with the same
+        /// dialect-aware cast as <see cref="SetAssignment"/>.
+        /// </summary>
+        public static string ValuePlaceholder(ISqlDialect dialect, IDbTable table, string column)
+            => dialect.AssignmentPlaceholder(column, ColumnType(table, column));
+
+        private static string? ColumnType(IDbTable table, string column)
+            => table.ColumnLookup.TryGetValue(column, out var c) ? c.DataType : null;
+
         /// <summary>
         /// Binds <c>@columnName</c> parameters from a column → value map.
         /// </summary>

@@ -424,6 +424,20 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     {
         status = "ok",
         connected = !string.IsNullOrEmpty(currentConnectionString),
+        provider = currentProvider?.ToString().ToLowerInvariant(),
+        version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3)
+    }));
+
+    // GET /api/diagnostics — versions + runtime info for the About page. The
+    // host (this desktop shell) and server (BifrostQL GraphQL engine) are
+    // versioned independently, so reporting both makes a drift obvious.
+    app.MapGet("/api/diagnostics", () => Results.Ok(new
+    {
+        hostVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3),
+        serverVersion = typeof(BifrostSetupOptions).Assembly.GetName().Version?.ToString(3),
+        runtime = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
+        os = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
+        connected = !string.IsNullOrEmpty(currentConnectionString),
         provider = currentProvider?.ToString().ToLowerInvariant()
     }));
 

@@ -36,6 +36,7 @@ interface WelcomePanelProps {
   onClearRecentConnections?: () => void;
   vaultServers?: VaultServer[];
   onConnectVaultServer?: (name: string) => void;
+  onShowAbout?: () => void;
 }
 
 export const WelcomePanel: React.FC<WelcomePanelProps> = ({
@@ -46,11 +47,26 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({
   onClearRecentConnections,
   vaultServers,
   onConnectVaultServer,
+  onShowAbout,
 }) => {
   const [internalRecentConnections, setInternalRecentConnections] = useState<ConnectionInfo[]>([]);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [version, setVersion] = useState<string | null>(null);
 
   const recentConnections = externalRecentConnections ?? internalRecentConnections;
+
+  // Pull the real build version from the backend so the footer never shows a
+  // stale hardcoded number.
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/health')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.version) setVersion(data.version as string);
+      })
+      .catch(() => { /* footer falls back to no version */ });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (externalRecentConnections === undefined) {
@@ -211,7 +227,20 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({
 
         <footer className="welcome-footer">
           <p>
-            BifrostQL v1.0.0 &middot;{' '}
+            {version ? `BifrostQL v${version}` : 'BifrostQL'} &middot;{' '}
+            {onShowAbout && (
+              <>
+                <button
+                  type="button"
+                  onClick={onShowAbout}
+                  className="welcome-footer__link"
+                  style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit' }}
+                >
+                  About
+                </button>
+                {' '}&middot;{' '}
+              </>
+            )}
             <a
               href="https://github.com/standardbeagle/bifrostql"
               target="_blank"

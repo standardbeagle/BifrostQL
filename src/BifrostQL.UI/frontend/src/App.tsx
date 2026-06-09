@@ -18,6 +18,7 @@ import {
   type ConnectionRequest,
 } from './connection';
 import type { VaultServer } from './connection/types';
+import { AboutPanel } from './about/AboutPanel';
 import { saveSession, loadSession } from './connection/session';
 import {
   createTransport,
@@ -50,7 +51,7 @@ import './app.css';
 // API endpoints
 const API_QUICKSTART = '/api/database/create-quickstart';
 
-type AppView = 'welcome' | 'quickstart' | 'provider-select' | 'connect' | 'editor';
+type AppView = 'welcome' | 'quickstart' | 'provider-select' | 'connect' | 'editor' | 'about';
 
 /**
  * Extract non-sensitive structured metadata from an ADO.NET-style
@@ -136,6 +137,8 @@ export default function App() {
   const [_connectionState, setConnectionState] = useState<ConnectionState>(restored ? 'connected' : 'idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<AppView>(restored ? 'editor' : 'welcome');
+  // View to return to when leaving the About page (opened from welcome or editor).
+  const [aboutReturnView, setAboutReturnView] = useState<AppView>('welcome');
   const [recentConnections, setRecentConnections] = useState<ConnectionInfo[]>(() => loadRecentConnections());
   const [connectionInfo, setConnectionInfo] = useState<ConnectionInfo | null>(restored);
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(restored?.provider ?? null);
@@ -605,9 +608,17 @@ export default function App() {
     }
   }, [recentConnections]);
 
+  const handleShowAbout = useCallback(() => {
+    setAboutReturnView(currentView);
+    setCurrentView('about');
+  }, [currentView]);
+
   const handleBack = useCallback(() => {
     setErrorMessage(null);
     switch (currentView) {
+      case 'about':
+        setCurrentView(aboutReturnView);
+        return;
       case 'quickstart':
       case 'provider-select':
         setCurrentView('welcome');
@@ -628,7 +639,7 @@ export default function App() {
       default:
         setCurrentView('welcome');
     }
-  }, [currentView]);
+  }, [currentView, aboutReturnView]);
 
   const errorBanner = errorMessage && (
     <div className="bifrost-error-banner" role="alert">
@@ -643,6 +654,15 @@ export default function App() {
       </button>
     </div>
   );
+
+  if (currentView === 'about') {
+    return (
+      <div className="bifrost-connection-container">
+        {errorBanner}
+        <AboutPanel onBack={handleBack} />
+      </div>
+    );
+  }
 
   if (currentView === 'quickstart') {
     return (
@@ -791,6 +811,13 @@ export default function App() {
           )}
           <button
             className="bifrost-disconnect-button"
+            onClick={handleShowAbout}
+            style={{ marginRight: 8 }}
+          >
+            About
+          </button>
+          <button
+            className="bifrost-disconnect-button"
             onClick={handleBack}
           >
             Disconnect
@@ -840,6 +867,7 @@ export default function App() {
         }}
         vaultServers={vaultServers}
         onConnectVaultServer={handleConnectVaultServer}
+        onShowAbout={handleShowAbout}
       />
     </div>
   );

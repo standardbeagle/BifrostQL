@@ -3,6 +3,12 @@ import react from '@vitejs/plugin-react-swc';
 import path from 'node:path';
 import fs from 'node:fs';
 
+// SPA build version, surfaced to the app via __APP_VERSION__ so the About page
+// can show the frontend version independently of the .NET host/server.
+const pkgVersion = JSON.parse(
+  fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf8'),
+).version as string;
+
 // Workspace root (two levels above frontend/)
 const workspaceRoot = path.resolve(__dirname, '../../..');
 const editDbDist = path.resolve(workspaceRoot, 'examples/edit-db/dist');
@@ -30,6 +36,9 @@ function watchWorkspaceLib(distDir: string) {
 }
 
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(pkgVersion),
+  },
   plugins: [react(), watchWorkspaceLib(editDbDist)],
   resolve: {
     dedupe: ['react', 'react-dom', '@tanstack/react-query'],

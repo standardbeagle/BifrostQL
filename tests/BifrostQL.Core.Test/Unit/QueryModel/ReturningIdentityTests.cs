@@ -72,4 +72,16 @@ public sealed class ReturningIdentityTests
         // so the caller keeps using LAST_INSERT_ID().
         MySqlDialect.Instance.ReturningIdentityClauseFor(new[] { "id" }).Should().BeNull();
     }
+
+    [Theory]
+    [InlineData("id")]
+    [InlineData("company_uuid")]
+    public void SqlServer_DelegatesToStaticNull_RegardlessOfKey(string keyColumn)
+    {
+        // SQL Server keeps its OUTPUT/SCOPE_IDENTITY path: the table-aware call delegates
+        // to the null static clause for any key shape (serial or non-serial), so this
+        // RETURNING fix does not alter SQL Server behavior.
+        SqlServerDialect.Instance
+            .ReturningIdentityClauseFor(new[] { keyColumn }).Should().BeNull();
+    }
 }

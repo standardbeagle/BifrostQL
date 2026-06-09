@@ -45,6 +45,9 @@ public abstract class SqlDialectBase : ISqlDialect
     public virtual string? ReturningIdentityClause => _returningIdentityClause;
 
     /// <inheritdoc />
+    public virtual string? ReturningIdentityClauseFor(IReadOnlyList<string> keyColumns) => ReturningIdentityClause;
+
+    /// <inheritdoc />
     public virtual string EscapeIdentifier(string identifier) => $"{_identifierPrefix}{identifier}{_identifierSuffix}";
 
     /// <inheritdoc />

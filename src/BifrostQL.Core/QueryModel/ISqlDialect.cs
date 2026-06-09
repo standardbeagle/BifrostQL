@@ -145,6 +145,21 @@ public interface ISqlDialect
     string? ReturningIdentityClause => null;
 
     /// <summary>
+    /// Table-aware variant of <see cref="ReturningIdentityClause"/>: emits the identity
+    /// using the table's actual primary-key column(s) so non-sequence primary keys
+    /// (uuid, client-supplied values) return their real value instead of relying on the
+    /// session's last-inserted-identity (e.g. PostgreSQL's <c>lastval()</c>, which is
+    /// only defined after a sequence is touched).
+    /// </summary>
+    /// <param name="keyColumns">The table's primary-key column names (unescaped).</param>
+    /// <returns>
+    /// A RETURNING fragment built from the real key column(s), or null to fall back to a
+    /// separate <c>SELECT LastInsertedIdentity</c>. The default delegates to the
+    /// table-agnostic <see cref="ReturningIdentityClause"/> so dialects opt in by overriding.
+    /// </returns>
+    string? ReturningIdentityClauseFor(IReadOnlyList<string> keyColumns) => ReturningIdentityClause;
+
+    /// <summary>
     /// Generates an atomic upsert SQL statement that inserts a row or updates it if a
     /// conflict occurs on the specified key columns. Returns null if the dialect does not
     /// support native upsert syntax, in which case the caller should fall back to

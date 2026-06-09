@@ -76,7 +76,7 @@ namespace BifrostQL.Core.Resolvers
 
                     var upsertData = transformResult.Data;
                     var moduleSql = modules.Insert(upsertData, table, context.UserContext, model);
-                    var returning = dialect.ReturningIdentityClause;
+                    var returning = dialect.ReturningIdentityClauseFor(table.KeyColumns.Select(k => k.ColumnName).ToList());
                     var identitySql = returning != null
                         ? upsertSql.TrimEnd(';') + returning + ";"
                         : upsertSql + $"SELECT {dialect.LastInsertedIdentity} ID;";
@@ -327,7 +327,7 @@ namespace BifrostQL.Core.Resolvers
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var columns = string.Join(",", data.Keys.Select(k => dialect.EscapeIdentifier(k)));
             var values = string.Join(",", data.Keys.Select(k => $"@{k}"));
-            var returning = dialect.ReturningIdentityClause;
+            var returning = dialect.ReturningIdentityClauseFor(table.KeyColumns.Select(k => k.ColumnName).ToList());
             var sql = returning != null
                 ? $"INSERT INTO {tableRef}({columns}) VALUES({values}){returning};"
                 : $"INSERT INTO {tableRef}({columns}) VALUES({values});SELECT {dialect.LastInsertedIdentity} ID;";

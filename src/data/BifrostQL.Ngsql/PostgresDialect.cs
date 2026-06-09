@@ -24,6 +24,25 @@ public sealed class PostgresDialect : StandardConcatDialectBase
 
     /// <inheritdoc />
     /// <remarks>
+    /// For a single-column primary key, RETURNING the real key column makes the insert
+    /// work for ANY key type — serial/bigserial, uuid (server-default gen_random_uuid()),
+    /// or a client-supplied value — because it reads the row's own key rather than the
+    /// session's <c>lastval()</c>, which is only defined when a sequence was advanced and
+    /// throws "lastval is not yet defined in this session" for uuid/non-sequence keys.
+    ///
+    /// Composite (or absent) primary keys fall back to <c>lastval()</c> (return null):
+    /// a multi-column key can't be projected into the single scalar identity the caller
+    /// reads via ExecuteScalar, and changing that contract is out of scope here.
+    /// </remarks>
+    public override string? ReturningIdentityClauseFor(IReadOnlyList<string> keyColumns)
+    {
+        if (keyColumns.Count != 1)
+            return null;
+        return $" RETURNING {EscapeIdentifier(keyColumns[0])} AS ID";
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
     /// information_schema reports custom types (Apache AGE's graphid/agtype, and any
     /// other user-defined type) as data_type 'USER-DEFINED'. Npgsql cannot read these
     /// as object, so they are cast to text in the SELECT and surfaced as GraphQL String.

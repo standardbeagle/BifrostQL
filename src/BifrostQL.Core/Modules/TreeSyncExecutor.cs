@@ -112,7 +112,7 @@ public sealed class TreeSyncExecutor
         var tableRef = _dialect.TableReference(op.Table.TableSchema, op.Table.DbName);
         var columns = string.Join(",", op.Data.Keys.Select(k => _dialect.EscapeIdentifier(k)));
         var values = string.Join(",", op.Data.Keys.Select(k => $"@{k}"));
-        var returning = _dialect.ReturningIdentityClause;
+        var returning = _dialect.ReturningIdentityClauseFor(op.Table.KeyColumns.Select(k => k.ColumnName).ToList());
         var sql = returning != null
             ? $"INSERT INTO {tableRef}({columns}) VALUES({values}){returning};"
             : $"INSERT INTO {tableRef}({columns}) VALUES({values});SELECT {_dialect.LastInsertedIdentity} ID;";

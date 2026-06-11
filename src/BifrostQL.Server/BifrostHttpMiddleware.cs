@@ -62,17 +62,14 @@ namespace BifrostQL.Server
             }
             catch (Exception ex)
             {
-                var innerMessage = ex.InnerException?.Message ?? ex.Message;
-                var errorMessage = $"Server error: {innerMessage}";
-                
-                // Log full exception with stack trace using ASP.NET Core logging
-                _logger.LogError(ex, "GraphQL execution failed: {ErrorMessage}", errorMessage);
-                
+                // Log full exception with stack trace server-side; never expose details to clients.
+                _logger.LogError(ex, "GraphQL execution failed");
+
                 result = new ExecutionResult
                 {
                     Errors = new ExecutionErrors
                     {
-                        new ExecutionError(errorMessage)
+                        new ExecutionError("An unexpected server error occurred.")
                     }
                 };
             }

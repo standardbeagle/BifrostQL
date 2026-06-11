@@ -96,10 +96,17 @@ namespace BifrostQL.Core.Model
             List<DbTable> tables,
             IDictionary<string, IDictionary<string, object?>> additionalMetadata)
         {
+            // Build a case-insensitive copy so that metadata keyed as "DBO.Users"
+            // matches a table whose qualified name is "dbo.Users" (or any other
+            // casing variant). Without this, misconfigured metadata is silently
+            // dropped when the dictionary's default comparer is ordinal/case-sensitive.
+            var ciAdditional = new Dictionary<string, IDictionary<string, object?>>(
+                additionalMetadata, StringComparer.OrdinalIgnoreCase);
+
             foreach (var table in tables)
             {
                 var qualifiedName = $"{table.TableSchema}.{table.DbName}";
-                if (additionalMetadata.TryGetValue(qualifiedName, out var tableExtra))
+                if (ciAdditional.TryGetValue(qualifiedName, out var tableExtra))
                 {
                     foreach (var (key, value) in tableExtra)
                     {

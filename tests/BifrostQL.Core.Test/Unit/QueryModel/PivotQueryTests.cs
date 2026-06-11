@@ -253,7 +253,10 @@ public sealed class PivotQueryTests
             Dialect, config, "[Orders]", pivotValues);
 
         result.Sql.Should().Contain("[_null_]");
-        result.Sql.Should().Contain("ISNULL(CAST([Status] AS NVARCHAR(MAX)), '_null_')");
+        // NullLabel is now bound as a parameter — the literal must NOT appear in SQL
+        result.Sql.Should().Contain("ISNULL(CAST([Status] AS NVARCHAR(MAX)), @p0)");
+        result.Sql.Should().NotContain("'_null_'");
+        result.Parameters.Should().Contain(p => p.Name == "@p0" && (string)p.Value! == "_null_");
     }
 
     [Fact]
@@ -266,7 +269,10 @@ public sealed class PivotQueryTests
             Dialect, config, "[Orders]", pivotValues);
 
         result.Sql.Should().Contain("[Unknown]");
-        result.Sql.Should().Contain("ISNULL(CAST([Status] AS NVARCHAR(MAX)), 'Unknown')");
+        // NullLabel is now bound as a parameter — the literal must NOT appear in SQL
+        result.Sql.Should().Contain("ISNULL(CAST([Status] AS NVARCHAR(MAX)), @p0)");
+        result.Sql.Should().NotContain("'Unknown'");
+        result.Parameters.Should().Contain(p => p.Name == "@p0" && (string)p.Value! == "Unknown");
     }
 
     [Fact]
@@ -281,7 +287,9 @@ public sealed class PivotQueryTests
             Dialect, config, "[Orders]", pivotValues, filter);
 
         result.Sql.Should().Contain("WHERE [Year] = @p0");
-        result.Parameters.Should().ContainSingle(p => p.Name == "@p0" && (int)p.Value! == 2024);
+        // @p0 is the filter parameter; @p1 is the bound NullLabel
+        result.Parameters.Should().Contain(p => p.Name == "@p0" && (int)p.Value! == 2024);
+        result.Parameters.Should().Contain(p => p.Name == "@p1" && (string)p.Value! == "_null_");
     }
 
     [Fact]

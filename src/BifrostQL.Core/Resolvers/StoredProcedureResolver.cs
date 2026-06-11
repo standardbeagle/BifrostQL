@@ -40,21 +40,19 @@ namespace BifrostQL.Core.Resolvers
                 var resultSets = new List<List<Dictionary<string, object?>>>();
                 int affectedRows;
 
-                using (var reader = await cmd.ExecuteReaderAsync())
+                await using var reader = await cmd.ExecuteReaderAsync();
+                do
                 {
-                    do
+                    var resultSet = new List<Dictionary<string, object?>>();
+                    while (await reader.ReadAsync())
                     {
-                        var resultSet = new List<Dictionary<string, object?>>();
-                        while (await reader.ReadAsync())
-                        {
-                            resultSet.Add(DbReaderExtensions.ReadRow(reader));
-                        }
-                        if (resultSet.Count > 0 || reader.FieldCount > 0)
-                            resultSets.Add(resultSet);
-                    } while (await reader.NextResultAsync());
+                        resultSet.Add(DbReaderExtensions.ReadRow(reader));
+                    }
+                    if (resultSet.Count > 0 || reader.FieldCount > 0)
+                        resultSets.Add(resultSet);
+                } while (await reader.NextResultAsync());
 
-                    affectedRows = reader.RecordsAffected >= 0 ? reader.RecordsAffected : 0;
-                }
+                affectedRows = reader.RecordsAffected >= 0 ? reader.RecordsAffected : 0;
 
                 var result = new Dictionary<string, object?>
                 {

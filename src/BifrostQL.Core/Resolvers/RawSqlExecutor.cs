@@ -1,5 +1,6 @@
 using System.Data.Common;
 using BifrostQL.Core.Model;
+using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Core.Resolvers
 {
@@ -43,7 +44,8 @@ namespace BifrostQL.Core.Resolvers
             IReadOnlyDictionary<string, object?>? parameters,
             int timeoutSeconds,
             int maxRows,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            ILogger? logger = null)
         {
             await using var conn = connFactory.GetConnection();
             await conn.OpenAsync(ct);
@@ -71,7 +73,10 @@ namespace BifrostQL.Core.Resolvers
 
             var columns = new RawSqlColumn[reader.FieldCount];
             for (var i = 0; i < reader.FieldCount; i++)
-                columns[i] = new RawSqlColumn(reader.GetName(i), SafeDataTypeName(reader, i));
+            {
+                var columnName = reader.GetName(i);
+                columns[i] = new RawSqlColumn(columnName, SafeDataTypeName(reader, i, columnName, logger));
+            }
 
             var rows = new List<object?[]>();
             var truncated = false;
@@ -97,10 +102,14 @@ namespace BifrostQL.Core.Resolvers
 
         // Some providers throw from GetDataTypeName for computed/expression columns.
         // The type label is advisory grid metadata, so degrade to "" rather than failing the query.
-        private static string SafeDataTypeName(DbDataReader reader, int ordinal)
+        private static string SafeDataTypeName(DbDataReader reader, int ordinal, string? columnName = null, ILogger? logger = null)
         {
             try { return reader.GetDataTypeName(ordinal); }
-            catch { return string.Empty; }
+            catch (Exception ex)
+            {
+                logger?.LogDebug(ex, "GetDataTypeName failed for column {ColumnIndex} ({ColumnName}); type will be reported as empty string", ordinal, columnName ?? $"<ordinal {ordinal}>");
+                return string.Empty;
+            }
         }
     }
 }

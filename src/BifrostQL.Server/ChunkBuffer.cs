@@ -164,10 +164,15 @@ namespace BifrostQL.Server
 
             public IReadOnlyList<BifrostMessage> GetChunksAfter(uint lastSequence)
             {
-                var startIndex = lastSequence == uint.MaxValue ? 0 : (int)(lastSequence + 1);
-                if (startIndex >= _chunks.Length)
+                // Use ulong arithmetic to avoid (int) cast overflow when lastSequence
+                // approaches uint.MaxValue. uint.MaxValue is the sentinel meaning "return
+                // all chunks from the start"; any other value that maps past the end of
+                // _chunks simply yields an empty list (no chunks in that range).
+                var startIndexUL = lastSequence == uint.MaxValue ? 0UL : (ulong)lastSequence + 1UL;
+                if (startIndexUL >= (ulong)_chunks.Length)
                     return Array.Empty<BifrostMessage>();
 
+                var startIndex = (int)startIndexUL; // safe: bounded by _chunks.Length (≤ int.MaxValue)
                 var result = new List<BifrostMessage>();
                 for (var i = startIndex; i < _chunks.Length; i++)
                 {

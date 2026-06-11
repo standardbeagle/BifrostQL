@@ -55,8 +55,11 @@ namespace BifrostQL.Core.Model.Relationships
                     if (!tablesByDbName.TryGetValue(parentDbName, out var parent))
                         continue;
 
-                    // A single discriminator id column can only carry a single
-                    // parent key value, so composite-key parents are unsupported.
+                    // Require exactly one primary key: a discriminator id column
+                    // can only reference a single parent key value, so both
+                    // zero-key tables (no PK at all) and composite-key tables
+                    // (Count > 1) are unsupported and must be skipped here to
+                    // avoid a crash on the KeyColumns.First() call below.
                     if (parent.KeyColumns.Count() != 1)
                         continue;
 

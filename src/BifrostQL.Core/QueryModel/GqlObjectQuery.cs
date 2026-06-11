@@ -214,7 +214,7 @@ namespace BifrostQL.Core.QueryModel
             {
                 var filter = query.FromTable.GetFilterSqlParameterized(dbModel, dialect, parameters);
                 var projection = query.Join.EmitJoinIdProjection(dialect);
-                var sqlText = $"SELECT DISTINCT {projection} FROM {dialect.EscapeIdentifier(query.FromTable.TableName)}";
+                var sqlText = $"SELECT DISTINCT {projection} FROM {dialect.TableReference(query.FromTable.SchemaName, query.FromTable.TableName)}";
                 var rootSql = new ParameterizedSql(sqlText, Array.Empty<SqlParameterInfo>()).Append(filter);
 
                 // Forward the parent table's pagination into the linked
@@ -258,7 +258,7 @@ namespace BifrostQL.Core.QueryModel
                 rightColumns: query.Parent.Join.ConnectedColumns);
 
             var nestedProjection = query.Join.EmitJoinIdProjection(dialect, "a");
-            var querySql = $"SELECT DISTINCT {nestedProjection} FROM {dialect.EscapeIdentifier(query.FromTable.TableName)} {ea} INNER JOIN ({baseSql.Sql}) {eb} ON {relationSql}";
+            var querySql = $"SELECT DISTINCT {nestedProjection} FROM {dialect.TableReference(query.FromTable.SchemaName, query.FromTable.TableName)} {ea} INNER JOIN ({baseSql.Sql}) {eb} ON {relationSql}";
             return new ParameterizedSql(querySql, baseSql.Parameters.Concat(relationParams).ToList()).Append(filterSql);
         }
 
@@ -366,6 +366,14 @@ namespace BifrostQL.Core.QueryModel
             }
             foreach (var join in Joins)
             {
+                // Propagate the full path to the connected table before recursing so
+                // that nested join keys (TableJoin.JoinName = "{FromTable.Path}->{Name}")
+                // include the complete ancestor chain. When GqlObjectQuery objects are
+                // constructed directly (e.g. in tests) rather than via QueryField.ToSqlData
+                // the Path is not pre-set on child nodes, so we set it here if the child
+                // has not already received a path (ToSqlData sets it before calling ConnectLinks).
+                if (string.IsNullOrEmpty(join.ConnectedTable.Path))
+                    join.ConnectedTable.Path = join.JoinName;
                 join.ConnectedTable.ConnectLinks(dbModel);
             }
         }

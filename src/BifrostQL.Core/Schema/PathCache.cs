@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -7,12 +8,13 @@ namespace BifrostQL.Core.Schema
 {
     public sealed class PathCache<T>
     {
-        private readonly Dictionary<string, Cache<T>> _schemas = new();
+        private readonly ConcurrentDictionary<string, Cache<T>> _schemas = new();
         public PathCache() { }
 
         public void AddLoader(string path, Func<Task<T>> loader)
         {
-            _schemas.Add(path, new Cache<T>(loader));
+            if (!_schemas.TryAdd(path, new Cache<T>(loader)))
+                throw new ArgumentException("A loader is already registered for path: " + path, nameof(path));
         }
 
         /// <summary>

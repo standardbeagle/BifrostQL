@@ -60,6 +60,12 @@ namespace BifrostQL.Server.Test
             _incoming.Enqueue((WebSocketMessageType.Text, new byte[] { 1 }));
         }
 
+        /// <summary>Queues any BifrostMessage as a binary frame.</summary>
+        public void EnqueueMessage(BifrostMessage message)
+        {
+            _incoming.Enqueue((WebSocketMessageType.Binary, message.ToBytes()));
+        }
+
         public void ForceState(WebSocketState state) => _state = state;
 
         /// <summary>Re-deserializes the recorded frames into messages for assertions.</summary>

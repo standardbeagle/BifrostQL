@@ -643,7 +643,7 @@ namespace BifrostQL.Server
             if (isAuthEnabled && _jwtConfig is not null)
             {
                 var scopes = new HashSet<string>() { "openid" };
-                foreach (var scope in (_jwtConfig["Scopes"] ?? "").Split(" "))
+                foreach (var scope in (_jwtConfig["Scopes"] ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                 {
                     scopes.Add(scope);
                 }

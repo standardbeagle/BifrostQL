@@ -55,6 +55,12 @@ public static class LookupTableDetector
     /// </summary>
     public static LookupColumnRoles DetectColumnRoles(IDbTable table)
     {
+        // Guard: a table with no primary key cannot have a meaningful IdColumn.
+        // IsLookupTable() already returns false for such tables; this guard
+        // protects callers who invoke DetectColumnRoles directly.
+        if (!table.KeyColumns.Any())
+            return new LookupColumnRoles { IdColumn = string.Empty };
+
         var roles = new LookupColumnRoles
         {
             IdColumn = table.KeyColumns.First().ColumnName

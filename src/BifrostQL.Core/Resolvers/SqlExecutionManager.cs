@@ -180,7 +180,7 @@ namespace BifrostQL.Core.Resolvers
             try
             {
                 await conn.OpenAsync();
-                var command = conn.CreateCommand();
+                await using var command = conn.CreateCommand();
                 command.CommandText = sql;
 
                 DbParameterBinder.AddExtraParameters(command, parameters.Parameters);

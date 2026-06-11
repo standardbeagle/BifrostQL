@@ -55,7 +55,17 @@ public abstract class SqlDialectBase : ISqlDialect
     public virtual string CastParameterReference(string placeholder, string? dataType) => placeholder;
 
     /// <inheritdoc />
-    public virtual string EscapeIdentifier(string identifier) => $"{_identifierPrefix}{identifier}{_identifierSuffix}";
+    /// <remarks>
+    /// Any occurrence of the closing delimiter inside <paramref name="identifier"/>
+    /// is doubled so it cannot break out of the delimited identifier context:
+    /// SQL Server <c>]</c> → <c>]]</c>; double-quote dialects <c>"</c> → <c>""</c>.
+    /// Normal identifiers (no delimiter character) are unchanged.
+    /// </remarks>
+    public virtual string EscapeIdentifier(string identifier)
+    {
+        var escapedInner = identifier.Replace(_identifierSuffix, _identifierSuffix + _identifierSuffix);
+        return $"{_identifierPrefix}{escapedInner}{_identifierSuffix}";
+    }
 
     /// <inheritdoc />
     public virtual string TableReference(string? schema, string tableName) =>

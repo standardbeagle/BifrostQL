@@ -301,9 +301,10 @@ namespace BifrostQL.Server
             // is visible to /api/profiles and the schema rebuild even if it starts empty.
             services.AddSingleton(_profileRegistry);
 
-            services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = _modules });
             if (_moduleLoader != null)
-                services.AddSingleton<IMutationModules>((sp => new ModulesWrap { Modules = _moduleLoader(sp) }));
+                services.AddSingleton<IMutationModules>(sp => new ModulesWrap { Modules = _moduleLoader(sp) });
+            else
+                services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = _modules });
 
             // Register filter transformers
             if (_filterTransformerLoader != null)
@@ -368,7 +369,7 @@ namespace BifrostQL.Server
             if (isAuthEnabled && _jwtConfig is not null)
             {
                 var scopes = new HashSet<string>() { "openid" };
-                foreach (var scope in (_jwtConfig["Scopes"] ?? "").Split(" "))
+                foreach (var scope in (_jwtConfig["Scopes"] ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                 {
                     scopes.Add(scope);
                 }

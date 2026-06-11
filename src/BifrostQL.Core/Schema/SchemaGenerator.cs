@@ -63,7 +63,9 @@ namespace BifrostQL.Core.Schema
             {
                 foreach (var kv in model.EnumColumns.EnumTables)
                 {
-                    var table = model.Tables.First(t => string.Equals(t.DbName, kv.Key, StringComparison.OrdinalIgnoreCase));
+                    var table = model.Tables.FirstOrDefault(t => string.Equals(t.DbName, kv.Key, StringComparison.OrdinalIgnoreCase));
+                    if (table == null)
+                        continue; // enum-table metadata references a table that no longer exists in the model; skip silently
                     var cfg = EnumTableConfig.FromTable(table)!;
                     var gen = new EnumTableSchemaGenerator(cfg, kv.Value.Entries);
                     builder.AppendLine(gen.GetEnumTypeDefinition());

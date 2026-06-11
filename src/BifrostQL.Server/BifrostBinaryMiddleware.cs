@@ -160,7 +160,7 @@ namespace BifrostQL.Server
                 var errorResponse = new BifrostMessage
                 {
                     Type = BifrostMessageType.Error,
-                    Errors = { "Invalid message format: " + ex.Message },
+                    Errors = { "Server error occurred" },
                 };
                 await SendResponseAsync(webSocket, errorResponse, httpContext.RequestAborted);
                 return;
@@ -186,7 +186,7 @@ namespace BifrostQL.Server
                     {
                         RequestId = request.RequestId,
                         Type = BifrostMessageType.Error,
-                        Errors = { "Chunk validation failed: " + ex.Message },
+                        Errors = { "Invalid chunk" },
                     };
                     await SendResponseAsync(webSocket, errorResponse, httpContext.RequestAborted);
                     return;
@@ -333,7 +333,7 @@ namespace BifrostQL.Server
             {
                 _logger.LogError(ex, "Error executing binary request {RequestId}", request.RequestId);
                 response.Type = BifrostMessageType.Error;
-                response.Errors.Add("Internal server error: " + ex.Message);
+                response.Errors.Add("Query execution failed");
             }
 
             return response;

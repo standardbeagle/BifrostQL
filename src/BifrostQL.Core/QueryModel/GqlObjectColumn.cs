@@ -62,13 +62,6 @@ namespace BifrostQL.Core.QueryModel
             return $"{expr}{aliasSeparator}{dialect.EscapeIdentifier(GraphQlDbName)}";
         }
 
-        public string GetSqlColumn()
-        {
-            return AggregateType switch
-            {
-                AggregateOperationType.None => $"[{DbDbName}] [{GraphQlDbName}]",
-                _ => $"{AggregateType}([{DbDbName}]) [{GraphQlDbName}]"
-            };
-        }
+
     }
 }

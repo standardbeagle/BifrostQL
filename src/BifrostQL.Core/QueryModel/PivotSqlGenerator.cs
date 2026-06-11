@@ -54,8 +54,13 @@ public static class PivotSqlGenerator
 
         var pivotColumnList = string.Join(", ", pivotAliases.Select(a => dialect.EscapeIdentifier(a)));
 
+        // Bind NullLabel as a parameter to prevent SQL injection via user-controlled config values.
+        // The parameter index is offset by the number of filter parameters so names do not collide.
+        var filterParamCount = filter?.Parameters.Count ?? 0;
+        var nullLabelParamName = $"@p{filterParamCount}";
+
         // Build the source subquery that coalesces NULL pivot values
-        var coalescedPivotCol = $"ISNULL(CAST({pivotCol} AS NVARCHAR(MAX)), '{config.NullLabel}')";
+        var coalescedPivotCol = $"ISNULL(CAST({pivotCol} AS NVARCHAR(MAX)), {nullLabelParamName})";
 
         var sourceSql = $"SELECT {groupByCols}, {coalescedPivotCol} AS {dialect.EscapeIdentifier("__pivot_col")}, {valueCol}" +
                         $" FROM {tableRef}";
@@ -70,7 +75,9 @@ public static class PivotSqlGenerator
                   $" FROM ({sourceSql}) AS __src" +
                   $" PIVOT ({aggFunc}({valueCol}) FOR {dialect.EscapeIdentifier("__pivot_col")} IN ({pivotColumnList})) AS __pvt";
 
-        return new ParameterizedSql(sql, filter?.Parameters.ToList() ?? new List<SqlParameterInfo>());
+        var allParameters = (filter?.Parameters ?? Array.Empty<SqlParameterInfo>()).ToList();
+        allParameters.Add(new SqlParameterInfo(nullLabelParamName, config.NullLabel));
+        return new ParameterizedSql(sql, allParameters);
     }
 
     /// <summary>

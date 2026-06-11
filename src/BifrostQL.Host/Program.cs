@@ -45,11 +45,27 @@ builder.Services.AddBifrostQL(options =>
 builder.Services.AddCors();
 var app = builder.Build();
 
-app.UseDeveloperExceptionPage();
-app.UseCors(x => x
-    .AllowAnyMethod()
-    .AllowAnyHeader()
-    .AllowAnyOrigin());
+if (app.Environment.IsDevelopment())
+    app.UseDeveloperExceptionPage();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseCors(x => x
+        .AllowAnyMethod()
+        .AllowAnyHeader()
+        .AllowAnyOrigin());
+}
+else
+{
+    var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>();
+    if (allowedOrigins != null && allowedOrigins.Length > 0)
+    {
+        app.UseCors(x => x
+            .AllowAnyMethod()
+            .AllowAnyHeader()
+            .WithOrigins(allowedOrigins));
+    }
+}
 
 if (jwtConfig.Exists())
     app.UseAuthentication();

@@ -35,7 +35,12 @@ namespace BifrostQL.Core.Model.Relationships
             // Get columns already linked by foreign keys to avoid duplicates
             var fkLinkedColumns = GetFkLinkedColumns(model, foreignKeys);
 
-            // Global lookup: NormalizedName -> table (for non-prefixed matching)
+            // Global lookup: NormalizedName -> table (for non-prefixed matching).
+            // Filtered to tables with exactly ONE primary key column so that all
+            // downstream KeyColumns.First() calls (in DiscoverRelationships and
+            // FindIdMatches) are safe — this is the single guard for those three
+            // call-sites, matching the repo pattern of guarding at candidate-selection
+            // time rather than scattering checks through the code.
             var singleTables = new Dictionary<string, IDbTable>(StringComparer.InvariantCultureIgnoreCase);
             foreach (var table in model.Tables.Where(t => t.KeyColumns.Count() == 1))
             {

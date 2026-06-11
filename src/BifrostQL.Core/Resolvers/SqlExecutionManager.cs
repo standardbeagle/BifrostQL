@@ -64,11 +64,9 @@ namespace BifrostQL.Core.Resolvers
             }
 
             // Apply filter transformers (tenant isolation, soft-delete, etc.)
-            // Pass _includeDeleted argument to UserContext for SoftDeleteFilterTransformer
-            if (context.HasArgument("_includeDeleted") && context.GetArgument<bool>("_includeDeleted"))
-            {
-                userContext[Modules.SoftDeleteFilterTransformer.IncludeDeletedKey] = true;
-            }
+            // Capture module arguments (e.g. _includeDeleted, _onlyDeleted) into the
+            // user context under table-scoped keys for the matching transformers.
+            Modules.ModuleApiRegistry.CaptureQueryArguments(context, dbTable, userContext);
 
             _transformerService.ApplyTransformers(table, _dbModel, userContext);
 

@@ -52,10 +52,9 @@ namespace BifrostQL.Core.Schema
 
         public string GetTableFieldDefinition()
         {
-            var hasSoftDelete = _table.Metadata.TryGetValue(MetadataKeys.SoftDelete.Column, out var sdVal) && sdVal != null;
-            var includeDeletedArg = hasSoftDelete ? " _includeDeleted: Boolean" : "";
+            var moduleArgs = Modules.ModuleApiRegistry.QueryArgumentsSdl(_table);
             return
-                $"{_table.GraphQlName}(limit: Int, offset: Int, sort: [{_table.TableColumnSortEnumName}!] filter: {_table.TableFilterTypeName} _primaryKey: [String]{includeDeletedArg}): {_table.GraphQlName}_paged";
+                $"{_table.GraphQlName}(limit: Int, offset: Int, sort: [{_table.TableColumnSortEnumName}!] filter: {_table.TableFilterTypeName} _primaryKey: [String]{moduleArgs}): {_table.GraphQlName}_paged";
         }
 
         public string GetDynamicJoinDefinition(IDbModel model, bool single)
@@ -367,7 +366,7 @@ namespace BifrostQL.Core.Schema
             var result = new StringBuilder();
 
             result.AppendLine(
-                $"\t{_table.GraphQlName}(insert: {_table.GetActionTypeName(MutateActions.Insert)}, update: {_table.GetActionTypeName(MutateActions.Update)}, upsert: {_table.GetActionTypeName(MutateActions.Upsert)}, delete: {_table.GetActionTypeName(MutateActions.Delete)}, sync: {NestedSyncInsertTypeName}, _primaryKey: [String]) : Int");
+                $"\t{_table.GraphQlName}(insert: {_table.GetActionTypeName(MutateActions.Insert)}, update: {_table.GetActionTypeName(MutateActions.Update)}, upsert: {_table.GetActionTypeName(MutateActions.Upsert)}, delete: {_table.GetActionTypeName(MutateActions.Delete)}, sync: {NestedSyncInsertTypeName}, _primaryKey: [String]{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : Int");
 
             result.AppendLine($"{_table.GraphQlName}_batch(actions: [batch_{_table.GraphQlName}!]!) : Int");
             return result.ToString();

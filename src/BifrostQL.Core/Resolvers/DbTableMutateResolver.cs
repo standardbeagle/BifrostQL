@@ -159,7 +159,13 @@ namespace BifrostQL.Core.Resolvers
             }
 
             var userContext = context.UserContext;
-            var transformContext = new MutationTransformContext { Model = model, UserContext = userContext, Services = context.RequestServices };
+            var transformContext = new MutationTransformContext
+            {
+                Model = model,
+                UserContext = userContext,
+                Services = context.RequestServices,
+                ModuleArguments = ModuleApiRegistry.CaptureMutationArguments(context, table),
+            };
             var transformResult = mutationTransformers.Transform(table, MutationType.Delete, data, transformContext);
 
             if (transformResult.Errors.Length > 0)

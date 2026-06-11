@@ -342,6 +342,12 @@ namespace BifrostQL.Core.Model
             /// <summary>Optional table-level column set to the deleting user ID.</summary>
             public const string DeletedBy = "soft-delete-by";
 
+            /// <summary>
+            /// Optional table-level role required to use the <c>_hardDelete</c>
+            /// mutation argument. When unset, hard delete is open to all callers.
+            /// </summary>
+            public const string HardDeleteRole = "soft-delete-hard-role";
+
             /// <summary>Legacy model-level soft-delete type setting.</summary>
             public const string LegacyType = "soft-delete-type";
 

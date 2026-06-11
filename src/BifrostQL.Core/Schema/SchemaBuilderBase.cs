@@ -87,14 +87,6 @@ public abstract class SchemaBuilderBase
     }
 
     /// <summary>
-    /// Checks if soft-delete is enabled for the given table.
-    /// </summary>
-    protected bool HasSoftDelete(IDbTable table)
-    {
-        return table.Metadata.TryGetValue(MetadataKeys.SoftDelete.Column, out var val) && val != null;
-    }
-
-    /// <summary>
     /// Gets the filter type name for a GraphQL type.
     /// </summary>
     protected static string GetFilterTypeName(string gqlType)
@@ -156,9 +148,8 @@ public class TableSchemaBuilder : SchemaBuilderBase
     /// </summary>
     public string GetTableFieldDefinition()
     {
-        var hasSoftDelete = HasSoftDelete(_table);
-        var includeDeletedArg = hasSoftDelete ? " _includeDeleted: Boolean" : "";
-        return $"{_table.GraphQlName}(limit: Int, offset: Int, sort: [{_table.TableColumnSortEnumName}!] filter: {_table.TableFilterTypeName} _primaryKey: [String]{includeDeletedArg}): {_table.GraphQlName}_paged";
+        var moduleArgs = Modules.ModuleApiRegistry.QueryArgumentsSdl(_table);
+        return $"{_table.GraphQlName}(limit: Int, offset: Int, sort: [{_table.TableColumnSortEnumName}!] filter: {_table.TableFilterTypeName} _primaryKey: [String]{moduleArgs}): {_table.GraphQlName}_paged";
     }
 
     /// <summary>

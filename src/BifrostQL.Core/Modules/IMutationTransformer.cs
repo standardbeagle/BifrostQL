@@ -78,6 +78,13 @@ public sealed class MutationTransformContext
     public required IDictionary<string, object?> UserContext { get; init; }
     public IReadOnlyDictionary<string, object?>? CurrentRow { get; init; }
     public IServiceProvider? Services { get; init; }
+
+    /// <summary>
+    /// Module argument values captured from the GraphQL request (e.g.
+    /// <c>_hardDelete</c>), keyed by the module's context key. See
+    /// <see cref="ModuleApiRegistry.CaptureMutationArguments"/>.
+    /// </summary>
+    public IReadOnlyDictionary<string, object?> ModuleArguments { get; init; } = ModuleApiRegistry.EmptyArguments;
 }
 
 /// <summary>

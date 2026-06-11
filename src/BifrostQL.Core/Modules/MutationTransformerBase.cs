@@ -102,6 +102,24 @@ public abstract class SoftDeleteMutationTransformerBase : MetadataMutationTransf
         MutationTransformContext context,
         string columnName)
     {
+        // _hardDelete: bypass the soft-delete rewrite and run a real DELETE.
+        // No IS NULL filter is added so already-soft-deleted rows can be purged.
+        // Optionally role-gated via the soft-delete-hard-role metadata key.
+        if (mutationType == MutationType.Delete && IsHardDeleteRequested(context))
+        {
+            var denial = GetHardDeleteDenial(table, context);
+            if (denial != null)
+            {
+                return new MutationTransformResult
+                {
+                    MutationType = mutationType,
+                    Data = data,
+                    Errors = new[] { denial },
+                };
+            }
+            return PassThrough(MutationType.Delete, data);
+        }
+
         // For both UPDATE and DELETE, ensure we only affect non-deleted records
         var softDeleteFilter = TableFilterFactory.IsNull(table.DbName, columnName);
 
@@ -116,6 +134,43 @@ public abstract class SoftDeleteMutationTransformerBase : MetadataMutationTransf
             MutationType = mutationType,
             Data = data,
             AdditionalFilter = softDeleteFilter
+        };
+    }
+
+    private static bool IsHardDeleteRequested(MutationTransformContext context) =>
+        context.ModuleArguments.TryGetValue(SoftDeleteModuleApi.HardDeleteKey, out var val) && val is true;
+
+    /// <summary>
+    /// Returns an error message when the table's <c>soft-delete-hard-role</c>
+    /// metadata names a role the caller does not hold; null when allowed.
+    /// </summary>
+    private static string? GetHardDeleteDenial(IDbTable table, MutationTransformContext context)
+    {
+        if (!table.Metadata.TryGetValue(MetadataKeys.SoftDelete.HardDeleteRole, out var roleVal) ||
+            roleVal is not string requiredRole || string.IsNullOrWhiteSpace(requiredRole))
+            return null;
+
+        if (ExtractRoles(context.UserContext).Any(r => string.Equals(r, requiredRole, StringComparison.OrdinalIgnoreCase)))
+            return null;
+
+        return $"Hard delete on '{table.TableSchema}.{table.DbName}' requires role '{requiredRole}'.";
+    }
+
+    private static IReadOnlyList<string> ExtractRoles(IDictionary<string, object?> userContext)
+    {
+        if (!userContext.TryGetValue("roles", out var rolesValue) || rolesValue is null)
+            return Array.Empty<string>();
+
+        return rolesValue switch
+        {
+            string single => new[] { single },
+            IEnumerable<string> typed => typed.ToArray(),
+            System.Collections.IEnumerable sequence => sequence.Cast<object?>()
+                .Select(o => o?.ToString())
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Select(s => s!)
+                .ToArray(),
+            _ => Array.Empty<string>(),
         };
     }
 

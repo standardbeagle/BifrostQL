@@ -52,6 +52,42 @@ Modify mutation data before execution. Used for:
 - Auto-populating audit columns
 - Setting default values
 
+## Module API Surface (`IModuleApi`)
+
+Modules expose their client-facing controls as GraphQL arguments through
+`ModuleApiRegistry` (`ModuleApi.cs`). Each `IModuleApi` declares per-table
+arguments (only emitted when the module's metadata is present on the table);
+schema generation emits them and the resolvers capture supplied values back
+into the transform pipeline — query arguments land in the user context under
+table-scoped keys (`{contextKey}:{schema}.{table}`), mutation arguments land
+in `MutationTransformContext.ModuleArguments`.
+
+Soft delete is the reference implementation. With
+`"dbo.users { soft-delete: deleted_at }"`:
+
+```graphql
+# Queries: deleted rows are hidden by default
+{ users { data { id } } }
+{ users(_includeDeleted: true) { data { id } } }   # deleted included
+{ users(_onlyDeleted: true) { data { id } } }      # only deleted (wins over _includeDeleted)
+
+# Mutations: delete soft-deletes by default
+mutation { users(delete: { id: 5 }) }                      # sets deleted_at
+mutation { users(delete: { id: 5 }, _hardDelete: true) }   # real DELETE (also purges soft-deleted rows)
+```
+
+Hard delete can be role-gated:
+`"dbo.users { soft-delete: deleted_at; soft-delete-hard-role: admin }"` —
+callers without the role in `UserContext["roles"]` get an error.
+
+Server-side overrides still work via the user context: globally
+(`UserContext["include_deleted"] = true`) or per table
+(`UserContext["include_deleted:dbo.users"] = true`).
+
+To give a new module a client-facing surface, implement `IModuleApi` and add
+it to `ModuleApiRegistry.BuiltIns` — emission and capture follow automatically.
+Modules with no client surface (tenant, policy, audit) return no arguments.
+
 ## Authorization Policy Engine
 
 The policy engine is an always-on, opt-in-per-table authorization layer. A table

@@ -637,9 +637,13 @@ public class SchemaFieldSchemaGeneratorTests
         // Verify new validation fields are present in dbColumnSchema
         schema.Should().Contain("maxLength: Int");
         schema.Should().Contain("minLength: Int");
-        schema.Should().Contain("min: Float");
-        schema.Should().Contain("max: Float");
-        schema.Should().Contain("step: Float");
+        // min/max/step are strings: bounds may be numeric or dates
+        schema.Should().Contain("min: String");
+        schema.Should().Contain("max: String");
+        schema.Should().Contain("step: String");
+        schema.Should().Contain("required: Boolean!");
+        schema.Should().Contain("precision: Float");
+        schema.Should().Contain("scale: Float");
         schema.Should().Contain("pattern: String");
         schema.Should().Contain("patternMessage: String");
         schema.Should().Contain("inputType: String");

@@ -53,8 +53,9 @@ namespace BifrostQL.Core.Resolvers
                                 .Where(c => !c.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden))
                                 .Select(c =>
                             {
-                                // Extract maxLength from VARCHAR(255) or NVARCHAR(100) style dbType
-                                int? maxLength = ExtractMaxLength(c.DataType);
+                                // Effective declarative validation rules — same derivation the
+                                // server-side validator uses, so clients can mirror enforcement.
+                                var rules = Modules.Validation.ValidationRules.ForColumn(c);
                                 // Extract numeric precision/scale from DECIMAL(10,2) style dbType
                                 var (numericPrecision, numericScale) = ExtractNumericPrecision(c.DataType);
                                 // Get enum values from metadata if present
@@ -84,14 +85,17 @@ namespace BifrostQL.Core.Resolvers
                                     isUpdatedByColumn = c.CompareMetadata("populate", "updated-by"),
                                     isDeletedOnColumn = c.CompareMetadata("populate", "deleted-on"),
                                     isDeletedColumn = c.CompareMetadata("populate", "deleted-by"),
-                                    maxLength,
-                                    minLength = (int?)null,
-                                    min = numericPrecision,
-                                    max = numericScale,
-                                    step = (double?)null,
-                                    pattern = c.GetMetadataValue(MetadataKeys.Validation.Pattern),
-                                    patternMessage = c.GetMetadataValue(MetadataKeys.Validation.PatternMessage) ?? c.GetMetadataValue(MetadataKeys.DataType.Title),
-                                    inputType = c.GetMetadataValue(MetadataKeys.Validation.InputType),
+                                    maxLength = rules.MaxLength,
+                                    minLength = rules.MinLength,
+                                    min = rules.Min,
+                                    max = rules.Max,
+                                    step = rules.Step,
+                                    required = rules.Required,
+                                    precision = numericPrecision,
+                                    scale = numericScale,
+                                    pattern = rules.Pattern,
+                                    patternMessage = rules.PatternMessage ?? c.GetMetadataValue(MetadataKeys.DataType.Title),
+                                    inputType = rules.InputType,
                                     defaultValue = c.GetMetadataValue(MetadataKeys.DataType.Default),
                                     enumValues,
                                     enumLabels,
@@ -153,36 +157,6 @@ namespace BifrostQL.Core.Resolvers
         }
 
         static bool Equal(string? a, string? b) => string.Equals(a, b, StringComparison.InvariantCultureIgnoreCase);
-
-        /// <summary>
-        /// Extracts max length from data type strings like VARCHAR(255), NVARCHAR(100), CHAR(50).
-        /// Returns null if no length is specified or if the type doesn't support length.
-        /// </summary>
-        private static int? ExtractMaxLength(string dataType)
-        {
-            if (string.IsNullOrEmpty(dataType))
-                return null;
-
-            // Look for pattern like VARCHAR(255) or NVARCHAR(max) - only extract if it's a number
-            var openParen = dataType.IndexOf('(');
-            if (openParen < 0)
-                return null;
-
-            var closeParen = dataType.IndexOf(')', openParen);
-            if (closeParen < 0)
-                return null;
-
-            var lengthStr = dataType.Substring(openParen + 1, closeParen - openParen - 1).Trim();
-
-            // Handle "max" case - return null as it doesn't represent a numeric constraint
-            if (string.Equals(lengthStr, "max", StringComparison.OrdinalIgnoreCase))
-                return null;
-
-            if (int.TryParse(lengthStr, out var length) && length > 0)
-                return length;
-
-            return null;
-        }
 
         /// <summary>
         /// Extracts numeric precision and scale from data type strings like DECIMAL(10,2) or NUMERIC(18,4).

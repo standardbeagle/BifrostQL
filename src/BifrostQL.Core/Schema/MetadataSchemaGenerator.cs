@@ -72,9 +72,13 @@ public static class MetadataSchemaGenerator
         sb.AppendLine("\tisDeletedColumn: Boolean!");
         sb.AppendLine("\tmaxLength: Int");
         sb.AppendLine("\tminLength: Int");
-        sb.AppendLine("\tmin: Float");
-        sb.AppendLine("\tmax: Float");
-        sb.AppendLine("\tstep: Float");
+        // min/max/step are strings: bounds may be numeric ("0.01") or dates ("2020-01-01")
+        sb.AppendLine("\tmin: String");
+        sb.AppendLine("\tmax: String");
+        sb.AppendLine("\tstep: String");
+        sb.AppendLine("\trequired: Boolean!");
+        sb.AppendLine("\tprecision: Float");
+        sb.AppendLine("\tscale: Float");
         sb.AppendLine("\tpattern: String");
         sb.AppendLine("\tpatternMessage: String");
         sb.AppendLine("\tinputType: String");

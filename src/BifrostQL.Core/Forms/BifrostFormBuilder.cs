@@ -161,7 +161,7 @@ namespace BifrostQL.Core.Forms
             var hasError = fieldErrors != null && fieldErrors.Count > 0;
             var errorClass = hasError ? " error" : "";
             var columnId = column.ColumnName.ToLowerInvariant().Replace(' ', '-');
-            var metadata = GetColumnMetadata(column.ColumnName);
+            var metadata = MergeWithSchemaRules(column, GetColumnMetadata(column.ColumnName));
 
             sb.Append($"<div class=\"form-group{errorClass}\">");
 
@@ -302,6 +302,48 @@ namespace BifrostQL.Core.Forms
         /// Determines whether a field should be marked as required.
         /// Metadata Required overrides the schema-derived state.
         /// </summary>
+        /// <summary>
+        /// Folds the column's schema-declared validation rules (min/max/length/
+        /// pattern/required metadata, varchar length) into the code-configured
+        /// form metadata. Code configuration wins per field; schema metadata
+        /// fills the gaps, so a rule declared once in connection metadata is
+        /// enforced server-side, advertised in _dbSchema, and emitted as HTML5
+        /// validation attributes here without further configuration.
+        /// Date-valued min/max bounds are not representable as HTML number
+        /// attributes and are skipped (SPA clients get them via _dbSchema).
+        /// </summary>
+        internal static ColumnMetadata? MergeWithSchemaRules(ColumnDto column, ColumnMetadata? configured)
+        {
+            var rules = Modules.Validation.ValidationRules.ForColumn(column);
+            var hasRules = rules.Pattern != null || rules.Min != null || rules.Max != null
+                || rules.Step != null || rules.MinLength.HasValue || rules.MaxLength.HasValue
+                || rules.RequiredExplicit || rules.InputType != null;
+            if (!hasRules)
+                return configured;
+
+            return new ColumnMetadata
+            {
+                InputType = configured?.InputType ?? rules.InputType,
+                Placeholder = configured?.Placeholder,
+                Pattern = configured?.Pattern ?? rules.Pattern,
+                Title = configured?.Title ?? rules.PatternMessage,
+                Min = configured?.Min ?? ParseDouble(rules.Min),
+                Max = configured?.Max ?? ParseDouble(rules.Max),
+                Step = configured?.Step ?? ParseDouble(rules.Step),
+                MinLength = configured?.MinLength ?? rules.MinLength,
+                MaxLength = configured?.MaxLength ?? rules.MaxLength,
+                Required = configured?.Required ?? (rules.RequiredExplicit ? true : null),
+                EnumValues = configured?.EnumValues,
+                EnumDisplayNames = configured?.EnumDisplayNames,
+                Accept = configured?.Accept,
+                FileStorage = configured?.FileStorage,
+                StorageBucket = configured?.StorageBucket,
+            };
+        }
+
+        private static double? ParseDouble(string? raw) =>
+            double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) ? value : null;
+
         internal static bool IsFieldRequired(ColumnDto column, ColumnMetadata? metadata)
         {
             if (metadata?.Required.HasValue == true)

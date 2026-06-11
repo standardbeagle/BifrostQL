@@ -109,7 +109,9 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
             var valuePresent = data.TryGetValue(column.ColumnName, out var value)
                 || data.TryGetValue(column.GraphQlName, out value);
 
-            if (IsRequired(column) && (mutationType == MutationType.Insert || valuePresent))
+            var rules = ValidationRules.ForColumn(column);
+
+            if (rules.RequiredExplicit && (mutationType == MutationType.Insert || valuePresent))
             {
                 if (!valuePresent || IsMissing(value))
                     errors.Add($"{column.GraphQlName} is required.");
@@ -118,50 +120,64 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
             if (!valuePresent || IsMissing(value))
                 continue;
 
-            ValidateLength(column, value, errors);
-            ValidateRange(column, value, errors);
-            ValidatePattern(column, value, errors);
+            ValidateLength(column, rules, value, errors);
+            ValidateRange(column, rules, value, errors);
+            ValidatePattern(column, rules, value, errors);
         }
     }
 
-    private static void ValidateLength(ColumnDto column, object? value, List<string> errors)
+    private static void ValidateLength(ColumnDto column, ValidationRules rules, object? value, List<string> errors)
     {
         var text = Convert.ToString(value, CultureInfo.InvariantCulture);
         if (text == null)
             return;
 
-        if (TryInt(column.GetMetadataValue(MetadataKeys.Validation.MinLength), out var minLength)
-            && text.Length < minLength)
+        if (rules.MinLength is { } minLength && text.Length < minLength)
             errors.Add($"{column.GraphQlName} must be at least {minLength} characters.");
 
-        if (TryInt(column.GetMetadataValue(MetadataKeys.Validation.MaxLength), out var maxLength)
-            && text.Length > maxLength)
+        if (rules.MaxLength is { } maxLength && text.Length > maxLength)
             errors.Add($"{column.GraphQlName} must be at most {maxLength} characters.");
     }
 
-    private static void ValidateRange(ColumnDto column, object? value, List<string> errors)
+    private static void ValidateRange(ColumnDto column, ValidationRules rules, object? value, List<string> errors)
     {
+        // Temporal values compare against min/max parsed as dates; everything
+        // else compares as decimal. A min/max that parses neither way is ignored.
+        // GraphQL date inputs frequently arrive as strings, so when the bounds
+        // are dates, string values are parsed as dates too.
+        var boundsAreDates = rules.TryMinDate(out _) || rules.TryMaxDate(out _);
+        if (boundsAreDates && value is string text &&
+            DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
+            value = parsed;
+
+        if (TryDate(value, out var dateValue))
+        {
+            if (rules.TryMinDate(out var minDate) && dateValue < minDate)
+                errors.Add($"{column.GraphQlName} must be on or after {minDate:yyyy-MM-dd}.");
+
+            if (rules.TryMaxDate(out var maxDate) && dateValue > maxDate)
+                errors.Add($"{column.GraphQlName} must be on or before {maxDate:yyyy-MM-dd}.");
+            return;
+        }
+
         if (!TryDecimal(value, out var numeric))
             return;
 
-        if (TryDecimal(column.GetMetadataValue(MetadataKeys.Validation.Min), out var min)
-            && numeric < min)
+        if (rules.TryMinDecimal(out var min) && numeric < min)
             errors.Add($"{column.GraphQlName} must be at least {min}.");
 
-        if (TryDecimal(column.GetMetadataValue(MetadataKeys.Validation.Max), out var max)
-            && numeric > max)
+        if (rules.TryMaxDecimal(out var max) && numeric > max)
             errors.Add($"{column.GraphQlName} must be at most {max}.");
     }
 
-    private static void ValidatePattern(ColumnDto column, object? value, List<string> errors)
+    private static void ValidatePattern(ColumnDto column, ValidationRules rules, object? value, List<string> errors)
     {
-        var pattern = column.GetMetadataValue(MetadataKeys.Validation.Pattern);
-        if (string.IsNullOrWhiteSpace(pattern))
+        if (rules.Pattern == null)
             return;
 
         var text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? "";
-        if (!Regex.IsMatch(text, pattern))
-            errors.Add(column.GetMetadataValue(MetadataKeys.Validation.PatternMessage) ?? $"{column.GraphQlName} is invalid.");
+        if (!Regex.IsMatch(text, rules.Pattern))
+            errors.Add(rules.PatternMessage ?? $"{column.GraphQlName} is invalid.");
     }
 
     private static bool IsTableValidationEnabled(IDbTable table)
@@ -169,9 +185,6 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
 
     private static bool IsColumnValidationEnabled(ColumnDto column)
         => IsEnabled(column.GetMetadataValue(MetadataKeys.Validation.Server));
-
-    private static bool IsRequired(ColumnDto column)
-        => IsEnabled(column.GetMetadataValue(MetadataKeys.Validation.Required));
 
     private static bool HasPluginValidation(IDbTable table)
         => ValidationPlugins(table.GetMetadataValue(MetadataKeys.Validation.Plugin)).Any()
@@ -191,8 +204,24 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
     private static bool IsMissing(object? value)
         => value == null || value is DBNull || value is string text && string.IsNullOrWhiteSpace(text);
 
-    private static bool TryInt(string? raw, out int value)
-        => int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+    private static bool TryDate(object? raw, out DateTime value)
+    {
+        switch (raw)
+        {
+            case DateTime dt:
+                value = dt;
+                return true;
+            case DateTimeOffset dto:
+                value = dto.UtcDateTime;
+                return true;
+            case DateOnly d:
+                value = d.ToDateTime(TimeOnly.MinValue);
+                return true;
+            default:
+                value = default;
+                return false;
+        }
+    }
 
     private static bool TryDecimal(object? raw, out decimal value)
     {

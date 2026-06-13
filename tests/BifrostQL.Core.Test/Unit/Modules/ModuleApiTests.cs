@@ -147,14 +147,14 @@ public class ModuleApiTests
     #region _hardDelete mutation
 
     [Fact]
-    public void HardDelete_BypassesSoftDeleteRewrite()
+    public async Task HardDelete_BypassesSoftDeleteRewrite()
     {
         var table = SoftDeleteTable();
         var transformer = new SoftDeleteMutationTransformer();
         var context = MutationContext(table, hardDelete: true);
 
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
-        var result = transformer.Transform(table, MutationType.Delete, data, context);
+        var result = await transformer.TransformAsync(table, MutationType.Delete, data, context);
 
         result.Errors.Should().BeEmpty();
         result.MutationType.Should().Be(MutationType.Delete, "hard delete must stay a real DELETE");
@@ -164,40 +164,40 @@ public class ModuleApiTests
     }
 
     [Fact]
-    public void HardDelete_WithoutFlag_StillSoftDeletes()
+    public async Task HardDelete_WithoutFlag_StillSoftDeletes()
     {
         var table = SoftDeleteTable();
         var transformer = new SoftDeleteMutationTransformer();
         var context = MutationContext(table, hardDelete: false);
 
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
-        var result = transformer.Transform(table, MutationType.Delete, data, context);
+        var result = await transformer.TransformAsync(table, MutationType.Delete, data, context);
 
         result.MutationType.Should().Be(MutationType.Update);
         result.Data.Should().ContainKey("deleted_at");
     }
 
     [Fact]
-    public void HardDelete_RoleGate_DeniesWithoutRole()
+    public async Task HardDelete_RoleGate_DeniesWithoutRole()
     {
         var table = SoftDeleteTable(hardDeleteRole: "admin");
         var transformer = new SoftDeleteMutationTransformer();
         var context = MutationContext(table, hardDelete: true);
 
-        var result = transformer.Transform(table, MutationType.Delete, new() { ["Id"] = 1 }, context);
+        var result = await transformer.TransformAsync(table, MutationType.Delete, new() { ["Id"] = 1 }, context);
 
         result.Errors.Should().ContainSingle(e => e.Contains("requires role 'admin'"));
     }
 
     [Fact]
-    public void HardDelete_RoleGate_AllowsWithRole_CaseInsensitive()
+    public async Task HardDelete_RoleGate_AllowsWithRole_CaseInsensitive()
     {
         var table = SoftDeleteTable(hardDeleteRole: "admin");
         var transformer = new SoftDeleteMutationTransformer();
         var context = MutationContext(table, hardDelete: true,
             userContext: new Dictionary<string, object?> { ["roles"] = new[] { "Admin" } });
 
-        var result = transformer.Transform(table, MutationType.Delete, new() { ["Id"] = 1 }, context);
+        var result = await transformer.TransformAsync(table, MutationType.Delete, new() { ["Id"] = 1 }, context);
 
         result.Errors.Should().BeEmpty();
         result.MutationType.Should().Be(MutationType.Delete);

@@ -128,12 +128,12 @@ namespace BifrostQL.Server.Test
         {
             public int Priority => 300;
             public bool AppliesTo(IDbTable table, MutationType mutationType, MutationTransformContext context) => false;
-            public MutationTransformResult Transform(
+            public ValueTask<MutationTransformResult> TransformAsync(
                 IDbTable table,
                 MutationType mutationType,
                 Dictionary<string, object?> data,
                 MutationTransformContext context) =>
-                new MutationTransformResult { MutationType = mutationType, Data = data };
+                new(new MutationTransformResult { MutationType = mutationType, Data = data });
         }
 
         private sealed class TestObserver : IQueryObserver

@@ -176,7 +176,7 @@ namespace BifrostQL.Core.Resolvers
 
             // Mutation transformers (e.g. the authorization policy engine) gate
             // the insert before any SQL is built; non-empty Errors abort it.
-            var transformResult = mutationTransformers.Transform(table, MutationType.Insert, data, transformContext);
+            var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Insert, data, transformContext);
             if (transformResult.Errors.Length > 0)
                 throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
@@ -231,7 +231,7 @@ namespace BifrostQL.Core.Resolvers
 
             // Mutation transformers (e.g. the authorization policy engine) gate
             // the update before any SQL is built; non-empty Errors abort it.
-            var transformResult = mutationTransformers.Transform(table, MutationType.Update, caseData, updateTransformContext);
+            var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Update, caseData, updateTransformContext);
             if (transformResult.Errors.Length > 0)
                 throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
@@ -303,7 +303,7 @@ namespace BifrostQL.Core.Resolvers
         {
             if (data.Count == 0) return null;
 
-            var transformResult = mutationTransformers.Transform(table, MutationType.Delete, data, transformContext);
+            var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Delete, data, transformContext);
             if (transformResult.Errors.Length > 0)
                 throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
@@ -370,7 +370,7 @@ namespace BifrostQL.Core.Resolvers
             {
                 // An upsert that resolves to a single statement is gated as an
                 // update: it targets an existing or new row keyed by primary key.
-                var transformResult = mutationTransformers.Transform(table, MutationType.Update, caseData, transformContext);
+                var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Update, caseData, transformContext);
                 if (transformResult.Errors.Length > 0)
                     throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 

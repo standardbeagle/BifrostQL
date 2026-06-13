@@ -10,14 +10,14 @@ public class AuditMutationTransformerTests
     #region Insert Tests
 
     [Fact]
-    public void Insert_SetsCreatedOnTimestamp()
+    public async Task Insert_SetsCreatedOnTimestamp()
     {
         var model = CreateAuditModel();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Name"] = "Alice" };
 
-        transformer.Transform(table, MutationType.Insert, data, Context(model, EmptyUserContext()));
+        await transformer.TransformAsync(table, MutationType.Insert, data, Context(model, EmptyUserContext()));
 
         Assert.True(data.ContainsKey("created_at"));
         Assert.IsType<DateTime>(data["created_at"]);
@@ -26,47 +26,47 @@ public class AuditMutationTransformerTests
     }
 
     [Fact]
-    public void Insert_SetsUpdatedOnTimestamp()
+    public async Task Insert_SetsUpdatedOnTimestamp()
     {
         var model = CreateAuditModel();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Name"] = "Alice" };
 
-        transformer.Transform(table, MutationType.Insert, data, Context(model, EmptyUserContext()));
+        await transformer.TransformAsync(table, MutationType.Insert, data, Context(model, EmptyUserContext()));
 
         Assert.True(data.ContainsKey("updated_at"));
         Assert.IsType<DateTime>(data["updated_at"]);
     }
 
     [Fact]
-    public void Insert_SetsCreatedByFromUserContext()
+    public async Task Insert_SetsCreatedByFromUserContext()
     {
         var model = CreateAuditModel();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Name"] = "Alice" };
 
-        transformer.Transform(table, MutationType.Insert, data, Context(model, UserContextWithId("user-42")));
+        await transformer.TransformAsync(table, MutationType.Insert, data, Context(model, UserContextWithId("user-42")));
 
         Assert.Equal("user-42", data["created_by_user_id"]);
     }
 
     [Fact]
-    public void Insert_SetsUpdatedByFromUserContext()
+    public async Task Insert_SetsUpdatedByFromUserContext()
     {
         var model = CreateAuditModel();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Name"] = "Alice" };
 
-        transformer.Transform(table, MutationType.Insert, data, Context(model, UserContextWithId("user-42")));
+        await transformer.TransformAsync(table, MutationType.Insert, data, Context(model, UserContextWithId("user-42")));
 
         Assert.Equal("user-42", data["updated_by_user_id"]);
     }
 
     [Fact]
-    public void Insert_OverwritesClientProvidedTimestamp()
+    public async Task Insert_OverwritesClientProvidedTimestamp()
     {
         var model = CreateAuditModel();
         var transformer = new AuditMutationTransformer();
@@ -78,7 +78,7 @@ public class AuditMutationTransformerTests
             ["created_at"] = spoofedTime
         };
 
-        transformer.Transform(table, MutationType.Insert, data, Context(model, EmptyUserContext()));
+        await transformer.TransformAsync(table, MutationType.Insert, data, Context(model, EmptyUserContext()));
 
         var actual = (DateTime)data["created_at"]!;
         Assert.NotEqual(spoofedTime, actual);
@@ -86,7 +86,7 @@ public class AuditMutationTransformerTests
     }
 
     [Fact]
-    public void Insert_OverwritesClientProvidedUserColumn()
+    public async Task Insert_OverwritesClientProvidedUserColumn()
     {
         var model = CreateAuditModel();
         var transformer = new AuditMutationTransformer();
@@ -97,69 +97,69 @@ public class AuditMutationTransformerTests
             ["created_by_user_id"] = "spoofed-user"
         };
 
-        transformer.Transform(table, MutationType.Insert, data, Context(model, UserContextWithId("real-user")));
+        await transformer.TransformAsync(table, MutationType.Insert, data, Context(model, UserContextWithId("real-user")));
 
         Assert.Equal("real-user", data["created_by_user_id"]);
     }
 
     [Fact]
-    public void Insert_DoesNotSetUserColumnsWhenNoAuditKey()
+    public async Task Insert_DoesNotSetUserColumnsWhenNoAuditKey()
     {
         var model = CreateAuditModelWithoutAuditKey();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Name"] = "Alice" };
 
-        transformer.Transform(table, MutationType.Insert, data, Context(model, UserContextWithId("user-42")));
+        await transformer.TransformAsync(table, MutationType.Insert, data, Context(model, UserContextWithId("user-42")));
 
         Assert.False(data.ContainsKey("created_by_user_id"));
         Assert.False(data.ContainsKey("updated_by_user_id"));
     }
 
     [Fact]
-    public void Insert_SetsTimestampsEvenWithoutAuditKey()
+    public async Task Insert_SetsTimestampsEvenWithoutAuditKey()
     {
         var model = CreateAuditModelWithoutAuditKey();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Name"] = "Alice" };
 
-        transformer.Transform(table, MutationType.Insert, data, Context(model, EmptyUserContext()));
+        await transformer.TransformAsync(table, MutationType.Insert, data, Context(model, EmptyUserContext()));
 
         Assert.True(data.ContainsKey("created_at"));
         Assert.True(data.ContainsKey("updated_at"));
     }
 
     [Fact]
-    public void Insert_DoesNotSetDeletedColumns()
+    public async Task Insert_DoesNotSetDeletedColumns()
     {
         var model = CreateFullAuditModel();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Name"] = "Alice" };
 
-        transformer.Transform(table, MutationType.Insert, data, Context(model, UserContextWithId("user-42")));
+        await transformer.TransformAsync(table, MutationType.Insert, data, Context(model, UserContextWithId("user-42")));
 
         Assert.False(data.ContainsKey("deleted_at"));
         Assert.False(data.ContainsKey("deleted_by_user_id"));
     }
 
     [Fact]
-    public void Insert_ReturnsNoErrors()
+    public async Task Insert_ReturnsNoErrors()
     {
         var model = CreateAuditModel();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Name"] = "Alice" };
 
-        var result = transformer.Transform(table, MutationType.Insert, data, Context(model, EmptyUserContext()));
+        var result = await transformer.TransformAsync(table, MutationType.Insert, data, Context(model, EmptyUserContext()));
 
         Assert.Empty(result.Errors);
         Assert.Equal(MutationType.Insert, result.MutationType);
     }
 
     [Fact]
-    public void Insert_HandlesNullUserContextValueGracefully()
+    public async Task Insert_HandlesNullUserContextValueGracefully()
     {
         var model = CreateAuditModel();
         var transformer = new AuditMutationTransformer();
@@ -167,13 +167,13 @@ public class AuditMutationTransformerTests
         var data = new Dictionary<string, object?> { ["Name"] = "Alice" };
         var userContext = new Dictionary<string, object?> { ["id"] = null };
 
-        transformer.Transform(table, MutationType.Insert, data, Context(model, userContext));
+        await transformer.TransformAsync(table, MutationType.Insert, data, Context(model, userContext));
 
         Assert.Null(data["created_by_user_id"]);
     }
 
     [Fact]
-    public void Insert_HandlesMissingAuditKeyInUserContext()
+    public async Task Insert_HandlesMissingAuditKeyInUserContext()
     {
         var model = CreateAuditModel();
         var transformer = new AuditMutationTransformer();
@@ -181,7 +181,7 @@ public class AuditMutationTransformerTests
         var data = new Dictionary<string, object?> { ["Name"] = "Alice" };
         var userContext = new Dictionary<string, object?> { ["other_key"] = "value" };
 
-        transformer.Transform(table, MutationType.Insert, data, Context(model, userContext));
+        await transformer.TransformAsync(table, MutationType.Insert, data, Context(model, userContext));
 
         Assert.Null(data["created_by_user_id"]);
     }
@@ -191,62 +191,62 @@ public class AuditMutationTransformerTests
     #region Update Tests
 
     [Fact]
-    public void Update_SetsUpdatedOnTimestamp()
+    public async Task Update_SetsUpdatedOnTimestamp()
     {
         var model = CreateAuditModel();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Name"] = "Bob" };
 
-        transformer.Transform(table, MutationType.Update, data, Context(model, EmptyUserContext()));
+        await transformer.TransformAsync(table, MutationType.Update, data, Context(model, EmptyUserContext()));
 
         Assert.True(data.ContainsKey("updated_at"));
         Assert.IsType<DateTime>(data["updated_at"]);
     }
 
     [Fact]
-    public void Update_SetsUpdatedByFromUserContext()
+    public async Task Update_SetsUpdatedByFromUserContext()
     {
         var model = CreateAuditModel();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Name"] = "Bob" };
 
-        transformer.Transform(table, MutationType.Update, data, Context(model, UserContextWithId("user-99")));
+        await transformer.TransformAsync(table, MutationType.Update, data, Context(model, UserContextWithId("user-99")));
 
         Assert.Equal("user-99", data["updated_by_user_id"]);
     }
 
     [Fact]
-    public void Update_DoesNotSetCreatedColumns()
+    public async Task Update_DoesNotSetCreatedColumns()
     {
         var model = CreateAuditModel();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Name"] = "Bob" };
 
-        transformer.Transform(table, MutationType.Update, data, Context(model, UserContextWithId("user-99")));
+        await transformer.TransformAsync(table, MutationType.Update, data, Context(model, UserContextWithId("user-99")));
 
         Assert.False(data.ContainsKey("created_at"));
         Assert.False(data.ContainsKey("created_by_user_id"));
     }
 
     [Fact]
-    public void Update_DoesNotSetDeletedColumns()
+    public async Task Update_DoesNotSetDeletedColumns()
     {
         var model = CreateFullAuditModel();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Name"] = "Bob" };
 
-        transformer.Transform(table, MutationType.Update, data, Context(model, UserContextWithId("user-99")));
+        await transformer.TransformAsync(table, MutationType.Update, data, Context(model, UserContextWithId("user-99")));
 
         Assert.False(data.ContainsKey("deleted_at"));
         Assert.False(data.ContainsKey("deleted_by_user_id"));
     }
 
     [Fact]
-    public void Update_OverwritesClientProvidedTimestamp()
+    public async Task Update_OverwritesClientProvidedTimestamp()
     {
         var model = CreateAuditModel();
         var transformer = new AuditMutationTransformer();
@@ -258,21 +258,21 @@ public class AuditMutationTransformerTests
             ["updated_at"] = spoofedTime
         };
 
-        transformer.Transform(table, MutationType.Update, data, Context(model, EmptyUserContext()));
+        await transformer.TransformAsync(table, MutationType.Update, data, Context(model, EmptyUserContext()));
 
         var actual = (DateTime)data["updated_at"]!;
         Assert.NotEqual(spoofedTime, actual);
     }
 
     [Fact]
-    public void Update_ReturnsNoErrors()
+    public async Task Update_ReturnsNoErrors()
     {
         var model = CreateAuditModel();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Name"] = "Bob" };
 
-        var result = transformer.Transform(table, MutationType.Update, data, Context(model, EmptyUserContext()));
+        var result = await transformer.TransformAsync(table, MutationType.Update, data, Context(model, EmptyUserContext()));
 
         Assert.Empty(result.Errors);
         Assert.Equal(MutationType.Update, result.MutationType);
@@ -283,82 +283,82 @@ public class AuditMutationTransformerTests
     #region Delete Tests
 
     [Fact]
-    public void Delete_SetsUpdatedOnTimestamp()
+    public async Task Delete_SetsUpdatedOnTimestamp()
     {
         var model = CreateFullAuditModel();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
 
-        transformer.Transform(table, MutationType.Delete, data, Context(model, EmptyUserContext()));
+        await transformer.TransformAsync(table, MutationType.Delete, data, Context(model, EmptyUserContext()));
 
         Assert.True(data.ContainsKey("updated_at"));
         Assert.IsType<DateTime>(data["updated_at"]);
     }
 
     [Fact]
-    public void Delete_SetsDeletedOnTimestamp()
+    public async Task Delete_SetsDeletedOnTimestamp()
     {
         var model = CreateFullAuditModel();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
 
-        transformer.Transform(table, MutationType.Delete, data, Context(model, EmptyUserContext()));
+        await transformer.TransformAsync(table, MutationType.Delete, data, Context(model, EmptyUserContext()));
 
         Assert.True(data.ContainsKey("deleted_at"));
         Assert.IsType<DateTime>(data["deleted_at"]);
     }
 
     [Fact]
-    public void Delete_SetsUpdatedByFromUserContext()
+    public async Task Delete_SetsUpdatedByFromUserContext()
     {
         var model = CreateFullAuditModel();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
 
-        transformer.Transform(table, MutationType.Delete, data, Context(model, UserContextWithId("admin-1")));
+        await transformer.TransformAsync(table, MutationType.Delete, data, Context(model, UserContextWithId("admin-1")));
 
         Assert.Equal("admin-1", data["updated_by_user_id"]);
     }
 
     [Fact]
-    public void Delete_SetsDeletedByFromUserContext()
+    public async Task Delete_SetsDeletedByFromUserContext()
     {
         var model = CreateFullAuditModel();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
 
-        transformer.Transform(table, MutationType.Delete, data, Context(model, UserContextWithId("admin-1")));
+        await transformer.TransformAsync(table, MutationType.Delete, data, Context(model, UserContextWithId("admin-1")));
 
         Assert.Equal("admin-1", data["deleted_by_user_id"]);
     }
 
     [Fact]
-    public void Delete_DoesNotSetCreatedColumns()
+    public async Task Delete_DoesNotSetCreatedColumns()
     {
         var model = CreateFullAuditModel();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
 
-        transformer.Transform(table, MutationType.Delete, data, Context(model, UserContextWithId("admin-1")));
+        await transformer.TransformAsync(table, MutationType.Delete, data, Context(model, UserContextWithId("admin-1")));
 
         Assert.False(data.ContainsKey("created_at"));
         Assert.False(data.ContainsKey("created_by_user_id"));
     }
 
     [Fact]
-    public void Delete_ReturnsNoErrors()
+    public async Task Delete_ReturnsNoErrors()
     {
         var model = CreateFullAuditModel();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
 
-        var result = transformer.Transform(table, MutationType.Delete, data, Context(model, EmptyUserContext()));
+        var result = await transformer.TransformAsync(table, MutationType.Delete, data, Context(model, EmptyUserContext()));
 
         Assert.Empty(result.Errors);
         Assert.Equal(MutationType.Delete, result.MutationType);
@@ -393,42 +393,42 @@ public class AuditMutationTransformerTests
     }
 
     [Fact]
-    public void Insert_NoAuditColumns_DataUnchanged()
+    public async Task Insert_NoAuditColumns_DataUnchanged()
     {
         var model = StandardTestFixtures.SimpleUsers();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Name"] = "Alice" };
 
-        transformer.Transform(table, MutationType.Insert, data, Context(model, UserContextWithId("user-1")));
+        await transformer.TransformAsync(table, MutationType.Insert, data, Context(model, UserContextWithId("user-1")));
 
         Assert.Single(data);
         Assert.Equal("Alice", data["Name"]);
     }
 
     [Fact]
-    public void Update_NoAuditColumns_DataUnchanged()
+    public async Task Update_NoAuditColumns_DataUnchanged()
     {
         var model = StandardTestFixtures.SimpleUsers();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Name"] = "Bob" };
 
-        transformer.Transform(table, MutationType.Update, data, Context(model, UserContextWithId("user-1")));
+        await transformer.TransformAsync(table, MutationType.Update, data, Context(model, UserContextWithId("user-1")));
 
         Assert.Single(data);
         Assert.Equal("Bob", data["Name"]);
     }
 
     [Fact]
-    public void Delete_NoAuditColumns_DataUnchanged()
+    public async Task Delete_NoAuditColumns_DataUnchanged()
     {
         var model = StandardTestFixtures.SimpleUsers();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
 
-        transformer.Transform(table, MutationType.Delete, data, Context(model, UserContextWithId("user-1")));
+        await transformer.TransformAsync(table, MutationType.Delete, data, Context(model, UserContextWithId("user-1")));
 
         Assert.Single(data);
         Assert.Equal(1, data["Id"]);
@@ -458,7 +458,7 @@ public class AuditMutationTransformerTests
     #region Soft-Delete Pipeline Interaction
 
     [Fact]
-    public void Pipeline_SoftDeleteWithAudit_StampsDeletedColumnsOnDelete()
+    public async Task Pipeline_SoftDeleteWithAudit_StampsDeletedColumnsOnDelete()
     {
         // Regression: in the legacy IMutationModule system, audit's Delete() ran on the
         // soft-delete (DELETE→UPDATE) path and stamped deleted-*. The transformer port
@@ -477,7 +477,7 @@ public class AuditMutationTransformerTests
         };
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
 
-        var result = pipeline.Transform(table, MutationType.Delete, data, Context(model, UserContextWithId("admin-1")));
+        var result = await pipeline.TransformAsync(table, MutationType.Delete, data, Context(model, UserContextWithId("admin-1")));
 
         // DELETE rewritten to UPDATE by soft-delete...
         Assert.Equal(MutationType.Update, result.MutationType);
@@ -496,14 +496,14 @@ public class AuditMutationTransformerTests
     #region Timestamp Consistency
 
     [Fact]
-    public void Insert_CreatedOnAndUpdatedOnUseSameTimestamp()
+    public async Task Insert_CreatedOnAndUpdatedOnUseSameTimestamp()
     {
         var model = CreateAuditModel();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Name"] = "Alice" };
 
-        transformer.Transform(table, MutationType.Insert, data, Context(model, EmptyUserContext()));
+        await transformer.TransformAsync(table, MutationType.Insert, data, Context(model, EmptyUserContext()));
 
         var createdAt = (DateTime)data["created_at"]!;
         var updatedAt = (DateTime)data["updated_at"]!;
@@ -511,14 +511,14 @@ public class AuditMutationTransformerTests
     }
 
     [Fact]
-    public void Delete_UpdatedOnAndDeletedOnUseSameTimestamp()
+    public async Task Delete_UpdatedOnAndDeletedOnUseSameTimestamp()
     {
         var model = CreateFullAuditModel();
         var transformer = new AuditMutationTransformer();
         var table = model.GetTableFromDbName("Users");
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
 
-        transformer.Transform(table, MutationType.Delete, data, Context(model, EmptyUserContext()));
+        await transformer.TransformAsync(table, MutationType.Delete, data, Context(model, EmptyUserContext()));
 
         var updatedAt = (DateTime)data["updated_at"]!;
         var deletedAt = (DateTime)data["deleted_at"]!;

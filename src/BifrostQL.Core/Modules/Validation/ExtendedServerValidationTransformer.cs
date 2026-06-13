@@ -28,7 +28,14 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
                || table.Columns.Any(IsColumnValidationEnabled)
                || HasPluginValidation(table));
 
-    public MutationTransformResult Transform(
+    public ValueTask<MutationTransformResult> TransformAsync(
+        IDbTable table,
+        MutationType mutationType,
+        Dictionary<string, object?> data,
+        MutationTransformContext context)
+        => new(TransformSync(table, mutationType, data, context));
+
+    private MutationTransformResult TransformSync(
         IDbTable table,
         MutationType mutationType,
         Dictionary<string, object?> data,

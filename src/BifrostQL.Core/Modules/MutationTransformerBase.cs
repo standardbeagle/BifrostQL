@@ -26,7 +26,7 @@ public abstract class MetadataMutationTransformerBase : IMutationTransformer, IM
         return table.Metadata.TryGetValue(_metadataKey, out var val) && val != null;
     }
 
-    public MutationTransformResult Transform(
+    public ValueTask<MutationTransformResult> TransformAsync(
         IDbTable table,
         MutationType mutationType,
         Dictionary<string, object?> data,
@@ -35,22 +35,22 @@ public abstract class MetadataMutationTransformerBase : IMutationTransformer, IM
         var columnName = table.Metadata[_metadataKey]?.ToString();
         if (string.IsNullOrWhiteSpace(columnName))
         {
-            return PassThrough(mutationType, data);
+            return new ValueTask<MutationTransformResult>(PassThrough(mutationType, data));
         }
 
         // Verify column exists
         if (!table.ColumnLookup.ContainsKey(columnName))
         {
             var fullTableName = $"{table.TableSchema}.{table.DbName}";
-            return new MutationTransformResult
+            return new ValueTask<MutationTransformResult>(new MutationTransformResult
             {
                 MutationType = mutationType,
                 Data = data,
                 Errors = new[] { $"{ModuleName} column '{columnName}' not found in table '{fullTableName}'." }
-            };
+            });
         }
 
-        return TransformCore(table, mutationType, data, context, columnName);
+        return new ValueTask<MutationTransformResult>(TransformCore(table, mutationType, data, context, columnName));
     }
 
     /// <summary>

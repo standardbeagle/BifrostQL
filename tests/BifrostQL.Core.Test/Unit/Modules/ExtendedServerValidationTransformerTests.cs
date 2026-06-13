@@ -10,13 +10,13 @@ namespace BifrostQL.Core.Test.Modules;
 public sealed class ExtendedServerValidationTransformerTests
 {
     [Fact]
-    public void Transform_EnforcesConfiguredMetadataRules()
+    public async Task Transform_EnforcesConfiguredMetadataRules()
     {
         var model = BuildModel();
         var table = model.GetTableFromDbName("Contacts");
         var transformer = new ExtendedServerValidationTransformer();
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             table,
             MutationType.Insert,
             new Dictionary<string, object?> { ["Email"] = "not-an-email", ["Age"] = 17 },
@@ -28,14 +28,14 @@ public sealed class ExtendedServerValidationTransformerTests
     }
 
     [Fact]
-    public void Transform_RunsRegisteredPluginValidator()
+    public async Task Transform_RunsRegisteredPluginValidator()
     {
         var model = BuildModel();
         var table = model.GetTableFromDbName("Contacts");
         table.Metadata[MetadataKeys.Validation.Plugin] = "custom";
         var transformer = new ExtendedServerValidationTransformer(new[] { new CustomValidator() });
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             table,
             MutationType.Insert,
             new Dictionary<string, object?> { ["Name"] = "Ada", ["Email"] = "ada@example.com", ["Age"] = 30 },
@@ -45,14 +45,14 @@ public sealed class ExtendedServerValidationTransformerTests
     }
 
     [Fact]
-    public void Transform_ReportsMissingPluginValidator()
+    public async Task Transform_ReportsMissingPluginValidator()
     {
         var model = BuildModel();
         var table = model.GetTableFromDbName("Contacts");
         table.Metadata[MetadataKeys.Validation.Plugin] = "missing-provider";
         var transformer = new ExtendedServerValidationTransformer();
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             table,
             MutationType.Insert,
             new Dictionary<string, object?> { ["Name"] = "Ada", ["Email"] = "ada@example.com", ["Age"] = 30 },

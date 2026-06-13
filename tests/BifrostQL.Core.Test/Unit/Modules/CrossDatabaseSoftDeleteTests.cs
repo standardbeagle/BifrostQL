@@ -232,7 +232,7 @@ public class CrossDatabaseSoftDeleteTests
 
     [Theory]
     [MemberData(nameof(AllDialects))]
-    public void SoftDeleteMutation_DeleteConvertsToUpdate_AcrossAllDatabases(
+    public async Task SoftDeleteMutation_DeleteConvertsToUpdate_AcrossAllDatabases(
         ISqlDialect dialect, string schema, string dbName)
     {
         _ = dialect;
@@ -251,7 +251,7 @@ public class CrossDatabaseSoftDeleteTests
         };
 
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
-        var result = transformers.Transform(table, MutationType.Delete, data, context);
+        var result = await transformers.TransformAsync(table, MutationType.Delete, data, context);
 
         result.MutationType.Should().Be(MutationType.Update,
             $"{dbName}: DELETE must be converted to UPDATE for soft-delete tables");
@@ -267,7 +267,7 @@ public class CrossDatabaseSoftDeleteTests
 
     [Theory]
     [MemberData(nameof(AllDialects))]
-    public void SoftDeleteMutation_DeletePreservesOriginalData_AcrossAllDatabases(
+    public async Task SoftDeleteMutation_DeletePreservesOriginalData_AcrossAllDatabases(
         ISqlDialect dialect, string schema, string dbName)
     {
         _ = dialect;
@@ -282,7 +282,7 @@ public class CrossDatabaseSoftDeleteTests
         };
 
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
-        var result = transformer.Transform(table, MutationType.Delete, data, context);
+        var result = await transformer.TransformAsync(table, MutationType.Delete, data, context);
 
         result.Data.Should().ContainKey("Id",
             $"{dbName}: original data must be preserved in soft-delete mutation");
@@ -294,7 +294,7 @@ public class CrossDatabaseSoftDeleteTests
 
     [Theory]
     [MemberData(nameof(AllDialects))]
-    public void SoftDeleteMutation_Update_AddsIsNullFilter_AcrossAllDatabases(
+    public async Task SoftDeleteMutation_Update_AddsIsNullFilter_AcrossAllDatabases(
         ISqlDialect dialect, string schema, string dbName)
     {
         _ = dialect;
@@ -313,7 +313,7 @@ public class CrossDatabaseSoftDeleteTests
         };
 
         var data = new Dictionary<string, object?> { ["Name"] = "Updated" };
-        var result = transformers.Transform(table, MutationType.Update, data, context);
+        var result = await transformers.TransformAsync(table, MutationType.Update, data, context);
 
         result.MutationType.Should().Be(MutationType.Update,
             $"{dbName}: UPDATE should remain an UPDATE");
@@ -351,7 +351,7 @@ public class CrossDatabaseSoftDeleteTests
 
     [Theory]
     [MemberData(nameof(AllDialects))]
-    public void SoftDeleteMutation_DeleteWithDeletedBy_PopulatesUserColumn_AcrossAllDatabases(
+    public async Task SoftDeleteMutation_DeleteWithDeletedBy_PopulatesUserColumn_AcrossAllDatabases(
         ISqlDialect dialect, string schema, string dbName)
     {
         _ = dialect;
@@ -370,7 +370,7 @@ public class CrossDatabaseSoftDeleteTests
         };
 
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
-        var result = transformers.Transform(table, MutationType.Delete, data, context);
+        var result = await transformers.TransformAsync(table, MutationType.Delete, data, context);
 
         result.MutationType.Should().Be(MutationType.Update,
             $"{dbName}: DELETE must be converted to UPDATE");
@@ -384,7 +384,7 @@ public class CrossDatabaseSoftDeleteTests
 
     [Theory]
     [MemberData(nameof(AllDialects))]
-    public void SoftDeleteMutation_DeleteWithoutUserContext_SkipsDeletedBy_AcrossAllDatabases(
+    public async Task SoftDeleteMutation_DeleteWithoutUserContext_SkipsDeletedBy_AcrossAllDatabases(
         ISqlDialect dialect, string schema, string dbName)
     {
         _ = dialect;
@@ -403,7 +403,7 @@ public class CrossDatabaseSoftDeleteTests
         };
 
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
-        var result = transformers.Transform(table, MutationType.Delete, data, context);
+        var result = await transformers.TransformAsync(table, MutationType.Delete, data, context);
 
         result.MutationType.Should().Be(MutationType.Update,
             $"{dbName}: DELETE must be converted to UPDATE even without user context");
@@ -482,7 +482,7 @@ public class CrossDatabaseSoftDeleteTests
 
     [Theory]
     [MemberData(nameof(AllDialects))]
-    public void SoftDeleteMutation_MissingColumn_ReturnsError_AcrossAllDatabases(
+    public async Task SoftDeleteMutation_MissingColumn_ReturnsError_AcrossAllDatabases(
         ISqlDialect dialect, string schema, string dbName)
     {
         _ = dialect;
@@ -503,7 +503,7 @@ public class CrossDatabaseSoftDeleteTests
         };
 
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
-        var result = transformer.Transform(table, MutationType.Delete, data, context);
+        var result = await transformer.TransformAsync(table, MutationType.Delete, data, context);
 
         result.Errors.Should().NotBeEmpty(
             $"{dbName}: mutation with missing column must return errors");
@@ -627,7 +627,7 @@ public class CrossDatabaseSoftDeleteTests
     }
 
     [Fact]
-    public void SoftDeleteMutation_AllDialects_ProduceIdenticalTransformResults()
+    public async Task SoftDeleteMutation_AllDialects_ProduceIdenticalTransformResults()
     {
         var schemas = new (string schema, string name)[]
         {
@@ -652,7 +652,7 @@ public class CrossDatabaseSoftDeleteTests
             };
 
             var data = new Dictionary<string, object?> { ["Id"] = 1 };
-            var result = transformer.Transform(table, MutationType.Delete, data, context);
+            var result = await transformer.TransformAsync(table, MutationType.Delete, data, context);
 
             if (firstResult == null)
             {

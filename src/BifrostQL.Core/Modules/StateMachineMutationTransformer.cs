@@ -32,7 +32,14 @@ public sealed class StateMachineMutationTransformer : IMutationTransformer, IMod
             && StateMachineConfigCollector.FromTable(table) is not null;
     }
 
-    public MutationTransformResult Transform(
+    public ValueTask<MutationTransformResult> TransformAsync(
+        IDbTable table,
+        MutationType mutationType,
+        Dictionary<string, object?> data,
+        MutationTransformContext context)
+        => new(TransformSync(table, mutationType, data, context));
+
+    private MutationTransformResult TransformSync(
         IDbTable table,
         MutationType mutationType,
         Dictionary<string, object?> data,

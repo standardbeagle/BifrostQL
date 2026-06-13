@@ -62,7 +62,7 @@ public interface IMutationTransformer
     /// <summary>
     /// Transforms the mutation. Can change type, data, or add filters.
     /// </summary>
-    MutationTransformResult Transform(
+    ValueTask<MutationTransformResult> TransformAsync(
         IDbTable table,
         MutationType mutationType,
         Dictionary<string, object?> data,
@@ -92,7 +92,7 @@ public sealed class MutationTransformContext
 /// </summary>
 public interface IMutationTransformers : IReadOnlyCollection<IMutationTransformer>
 {
-    MutationTransformResult Transform(
+    ValueTask<MutationTransformResult> TransformAsync(
         IDbTable table,
         MutationType mutationType,
         Dictionary<string, object?> data,
@@ -105,7 +105,7 @@ public sealed class MutationTransformersWrap : IMutationTransformers
 
     public int Count => Transformers.Count;
 
-    public MutationTransformResult Transform(
+    public async ValueTask<MutationTransformResult> TransformAsync(
         IDbTable table,
         MutationType mutationType,
         Dictionary<string, object?> data,
@@ -122,7 +122,7 @@ public sealed class MutationTransformersWrap : IMutationTransformers
             if (!transformer.AppliesTo(table, currentType, context))
                 continue;
 
-            var result = transformer.Transform(table, currentType, currentData, context);
+            var result = await transformer.TransformAsync(table, currentType, currentData, context);
 
             if (result.Errors.Length > 0)
             {

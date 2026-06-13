@@ -104,12 +104,12 @@ public sealed class ValidationRulesTests
     #region Server enforcement
 
     [Fact]
-    public void Server_EnforcesDateRange_OnDateTimeValue()
+    public async Task Server_EnforcesDateRange_OnDateTimeValue()
     {
         var (table, model) = DateTable();
         var transformer = new ExtendedServerValidationTransformer();
 
-        var result = transformer.Transform(table, MutationType.Insert,
+        var result = await transformer.TransformAsync(table, MutationType.Insert,
             new Dictionary<string, object?> { ["BirthDate"] = new DateTime(1850, 5, 1) },
             Context(model));
 
@@ -117,12 +117,12 @@ public sealed class ValidationRulesTests
     }
 
     [Fact]
-    public void Server_EnforcesDateRange_OnStringValue()
+    public async Task Server_EnforcesDateRange_OnStringValue()
     {
         var (table, model) = DateTable();
         var transformer = new ExtendedServerValidationTransformer();
 
-        var result = transformer.Transform(table, MutationType.Insert,
+        var result = await transformer.TransformAsync(table, MutationType.Insert,
             new Dictionary<string, object?> { ["BirthDate"] = "2300-01-01" },
             Context(model));
 
@@ -130,12 +130,12 @@ public sealed class ValidationRulesTests
     }
 
     [Fact]
-    public void Server_AcceptsDateInsideRange()
+    public async Task Server_AcceptsDateInsideRange()
     {
         var (table, model) = DateTable();
         var transformer = new ExtendedServerValidationTransformer();
 
-        var result = transformer.Transform(table, MutationType.Insert,
+        var result = await transformer.TransformAsync(table, MutationType.Insert,
             new Dictionary<string, object?> { ["BirthDate"] = "1985-06-15" },
             Context(model));
 
@@ -143,7 +143,7 @@ public sealed class ValidationRulesTests
     }
 
     [Fact]
-    public void Server_EnforcesDbDerivedVarcharLength()
+    public async Task Server_EnforcesDbDerivedVarcharLength()
     {
         var model = DbModelTestFixture.Create()
             .WithTable("Users", t => t
@@ -154,7 +154,7 @@ public sealed class ValidationRulesTests
         var table = model.GetTableFromDbName("Users");
         var transformer = new ExtendedServerValidationTransformer();
 
-        var result = transformer.Transform(table, MutationType.Insert,
+        var result = await transformer.TransformAsync(table, MutationType.Insert,
             new Dictionary<string, object?> { ["Code"] = "TOOLONG" },
             Context(model));
 

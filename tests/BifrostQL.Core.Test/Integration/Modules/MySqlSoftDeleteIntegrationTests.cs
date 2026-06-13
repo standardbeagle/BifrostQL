@@ -276,7 +276,7 @@ public class MySqlSoftDeleteIntegrationTests
     #region Mutation Transformer Integration
 
     [Fact]
-    public void SoftDeleteMutation_DeleteConvertsToUpdate_WithTimestamp()
+    public async Task SoftDeleteMutation_DeleteConvertsToUpdate_WithTimestamp()
     {
         var model = CreateSoftDeleteModel();
         var table = model.GetTableFromDbName("Users");
@@ -293,7 +293,7 @@ public class MySqlSoftDeleteIntegrationTests
         };
 
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
-        var result = transformers.Transform(table, MutationType.Delete, data, context);
+        var result = await transformers.TransformAsync(table, MutationType.Delete, data, context);
 
         result.MutationType.Should().Be(MutationType.Update);
         result.Data.Should().ContainKey("deleted_at");
@@ -303,7 +303,7 @@ public class MySqlSoftDeleteIntegrationTests
     }
 
     [Fact]
-    public void SoftDeleteMutation_DeleteTimestamp_IsRecentUtc()
+    public async Task SoftDeleteMutation_DeleteTimestamp_IsRecentUtc()
     {
         var model = CreateSoftDeleteModel();
         var table = model.GetTableFromDbName("Users");
@@ -317,7 +317,7 @@ public class MySqlSoftDeleteIntegrationTests
 
         var before = DateTimeOffset.UtcNow;
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
-        var result = transformer.Transform(table, MutationType.Delete, data, context);
+        var result = await transformer.TransformAsync(table, MutationType.Delete, data, context);
         var after = DateTimeOffset.UtcNow;
 
         var timestamp = (DateTimeOffset)result.Data["deleted_at"]!;
@@ -326,7 +326,7 @@ public class MySqlSoftDeleteIntegrationTests
     }
 
     [Fact]
-    public void SoftDeleteMutation_DeleteWithDeletedBy_PopulatesUserColumn()
+    public async Task SoftDeleteMutation_DeleteWithDeletedBy_PopulatesUserColumn()
     {
         var model = CreateSoftDeleteWithDeletedByModel();
         var table = model.GetTableFromDbName("Users");
@@ -343,7 +343,7 @@ public class MySqlSoftDeleteIntegrationTests
         };
 
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
-        var result = transformers.Transform(table, MutationType.Delete, data, context);
+        var result = await transformers.TransformAsync(table, MutationType.Delete, data, context);
 
         result.MutationType.Should().Be(MutationType.Update);
         result.Data.Should().ContainKey("deleted_at");
@@ -352,7 +352,7 @@ public class MySqlSoftDeleteIntegrationTests
     }
 
     [Fact]
-    public void SoftDeleteMutation_DeleteWithoutUserContext_SkipsDeletedBy()
+    public async Task SoftDeleteMutation_DeleteWithoutUserContext_SkipsDeletedBy()
     {
         var model = CreateSoftDeleteWithDeletedByModel();
         var table = model.GetTableFromDbName("Users");
@@ -369,7 +369,7 @@ public class MySqlSoftDeleteIntegrationTests
         };
 
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
-        var result = transformers.Transform(table, MutationType.Delete, data, context);
+        var result = await transformers.TransformAsync(table, MutationType.Delete, data, context);
 
         result.MutationType.Should().Be(MutationType.Update);
         result.Data.Should().ContainKey("deleted_at");
@@ -378,7 +378,7 @@ public class MySqlSoftDeleteIntegrationTests
     }
 
     [Fact]
-    public void SoftDeleteMutation_Update_AddsIsNullFilter()
+    public async Task SoftDeleteMutation_Update_AddsIsNullFilter()
     {
         var model = CreateSoftDeleteModel();
         var table = model.GetTableFromDbName("Users");
@@ -395,7 +395,7 @@ public class MySqlSoftDeleteIntegrationTests
         };
 
         var data = new Dictionary<string, object?> { ["Name"] = "Updated" };
-        var result = transformers.Transform(table, MutationType.Update, data, context);
+        var result = await transformers.TransformAsync(table, MutationType.Update, data, context);
 
         result.MutationType.Should().Be(MutationType.Update);
         result.Data.Should().NotContainKey("deleted_at",
@@ -422,7 +422,7 @@ public class MySqlSoftDeleteIntegrationTests
     }
 
     [Fact]
-    public void SoftDeleteMutation_DeletePreservesOriginalData()
+    public async Task SoftDeleteMutation_DeletePreservesOriginalData()
     {
         var model = CreateSoftDeleteModel();
         var table = model.GetTableFromDbName("Users");
@@ -435,7 +435,7 @@ public class MySqlSoftDeleteIntegrationTests
         };
 
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
-        var result = transformer.Transform(table, MutationType.Delete, data, context);
+        var result = await transformer.TransformAsync(table, MutationType.Delete, data, context);
 
         result.Data.Should().ContainKey("Id");
         result.Data["Id"].Should().Be(1);
@@ -526,7 +526,7 @@ public class MySqlSoftDeleteIntegrationTests
     }
 
     [Fact]
-    public void SoftDeleteMutation_MissingColumn_ReturnsError()
+    public async Task SoftDeleteMutation_MissingColumn_ReturnsError()
     {
         var model = DbModelTestFixture.Create()
             .WithTable("Users", t => t
@@ -545,7 +545,7 @@ public class MySqlSoftDeleteIntegrationTests
         };
 
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
-        var result = transformer.Transform(table, MutationType.Delete, data, context);
+        var result = await transformer.TransformAsync(table, MutationType.Delete, data, context);
 
         result.Errors.Should().NotBeEmpty();
         result.Errors[0].Should().Contain("not found in table");
@@ -556,7 +556,7 @@ public class MySqlSoftDeleteIntegrationTests
     #region Combined Filter + Mutation Flow
 
     [Fact]
-    public void FullSoftDeleteFlow_QueryExcludesDeleted_DeleteConvertsToUpdate_MySqlSql()
+    public async Task FullSoftDeleteFlow_QueryExcludesDeleted_DeleteConvertsToUpdate_MySqlSql()
     {
         var model = CreateSoftDeleteWithDeletedByModel();
         var table = model.GetTableFromDbName("Users");
@@ -589,7 +589,7 @@ public class MySqlSoftDeleteIntegrationTests
         };
 
         var deleteData = new Dictionary<string, object?> { ["Id"] = 1 };
-        var deleteResult = mutationTransformers.Transform(table, MutationType.Delete, deleteData, mutationContext);
+        var deleteResult = await mutationTransformers.TransformAsync(table, MutationType.Delete, deleteData, mutationContext);
 
         deleteResult.MutationType.Should().Be(MutationType.Update);
         deleteResult.Data["deleted_by"].Should().Be(42);

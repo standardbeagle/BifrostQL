@@ -69,7 +69,7 @@ namespace BifrostQL.Core.Resolvers
                     // transformer applies, Transform returns the same data reference,
                     // so adopting transformResult.Data is an exact no-op.
                     var upsertTransformContext = new MutationTransformContext { Model = model, UserContext = context.UserContext, Services = context.RequestServices };
-                    var transformResult = mutationTransformers.Transform(table, MutationType.Update, propertyInfo.data, upsertTransformContext);
+                    var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Update, propertyInfo.data, upsertTransformContext);
                     if (transformResult.Errors.Length > 0)
                         throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
@@ -162,7 +162,7 @@ namespace BifrostQL.Core.Resolvers
                 Services = context.RequestServices,
                 ModuleArguments = ModuleApiRegistry.CaptureMutationArguments(context, table),
             };
-            var transformResult = mutationTransformers.Transform(table, MutationType.Delete, data, transformContext);
+            var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Delete, data, transformContext);
 
             if (transformResult.Errors.Length > 0)
                 throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
@@ -231,7 +231,7 @@ namespace BifrostQL.Core.Resolvers
                 CurrentRow = currentRow,
                 Services = context.RequestServices,
             };
-            var transformResult = mutationTransformers.Transform(table, MutationType.Update, propertyInfo.data, transformContext);
+            var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Update, propertyInfo.data, transformContext);
             if (transformResult.Errors.Length > 0)
                 throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
@@ -313,7 +313,7 @@ namespace BifrostQL.Core.Resolvers
             // Mutation transformers (e.g. the authorization policy engine) gate
             // the insert before any SQL is built; non-empty Errors abort it.
             var transformContext = new MutationTransformContext { Model = model, UserContext = context.UserContext, Services = context.RequestServices };
-            var transformResult = mutationTransformers.Transform(table, MutationType.Insert, data, transformContext);
+            var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Insert, data, transformContext);
             if (transformResult.Errors.Length > 0)
                 throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 

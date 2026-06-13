@@ -288,7 +288,7 @@ public class MembershipManagerFinanceFieldPolicyTests
     // ---- Acceptance 3: officer can update operational tables within its tenant ----
 
     [Fact]
-    public void Officer_UpdatingMembers_IsPermitted()
+    public async Task Officer_UpdatingMembers_IsPermitted()
     {
         // The table-level policy-actions grant from sub-task 1 already gives
         // officer full CRUD on the operational tables — no field metadata is
@@ -298,7 +298,7 @@ public class MembershipManagerFinanceFieldPolicyTests
         var transformer = new PolicyMutationTransformer();
         var context = MutationContext(model, Caller("officer"));
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             model.GetTableFromDbName("members"),
             MutationType.Update,
             new Dictionary<string, object?> { ["first_name"] = "Renamed" },
@@ -309,13 +309,13 @@ public class MembershipManagerFinanceFieldPolicyTests
     }
 
     [Fact]
-    public void Officer_CreatingMembers_IsPermitted()
+    public async Task Officer_CreatingMembers_IsPermitted()
     {
         var model = MembershipManagerModel();
         var transformer = new PolicyMutationTransformer();
         var context = MutationContext(model, Caller("officer"));
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             model.GetTableFromDbName("members"),
             MutationType.Insert,
             new Dictionary<string, object?> { ["first_name"] = "New" },
@@ -330,7 +330,7 @@ public class MembershipManagerFinanceFieldPolicyTests
     [InlineData(MutationType.Insert)]
     [InlineData(MutationType.Update)]
     [InlineData(MutationType.Delete)]
-    public void ReadOnly_WritingReadOnlyTable_IsDenied(MutationType mutationType)
+    public async Task ReadOnly_WritingReadOnlyTable_IsDenied(MutationType mutationType)
     {
         // audit_log carries policy-actions: read only — it grants no write
         // action, so the mutation transformer rejects every create/update/delete
@@ -340,7 +340,7 @@ public class MembershipManagerFinanceFieldPolicyTests
         var transformer = new PolicyMutationTransformer();
         var context = MutationContext(model, Caller("read_only"));
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             model.GetTableFromDbName("audit_log"),
             mutationType,
             new Dictionary<string, object?> { ["action"] = "tampered" },
@@ -351,7 +351,7 @@ public class MembershipManagerFinanceFieldPolicyTests
     }
 
     [Fact]
-    public void Officer_WritingReadOnlyTable_IsAlsoDenied()
+    public async Task Officer_WritingReadOnlyTable_IsAlsoDenied()
     {
         // The read-only grant is role-blind by design (sub-task 1: policy-actions
         // is the union of allowed actions, not a role-keyed grant). officer is
@@ -361,7 +361,7 @@ public class MembershipManagerFinanceFieldPolicyTests
         var transformer = new PolicyMutationTransformer();
         var context = MutationContext(model, Caller("officer"));
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             model.GetTableFromDbName("audit_log"),
             MutationType.Insert,
             new Dictionary<string, object?> { ["action"] = "tampered" },

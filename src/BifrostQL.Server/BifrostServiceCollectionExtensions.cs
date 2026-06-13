@@ -709,6 +709,7 @@ namespace BifrostQL.Server
             services.AddSingleton<IQueryTransformerService, QueryTransformerService>();
             services.AddSingleton<IComputedColumnProvider, LocalFileFolderComputedColumnProvider>();
             services.AddSingleton<IComputedColumnProvider, S3FileFolderComputedColumnProvider>();
+            services.AddSingleton<IComputedColumnProvider>(_ => new StateMachineTransitionsProvider());
             services.AddSingleton<IComputedColumnProviders>(sp => new ComputedColumnProviders(sp.GetServices<IComputedColumnProvider>()));
 
             var isAuthEnabled = IsUsingAuth;

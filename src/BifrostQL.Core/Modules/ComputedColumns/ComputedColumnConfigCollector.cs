@@ -1,3 +1,4 @@
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Storage;
 
@@ -11,7 +12,26 @@ public static class ComputedColumnConfigCollector
         result.AddRange(ParseSql(table.GetMetadataValue(MetadataKeys.Computed.Sql)));
         result.AddRange(ParseProvider(table.GetMetadataValue(MetadataKeys.Computed.Provider)));
         result.AddRange(FileFolderComputedColumnCollector.FromTable(table));
+        AddStateMachineTransitions(table, result);
         return result;
+    }
+
+    /// <summary>
+    /// Emits the read-only <c>_availableTransitions</c> provider column on tables
+    /// that carry state-machine metadata. Tables without it are unaffected.
+    /// </summary>
+    private static void AddStateMachineTransitions(IDbTable table, List<ComputedColumnDefinition> result)
+    {
+        var definition = StateMachineConfigCollector.FromTable(table);
+        if (definition is null)
+            return;
+
+        result.Add(new ComputedColumnDefinition(
+            StateMachineTransitionsProvider.FieldName,
+            StateMachineTransitionsProvider.FieldType,
+            ComputedColumnKind.Provider,
+            StateMachineTransitionsProvider.ProviderName,
+            new[] { definition.StateColumn }));
     }
 
     public static ComputedColumnDefinition? Find(IDbTable table, string graphQlName)

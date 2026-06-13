@@ -325,6 +325,14 @@ namespace BifrostQL.Server
                 combined.Add(new ExtendedServerValidationTransformer(
                     services?.GetServices<IServerValidationProvider>() ?? Array.Empty<IServerValidationProvider>()));
 
+            // Soft delete is one feature split across two transformers: the filter
+            // hides soft-deleted rows, this mutation rewrites DELETE into an UPDATE of
+            // the soft-delete column. Auto-registering only the filter (see
+            // WithBuiltInFilterTransformers) would leave DELETEs hard — incoherent. A
+            // no-op for tables without the soft-delete metadata key, so always safe.
+            if (!configured.Any(t => t is SoftDeleteMutationTransformer))
+                combined.Add(new SoftDeleteMutationTransformer());
+
             combined.AddRange(configured);
             return combined;
         }

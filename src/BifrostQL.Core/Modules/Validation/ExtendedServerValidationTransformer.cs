@@ -168,6 +168,16 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
 
         if (rules.TryMaxDecimal(out var max) && numeric > max)
             errors.Add($"{column.GraphQlName} must be at most {max}.");
+
+        // Step grid: the value must be an integral number of steps from the base
+        // (min when present, else 0), mirroring the HTML number input's step attribute.
+        if (rules.TryStepDecimal(out var step) && step > 0)
+        {
+            var origin = rules.TryMinDecimal(out var baseMin) ? baseMin : 0m;
+            var stepsFromOrigin = (numeric - origin) / step;
+            if (Math.Abs(stepsFromOrigin - Math.Round(stepsFromOrigin)) > 0.0000001m)
+                errors.Add($"{column.GraphQlName} must be in increments of {step}.");
+        }
     }
 
     private static void ValidatePattern(ColumnDto column, ValidationRules rules, object? value, List<string> errors)

@@ -99,6 +99,71 @@ public sealed class ExtendedServerValidationTransformerTests
         result.Errors.Should().Contain("Server validation provider 'missing-provider' is not registered.");
     }
 
+    [Fact]
+    public async Task Transform_ValueOffStepGrid_ProducesError()
+    {
+        var model = BuildStepModel();
+        var table = model.GetTableFromDbName("Products");
+        var transformer = new ExtendedServerValidationTransformer();
+
+        var result = await transformer.TransformAsync(
+            table,
+            MutationType.Insert,
+            new Dictionary<string, object?> { ["Price"] = 1.30m },
+            NewContext(model));
+
+        result.Errors.Should().Contain("Price must be in increments of 0.25.");
+    }
+
+    [Fact]
+    public async Task Transform_ValueOnStepGrid_NoStepError()
+    {
+        var model = BuildStepModel();
+        var table = model.GetTableFromDbName("Products");
+        var transformer = new ExtendedServerValidationTransformer();
+
+        var result = await transformer.TransformAsync(
+            table,
+            MutationType.Insert,
+            new Dictionary<string, object?> { ["Price"] = 1.25m },
+            NewContext(model));
+
+        result.Errors.Should().NotContain(e => e.Contains("increments"));
+    }
+
+    [Fact]
+    public async Task Transform_StepGridOriginIsMin_WhenMinPresent()
+    {
+        // origin = min (1), step 0.5: 2.0 is on-grid (2 steps), 2.25 is off-grid.
+        var model = DbModelTestFixture.Create()
+            .WithTable("Products", t => t
+                .WithPrimaryKey("Id")
+                .WithColumn("Price", "decimal")
+                .WithMetadata(MetadataKeys.Validation.Server, "enabled")
+                .WithColumnMetadata("Price", MetadataKeys.Validation.Min, "1")
+                .WithColumnMetadata("Price", MetadataKeys.Validation.Step, "0.5"))
+            .Build();
+        var table = model.GetTableFromDbName("Products");
+        var transformer = new ExtendedServerValidationTransformer();
+
+        var onGrid = await transformer.TransformAsync(table, MutationType.Insert,
+            new Dictionary<string, object?> { ["Price"] = 2.0m }, NewContext(model));
+        var offGrid = await transformer.TransformAsync(table, MutationType.Insert,
+            new Dictionary<string, object?> { ["Price"] = 2.25m }, NewContext(model));
+
+        onGrid.Errors.Should().NotContain(e => e.Contains("increments"));
+        offGrid.Errors.Should().Contain("Price must be in increments of 0.5.");
+    }
+
+    private static IDbModel BuildStepModel()
+        => DbModelTestFixture.Create()
+            .WithTable("Products", t => t
+                .WithPrimaryKey("Id")
+                .WithColumn("Price", "decimal")
+                .WithMetadata(MetadataKeys.Validation.Server, "enabled")
+                .WithColumnMetadata("Price", MetadataKeys.Validation.Step, "0.25"))
+            .Build();
+
     private static MutationTransformContext NewContext(IDbModel model)
         => new()
         {

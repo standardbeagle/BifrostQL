@@ -27,7 +27,6 @@ namespace BifrostQL.Core.Resolvers
             var model = bifrost.Model;
             var dialect = conFactory.Dialect;
             var table = _table;
-            var modules = context.RequestServices!.GetRequiredService<IMutationModules>();
             var mutationTransformers = context.RequestServices!.GetRequiredService<IMutationTransformers>();
 
             if (context.HasArgument("sync"))
@@ -36,15 +35,15 @@ namespace BifrostQL.Core.Resolvers
             }
             if (context.HasArgument("insert"))
             {
-                return await InsertObject(context, table, modules, mutationTransformers, model, conFactory, dialect);
+                return await InsertObject(context, table, mutationTransformers, model, conFactory, dialect);
             }
             if (context.HasArgument("update"))
             {
-                return await UpdateObject(context, table, modules, mutationTransformers, model, conFactory, dialect);
+                return await UpdateObject(context, table, mutationTransformers, model, conFactory, dialect);
             }
             if (context.HasArgument("delete"))
             {
-                return await DeleteObject(context, modules, mutationTransformers, table, model, conFactory, dialect);
+                return await DeleteObject(context, mutationTransformers, table, model, conFactory, dialect);
             }
 
             if (context.HasArgument("upsert"))
@@ -75,26 +74,23 @@ namespace BifrostQL.Core.Resolvers
                         throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
                     var upsertData = transformResult.Data;
-                    var moduleSql = modules.Insert(upsertData, table, context.UserContext, model);
                     var returning = dialect.ReturningIdentityClauseFor(table.KeyColumns.Select(k => k.ColumnName).ToList());
                     var identitySql = returning != null
                         ? upsertSql.TrimEnd(';') + returning + ";"
                         : upsertSql + $"SELECT {dialect.LastInsertedIdentity} ID;";
-                    return HandleDecimals(await ExecuteScalar(conFactory, Join(identitySql, moduleSql), upsertData));
+                    return HandleDecimals(await ExecuteScalar(conFactory, identitySql, upsertData));
                 }
 
                 if (propertyInfo.keyData.Any())
-                    return await UpdateObject(context, table, modules, mutationTransformers, model, conFactory, dialect, "upsert");
+                    return await UpdateObject(context, table, mutationTransformers, model, conFactory, dialect, "upsert");
 
-                return await InsertObject(context, table, modules, mutationTransformers, model, conFactory, dialect, "upsert");
+                return await InsertObject(context, table, mutationTransformers, model, conFactory, dialect, "upsert");
             }
             return null;
         }
 
         ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
         {
-            var modules = context.RequestServices!.GetRequiredService<IMutationModules>();
-            modules.OnSave(context);
             return ResolveAsync(new BifrostFieldContextAdapter(context));
         }
 
@@ -143,7 +139,7 @@ namespace BifrostQL.Core.Resolvers
                 .ToDictionary(x => x.ColumnName, x => x.Value);
         }
 
-        private async Task<object?> DeleteObject(IBifrostFieldContext context, IMutationModules modules,
+        private async Task<object?> DeleteObject(IBifrostFieldContext context,
             IMutationTransformers mutationTransformers, IDbTable table, IDbModel model,
             IDbConnFactory conFactory, ISqlDialect dialect)
         {
@@ -179,7 +175,6 @@ namespace BifrostQL.Core.Resolvers
             if (transformResult.MutationType == MutationType.Update)
             {
                 // Soft-delete: transformed to UPDATE
-                var moduleSql = modules.Delete(transformResult.Data, table, userContext, model);
                 var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
 
                 var keyData = transformResult.Data.Where(d => table.ColumnLookup.ContainsKey(d.Key) && table.ColumnLookup[d.Key].IsPrimaryKey)
@@ -190,7 +185,7 @@ namespace BifrostQL.Core.Resolvers
                 var setClause = string.Join(",", setData.Select(kv => SetAssignment(dialect, table, kv.Key)));
                 var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
                 var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
-                var result = await ExecuteNonQuery(conFactory, Join(sql, moduleSql), transformResult.Data, additionalFilter.Parameters);
+                var result = await ExecuteNonQuery(conFactory, sql, transformResult.Data, additionalFilter.Parameters);
                 await NotifyMutationAsync(context.RequestServices, table, MutationType.Update, transformResult.Data, result, userContext);
                 return result;
             }
@@ -200,16 +195,15 @@ namespace BifrostQL.Core.Resolvers
             // reaches the WHERE clause and parameters, mirroring the soft-delete
             // branch above.
             var deleteData = transformResult.Data;
-            var deleteModuleSql = modules.Delete(deleteData, table, userContext, model);
             var deleteTableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var deleteWhereClause = string.Join(" AND ", deleteData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause}{additionalFilter.WhereSuffix};";
-            var deleteResult = await ExecuteNonQuery(conFactory, Join(deleteSql, deleteModuleSql), deleteData, additionalFilter.Parameters);
+            var deleteResult = await ExecuteNonQuery(conFactory, deleteSql, deleteData, additionalFilter.Parameters);
             await NotifyMutationAsync(context.RequestServices, table, MutationType.Delete, deleteData, deleteResult, userContext);
             return deleteResult;
         }
 
-        private async Task<object?> UpdateObject(IBifrostFieldContext context, IDbTable table, IMutationModules modules,
+        private async Task<object?> UpdateObject(IBifrostFieldContext context, IDbTable table,
             IMutationTransformers mutationTransformers, IDbModel model,
             IDbConnFactory conFactory, ISqlDialect dialect, string parameterName = "update")
         {
@@ -254,12 +248,11 @@ namespace BifrostQL.Core.Resolvers
                 .Where(d => !propertyInfo.keyData.ContainsKey(d.Key))
                 .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
 
-            var moduleSql = modules.Update(updatedData, table, context.UserContext, model);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var setClause = string.Join(",", standardData.Select(kv => SetAssignment(dialect, table, kv.Key)));
             var whereClause = string.Join(" AND ", propertyInfo.keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
-            var result = await ExecuteNonQuery(conFactory, Join(sql, moduleSql), updatedData, additionalFilter.Parameters);
+            var result = await ExecuteNonQuery(conFactory, sql, updatedData, additionalFilter.Parameters);
             await NotifyMutationAsync(context.RequestServices, table, MutationType.Update, updatedData, result, context.UserContext);
             await NotifyStateTransitionAsync(context.RequestServices, transformResult.StateTransition, context.UserContext);
             return propertyInfo.keyData.Values.First();
@@ -311,7 +304,7 @@ namespace BifrostQL.Core.Resolvers
             return data.TryGetValue(keys[0].ColumnName, out var v) ? v : null;
         }
 
-        private async Task<object?> InsertObject(IBifrostFieldContext context, IDbTable table, IMutationModules modules,
+        private async Task<object?> InsertObject(IBifrostFieldContext context, IDbTable table,
             IMutationTransformers mutationTransformers, IDbModel model,
             IDbConnFactory conFactory, ISqlDialect dialect, string parameterName = "insert")
         {
@@ -329,7 +322,6 @@ namespace BifrostQL.Core.Resolvers
             // delete path; equals the original data when no transformer applies.
             data = transformResult.Data;
 
-            var moduleSql = modules.Insert(data, table, context.UserContext, model);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var columns = string.Join(",", data.Keys.Select(k => dialect.EscapeIdentifier(k)));
             var values = string.Join(",", data.Keys.Select(k => ValuePlaceholder(dialect, table, k)));
@@ -337,7 +329,7 @@ namespace BifrostQL.Core.Resolvers
             var sql = returning != null
                 ? $"INSERT INTO {tableRef}({columns}) VALUES({values}){returning};"
                 : $"INSERT INTO {tableRef}({columns}) VALUES({values});SELECT {dialect.LastInsertedIdentity} ID;";
-            var result = HandleDecimals(await ExecuteScalar(conFactory, Join(sql, moduleSql), data));
+            var result = HandleDecimals(await ExecuteScalar(conFactory, sql, data));
             await NotifyMutationAsync(context.RequestServices, table, MutationType.Insert, data, result, context.UserContext);
             return result;
         }
@@ -425,11 +417,6 @@ namespace BifrostQL.Core.Resolvers
             return ($" AND ({rendered.Sql})", parameters.Parameters);
         }
 
-        private static string Join(string str, string[] array)
-        {
-            return String.Join(";", Flat(str, array));
-        }
-
         private static async ValueTask NotifyStateTransitionAsync(
             IServiceProvider? services,
             StateTransitionInfo? transition,
@@ -472,15 +459,6 @@ namespace BifrostQL.Core.Resolvers
             => userContext.TryGetValue(BifrostQL.Core.Workflows.WorkflowTriggerHost.SuppressTriggersKey, out var value)
                && value is bool suppressed
                && suppressed;
-
-        private static IEnumerable<string> Flat(string str, string[] array)
-        {
-            yield return str;
-            if (array != null)
-            {
-                foreach (var arrString in array) { yield return arrString; }
-            }
-        }
 
     }
 }

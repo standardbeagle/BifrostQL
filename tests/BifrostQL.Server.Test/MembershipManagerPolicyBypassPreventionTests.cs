@@ -196,7 +196,6 @@ public sealed class MembershipManagerPolicyBypassPreventionTests : IAsyncLifetim
 
         var services = new ServiceCollection();
         services.AddSingleton<IFilterTransformers>(filterTransformers);
-        services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = Array.Empty<IMutationModule>() });
         services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap
         {
             Transformers = new IMutationTransformer[] { new PolicyMutationTransformer() },

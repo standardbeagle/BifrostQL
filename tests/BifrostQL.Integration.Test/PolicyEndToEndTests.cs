@@ -126,7 +126,6 @@ public sealed class PolicyEndToEndTests : IAsyncLifetime
         };
 
         var services = new ServiceCollection();
-        services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = Array.Empty<IMutationModule>() });
         services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap
         {
             Transformers = new IMutationTransformer[] { new PolicyMutationTransformer() },

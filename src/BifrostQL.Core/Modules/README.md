@@ -46,11 +46,14 @@ Lifecycle hooks for side effects. Used for:
 - `BeforeExecute` - SQL built, about to execute
 - `AfterExecute` - Execution complete, results available
 
-### Mutation Modules (`IMutationModule`)
+### Audit Columns (`AuditMutationTransformer`)
 
-Modify mutation data before execution. Used for:
-- Auto-populating audit columns
-- Setting default values
+Auto-populating audit columns is a mutation transformer (`IMutationTransformer`),
+not a separate hook system. `AuditMutationTransformer` stamps created-on/by,
+updated-on/by, and deleted-on/by from `populate` column metadata plus the
+model-level `user-audit-key`, overwriting any client-supplied value. It runs at
+priority 50 so it sees the original DELETE intent before the soft-delete
+transformer (100) rewrites DELETE into UPDATE. See `AuditMutationTransformer.cs`.
 
 ## Module API Surface (`IModuleApi`)
 

@@ -43,8 +43,8 @@ public sealed class MutationTransformResult
 }
 
 /// <summary>
-/// Transforms mutations before execution.
-/// Unlike IMutationModule (which only modifies data), this can change the mutation type itself.
+/// Transforms mutations before execution. Can change the mutation type itself,
+/// rewrite the data, add filters, or reject with errors.
 /// Example: Convert DELETE to UPDATE for soft-delete.
 /// </summary>
 public interface IMutationTransformer

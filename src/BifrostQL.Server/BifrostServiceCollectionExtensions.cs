@@ -355,6 +355,13 @@ namespace BifrostQL.Server
             if (!configured.Any(t => t is SoftDeleteMutationTransformer))
                 combined.Add(new SoftDeleteMutationTransformer());
 
+            // Audit-column population (created/updated/deleted on/by). Keys off
+            // per-column "populate" metadata plus the model-level user-audit-key, so
+            // it is a no-op for tables without audit columns and always safe to
+            // auto-register. A caller-supplied instance takes precedence.
+            if (!configured.Any(t => t is AuditMutationTransformer))
+                combined.Add(new AuditMutationTransformer());
+
             combined.AddRange(configured);
             return combined;
         }
@@ -411,8 +418,6 @@ namespace BifrostQL.Server
     {
         private readonly List<BifrostEndpointConfig> _endpoints = new();
         private IConfigurationSection? _jwtConfig;
-        private IReadOnlyCollection<IMutationModule> _modules = Array.Empty<IMutationModule>();
-        private Func<IServiceProvider, IReadOnlyCollection<IMutationModule>>? _moduleLoader;
         private IReadOnlyCollection<IFilterTransformer> _filterTransformers = Array.Empty<IFilterTransformer>();
         private Func<IServiceProvider, IReadOnlyCollection<IFilterTransformer>>? _filterTransformerLoader;
         private IReadOnlyCollection<IMutationTransformer> _mutationTransformers = Array.Empty<IMutationTransformer>();
@@ -473,18 +478,6 @@ namespace BifrostQL.Server
         public BifrostMultiDbOptions BindLogging(IConfigurationSection? section)
         {
             _loggingConfig = section;
-            return this;
-        }
-
-        public BifrostMultiDbOptions AddModules(IReadOnlyCollection<IMutationModule> modules)
-        {
-            _modules = modules;
-            return this;
-        }
-
-        public BifrostMultiDbOptions AddModules(Func<IServiceProvider, IReadOnlyCollection<IMutationModule>>? moduleLoader)
-        {
-            _moduleLoader = moduleLoader;
             return this;
         }
 
@@ -667,11 +660,6 @@ namespace BifrostQL.Server
             // Register unconditionally so a runtime ReplaceAll on this same instance
             // is visible even if it starts empty.
             services.AddSingleton(_profileRegistry);
-
-            if (_moduleLoader != null)
-                services.AddSingleton<IMutationModules>(sp => new ModulesWrap { Modules = _moduleLoader(sp) });
-            else
-                services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = _modules });
 
             foreach (var t in _filterTransformerTypes) services.TryAddSingleton(t);
             services.AddSingleton<IFilterTransformers>(sp => new FilterTransformersWrap

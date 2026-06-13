@@ -62,7 +62,6 @@ public sealed class PolymorphicLeakRepro
         _out.WriteLine($"notes field on companies = '{notesField}'");
 
         var services = new ServiceCollection();
-        services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = System.Array.Empty<IMutationModule>() });
         services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap { Transformers = System.Array.Empty<IMutationTransformer>() });
         using var sp = services.BuildServiceProvider();
 

@@ -50,7 +50,6 @@ public abstract class FullIntegrationTestBase
         // EnumValueMutationTransformer no-ops when the model has no enum
         // columns, so it is safe for non-enum suites.
         var services = new ServiceCollection();
-        services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = Array.Empty<IMutationModule>() });
         services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap
         {
             Transformers = new IMutationTransformer[] { new EnumValueMutationTransformer() }

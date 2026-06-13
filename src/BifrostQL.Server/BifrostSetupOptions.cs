@@ -28,8 +28,6 @@ namespace BifrostQL.Server
         private IConfigurationSection? _jwtConfig;
         private string? _connectionString;
         private string? _provider;
-        private IReadOnlyCollection<IMutationModule> _modules = Array.Empty<IMutationModule>();
-        private Func<IServiceProvider, IReadOnlyCollection<IMutationModule>>? _moduleLoader = null;
         private IReadOnlyCollection<IFilterTransformer> _filterTransformers = Array.Empty<IFilterTransformer>();
         private Func<IServiceProvider, IReadOnlyCollection<IFilterTransformer>>? _filterTransformerLoader = null;
         private IReadOnlyCollection<IMutationTransformer> _mutationTransformers = Array.Empty<IMutationTransformer>();
@@ -97,16 +95,6 @@ namespace BifrostQL.Server
         {
             if (!section.Exists()) return this;
             _jwtConfig = section;
-            return this;
-        }
-        public BifrostSetupOptions AddModules(IReadOnlyCollection<IMutationModule> modules)
-        {
-            _modules = modules;
-            return this;
-        }
-        public BifrostSetupOptions AddModules(Func<IServiceProvider, IReadOnlyCollection<IMutationModule>>? moduleLoader)
-        {
-            _moduleLoader = moduleLoader;
             return this;
         }
 
@@ -344,11 +332,6 @@ namespace BifrostQL.Server
             // Register unconditionally so a runtime ReplaceAll on this same instance
             // is visible to /api/profiles and the schema rebuild even if it starts empty.
             services.AddSingleton(_profileRegistry);
-
-            if (_moduleLoader != null)
-                services.AddSingleton<IMutationModules>(sp => new ModulesWrap { Modules = _moduleLoader(sp) });
-            else
-                services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = _modules });
 
             // Register filter transformers
             foreach (var t in _filterTransformerTypes) services.TryAddSingleton(t);

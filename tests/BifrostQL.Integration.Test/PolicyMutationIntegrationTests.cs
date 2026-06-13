@@ -94,7 +94,6 @@ public sealed class PolicyMutationIntegrationTests : IAsyncLifetime
     private async Task<ExecutionResult> ExecuteAsync(string query, IDictionary<string, object?> userContext)
     {
         var services = new ServiceCollection();
-        services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = Array.Empty<IMutationModule>() });
         services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap
         {
             Transformers = new IMutationTransformer[] { new PolicyMutationTransformer() },

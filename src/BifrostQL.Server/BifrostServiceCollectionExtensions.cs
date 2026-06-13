@@ -261,21 +261,38 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
-        /// Prepends the built-in security filter transformers to the
-        /// caller-supplied set. <see cref="PolicyFilterTransformer"/> is
-        /// always active so authorization-policy metadata is enforced on the
-        /// query path without explicit opt-in; it is opt-in per table via the
-        /// <c>policy-*</c> metadata keys and a no-op for tables without them.
-        /// A caller-supplied <see cref="PolicyFilterTransformer"/> (e.g. one
-        /// configured with a non-default admin role) takes precedence.
+        /// Prepends the built-in filter transformers to the caller-supplied set so
+        /// that filtering metadata is enforced on the query path without explicit
+        /// opt-in. <see cref="PolicyFilterTransformer"/>, <see cref="TenantFilterTransformer"/>,
+        /// <see cref="SoftDeleteFilterTransformer"/>, and <see cref="AutoFilterTransformer"/>
+        /// are each metadata-driven and a no-op for tables lacking their respective
+        /// metadata key, so always registering them is safe. This closes a security
+        /// footgun where <c>tenant-filter</c> metadata silently did nothing unless the
+        /// host also registered the matching transformer by hand.
+        ///
+        /// A caller-supplied instance of the same type (e.g. a
+        /// <see cref="PolicyFilterTransformer"/> configured with a non-default admin
+        /// role) takes precedence and suppresses the built-in for that type. Per-profile
+        /// opt-out is handled downstream by <see cref="BifrostProfileRegistry.FilterBy(IFilterTransformers, BifrostProfile)"/>
+        /// since each built-in implements <see cref="IModuleNamed"/>.
         /// </summary>
         internal static IReadOnlyCollection<IFilterTransformer> WithBuiltInFilterTransformers(
             IReadOnlyCollection<IFilterTransformer> configured)
         {
-            if (configured.Any(t => t is PolicyFilterTransformer))
-                return configured;
+            var combined = new List<IFilterTransformer>();
 
-            var combined = new List<IFilterTransformer> { new PolicyFilterTransformer() };
+            if (!configured.Any(t => t is PolicyFilterTransformer))
+                combined.Add(new PolicyFilterTransformer());
+
+            if (!configured.Any(t => t is TenantFilterTransformer))
+                combined.Add(new TenantFilterTransformer());
+
+            if (!configured.Any(t => t is SoftDeleteFilterTransformer))
+                combined.Add(new SoftDeleteFilterTransformer());
+
+            if (!configured.Any(t => t is AutoFilterTransformer))
+                combined.Add(new AutoFilterTransformer());
+
             combined.AddRange(configured);
             return combined;
         }

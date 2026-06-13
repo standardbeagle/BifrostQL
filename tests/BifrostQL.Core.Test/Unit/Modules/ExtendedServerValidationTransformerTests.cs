@@ -45,6 +45,44 @@ public sealed class ExtendedServerValidationTransformerTests
     }
 
     [Fact]
+    public async Task Transform_RunsAsyncPluginValidator_ErrorAbortsMutation()
+    {
+        var model = BuildModel();
+        var table = model.GetTableFromDbName("Contacts");
+        table.Metadata[MetadataKeys.Validation.Plugin] = "async-unique";
+        var transformer = new ExtendedServerValidationTransformer(new[] { new AsyncUniquenessValidator() });
+
+        var result = await transformer.TransformAsync(
+            table,
+            MutationType.Insert,
+            new Dictionary<string, object?> { ["Name"] = "Ada", ["Email"] = "taken@example.com", ["Age"] = 30 },
+            NewContext(model));
+
+        // The async provider's simulated lookup found a duplicate; its error surfaces
+        // in the result, which the resolver turns into an aborted mutation.
+        result.Errors.Should().Contain("Email taken@example.com is already in use.");
+    }
+
+    [Fact]
+    public async Task Transform_SyncProviderStillRunsViaDefaultAsyncBridge()
+    {
+        var model = BuildModel();
+        var table = model.GetTableFromDbName("Contacts");
+        table.Metadata[MetadataKeys.Validation.Plugin] = "custom";
+        // CustomValidator only overrides the sync Validate; the default ValidateAsync
+        // bridge must still surface its error through the now-async pipeline.
+        var transformer = new ExtendedServerValidationTransformer(new[] { new CustomValidator() });
+
+        var result = await transformer.TransformAsync(
+            table,
+            MutationType.Insert,
+            new Dictionary<string, object?> { ["Name"] = "Ada", ["Email"] = "ada@example.com", ["Age"] = 30 },
+            NewContext(model));
+
+        result.Errors.Should().Contain("custom validation failed");
+    }
+
+    [Fact]
     public async Task Transform_ReportsMissingPluginValidator()
     {
         var model = BuildModel();
@@ -88,5 +126,26 @@ public sealed class ExtendedServerValidationTransformerTests
 
         public IReadOnlyList<string> Validate(ServerValidationContext context)
             => new[] { "custom validation failed" };
+    }
+
+    // Overrides ValidateAsync to do a simulated async lookup (e.g. a uniqueness query).
+    private sealed class AsyncUniquenessValidator : IServerValidationProvider
+    {
+        public string Name => "async-unique";
+
+        // Async-only provider: sync entry returns no errors; real work is in ValidateAsync.
+        public IReadOnlyList<string> Validate(ServerValidationContext context)
+            => Array.Empty<string>();
+
+        public async ValueTask<IReadOnlyList<string>> ValidateAsync(
+            ServerValidationContext context,
+            CancellationToken cancellationToken = default)
+        {
+            await Task.Yield(); // stand in for an awaited DB/service lookup
+            var email = context.Data.TryGetValue("Email", out var v) ? v as string : null;
+            return email == "taken@example.com"
+                ? new[] { $"Email {email} is already in use." }
+                : Array.Empty<string>();
+        }
     }
 }

@@ -116,6 +116,11 @@ namespace BifrostQL.Core.QueryModel
                     .Where((f) => f.Type == FieldType.Join)
                     .Select(f => f.ToJoin(model, result))
                 );
+            // Capture module query arguments (e.g. _includeDeleted / _onlyDeleted)
+            // off this field's arguments so they can be scoped into the user
+            // context per node — nested join fields included, not just the root.
+            result.ModuleQueryArguments =
+                Modules.ModuleApiRegistry.CaptureQueryArguments(BuildArgumentLookup(Arguments), dbTable);
             if (parent == null)
                 result.ConnectLinks(model);
             return result;
@@ -300,6 +305,16 @@ namespace BifrostQL.Core.QueryModel
                     return type;
             }
             return QueryType.Standard;
+        }
+
+        // Flattens this field's arguments into a name → value lookup for module
+        // query-argument capture. Last write wins if a name repeats (it should not).
+        private static IReadOnlyDictionary<string, object?> BuildArgumentLookup(List<QueryArgument> arguments)
+        {
+            var lookup = new Dictionary<string, object?>(StringComparer.Ordinal);
+            foreach (var arg in arguments)
+                lookup[arg.Name] = arg.Value;
+            return lookup;
         }
 
         private static TableFilter? BuildCombinedFilter(List<QueryArgument> arguments, IDbTable dbTable)

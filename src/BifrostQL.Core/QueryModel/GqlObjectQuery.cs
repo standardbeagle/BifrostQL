@@ -35,6 +35,16 @@ namespace BifrostQL.Core.QueryModel
         public int? Offset { get; set; }
         public bool IsFragment { get; set; }
         public bool IncludeResult { get; set; }
+
+        /// <summary>
+        /// Module query-argument values (keyed by module context key, e.g.
+        /// <c>include_deleted</c>) captured off this node's GraphQL field
+        /// arguments. Threaded into the user context under table-scoped keys by
+        /// <c>QueryTransformerService</c> so module filter transformers honor
+        /// them per node — on nested join fields, not just the root field.
+        /// </summary>
+        public IReadOnlyDictionary<string, object?> ModuleQueryArguments { get; set; } =
+            Modules.ModuleApiRegistry.EmptyArguments;
         public List<TableJoin> Joins { get; set; } = new();
         public IEnumerable<TableJoin> RecurseJoins => Joins.Concat(Joins.SelectMany(j => j.ConnectedTable.RecurseJoins));
 

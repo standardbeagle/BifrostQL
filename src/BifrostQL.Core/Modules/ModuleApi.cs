@@ -118,6 +118,28 @@ public static class ModuleApiRegistry
     }
 
     /// <summary>
+    /// Copies module query-argument values already parsed off a query node's
+    /// arguments (name → value) into a dictionary keyed by context key, so a
+    /// nested join field's <c>_includeDeleted</c>/<c>_onlyDeleted</c> can be
+    /// scoped into the user context exactly like the root field's. Mirrors
+    /// <see cref="CaptureQueryArguments(IBifrostFieldContext, IDbTable, IDictionary{string, object?})"/>
+    /// but reads from the parsed query tree rather than the live field context,
+    /// since nested-field arguments are not exposed on <see cref="IBifrostFieldContext"/>.
+    /// </summary>
+    public static IReadOnlyDictionary<string, object?> CaptureQueryArguments(IReadOnlyDictionary<string, object?> arguments, IDbTable table)
+    {
+        Dictionary<string, object?>? captured = null;
+        foreach (var arg in BuiltIns.SelectMany(m => m.GetQueryArguments(table)))
+        {
+            if (!arguments.TryGetValue(arg.Name, out var value))
+                continue;
+            captured ??= new Dictionary<string, object?>();
+            captured[arg.ContextKey] = value;
+        }
+        return captured ?? EmptyArguments;
+    }
+
+    /// <summary>
     /// Reads module mutation-argument values supplied on the request into a
     /// dictionary keyed by context key, for <see cref="MutationTransformContext.ModuleArguments"/>.
     /// </summary>

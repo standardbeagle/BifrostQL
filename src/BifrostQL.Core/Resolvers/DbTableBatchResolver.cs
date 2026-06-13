@@ -40,6 +40,13 @@ namespace BifrostQL.Core.Resolvers
             var userContext = context.UserContext;
             var transformContext = new MutationTransformContext { Model = model, UserContext = userContext, Services = context.RequestServices };
 
+            // Module mutation arguments (e.g. _hardDelete) are declared on the
+            // batch field and apply to every delete action in the batch. Captured
+            // once here and threaded into each delete's transform context, mirroring
+            // the single-row resolver, so a batch delete with _hardDelete:true
+            // performs a real DELETE on a soft-delete table.
+            var moduleArguments = ModuleApiRegistry.CaptureMutationArguments(context, _table);
+
             await using var conn = conFactory.GetConnection();
             await conn.OpenAsync();
             await using var transaction = await conn.BeginTransactionAsync();
@@ -48,7 +55,7 @@ namespace BifrostQL.Core.Resolvers
             {
                 foreach (var action in actions)
                 {
-                    var outcome = await ExecuteAction(action, _table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext);
+                    var outcome = await ExecuteAction(action, _table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext, moduleArguments);
                     if (outcome is not null)
                         outcomes.Add(outcome);
                 }
@@ -140,7 +147,8 @@ namespace BifrostQL.Core.Resolvers
             DbConnection conn,
             DbTransaction transaction,
             IDictionary<string, object?> userContext,
-            MutationTransformContext transformContext)
+            MutationTransformContext transformContext,
+            IReadOnlyDictionary<string, object?> moduleArguments)
         {
             if (action.TryGetValue("insert", out var insertObj) && insertObj is Dictionary<string, object?> insertData)
             {
@@ -152,7 +160,7 @@ namespace BifrostQL.Core.Resolvers
             }
             if (action.TryGetValue("delete", out var deleteObj) && deleteObj is Dictionary<string, object?> deleteData)
             {
-                return await ExecuteDelete(deleteData, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext);
+                return await ExecuteDelete(deleteData, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext, moduleArguments);
             }
             if (action.TryGetValue("upsert", out var upsertObj) && upsertObj is Dictionary<string, object?> upsertData)
             {
@@ -299,11 +307,25 @@ namespace BifrostQL.Core.Resolvers
             DbConnection conn,
             DbTransaction transaction,
             IDictionary<string, object?> userContext,
-            MutationTransformContext transformContext)
+            MutationTransformContext transformContext,
+            IReadOnlyDictionary<string, object?> moduleArguments)
         {
             if (data.Count == 0) return null;
 
-            var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Delete, data, transformContext);
+            // Thread the captured module arguments (e.g. _hardDelete) so the
+            // soft-delete transformer can read HardDeleteKey and skip the
+            // DELETE→UPDATE rewrite, mirroring the single-row resolver.
+            var deleteTransformContext = moduleArguments.Count == 0
+                ? transformContext
+                : new MutationTransformContext
+                {
+                    Model = transformContext.Model,
+                    UserContext = transformContext.UserContext,
+                    Services = transformContext.Services,
+                    ModuleArguments = moduleArguments,
+                };
+
+            var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Delete, data, deleteTransformContext);
             if (transformResult.Errors.Length > 0)
                 throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 

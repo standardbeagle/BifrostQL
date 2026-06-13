@@ -112,14 +112,16 @@ namespace BifrostQL.Core.Schema
                 var fieldName = link.Value.ChildFieldName;
                 if (!emittedLinkFields.Add(fieldName)) continue;
                 var child = link.Value.ChildTable;
-                builder.AppendLine($"\t{fieldName}(filter: {child.TableFilterTypeName}, limit: Int, offset: Int, sort: [{child.TableColumnSortEnumName}!]) : {child.GraphQlName}_paged");
+                var childModuleArgs = Modules.ModuleApiRegistry.QueryArgumentsSdl(child);
+                builder.AppendLine($"\t{fieldName}(filter: {child.TableFilterTypeName}, limit: Int, offset: Int, sort: [{child.TableColumnSortEnumName}!]{childModuleArgs}) : {child.GraphQlName}_paged");
             }
             foreach (var link in _table.ManyToManyLinks)
             {
                 if (!emittedLinkFields.Add(link.Value.TargetTable.GraphQlName))
                     continue;
                 var target = link.Value.TargetTable;
-                builder.AppendLine($"\t{target.GraphQlName}(filter: {target.TableFilterTypeName}, limit: Int, offset: Int, sort: [{target.TableColumnSortEnumName}!]) : {target.GraphQlName}_paged");
+                var targetModuleArgs = Modules.ModuleApiRegistry.QueryArgumentsSdl(target);
+                builder.AppendLine($"\t{target.GraphQlName}(filter: {target.TableFilterTypeName}, limit: Int, offset: Int, sort: [{target.TableColumnSortEnumName}!]{targetModuleArgs}) : {target.GraphQlName}_paged");
             }
 
             // Add _meta field if this table is an EAV parent
@@ -368,7 +370,7 @@ namespace BifrostQL.Core.Schema
             result.AppendLine(
                 $"\t{_table.GraphQlName}(insert: {_table.GetActionTypeName(MutateActions.Insert)}, update: {_table.GetActionTypeName(MutateActions.Update)}, upsert: {_table.GetActionTypeName(MutateActions.Upsert)}, delete: {_table.GetActionTypeName(MutateActions.Delete)}, sync: {NestedSyncInsertTypeName}, _primaryKey: [String]{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : Int");
 
-            result.AppendLine($"{_table.GraphQlName}_batch(actions: [batch_{_table.GraphQlName}!]!) : Int");
+            result.AppendLine($"{_table.GraphQlName}_batch(actions: [batch_{_table.GraphQlName}!]!{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : Int");
             return result.ToString();
         }
 

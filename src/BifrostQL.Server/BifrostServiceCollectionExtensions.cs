@@ -650,6 +650,11 @@ namespace BifrostQL.Server
             services.AddSingleton<WorkflowScheduler>();
             services.AddSingleton<MutationObservers>(sp => new MutationObservers(
                 new IMutationObserver[] { sp.GetRequiredService<WorkflowTriggerHost>() }));
+            // Before-commit veto hooks: built from every registered
+            // IBeforeCommitMutationHook so a host/test can register one. There are
+            // no built-in hooks, so the collection is empty unless the host adds one.
+            services.AddSingleton<BeforeCommitMutationHooks>(sp => new BeforeCommitMutationHooks(
+                sp.GetServices<IBeforeCommitMutationHook>().ToArray()));
             services.AddSingleton<StateTransitionObservers>(sp => new StateTransitionObservers(
                 new IStateTransitionObserver[]
                 {

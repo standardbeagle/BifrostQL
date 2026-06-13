@@ -78,6 +78,7 @@ namespace BifrostQL.Core.Resolvers
                     var identitySql = returning != null
                         ? upsertSql.TrimEnd(';') + returning + ";"
                         : upsertSql + $"SELECT {dialect.LastInsertedIdentity} ID;";
+                    await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, upsertData, context.UserContext);
                     return HandleDecimals(await ExecuteScalar(conFactory, identitySql, upsertData));
                 }
 
@@ -185,6 +186,7 @@ namespace BifrostQL.Core.Resolvers
                 var setClause = string.Join(",", setData.Select(kv => SetAssignment(dialect, table, kv.Key)));
                 var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
                 var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
+                await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, transformResult.Data, userContext);
                 var result = await ExecuteNonQuery(conFactory, sql, transformResult.Data, additionalFilter.Parameters);
                 await NotifyMutationAsync(context.RequestServices, table, MutationType.Update, transformResult.Data, result, userContext);
                 return result;
@@ -198,6 +200,7 @@ namespace BifrostQL.Core.Resolvers
             var deleteTableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var deleteWhereClause = string.Join(" AND ", deleteData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause}{additionalFilter.WhereSuffix};";
+            await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Delete, deleteData, userContext);
             var deleteResult = await ExecuteNonQuery(conFactory, deleteSql, deleteData, additionalFilter.Parameters);
             await NotifyMutationAsync(context.RequestServices, table, MutationType.Delete, deleteData, deleteResult, userContext);
             return deleteResult;
@@ -252,6 +255,7 @@ namespace BifrostQL.Core.Resolvers
             var setClause = string.Join(",", standardData.Select(kv => SetAssignment(dialect, table, kv.Key)));
             var whereClause = string.Join(" AND ", propertyInfo.keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
+            await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, updatedData, context.UserContext);
             var result = await ExecuteNonQuery(conFactory, sql, updatedData, additionalFilter.Parameters);
             await NotifyMutationAsync(context.RequestServices, table, MutationType.Update, updatedData, result, context.UserContext);
             await NotifyStateTransitionAsync(context.RequestServices, transformResult.StateTransition, context.UserContext);
@@ -329,6 +333,7 @@ namespace BifrostQL.Core.Resolvers
             var sql = returning != null
                 ? $"INSERT INTO {tableRef}({columns}) VALUES({values}){returning};"
                 : $"INSERT INTO {tableRef}({columns}) VALUES({values});SELECT {dialect.LastInsertedIdentity} ID;";
+            await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Insert, data, context.UserContext);
             var result = HandleDecimals(await ExecuteScalar(conFactory, sql, data));
             await NotifyMutationAsync(context.RequestServices, table, MutationType.Insert, data, result, context.UserContext);
             return result;
@@ -415,6 +420,38 @@ namespace BifrostQL.Core.Resolvers
             var parameters = new SqlParameterCollection();
             var rendered = filter.RenderForMutation(dialect, parameters);
             return ($" AND ({rendered.Sql})", parameters.Parameters);
+        }
+
+        // Runs the before-commit veto phase immediately before the write. Mirrors
+        // the IsWorkflowTriggerSuppressed guard used by NotifyMutationAsync. If any
+        // hook returns errors (or throws), the aggregated errors surface as a
+        // BifrostExecutionError so the caller's write is aborted and no row is
+        // written/changed. Result is not known yet, so the context carries null.
+        private static async ValueTask RunBeforeCommitHooksAsync(
+            IServiceProvider? services,
+            IDbTable table,
+            MutationType mutationType,
+            IDictionary<string, object?> data,
+            IDictionary<string, object?> userContext)
+        {
+            if (services is null || IsWorkflowTriggerSuppressed(userContext))
+                return;
+
+            var hooks = services.GetService<BeforeCommitMutationHooks>();
+            if (hooks is null)
+                return;
+
+            var errors = await hooks.RunAsync(new MutationObserverContext
+            {
+                Table = table,
+                MutationType = mutationType,
+                Data = data,
+                Result = null,
+                UserContext = userContext,
+            });
+
+            if (errors.Count > 0)
+                throw new BifrostExecutionError(string.Join("; ", errors));
         }
 
         private static async ValueTask NotifyStateTransitionAsync(

@@ -309,8 +309,10 @@ namespace BifrostQL.Core.Forms
         /// fills the gaps, so a rule declared once in connection metadata is
         /// enforced server-side, advertised in _dbSchema, and emitted as HTML5
         /// validation attributes here without further configuration.
-        /// Date-valued min/max bounds are not representable as HTML number
-        /// attributes and are skipped (SPA clients get them via _dbSchema).
+        /// Date-valued min/max bounds are carried as ISO strings (MinDate/MaxDate),
+        /// formatted to match the resolved input type — yyyy-MM-dd for a date input,
+        /// yyyy-MM-ddTHH:mm for a datetime-local input — so the HTML min/max attribute
+        /// is one the browser actually enforces.
         /// </summary>
         internal static ColumnMetadata? MergeWithSchemaRules(ColumnDto column, ColumnMetadata? configured)
         {
@@ -321,6 +323,14 @@ namespace BifrostQL.Core.Forms
             if (!hasRules)
                 return configured;
 
+            // Resolve the input type the same way BuildField does, so a date bound is
+            // formatted for the control it will actually render in. <input type=date>
+            // wants yyyy-MM-dd; <input type=datetime-local> wants yyyy-MM-ddTHH:mm and
+            // silently ignores a date-only bound.
+            var effectiveInputType = configured?.InputType ?? rules.InputType
+                ?? TypeMapper.GetInputType(column.EffectiveDataType);
+            var dateFormat = effectiveInputType == "datetime-local" ? "yyyy-MM-ddTHH:mm" : "yyyy-MM-dd";
+
             return new ColumnMetadata
             {
                 InputType = configured?.InputType ?? rules.InputType,
@@ -329,6 +339,10 @@ namespace BifrostQL.Core.Forms
                 Title = configured?.Title ?? rules.PatternMessage,
                 Min = configured?.Min ?? ParseDouble(rules.Min),
                 Max = configured?.Max ?? ParseDouble(rules.Max),
+                // Date bounds don't parse as doubles, so carry them as ISO strings
+                // formatted for the resolved input type — emitted as HTML min=/max= below.
+                MinDate = configured?.MinDate ?? (rules.TryMinDate(out var minDate) ? minDate.ToString(dateFormat, CultureInfo.InvariantCulture) : null),
+                MaxDate = configured?.MaxDate ?? (rules.TryMaxDate(out var maxDate) ? maxDate.ToString(dateFormat, CultureInfo.InvariantCulture) : null),
                 Step = configured?.Step ?? ParseDouble(rules.Step),
                 MinLength = configured?.MinLength ?? rules.MinLength,
                 MaxLength = configured?.MaxLength ?? rules.MaxLength,
@@ -365,10 +379,16 @@ namespace BifrostQL.Core.Forms
                 if (metadata.Title != null)
                     sb.Append($" title=\"{Encode(metadata.Title)}\"");
             }
+            // Numeric bound wins when present; otherwise emit the date bound (date
+            // columns have no numeric Min/Max). One column is numeric or date, not both.
             if (metadata.Min.HasValue)
                 sb.Append(" min=\"").Append(metadata.Min.Value.ToString(CultureInfo.InvariantCulture)).Append('"');
+            else if (metadata.MinDate != null)
+                sb.Append(" min=\"").Append(Encode(metadata.MinDate)).Append('"');
             if (metadata.Max.HasValue)
                 sb.Append(" max=\"").Append(metadata.Max.Value.ToString(CultureInfo.InvariantCulture)).Append('"');
+            else if (metadata.MaxDate != null)
+                sb.Append(" max=\"").Append(Encode(metadata.MaxDate)).Append('"');
             if (metadata.Step.HasValue)
                 sb.Append(" step=\"").Append(metadata.Step.Value.ToString(CultureInfo.InvariantCulture)).Append('"');
             if (metadata.MinLength.HasValue)

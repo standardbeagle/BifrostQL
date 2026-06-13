@@ -41,6 +41,19 @@ namespace BifrostQL.Core.Forms
         public double? Step { get; set; }
 
         /// <summary>
+        /// Minimum bound for date/datetime inputs, as the raw ISO string
+        /// (e.g. "1900-01-01"). Date bounds are not representable as the numeric
+        /// <see cref="Min"/> double, so they are carried separately and emitted as the
+        /// HTML <c>min</c> attribute for date inputs.
+        /// </summary>
+        public string? MinDate { get; set; }
+
+        /// <summary>
+        /// Maximum bound for date/datetime inputs, as the raw ISO string. See <see cref="MinDate"/>.
+        /// </summary>
+        public string? MaxDate { get; set; }
+
+        /// <summary>
         /// When set, the column renders as an enum control (radio buttons or select)
         /// instead of a text input. Values are the raw enum option values.
         /// </summary>

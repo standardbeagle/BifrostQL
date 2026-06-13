@@ -857,6 +857,47 @@ public class BifrostFormBuilderTests
     }
 
     [Fact]
+    public void GenerateForm_DateColumnWithSchemaBounds_EmitsDateMinMax()
+    {
+        // A date column with min/max validation metadata (ISO date strings). These are
+        // not numeric doubles, so they must surface as date min=/max= attributes on the
+        // server-rendered input (SPA clients already get them via _dbSchema).
+        var model = DbModelTestFixture.Create()
+            .WithTable("Events", t => t
+                .WithPrimaryKey("Id")
+                .WithColumn("StartsOn", "date")
+                .WithColumnMetadata("StartsOn", MetadataKeys.Validation.Min, "1900-01-01")
+                .WithColumnMetadata("StartsOn", MetadataKeys.Validation.Max, "2099-12-31"))
+            .Build();
+        var builder = new BifrostFormBuilder(model);
+
+        var html = builder.GenerateForm("Events", FormMode.Insert);
+
+        Assert.Contains("min=\"1900-01-01\"", html);
+        Assert.Contains("max=\"2099-12-31\"", html);
+    }
+
+    [Fact]
+    public void GenerateForm_DatetimeColumnWithSchemaBounds_EmitsDatetimeLocalMinMax()
+    {
+        // A datetime2 column renders as <input type="datetime-local">, which requires
+        // yyyy-MM-ddTHH:mm bounds — a date-only bound is silently ignored by browsers.
+        var model = DbModelTestFixture.Create()
+            .WithTable("Events", t => t
+                .WithPrimaryKey("Id")
+                .WithColumn("StartsAt", "datetime2")
+                .WithColumnMetadata("StartsAt", MetadataKeys.Validation.Min, "1900-01-01")
+                .WithColumnMetadata("StartsAt", MetadataKeys.Validation.Max, "2099-12-31"))
+            .Build();
+        var builder = new BifrostFormBuilder(model);
+
+        var html = builder.GenerateForm("Events", FormMode.Insert);
+
+        Assert.Contains("min=\"1900-01-01T00:00\"", html);
+        Assert.Contains("max=\"2099-12-31T00:00\"", html);
+    }
+
+    [Fact]
     public void GenerateForm_WithMetadata_StepOverridesTypeDefault()
     {
         var model = CreateModelWithTypes();

@@ -4,6 +4,7 @@ using BifrostQL;
 using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Configuration;
 using GraphQL;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -276,6 +277,27 @@ namespace BifrostQL.Server
         /// opt-out is handled downstream by <see cref="BifrostProfileRegistry.FilterBy(IFilterTransformers, BifrostProfile)"/>
         /// since each built-in implements <see cref="IModuleNamed"/>.
         /// </summary>
+        /// <summary>
+        /// Appends instances of the supplied <paramref name="types"/>, resolved from
+        /// <paramref name="sp"/>, to the caller-configured collection. Backs the generic
+        /// <c>AddFilterTransformer&lt;T&gt;</c>/<c>AddMutationTransformer&lt;T&gt;</c>/<c>AddQueryObserver&lt;T&gt;</c>
+        /// overloads, which are additive over the collection/factory overloads. Returns the
+        /// original collection unchanged when no generic types were registered.
+        /// </summary>
+        internal static IReadOnlyCollection<T> ResolveTransformers<T>(
+            IReadOnlyCollection<T> configured,
+            IReadOnlyList<Type> types,
+            IServiceProvider sp)
+        {
+            if (types.Count == 0)
+                return configured;
+
+            var combined = new List<T>(configured);
+            foreach (var type in types)
+                combined.Add((T)sp.GetRequiredService(type));
+            return combined;
+        }
+
         internal static IReadOnlyCollection<IFilterTransformer> WithBuiltInFilterTransformers(
             IReadOnlyCollection<IFilterTransformer> configured)
         {
@@ -397,6 +419,11 @@ namespace BifrostQL.Server
         private Func<IServiceProvider, IReadOnlyCollection<IMutationTransformer>>? _mutationTransformerLoader;
         private IReadOnlyCollection<IQueryObserver> _queryObservers = Array.Empty<IQueryObserver>();
         private Func<IServiceProvider, IReadOnlyCollection<IQueryObserver>>? _queryObserverLoader;
+        // Types registered via the generic AddXTransformer<T>()/AddQueryObserver<T>() overloads;
+        // resolved from DI at build time and appended to the collection/factory overloads.
+        private readonly List<Type> _filterTransformerTypes = new();
+        private readonly List<Type> _mutationTransformerTypes = new();
+        private readonly List<Type> _queryObserverTypes = new();
         private IConfigurationSection? _loggingConfig;
         private readonly BifrostProfileRegistry _profileRegistry = new();
 
@@ -473,6 +500,17 @@ namespace BifrostQL.Server
             return this;
         }
 
+        /// <summary>
+        /// Registers a single filter transformer of type <typeparamref name="T"/>, resolved
+        /// from DI at build time. Additive over the collection/factory overloads.
+        /// </summary>
+        public BifrostMultiDbOptions AddFilterTransformer<T>() where T : class, IFilterTransformer
+        {
+            if (!_filterTransformerTypes.Contains(typeof(T)))
+                _filterTransformerTypes.Add(typeof(T));
+            return this;
+        }
+
         public BifrostMultiDbOptions AddMutationTransformers(IReadOnlyCollection<IMutationTransformer> transformers)
         {
             _mutationTransformers = transformers;
@@ -485,6 +523,17 @@ namespace BifrostQL.Server
             return this;
         }
 
+        /// <summary>
+        /// Registers a single mutation transformer of type <typeparamref name="T"/>, resolved
+        /// from DI at build time. Additive over the collection/factory overloads.
+        /// </summary>
+        public BifrostMultiDbOptions AddMutationTransformer<T>() where T : class, IMutationTransformer
+        {
+            if (!_mutationTransformerTypes.Contains(typeof(T)))
+                _mutationTransformerTypes.Add(typeof(T));
+            return this;
+        }
+
         public BifrostMultiDbOptions AddQueryObservers(IReadOnlyCollection<IQueryObserver> observers)
         {
             _queryObservers = observers;
@@ -494,6 +543,17 @@ namespace BifrostQL.Server
         public BifrostMultiDbOptions AddQueryObservers(Func<IServiceProvider, IReadOnlyCollection<IQueryObserver>>? loader)
         {
             _queryObserverLoader = loader;
+            return this;
+        }
+
+        /// <summary>
+        /// Registers a single query observer of type <typeparamref name="T"/>, resolved from
+        /// DI at build time. Additive over the collection/factory overloads.
+        /// </summary>
+        public BifrostMultiDbOptions AddQueryObserver<T>() where T : class, IQueryObserver
+        {
+            if (!_queryObserverTypes.Contains(typeof(T)))
+                _queryObserverTypes.Add(typeof(T));
             return this;
         }
 
@@ -613,21 +673,30 @@ namespace BifrostQL.Server
             else
                 services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = _modules });
 
-            if (_filterTransformerLoader != null)
-                services.AddSingleton<IFilterTransformers>(sp => new FilterTransformersWrap { Transformers = BifrostServiceCollectionExtensions.WithBuiltInFilterTransformers(_filterTransformerLoader(sp)) });
-            else
-                services.AddSingleton<IFilterTransformers>(new FilterTransformersWrap { Transformers = BifrostServiceCollectionExtensions.WithBuiltInFilterTransformers(_filterTransformers) });
+            foreach (var t in _filterTransformerTypes) services.TryAddSingleton(t);
+            services.AddSingleton<IFilterTransformers>(sp => new FilterTransformersWrap
+            {
+                Transformers = BifrostServiceCollectionExtensions.WithBuiltInFilterTransformers(
+                    BifrostServiceCollectionExtensions.ResolveTransformers(
+                        _filterTransformerLoader != null ? _filterTransformerLoader(sp) : _filterTransformers,
+                        _filterTransformerTypes, sp))
+            });
 
-            if (_mutationTransformerLoader != null)
-                services.AddSingleton<IMutationTransformers>(sp => new MutationTransformersWrap { Transformers = BifrostServiceCollectionExtensions.WithBuiltInMutationTransformers(_mutationTransformerLoader(sp), sp) });
-            else
-                services.AddSingleton<IMutationTransformers>(sp => new MutationTransformersWrap { Transformers = BifrostServiceCollectionExtensions.WithBuiltInMutationTransformers(_mutationTransformers, sp) });
+            foreach (var t in _mutationTransformerTypes) services.TryAddSingleton(t);
+            services.AddSingleton<IMutationTransformers>(sp => new MutationTransformersWrap
+            {
+                Transformers = BifrostServiceCollectionExtensions.WithBuiltInMutationTransformers(
+                    BifrostServiceCollectionExtensions.ResolveTransformers(
+                        _mutationTransformerLoader != null ? _mutationTransformerLoader(sp) : _mutationTransformers,
+                        _mutationTransformerTypes, sp), sp)
+            });
 
+            foreach (var t in _queryObserverTypes) services.TryAddSingleton(t);
             services.AddSingleton<IQueryObservers>(sp =>
             {
-                var userObservers = _queryObserverLoader != null
-                    ? _queryObserverLoader(sp)
-                    : _queryObservers;
+                var userObservers = BifrostServiceCollectionExtensions.ResolveTransformers(
+                    _queryObserverLoader != null ? _queryObserverLoader(sp) : _queryObservers,
+                    _queryObserverTypes, sp);
                 var loggingConfig = sp.GetRequiredService<BifrostLoggingConfiguration>();
                 var allObservers = new List<IQueryObserver>(userObservers);
                 if (loggingConfig.EnableQueryLogging)

@@ -117,9 +117,10 @@ public class EavModuleTests
     }
 
     [Fact]
-    public void CollectEavConfigs_ShortParentName_ResolvesByPrefix()
+    public void CollectEavConfigs_ShortParentName_DoesNotResolveByPrefix()
     {
-        // Parent specified as "posts" but actual table is "wp_postmeta" -> prefix "wp_" -> "wp_posts"
+        // Metadata-driven only: eav-parent must name the table EXACTLY. A short name
+        // ("posts") is NOT inferred to "wp_posts" by prefix — no detection/guessing.
         var metaTable = MakeTableWithMetadata("wp_postmeta", "dbo", new Dictionary<string, object?>
         {
             ["eav-parent"] = "posts",
@@ -132,8 +133,7 @@ public class EavModuleTests
 
         var configs = DbModel.CollectEavConfigs(tables);
 
-        configs.Should().ContainSingle();
-        configs[0].ParentTableDbName.Should().Be("wp_posts");
+        configs.Should().BeEmpty("eav-parent must match a table name exactly — no prefix inference");
     }
 
     [Fact]

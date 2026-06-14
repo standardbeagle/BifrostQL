@@ -17,6 +17,7 @@ using BifrostQL.Core.Model;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.ComputedColumns;
+using BifrostQL.Core.Modules.Eav;
 using BifrostQL.Core.Modules.Validation;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
@@ -710,6 +711,7 @@ namespace BifrostQL.Server
             services.AddSingleton<IComputedColumnProvider, LocalFileFolderComputedColumnProvider>();
             services.AddSingleton<IComputedColumnProvider, S3FileFolderComputedColumnProvider>();
             services.AddSingleton<IComputedColumnProvider>(_ => new StateMachineTransitionsProvider());
+            services.AddSingleton<IComputedColumnProvider, EavMetaProvider>();
             services.AddSingleton<IComputedColumnProviders>(sp => new ComputedColumnProviders(sp.GetServices<IComputedColumnProvider>()));
 
             var isAuthEnabled = IsUsingAuth;

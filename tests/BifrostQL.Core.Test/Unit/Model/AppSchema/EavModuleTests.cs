@@ -332,7 +332,9 @@ public class EavModuleTests
 
         var sdl = generator.GetTableTypeDefinition(model, includeDynamicJoins: false);
 
-        sdl.Should().Contain("_meta: String");
+        // _meta is now emitted through the uniform computed-column loop, so it
+        // carries the same "name : Type" spacing as every other field.
+        sdl.Should().Contain("_meta : String");
     }
 
     [Fact]
@@ -404,8 +406,8 @@ public class EavModuleTests
         var usersGenerator = new TableSchemaGenerator(
             model.Tables.First(t => t.DbName == "wp_users"));
 
-        postsGenerator.GetTableTypeDefinition(model, false).Should().Contain("_meta: String");
-        usersGenerator.GetTableTypeDefinition(model, false).Should().Contain("_meta: String");
+        postsGenerator.GetTableTypeDefinition(model, false).Should().Contain("_meta : String");
+        usersGenerator.GetTableTypeDefinition(model, false).Should().Contain("_meta : String");
     }
 
     #endregion

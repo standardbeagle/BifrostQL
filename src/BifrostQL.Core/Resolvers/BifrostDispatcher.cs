@@ -125,7 +125,7 @@ namespace BifrostQL.Core.Resolvers
                 foreach (var column in table.Columns)
                     tableType.FieldFor(column.GraphQlName).Resolver = this;
 
-                foreach (var column in ComputedColumnConfigCollector.FromTable(table))
+                foreach (var column in ComputedColumnConfigCollector.FromTable(table, _model))
                     tableType.FieldFor(column.Name).Resolver = this;
 
                 foreach (var singleLink in table.SingleLinks)

@@ -17,7 +17,7 @@ namespace BifrostQL.Core.QueryModel
         GqlObjectQuery ToSqlData(IDbModel model, IQueryField? parent = null, string basePath = "");
         TableJoin ToJoin(IDbModel model, GqlObjectQuery parent);
         FieldType Type { get; }
-        GqlObjectColumn ToScalarSql(IDbTable dbTable);
+        GqlObjectColumn ToScalarSql(IDbTable dbTable, IDbModel model);
         GqlAggregateColumn ToAggregateSql(IDbTable dbTable);
 
 
@@ -100,7 +100,7 @@ namespace BifrostQL.Core.QueryModel
                 QueryType = queryType,
                 IsFragment = false,
                 IncludeResult = IncludeResult,
-                ScalarColumns = standardFields.Where(f => f.Type == FieldType.Scalar).Select(f => f.ToScalarSql(dbTable)).ToList(),
+                ScalarColumns = standardFields.Where(f => f.Type == FieldType.Scalar).Select(f => f.ToScalarSql(dbTable, model)).ToList(),
                 AggregateColumns = standardFields.Where(f => f.Type == FieldType.Aggregate).Select(f => f.ToAggregateSql(dbTable)).ToList(),
                 Sort = sort,
                 Limit = (int?)Arguments.FirstOrDefault(a => a.Name == "limit")?.Value,
@@ -186,9 +186,9 @@ namespace BifrostQL.Core.QueryModel
             };
         }
 
-        public GqlObjectColumn ToScalarSql(IDbTable dbTable)
+        public GqlObjectColumn ToScalarSql(IDbTable dbTable, IDbModel model)
         {
-            var computed = ComputedColumnConfigCollector.Find(dbTable, Name);
+            var computed = ComputedColumnConfigCollector.Find(dbTable, Name, model);
             if (computed != null)
                 return new GqlObjectColumn(computed, RefName);
 

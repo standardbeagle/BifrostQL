@@ -31,7 +31,7 @@ namespace BifrostQL.Core.Resolvers
 
             if (context.HasArgument("sync"))
             {
-                return await SyncObject(context, table, model, conFactory, dialect);
+                return await SyncObject(context, table, mutationTransformers, model, conFactory, dialect);
             }
             if (context.HasArgument("insert"))
             {
@@ -274,11 +274,19 @@ namespace BifrostQL.Core.Resolvers
         // Orphan loading/deletion is scoped per parent (and per discriminator for
         // polymorphic links), so reconciling one parent never touches another's.
         //
-        // NOTE (v1 scope): the nested path bypasses the mutation transformer /
-        // module pipeline — no policy gating, no audit-populate. Columns relying on
-        // populate metadata must have a database default. Tracked as follow-up.
+        // Each inferred operation is routed through the mutation-transformer
+        // pipeline (TreeSyncExecutor) before its SQL is built, so soft-delete,
+        // authorization policy, and audit-populate apply to nested and orphan
+        // operations exactly as they do to a single-row mutation. In particular an
+        // orphaned child on a soft-delete table is rewritten Delete → UPDATE
+        // (deleted_at stamped) instead of being physically removed.
+        //
+        // NOTE (remaining sub-item): _hardDelete is not yet capturable on the sync
+        // field — opting a soft-delete orphan into a real DELETE would require
+        // emitting + capturing the module arg on the sync mutation field. The
+        // default (soft-delete orphans become UPDATE) is correct without it.
         private static async Task<object?> SyncObject(IBifrostFieldContext context, IDbTable table,
-            IDbModel model, IDbConnFactory conFactory, ISqlDialect dialect)
+            IMutationTransformers mutationTransformers, IDbModel model, IDbConnFactory conFactory, ISqlDialect dialect)
         {
             var tree = context.GetArgument<Dictionary<string, object?>>("sync") ?? new();
             if (tree.Count == 0)
@@ -291,7 +299,8 @@ namespace BifrostQL.Core.Resolvers
             var operations = engine.ComputeOperations(table, tree, existing);
 
             var executor = new TreeSyncExecutor(dialect);
-            var rootId = await executor.ExecuteAsync(operations, conFactory);
+            var rootId = await executor.ExecuteAsync(
+                operations, conFactory, mutationTransformers, model, context.UserContext, context.RequestServices);
             // On a pure insert the executor returns the generated PK; on an update
             // the root already has one, so fall back to the submitted key value.
             rootId ??= RootKeyValue(table, tree);

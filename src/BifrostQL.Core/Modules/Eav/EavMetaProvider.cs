@@ -27,8 +27,13 @@ public sealed class EavMetaProvider : IComputedColumnProvider
     /// <summary>GraphQL field name emitted on EAV parent tables.</summary>
     public const string FieldName = "_meta";
 
-    /// <summary>GraphQL type of the emitted field: a JSON object string.</summary>
-    public const string FieldType = "String";
+    /// <summary>
+    /// GraphQL type of the emitted field — the registered JSON scalar
+    /// (<see cref="BifrostQL.Core.Schema.JsonScalarGraphType"/>). ComputeAsync returns a
+    /// raw JSON object string; the scalar's Serialize parses it into a real object in the
+    /// response, so clients get a structured object rather than an escaped string.
+    /// </summary>
+    public const string FieldType = "JSON";
 
     public string Name => ProviderName;
 

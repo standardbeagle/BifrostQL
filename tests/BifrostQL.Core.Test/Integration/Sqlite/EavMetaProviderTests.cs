@@ -16,16 +16,17 @@ using Xunit;
 namespace BifrostQL.Core.Test.Sqlite;
 
 /// <summary>
-/// End-to-end proof that the dead <c>_meta: String</c> stub on EAV-parent tables
-/// now resolves through the provider-computed-column pipeline (the same mechanism
-/// as <see cref="StateMachineTransitionsProvider"/>). The <see cref="EavMetaProvider"/>
+/// End-to-end proof that the dead <c>_meta</c> stub on EAV-parent tables now
+/// resolves through the provider-computed-column pipeline (the same mechanism as
+/// <see cref="StateMachineTransitionsProvider"/>). The <see cref="EavMetaProvider"/>
 /// reads each parent row's primary key, queries the linked meta table for that
-/// row's attribute rows, and returns them as a JSON object string.
+/// row's attribute rows, and returns them as a raw JSON object string — which the
+/// registered <c>JSON</c> scalar serializes into a real nested object in the response.
 ///
 /// Covers:
-///  - An EAV parent row with attributes returns <c>_meta</c> as a JSON string of
+///  - An EAV parent row with attributes returns <c>_meta</c> as a JSON object of
 ///    that row's key/value pairs.
-///  - An EAV parent row with no attribute rows returns <c>_meta == "{}"</c>.
+///  - An EAV parent row with no attribute rows returns <c>_meta</c> as an empty object.
 ///  - A non-EAV table is unaffected (no <c>_meta</c> field on the type).
 /// </summary>
 public sealed class EavMetaProviderTests : IAsyncLifetime
@@ -109,10 +110,10 @@ public sealed class EavMetaProviderTests : IAsyncLifetime
         result.Errors.Should().BeNullOrEmpty();
         var meta = ExtractMeta(result, postIndex: 0);
 
-        // _meta is a JSON object string with the row's attributes.
-        using var doc = JsonDocument.Parse(meta!);
-        doc.RootElement.GetProperty("color").GetString().Should().Be("red");
-        doc.RootElement.GetProperty("size").GetString().Should().Be("L");
+        // _meta is the JSON scalar — a real nested object in the response, not a string.
+        meta.ValueKind.Should().Be(JsonValueKind.Object);
+        meta.GetProperty("color").GetString().Should().Be("red");
+        meta.GetProperty("size").GetString().Should().Be("L");
     }
 
     [Fact]
@@ -124,7 +125,8 @@ public sealed class EavMetaProviderTests : IAsyncLifetime
 
         result.Errors.Should().BeNullOrEmpty();
         var meta = ExtractMeta(result, postIndex: 0);
-        meta.Should().Be("{}");
+        meta.ValueKind.Should().Be(JsonValueKind.Object);
+        meta.EnumerateObject().Should().BeEmpty("a row with no attribute rows yields an empty JSON object");
     }
 
     [Fact]
@@ -144,18 +146,19 @@ public sealed class EavMetaProviderTests : IAsyncLifetime
         postsType!.Fields.Any(f => f.Name == "_meta").Should().BeTrue();
     }
 
-    private static string? ExtractMeta(ExecutionResult result, int postIndex)
+    private static JsonElement ExtractMeta(ExecutionResult result, int postIndex)
     {
         var json = new GraphQLSerializer().Serialize(result);
+        // Clone so the element survives the JsonDocument being disposed.
         using var doc = JsonDocument.Parse(json);
-        var row = doc.RootElement
+        return doc.RootElement
             .GetProperty("data")
             .GetProperty("posts")
             .GetProperty("data")
             .EnumerateArray()
-            .ElementAt(postIndex);
-        var meta = row.GetProperty("_meta");
-        return meta.ValueKind == JsonValueKind.Null ? null : meta.GetString();
+            .ElementAt(postIndex)
+            .GetProperty("_meta")
+            .Clone();
     }
 
     private async Task<ExecutionResult> ExecuteQueryAsync(IDbModel model, string query)

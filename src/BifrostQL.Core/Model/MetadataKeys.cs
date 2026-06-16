@@ -218,7 +218,7 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
-        /// Metadata keys for audit-column population by <c>BasicAuditModule</c>.
+        /// Metadata keys for audit-column population by <c>AuditMutationTransformer</c>.
         /// </summary>
         public static class Audit
         {

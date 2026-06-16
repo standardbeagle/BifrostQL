@@ -110,7 +110,6 @@ public class QuickStartEndToEndTests : IDisposable
 
         // Build service provider for mutation support
         var services = new ServiceCollection();
-        services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = Array.Empty<IMutationModule>() });
         services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap { Transformers = Array.Empty<IMutationTransformer>() });
         var serviceProvider = services.BuildServiceProvider();
 

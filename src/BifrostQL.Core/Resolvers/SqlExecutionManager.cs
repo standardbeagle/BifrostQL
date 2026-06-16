@@ -94,7 +94,7 @@ namespace BifrostQL.Core.Resolvers
 
             var sw = Stopwatch.StartNew();
             var (data, sql) = await LoadDataParameterizedAsync(table, conFactory);
-            await ApplyProviderComputedColumnsAsync(table, data, context);
+            await ApplyProviderComputedColumnsAsync(table, data, context, conFactory);
             sw.Stop();
 
             // Notify AfterExecute phase with timing data
@@ -215,13 +215,14 @@ namespace BifrostQL.Core.Resolvers
         private async ValueTask ApplyProviderComputedColumnsAsync(
             GqlObjectQuery query,
             IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> results,
-            IBifrostFieldContext context)
+            IBifrostFieldContext context,
+            IDbConnFactory connFactory)
         {
             var providers = context.RequestServices?.GetService<IComputedColumnProviders>() ?? ComputedColumnProviders.Empty;
-            await ApplyProviderComputedColumnsForQueryAsync(query, query.KeyName, results, providers, context);
+            await ApplyProviderComputedColumnsForQueryAsync(query, query.KeyName, results, providers, context, connFactory);
 
             foreach (var join in query.RecurseJoins)
-                await ApplyProviderComputedColumnsForQueryAsync(join.ConnectedTable, join.JoinName, results, providers, context);
+                await ApplyProviderComputedColumnsForQueryAsync(join.ConnectedTable, join.JoinName, results, providers, context, connFactory);
         }
 
         private async ValueTask ApplyProviderComputedColumnsForQueryAsync(
@@ -229,7 +230,8 @@ namespace BifrostQL.Core.Resolvers
             string resultName,
             IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> results,
             IComputedColumnProviders providers,
-            IBifrostFieldContext context)
+            IBifrostFieldContext context,
+            IDbConnFactory connFactory)
         {
             var providerColumns = query.ScalarColumns
                 .Where(c => c.ComputedColumn is { Kind: ComputedColumnKind.Provider })
@@ -263,6 +265,7 @@ namespace BifrostQL.Core.Resolvers
                         Row = rowMap,
                         UserContext = context.UserContext,
                         Services = context.RequestServices,
+                        ConnFactory = connFactory,
                     });
 
                     var expanded = new object?[tableData.index.Count];

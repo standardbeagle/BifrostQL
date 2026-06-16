@@ -55,7 +55,7 @@ public class MutationTransformerTests
     }
 
     [Fact]
-    public void SoftDeleteMutationTransformer_Transform_ConvertsDeleteToUpdate()
+    public async Task SoftDeleteMutationTransformer_Transform_ConvertsDeleteToUpdate()
     {
         var model = CreateSoftDeleteModel();
         var transformer = new SoftDeleteMutationTransformer();
@@ -67,7 +67,7 @@ public class MutationTransformerTests
             ["Id"] = 1
         };
 
-        var result = transformer.Transform(table, MutationType.Delete, data, context);
+        var result = await transformer.TransformAsync(table, MutationType.Delete, data, context);
 
         Assert.Equal(MutationType.Update, result.MutationType);
         Assert.Contains("deleted_at", result.Data.Keys);
@@ -76,7 +76,7 @@ public class MutationTransformerTests
     }
 
     [Fact]
-    public void SoftDeleteMutationTransformer_Transform_AddsDeletedByWhenConfigured()
+    public async Task SoftDeleteMutationTransformer_Transform_AddsDeletedByWhenConfigured()
     {
         var model = DbModelTestFixture.Create()
             .WithTable("Users", t => t
@@ -97,14 +97,14 @@ public class MutationTransformerTests
         });
 
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
-        var result = transformer.Transform(table, MutationType.Delete, data, context);
+        var result = await transformer.TransformAsync(table, MutationType.Delete, data, context);
 
         Assert.Equal(MutationType.Update, result.MutationType);
         Assert.Equal(99, result.Data["deleted_by"]);
     }
 
     [Fact]
-    public void SoftDeleteMutationTransformer_Transform_AddsFilterForUpdate()
+    public async Task SoftDeleteMutationTransformer_Transform_AddsFilterForUpdate()
     {
         var model = CreateSoftDeleteModel();
         var transformer = new SoftDeleteMutationTransformer();
@@ -116,7 +116,7 @@ public class MutationTransformerTests
             ["Name"] = "Updated Name"
         };
 
-        var result = transformer.Transform(table, MutationType.Update, data, context);
+        var result = await transformer.TransformAsync(table, MutationType.Update, data, context);
 
         Assert.Equal(MutationType.Update, result.MutationType);
         Assert.NotNull(result.AdditionalFilter);
@@ -124,7 +124,7 @@ public class MutationTransformerTests
     }
 
     [Fact]
-    public void SoftDeleteMutationTransformer_Transform_AddsFilterForDelete()
+    public async Task SoftDeleteMutationTransformer_Transform_AddsFilterForDelete()
     {
         var model = CreateSoftDeleteModel();
         var transformer = new SoftDeleteMutationTransformer();
@@ -132,7 +132,7 @@ public class MutationTransformerTests
         var context = CreateMutationContext(model);
 
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
-        var result = transformer.Transform(table, MutationType.Delete, data, context);
+        var result = await transformer.TransformAsync(table, MutationType.Delete, data, context);
 
         // Should have filter to only soft-delete non-deleted records
         Assert.NotNull(result.AdditionalFilter);
@@ -140,7 +140,7 @@ public class MutationTransformerTests
     }
 
     [Fact]
-    public void SoftDeleteMutationTransformer_Transform_ReturnsErrorWhenColumnNotFound()
+    public async Task SoftDeleteMutationTransformer_Transform_ReturnsErrorWhenColumnNotFound()
     {
         var model = DbModelTestFixture.Create()
             .WithTable("Users", t => t
@@ -155,7 +155,7 @@ public class MutationTransformerTests
         var context = CreateMutationContext(model);
 
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
-        var result = transformer.Transform(table, MutationType.Delete, data, context);
+        var result = await transformer.TransformAsync(table, MutationType.Delete, data, context);
 
         Assert.Single(result.Errors);
         Assert.Contains("not found in table", result.Errors[0]);
@@ -166,7 +166,7 @@ public class MutationTransformerTests
     #region MutationTransformersWrap Tests
 
     [Fact]
-    public void MutationTransformersWrap_Transform_ChainsTransformers()
+    public async Task MutationTransformersWrap_Transform_ChainsTransformers()
     {
         var model = CreateSoftDeleteModel();
         var transformers = new MutationTransformersWrap
@@ -181,14 +181,14 @@ public class MutationTransformerTests
         var context = CreateMutationContext(model);
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
 
-        var result = transformers.Transform(table, MutationType.Delete, data, context);
+        var result = await transformers.TransformAsync(table, MutationType.Delete, data, context);
 
         Assert.Equal(MutationType.Update, result.MutationType);
         Assert.Contains("deleted_at", result.Data.Keys);
     }
 
     [Fact]
-    public void MutationTransformersWrap_Transform_AccumulatesErrors()
+    public async Task MutationTransformersWrap_Transform_AccumulatesErrors()
     {
         var model = DbModelTestFixture.Create()
             .WithTable("Users", t => t
@@ -209,13 +209,13 @@ public class MutationTransformerTests
         var context = CreateMutationContext(model);
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
 
-        var result = transformers.Transform(table, MutationType.Delete, data, context);
+        var result = await transformers.TransformAsync(table, MutationType.Delete, data, context);
 
         Assert.NotEmpty(result.Errors);
     }
 
     [Fact]
-    public void MutationTransformersWrap_Transform_ReturnsUnchangedWhenNoTransformersApply()
+    public async Task MutationTransformersWrap_Transform_ReturnsUnchangedWhenNoTransformersApply()
     {
         var model = StandardTestFixtures.SimpleUsers();
         var transformers = new MutationTransformersWrap
@@ -230,7 +230,7 @@ public class MutationTransformerTests
         var context = CreateMutationContext(model);
         var data = new Dictionary<string, object?> { ["Id"] = 1, ["Name"] = "Test" };
 
-        var result = transformers.Transform(table, MutationType.Delete, data, context);
+        var result = await transformers.TransformAsync(table, MutationType.Delete, data, context);
 
         Assert.Equal(MutationType.Delete, result.MutationType);
         Assert.Equal(data, result.Data);

@@ -32,14 +32,10 @@ if (http3Config.GetValue("Enabled", false))
     });
 }
 
-builder.Services.AddSingleton<BasicAuditModule>();
 builder.Services.AddBifrostQL(options =>
 {
     options
-        .BindStandardConfig(builder.Configuration)
-        .AddModules(sp => new[] {
-            sp.GetRequiredService<BasicAuditModule>(),
-        });
+        .BindStandardConfig(builder.Configuration);
 });
 
 builder.Services.AddCors();

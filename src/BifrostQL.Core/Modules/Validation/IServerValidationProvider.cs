@@ -17,5 +17,19 @@ public interface IServerValidationProvider
 {
     string Name { get; }
 
+    /// <summary>
+    /// Synchronous validation. Return one message per failure, or an empty list when valid.
+    /// </summary>
     IReadOnlyList<string> Validate(ServerValidationContext context);
+
+    /// <summary>
+    /// Asynchronous validation — use for uniqueness checks, FK-existence lookups, or
+    /// service calls. The default bridges to <see cref="Validate"/> so existing sync
+    /// providers keep working unchanged; async providers override this and may leave
+    /// <see cref="Validate"/> returning an empty list (or delegating back).
+    /// </summary>
+    ValueTask<IReadOnlyList<string>> ValidateAsync(
+        ServerValidationContext context,
+        CancellationToken cancellationToken = default)
+        => new(Validate(context));
 }

@@ -18,61 +18,61 @@ public sealed class ServerValidationHardeningTests
     private static readonly ExtendedServerValidationTransformer Transformer = new();
 
     [Fact]
-    public void Length_EnforcesMinAndMax()
+    public async Task Length_EnforcesMinAndMax()
     {
         var model = LengthModel();
         var table = model.GetTableFromDbName("T");
 
-        var tooShort = Run(table, model, new() { ["Code"] = "ab" });
+        var tooShort = await Run(table, model, new() { ["Code"] = "ab" });
         tooShort.Should().Contain("Code must be at least 3 characters.");
 
-        var tooLong = Run(table, model, new() { ["Code"] = "abcdefghij" });
+        var tooLong = await Run(table, model, new() { ["Code"] = "abcdefghij" });
         tooLong.Should().Contain("Code must be at most 5 characters.");
 
-        var ok = Run(table, model, new() { ["Code"] = "abcd" });
+        var ok = await Run(table, model, new() { ["Code"] = "abcd" });
         ok.Should().BeEmpty();
     }
 
     [Fact]
-    public void Range_EnforcesMax()
+    public async Task Range_EnforcesMax()
     {
         var model = RangeModel();
         var table = model.GetTableFromDbName("T");
 
-        Run(table, model, new() { ["Score"] = 150 })
+        (await Run(table, model, new() { ["Score"] = 150 }))
             .Should().Contain("Score must be at most 100.");
 
-        Run(table, model, new() { ["Score"] = 50 }).Should().BeEmpty();
+        (await Run(table, model, new() { ["Score"] = 50 })).Should().BeEmpty();
     }
 
     [Fact]
-    public void Range_IgnoresNonNumericValues()
+    public async Task Range_IgnoresNonNumericValues()
     {
         var model = RangeModel();
         var table = model.GetTableFromDbName("T");
 
         // A non-numeric value cannot be range-checked; it must not throw and must
         // not produce a spurious range error.
-        Run(table, model, new() { ["Score"] = "not-a-number" }).Should().BeEmpty();
+        (await Run(table, model, new() { ["Score"] = "not-a-number" })).Should().BeEmpty();
     }
 
     [Fact]
-    public void Required_NotEnforcedOnUpdateWhenFieldAbsent()
+    public async Task Required_NotEnforcedOnUpdateWhenFieldAbsent()
     {
         var model = RequiredModel();
         var table = model.GetTableFromDbName("T");
 
         // Partial update omitting the required field is allowed.
-        RunUpdate(table, model, new() { ["Other"] = "x" }).Should().BeEmpty();
+        (await RunUpdate(table, model, new() { ["Other"] = "x" })).Should().BeEmpty();
     }
 
     [Fact]
-    public void Required_EnforcedOnUpdateWhenFieldPresentButBlank()
+    public async Task Required_EnforcedOnUpdateWhenFieldPresentButBlank()
     {
         var model = RequiredModel();
         var table = model.GetTableFromDbName("T");
 
-        RunUpdate(table, model, new() { ["Name"] = "  " })
+        (await RunUpdate(table, model, new() { ["Name"] = "  " }))
             .Should().Contain("Name is required.");
     }
 
@@ -92,7 +92,7 @@ public sealed class ServerValidationHardeningTests
     }
 
     [Fact]
-    public void ColumnLevelEnablement_ValidatesOnlyFlaggedColumn()
+    public async Task ColumnLevelEnablement_ValidatesOnlyFlaggedColumn()
     {
         var model = DbModelTestFixture.Create()
             .WithTable("T", t => t
@@ -108,7 +108,7 @@ public sealed class ServerValidationHardeningTests
         Transformer.AppliesTo(table, MutationType.Insert, NewContext(model)).Should().BeTrue();
 
         // Note is required but not server-enabled → no error; Name is.
-        var errors = Run(table, model, new() { ["Note"] = null });
+        var errors = await Run(table, model, new() { ["Note"] = null });
         errors.Should().Contain("Name is required.");
         errors.Should().NotContain("Note is required.");
     }
@@ -122,11 +122,11 @@ public sealed class ServerValidationHardeningTests
         Transformer.AppliesTo(table, MutationType.Delete, NewContext(model)).Should().BeFalse();
     }
 
-    private static IReadOnlyList<string> Run(IDbTable table, IDbModel model, Dictionary<string, object?> data)
-        => Transformer.Transform(table, MutationType.Insert, data, NewContext(model)).Errors;
+    private static async Task<IReadOnlyList<string>> Run(IDbTable table, IDbModel model, Dictionary<string, object?> data)
+        => (await Transformer.TransformAsync(table, MutationType.Insert, data, NewContext(model))).Errors;
 
-    private static IReadOnlyList<string> RunUpdate(IDbTable table, IDbModel model, Dictionary<string, object?> data)
-        => Transformer.Transform(table, MutationType.Update, data, NewContext(model)).Errors;
+    private static async Task<IReadOnlyList<string>> RunUpdate(IDbTable table, IDbModel model, Dictionary<string, object?> data)
+        => (await Transformer.TransformAsync(table, MutationType.Update, data, NewContext(model))).Errors;
 
     private static MutationTransformContext NewContext(IDbModel model)
         => new() { Model = model, UserContext = new Dictionary<string, object?>() };

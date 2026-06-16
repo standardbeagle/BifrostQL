@@ -76,7 +76,7 @@ public class EnumValueMutationTransformerTests
             .GraphQlName;
 
     [Fact]
-    public void Transform_RewritesEnumNameToDbValue()
+    public async Task Transform_RewritesEnumNameToDbValue()
     {
         var transformer = new EnumValueMutationTransformer();
         var model = BuildModelWithEnums();
@@ -86,7 +86,7 @@ public class EnumValueMutationTransformerTests
             [statusField] = "ACTIVE",
         };
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             model.GetTableFromDbName("Orders"), MutationType.Insert, data, Context(model));
 
         result.Errors.Should().BeEmpty();
@@ -94,7 +94,7 @@ public class EnumValueMutationTransformerTests
     }
 
     [Fact]
-    public void Transform_UnknownName_ProducesErrorAndDoesNotRewrite()
+    public async Task Transform_UnknownName_ProducesErrorAndDoesNotRewrite()
     {
         var transformer = new EnumValueMutationTransformer();
         var model = BuildModelWithEnums();
@@ -104,7 +104,7 @@ public class EnumValueMutationTransformerTests
             [statusField] = "BOGUS",
         };
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             model.GetTableFromDbName("Orders"), MutationType.Update, data, Context(model));
 
         result.Errors.Should().ContainSingle();
@@ -112,7 +112,7 @@ public class EnumValueMutationTransformerTests
     }
 
     [Fact]
-    public void Transform_Delete_RewritesEnumNameToDbValue()
+    public async Task Transform_Delete_RewritesEnumNameToDbValue()
     {
         var transformer = new EnumValueMutationTransformer();
         var model = BuildModelWithEnums();
@@ -122,7 +122,7 @@ public class EnumValueMutationTransformerTests
             [statusField] = "ACTIVE",
         };
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             model.GetTableFromDbName("Orders"), MutationType.Delete, data, Context(model));
 
         result.Errors.Should().BeEmpty();

@@ -64,7 +64,7 @@ public class StateMachineMutationTransformerTests
     }
 
     [Fact]
-    public void Transform_AllowsValidTransition_WhenCallerHasRequiredRole()
+    public async Task Transform_AllowsValidTransition_WhenCallerHasRequiredRole()
     {
         var transformer = new StateMachineMutationTransformer();
         var data = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
@@ -73,7 +73,7 @@ public class StateMachineMutationTransformerTests
             ["status"] = "active",
         };
 
-        var result = transformer.Transform(StateMachineTable(), MutationType.Update, data, Context("pending", "officer"));
+        var result = await transformer.TransformAsync(StateMachineTable(), MutationType.Update, data, Context("pending", "officer"));
 
         result.Errors.Should().BeEmpty();
         result.Data.Should().BeSameAs(data);
@@ -89,7 +89,7 @@ public class StateMachineMutationTransformerTests
     }
 
     [Fact]
-    public void Transform_RejectsInvalidTransition_WithGenericError()
+    public async Task Transform_RejectsInvalidTransition_WithGenericError()
     {
         var transformer = new StateMachineMutationTransformer();
         var data = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
@@ -98,14 +98,14 @@ public class StateMachineMutationTransformerTests
             ["status"] = "inactive",
         };
 
-        var result = transformer.Transform(StateMachineTable(), MutationType.Update, data, Context("pending", "officer"));
+        var result = await transformer.TransformAsync(StateMachineTable(), MutationType.Update, data, Context("pending", "officer"));
 
         result.Errors.Should().Equal("State transition is not permitted.");
         result.StateTransition.Should().BeNull();
     }
 
     [Fact]
-    public void Transform_RejectsRoleGatedTransition_WhenCallerLacksRole()
+    public async Task Transform_RejectsRoleGatedTransition_WhenCallerLacksRole()
     {
         var transformer = new StateMachineMutationTransformer();
         var data = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
@@ -114,13 +114,13 @@ public class StateMachineMutationTransformerTests
             ["status"] = "active",
         };
 
-        var result = transformer.Transform(StateMachineTable(), MutationType.Update, data, Context("pending", "member"));
+        var result = await transformer.TransformAsync(StateMachineTable(), MutationType.Update, data, Context("pending", "member"));
 
         result.Errors.Should().Equal("State transition is not permitted.");
     }
 
     [Fact]
-    public void Transform_AllowsRoleGatedTransition_ForAdmin()
+    public async Task Transform_AllowsRoleGatedTransition_ForAdmin()
     {
         var transformer = new StateMachineMutationTransformer();
         var data = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
@@ -129,13 +129,13 @@ public class StateMachineMutationTransformerTests
             ["status"] = "active",
         };
 
-        var result = transformer.Transform(StateMachineTable(), MutationType.Update, data, Context("pending", "admin"));
+        var result = await transformer.TransformAsync(StateMachineTable(), MutationType.Update, data, Context("pending", "admin"));
 
         result.Errors.Should().BeEmpty();
     }
 
     [Fact]
-    public void Transform_DoesNothing_WhenUpdateDoesNotTouchStateColumn()
+    public async Task Transform_DoesNothing_WhenUpdateDoesNotTouchStateColumn()
     {
         var transformer = new StateMachineMutationTransformer();
         var data = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
@@ -144,14 +144,14 @@ public class StateMachineMutationTransformerTests
             ["name"] = "Ada",
         };
 
-        var result = transformer.Transform(StateMachineTable(), MutationType.Update, data, Context("pending", "member"));
+        var result = await transformer.TransformAsync(StateMachineTable(), MutationType.Update, data, Context("pending", "member"));
 
         result.Errors.Should().BeEmpty();
         result.Data.Should().BeSameAs(data);
     }
 
     [Fact]
-    public void Transform_AllowsInsertWithInitialState()
+    public async Task Transform_AllowsInsertWithInitialState()
     {
         var transformer = new StateMachineMutationTransformer();
         var data = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
@@ -159,13 +159,13 @@ public class StateMachineMutationTransformerTests
             ["status"] = "pending",
         };
 
-        var result = transformer.Transform(StateMachineTable(), MutationType.Insert, data, Context("pending", "member"));
+        var result = await transformer.TransformAsync(StateMachineTable(), MutationType.Insert, data, Context("pending", "member"));
 
         result.Errors.Should().BeEmpty();
     }
 
     [Fact]
-    public void Transform_RejectsInsertWithNonInitialState()
+    public async Task Transform_RejectsInsertWithNonInitialState()
     {
         var transformer = new StateMachineMutationTransformer();
         var data = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
@@ -173,13 +173,13 @@ public class StateMachineMutationTransformerTests
             ["status"] = "active",
         };
 
-        var result = transformer.Transform(StateMachineTable(), MutationType.Insert, data, Context("pending", "officer"));
+        var result = await transformer.TransformAsync(StateMachineTable(), MutationType.Insert, data, Context("pending", "officer"));
 
         result.Errors.Should().Equal("State transition is not permitted.");
     }
 
     [Fact]
-    public void Transform_RejectsUpdate_WhenCurrentRowStateIsMissing()
+    public async Task Transform_RejectsUpdate_WhenCurrentRowStateIsMissing()
     {
         var transformer = new StateMachineMutationTransformer();
         var data = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
@@ -193,7 +193,7 @@ public class StateMachineMutationTransformerTests
             UserContext = new Dictionary<string, object?>(),
         };
 
-        var result = transformer.Transform(StateMachineTable(), MutationType.Update, data, context);
+        var result = await transformer.TransformAsync(StateMachineTable(), MutationType.Update, data, context);
 
         result.Errors.Should().Equal("State transition is not permitted.");
     }

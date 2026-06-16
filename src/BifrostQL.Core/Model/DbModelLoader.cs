@@ -81,6 +81,12 @@ namespace BifrostQL.Model
                 read.ForeignKeys,
                 additionalMetadata);
             model.TypeMapper = _connFactory.TypeMapper;
+
+            // Fail-fast: validate stringly-typed metadata configs now that the model is
+            // fully built (ColumnLookup + applied metadata available). Aggregates every
+            // structural problem into one descriptive exception instead of letting a typo
+            // surface only as a runtime BifrostExecutionError on the first query.
+            ModelConfigValidator.Validate(model);
             return model;
         }
 

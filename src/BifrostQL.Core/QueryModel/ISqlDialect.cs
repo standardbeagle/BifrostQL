@@ -240,4 +240,18 @@ public interface ISqlDialect
     /// override this when some types need different text extraction than the default.
     /// </summary>
     string TextCast(string columnExpression, string dataType) => TextCast(columnExpression);
+
+    /// <summary>
+    /// The statement that opens an explicit transaction, emitted directly as SQL
+    /// on the connection (rather than the ADO.NET DbTransaction API) so the
+    /// transaction boundary is visible in the generated SQL. SQL Server uses
+    /// <c>BEGIN TRANSACTION;</c>; PostgreSQL, MySQL, and SQLite use <c>BEGIN;</c>.
+    /// </summary>
+    string BeginTransactionSql => "BEGIN TRANSACTION;";
+
+    /// <summary>The statement that commits the current transaction.</summary>
+    string CommitTransactionSql => "COMMIT;";
+
+    /// <summary>The statement that rolls back the current transaction.</summary>
+    string RollbackTransactionSql => "ROLLBACK;";
 }

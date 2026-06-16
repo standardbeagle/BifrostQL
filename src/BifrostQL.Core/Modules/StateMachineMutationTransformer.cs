@@ -1,4 +1,3 @@
-using System.Collections;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 
@@ -9,8 +8,6 @@ namespace BifrostQL.Core.Modules;
 /// </summary>
 public sealed class StateMachineMutationTransformer : IMutationTransformer, IModuleNamed
 {
-    private const string UserIdContextKey = MetadataKeys.Auth.DefaultUserIdContextKey;
-    private const string RolesContextKey = MetadataKeys.Auth.DefaultRolesContextKey;
     private const string InvalidTransitionMessage = "State transition is not permitted.";
 
     private readonly PolicyEvaluator _evaluator;
@@ -32,7 +29,14 @@ public sealed class StateMachineMutationTransformer : IMutationTransformer, IMod
             && StateMachineConfigCollector.FromTable(table) is not null;
     }
 
-    public MutationTransformResult Transform(
+    public ValueTask<MutationTransformResult> TransformAsync(
+        IDbTable table,
+        MutationType mutationType,
+        Dictionary<string, object?> data,
+        MutationTransformContext context)
+        => new(TransformSync(table, mutationType, data, context));
+
+    private MutationTransformResult TransformSync(
         IDbTable table,
         MutationType mutationType,
         Dictionary<string, object?> data,
@@ -74,8 +78,8 @@ public sealed class StateMachineMutationTransformer : IMutationTransformer, IMod
         if (transition is null)
             return Denied(mutationType, data);
 
-        var identity = BuildIdentity(context);
-        if (!CanUseTransition(transition, identity))
+        var identity = StateMachineRoleGate.BuildIdentity(context.UserContext);
+        if (!StateMachineRoleGate.CanUseTransition(transition, identity, _evaluator))
             return Denied(mutationType, data);
 
         return new MutationTransformResult
@@ -90,70 +94,6 @@ public sealed class StateMachineMutationTransformer : IMutationTransformer, IMod
                 identity.Id,
                 transition.OnEvent ?? "StateTransitioned"),
         };
-    }
-
-    private bool CanUseTransition(StateMachineTransition transition, AppIdentity identity)
-    {
-        if (transition.RequiredRoles.Count == 0)
-            return true;
-
-        var transitionPolicy = new TablePolicy(
-            allowedActions: new[] { PolicyAction.Update },
-            rowScopeExpression: "state-machine-role-gate",
-            rowScopeRoles: transition.RequiredRoles);
-
-        if (_evaluator.CanAct(transitionPolicy, PolicyAction.Update, identity).Allowed &&
-            (identity.Roles.Any(transition.RequiredRoles.Contains) || IsAdmin(identity)))
-        {
-            return true;
-        }
-
-        return false;
-    }
-
-    private bool IsAdmin(AppIdentity identity)
-    {
-        var denyAllPolicy = new TablePolicy(rowScopeExpression: "admin-probe");
-        return _evaluator.CanAct(denyAllPolicy, PolicyAction.Update, identity).Allowed;
-    }
-
-    private static AppIdentity BuildIdentity(MutationTransformContext context)
-    {
-        var userContext = context.UserContext;
-        var userId = userContext.TryGetValue(UserIdContextKey, out var idValue) && idValue is not null
-            ? idValue.ToString()
-            : null;
-
-        if (string.IsNullOrWhiteSpace(userId))
-            userId = "anonymous";
-
-        return new AppIdentity(userId, "mutation-context", roles: ExtractRoles(userContext));
-    }
-
-    private static IReadOnlyList<string> ExtractRoles(IDictionary<string, object?> userContext)
-    {
-        if (!userContext.TryGetValue(RolesContextKey, out var rolesValue) || rolesValue is null)
-            return Array.Empty<string>();
-
-        if (rolesValue is string singleRole)
-            return new[] { singleRole };
-
-        if (rolesValue is IEnumerable<string> typedRoles)
-            return typedRoles.ToArray();
-
-        if (rolesValue is IEnumerable sequence)
-        {
-            var result = new List<string>();
-            foreach (var item in sequence)
-            {
-                var role = item?.ToString();
-                if (!string.IsNullOrWhiteSpace(role))
-                    result.Add(role);
-            }
-            return result;
-        }
-
-        return Array.Empty<string>();
     }
 
     private static bool TryGetValue(

@@ -72,6 +72,9 @@ public sealed record ValidationRules
     /// <summary>Max as a decimal bound, when it parses as one.</summary>
     public bool TryMaxDecimal(out decimal value) => TryDecimalStr(Max, out value);
 
+    /// <summary>Step as a decimal increment, when it parses as one.</summary>
+    public bool TryStepDecimal(out decimal value) => TryDecimalStr(Step, out value);
+
     /// <summary>Min as a date/time bound, when it parses as one (ISO 8601 recommended).</summary>
     public bool TryMinDate(out DateTime value) => TryDateStr(Min, out value);
 

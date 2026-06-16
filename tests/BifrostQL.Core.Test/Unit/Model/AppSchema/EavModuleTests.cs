@@ -117,9 +117,10 @@ public class EavModuleTests
     }
 
     [Fact]
-    public void CollectEavConfigs_ShortParentName_ResolvesByPrefix()
+    public void CollectEavConfigs_ShortParentName_DoesNotResolveByPrefix()
     {
-        // Parent specified as "posts" but actual table is "wp_postmeta" -> prefix "wp_" -> "wp_posts"
+        // Metadata-driven only: eav-parent must name the table EXACTLY. A short name
+        // ("posts") is NOT inferred to "wp_posts" by prefix — no detection/guessing.
         var metaTable = MakeTableWithMetadata("wp_postmeta", "dbo", new Dictionary<string, object?>
         {
             ["eav-parent"] = "posts",
@@ -132,8 +133,7 @@ public class EavModuleTests
 
         var configs = DbModel.CollectEavConfigs(tables);
 
-        configs.Should().ContainSingle();
-        configs[0].ParentTableDbName.Should().Be("wp_posts");
+        configs.Should().BeEmpty("eav-parent must match a table name exactly — no prefix inference");
     }
 
     [Fact]
@@ -332,7 +332,9 @@ public class EavModuleTests
 
         var sdl = generator.GetTableTypeDefinition(model, includeDynamicJoins: false);
 
-        sdl.Should().Contain("_meta: String");
+        // _meta is now emitted through the uniform computed-column loop, so it
+        // carries the same "name : Type" spacing as every other field.
+        sdl.Should().Contain("_meta : JSON");
     }
 
     [Fact]
@@ -372,7 +374,7 @@ public class EavModuleTests
 
         var sdl = metaGenerator.GetTableTypeDefinition(model, includeDynamicJoins: false);
 
-        sdl.Should().NotContain("_meta: String");
+        sdl.Should().NotContain("_meta"); // the meta (child) table gets no _meta field — only the parent does
     }
 
     [Fact]
@@ -404,8 +406,8 @@ public class EavModuleTests
         var usersGenerator = new TableSchemaGenerator(
             model.Tables.First(t => t.DbName == "wp_users"));
 
-        postsGenerator.GetTableTypeDefinition(model, false).Should().Contain("_meta: String");
-        usersGenerator.GetTableTypeDefinition(model, false).Should().Contain("_meta: String");
+        postsGenerator.GetTableTypeDefinition(model, false).Should().Contain("_meta : JSON");
+        usersGenerator.GetTableTypeDefinition(model, false).Should().Contain("_meta : JSON");
     }
 
     #endregion

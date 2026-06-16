@@ -41,6 +41,14 @@ public sealed class QueryTransformerService : IQueryTransformerService
         IDictionary<string, object?> userContext,
         bool isNested)
     {
+        // Scope this node's module query arguments (e.g. _includeDeleted) into the
+        // user context under table-scoped keys before computing its filter, so a
+        // module filter transformer honors arguments supplied on this very node —
+        // nested join fields included, not just the root. The root field's args
+        // are also captured here (idempotent with the field-context capture).
+        foreach (var moduleArg in query.ModuleQueryArguments)
+            userContext[ModuleApiRegistry.ScopedKey(moduleArg.Key, query.DbTable)] = moduleArg.Value;
+
         var context = new QueryTransformContext
         {
             Model = model,

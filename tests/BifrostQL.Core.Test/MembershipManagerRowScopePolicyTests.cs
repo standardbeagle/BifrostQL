@@ -212,7 +212,7 @@ public class MembershipManagerRowScopePolicyTests
     // ---- Member cross-write: an update on another member's row is denied ----
 
     [Fact]
-    public void MemberUpdate_OnMembers_IsScopedToTheCallersOwnRow()
+    public async Task MemberUpdate_OnMembers_IsScopedToTheCallersOwnRow()
     {
         // PolicyMutationTransformer returns the row-scope filter as the
         // mutation's AdditionalFilter for update. A member updating another
@@ -222,7 +222,7 @@ public class MembershipManagerRowScopePolicyTests
         var transformer = new PolicyMutationTransformer();
         var context = MutationContext(model, Caller("member", userId: "42"));
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             model.GetTableFromDbName("members"),
             MutationType.Update,
             new Dictionary<string, object?> { ["first_name"] = "Renamed" },
@@ -236,13 +236,13 @@ public class MembershipManagerRowScopePolicyTests
     }
 
     [Fact]
-    public void MemberDelete_OnMembers_IsScopedToTheCallersOwnRow()
+    public async Task MemberDelete_OnMembers_IsScopedToTheCallersOwnRow()
     {
         var model = MembershipManagerModel();
         var transformer = new PolicyMutationTransformer();
         var context = MutationContext(model, Caller("member", userId: "42"));
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             model.GetTableFromDbName("members"),
             MutationType.Delete,
             new Dictionary<string, object?>(),
@@ -272,13 +272,13 @@ public class MembershipManagerRowScopePolicyTests
     }
 
     [Fact]
-    public void OfficerUpdate_OnMembers_IsNotScopedSoCrossMemberEditsArePermitted()
+    public async Task OfficerUpdate_OnMembers_IsNotScopedSoCrossMemberEditsArePermitted()
     {
         var model = MembershipManagerModel();
         var transformer = new PolicyMutationTransformer();
         var context = MutationContext(model, Caller("officer", userId: "7"));
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             model.GetTableFromDbName("members"),
             MutationType.Update,
             new Dictionary<string, object?> { ["first_name"] = "Renamed" },

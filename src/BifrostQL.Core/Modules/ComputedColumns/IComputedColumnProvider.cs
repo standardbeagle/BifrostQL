@@ -10,6 +10,15 @@ public sealed class ComputedColumnContext
     public required IReadOnlyDictionary<string, object?> Row { get; init; }
     public required IDictionary<string, object?> UserContext { get; init; }
     public IServiceProvider? Services { get; init; }
+
+    /// <summary>
+    /// The connection factory for the database backing the current request, when
+    /// available. Providers that must run their own auxiliary query (e.g. the EAV
+    /// <c>_meta</c> provider reading a row's attribute rows) open a connection and
+    /// build dialect-escaped, parameterized SQL through this. Null when the query
+    /// was resolved without a connection factory in context.
+    /// </summary>
+    public IDbConnFactory? ConnFactory { get; init; }
 }
 
 public interface IComputedColumnProvider

@@ -114,7 +114,6 @@ public sealed class PerProfileSchemaResolutionTests : IAsyncLifetime
 
         var services = new ServiceCollection();
         services.AddSingleton<IFilterTransformers>(filterTransformers);
-        services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = Array.Empty<IMutationModule>() });
         services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap
         {
             Transformers = Array.Empty<IMutationTransformer>(),

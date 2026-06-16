@@ -1,175 +1,47 @@
-# EAV Flattening Module
+# EAV Attributes (`_meta`)
 
-This module provides Entity-Attribute-Value (EAV) flattening functionality for BifrostQL, enabling dynamic pivot of EAV tables into queryable, wide-format virtual tables.
-
-## Overview
-
-EAV (Entity-Attribute-Value) is a common database pattern used for flexible schemas, particularly in WordPress and similar applications:
+Surfaces Entity-Attribute-Value (EAV) tables — a key/value side table holding a row's
+dynamic attributes (e.g. WordPress `wp_postmeta`) — on the parent type as a single
+`_meta` field.
 
 ```sql
--- EAV table structure (e.g., wp_postmeta)
+-- EAV meta table (e.g. wp_postmeta)
 | post_id | meta_key | meta_value |
 |---------|----------|------------|
-| 1       | title    | Hello      |
-| 1       | views    | 100        |
-| 2       | title    | World      |
+| 1       | color    | red        |
+| 1       | size     | L          |
 ```
-
-The flattening module transforms this into:
-
-```
--- Flattened virtual table
-| post_id | title | views |
-|---------|-------|-------|
-| 1       | Hello | 100   |
-| 2       | World | null  |
-```
-
-## Components
-
-### 1. EavDetector
-
-Detects EAV patterns in database tables:
-- `DetectFromMetadata()` - Detects from table metadata (eav-parent, eav-fk, eav-key, eav-value)
-- `DetectHeuristic()` - Heuristic detection based on column naming patterns
-
-### 2. EavFlattener
-
-Core flattening logic:
-- `EavFlattenedTable` - Represents a flattened virtual table
-- `EavColumn` - Represents a dynamic column discovered from meta_keys
-- `EavColumnDiscoverer` - Discovers columns by querying distinct meta_keys
-
-### 3. EavSchemaTransformer
-
-Schema generation for flattened tables:
-- Generates GraphQL type definitions
-- Creates field extensions on parent tables
-- Provides naming conventions for flattened types
-
-### 4. EavQueryTransformer
-
-SQL generation for flattened queries:
-- Generates dynamic pivot SQL using `MAX(CASE WHEN ...)` pattern
-- Handles pagination and filtering
-- Joins parent tables with pivoted EAV data
-
-### 5. EavModule
-
-Main orchestration class:
-- Manages flattened table definitions
-- Caches discovered column schemas
-- Executes queries against flattened tables
-
-### 6. EavResolver
-
-GraphQL resolvers:
-- `EavResolver` - Root-level query resolver
-- `EavSingleResolver` - Single entity resolver (for nested queries)
-- `EavColumnResolver` - Individual column value resolver
-
-## Usage
-
-### Configuration
-
-EAV tables are automatically detected when table metadata includes:
-- `eav-parent`: Parent table name (e.g., "wp_posts")
-- `eav-fk`: Foreign key column (e.g., "post_id")
-- `eav-key`: Attribute key column (e.g., "meta_key")
-- `eav-value`: Attribute value column (e.g., "meta_value")
-
-### WordPress Integration
-
-The WordPressDetector automatically configures EAV metadata for WordPress databases:
-- `wp_postmeta` → `wp_posts` (via post_id)
-- `wp_usermeta` → `wp_users` (via user_id)
-- `wp_termmeta` → `wp_terms` (via term_id)
-- `wp_commentmeta` → `wp_comments` (via comment_id)
-
-### GraphQL Queries
-
-Once configured, flattened EAV data is accessible via:
 
 ```graphql
-# Root-level query
-query {
-  wp_posts_flattened_postmeta(limit: 10) {
-    data {
-      ID
-      _meta  # JSON object with all meta values
-    }
-    total
-  }
-}
-
-# Nested query via parent entity
-query {
-  wp_posts(limit: 10) {
-    data {
-      ID
-      post_title
-      _flattened_postmeta {
-        _meta
-      }
-    }
-  }
-}
+{ posts { data { id _meta } } }
+```
+```json
+{ "id": 1, "_meta": { "color": "red", "size": "L" } }
 ```
 
-## Type Conversion
+`_meta` is the registered `JSON` scalar — a row's attributes as one nested object.
 
-The module includes `EavTypeConverter` for automatic type inference:
-- Integer values → `Int`
-- Decimal values → `Float`
-- Boolean values → `Boolean`
-- DateTime values → `DateTime`
-- Mixed/Other → `String`
+## Configuration (metadata-driven only)
 
-## Caching
-
-Column discovery is cached via `EavSchemaCache`:
-- Default TTL: 5 minutes
-- Cache can be invalidated per table or globally
-- Prevents repeated database queries for meta_key discovery
-
-## Testing
-
-Run EAV-specific tests:
-```bash
-dotnet test --filter "FullyQualifiedName~Eav"
-```
-
-Test files:
-- `EavFlattenerTests.cs` - Core detection and type conversion tests
-- `EavQueryTransformerTests.cs` - SQL generation tests
-- `EavSchemaTransformerTests.cs` - Schema generation tests
-- `EavModuleTests.cs` - Module integration tests
-
-## Architecture
+Declare the link on the **meta** table with `eav-*` metadata. `eav-parent` must name the
+parent table **exactly** — there is no name-based detection or inference.
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  EavDetector    │────▶│  EavModule       │────▶│ EavSchemaTransformer│
-│  (Detection)    │     │  (Orchestration) │     │ (Schema Gen)    │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-         │                       │                         │
-         ▼                       ▼                         ▼
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  Table Metadata │     │ EavQueryTransformer    │ │ GraphQL Schema  │
-│  (eav-parent,   │     │ (SQL Generation) │     │ (Type System)   │
-│   eav-fk, etc.) │     └──────────────────┘     └─────────────────┘
-└─────────────────┘              │                         │
-                                 ▼                         ▼
-                          ┌──────────────────┐     ┌─────────────────┐
-                          │  EavResolver     │────▶│  Query Results  │
-                          │  (GraphQL)       │     │  (Flattened)    │
-                          └──────────────────┘     └─────────────────┘
+"dbo.wp_postmeta { eav-parent: wp_posts; eav-fk: post_id; eav-key: meta_key; eav-value: meta_value }"
 ```
 
-## Future Enhancements
+## How it works
 
-- [ ] Support for filtering on flattened columns
-- [ ] Support for sorting by meta values
-- [ ] Type inference from sample values
-- [ ] Configurable column name mapping
-- [ ] Support for JSON meta values
+- `EavConfigCollector` reads the `eav-*` metadata at model build into `model.EavConfigs`.
+- `EavMetaProvider` (an `IComputedColumnProvider`, name `eav-meta`) synthesizes the
+  read-only `_meta` field on each EAV-parent table via the standard
+  provider-computed-column pipeline. Per row, it reads the parent's single primary key,
+  queries the meta table (`SELECT key,value WHERE fk=@pk`), and returns the attributes as
+  a JSON object string that the `JSON` scalar serializes into a real object.
+
+## Scope / limits
+
+- Read-only. Single-PK parents only (composite PK → `null`).
+- One per-row query per parent row (N+1); batch later if needed.
+- No SQL-level filter/sort **by** an attribute — `_meta` is an opaque object. Richer
+  attribute querying is intentionally out of scope.

@@ -154,6 +154,16 @@ public abstract class SqlDialectBase : ISqlDialect
 
     /// <inheritdoc />
     public virtual string TextCast(string columnExpression, string dataType) => TextCast(columnExpression);
+
+    /// <inheritdoc />
+    /// <remarks>SQL Server requires <c>BEGIN TRANSACTION</c>; LIMIT/OFFSET dialects override with <c>BEGIN</c>.</remarks>
+    public virtual string BeginTransactionSql => "BEGIN TRANSACTION;";
+
+    /// <inheritdoc />
+    public virtual string CommitTransactionSql => "COMMIT;";
+
+    /// <inheritdoc />
+    public virtual string RollbackTransactionSql => "ROLLBACK;";
 }
 
 /// <summary>
@@ -169,6 +179,13 @@ public abstract class LimitOffsetDialectBase : SqlDialectBase
         : base(identifierQuote, stringConcatOperator, lastInsertedIdentity, returningIdentityClause)
     {
     }
+
+    /// <summary>
+    /// PostgreSQL, MySQL, and SQLite all open a transaction with the bare
+    /// <c>BEGIN;</c> keyword (no <c>TRANSACTION</c> noise word required), unlike
+    /// SQL Server's <c>BEGIN TRANSACTION;</c>.
+    /// </summary>
+    public override string BeginTransactionSql => "BEGIN;";
 }
 
 /// <summary>

@@ -33,49 +33,16 @@ namespace BifrostQL.Core.Model.Relationships
                     string.IsNullOrWhiteSpace(value))
                     continue;
 
-                // Resolve parent: try exact match first, then prefix-aware match
-                var parentDbName = ResolveParentTableName(table.DbName, parent, tablesByDbName);
-
-                if (parentDbName == null)
+                // Metadata-driven only: eav-parent must name an existing table exactly.
+                // No name-prefix inference — EAV participation is an explicit, declared
+                // choice, never detected from a naming convention.
+                if (!tablesByDbName.Contains(parent!))
                     continue;
 
-                configs.Add(new EavConfig(table.DbName, parentDbName, fk!, key!, value!));
+                configs.Add(new EavConfig(table.DbName, parent!, fk!, key!, value!));
             }
 
             return configs;
-        }
-
-        private string? ResolveParentTableName(
-            string metaTableName, 
-            string parentShortName, 
-            HashSet<string> tablesByDbName)
-        {
-            // Try exact match first
-            if (tablesByDbName.Contains(parentShortName))
-                return parentShortName;
-
-            // Try prefix-aware match
-            var lastUnderscore = metaTableName.LastIndexOf('_');
-            if (lastUnderscore <= 0)
-                return null;
-
-            var prefix = metaTableName[..lastUnderscore];
-            
-            // Try progressively shorter prefixes
-            while (prefix.Length > 0)
-            {
-                var candidate = prefix + "_" + parentShortName;
-                if (tablesByDbName.Contains(candidate))
-                    return candidate;
-
-                var idx = prefix.LastIndexOf('_');
-                if (idx <= 0) 
-                    break;
-                
-                prefix = prefix[..idx];
-            }
-
-            return null;
         }
     }
 }

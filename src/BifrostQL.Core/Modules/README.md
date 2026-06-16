@@ -46,11 +46,57 @@ Lifecycle hooks for side effects. Used for:
 - `BeforeExecute` - SQL built, about to execute
 - `AfterExecute` - Execution complete, results available
 
-### Mutation Modules (`IMutationModule`)
+### Before-Commit Mutation Hooks (`IBeforeCommitMutationHook`)
 
-Modify mutation data before execution. Used for:
-- Auto-populating audit columns
-- Setting default values
+A **veto** phase that runs immediately *before* the write, distinct from the
+post-commit `IMutationObserver` (which fires *after* the write and swallows
+failures — fine for metrics, useless for outbox/domain-event/veto patterns).
+
+```csharp
+public interface IBeforeCommitMutationHook
+{
+    ValueTask<IReadOnlyList<string>> BeforeCommitAsync(MutationObserverContext context);
+}
+```
+
+**Contract:**
+- Runs after the mutation transform pipeline and immediately **before** the
+  single-statement write (`Insert`, `Update`, `Delete`, soft-delete-as-`Update`,
+  and the inline `upsert`) in `DbTableMutateResolver`.
+- Returning a **non-empty** error list — or **throwing** — aborts the mutation:
+  the resolver raises `BifrostExecutionError` and the write never executes, so
+  **no row is written or changed**. Unlike `MutationObservers`, the composite
+  (`BeforeCommitMutationHooks`) does **not** swallow: thrown exceptions
+  propagate and aggregated errors abort.
+- `context.Result` is **always null** in this phase — the write has not happened
+  yet, so no generated id / affected-row count is available.
+
+**Transactional guarantee / limit (read this):** each write goes through
+`DbTableMutateResolver.ExecuteNonQuery`/`ExecuteScalar`, which opens its own
+connection and runs a **single statement** (implicitly atomic). There is no
+explicit multi-statement DB transaction wrapping a mutation. A before-commit
+veto therefore works by running *before* that single statement and preventing
+it from executing at all — it is **not** a DB transaction spanning multiple
+statements and cannot roll back a write that already ran. Post-write
+`IMutationObserver`s still run **only after** a successful write, so a veto
+prevents both the write and the post-commit observers from firing.
+
+Hooks resolve from DI (`BeforeCommitMutationHooks`, built from every registered
+`IBeforeCommitMutationHook`). They run in registration order and their errors
+are aggregated. The `WorkflowTriggerHost` suppression guard is honored, mirroring
+the post-commit observer path.
+
+> Wired on the single-row resolver (`DbTableMutateResolver`). The batch resolver
+> (`DbTableBatchResolver`) is a follow-up.
+
+### Audit Columns (`AuditMutationTransformer`)
+
+Auto-populating audit columns is a mutation transformer (`IMutationTransformer`),
+not a separate hook system. `AuditMutationTransformer` stamps created-on/by,
+updated-on/by, and deleted-on/by from `populate` column metadata plus the
+model-level `user-audit-key`, overwriting any client-supplied value. It runs at
+priority 50 so it sees the original DELETE intent before the soft-delete
+transformer (100) rewrites DELETE into UPDATE. See `AuditMutationTransformer.cs`.
 
 ## Module API Surface (`IModuleApi`)
 

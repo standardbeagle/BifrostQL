@@ -89,7 +89,6 @@ public sealed class SoftDeleteShapeTests
         var executor = new SqlExecutionManager(model, schema, transformerService);
 
         var services = new ServiceCollection();
-        services.AddSingleton<IMutationModules>(new ModulesWrap { Modules = System.Array.Empty<IMutationModule>() });
         services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap { Transformers = System.Array.Empty<IMutationTransformer>() });
         using var sp = services.BuildServiceProvider();
 

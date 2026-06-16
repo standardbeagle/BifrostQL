@@ -78,23 +78,6 @@ public static class WordPressBundleExtensions
         return bundle != null;
     }
 
-    /// <summary>
-    /// Enables EAV flattening for WordPress meta tables using the bundle configuration.
-    /// </summary>
-    /// <param name="model">The database model.</param>
-    /// <param name="dialect">The SQL dialect.</param>
-    /// <param name="bundle">The WordPress schema bundle.</param>
-    /// <returns>The EAV module integration.</returns>
-    public static EavModuleIntegration? CreateEavModuleWithBundle(
-        this IDbModel model,
-        ISqlDialect dialect,
-        WordPressSchemaBundle bundle)
-    {
-        if (!bundle.Configuration.EnableEavFlattening)
-            return null;
-
-        return new EavModuleIntegration(model, dialect);
-    }
 
     /// <summary>
     /// Gets the file storage service configured for WordPress if available.

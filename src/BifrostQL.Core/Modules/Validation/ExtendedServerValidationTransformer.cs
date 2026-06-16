@@ -28,7 +28,7 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
                || table.Columns.Any(IsColumnValidationEnabled)
                || HasPluginValidation(table));
 
-    public MutationTransformResult Transform(
+    public async ValueTask<MutationTransformResult> TransformAsync(
         IDbTable table,
         MutationType mutationType,
         Dictionary<string, object?> data,
@@ -39,7 +39,7 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
         if (IsTableValidationEnabled(table) || table.Columns.Any(IsColumnValidationEnabled))
             ValidateStandardMetadata(table, mutationType, data, errors);
 
-        RunPluginValidators(table, mutationType, data, context, errors);
+        await RunPluginValidatorsAsync(table, mutationType, data, context, errors);
 
         return new MutationTransformResult
         {
@@ -49,7 +49,7 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
         };
     }
 
-    private void RunPluginValidators(
+    private async ValueTask RunPluginValidatorsAsync(
         IDbTable table,
         MutationType mutationType,
         Dictionary<string, object?> data,
@@ -57,16 +57,16 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
         List<string> errors)
     {
         foreach (var providerName in ValidationPlugins(table.GetMetadataValue(MetadataKeys.Validation.Plugin)))
-            RunProvider(providerName, table, mutationType, data, context, columnName: null, errors);
+            await RunProviderAsync(providerName, table, mutationType, data, context, columnName: null, errors);
 
         foreach (var column in table.Columns)
         {
             foreach (var providerName in ValidationPlugins(column.GetMetadataValue(MetadataKeys.Validation.Plugin)))
-                RunProvider(providerName, table, mutationType, data, context, column.ColumnName, errors);
+                await RunProviderAsync(providerName, table, mutationType, data, context, column.ColumnName, errors);
         }
     }
 
-    private void RunProvider(
+    private async ValueTask RunProviderAsync(
         string providerName,
         IDbTable table,
         MutationType mutationType,
@@ -82,7 +82,7 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
             return;
         }
 
-        errors.AddRange(provider.Validate(new ServerValidationContext
+        errors.AddRange(await provider.ValidateAsync(new ServerValidationContext
         {
             Model = context.Model,
             Table = table,
@@ -168,6 +168,16 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
 
         if (rules.TryMaxDecimal(out var max) && numeric > max)
             errors.Add($"{column.GraphQlName} must be at most {max}.");
+
+        // Step grid: the value must be an integral number of steps from the base
+        // (min when present, else 0), mirroring the HTML number input's step attribute.
+        if (rules.TryStepDecimal(out var step) && step > 0)
+        {
+            var origin = rules.TryMinDecimal(out var baseMin) ? baseMin : 0m;
+            var stepsFromOrigin = (numeric - origin) / step;
+            if (Math.Abs(stepsFromOrigin - Math.Round(stepsFromOrigin)) > 0.0000001m)
+                errors.Add($"{column.GraphQlName} must be in increments of {step}.");
+        }
     }
 
     private static void ValidatePattern(ColumnDto column, ValidationRules rules, object? value, List<string> errors)

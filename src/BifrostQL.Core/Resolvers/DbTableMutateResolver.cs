@@ -27,24 +27,23 @@ namespace BifrostQL.Core.Resolvers
             var model = bifrost.Model;
             var dialect = conFactory.Dialect;
             var table = _table;
-            var modules = context.RequestServices!.GetRequiredService<IMutationModules>();
             var mutationTransformers = context.RequestServices!.GetRequiredService<IMutationTransformers>();
 
             if (context.HasArgument("sync"))
             {
-                return await SyncObject(context, table, model, conFactory, dialect);
+                return await SyncObject(context, table, mutationTransformers, model, conFactory, dialect);
             }
             if (context.HasArgument("insert"))
             {
-                return await InsertObject(context, table, modules, mutationTransformers, model, conFactory, dialect);
+                return await InsertObject(context, table, mutationTransformers, model, conFactory, dialect);
             }
             if (context.HasArgument("update"))
             {
-                return await UpdateObject(context, table, modules, mutationTransformers, model, conFactory, dialect);
+                return await UpdateObject(context, table, mutationTransformers, model, conFactory, dialect);
             }
             if (context.HasArgument("delete"))
             {
-                return await DeleteObject(context, modules, mutationTransformers, table, model, conFactory, dialect);
+                return await DeleteObject(context, mutationTransformers, table, model, conFactory, dialect);
             }
 
             if (context.HasArgument("upsert"))
@@ -70,31 +69,29 @@ namespace BifrostQL.Core.Resolvers
                     // transformer applies, Transform returns the same data reference,
                     // so adopting transformResult.Data is an exact no-op.
                     var upsertTransformContext = new MutationTransformContext { Model = model, UserContext = context.UserContext, Services = context.RequestServices };
-                    var transformResult = mutationTransformers.Transform(table, MutationType.Update, propertyInfo.data, upsertTransformContext);
+                    var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Update, propertyInfo.data, upsertTransformContext);
                     if (transformResult.Errors.Length > 0)
                         throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
                     var upsertData = transformResult.Data;
-                    var moduleSql = modules.Insert(upsertData, table, context.UserContext, model);
                     var returning = dialect.ReturningIdentityClauseFor(table.KeyColumns.Select(k => k.ColumnName).ToList());
                     var identitySql = returning != null
                         ? upsertSql.TrimEnd(';') + returning + ";"
                         : upsertSql + $"SELECT {dialect.LastInsertedIdentity} ID;";
-                    return HandleDecimals(await ExecuteScalar(conFactory, Join(identitySql, moduleSql), upsertData));
+                    await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, upsertData, context.UserContext);
+                    return HandleDecimals(await ExecuteScalar(conFactory, identitySql, upsertData));
                 }
 
                 if (propertyInfo.keyData.Any())
-                    return await UpdateObject(context, table, modules, mutationTransformers, model, conFactory, dialect, "upsert");
+                    return await UpdateObject(context, table, mutationTransformers, model, conFactory, dialect, "upsert");
 
-                return await InsertObject(context, table, modules, mutationTransformers, model, conFactory, dialect, "upsert");
+                return await InsertObject(context, table, mutationTransformers, model, conFactory, dialect, "upsert");
             }
             return null;
         }
 
         ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
         {
-            var modules = context.RequestServices!.GetRequiredService<IMutationModules>();
-            modules.OnSave(context);
             return ResolveAsync(new BifrostFieldContextAdapter(context));
         }
 
@@ -143,7 +140,7 @@ namespace BifrostQL.Core.Resolvers
                 .ToDictionary(x => x.ColumnName, x => x.Value);
         }
 
-        private async Task<object?> DeleteObject(IBifrostFieldContext context, IMutationModules modules,
+        private async Task<object?> DeleteObject(IBifrostFieldContext context,
             IMutationTransformers mutationTransformers, IDbTable table, IDbModel model,
             IDbConnFactory conFactory, ISqlDialect dialect)
         {
@@ -166,7 +163,7 @@ namespace BifrostQL.Core.Resolvers
                 Services = context.RequestServices,
                 ModuleArguments = ModuleApiRegistry.CaptureMutationArguments(context, table),
             };
-            var transformResult = mutationTransformers.Transform(table, MutationType.Delete, data, transformContext);
+            var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Delete, data, transformContext);
 
             if (transformResult.Errors.Length > 0)
                 throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
@@ -179,7 +176,6 @@ namespace BifrostQL.Core.Resolvers
             if (transformResult.MutationType == MutationType.Update)
             {
                 // Soft-delete: transformed to UPDATE
-                var moduleSql = modules.Delete(transformResult.Data, table, userContext, model);
                 var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
 
                 var keyData = transformResult.Data.Where(d => table.ColumnLookup.ContainsKey(d.Key) && table.ColumnLookup[d.Key].IsPrimaryKey)
@@ -190,7 +186,8 @@ namespace BifrostQL.Core.Resolvers
                 var setClause = string.Join(",", setData.Select(kv => SetAssignment(dialect, table, kv.Key)));
                 var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
                 var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
-                var result = await ExecuteNonQuery(conFactory, Join(sql, moduleSql), transformResult.Data, additionalFilter.Parameters);
+                await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, transformResult.Data, userContext);
+                var result = await ExecuteNonQuery(conFactory, sql, transformResult.Data, additionalFilter.Parameters);
                 await NotifyMutationAsync(context.RequestServices, table, MutationType.Update, transformResult.Data, result, userContext);
                 return result;
             }
@@ -200,16 +197,16 @@ namespace BifrostQL.Core.Resolvers
             // reaches the WHERE clause and parameters, mirroring the soft-delete
             // branch above.
             var deleteData = transformResult.Data;
-            var deleteModuleSql = modules.Delete(deleteData, table, userContext, model);
             var deleteTableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var deleteWhereClause = string.Join(" AND ", deleteData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause}{additionalFilter.WhereSuffix};";
-            var deleteResult = await ExecuteNonQuery(conFactory, Join(deleteSql, deleteModuleSql), deleteData, additionalFilter.Parameters);
+            await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Delete, deleteData, userContext);
+            var deleteResult = await ExecuteNonQuery(conFactory, deleteSql, deleteData, additionalFilter.Parameters);
             await NotifyMutationAsync(context.RequestServices, table, MutationType.Delete, deleteData, deleteResult, userContext);
             return deleteResult;
         }
 
-        private async Task<object?> UpdateObject(IBifrostFieldContext context, IDbTable table, IMutationModules modules,
+        private async Task<object?> UpdateObject(IBifrostFieldContext context, IDbTable table,
             IMutationTransformers mutationTransformers, IDbModel model,
             IDbConnFactory conFactory, ISqlDialect dialect, string parameterName = "update")
         {
@@ -237,7 +234,7 @@ namespace BifrostQL.Core.Resolvers
                 CurrentRow = currentRow,
                 Services = context.RequestServices,
             };
-            var transformResult = mutationTransformers.Transform(table, MutationType.Update, propertyInfo.data, transformContext);
+            var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Update, propertyInfo.data, transformContext);
             if (transformResult.Errors.Length > 0)
                 throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
@@ -254,12 +251,12 @@ namespace BifrostQL.Core.Resolvers
                 .Where(d => !propertyInfo.keyData.ContainsKey(d.Key))
                 .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
 
-            var moduleSql = modules.Update(updatedData, table, context.UserContext, model);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var setClause = string.Join(",", standardData.Select(kv => SetAssignment(dialect, table, kv.Key)));
             var whereClause = string.Join(" AND ", propertyInfo.keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
-            var result = await ExecuteNonQuery(conFactory, Join(sql, moduleSql), updatedData, additionalFilter.Parameters);
+            await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, updatedData, context.UserContext);
+            var result = await ExecuteNonQuery(conFactory, sql, updatedData, additionalFilter.Parameters);
             await NotifyMutationAsync(context.RequestServices, table, MutationType.Update, updatedData, result, context.UserContext);
             await NotifyStateTransitionAsync(context.RequestServices, transformResult.StateTransition, context.UserContext);
             return propertyInfo.keyData.Values.First();
@@ -277,11 +274,19 @@ namespace BifrostQL.Core.Resolvers
         // Orphan loading/deletion is scoped per parent (and per discriminator for
         // polymorphic links), so reconciling one parent never touches another's.
         //
-        // NOTE (v1 scope): the nested path bypasses the mutation transformer /
-        // module pipeline — no policy gating, no audit-populate. Columns relying on
-        // populate metadata must have a database default. Tracked as follow-up.
+        // Each inferred operation is routed through the mutation-transformer
+        // pipeline (TreeSyncExecutor) before its SQL is built, so soft-delete,
+        // authorization policy, and audit-populate apply to nested and orphan
+        // operations exactly as they do to a single-row mutation. In particular an
+        // orphaned child on a soft-delete table is rewritten Delete → UPDATE
+        // (deleted_at stamped) instead of being physically removed.
+        //
+        // NOTE (remaining sub-item): _hardDelete is not yet capturable on the sync
+        // field — opting a soft-delete orphan into a real DELETE would require
+        // emitting + capturing the module arg on the sync mutation field. The
+        // default (soft-delete orphans become UPDATE) is correct without it.
         private static async Task<object?> SyncObject(IBifrostFieldContext context, IDbTable table,
-            IDbModel model, IDbConnFactory conFactory, ISqlDialect dialect)
+            IMutationTransformers mutationTransformers, IDbModel model, IDbConnFactory conFactory, ISqlDialect dialect)
         {
             var tree = context.GetArgument<Dictionary<string, object?>>("sync") ?? new();
             if (tree.Count == 0)
@@ -294,7 +299,8 @@ namespace BifrostQL.Core.Resolvers
             var operations = engine.ComputeOperations(table, tree, existing);
 
             var executor = new TreeSyncExecutor(dialect);
-            var rootId = await executor.ExecuteAsync(operations, conFactory);
+            var rootId = await executor.ExecuteAsync(
+                operations, conFactory, mutationTransformers, model, context.UserContext, context.RequestServices);
             // On a pure insert the executor returns the generated PK; on an update
             // the root already has one, so fall back to the submitted key value.
             rootId ??= RootKeyValue(table, tree);
@@ -311,7 +317,7 @@ namespace BifrostQL.Core.Resolvers
             return data.TryGetValue(keys[0].ColumnName, out var v) ? v : null;
         }
 
-        private async Task<object?> InsertObject(IBifrostFieldContext context, IDbTable table, IMutationModules modules,
+        private async Task<object?> InsertObject(IBifrostFieldContext context, IDbTable table,
             IMutationTransformers mutationTransformers, IDbModel model,
             IDbConnFactory conFactory, ISqlDialect dialect, string parameterName = "insert")
         {
@@ -320,7 +326,7 @@ namespace BifrostQL.Core.Resolvers
             // Mutation transformers (e.g. the authorization policy engine) gate
             // the insert before any SQL is built; non-empty Errors abort it.
             var transformContext = new MutationTransformContext { Model = model, UserContext = context.UserContext, Services = context.RequestServices };
-            var transformResult = mutationTransformers.Transform(table, MutationType.Insert, data, transformContext);
+            var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Insert, data, transformContext);
             if (transformResult.Errors.Length > 0)
                 throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
@@ -329,7 +335,6 @@ namespace BifrostQL.Core.Resolvers
             // delete path; equals the original data when no transformer applies.
             data = transformResult.Data;
 
-            var moduleSql = modules.Insert(data, table, context.UserContext, model);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var columns = string.Join(",", data.Keys.Select(k => dialect.EscapeIdentifier(k)));
             var values = string.Join(",", data.Keys.Select(k => ValuePlaceholder(dialect, table, k)));
@@ -337,7 +342,8 @@ namespace BifrostQL.Core.Resolvers
             var sql = returning != null
                 ? $"INSERT INTO {tableRef}({columns}) VALUES({values}){returning};"
                 : $"INSERT INTO {tableRef}({columns}) VALUES({values});SELECT {dialect.LastInsertedIdentity} ID;";
-            var result = HandleDecimals(await ExecuteScalar(conFactory, Join(sql, moduleSql), data));
+            await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Insert, data, context.UserContext);
+            var result = HandleDecimals(await ExecuteScalar(conFactory, sql, data));
             await NotifyMutationAsync(context.RequestServices, table, MutationType.Insert, data, result, context.UserContext);
             return result;
         }
@@ -425,9 +431,36 @@ namespace BifrostQL.Core.Resolvers
             return ($" AND ({rendered.Sql})", parameters.Parameters);
         }
 
-        private static string Join(string str, string[] array)
+        // Runs the before-commit veto phase immediately before the write. Mirrors
+        // the IsWorkflowTriggerSuppressed guard used by NotifyMutationAsync. If any
+        // hook returns errors (or throws), the aggregated errors surface as a
+        // BifrostExecutionError so the caller's write is aborted and no row is
+        // written/changed. Result is not known yet, so the context carries null.
+        private static async ValueTask RunBeforeCommitHooksAsync(
+            IServiceProvider? services,
+            IDbTable table,
+            MutationType mutationType,
+            IDictionary<string, object?> data,
+            IDictionary<string, object?> userContext)
         {
-            return String.Join(";", Flat(str, array));
+            if (services is null || IsWorkflowTriggerSuppressed(userContext))
+                return;
+
+            var hooks = services.GetService<BeforeCommitMutationHooks>();
+            if (hooks is null)
+                return;
+
+            var errors = await hooks.RunAsync(new MutationObserverContext
+            {
+                Table = table,
+                MutationType = mutationType,
+                Data = data,
+                Result = null,
+                UserContext = userContext,
+            });
+
+            if (errors.Count > 0)
+                throw new BifrostExecutionError(string.Join("; ", errors));
         }
 
         private static async ValueTask NotifyStateTransitionAsync(
@@ -472,15 +505,6 @@ namespace BifrostQL.Core.Resolvers
             => userContext.TryGetValue(BifrostQL.Core.Workflows.WorkflowTriggerHost.SuppressTriggersKey, out var value)
                && value is bool suppressed
                && suppressed;
-
-        private static IEnumerable<string> Flat(string str, string[] array)
-        {
-            yield return str;
-            if (array != null)
-            {
-                foreach (var arrString in array) { yield return arrString; }
-            }
-        }
 
     }
 }

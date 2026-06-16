@@ -39,7 +39,13 @@ namespace BifrostQL.Core.Schema
             !col.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden);
 
         private IEnumerable<ColumnDto> VisibleColumns => _table.Columns.Where(IsColumnVisible);
-        private IEnumerable<ComputedColumnDefinition> ComputedColumns => ComputedColumnConfigCollector.FromTable(_table);
+
+        /// <summary>
+        /// Computed columns emitted for this table. The model is required so EAV
+        /// parent tables surface their synthesized <c>_meta</c> provider column.
+        /// </summary>
+        private IEnumerable<ComputedColumnDefinition> ComputedColumnsFor(IDbModel model)
+            => ComputedColumnConfigCollector.FromTable(_table, model);
 
         /// <summary>
         /// True when a single-link's FK column(s) on this table resolve to a
@@ -90,7 +96,7 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine($"\t{column.GraphQlName} : {fieldType}");
             }
 
-            foreach (var column in ComputedColumns)
+            foreach (var column in ComputedColumnsFor(model))
             {
                 builder.AppendLine($"\t{column.Name} : {column.GraphQlType}");
             }
@@ -112,21 +118,22 @@ namespace BifrostQL.Core.Schema
                 var fieldName = link.Value.ChildFieldName;
                 if (!emittedLinkFields.Add(fieldName)) continue;
                 var child = link.Value.ChildTable;
-                builder.AppendLine($"\t{fieldName}(filter: {child.TableFilterTypeName}, limit: Int, offset: Int, sort: [{child.TableColumnSortEnumName}!]) : {child.GraphQlName}_paged");
+                var childModuleArgs = Modules.ModuleApiRegistry.QueryArgumentsSdl(child);
+                builder.AppendLine($"\t{fieldName}(filter: {child.TableFilterTypeName}, limit: Int, offset: Int, sort: [{child.TableColumnSortEnumName}!]{childModuleArgs}) : {child.GraphQlName}_paged");
             }
             foreach (var link in _table.ManyToManyLinks)
             {
                 if (!emittedLinkFields.Add(link.Value.TargetTable.GraphQlName))
                     continue;
                 var target = link.Value.TargetTable;
-                builder.AppendLine($"\t{target.GraphQlName}(filter: {target.TableFilterTypeName}, limit: Int, offset: Int, sort: [{target.TableColumnSortEnumName}!]) : {target.GraphQlName}_paged");
+                var targetModuleArgs = Modules.ModuleApiRegistry.QueryArgumentsSdl(target);
+                builder.AppendLine($"\t{target.GraphQlName}(filter: {target.TableFilterTypeName}, limit: Int, offset: Int, sort: [{target.TableColumnSortEnumName}!]{targetModuleArgs}) : {target.GraphQlName}_paged");
             }
 
-            // Add _meta field if this table is an EAV parent
-            if (model.EavConfigs.Any(e => string.Equals(e.ParentTableDbName, _table.DbName, StringComparison.OrdinalIgnoreCase)))
-            {
-                builder.AppendLine("\t_meta: String");
-            }
+            // The EAV-parent _meta field is now emitted through the ComputedColumns
+            // loop above (synthesized by ComputedColumnConfigCollector.AddEavMeta),
+            // so it resolves via the provider-computed-column pipeline rather than
+            // being a dead schema-only stub.
 
             if (includeDynamicJoins)
             {
@@ -368,7 +375,7 @@ namespace BifrostQL.Core.Schema
             result.AppendLine(
                 $"\t{_table.GraphQlName}(insert: {_table.GetActionTypeName(MutateActions.Insert)}, update: {_table.GetActionTypeName(MutateActions.Update)}, upsert: {_table.GetActionTypeName(MutateActions.Upsert)}, delete: {_table.GetActionTypeName(MutateActions.Delete)}, sync: {NestedSyncInsertTypeName}, _primaryKey: [String]{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : Int");
 
-            result.AppendLine($"{_table.GraphQlName}_batch(actions: [batch_{_table.GraphQlName}!]!) : Int");
+            result.AppendLine($"{_table.GraphQlName}_batch(actions: [batch_{_table.GraphQlName}!]!{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : Int");
             return result.ToString();
         }
 

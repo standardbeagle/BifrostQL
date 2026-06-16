@@ -100,14 +100,14 @@ public class PolicyMutationTransformerTests
     [InlineData(MutationType.Insert)]
     [InlineData(MutationType.Update)]
     [InlineData(MutationType.Delete)]
-    public void Transform_ActionNotPermitted_ReturnsNonLeakingError(MutationType mutationType)
+    public async Task Transform_ActionNotPermitted_ReturnsNonLeakingError(MutationType mutationType)
     {
         // Policy permits only read — create/update/delete are all denied.
         var model = ModelWithPolicy((MetadataKeys.Policy.Actions, "read"));
         var transformer = new PolicyMutationTransformer();
         var data = new Dictionary<string, object?> { ["Total"] = 10m };
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             Orders(model), mutationType, data, Context(model, UserWithRoles("user")));
 
         result.Errors.Should().ContainSingle();
@@ -120,40 +120,40 @@ public class PolicyMutationTransformerTests
     [InlineData(MutationType.Insert, "create")]
     [InlineData(MutationType.Update, "update")]
     [InlineData(MutationType.Delete, "delete")]
-    public void Transform_ActionPermitted_ReturnsNoErrors(MutationType mutationType, string action)
+    public async Task Transform_ActionPermitted_ReturnsNoErrors(MutationType mutationType, string action)
     {
         var model = ModelWithPolicy((MetadataKeys.Policy.Actions, action));
         var transformer = new PolicyMutationTransformer();
         var data = new Dictionary<string, object?> { ["Total"] = 10m };
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             Orders(model), mutationType, data, Context(model, UserWithRoles("user")));
 
         result.Errors.Should().BeEmpty();
     }
 
     [Fact]
-    public void Transform_NoPolicyMetadata_AllowsByDefault()
+    public async Task Transform_NoPolicyMetadata_AllowsByDefault()
     {
         // Absent-policy default established in sub-task 1 is ALLOW.
         var model = ModelWithPolicy();
         var transformer = new PolicyMutationTransformer();
         var data = new Dictionary<string, object?> { ["Total"] = 10m };
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             Orders(model), MutationType.Insert, data, Context(model, UserWithRoles("user")));
 
         result.Errors.Should().BeEmpty();
     }
 
     [Fact]
-    public void Transform_AdminRole_BypassesActionDeny()
+    public async Task Transform_AdminRole_BypassesActionDeny()
     {
         var model = ModelWithPolicy((MetadataKeys.Policy.Actions, "read"));
         var transformer = new PolicyMutationTransformer();
         var data = new Dictionary<string, object?> { ["Total"] = 10m };
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             Orders(model), MutationType.Delete, data, Context(model, UserWithRoles("admin")));
 
         result.Errors.Should().BeEmpty();
@@ -162,7 +162,7 @@ public class PolicyMutationTransformerTests
     // ---- Column write-deny ----
 
     [Fact]
-    public void Transform_WritesDeniedColumn_ReturnsNonLeakingError()
+    public async Task Transform_WritesDeniedColumn_ReturnsNonLeakingError()
     {
         var model = ModelWithPolicy(
             (MetadataKeys.Policy.Actions, "update"),
@@ -170,7 +170,7 @@ public class PolicyMutationTransformerTests
         var transformer = new PolicyMutationTransformer();
         var data = new Dictionary<string, object?> { ["Total"] = 10m, ["ssn"] = "123-45-6789" };
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             Orders(model), MutationType.Update, data, Context(model, UserWithRoles("user")));
 
         result.Errors.Should().ContainSingle();
@@ -179,7 +179,7 @@ public class PolicyMutationTransformerTests
     }
 
     [Fact]
-    public void Transform_WritesOnlyAllowedColumns_ReturnsNoErrors()
+    public async Task Transform_WritesOnlyAllowedColumns_ReturnsNoErrors()
     {
         var model = ModelWithPolicy(
             (MetadataKeys.Policy.Actions, "update"),
@@ -187,14 +187,14 @@ public class PolicyMutationTransformerTests
         var transformer = new PolicyMutationTransformer();
         var data = new Dictionary<string, object?> { ["Total"] = 10m, ["tenant_id"] = 1 };
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             Orders(model), MutationType.Update, data, Context(model, UserWithRoles("user")));
 
         result.Errors.Should().BeEmpty();
     }
 
     [Fact]
-    public void Transform_AdminRole_BypassesColumnWriteDeny()
+    public async Task Transform_AdminRole_BypassesColumnWriteDeny()
     {
         var model = ModelWithPolicy(
             (MetadataKeys.Policy.Actions, "update"),
@@ -202,7 +202,7 @@ public class PolicyMutationTransformerTests
         var transformer = new PolicyMutationTransformer();
         var data = new Dictionary<string, object?> { ["ssn"] = "123-45-6789" };
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             Orders(model), MutationType.Update, data, Context(model, UserWithRoles("admin")));
 
         result.Errors.Should().BeEmpty();
@@ -213,7 +213,7 @@ public class PolicyMutationTransformerTests
     [Theory]
     [InlineData(MutationType.Update, "update")]
     [InlineData(MutationType.Delete, "delete")]
-    public void Transform_RowScope_CompilesToEqualityFilter(MutationType mutationType, string action)
+    public async Task Transform_RowScope_CompilesToEqualityFilter(MutationType mutationType, string action)
     {
         var model = ModelWithPolicy(
             (MetadataKeys.Policy.Actions, action),
@@ -223,7 +223,7 @@ public class PolicyMutationTransformerTests
         userContext["tenant_id"] = 7;
         var data = new Dictionary<string, object?> { ["Id"] = 1, ["Total"] = 10m };
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             Orders(model), mutationType, data, Context(model, userContext));
 
         result.Errors.Should().BeEmpty();
@@ -234,7 +234,7 @@ public class PolicyMutationTransformerTests
     }
 
     [Fact]
-    public void Transform_RowScopeOnCreate_NoAdditionalFilter()
+    public async Task Transform_RowScopeOnCreate_NoAdditionalFilter()
     {
         // A create has no existing row to scope.
         var model = ModelWithPolicy(
@@ -245,7 +245,7 @@ public class PolicyMutationTransformerTests
         userContext["tenant_id"] = 7;
         var data = new Dictionary<string, object?> { ["Total"] = 10m };
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             Orders(model), MutationType.Insert, data, Context(model, userContext));
 
         result.Errors.Should().BeEmpty();
@@ -253,7 +253,7 @@ public class PolicyMutationTransformerTests
     }
 
     [Fact]
-    public void Transform_AdminRole_SkipsRowScopeFilter()
+    public async Task Transform_AdminRole_SkipsRowScopeFilter()
     {
         var model = ModelWithPolicy(
             (MetadataKeys.Policy.Actions, "update"),
@@ -263,7 +263,7 @@ public class PolicyMutationTransformerTests
         userContext["tenant_id"] = 7;
         var data = new Dictionary<string, object?> { ["Id"] = 1, ["Total"] = 10m };
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             Orders(model), MutationType.Update, data, Context(model, userContext));
 
         result.Errors.Should().BeEmpty();
@@ -271,13 +271,13 @@ public class PolicyMutationTransformerTests
     }
 
     [Fact]
-    public void Transform_RowScopeWithNoExpression_NoAdditionalFilter()
+    public async Task Transform_RowScopeWithNoExpression_NoAdditionalFilter()
     {
         var model = ModelWithPolicy((MetadataKeys.Policy.Actions, "update"));
         var transformer = new PolicyMutationTransformer();
         var data = new Dictionary<string, object?> { ["Id"] = 1, ["Total"] = 10m };
 
-        var result = transformer.Transform(
+        var result = await transformer.TransformAsync(
             Orders(model), MutationType.Update, data, Context(model, UserWithRoles("user")));
 
         result.AdditionalFilter.Should().BeNull();
@@ -287,7 +287,7 @@ public class PolicyMutationTransformerTests
     //      alongside a tenant-scoped transformer's filter rather than replacing it. ----
 
     [Fact]
-    public void Integration_RowScopeIsAndedAlongsideAnotherTransformersFilter()
+    public async Task Integration_RowScopeIsAndedAlongsideAnotherTransformersFilter()
     {
         var model = ModelWithPolicy(
             (MetadataKeys.Policy.Actions, "update"),
@@ -312,7 +312,7 @@ public class PolicyMutationTransformerTests
         userContext["tenant_id"] = 7;
         var data = new Dictionary<string, object?> { ["Id"] = 1, ["Total"] = 10m };
 
-        var result = wrap.Transform(Orders(model), MutationType.Update, data, Context(model, userContext));
+        var result = await wrap.TransformAsync(Orders(model), MutationType.Update, data, Context(model, userContext));
 
         result.Errors.Should().BeEmpty();
         result.AdditionalFilter.Should().NotBeNull();
@@ -342,16 +342,16 @@ public class PolicyMutationTransformerTests
 
         public bool AppliesTo(IDbTable table, MutationType mutationType, MutationTransformContext context) => true;
 
-        public MutationTransformResult Transform(
+        public ValueTask<MutationTransformResult> TransformAsync(
             IDbTable table,
             MutationType mutationType,
             Dictionary<string, object?> data,
             MutationTransformContext context) =>
-            new()
+            new(new MutationTransformResult
             {
                 MutationType = mutationType,
                 Data = data,
                 AdditionalFilter = _filter,
-            };
+            });
     }
 }

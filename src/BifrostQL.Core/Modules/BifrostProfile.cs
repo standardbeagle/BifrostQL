@@ -185,18 +185,6 @@ public sealed class BifrostProfileRegistry
     /// <summary>
     /// Creates filtered wrapper collections for a given profile.
     /// </summary>
-    public static IMutationModules FilterBy(IMutationModules source, BifrostProfile profile)
-    {
-        if (profile.Modules == null)
-            return source;
-
-        var filtered = source.Where(m => profile.IsModuleActive(m)).ToList();
-        return new ModulesWrap { Modules = filtered };
-    }
-
-    /// <summary>
-    /// Creates filtered wrapper collections for a given profile.
-    /// </summary>
     public static IQueryObservers FilterBy(IQueryObservers source, BifrostProfile profile)
     {
         if (profile.Modules == null)

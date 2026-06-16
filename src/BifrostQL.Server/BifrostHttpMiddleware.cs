@@ -173,7 +173,7 @@ namespace BifrostQL.Server
             transformerService = new QueryTransformerService(filteredTransformers);
             observers = observers != null ? BifrostProfileRegistry.FilterBy(observers, activeProfile) : null;
 
-            // Store profile in UserContext so mutation resolvers can filter their modules.
+            // Store profile in UserContext so downstream resolvers see the active profile.
             if (options.UserContext is IDictionary<string, object?> uc)
                 uc[BifrostProfile.UserContextKey] = activeProfile;
 

@@ -161,13 +161,6 @@ namespace BifrostQL.Server
         {
             var names = new List<string>();
 
-            var mutationModules = services.GetService<Core.Modules.IMutationModules>();
-            if (mutationModules != null)
-            {
-                foreach (var m in mutationModules)
-                    names.Add(m.GetType().Name);
-            }
-
             var filterTransformers = services.GetService<Core.Modules.IFilterTransformers>();
             if (filterTransformers != null)
             {

@@ -13,14 +13,11 @@ namespace BifrostQL.Server.Test
         private static BifrostServerClock CreateClock() => new();
 
         private static ServiceProvider BuildServices(
-            IMutationModules? modules = null,
             IFilterTransformers? filterTransformers = null,
             IMutationTransformers? mutationTransformers = null,
             IQueryObservers? queryObservers = null)
         {
             var services = new ServiceCollection();
-            if (modules != null)
-                services.AddSingleton(modules);
             if (filterTransformers != null)
                 services.AddSingleton(filterTransformers);
             if (mutationTransformers != null)
@@ -302,7 +299,7 @@ namespace BifrostQL.Server.Test
                 DatabaseType = "SqlServer",
                 Uptime = "5m 30s",
                 SchemaCacheStatus = "active",
-                EnabledModules = new[] { "BasicAuditModule" },
+                EnabledModules = new[] { "AuditMutationTransformer" },
                 SchemaHash = "abc123",
                 ServerStartTime = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero),
             };
@@ -315,7 +312,7 @@ namespace BifrostQL.Server.Test
             deserialized.DatabaseType.Should().Be("SqlServer");
             deserialized.Uptime.Should().Be("5m 30s");
             deserialized.SchemaCacheStatus.Should().Be("active");
-            deserialized.EnabledModules.Should().ContainSingle().Which.Should().Be("BasicAuditModule");
+            deserialized.EnabledModules.Should().ContainSingle().Which.Should().Be("AuditMutationTransformer");
             deserialized.SchemaHash.Should().Be("abc123");
             deserialized.ServerStartTime.Should().Be(new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero));
         }

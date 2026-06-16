@@ -132,53 +132,6 @@ public sealed class DbTableInsertResolverTests
 
     #endregion
 
-    #region Module Optional Tests
-
-    [Fact]
-    public void ModulesWrap_WithEmptyModules_ReturnsEmptyArrays()
-    {
-        // Arrange
-        var wrap = new ModulesWrap
-        {
-            Modules = Array.Empty<IMutationModule>()
-        };
-        var model = StandardTestFixtures.SimpleUsers();
-        var table = model.GetTableFromDbName("Users");
-        var data = new Dictionary<string, object?> { ["Name"] = "Alice" };
-
-        // Act
-        var insertErrors = wrap.Insert(data, table, new Dictionary<string, object?>(), model);
-        var updateErrors = wrap.Update(data, table, new Dictionary<string, object?>(), model);
-        var deleteErrors = wrap.Delete(data, table, new Dictionary<string, object?>(), model);
-
-        // Assert
-        insertErrors.Should().BeEmpty();
-        updateErrors.Should().BeEmpty();
-        deleteErrors.Should().BeEmpty();
-    }
-
-    [Fact]
-    public void ModulesWrap_WithNoModules_DoesNotModifyData()
-    {
-        // Arrange
-        var wrap = new ModulesWrap
-        {
-            Modules = Array.Empty<IMutationModule>()
-        };
-        var model = StandardTestFixtures.SimpleUsers();
-        var table = model.GetTableFromDbName("Users");
-        var originalData = new Dictionary<string, object?> { ["Name"] = "Alice" };
-        var data = new Dictionary<string, object?>(originalData);
-
-        // Act
-        wrap.Insert(data, table, new Dictionary<string, object?>(), model);
-
-        // Assert
-        data.Should().Equal(originalData);
-    }
-
-    #endregion
-
     #region Cross-Dialect Insert Tests
 
     [Theory]

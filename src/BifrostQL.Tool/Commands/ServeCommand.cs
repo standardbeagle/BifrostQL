@@ -46,14 +46,11 @@ public sealed class ServeCommand : ICommand
 
         var metadata = configSection?.Metadata ?? Array.Empty<string>();
 
-        builder.Services.AddSingleton<BasicAuditModule>();
         builder.Services.AddBifrostQL(options =>
         {
             options
                 .BindConnectionString(connectionString)
                 .BindConfiguration(builder.Configuration.GetSection("BifrostQL"));
-
-            options.AddModules(sp => new[] { sp.GetRequiredService<BasicAuditModule>() });
         });
         builder.Services.AddCors();
 

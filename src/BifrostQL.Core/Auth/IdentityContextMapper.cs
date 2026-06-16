@@ -32,7 +32,7 @@ namespace BifrostQL.Core.Auth;
 ///       <c>IReadOnlyList&lt;string&gt;</c> (empty when the user has none).
 ///     </description></item>
 ///     <item><description>
-///       Audit user key (default <c>id</c>) — read by <c>BasicAuditModule</c>,
+///       Audit user key (default <c>id</c>) — read by <c>AuditMutationTransformer</c>,
 ///       configurable via the <c>user-audit-key</c> model metadata.
 ///     </description></item>
 ///   </list>

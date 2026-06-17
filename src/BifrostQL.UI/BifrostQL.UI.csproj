@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>bifrostui</AssemblyName>
     <RootNamespace>BifrostQL.UI</RootNamespace>
-    <Version>0.4.3</Version>
+    <Version>0.4.4</Version>
   </PropertyGroup>
 
   <ItemGroup>

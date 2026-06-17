@@ -1,14 +1,25 @@
 /*
- * BifrostQL.UI - Norse-Industrial Dark Theme
+ * BifrostQL.UI (Photino desktop) — Norse-Industrial Dark Theme
  *
- * Design tokens define the dark palette used by the desktop app.
- * shadcn/Tailwind CSS variables are overridden here so the embedded
- * edit-db component renders in dark mode. edit-db's built CSS already
- * includes all Tailwind utilities — no Tailwind plugin needed here.
+ * Styling is split into explicit cascade layers so the photino app shell and the
+ * embedded edit-db editor never fight:
+ *
+ *   editdb-theme  (defined by @standardbeagle/edit-db) — the --ui-* token contract
+ *   app-theme     (here) — remaps the --ui-* contract onto the Norse-Industrial
+ *                 palette so the embedded grids/forms render in our dark theme
+ *   app-shell     (here) — the desktop app's own chrome (header, connection screen,
+ *                 error banners). Pure host UI; never reaches into edit-db internals.
+ *
+ * `app-theme`/`app-shell` are declared AFTER edit-db's `editdb-theme`, so our token
+ * overrides win over edit-db's bundled light/dark defaults with no specificity fight.
+ * We drive --ui-* (the contract the compiled edit-db utilities actually read) — NOT
+ * bare --color-*, which edit-db's compiled CSS does not consume.
  */
 
+@layer editdb-theme, app-theme, app-shell;
+
+/* App palette primitives — unlayered constants consumed by both layers below. */
 :root {
-  /* Norse-Industrial Design Tokens */
   --void: #0f172a;
   --void-surface: #1e293b;
   --void-elevated: #334155;
@@ -30,308 +41,285 @@
 
   --bifrost-gradient: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
 
-  /* shadcn/Tailwind v4 overrides — remap to Norse-Industrial tokens */
-  --color-background: var(--void);
-  --color-foreground: var(--text-primary);
-  --color-card: var(--void-surface);
-  --color-card-foreground: var(--text-bright);
-  --color-popover: var(--void-surface);
-  --color-popover-foreground: var(--text-bright);
-  --color-primary: var(--accent-action);
-  --color-primary-foreground: var(--text-bright);
-  --color-secondary: var(--void-elevated);
-  --color-secondary-foreground: var(--text-primary);
-  --color-muted: var(--void-highlight);
-  --color-muted-foreground: var(--text-muted);
-  --color-accent: var(--void-elevated);
-  --color-accent-foreground: var(--text-bright);
-  --color-destructive: var(--accent-danger);
-  --color-destructive-foreground: var(--text-bright);
-  --color-border: var(--void-border);
-  --color-input: var(--void-border);
-  --color-ring: var(--accent-action);
   --radius: 0.5rem;
 }
 
-.app-container {
-  height: 100vh;
-  width: 100vw;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
+/*
+ * edit-db theme overlay — map the --ui-* contract onto the Norse-Industrial palette.
+ * These are the tokens every edit-db grid/form utility reads (var(--ui-*)); overriding
+ * them here re-themes the entire embedded editor. In `app-theme` (after editdb-theme)
+ * so it beats edit-db's bundled defaults regardless of their selector specificity.
+ */
+@layer app-theme {
+  :root {
+    --ui-background: var(--void);
+    --ui-foreground: var(--text-primary);
+    --ui-card: var(--void-surface);
+    --ui-card-foreground: var(--text-bright);
+    --ui-popover: var(--void-surface);
+    --ui-popover-foreground: var(--text-bright);
+    --ui-primary: var(--accent-action);
+    --ui-primary-foreground: var(--text-bright);
+    --ui-secondary: var(--void-elevated);
+    --ui-secondary-foreground: var(--text-primary);
+    --ui-muted: var(--void-highlight);
+    --ui-muted-foreground: var(--text-muted);
+    --ui-accent: var(--void-elevated);
+    --ui-accent-foreground: var(--text-bright);
+    --ui-destructive: var(--accent-danger);
+    --ui-destructive-foreground: var(--text-bright);
+    --ui-border: var(--void-border);
+    --ui-input: var(--void-border);
+    --ui-ring: var(--accent-action);
+  }
 }
 
-/* Constrain the editor frame to viewport height */
-.editdb-frame-layout {
-  height: 100vh;
-  min-height: auto;
-}
+/* Photino app-shell chrome — the desktop app's own UI, isolated from edit-db. */
+@layer app-shell {
+  .app-container {
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
 
-/* BifrostQL header when connected */
-.bifrost-header {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0 0.75rem;
-  height: 2.75rem;
-  background: var(--void);
-  border-bottom: 1px solid var(--void-border);
-  flex-shrink: 0;
-}
+  /* Constrain the editor frame to viewport height (edit-db assumes full-viewport). */
+  .editdb-frame-layout {
+    height: 100vh;
+    min-height: auto;
+  }
 
-/* Prismatic accent line under header */
-.bifrost-header::after {
-  content: '';
-  position: absolute;
-  bottom: -1px;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, #3b82f6 0%, #8b5cf6 40%, #ec4899 70%, #f59e0b 100%);
-  opacity: 0.5;
-}
+  /* BifrostQL header when connected */
+  .bifrost-header {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0 0.75rem;
+    height: 2.75rem;
+    background: var(--void);
+    border-bottom: 1px solid var(--void-border);
+    flex-shrink: 0;
+  }
 
-.bifrost-header__brand {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
+  /* Prismatic accent line under header */
+  .bifrost-header::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, #3b82f6 0%, #8b5cf6 40%, #ec4899 70%, #f59e0b 100%);
+    opacity: 0.5;
+  }
 
-.bifrost-header__logo {
-  width: 24px;
-  height: 24px;
-  background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
-  border-radius: 5px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.6875rem;
-  font-weight: 700;
-  color: white;
-  letter-spacing: -0.04em;
-  flex-shrink: 0;
-}
+  .bifrost-header__brand {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
 
-.bifrost-header h1 {
-  margin: 0;
-  font-family: 'DM Sans', sans-serif;
-  font-size: 0.9375rem;
-  font-weight: 700;
-  color: var(--text-bright);
-  letter-spacing: -0.03em;
-}
+  .bifrost-header__logo {
+    width: 24px;
+    height: 24px;
+    background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+    border-radius: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    color: white;
+    letter-spacing: -0.04em;
+    flex-shrink: 0;
+  }
 
-.bifrost-header__separator {
-  width: 1px;
-  height: 1rem;
-  background: var(--void-border);
-  flex-shrink: 0;
-}
+  .bifrost-header h1 {
+    margin: 0;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.9375rem;
+    font-weight: 700;
+    color: var(--text-bright);
+    letter-spacing: -0.03em;
+  }
 
-.bifrost-database-info {
-  padding: 0.1875rem 0.5rem;
-  background: var(--void-highlight);
-  border: 1px solid var(--void-border);
-  border-radius: 4px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.6875rem;
-  color: var(--text-secondary);
-  max-width: 280px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+  .bifrost-header__separator {
+    width: 1px;
+    height: 1rem;
+    background: var(--void-border);
+    flex-shrink: 0;
+  }
 
-.bifrost-header__spacer {
-  flex: 1;
-}
+  .bifrost-database-info {
+    padding: 0.1875rem 0.5rem;
+    background: var(--void-highlight);
+    border: 1px solid var(--void-border);
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6875rem;
+    color: var(--text-secondary);
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
-.bifrost-disconnect-button {
-  padding: 0.25rem 0.625rem;
-  background: transparent;
-  color: var(--text-muted);
-  border: 1px solid var(--void-border);
-  border-radius: 4px;
-  font-family: 'DM Sans', sans-serif;
-  font-size: 0.6875rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: color 150ms, border-color 150ms, background 150ms;
-}
+  .bifrost-header__spacer {
+    flex: 1;
+  }
 
-.bifrost-disconnect-button:hover {
-  color: var(--accent-danger);
-  border-color: rgba(239, 68, 68, 0.35);
-  background: rgba(239, 68, 68, 0.08);
-}
+  .bifrost-disconnect-button {
+    padding: 0.25rem 0.625rem;
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--void-border);
+    border-radius: 4px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: color 150ms, border-color 150ms, background 150ms;
+  }
 
-/* Connection container — deep void background */
-.bifrost-connection-container {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 2rem;
-  background: var(--void);
-}
+  .bifrost-disconnect-button:hover {
+    color: var(--accent-danger);
+    border-color: rgba(239, 68, 68, 0.35);
+    background: rgba(239, 68, 68, 0.08);
+  }
 
-.bifrost-back-button {
-  margin-top: 2rem;
-  padding: 0.625rem 1.25rem;
-  background: var(--void-highlight);
-  color: var(--text-primary);
-  border: 1px solid var(--void-border);
-  border-radius: 6px;
-  font-family: 'DM Sans', sans-serif;
-  font-size: 0.8125rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-}
+  /* Connection container — deep void background */
+  .bifrost-connection-container {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    background: var(--void);
+  }
 
-.bifrost-back-button:hover {
-  background: var(--void-border-hover);
-  transform: translateY(-1px);
-}
+  .bifrost-back-button {
+    margin-top: 2rem;
+    padding: 0.625rem 1.25rem;
+    background: var(--void-highlight);
+    color: var(--text-primary);
+    border: 1px solid var(--void-border);
+    border-radius: 6px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
 
-/* Welcome container — WelcomePanel handles its own full-page sizing */
-.bifrost-welcome-container {
-  background: var(--void);
-}
+  .bifrost-back-button:hover {
+    background: var(--void-border-hover);
+    transform: translateY(-1px);
+  }
 
-/* Connection error banner */
-.bifrost-error-banner {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  width: 100%;
-  max-width: 480px;
-  padding: 0.75rem 1rem;
-  margin-bottom: 1rem;
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  border-radius: 6px;
-  color: #fca5a5;
-  font-size: 0.8125rem;
-}
+  /* Welcome container — WelcomePanel handles its own full-page sizing */
+  .bifrost-welcome-container {
+    background: var(--void);
+  }
 
-.bifrost-error-banner__message {
-  flex: 1;
-}
+  /* Connecting overlay for reconnect */
+  .bifrost-connecting-overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(15, 23, 42, 0.8);
+    z-index: 50;
+  }
 
-.bifrost-error-banner__dismiss {
-  background: none;
-  border: none;
-  color: #fca5a5;
-  font-size: 1.125rem;
-  cursor: pointer;
-  padding: 0 0.25rem;
-  line-height: 1;
-  opacity: 0.7;
-  transition: opacity 0.15s;
-}
+  .bifrost-connecting-overlay__content {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem 1.5rem;
+    background: var(--void-surface);
+    border: 1px solid var(--void-border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 0.875rem;
+  }
 
-.bifrost-error-banner__dismiss:hover {
-  opacity: 1;
-}
+  @keyframes bifrost-spin {
+    to { transform: rotate(360deg); }
+  }
 
-/* Connecting overlay for reconnect */
-.bifrost-connecting-overlay {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(15, 23, 42, 0.8);
-  z-index: 50;
-}
+  .bifrost-connecting-spinner {
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid var(--void-border);
+    border-top-color: var(--accent-action);
+    border-radius: 50%;
+    animation: bifrost-spin 0.6s linear infinite;
+  }
 
-.bifrost-connecting-overlay__content {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 1rem 1.5rem;
-  background: var(--void-surface);
-  border: 1px solid var(--void-border);
-  border-radius: 8px;
-  color: var(--text-primary);
-  font-size: 0.875rem;
-}
+  *:focus-visible {
+    outline: 2px solid var(--accent-action);
+    outline-offset: 2px;
+  }
 
-@keyframes bifrost-spin {
-  to { transform: rotate(360deg); }
-}
+  /* Connection error banner — fixed top, impossible to miss */
+  .bifrost-error-banner {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1.25rem;
+    background: rgba(239, 68, 68, 0.15);
+    border-bottom: 2px solid var(--accent-danger, #ef4444);
+    color: #fca5a5;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.875rem;
+    animation: error-slide-in 300ms ease-out;
+  }
 
-.bifrost-connecting-spinner {
-  width: 1rem;
-  height: 1rem;
-  border: 2px solid var(--void-border);
-  border-top-color: var(--accent-action);
-  border-radius: 50%;
-  animation: bifrost-spin 0.6s linear infinite;
-}
+  @keyframes error-slide-in {
+    from { transform: translateY(-100%); }
+  }
 
-*:focus-visible {
-  outline: 2px solid var(--accent-action);
-  outline-offset: 2px;
-}
+  .bifrost-error-banner__icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--accent-danger, #ef4444);
+    color: white;
+    font-weight: 700;
+    font-size: 0.875rem;
+    flex-shrink: 0;
+  }
 
-/* Error banner — fixed top, impossible to miss */
-.bifrost-error-banner {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem 1.25rem;
-  background: rgba(239, 68, 68, 0.15);
-  border-bottom: 2px solid var(--accent-danger, #ef4444);
-  color: #fca5a5;
-  font-family: 'DM Sans', sans-serif;
-  font-size: 0.875rem;
-  animation: error-slide-in 300ms ease-out;
-}
+  .bifrost-error-banner__message {
+    flex: 1;
+  }
 
-@keyframes error-slide-in {
-  from { transform: translateY(-100%); }
-}
+  .bifrost-error-banner__dismiss {
+    background: none;
+    border: none;
+    color: #fca5a5;
+    font-size: 1.25rem;
+    cursor: pointer;
+    padding: 0.25rem;
+    line-height: 1;
+    opacity: 0.7;
+    transition: opacity 150ms;
+  }
 
-.bifrost-error-banner__icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--accent-danger, #ef4444);
-  color: white;
-  font-weight: 700;
-  font-size: 0.875rem;
-  flex-shrink: 0;
-}
-
-.bifrost-error-banner__message {
-  flex: 1;
-}
-
-.bifrost-error-banner__dismiss {
-  background: none;
-  border: none;
-  color: #fca5a5;
-  font-size: 1.25rem;
-  cursor: pointer;
-  padding: 0.25rem;
-  line-height: 1;
-  opacity: 0.7;
-  transition: opacity 150ms;
-}
-
-.bifrost-error-banner__dismiss:hover {
-  opacity: 1;
+  .bifrost-error-banner__dismiss:hover {
+    opacity: 1;
+  }
 }

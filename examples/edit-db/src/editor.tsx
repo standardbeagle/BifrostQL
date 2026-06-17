@@ -4,6 +4,7 @@ import { MainFrame } from './main-frame';
 import { PathProvider } from './hooks/usePath';
 import { SchemaProvider } from './hooks/useSchema';
 import { GraphQLFetcher, HttpGraphQLFetcher, FetcherProvider } from './common/fetcher';
+import { EditorConfigProvider } from './hooks/useEditorConfig';
 import './globals.css';
 
 /**
@@ -19,6 +20,11 @@ interface EditorProps {
     fetcher?: GraphQLFetcher;
     /** Callback invoked when navigation occurs */
     onLocate?: (location: string) => void;
+    /**
+     * Show per-table statistics (row-count bars, column/FK counts) in the table
+     * list. Off by default — it issues a row-count query per table. Defaults to false.
+     */
+    showStats?: boolean;
 }
 
 /**
@@ -50,6 +56,7 @@ export function Editor({
     fetcher,
     uiPath,
     onLocate,
+    showStats = false,
 }: EditorProps) {
     const resolvedFetcher = useMemo(() => {
         if (fetcher) return fetcher;
@@ -71,11 +78,13 @@ export function Editor({
     return (
         <QueryClientProvider client={queryClient}>
             <FetcherProvider value={resolvedFetcher}>
-                <PathProvider path={uiPath || "/"}>
-                    <SchemaProvider>
-                        <MainFrame onLocate={onLocate} />
-                    </SchemaProvider>
-                </PathProvider>
+                <EditorConfigProvider config={{ showStats }}>
+                    <PathProvider path={uiPath || "/"}>
+                        <SchemaProvider>
+                            <MainFrame onLocate={onLocate} />
+                        </SchemaProvider>
+                    </PathProvider>
+                </EditorConfigProvider>
             </FetcherProvider>
         </QueryClientProvider>
     )

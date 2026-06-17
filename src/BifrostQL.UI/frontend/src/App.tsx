@@ -843,6 +843,7 @@ export default function App() {
           <Editor
             key={editorKey}
             uri={graphqlUri}
+            showStats
             onLocate={(location) => {
               window.history.pushState(null, '', location);
             }}

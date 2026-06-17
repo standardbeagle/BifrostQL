@@ -2,6 +2,14 @@
 @import "tailwindcss/theme" layer(theme);
 @import "tailwindcss/utilities" layer(utilities);
 
+/*
+ * Layer order (low → high). The token contract lives in `editdb-theme`, which is
+ * declared LAST here so a host can override the --ui-* tokens from any later layer
+ * (or by re-opening `editdb-theme` after this stylesheet) with zero specificity
+ * fights. Tailwind's own base/theme/utilities keep their conventional layers.
+ */
+@layer base, theme, utilities, editdb-theme;
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -31,6 +39,13 @@
   --radius-xl: calc(var(--radius) + 4px);
   --radius: 0.5rem;
 }
+
+/*
+ * Token contract defaults, in the `editdb-theme` layer so hosts can override the
+ * --ui-* tokens from a later layer. The compiled utilities read var(--ui-*)
+ * directly, so overriding these tokens re-themes every grid/form control.
+ */
+@layer editdb-theme {
 
 /* Light mode defaults */
 :root {
@@ -77,3 +92,5 @@
   --ui-input: hsl(217.2 32.6% 17.5%);
   --ui-ring: hsl(212.7 26.8% 83.9%);
 }
+
+} /* @layer editdb-theme */

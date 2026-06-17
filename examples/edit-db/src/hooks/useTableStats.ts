@@ -71,7 +71,7 @@ function buildRowCountQuery(tableNames: string[]): string | null {
  * 
  * @returns Table statistics map and loading state
  */
-export function useTableStats(): UseTableStatsResult {
+export function useTableStats(enabled: boolean = true): UseTableStatsResult {
   const { data: tables, loading: schemaLoading, error: schemaError } = useSchema();
   const fetcher = useFetcher();
 
@@ -89,7 +89,7 @@ export function useTableStats(): UseTableStatsResult {
   } = useQuery({
     queryKey: ["tableRowCounts", tableNames],
     queryFn: () => fetcher.query<Record<string, { total: number }>>(rowCountQuery!),
-    enabled: !!rowCountQuery && tableNames.length > 0,
+    enabled: enabled && !!rowCountQuery && tableNames.length > 0,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 

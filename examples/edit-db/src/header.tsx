@@ -66,8 +66,8 @@ export function Header() {
         </Alert>
     );
     return (
-        <header className="grid grid-cols-[auto_1fr_auto] items-center gap-3 px-3 py-1.5 min-h-[2.5rem]">
-            <div className="flex items-center gap-1.5 overflow-x-auto">
+        <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-1.5 min-h-[2.5rem]">
+            <div className="flex items-center gap-1.5 overflow-x-auto min-w-0 flex-1">
                 <Button
                     variant="ghost"
                     size="icon-sm"
@@ -128,7 +128,7 @@ export function Header() {
                 )}
             </div>
             {options ? <>
-                <div className="flex items-center border border-border rounded-md overflow-hidden">
+                <div className="flex items-center border border-border rounded-md overflow-hidden flex-[2_2_16rem] min-w-[12rem]">
                     <Select value={column} onValueChange={setColumn}>
                         <SelectTrigger size="sm" className="w-auto min-w-[120px] shrink-0 border-0 rounded-none border-r border-border h-8 text-xs">
                             <SelectValue />
@@ -156,7 +156,7 @@ export function Header() {
                         Filter
                     </Button>
                 </div>
-                <div className="flex items-center gap-px border border-border rounded-md overflow-hidden">
+                <div className="flex items-center gap-px border border-border rounded-md overflow-hidden shrink-0">
                     <Button variant="ghost" size="sm" onClick={() => navigate("/")} className="text-muted-foreground text-xs h-8 px-3 rounded-none">
                         <X className="size-3.5" />
                         Clear
@@ -168,7 +168,7 @@ export function Header() {
                         </Button>
                     )}
                 </div>
-            </> : <div className="col-span-2" />}
+            </> : null}
         </header>
     )
 }

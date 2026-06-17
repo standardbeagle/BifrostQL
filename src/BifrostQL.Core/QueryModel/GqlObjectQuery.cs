@@ -224,33 +224,46 @@ namespace BifrostQL.Core.QueryModel
             {
                 var filter = query.FromTable.GetFilterSqlParameterized(dbModel, dialect, parameters);
                 var projection = query.Join.EmitJoinIdProjection(dialect);
-                var sqlText = $"SELECT DISTINCT {projection} FROM {dialect.TableReference(query.FromTable.SchemaName, query.FromTable.TableName)}";
-                var rootSql = new ParameterizedSql(sqlText, Array.Empty<SqlParameterInfo>()).Append(filter);
+                var tableRef = dialect.TableReference(query.FromTable.SchemaName, query.FromTable.TableName);
 
-                // Forward the parent table's pagination into the linked
-                // sub-query so the joined rows stay aligned with the paged
-                // parent set. Without this, the linked SQL distinct-selects
-                // the unpaged universe and the join returns rows for parents
-                // outside the current page.
-                //
-                // Skip when the parent is unbounded — `Limit == -1` is the
-                // explicit "no limit" sentinel and `Offset` of 0 (or null)
-                // means "from the start", so the linked sub-query already
-                // matches the parent universe.
+                // Skip pagination when the parent is unbounded — `Limit == -1` is the
+                // explicit "no limit" sentinel and `Offset` of 0 (or null) means "from
+                // the start", so the linked sub-query already matches the parent universe.
                 var hasOffset = query.FromTable.Offset.HasValue && query.FromTable.Offset.Value > 0;
                 var hasLimit = query.FromTable.Limit.HasValue && query.FromTable.Limit.Value > 0;
-                if (hasOffset || hasLimit)
+                if (!(hasOffset || hasLimit))
                 {
-                    var sortCols = query.FromTable.Sort.Any() ? query.FromTable.Sort.Select(s => s switch
-                    {
-                        { } when s.EndsWith("_asc") => dialect.EscapeIdentifier(s[..^4]) + " asc",
-                        { } when s.EndsWith("_desc") => dialect.EscapeIdentifier(s[..^5]) + " desc",
-                        _ => throw new BifrostExecutionError($"Unsupported sort token '{s}'; expected suffix '_asc' or '_desc'.")
-                    }) : null;
-                    var pagination = dialect.Pagination(sortCols, query.FromTable.Offset, query.FromTable.Limit);
-                    rootSql = rootSql.Append(pagination);
+                    var sqlText = $"SELECT DISTINCT {projection} FROM {tableRef}";
+                    return new ParameterizedSql(sqlText, Array.Empty<SqlParameterInfo>()).Append(filter);
                 }
-                return rootSql;
+
+                // Forward the parent table's pagination into the linked sub-query so the
+                // joined rows stay aligned with the paged parent set. Page the parent rows
+                // in an inner (non-DISTINCT) query ordered by the parent's sort, then
+                // DISTINCT the join-id columns in an outer wrap.
+                //
+                // The inner query must NOT be DISTINCT: `SELECT DISTINCT {join-ids} ...
+                // ORDER BY {pk}` is rejected by SQL Server because the sort (pk) columns
+                // aren't in the DISTINCT projection. A non-DISTINCT inner can ORDER BY any
+                // column, and the outer wrap then de-duplicates the join-id set.
+                var sortCols = query.FromTable.Sort.Any() ? query.FromTable.Sort.Select(s => s switch
+                {
+                    { } when s.EndsWith("_asc") => dialect.EscapeIdentifier(s[..^4]) + " asc",
+                    { } when s.EndsWith("_desc") => dialect.EscapeIdentifier(s[..^5]) + " desc",
+                    _ => throw new BifrostExecutionError($"Unsupported sort token '{s}'; expected suffix '_asc' or '_desc'.")
+                }) : null;
+                var pagination = dialect.Pagination(sortCols, query.FromTable.Offset, query.FromTable.Limit);
+
+                var inner = new ParameterizedSql($"SELECT {projection} FROM {tableRef}", Array.Empty<SqlParameterInfo>())
+                    .Append(filter)
+                    .Append(pagination);
+
+                var joinIdNames = string.Join(", ", Enumerable.Range(0, query.Join.FromColumns.Count)
+                    .Select(i => dialect.EscapeIdentifier(JoinKeyNames.JoinIdAt(i, query.Join.FromColumns.Count))));
+
+                return new ParameterizedSql(
+                    $"SELECT DISTINCT {joinIdNames} FROM ({inner.Sql}) {dialect.EscapeIdentifier("p")}",
+                    inner.Parameters);
             }
 
             var ea = dialect.EscapeIdentifier("a");

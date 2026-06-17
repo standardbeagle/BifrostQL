@@ -344,7 +344,11 @@ namespace BifrostQL.Core.QueryModel
                 .Which.Should().Equal(new Dictionary<string, string> {
                     { "sessions", "SELECT [sid] [id],[workshopid] [workshopid] FROM [dbo].[sessions] ORDER BY (SELECT NULL) OFFSET 3 ROWS FETCH NEXT 2 ROWS ONLY"},
                     { "sessions=>count", "SELECT COUNT(*) FROM [dbo].[sessions]"},
-                    { "sessions->shops", "SELECT [a].[JoinId] [src_id], [b].[id] AS [id],[b].[number] AS [number] FROM (SELECT DISTINCT [workshopid] AS [JoinId] FROM [dbo].[sessions] ORDER BY (SELECT NULL) OFFSET 3 ROWS FETCH NEXT 2 ROWS ONLY) [a] INNER JOIN [work shops] [b] ON [a].[JoinId] = [b].[id]" },
+                    // Parent paging is forwarded by pre-paging the parent rows in a
+                    // non-DISTINCT inner query, then DISTINCT-projecting the join-ids in an
+                    // outer wrap — a top-level `SELECT DISTINCT ... ORDER BY` is invalid on
+                    // SQL Server when the sort columns aren't in the DISTINCT projection.
+                    { "sessions->shops", "SELECT [a].[JoinId] [src_id], [b].[id] AS [id],[b].[number] AS [number] FROM (SELECT DISTINCT [JoinId] FROM (SELECT [workshopid] AS [JoinId] FROM [dbo].[sessions] ORDER BY (SELECT NULL) OFFSET 3 ROWS FETCH NEXT 2 ROWS ONLY) [p]) [a] INNER JOIN [work shops] [b] ON [a].[JoinId] = [b].[id]" },
                 });
         }
 

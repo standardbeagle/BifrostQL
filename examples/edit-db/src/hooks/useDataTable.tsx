@@ -12,7 +12,8 @@ import type { ColumnPanel } from "../data-panel";
 import { Button } from "../components/ui/button";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "../components/ui/hover-card";
 import { ContentViewer } from "../components/content-viewer";
-import { EmptyValue, renderScalarValue } from "../components/empty-value";
+import { EmptyValue } from "../components/empty-value";
+import { formatColumnValue } from "../lib/format-value";
 import { isLongTextDbType, isBinaryDbType } from "../lib/content-detect";
 import {
     getFilterOperators,
@@ -153,7 +154,7 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                 return {
                     id: c.name,
                     accessorFn: (row) => (c.name ? String(row?.[c.name] ?? "") : ""),
-                    cell: ({ row }) => renderScalarValue(row.original[c.name]),
+                    cell: ({ row }) => formatColumnValue(row.original[c.name], c),
                     header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
                     enableSorting: true,
                     meta: {
@@ -228,7 +229,7 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
             return {
                 id: c.name,
                 accessorFn: (row) => (c.name ? String(row?.[c.name] ?? "") : ""),
-                cell: ({ row }) => renderScalarValue(row.original[c.name]),
+                cell: ({ row }) => formatColumnValue(row.original[c.name], c),
                 header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
                 enableSorting: true,
                 meta: { sortField: c.name, paramType: c.paramType, dbType: c.dbType, filterOperators: operators, column: c },

@@ -120,6 +120,17 @@ namespace BifrostQL.Core.Model
 
             /// <summary>Mark as read-only.</summary>
             public const string ReadOnly = "readonly";
+
+            /// <summary>
+            /// Preferred client display format for a column's values. Consumed by the
+            /// edit-db client to render values concisely in the user's locale instead
+            /// of raw DB strings (e.g. SQL Server <c>datetime2</c> "2026-05-11T22:17:47.7636626").
+            /// Recognized values: <c>date</c>, <c>datetime</c>, <c>time</c>,
+            /// <c>relative</c> (humanized "4 hours ago", hover reveals the exact value),
+            /// <c>number</c>, <c>percent</c>, <c>raw</c>. When unset the client infers
+            /// date/datetime from the column type.
+            /// </summary>
+            public const string DisplayFormat = "display-format";
         }
 
         /// <summary>

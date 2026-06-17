@@ -470,7 +470,12 @@ export function DataTable<TData>({
                                         key={row.id}
                                         data-state={isSelected ? 'selected' : row.getIsSelected() ? 'selected' : undefined}
                                         className={onRowSelect ? 'cursor-pointer group/row' : 'group/row'}
-                                        onClick={onRowSelect ? () => onRowSelect(isSelected ? null : row.id) : undefined}
+                                        onClick={onRowSelect ? () => {
+                                            // Don't hijack a text-selection drag as a row click —
+                                            // lets users select/copy cell text without navigating.
+                                            if (window.getSelection()?.toString()) return;
+                                            onRowSelect(isSelected ? null : row.id);
+                                        } : undefined}
                                         onMouseEnter={(e) => hoverRow(row.id, e.currentTarget)}
                                         onMouseLeave={scheduleDismiss}
                                     >

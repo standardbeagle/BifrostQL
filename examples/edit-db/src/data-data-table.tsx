@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useDataTable } from './hooks/useDataTable';
 import { useDeleteMutation } from './hooks/useDeleteMutation';
-import { useNavigate } from './hooks/usePath';
+import { DataEditDialog } from './data-edit';
 import { DataTable } from './components/data-table';
 import { ConfirmDialog } from './components/confirm-dialog';
 import { ContentPanel, type ContentPanelTarget } from './components/content-panel';
@@ -25,17 +25,22 @@ type DeleteTarget =
 
 export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRowId, onRowSelect, onOpenColumn }: DataDataTableParams): JSX.Element {
     const deleteMutation = useDeleteMutation(table);
-    const navigate = useNavigate();
 
     const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+    // Encoded PK route of the row being edited, or null when the dialog is closed.
+    // Editing in place (local state) instead of routing keeps the surrounding drill
+    // context — parent → child → grandchild, side columns — mounted while the dialog
+    // is open, so saved changes refetch in place rather than yanking the view to the
+    // edited table's root.
+    const [editTarget, setEditTarget] = useState<string | null>(null);
 
     // Content panel state
     const [panelColumn, setPanelColumn] = useState<string | null>(null);
     const [panelRowIndex, setPanelRowIndex] = useState<number>(0);
 
     const handleEditRow = useCallback((pk: PkFilter) => {
-        navigate(`/${table.graphQlName}/edit/${encodePkRoute(pk, table)}`);
-    }, [table, navigate]);
+        setEditTarget(encodePkRoute(pk, table));
+    }, [table]);
 
     const handleDeleteRow = useCallback((pk: PkFilter) => {
         setDeleteTarget({ type: 'single', pk });
@@ -162,6 +167,13 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
                 canNavigatePrev={panelRowIndex > 0}
                 canNavigateNext={panelRowIndex < rows.length - 1}
             />
+            {editTarget !== null && (
+                <DataEditDialog
+                    table={table.graphQlName}
+                    editid={editTarget}
+                    onClose={() => setEditTarget(null)}
+                />
+            )}
         </>
     );
 }

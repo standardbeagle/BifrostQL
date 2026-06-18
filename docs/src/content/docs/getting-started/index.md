@@ -99,3 +99,7 @@ bifrost config-generate --connection "..."
 - [Joins](/BifrostQL/guides/joins/) -- automatic and explicit table joins
 - [Mutations](/BifrostQL/guides/mutations/) -- insert, update, upsert, delete
 - [Module System](/BifrostQL/guides/modules/) -- tenant isolation, auto filters, soft delete, audit columns
+- [Extending BifrostQL](/BifrostQL/guides/extensibility/) -- custom filters, mutation transformers, before-commit hooks, async validation
+- [React Hooks & Components](/BifrostQL/guides/react-hooks/) -- query and mutate from React
+- [Embeddable Data Editor](/BifrostQL/guides/embedded-editor/) -- a full admin UI in one component
+- [Desktop App](/BifrostQL/guides/desktop-app/) -- explore any database with `bifrostui`

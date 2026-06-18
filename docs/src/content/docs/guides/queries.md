@@ -144,3 +144,27 @@ Request only the fields you need. BifrostQL generates SQL that selects only the 
 ```
 
 This produces `SELECT [userId], [email] FROM [users]` -- not `SELECT *`.
+
+## Aggregates
+
+Roll up related rows inline with `_agg`. It computes an aggregate over a child collection per parent row, so you can return "order count" or "average score" alongside the parent without a second round-trip:
+
+```graphql
+{
+  workshops {
+    data {
+      id
+      sessionCount: _agg(value: { sessions: id } operation: count)
+      avgScore:     _agg(value: { sessions: { entry: score } } operation: avg)
+    }
+  }
+}
+```
+
+- `value` names the path to aggregate — `{ joinTable: column }`, nested as deep as the relationship goes.
+- `operation` is one of `count`, `sum`, `avg`, `min`, `max`.
+- Alias each `_agg` (e.g. `sessionCount:`) when you request more than one.
+
+`_agg` runs across all four engines — SQL Server, PostgreSQL, MySQL, and SQLite — through the [dialect layer](/BifrostQL/reference/dialects/). Aggregating a column requires a nested foreign-key path; a bare-column aggregate raises a clear error.
+
+For cross-tab / matrix output, see [Pivot / Cross-Tab](/BifrostQL/concepts/pivot/).

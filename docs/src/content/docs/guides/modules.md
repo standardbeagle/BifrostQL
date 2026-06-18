@@ -5,16 +5,22 @@ description: Cross-cutting concerns via filter transformers, mutation transforme
 
 BifrostQL's module system handles cross-cutting concerns through metadata configuration. No custom code required for common patterns like tenant isolation, claim-based filters, soft-delete, and audit columns.
 
+Need to plug in your *own* logic — a custom filter, a mutation veto, an async validator, a computed column? See [Extending BifrostQL (Hooks & Providers)](/BifrostQL/guides/extensibility/) for the programming surface.
+
 ## Architecture
 
-The module system has four extension points:
+The module system has these extension points:
 
-| Extension | Purpose | Behavior |
-|-----------|---------|----------|
-| **Filter Transformer** | Inject WHERE clauses | Applied to every SELECT. Throws to abort queries. |
-| **Mutation Transformer** | Transform mutation operations | Can change operation type (e.g., DELETE to UPDATE). |
-| **Query Observer** | Side effects at lifecycle phases | Exceptions are logged but don't abort queries. |
-| **Mutation Module** | Modify mutation data | Populate columns before insert/update. |
+| Extension | Interface | Purpose | Behavior |
+|-----------|-----------|---------|----------|
+| **Filter Transformer** | `IFilterTransformer` | Inject WHERE clauses | Applied to every SELECT. Throws to abort queries. |
+| **Mutation Transformer** | `IMutationTransformer` | Transform mutation operations | Can change operation type (e.g., DELETE → UPDATE). Runs `TransformAsync`. |
+| **Before-Commit Hook** | `IBeforeCommitMutationHook` | Veto a mutation inside the transaction | Returns errors (or throws) to roll back before commit. |
+| **Query Observer** | `IQueryObserver` | Side effects at lifecycle phases | Exceptions are logged but don't abort queries. |
+| **Server Validator** | `IServerValidationProvider` | Async per-mutation validation | Returns error messages; any error aborts the mutation. |
+| **Computed Column** | `IComputedColumnProvider` | Provider-backed virtual fields | Computed after the row is read. |
+
+The built-in transformers (tenant filter, auto-filter, soft-delete, audit columns, policy, state machine, enum value, server validation) **auto-register from metadata** — declaring the metadata key is enough; you do not wire them up in code. See [Extending BifrostQL](/BifrostQL/guides/extensibility/) to register your own.
 
 ## Tenant isolation
 
@@ -93,17 +99,31 @@ Soft delete converts DELETE mutations into UPDATE mutations that set a timestamp
 
 - **Queries**: A `WHERE deleted_at IS NULL` filter is added to every query against the table
 - **DELETE mutations**: Transformed into `UPDATE ... SET deleted_at = NOW(), deleted_by_user_id = @userId`
-- **Schema**: Soft-deleted tables expose an `_includeDeleted: Boolean` query argument for administrative reads
+- **Schema**: Soft-deleted tables expose extra query and mutation arguments for administrative access
+
+| Argument | Side | Effect |
+|----------|------|--------|
+| `_includeDeleted: Boolean` | query | Include soft-deleted rows alongside live rows |
+| `_onlyDeleted: Boolean` | query | Return **only** soft-deleted rows (takes precedence) — power a "recycle bin" view |
+| `_hardDelete: Boolean` | mutation | Bypass the soft-delete rewrite and issue a real `DELETE` |
 
 ```graphql
+# Administrative read — show the recycle bin
 {
-  orders(_includeDeleted: true) {
+  orders(_onlyDeleted: true) {
     data { orderId deletedAt }
   }
 }
 ```
 
-The delete mutation shape stays the same: `orders(delete: { orderId: 42 })`.
+```graphql
+# Permanently remove a row (bypasses soft-delete)
+mutation {
+  orders(delete: { orderId: 42 }, _hardDelete: true) { orderId }
+}
+```
+
+The standard delete mutation shape is unchanged: `orders(delete: { orderId: 42 })` soft-deletes.
 
 ### Priority ordering
 

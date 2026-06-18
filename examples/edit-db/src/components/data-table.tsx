@@ -196,6 +196,34 @@ export function DataTable<TData>({
     const cancelDismiss = useCallback(() => {
         if (dismissTimer.current) { clearTimeout(dismissTimer.current); dismissTimer.current = null; }
     }, []);
+
+    // Touch: open the row actions on a long-press (hold) instead of hover, which
+    // doesn't exist on touch. A finger move (scroll) cancels the press; a fired
+    // press suppresses the click that follows the lift so it doesn't also select.
+    const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pressMoved = useRef(false);
+    const suppressClick = useRef(false);
+    const LONG_PRESS_MS = 500;
+
+    const cancelPress = useCallback(() => {
+        if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; }
+    }, []);
+
+    const startPress = useCallback((rowId: string, el: HTMLElement, e: React.PointerEvent) => {
+        if (e.pointerType !== 'touch') return;
+        pressMoved.current = false;
+        cancelPress();
+        pressTimer.current = setTimeout(() => {
+            if (pressMoved.current) return;
+            suppressClick.current = true;
+            hoverRow(rowId, el);
+        }, LONG_PRESS_MS);
+    }, [cancelPress, hoverRow]);
+
+    const onPressMove = useCallback(() => {
+        pressMoved.current = true;
+        cancelPress();
+    }, [cancelPress]);
     const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
     const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
     const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(() =>
@@ -471,13 +499,21 @@ export function DataTable<TData>({
                                         data-state={isSelected ? 'selected' : row.getIsSelected() ? 'selected' : undefined}
                                         className={onRowSelect ? 'cursor-pointer group/row' : 'group/row'}
                                         onClick={onRowSelect ? () => {
+                                            // A long-press just opened the actions overlay — swallow
+                                            // the click that follows the finger lift so it doesn't
+                                            // also select the row.
+                                            if (suppressClick.current) { suppressClick.current = false; return; }
                                             // Don't hijack a text-selection drag as a row click —
                                             // lets users select/copy cell text without navigating.
                                             if (window.getSelection()?.toString()) return;
                                             onRowSelect(isSelected ? null : row.id);
                                         } : undefined}
-                                        onMouseEnter={(e) => hoverRow(row.id, e.currentTarget)}
-                                        onMouseLeave={scheduleDismiss}
+                                        onPointerEnter={(e) => { if (e.pointerType === 'mouse') hoverRow(row.id, e.currentTarget); }}
+                                        onPointerLeave={(e) => { if (e.pointerType === 'mouse') scheduleDismiss(); }}
+                                        onPointerDown={(e) => startPress(row.id, e.currentTarget, e)}
+                                        onPointerMove={onPressMove}
+                                        onPointerUp={cancelPress}
+                                        onPointerCancel={cancelPress}
                                     >
                                         {row.getVisibleCells().map((cell) => (
                                             <TableCell

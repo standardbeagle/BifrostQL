@@ -4,6 +4,26 @@ All notable changes to BifrostQL after `3c42a60` (`[DART-xDCKBXmI5qsv] add app-b
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); pre-1.0 BifrostQL still uses CommitsSinceBaseline-style versioning.
 
+## 0.4.7 — 2026-06-18
+
+### Changed — edit-db navigator
+
+- Nested records now edit **in place**. The edit dialog is prop-driven (`DataEditDialog`) and opened from each grid's local state instead of routing, so editing a child / grandchild / side-column row no longer rewrites the root route and collapses the drill context. Saved changes refetch in the grid you edited.
+- Row action toolbar (edit/delete) now **overlays the row** — pinned to the row's right edge, vertically centered — instead of floating below it, so it's easy to reach. Dismisses on outside tap/click.
+- Touch: the row action overlay opens on a **long-press (hold)** rather than hover; a finger move (scroll) cancels, and the follow-up click is suppressed so it doesn't also select the row.
+- Many-to-many panel always shows the junction payload fields (removed the show/hide toggle).
+
+### Changed — shared cell formatting
+
+- All grid/detail/popover cells render through one `formatColumnValue` path. The m2m panel and the FK preview popover previously used their own renderers and missed locale-aware formatting; they now match the main grid.
+- Added a secondary, context-specific format template: `display-format-preview` column metadata, which falls back to the main `display-format` when unset (used by FK preview popovers). Removed the now-dead `renderScalarValue` and the popover's private `formatValue`.
+
+### Docs
+
+- New guides: Extending BifrostQL (hooks & providers), React Hooks & Components, Embeddable Data Editor; new concept: EAV & the `_meta` field.
+- Sidebar now surfaces the previously-orphaned concept pages (computed columns, lookup-table enums, pivot, visual query builder) and a Desktop Navigator section.
+- Documented the new API surface: generic `Add*Transformer<T>` registration + metadata auto-registration, before-commit veto hooks, async `TransformAsync`/`ValidateAsync`, soft-delete `_onlyDeleted`/`_hardDelete` args, `_availableTransitions`, and `_agg` aggregates.
+
 ## 0.4.1 — 2026-05-18
 
 ### Added — composite foreign keys

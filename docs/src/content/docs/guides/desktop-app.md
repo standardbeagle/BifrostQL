@@ -87,6 +87,25 @@ The desktop app bundles a full BifrostQL server inside a native window:
 - **Transport probe** -- Header toggle can probe HTTP and binary WebSocket health. Editor queries still use HTTP until the editor accepts a pluggable transport.
 - **Health check** -- `/api/health` reports server status and connection state.
 
+## Navigator panes
+
+The window is more than a playground — it's a full database navigator. The editor shell switches between several panes, each driven by the live schema:
+
+- **Data grid** — browse and edit any table. Responsive table-list and header that reflow on narrow windows, in-cell text selection (drag to copy without navigating into a row), and **locale-aware value formatting**: dates, relative times ("4 hours ago"), grouped numbers, and percentages render through native `Intl`, with the exact raw value always available on hover. Format per column with the `display-format` metadata key (`date`, `datetime`, `time`, `relative`, `number`, `percent`, `raw`).
+- **Opt-in table stats** — the desktop app shows per-table row-count bars that scale with the column width. Stats are off by default in the embeddable editor (zero extra queries) and turned on in the desktop build.
+- **[Visual Query Builder](/BifrostQL/concepts/visual-query-builder/)** — an Access-style designer: pick tables, let FK auto-join wire the relationships (composite-aware), set criteria and sort in a grid, preview the parameterized SQL, and run it over the in-process bridge — no SQL required.
+- **Form builder** — an Access-style pane for laying out single-record data-entry forms: pick a table, choose control types per column, set labels, required/read-only flags, a 1–4 column grid layout, and see a live preview.
+- **Many-to-many picker** — attach and detach junction-table links directly, with optional payload-column editing on the join row.
+- **Raw SQL console** — arbitrary SQL (including DML/DDL) over the same in-process execution path the builder uses.
+
+## Theming the editor
+
+The data editor ships as an embeddable React component (see [Embeddable Data Editor](/BifrostQL/guides/embedded-editor/)) and is themed through a **CSS custom-property contract** layered with `@layer` so host styles win without specificity fights. Override any of the `--ui-*` tokens — `--ui-background`, `--ui-foreground`, `--ui-primary`, `--ui-border`, `--ui-accent`, `--ui-destructive`, and their `-foreground` pairs — to re-skin every grid and form. The desktop app uses this contract to apply its Norse-industrial dark palette.
+
+## About & diagnostics
+
+An **About / diagnostics** panel (welcome-footer link and editor header button) reports the SPA, host, and engine versions side by side — flagging a mismatch that usually means a stale frontend build — plus the .NET runtime, OS, and current connection state. `/api/health` and `/api/diagnostics` expose the same data for scripts and monitoring.
+
 ## Architecture
 
 The app runs an embedded ASP.NET Core server on localhost and opens a Photino native window pointed at it. The server hosts both the BifrostQL GraphQL endpoint and a React-based frontend.

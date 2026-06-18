@@ -43,6 +43,24 @@ State transition is not permitted.
 
 The message intentionally omits table, state, and role details so raw GraphQL callers cannot use transition failures to discover the lifecycle configuration.
 
+## Reading available transitions
+
+A client shouldn't have to hard-code which buttons to show — "Activate", "Cancel", "Reactivate" — or guess and get rejected. Every table with a state machine exposes an `_availableTransitions` field that returns the target states the **current caller** may move *this row* to, already filtered by the caller's roles:
+
+```graphql
+{
+  members {
+    data {
+      memberId
+      status
+      _availableTransitions   # e.g. ["active", "inactive"] for an officer
+    }
+  }
+}
+```
+
+`_availableTransitions` returns `[String!]` — the reachable next states from the row's current state, with role checks applied. An admin sees the full set; a member with no qualifying role sees `[]`. Drive your UI straight off this list so the actions a user sees always match what the server will accept.
+
 ## Audit Trail
 
 Accepted state transitions emit a `StateTransitionInfo` event after the database update succeeds. The default server observer writes an `audit_log` row through `IBifrostWorkflowExecutor`, so the audit insert still traverses BifrostQL's normal GraphQL mutation pipeline.

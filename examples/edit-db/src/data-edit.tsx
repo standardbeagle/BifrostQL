@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ReactElement, useMemo } from "react";
 import { useForm } from "@tanstack/react-form";
 import { useSchema } from "./hooks/useSchema";
-import { Link, useParams, useNavigate } from "./hooks/usePath";
+import { useParams, useNavigate } from "./hooks/usePath";
 import { Schema, Table, Column, Join } from "./types/schema";
 import { TableRefValue, useTableRef } from "./hooks/useTableRef";
 import { useCompositeTableRef } from "./hooks/useCompositeTableRef";
@@ -93,8 +93,7 @@ function useTable(schema: Schema, tableName: string) {
     }, [schema, tableName]);
 }
 
-function DataEditDetail({ table, schema, editid }: { table: string, schema: Schema, editid: string }) {
-    const navigate = useNavigate();
+function DataEditDetail({ table, schema, editid, onClose }: { table: string, schema: Schema, editid: string, onClose: () => void }) {
     const fetcher = useFetcher();
     const isInsert = editid === undefined || editid === '';
     const [dataTable, editColumns, idColumns] = useTable(schema, table);
@@ -147,7 +146,7 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
         onSubmit: async ({ value: formValues }) => {
             const mutate = isInsert ? mutation.insert : mutation.update;
             await mutate({ ...formValues });
-            navigate('../..');
+            onClose();
         },
     });
 
@@ -166,7 +165,7 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
     );
 
     return (
-        <Dialog open onOpenChange={(open) => { if (!open) navigate('../..'); }}>
+        <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
             <DialogContent
                 showCloseButton={false}
                 className="sm:max-w-2xl max-h-[90vh] flex flex-col gap-0 p-0 overflow-hidden"
@@ -184,7 +183,7 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
                     <Button
                         variant="ghost"
                         size="icon-sm"
-                        onClick={() => navigate('../..')}
+                        onClick={onClose}
                         aria-label="Close"
                         className="shrink-0 -mr-1"
                     >
@@ -251,8 +250,8 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
 
                     {/* Footer */}
                     <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border bg-muted/30 shrink-0">
-                        <Button variant="outline" size="sm" asChild>
-                            <Link to="../..">Cancel</Link>
+                        <Button variant="outline" size="sm" onClick={onClose}>
+                            Cancel
                         </Button>
                         <Button type="submit" size="sm" disabled={mutation.isPending}>
                             {mutation.isPending ? (
@@ -285,13 +284,28 @@ function DataEditDetail({ table, schema, editid }: { table: string, schema: Sche
  */
 export function DataEdit(): ReactElement {
     const { table, editid } = useParams<DataEditRouteParams>();
+    const navigate = useNavigate();
+
+    if (!table) return <div>Table missing</div>;
+
+    // Route-driven edit (deep links, header "New"): close returns up the route.
+    return <DataEditDialog table={table} editid={editid ?? ''} onClose={() => navigate('../..')} />;
+}
+
+/**
+ * Prop-driven edit dialog. Use this to edit a record in place — from a grid at
+ * any nesting depth — without changing the route, so the surrounding drill
+ * context (parent → child → grandchild, side columns) is preserved. `table` is
+ * the table's `graphQlName`; `editid` is the encoded PK route ('' to insert).
+ */
+export function DataEditDialog({ table, editid, onClose }: { table: string; editid: string; onClose: () => void }): ReactElement {
     const schema = useSchema();
 
     if (!table) return <div>Table missing</div>;
     if (schema.loading) return <div>Loading...</div>;
     if (schema.error) return <div>Error: {schema.error.message}</div>;
 
-    return <DataEditDetail table={table} schema={schema} editid={editid ?? ''} />
+    return <DataEditDetail table={table} schema={schema} editid={editid} onClose={onClose} />;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

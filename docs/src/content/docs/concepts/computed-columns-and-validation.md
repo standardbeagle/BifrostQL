@@ -109,10 +109,15 @@ public sealed class ContactRules : IServerValidationProvider
 {
     public string Name => "custom-contact-rules";
 
-    public IReadOnlyList<string> Validate(ServerValidationContext context)
+    public async ValueTask<IReadOnlyList<string>> ValidateAsync(
+        ServerValidationContext context,
+        CancellationToken cancellationToken = default)
     {
         // Return zero or more error messages. Any error aborts the mutation.
+        // Async lets you call a database or external policy service here.
         return Array.Empty<string>();
     }
 }
 ```
+
+Validation runs inside the mutation pipeline, so it applies to top-level *and* nested (tree-sync) writes alike. The same declarative rules (`required`, `min`, `pattern`, …) are derived once and exposed to generated client forms, keeping browser and server validation in lockstep. For the full hook surface — before-commit veto hooks, custom transformers, and DI registration — see [Extending BifrostQL](/BifrostQL/guides/extensibility/).

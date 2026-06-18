@@ -12,8 +12,9 @@ interface RowActionsProps {
 
 /**
  * Floating row action toolbar using the Popover API.
- * Anchored to the row element, positioned below-left with automatic
- * flip to above when near the viewport bottom.
+ * Overlays the row it's anchored to — pinned to the row's right edge and
+ * vertically centered — so the buttons sit ON the row and are easy to reach,
+ * rather than floating below it.
  */
 export function RowActions({ anchorEl, onEdit, onDelete, onMouseEnter, onDismiss }: RowActionsProps) {
     const ref = useRef<HTMLDivElement>(null);
@@ -24,17 +25,28 @@ export function RowActions({ anchorEl, onEdit, onDelete, onMouseEnter, onDismiss
         const update = () => {
             const rowRect = anchorEl.getBoundingClientRect();
             const popH = el.offsetHeight;
-            const spaceBelow = window.innerHeight - rowRect.bottom;
-            const above = spaceBelow < popH + 4;
-            el.style.top = above
-                ? `${rowRect.top - popH - 2}px`
-                : `${rowRect.bottom + 2}px`;
-            el.style.left = `${rowRect.left + 4}px`;
+            const popW = el.offsetWidth;
+            // Center vertically within the row; pin to the right edge, clamped to
+            // the viewport so a horizontally-scrolled row keeps the toolbar visible.
+            el.style.top = `${rowRect.top + (rowRect.height - popH) / 2}px`;
+            const left = Math.min(rowRect.right - popW - 8, window.innerWidth - popW - 8);
+            el.style.left = `${Math.max(8, left)}px`;
         };
         update();
         el.showPopover();
         return () => { try { el.hidePopover(); } catch { /* already hidden */ } };
     }, [anchorEl]);
+
+    // Dismiss on a tap/click outside the toolbar — the touch equivalent of
+    // mouse-leave, since a held-open overlay has no pointer to leave.
+    useEffect(() => {
+        const onDocPointerDown = (e: PointerEvent) => {
+            const el = ref.current;
+            if (el && !el.contains(e.target as Node)) onDismiss();
+        };
+        document.addEventListener('pointerdown', onDocPointerDown);
+        return () => document.removeEventListener('pointerdown', onDocPointerDown);
+    }, [onDismiss]);
 
     return (
         <div

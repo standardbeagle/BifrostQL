@@ -5,6 +5,7 @@ import { useSchema } from "../hooks/useSchema";
 import { useFetcher } from "../common/fetcher";
 import type { Column, Join, Table } from "../types/schema";
 import { buildFkEqFilter, isComposite } from "../lib/fk";
+import { formatColumnValue, DISPLAY_FORMAT_PREVIEW_KEY } from "../lib/format-value";
 
 const MAX_PREVIEW_COLUMNS = 5;
 const HOVER_OPEN_DELAY = 400;
@@ -48,14 +49,6 @@ function buildSinglePreviewQuery(tableName: string, columns: Column[], pkColumn:
 function buildCompositePreviewQuery(tableName: string, columns: Column[], paramsDecl: string, filterText: string): string {
     const fields = columns.map((c) => c.name).join(" ");
     return `query FkPreview(${paramsDecl}) { ${tableName}(filter: ${filterText} limit: 1) { data { ${fields} } } }`;
-}
-
-function formatValue(value: unknown): string {
-    if (value === null || value === undefined) return "-";
-    if (typeof value === "boolean") return value ? "Yes" : "No";
-    const str = String(value);
-    if (str.length > 50) return str.slice(0, 47) + "...";
-    return str;
 }
 
 interface PreviewPlan {
@@ -129,7 +122,7 @@ export function FkCellPopover({ tableName, recordId, filterColumn, join, sourceR
                             {previewColumns.map((col) => (
                                 <div key={col.name} className="contents">
                                     <dt className="text-muted-foreground truncate">{col.label}</dt>
-                                    <dd className="text-foreground truncate">{formatValue(record[col.name])}</dd>
+                                    <dd className="text-foreground truncate">{formatColumnValue(record[col.name], col, { formatKey: DISPLAY_FORMAT_PREVIEW_KEY })}</dd>
                                 </div>
                             ))}
                         </dl>

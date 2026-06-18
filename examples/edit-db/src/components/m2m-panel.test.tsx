@@ -88,15 +88,14 @@ describe('M2mPanel', () => {
         expect(screen.getByText('Biology')).toBeInTheDocument();
     });
 
-    it('hides payload columns until expanded, then reveals them', async () => {
+    it('always shows the junction payload columns', async () => {
         renderPanel();
         await screen.findByText('Algebra');
-        // Collapsed: payload value not shown.
-        expect(screen.queryByText('A')).not.toBeInTheDocument();
-        fireEvent.click(screen.getByText(/Show Enrollments fields/));
-        // Expanded: payload header + value appear.
+        // Payload header + value are visible without any toggle.
         expect(screen.getByText('grade')).toBeInTheDocument();
         expect(screen.getByText('A')).toBeInTheDocument();
+        // No show/hide toggle is rendered.
+        expect(screen.queryByText(/Show Enrollments fields/)).not.toBeInTheDocument();
     });
 
     it('detaches a link by deleting its junction row primary key', async () => {

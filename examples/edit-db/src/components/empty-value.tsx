@@ -1,5 +1,3 @@
-import type { ReactNode } from 'react';
-
 /**
  * Renders a muted placeholder so empty grid/detail cells are visibly distinct
  * from cells that merely failed to render. In a DB editor the difference between
@@ -22,16 +20,4 @@ export function EmptyValue({ kind }: { kind: 'null' | 'empty' }) {
  */
 export function isEmptyValue(value: unknown): boolean {
     return value === null || value === undefined || value === '';
-}
-
-/**
- * Render a scalar cell value, substituting a muted placeholder for null/empty.
- * Non-empty values are returned as their string form so callers don't repeat
- * the coercion.
- */
-export function renderScalarValue(value: unknown): ReactNode {
-    if (value === null || value === undefined) return <EmptyValue kind="null" />;
-    const str = String(value);
-    if (str === '') return <EmptyValue kind="empty" />;
-    return str;
 }

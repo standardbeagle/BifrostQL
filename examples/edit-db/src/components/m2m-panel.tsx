@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Link } from '../hooks/usePath';
-import { renderScalarValue } from './empty-value';
+import { formatColumnValue } from '../lib/format-value';
 
 interface M2mPanelProps {
     parentTable: Table;
@@ -27,15 +27,14 @@ type JunctionRow = Record<string, unknown>;
 /**
  * One detail tab for a many-to-many relationship. The junction is skipped for
  * navigation: each row shows the linked target entity (resolved through the
- * junction), with an indicator and an expand toggle that reveals the junction
- * payload columns. Links can be attached (insert a junction row) and detached
- * (delete the junction row by its primary key).
+ * junction) alongside the junction payload columns. Links can be attached
+ * (insert a junction row) and detached (delete the junction row by its primary
+ * key).
  */
 export function M2mPanel({ parentTable, m2m, parentRowId, onOpenColumn }: M2mPanelProps) {
     const schema = useSchema();
     const fetcher = useFetcher();
     const queryClient = useQueryClient();
-    const [expanded, setExpanded] = useState(false);
     const [picking, setPicking] = useState(false);
 
     const junction = schema.findTable(m2m.junctionTable);
@@ -70,7 +69,6 @@ export function M2mPanel({ parentTable, m2m, parentRowId, onOpenColumn }: M2mPan
 
     const rows = data?.[junction.name]?.data ?? [];
     const payload = payloadColumns(junction, m2m);
-    const canExpand = payload.length > 0;
     const isEditable = junction.isEditable !== false;
 
     return (
@@ -80,11 +78,6 @@ export function M2mPanel({ parentTable, m2m, parentRowId, onOpenColumn }: M2mPan
                     <Link2 className="size-3" />
                     via {junction.label}
                 </span>
-                {canExpand && (
-                    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => setExpanded((v) => !v)}>
-                        {expanded ? 'Hide' : 'Show'} {junction.label} fields
-                    </Button>
-                )}
                 {isEditable && (
                     <Button variant="ghost" size="sm" className="h-7 px-2 text-xs ml-auto" onClick={() => setPicking(true)}>
                         <Plus className="size-3 mr-1" /> Add link
@@ -107,7 +100,7 @@ export function M2mPanel({ parentTable, m2m, parentRowId, onOpenColumn }: M2mPan
                         <thead>
                             <tr className="border-b border-border text-left text-xs text-muted-foreground">
                                 <th className="px-2 py-1 font-medium">{target.label}</th>
-                                {expanded && payload.map((c) => (
+                                {payload.map((c) => (
                                     <th key={c.name} className="px-2 py-1 font-medium">{c.label}</th>
                                 ))}
                                 {isEditable && <th className="px-2 py-1 w-8" aria-label="actions" />}
@@ -141,8 +134,8 @@ export function M2mPanel({ parentTable, m2m, parentRowId, onOpenColumn }: M2mPan
                                                 <span className="text-muted-foreground">—</span>
                                             )}
                                         </td>
-                                        {expanded && payload.map((c) => (
-                                            <td key={c.name} className="px-2 py-1">{renderScalarValue(row[c.name])}</td>
+                                        {payload.map((c) => (
+                                            <td key={c.name} className="px-2 py-1">{formatColumnValue(row[c.name], c)}</td>
                                         ))}
                                         {isEditable && (
                                             <td className="px-2 py-1">

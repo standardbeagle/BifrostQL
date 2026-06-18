@@ -24,10 +24,26 @@ import type { Column } from '../types/schema';
  */
 
 export const DISPLAY_FORMAT_KEY = 'display-format';
+/**
+ * Secondary, context-specific format template (used by compact surfaces like FK
+ * preview popovers). When a column doesn't set it, formatting falls back to the
+ * main `display-format`, so the preview matches the grid by default.
+ */
+export const DISPLAY_FORMAT_PREVIEW_KEY = 'display-format-preview';
 
 export type DisplayFormat = 'date' | 'datetime' | 'time' | 'relative' | 'number' | 'percent' | 'raw';
 
 const KNOWN: ReadonlySet<string> = new Set(['date', 'datetime', 'time', 'relative', 'number', 'percent', 'raw']);
+
+/** Options for {@link formatColumnValue}. */
+export interface FormatOptions {
+    /**
+     * Metadata key to read the format from before falling back to the main
+     * `display-format`. Lets a context override the template while defaulting to
+     * the main one when the column doesn't set the override key.
+     */
+    formatKey?: string;
+}
 
 /** Base GraphQL/db type, lower-cased, with the `!` non-null suffix stripped. */
 function baseType(column: Column): { param: string; db: string } {
@@ -44,9 +60,14 @@ function isDateTimeType({ param, db }: { param: string; db: string }): boolean {
     return param === 'datetime' || param === 'datetimeoffset'
         || db.includes('datetime') || db === 'timestamp' || db === 'smalldatetime';
 }
-/** Resolve the effective format: explicit metadata wins, else inferred from type. */
-export function resolveDisplayFormat(column: Column): DisplayFormat | null {
-    const meta = column.metadata?.[DISPLAY_FORMAT_KEY];
+/**
+ * Resolve the effective format: an explicit override key wins, then the main
+ * `display-format` metadata, else inferred from the column type. Passing
+ * `formatKey` lets a context default to the main template when its own is unset.
+ */
+export function resolveDisplayFormat(column: Column, formatKey?: string): DisplayFormat | null {
+    const override = formatKey ? column.metadata?.[formatKey] : undefined;
+    const meta = override ?? column.metadata?.[DISPLAY_FORMAT_KEY];
     if (typeof meta === 'string' && KNOWN.has(meta.toLowerCase())) {
         return meta.toLowerCase() as DisplayFormat;
     }
@@ -91,11 +112,11 @@ export function formatRelative(date: Date, now: Date = new Date()): string {
  * placeholder for null/empty, a locale-formatted node for known formats (with a
  * `title` revealing the exact value), or the plain string otherwise.
  */
-export function formatColumnValue(value: unknown, column: Column): ReactNode {
+export function formatColumnValue(value: unknown, column: Column, options?: FormatOptions): ReactNode {
     if (value === null || value === undefined) return <EmptyValue kind="null" />;
     if (value === '') return <EmptyValue kind="empty" />;
 
-    const fmt = resolveDisplayFormat(column);
+    const fmt = resolveDisplayFormat(column, options?.formatKey);
     if (fmt === null || fmt === 'raw') return String(value);
 
     if (fmt === 'date' || fmt === 'datetime' || fmt === 'time' || fmt === 'relative') {

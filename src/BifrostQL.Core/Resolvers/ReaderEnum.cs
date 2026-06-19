@@ -66,39 +66,50 @@ namespace BifrostQL.Core.Resolvers
             return null;
         }
         public ValueTask<object?> GetDataForMissingColumn(IBifrostFieldContext context, (IDictionary<string, int> index, IList<object?[]> data) table, int row)
+            => GetDataForMissingColumn(context, _tableSql, table, row);
+
+        /// <summary>
+        /// Resolves a join/aggregate field against the supplied query node
+        /// (<paramref name="level"/>) rather than always the root. Nested
+        /// sub-readers pass their own connected-table node so joins resolve
+        /// against the correct level's direct children — otherwise a same-named
+        /// join on a different path shadows the right one and the deeper field
+        /// reads the wrong (or empty) result set, surfacing as null.
+        /// </summary>
+        internal ValueTask<object?> GetDataForMissingColumn(IBifrostFieldContext context, GqlObjectQuery level, (IDictionary<string, int> index, IList<object?[]> data) table, int row)
         {
             string name = context.FieldName;
             string? alias = context.FieldAlias;
 
-            var join = _tableSql.GetJoin(alias, name);
+            var join = level.GetJoin(alias, name);
             if (join != null)
                 return GetJoinResult(table, row, join);
 
-            var aggregate = _tableSql.GetAggregate(alias, name);
+            var aggregate = level.GetAggregate(alias, name);
             if (aggregate != null)
             {
                 var tableData = _tables[aggregate.SqlKey!];
                 var valueFound = tableData.index.TryGetValue(aggregate.FinalColumnGraphQlName, out int valueIndex);
                 var keyFound = tableData.index.TryGetValue("srcId", out int keyIndex);
                 if (!valueFound || !keyFound)
-                    throw new BifrostExecutionError($"Unable to find aggregate column: {name} on table: {_tableSql.Alias}:{_tableSql.GraphQlName}");
-                var parentKeyIndex = table.index[_tableSql.DbTable.KeyColumns.First().DbName];
+                    throw new BifrostExecutionError($"Unable to find aggregate column: {name} on table: {level.Alias}:{level.GraphQlName}");
+                var parentKeyIndex = table.index[level.DbTable.KeyColumns.First().DbName];
                 var parentKeyValue = table.data[row][parentKeyIndex];
                 var value = tableData.data.FirstOrDefault(r => Equals(r[keyIndex], parentKeyValue))?[valueIndex];
                 return ValueTask.FromResult<object?>(value);
             }
-            throw new BifrostExecutionError($"Unable to find queryField: {name} on table: {_tableSql.Alias}:{_tableSql.GraphQlName}");
+            throw new BifrostExecutionError($"Unable to find queryField: {name} on table: {level.Alias}:{level.GraphQlName}");
         }
 
         private ValueTask<object?> GetJoinResult((IDictionary<string, int> index, IList<object?[]> data) table, int row, TableJoin join)
         {
             var key = JoinKeyValues.FromParentRow(join, table, row);
             var tableData = _tables[join.JoinName];
-            var connectedDbName = join.ConnectedTable.DbTable.DbName;
+            var connected = join.ConnectedTable;
 
             if (join.QueryType == QueryType.Join)
             {
-                var subTable = new SubTableEnumerable(this, key, tableData, connectedDbName);
+                var subTable = new SubTableEnumerable(this, key, tableData, connected);
                 // Paged nested collections (multi-links) surface the same
                 // wrapper as top-level queries: {total, offset, limit, data}.
                 // The per-parent total is carried on the window column; read it
@@ -119,7 +130,7 @@ namespace BifrostQL.Core.Resolvers
             if (join.QueryType == QueryType.Single)
             {
                 var data = JoinKeyMatcher.FindRow(tableData, key);
-                return ValueTask.FromResult<object?>(data == null ? null : new SingleRowLookup(data, tableData.index, this, connectedDbName));
+                return ValueTask.FromResult<object?>(data == null ? null : new SingleRowLookup(data, tableData.index, this, connected));
             }
 
             throw new BifrostExecutionError("unexpected Join type: " + join.JoinName);
@@ -274,12 +285,12 @@ namespace BifrostQL.Core.Resolvers
         private readonly (IDictionary<string, int> index, IList<object?[]> data) _table;
         private readonly IList<object?[]> _data;
         private readonly ReaderEnum _root;
-        private readonly string _tableDbName;
-        public SubTableEnumerable(ReaderEnum root, object?[] key, (IDictionary<string, int> index, IList<object?[]> data) @table, string tableDbName)
+        private readonly GqlObjectQuery _level;
+        public SubTableEnumerable(ReaderEnum root, object?[] key, (IDictionary<string, int> index, IList<object?[]> data) @table, GqlObjectQuery level)
         {
             _root = root;
             _table = table;
-            _tableDbName = tableDbName;
+            _level = level;
             _data = JoinKeyMatcher.FilterRows(table, key);
         }
 
@@ -300,11 +311,11 @@ namespace BifrostQL.Core.Resolvers
             var found = _table.index.TryGetValue(lookup, out int index);
             if (!found)
             {
-                return _root.GetDataForMissingColumn(context, _table, row);
+                return _root.GetDataForMissingColumn(context, _level, _table, row);
             }
 
             var raw = ReaderEnum.DbConvert(_data[row][index]);
-            return ValueTask.FromResult(_root.MapEnumValueOrRaw(_tableDbName, column, raw));
+            return ValueTask.FromResult(_root.MapEnumValueOrRaw(_level.DbTable.DbName, column, raw));
         }
 
 
@@ -341,15 +352,15 @@ namespace BifrostQL.Core.Resolvers
         private readonly object?[] _row;
         private readonly IDictionary<string, int> _index;
         private readonly ReaderEnum _root;
-        private readonly string _tableDbName;
+        private readonly GqlObjectQuery _level;
         private List<object?[]>? _data;
 
-        public SingleRowLookup(object?[] row, IDictionary<string, int> index, ReaderEnum root, string tableDbName)
+        public SingleRowLookup(object?[] row, IDictionary<string, int> index, ReaderEnum root, GqlObjectQuery level)
         {
             _row = row;
             _index = index;
             _root = root;
-            _tableDbName = tableDbName;
+            _level = level;
         }
 
         public ValueTask<object?> Get(IBifrostFieldContext context)
@@ -357,13 +368,13 @@ namespace BifrostQL.Core.Resolvers
             var name = context.FieldName;
             var alias = context.FieldAlias;
             if (_index.TryGetValue(alias ?? name, out var index))
-                return ValueTask.FromResult(_root.MapEnumValueOrRaw(_tableDbName, name, ReaderEnum.DbConvert(_row[index])));
+                return ValueTask.FromResult(_root.MapEnumValueOrRaw(_level.DbTable.DbName, name, ReaderEnum.DbConvert(_row[index])));
             if (_index.TryGetValue(name, out var index2))
-                return ValueTask.FromResult(_root.MapEnumValueOrRaw(_tableDbName, name, ReaderEnum.DbConvert(_row[index2])));
+                return ValueTask.FromResult(_root.MapEnumValueOrRaw(_level.DbTable.DbName, name, ReaderEnum.DbConvert(_row[index2])));
 
             _data ??= new List<object?[]> { _row };
 
-            return _root.GetDataForMissingColumn(context, (_index, _data), 0);
+            return _root.GetDataForMissingColumn(context, _level, (_index, _data), 0);
         }
     }
 }

@@ -411,7 +411,13 @@ namespace BifrostQL.Core.QueryModel
 
         public TableJoin? GetJoin(string? alias, string name)
         {
-            return RecurseJoins.FirstOrDefault(j => (alias != null && j.Alias == alias) || j.Name == name);
+            // Scope to this level's DIRECT joins only. Searching the flattened
+            // RecurseJoins (whole subtree) matched by name lets a join at a
+            // different path with the same field name shadow the right one — the
+            // "same table via two paths nulls the deeper one" bug. The reader
+            // resolves level by level, so the correct join is always a direct
+            // child of the current node.
+            return Joins.FirstOrDefault(j => (alias != null && j.Alias == alias) || j.Name == name);
         }
 
         public GqlAggregateColumn? GetAggregate(string? alias, string name)

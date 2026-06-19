@@ -175,14 +175,17 @@ public class ReaderEnumEnumMappingTests
     /// and routes scalar reads through the parent ReaderEnum's mapping. The same
     /// value→name mapping and drift→null policy must apply at this depth.
     /// </summary>
-    private static SingleRowLookup BuildSingleLink(ReaderEnum root, object? statusValue)
+    private static SingleRowLookup BuildSingleLink(IDbModel model, ReaderEnum root, object? statusValue)
     {
         var index = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
         {
             ["status"] = 0,
         };
         var row = new object?[] { statusValue };
-        return new SingleRowLookup(row, index, root, "Orders");
+        var level = GqlObjectQueryBuilder.Create()
+            .WithDbTable(model.GetTableFromDbName("Orders"))
+            .Build();
+        return new SingleRowLookup(row, index, root, level);
     }
 
     [Fact]
@@ -190,7 +193,7 @@ public class ReaderEnumEnumMappingTests
     {
         var model = BuildModel();
         var root = BuildReader(model, BuildMap(model));
-        var nested = BuildSingleLink(root, "active");
+        var nested = BuildSingleLink(model, root, "active");
 
         var result = await nested.Get(FieldContext("status"));
 
@@ -202,7 +205,7 @@ public class ReaderEnumEnumMappingTests
     {
         var model = BuildModel();
         var root = BuildReader(model, BuildMap(model));
-        var nested = BuildSingleLink(root, "gone");
+        var nested = BuildSingleLink(model, root, "gone");
 
         var result = await nested.Get(FieldContext("status"));
 

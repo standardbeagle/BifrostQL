@@ -4,6 +4,14 @@ All notable changes to BifrostQL after `3c42a60` (`[DART-xDCKBXmI5qsv] add app-b
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); pre-1.0 BifrostQL still uses CommitsSinceBaseline-style versioning.
 
+## 0.4.9 — 2026-06-19
+
+### Fixed — same-table-via-two-paths join nulling
+
+- A table reached through two different join paths in one query nulled the deeper path. Example: `board → client → users` (the lead) and `board → deliverable → users` (the owner) — both single-links carry the join field name `users`. The result reader resolved nested join fields against the root query's flattened `RecurseJoins` matched by name only, so the second path read the wrong (or empty) result set.
+- Fix threads each level's `GqlObjectQuery` into `SubTableEnumerable`/`SingleRowLookup` and scopes `GetJoin`/`GetAggregate` to that level's direct `Joins`. Also repairs nested aggregate resolution, which shared the root-scoping flaw. The bug was in post-SQL result assembly, so it was dialect independent.
+- Regression: `SqliteDualPathSameTableTests`.
+
 ## 0.4.8 — 2026-06-18
 
 ### Security — dependency bumps (Dependabot)

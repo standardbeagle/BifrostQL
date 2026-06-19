@@ -27,7 +27,9 @@
   },
   "pnpm": {
     "overrides": {
-      "ajv": "$ajv"
+      "ajv": "$ajv",
+      "form-data": "^4.0.6",
+      "js-yaml": "^4.2.0"
     }
   }
 }

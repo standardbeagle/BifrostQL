@@ -4,6 +4,14 @@ All notable changes to BifrostQL after `3c42a60` (`[DART-xDCKBXmI5qsv] add app-b
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); pre-1.0 BifrostQL still uses CommitsSinceBaseline-style versioning.
 
+## 0.4.8 — 2026-06-18
+
+### Security — dependency bumps (Dependabot)
+
+- Resolved 7 of 8 Dependabot advisories in the JS workspace: `astro` → 6.4.8 (2× high/moderate), `vite` → 7.3.5 (high/moderate), `form-data` → 4.0.6 (high), `js-yaml` → 4.2.0 (moderate, via pnpm override), `@babel/core` → 7.29.7 (low). `form-data`/`js-yaml` pinned through root `pnpm.overrides`.
+- Deferred: `esbuild` (low, build-time only) stays at 0.27.7 — pinned transitively by `vite@7.3.5`; will clear when Vite bumps its esbuild range. Forcing 0.28.1 across vite/storybook/webpack risks the build for a low-severity dev-only advisory.
+- All workspace builds (docs, edit-db) and JS test suites (1389 tests) pass on the updated tree.
+
 ## 0.4.7 — 2026-06-18
 
 ### Changed — edit-db navigator

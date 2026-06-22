@@ -65,8 +65,11 @@ public sealed class MetaSchemaResolverManyToManyTests
     [Fact]
     public void Projection_PayloadJunction_FlagsHasPayload()
     {
+        // A payload junction is opted in explicitly via many-to-many metadata
+        // (auto-detection deliberately skips junctions that carry real columns).
         var model = DbModelTestFixture.Create()
-            .WithTable("Students", t => t.WithSchema("dbo").WithPrimaryKey("Id").WithColumn("Name", "nvarchar"))
+            .WithTable("Students", t => t.WithSchema("dbo").WithPrimaryKey("Id").WithColumn("Name", "nvarchar")
+                .WithMetadata("many-to-many", "Courses:Enrollments"))
             .WithTable("Courses", t => t.WithSchema("dbo").WithPrimaryKey("Id").WithColumn("Title", "nvarchar"))
             .WithTable("Enrollments", t => t
                 .WithSchema("dbo")

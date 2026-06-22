@@ -162,6 +162,15 @@ namespace BifrostQL.Core.Resolvers
             return val switch
             {
                 DBNull => null,
+                // SQL `time`/`date` columns map to the GraphQL String scalar, but
+                // ADO providers hand back TimeSpan/TimeOnly/DateOnly (SQL Server
+                // `time` -> TimeSpan; Npgsql `time`/`date` -> TimeOnly/DateOnly).
+                // GraphQL.NET's StringGraphType.Serialize throws on non-string
+                // values, so normalize these to round-trippable ISO strings here,
+                // the single choke point for every read path.
+                TimeSpan ts => ts.ToString("c", System.Globalization.CultureInfo.InvariantCulture),
+                TimeOnly to => to.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+                DateOnly d => d.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
                 _ => val,
             };
         }

@@ -186,12 +186,40 @@ export const Link = forwardRef<HTMLAnchorElement, LinkProps>(({ to, children, ..
 export function Routes({ children }: { children: ReactNode }) {
     const routeContext = useContext(RouteContext);
     const pathContext = useContext(PathContext);
-    const routes = flatRoutes(children, routeContext.path)
-        .map((r): [FlatRoute, PathMatch] => [r, matchPath(r.route, pathContext.path)])
-        .filter(([, match]) => match.isMatch);
-    return <>{ routes.map(([route, match], index) => {
-        return (<RouteContext.Provider key={ index } value={{ ...match }}>{route.element}</RouteContext.Provider>);
-    })}</>
+    const flat = flatRoutes(children, routeContext.path);
+    const best = selectRoute(flat.map(f => f.route), pathContext.path);
+    if (!best) return <></>;
+    const element = flat.find(f => f.route === best.route)!.element;
+    return <RouteContext.Provider value={{ ...best.match }}>{element}</RouteContext.Provider>;
+}
+
+/** Higher = more specific: literal segments rank above `:param`, which ranks above `*`. */
+export function routeSpecificity(route: string): number {
+    let score = 0;
+    for (const seg of route.split('/')) {
+        if (seg === '' || seg === '*') continue;
+        score += seg.startsWith(':') ? 1 : 100;
+    }
+    return score;
+}
+
+/**
+ * Picks the single most-specific matching route for a path. When several
+ * same-length routes match (a literal segment vs a `:param` at the same
+ * position, e.g. `/:table/edit` vs `/:table/:id` for "/users/edit"), the
+ * literal route wins so a route keyword like "edit" is never captured as an
+ * `:id` and fired off as a bogus get-by-id ($id="edit"). Ties keep declaration
+ * order.
+ */
+export function selectRoute(routePaths: string[], path: string): { route: string; match: PathMatch } | null {
+    let best: { route: string; match: PathMatch } | null = null;
+    for (const route of routePaths) {
+        const match = matchPath(route, path);
+        if (!match.isMatch) continue;
+        if (best === null || routeSpecificity(route) > routeSpecificity(best.route))
+            best = { route, match };
+    }
+    return best;
 }
 
 export function Route({ path, element }: { path: string, element: ReactElement }): ReactElement {

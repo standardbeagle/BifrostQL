@@ -42,6 +42,8 @@ import {
     ChevronsLeft,
     ChevronsRight,
     Columns3,
+    PanelRight,
+    Rows3,
     Trash2,
 } from 'lucide-react';
 import { RowActions } from './row-actions';
@@ -125,6 +127,15 @@ interface DataTableProps<TData> {
     onDeleteRow?: (pk: PkFilter) => void;
     /** Callback when deleting multiple selected rows */
     onDeleteSelected?: (pks: PkFilter[]) => void;
+    /**
+     * Whether parent/child drill-down ("stacking") mode is active. When the
+     * companion `onToggleStacking` is supplied, a graphical toggle renders next
+     * to the Columns selector so the user can switch between stacked drill-down
+     * and a flat standard grid.
+     */
+    stackingEnabled?: boolean;
+    /** Toggle stacking mode on/off. When omitted, the toggle is not rendered. */
+    onToggleStacking?: (next: boolean) => void;
 }
 
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100];
@@ -179,6 +190,8 @@ export function DataTable<TData>({
     onEditRow,
     onDeleteRow,
     onDeleteSelected,
+    stackingEnabled,
+    onToggleStacking,
 }: DataTableProps<TData>) {
     const [hoveredRow, setHoveredRow] = useState<{ rowId: string; el: HTMLElement } | null>(null);
     const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -422,6 +435,24 @@ export function DataTable<TData>({
                         </>
                     )}
                 </div>
+                <div className="flex items-center gap-2">
+                {onToggleStacking && (
+                    <Button
+                        variant={stackingEnabled ? 'secondary' : 'outline'}
+                        size="sm"
+                        role="switch"
+                        aria-checked={!!stackingEnabled}
+                        onClick={() => onToggleStacking(!stackingEnabled)}
+                        title={stackingEnabled
+                            ? 'Stacked drill-down active — click for flat grid'
+                            : 'Flat grid active — click for stacked drill-down'}
+                    >
+                        {stackingEnabled
+                            ? <PanelRight className="size-3.5" />
+                            : <Rows3 className="size-3.5" />}
+                        {stackingEnabled ? 'Stacked' : 'Grid'}
+                    </Button>
+                )}
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                         <Button variant="outline" size="sm">
@@ -444,6 +475,7 @@ export function DataTable<TData>({
                             ))}
                     </DropdownMenuContent>
                 </DropdownMenu>
+                </div>
             </div>
             <div ref={scrollRef} className="flex-1 overflow-auto min-h-0">
                 <Table style={{ width: table.getTotalSize() }}>

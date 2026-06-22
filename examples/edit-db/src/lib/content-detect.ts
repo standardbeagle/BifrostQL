@@ -3,10 +3,16 @@ export type ContentKind = 'json' | 'xml' | 'php-serialized' | 'binary' | 'longte
 
 const binaryDbTypes = new Set(['binary', 'varbinary', 'image', 'blob', 'tinyblob', 'mediumblob', 'longblob', 'bytea']);
 const longTextDbTypes = new Set(['text', 'ntext', 'xml']);
+const jsonDbTypes = new Set(['json', 'jsonb']);
 
 /** Check if a dbType is a binary/blob type */
 export function isBinaryDbType(dbType: string): boolean {
     return binaryDbTypes.has(dbType.toLowerCase().replace(/\(.*\)/, ''));
+}
+
+/** Check if a dbType is a native JSON type (json, jsonb). */
+export function isJsonDbType(dbType: string): boolean {
+    return jsonDbTypes.has(dbType.toLowerCase().replace(/\(.*\)/, ''));
 }
 
 /** Check if a dbType is a long text type (text, ntext, varchar(max), xml) */
@@ -23,6 +29,11 @@ export function detectContentKind(value: string, dbType?: string): ContentKind {
     if (!value) return 'text';
 
     if (dbType && isBinaryDbType(dbType)) return 'binary';
+
+    // Native JSON columns (json/jsonb) are JSON by declaration — trust the
+    // schema even when the serialized value doesn't pass the bracket heuristic
+    // (e.g. a JSON scalar string, or a top-level number/string value).
+    if (dbType && isJsonDbType(dbType)) return 'json';
 
     const trimmed = value.trimStart();
 

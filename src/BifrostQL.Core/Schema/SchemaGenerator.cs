@@ -180,13 +180,13 @@ namespace BifrostQL.Core.Schema
         internal static bool IsRawSqlEnabled(IDbModel model)
         {
             var value = model.GetMetadataValue(Model.MetadataKeys.RawSql.Enabled);
-            return string.Equals(value, "enabled", StringComparison.OrdinalIgnoreCase);
+            return Utils.MetadataSwitch.Parse(value, defaultValue: false);
         }
 
         internal static bool IsGenericTableEnabled(IDbModel model)
         {
             var value = model.GetMetadataValue(Model.GenericTableConfig.MetadataKey);
-            return string.Equals(value, Model.GenericTableConfig.MetadataEnabled, StringComparison.OrdinalIgnoreCase);
+            return Utils.MetadataSwitch.Parse(value, defaultValue: false);
         }
 
         internal static string GetGenericTableTypes()

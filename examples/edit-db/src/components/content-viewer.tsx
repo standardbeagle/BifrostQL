@@ -44,7 +44,10 @@ function formatForPreview(value: string, kind: ContentKind): string {
 
 export function ContentViewer({ value, dbType, onExpand }: ContentViewerProps) {
     if (value === null || value === undefined) return <EmptyValue kind="null" />;
-    const str = String(value);
+    // Native JSON columns arrive already parsed (object/array) from the GraphQL
+    // JSON scalar; serialize so detection + preview operate on JSON text rather
+    // than "[object Object]".
+    const str = typeof value === 'object' ? JSON.stringify(value) : String(value);
     if (str === '') return <EmptyValue kind="empty" />;
 
     const kind = detectContentKind(str, dbType);

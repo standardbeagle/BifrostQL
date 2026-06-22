@@ -39,6 +39,9 @@ export function DataPanel() {
     const { loading, error, data } = useSchema();
     const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
     const [openColumns, setOpenColumns] = useState<DrillFrame[]>([]);
+    // Parent/child drill-down ("stacking") mode. When off, FK/multi-join cells
+    // render as flat values and the grid behaves as a standard single-table view.
+    const [stackingEnabled, setStackingEnabled] = useState(true);
 
     // Reset the drill stack whenever the root table changes so we don't carry
     // ghost breadcrumbs across unrelated navigations.
@@ -58,6 +61,17 @@ export function DataPanel() {
     const handleOpenColumn = useCallback((panel: ColumnPanel) => {
         setOpenColumns((prev) => pushDrillFrame(prev, panel));
     }, []);
+
+    // Switching to flat grid mode collapses any open drill columns so the view
+    // doesn't strand side panels the user can no longer extend.
+    const handleToggleStacking = useCallback((next: boolean) => {
+        setStackingEnabled(next);
+        if (!next) setOpenColumns([]);
+    }, []);
+
+    // Gating the open-column handler at the source removes the per-cell drill
+    // buttons in flat mode (the grid only renders them when a handler exists).
+    const drillHandler = stackingEnabled ? handleOpenColumn : undefined;
 
     const handleCloseColumn = useCallback((index: number) => {
         setOpenColumns((prev) => prev.filter((_, i) => i !== index));
@@ -124,7 +138,9 @@ export function DataPanel() {
                             tableFilter={filterTable}
                             selectedRowId={hasMultiJoins ? selectedRowId : undefined}
                             onRowSelect={hasMultiJoins ? setSelectedRowId : undefined}
-                            onOpenColumn={handleOpenColumn}
+                            onOpenColumn={drillHandler}
+                            stackingEnabled={stackingEnabled}
+                            onToggleStacking={handleToggleStacking}
                         />
                     </div>
                     {hasMultiJoins && selectedRowId && (
@@ -133,7 +149,7 @@ export function DataPanel() {
                                 parentTable={table}
                                 selectedRowId={selectedRowId}
                                 onClose={() => setSelectedRowId(null)}
-                                onOpenColumn={handleOpenColumn}
+                                onOpenColumn={drillHandler}
                             />
                         </div>
                     )}

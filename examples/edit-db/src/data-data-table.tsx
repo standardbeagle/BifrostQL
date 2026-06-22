@@ -17,13 +17,17 @@ interface DataDataTableParams {
     selectedRowId?: string | null;
     onRowSelect?: (rowId: string | null) => void;
     onOpenColumn?: (panel: ColumnPanel) => void;
+    /** Current stacking (parent/child drill-down) mode state. */
+    stackingEnabled?: boolean;
+    /** Toggle stacking mode. When supplied, the grid renders the mode toggle. */
+    onToggleStacking?: (next: boolean) => void;
 }
 
 type DeleteTarget =
     | { type: 'single'; pk: PkFilter }
     | { type: 'batch'; pks: PkFilter[] };
 
-export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRowId, onRowSelect, onOpenColumn }: DataDataTableParams): JSX.Element {
+export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRowId, onRowSelect, onOpenColumn, stackingEnabled, onToggleStacking }: DataDataTableParams): JSX.Element {
     const deleteMutation = useDeleteMutation(table);
 
     const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
@@ -94,8 +98,14 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
         const row = rows[panelRowIndex] as Record<string, unknown>;
         const col = table.columns.find((c: Column) => c.name === panelColumn);
         if (!col) return null;
+        const rawValue = row[panelColumn];
+        // Native JSON columns come back parsed; serialize so the expand panel
+        // edits/views JSON text instead of "[object Object]".
+        const stringValue = typeof rawValue === 'object' && rawValue !== null
+            ? JSON.stringify(rawValue, null, 2)
+            : String(rawValue ?? '');
         return {
-            value: String(row[panelColumn] ?? ''),
+            value: stringValue,
             columnName: col.name,
             columnLabel: col.label,
             dbType: col.dbType,
@@ -142,6 +152,8 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
                 onEditRow={isEditable ? handleEditRow : undefined}
                 onDeleteRow={isEditable ? handleDeleteRow : undefined}
                 onDeleteSelected={isEditable ? handleDeleteSelected : undefined}
+                stackingEnabled={stackingEnabled}
+                onToggleStacking={onToggleStacking}
             />
             <ConfirmDialog
                 open={deleteTarget !== null}

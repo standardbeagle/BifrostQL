@@ -158,8 +158,9 @@ function Layout() {
                                 <Route path='/:table/from/:filterTable/:id/edit/:editid' element={<DataPanel />} />
                                 <Route path='/:table/from/:filterTable/:id' element={<DataPanel />} />
                                 <Route path='/:table/:id/edit/:editid' element={<DataPanel />} />
-                                <Route path='/:table/:id' element={<DataPanel />} />
                                 <Route path='/:table/edit/:editid' element={<DataPanel />} />
+                                <Route path='/:table/edit' element={<DataPanel />} />
+                                <Route path='/:table/:id' element={<DataPanel />} />
                                 <Route path='/:table' element={<DataPanel />} />
                                 <Route path='/' element={<StartPage />} />
                             </Routes>

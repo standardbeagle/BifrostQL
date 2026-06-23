@@ -186,12 +186,17 @@ export const Link = forwardRef<HTMLAnchorElement, LinkProps>(({ to, children, ..
 export function Routes({ children }: { children: ReactNode }) {
     const routeContext = useContext(RouteContext);
     const pathContext = useContext(PathContext);
-    const routes = flatRoutes(children, routeContext.path)
+    // First match wins (react-router semantics). Routes are authored most-specific
+    // first (literal segments before params), so the first match is the intended one.
+    // Rendering every match would double-render a component — e.g. `/t/edit` matching
+    // both `/:table/edit` (id undefined) and `/:table/:id` (id="edit"), the latter
+    // firing a by-id query with the literal "edit".
+    const hit = flatRoutes(children, routeContext.path)
         .map((r): [FlatRoute, PathMatch] => [r, matchPath(r.route, pathContext.path)])
-        .filter(([, match]) => match.isMatch);
-    return <>{ routes.map(([route, match], index) => {
-        return (<RouteContext.Provider key={ index } value={{ ...match }}>{route.element}</RouteContext.Provider>);
-    })}</>
+        .find(([, match]) => match.isMatch);
+    if (!hit) return <></>;
+    const [route, match] = hit;
+    return <RouteContext.Provider value={{ ...match }}>{route.element}</RouteContext.Provider>
 }
 
 export function Route({ path, element }: { path: string, element: ReactElement }): ReactElement {

@@ -2,6 +2,7 @@ using BifrostQL.Core.Model;
 using BifrostQL.Core.Model.Relationships;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.QueryModel.TestFixtures;
+using BifrostQL.Core.Test.TestSupport;
 using FluentAssertions;
 
 namespace BifrostQL.Core.Test.QueryModel;
@@ -96,6 +97,39 @@ public sealed class PolymorphicJoinSqlTests
         // Cross-type isolation: querying contacts must bind 'contact', never 'company'.
         parameters.Parameters.Should().Contain(p => Equals(p.Value, "contact"));
         parameters.Parameters.Should().NotContain(p => Equals(p.Value, "company"));
+    }
+
+    [Fact]
+    public void CompaniesNotes_NoChildColumns_EmitsValidProjection()
+    {
+        // A polymorphic child collection selected with only the relationship and
+        // no scalar fields contributes no child columns. The connected projection
+        // must not append a trailing comma ("[src_id], FROM" → "Incorrect syntax
+        // near ','").
+        var model = BuildModel();
+        var parent = model.GetTableFromDbName("companies");
+        var notesLink = new GqlObjectQuery { GraphQlName = "notes" };
+        var query = new GqlObjectQuery
+        {
+            DbTable = parent,
+            TableName = "companies",
+            GraphQlName = parent.GraphQlName,
+            Path = "companies",
+            ScalarColumns = { new GqlObjectColumn(parent.KeyColumns.First().ColumnName) },
+            Links = { notesLink },
+        };
+        query.ConnectLinks(model);
+
+        var sqls = new Dictionary<string, ParameterizedSql>();
+        var parameters = new SqlParameterCollection();
+        query.AddSqlParameterized(model, Dialect, sqls, parameters);
+        var join = NotesJoin(sqls);
+
+        // Parse the real generated SQL — the stray comma ("[src_id], FROM") is a
+        // syntax error ScriptDom catches directly.
+        SqlSyntax.AssertValid(join.Sql, "polymorphic child with no scalar columns");
+        join.Sql.Should().Contain("[src_id]");
+        join.Sql.Should().Contain("INNER JOIN [notes]");
     }
 
     [Fact]

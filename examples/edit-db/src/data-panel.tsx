@@ -1,11 +1,11 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { DataDataTable } from './data-data-table';
 import { DetailPanel } from './components/detail-panel';
 import { useParams } from './hooks/usePath';
 import { useSchema } from './hooks/useSchema';
 import { useColumnNavRegister } from './hooks/useColumnNav';
 import { Table } from './types/schema';
-import { Loader2, X, ChevronRight, Home } from 'lucide-react';
+import { Loader2, X, ChevronRight, ChevronDown, Home } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -42,6 +42,11 @@ export function DataPanel() {
     // Parent/child drill-down ("stacking") mode. When off, FK/multi-join cells
     // render as flat values and the grid behaves as a standard single-table view.
     const [stackingEnabled, setStackingEnabled] = useState(true);
+    // Levels the user manually re-expanded. By default every ancestor (a level
+    // with a deeper level below it) auto-collapses to its selected row; the
+    // deepest/active level is always full. Keyed by level: -1 = main grid,
+    // 0..n = drill columns.
+    const [expandedLevels, setExpandedLevels] = useState<Set<number>>(new Set());
 
     // Reset the drill stack whenever the root table changes so we don't carry
     // ghost breadcrumbs across unrelated navigations.
@@ -49,10 +54,19 @@ export function DataPanel() {
     if (tableName !== lastTableRef.current) {
         lastTableRef.current = tableName;
         if (openColumns.length > 0) setOpenColumns([]);
+        if (expandedLevels.size > 0) setExpandedLevels(new Set());
     }
 
+    const toggleLevel = useCallback((key: number) => {
+        setExpandedLevels((prev) => {
+            const next = new Set(prev);
+            next.has(key) ? next.delete(key) : next.add(key);
+            return next;
+        });
+    }, []);
+
     const { register, unregister } = useColumnNavRegister();
-    const mainRef = useRef<HTMLDivElement>(null);
+    const mainRef = useRef<HTMLDivElement | null>(null);
     const columnRefsMap = useRef<Map<number, HTMLElement | null>>(new Map());
 
     const table = useMemo(() => data ? getTable(data, tableName) : undefined, [data, tableName]);
@@ -120,28 +134,27 @@ export function DataPanel() {
     );
     if (!table) return <div className="p-5 text-center text-muted-foreground">Table not found</div>;
 
-    return (
-        <div className="flex flex-col flex-1 min-h-0">
-            {openColumns.length > 0 && (
-                <DrillBreadcrumb
-                    crumbs={crumbs}
-                    onCrumbClick={handleCrumbClick}
-                    activeIndex={openColumns.length - 1}
-                />
-            )}
-            <div className="flex flex-1 min-h-0 gap-0.5">
+    const mainGrid = (
+        <DataDataTable
+            table={table}
+            id={id}
+            tableFilter={filterTable}
+            selectedRowId={hasMultiJoins ? selectedRowId : undefined}
+            onRowSelect={hasMultiJoins ? setSelectedRowId : undefined}
+            onOpenColumn={drillHandler}
+            stackingEnabled={stackingEnabled}
+            onToggleStacking={handleToggleStacking}
+        />
+    );
+
+    // No drill stack open: keep the standard single-table view (with the m2m
+    // detail panel below when applicable). Unchanged behavior.
+    if (openColumns.length === 0) {
+        return (
+            <div className="flex flex-col flex-1 min-h-0">
                 <div ref={mainRef} className="flex flex-col flex-1 min-h-0 min-w-0">
                     <div className={hasMultiJoins && selectedRowId ? 'flex-1 min-h-0 max-h-[50%] overflow-hidden flex flex-col' : 'flex-1 min-h-0 overflow-hidden flex flex-col'}>
-                        <DataDataTable
-                            table={table}
-                            id={id}
-                            tableFilter={filterTable}
-                            selectedRowId={hasMultiJoins ? selectedRowId : undefined}
-                            onRowSelect={hasMultiJoins ? setSelectedRowId : undefined}
-                            onOpenColumn={drillHandler}
-                            stackingEnabled={stackingEnabled}
-                            onToggleStacking={handleToggleStacking}
-                        />
+                        {mainGrid}
                     </div>
                     {hasMultiJoins && selectedRowId && (
                         <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
@@ -154,15 +167,58 @@ export function DataPanel() {
                         </div>
                     )}
                 </div>
-                {openColumns.map((col, index) => (
-                    <SideColumn
-                        key={`${col.tableName}-${col.filterId ?? ''}-${col.filterColumn ?? ''}-${index}`}
-                        panel={col}
-                        onClose={() => handleCloseColumn(index)}
-                        onOpenColumn={handleOpenColumn}
-                        onRef={(el) => { columnRefsMap.current.set(index + 1, el); }}
-                    />
-                ))}
+            </div>
+        );
+    }
+
+    // Multi-generational drill stack: every generation stacks vertically and the
+    // whole stack shares one scrollbar. Each generation keeps a min-height when
+    // expanded; ancestors auto-collapse to their selected row (the row that was
+    // drilled into the next generation) unless the user re-expands them.
+    const lastIndex = openColumns.length - 1;
+    const isExpanded = (key: number, active: boolean) => active || expandedLevels.has(key);
+
+    return (
+        <div className="flex flex-col flex-1 min-h-0">
+            <DrillBreadcrumb
+                crumbs={crumbs}
+                onCrumbClick={handleCrumbClick}
+                activeIndex={openColumns.length - 1}
+            />
+            <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-0.5 p-0.5">
+                <StackLevel
+                    title={table.label}
+                    selectedRowId={openColumns[0]?.filterId}
+                    expanded={isExpanded(-1, false)}
+                    active={false}
+                    onToggle={() => toggleLevel(-1)}
+                    onRef={(el) => { mainRef.current = el; columnRefsMap.current.set(0, el); }}
+                >
+                    {mainGrid}
+                </StackLevel>
+                {openColumns.map((col, index) => {
+                    const active = index === lastIndex;
+                    return (
+                        <StackLevel
+                            key={`${col.tableName}-${col.filterId ?? ''}-${col.filterColumn ?? ''}-${index}`}
+                            title={getTable(data!, col.tableName)?.label ?? col.tableName}
+                            selectedRowId={openColumns[index + 1]?.filterId}
+                            expanded={isExpanded(index, active)}
+                            active={active}
+                            onToggle={() => toggleLevel(index)}
+                            onClose={() => handleCloseColumn(index)}
+                            onRef={(el) => { columnRefsMap.current.set(index + 1, el); }}
+                        >
+                            <DataDataTable
+                                table={getTable(data!, col.tableName)!}
+                                id={col.filterId}
+                                tableFilter={col.filterTable}
+                                filterColumn={col.filterColumn}
+                                onOpenColumn={handleOpenColumn}
+                            />
+                        </StackLevel>
+                    );
+                })}
             </div>
         </div>
     );
@@ -209,42 +265,68 @@ function DrillBreadcrumb({ crumbs, onCrumbClick, activeIndex }: DrillBreadcrumbP
     );
 }
 
-interface SideColumnProps {
-    panel: ColumnPanel;
-    onClose: () => void;
-    onOpenColumn: (panel: ColumnPanel) => void;
+interface StackLevelProps {
+    /** Table label shown in the level header. */
+    title: string;
+    /** Id of this level's selected row (the row drilled into the next level);
+     *  shown as a chip when collapsed. */
+    selectedRowId?: string;
+    /** Expanded → full grid; collapsed → header-only summary. */
+    expanded: boolean;
+    /** The deepest level — always expanded, badged "active". */
+    active: boolean;
+    onToggle: () => void;
+    /** Close (only for drill columns, not the main level). */
+    onClose?: () => void;
     onRef?: (el: HTMLDivElement | null) => void;
+    children: ReactNode;
 }
 
-function SideColumn({ panel, onClose, onOpenColumn, onRef }: SideColumnProps) {
-    const { data } = useSchema();
-    const table = useMemo(() => data ? getTable(data, panel.tableName) : undefined, [data, panel.tableName]);
-
-    if (!table) return null;
-
+/**
+ * One generation in the vertical drill stack: a header (expand/collapse, label,
+ * selected-row chip, close) plus the grid when expanded. Collapsed it shrinks to
+ * the header so deep stacks stay navigable under one outer scrollbar.
+ */
+function StackLevel({ title, selectedRowId, expanded, active, onToggle, onClose, onRef, children }: StackLevelProps) {
     return (
-        <div ref={onRef} className="flex flex-col flex-1 min-h-0 min-w-0 border-l border-border">
+        <div ref={onRef} className="shrink-0 flex flex-col border border-border rounded-sm overflow-hidden">
             <div className="flex items-center gap-1 px-2 py-1 bg-muted/30 border-b border-border shrink-0">
-                <span className="text-xs font-medium truncate flex-1">{table.label}</span>
-                <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={onClose}
-                    aria-label="Close column"
-                    title="Close column"
+                <button
+                    type="button"
+                    onClick={onToggle}
+                    className="inline-flex items-center justify-center size-5 shrink-0 text-muted-foreground hover:text-foreground"
+                    aria-expanded={expanded}
+                    aria-label={expanded ? 'Collapse table' : 'Expand table'}
+                    title={expanded ? 'Collapse' : 'Expand'}
                 >
-                    <X className="size-3.5" />
-                </Button>
+                    {expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+                </button>
+                <span className="text-xs font-medium truncate">{title}</span>
+                {active && (
+                    <span className="text-[10px] uppercase tracking-wide text-primary/70 shrink-0">active</span>
+                )}
+                {!expanded && selectedRowId && (
+                    <span className="text-xs text-muted-foreground truncate">#{selectedRowId}</span>
+                )}
+                <div className="flex-1" />
+                {onClose && (
+                    <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="shrink-0"
+                        onClick={onClose}
+                        aria-label="Close column"
+                        title="Close column"
+                    >
+                        <X className="size-3.5" />
+                    </Button>
+                )}
             </div>
-            <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-                <DataDataTable
-                    table={table}
-                    id={panel.filterId}
-                    tableFilter={panel.filterTable}
-                    filterColumn={panel.filterColumn}
-                    onOpenColumn={onOpenColumn}
-                />
-            </div>
+            {expanded && (
+                <div className="flex flex-col min-h-[18rem] max-h-[34rem]">
+                    {children}
+                </div>
+            )}
         </div>
     );
 }

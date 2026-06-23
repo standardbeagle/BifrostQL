@@ -31,6 +31,7 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - **Pagination fix**: switching tables no longer strands the grid on an out-of-range page ("page 2 of 1"). The page index is clamped into range (`clampPageIndex`), which also repairs the empty-window fetch and the stuck pager.
 - **JSON data support**: native `json`/`jsonb` columns (and `paramType: JSON`) now route to the content viewer with pretty-print + format/minify; object values from the GraphQL JSON scalar are serialized instead of rendering as `[object Object]`.
 - **Create-flow routing fix**: opening the New-record dialog (`/:table/edit`) no longer fires a bogus get-by-id with `$id="edit"`. The router matched `/:table/:id` and captured the `edit` keyword as an id because `Routes` rendered every match and lacked a bare create route. `Routes` now renders the single most-specific match (literal segment beats `:param`), and the DataPanel block gained the missing `/:table/edit` route. Regression: `usePath.test.ts`.
+- **Drill-stack scroll & collapse**: the multi-generational drill stack now shares one outer scrollbar with a per-table min-height instead of squishing. Ancestor generations auto-collapse to their selected row (the row drilled into the next level); the deepest level stays full and is badged "active". Any ancestor re-expands from its header chevron.
 
 ## 0.4.9 — 2026-06-19
 

@@ -122,6 +122,55 @@ describe('DataTable composite primary key rendering', () => {
     });
 });
 
+describe('DataTable stacking-mode toggle', () => {
+    function renderWithToggle(stackingEnabled: boolean, onToggle = vi.fn()) {
+        render(
+            <DataTable<EnrollmentRow>
+                columns={makeColumns()}
+                data={enrollmentRows}
+                pageCount={1}
+                pageIndex={0}
+                pageSize={50}
+                sorting={[]}
+                columnFilters={[]}
+                primaryKeys={['student_id', 'course_id']}
+                stackingEnabled={stackingEnabled}
+                onToggleStacking={onToggle}
+                onSortingChange={() => { /* noop */ }}
+                onColumnFiltersChange={() => { /* noop */ }}
+                onPageIndexChange={() => { /* noop */ }}
+                onPageSizeChange={() => { /* noop */ }}
+            />,
+        );
+        return onToggle;
+    }
+
+    it('does not render the toggle when onToggleStacking is omitted', () => {
+        renderDataTable();
+        expect(screen.queryByRole('switch')).not.toBeInTheDocument();
+    });
+
+    it('renders the toggle as checked and labelled "Stacked" when stacking is enabled', () => {
+        renderWithToggle(true);
+        const toggle = screen.getByRole('switch');
+        expect(toggle).toHaveAttribute('aria-checked', 'true');
+        expect(toggle).toHaveTextContent('Stacked');
+    });
+
+    it('renders the toggle as unchecked and labelled "Grid" when stacking is disabled', () => {
+        renderWithToggle(false);
+        const toggle = screen.getByRole('switch');
+        expect(toggle).toHaveAttribute('aria-checked', 'false');
+        expect(toggle).toHaveTextContent('Grid');
+    });
+
+    it('requests the opposite mode when clicked', () => {
+        const onToggle = renderWithToggle(true);
+        fireEvent.click(screen.getByRole('switch'));
+        expect(onToggle).toHaveBeenCalledWith(false);
+    });
+});
+
 describe('DataTable action callback payloads', () => {
     it('dispatches PkFilter[] to onDeleteSelected after selecting all rows via the select-all checkbox', async () => {
         const deleteSpy = vi.fn((_pks: PkFilter[]) => { /* noop */ });

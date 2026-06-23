@@ -4,6 +4,35 @@ All notable changes to BifrostQL after `3c42a60` (`[DART-xDCKBXmI5qsv] add app-b
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); pre-1.0 BifrostQL still uses CommitsSinceBaseline-style versioning.
 
+## 0.4.10 — 2026-06-22
+
+### Fixed — `time`/`date` columns crashed the String scalar
+
+- SQL `time`/`date` columns map to the GraphQL `String` scalar, but ADO providers hand back `TimeSpan`/`TimeOnly`/`DateOnly` (SQL Server `time` → `TimeSpan`; Npgsql `time`/`date` → `TimeOnly`/`DateOnly`). GraphQL.NET's `StringGraphType.Serialize` throws on non-string values, so these columns failed serialization.
+- Fix normalizes them to round-trippable ISO strings in `ReaderEnum.DbConvert` — the single choke point for every read path (top-level, sub-table, single-row). `DateTime`/`DateTimeOffset` are untouched (their own scalars handle them).
+- Regression: `ReaderEnumDbConvertTests`.
+
+### Changed — conservative many-to-many auto-detection
+
+- Auto-detection no longer treats a two-FK table as a pure junction when it carries **real extra (non-key, non-FK) columns** — such a table is a first-class entity (e.g. `sessions → session_entries → participants`), not a link table.
+- Auto-detection now also requires the junction name to reference **both** endpoint tables (the conventional `tableA_tableB` link-table naming, singular/plural tolerant).
+- Either guard is overridden by explicit `many-to-many:` metadata, which still supports payload junctions.
+- Regression: `ManyToManyLinkTests`, `MetaSchemaResolverManyToManyTests`.
+
+### Added — uniform metadata activate/deactivate convention
+
+- New `MetadataSwitch` vocabulary shared by every boolean toggle: on (`true/on/yes/enabled/1/active`) and off (`false/off/no/disabled/0/!`). Blank/unrecognized falls back to each switch's default. Routed through all `GetMetadataBool` readers plus the `raw-sql` / `enable-generic-table` checks, so `auto-join`, `foreign-joins`, `dynamic-joins`, `de-pluralize`, etc. all deactivate consistently.
+- Many-to-many metadata accepts an inline `!` negation to prune a single auto-detected bridge while keeping the wide auto-detection net (e.g. `many-to-many: Groups:Memberships, !Roles`). A negation on either endpoint suppresses the whole pair.
+- Regression: `MetadataSwitchTests`, `ManyToManyLinkTests`.
+
+### edit-db (`0.3.87`)
+
+- **Stacking-mode toggle**: a graphical switch beside the Columns selector toggles parent/child drill-down ("Stacked") vs a flat standard grid. Off collapses any open drill columns and renders FK/multi-join cells as plain values.
+- **Pagination fix**: switching tables no longer strands the grid on an out-of-range page ("page 2 of 1"). The page index is clamped into range (`clampPageIndex`), which also repairs the empty-window fetch and the stuck pager.
+- **JSON data support**: native `json`/`jsonb` columns (and `paramType: JSON`) now route to the content viewer with pretty-print + format/minify; object values from the GraphQL JSON scalar are serialized instead of rendering as `[object Object]`.
+- **Create-flow routing fix**: opening the New-record dialog (`/:table/edit`) no longer fires a bogus get-by-id with `$id="edit"`. The router matched `/:table/:id` and captured the `edit` keyword as an id because `Routes` rendered every match and lacked a bare create route. `Routes` now renders the single most-specific match (literal segment beats `:param`), and the DataPanel block gained the missing `/:table/edit` route. Regression: `usePath.test.ts`.
+- **Drill-stack scroll & collapse**: the multi-generational drill stack now shares one outer scrollbar with a per-table min-height instead of squishing. Ancestor generations auto-collapse to their selected row (the row drilled into the next level); the deepest level stays full and is badged "active". Any ancestor re-expands from its header chevron.
+
 ## 0.4.9 — 2026-06-19
 
 ### Fixed — same-table-via-two-paths join nulling

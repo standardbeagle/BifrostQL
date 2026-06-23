@@ -158,9 +158,12 @@ function Layout() {
                                 <Route path='/:table/from/:filterTable/:id/edit/:editid' element={<DataPanel />} />
                                 <Route path='/:table/from/:filterTable/:id' element={<DataPanel />} />
                                 <Route path='/:table/:id/edit/:editid' element={<DataPanel />} />
-                                <Route path='/:table/edit/:editid' element={<DataPanel />} />
-                                <Route path='/:table/edit' element={<DataPanel />} />
                                 <Route path='/:table/:id' element={<DataPanel />} />
+                                <Route path='/:table/edit/:editid' element={<DataPanel />} />
+                                {/* Bare create route: keeps the grid mounted behind the New-record
+                                    dialog and stops `:id` from capturing the "edit" keyword
+                                    (which fired a bogus get-by-id with $id="edit"). */}
+                                <Route path='/:table/edit' element={<DataPanel />} />
                                 <Route path='/:table' element={<DataPanel />} />
                                 <Route path='/' element={<StartPage />} />
                             </Routes>

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "./usePath";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSchema } from "./useSchema";
 import { Table, Column, Join, Schema } from "../types/schema";
 import { ColumnDef, ColumnFiltersState, SortingState } from "@tanstack/react-table";
@@ -14,7 +14,7 @@ import { HoverCard, HoverCardTrigger, HoverCardContent } from "../components/ui/
 import { ContentViewer } from "../components/content-viewer";
 import { EmptyValue } from "../components/empty-value";
 import { formatColumnValue } from "../lib/format-value";
-import { isLongTextDbType, isBinaryDbType } from "../lib/content-detect";
+import { isLongTextDbType, isBinaryDbType, isJsonDbType } from "../lib/content-detect";
 import {
     getFilterOperators,
     getFilterObj,
@@ -52,6 +52,18 @@ function getJoinedRowPkValue(row: RowData | undefined, joinSchema: Table | undef
     if (!row) return "";
     if (!joinSchema || (joinSchema.primaryKeys?.length ?? 0) <= 1) return String(row?.id ?? "");
     return rowIdOf(row as Record<string, unknown>, joinSchema, 0);
+}
+
+/**
+ * Clamp a page index into the valid [0, pageCount-1] range. Guards against a
+ * stale/out-of-range page (e.g. "page 2 of 1" after switching to a smaller
+ * table or when the row count shrinks).
+ */
+export function clampPageIndex(pageIndex: number, pageCount: number): number {
+    const maxPageIndex = Math.max(0, pageCount - 1);
+    if (pageIndex < 0) return 0;
+    if (pageIndex > maxPageIndex) return maxPageIndex;
+    return pageIndex;
 }
 
 export function getMultiJoinRows(row: RowData, join: Join): RowData[] {
@@ -207,7 +219,7 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                 };
             }
 
-            const useContentViewer = isLongTextDbType(c.dbType) || isBinaryDbType(c.dbType);
+            const useContentViewer = isLongTextDbType(c.dbType) || isBinaryDbType(c.dbType) || isJsonDbType(c.dbType) || c.paramType === "JSON";
 
             if (useContentViewer) {
                 return {
@@ -507,6 +519,16 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         totalRows = tableData?.total ?? 0;
     }
     const pageCount = Math.max(1, Math.ceil(totalRows / pageSize));
+
+    // Clamp the page index into range. The table-change reset above zeroes it on
+    // a new table, but a shrinking row count (or a switch to a smaller table
+    // whose data arrives after the reset) can still leave it past the last page
+    // — e.g. "page 2 of 1", which also makes the offset query fetch an empty
+    // window and strands the pager. Snap back to the last valid page (min 0).
+    useEffect(() => {
+        const clamped = clampPageIndex(pageIndex, pageCount);
+        if (clamped !== pageIndex) setPageIndex(clamped);
+    }, [pageIndex, pageCount]);
 
     const syncFiltersToUrl = useCallback((filters: ColumnFiltersState) => {
         const params = new URLSearchParams();

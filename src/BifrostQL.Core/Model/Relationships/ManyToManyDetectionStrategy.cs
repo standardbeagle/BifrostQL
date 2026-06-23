@@ -1,3 +1,5 @@
+using BifrostQL.Core.Utils;
+
 namespace BifrostQL.Core.Model.Relationships
 {
     /// <summary>
@@ -27,6 +29,12 @@ namespace BifrostQL.Core.Model.Relationships
                 var entries = m2mValue.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 foreach (var entry in entries)
                 {
+                    // A negated entry (e.g. "!Roles:UserRoles") is a suppression, not a
+                    // declaration — it prunes an auto-detected link (handled in AutoDetect
+                    // via IsM2MSuppressed), so there is nothing to add here.
+                    if (MetadataSwitch.IsNegated(entry))
+                        continue;
+
                     var parts = entry.Split(':', StringSplitOptions.TrimEntries);
                     if (parts.Length != 2)
                         continue;
@@ -76,7 +84,13 @@ namespace BifrostQL.Core.Model.Relationships
 
         /// <summary>
         /// Auto-detects many-to-many relationships by analyzing foreign key patterns.
-        /// A junction table has exactly 2 FKs and no additional non-key data columns.
+        /// A junction table must have exactly 2 (non-composite) FKs, NO extra
+        /// non-key data columns, AND a name that references both linked tables
+        /// (the conventional <c>tableA_tableB</c> link-table naming). The last two
+        /// guards keep ordinary entities that merely carry two FKs (e.g.
+        /// sessions -> session_entries -> participants) from being mistaken for a
+        /// pure bridge. Either guard can be overridden with explicit
+        /// <c>many-to-many:</c> metadata (see <see cref="DetectFromMetadata"/>).
         /// </summary>
         public void AutoDetect(IDbModel model, IReadOnlyCollection<DbForeignKey> foreignKeys)
         {
@@ -99,21 +113,21 @@ namespace BifrostQL.Core.Model.Relationships
                 if (junctionTable == null)
                     continue;
 
-                // Respect the per-table opt-out: an association entity tagged
-                // not-junction stays an ordinary table, never an auto-detected bridge.
-                if (junctionTable.CompareMetadata(MetadataKeys.Relationships.NotJunction, "true"))
-                    continue;
-
-                // Detect payload columns (non-key, non-FK). A junction with payload is
-                // still a many-to-many bridge — skip-with-payload — so it is detected
-                // like a pure junction but flagged so the UI can reveal those columns.
+                // Real extra columns (non-key, non-FK) mean this is a first-class
+                // entity carrying its own data, not a pure link table. Auto-detection
+                // bows out — the schema author can still opt in via metadata.
                 var nonKeyColumns = junctionTable.Columns
                     .Where(c => !c.IsPrimaryKey)
                     .Where(c => !string.Equals(c.ColumnName, childFks[0].ChildColumnNames[0], StringComparison.OrdinalIgnoreCase))
                     .Where(c => !string.Equals(c.ColumnName, childFks[1].ChildColumnNames[0], StringComparison.OrdinalIgnoreCase))
                     .ToList();
 
-                var hasPayload = nonKeyColumns.Count > 0;
+                if (nonKeyColumns.Count > 0)
+                    continue;
+
+                // Auto-detected junctions are always pure (the payload guard above
+                // already bailed out otherwise).
+                const bool hasPayload = false;
 
                 // Get the two parent tables
                 var parentTables = childFks
@@ -129,6 +143,12 @@ namespace BifrostQL.Core.Model.Relationships
                 var tableA = parentTables[0]!;
                 var tableB = parentTables[1]!;
 
+                // Require the link-table naming signal: the junction name must
+                // reference both endpoints (e.g. `user_roles`, `StudentCourses`).
+                // Without it, a coincidental two-FK entity would be mis-bridged.
+                if (!JunctionNameReferencesBoth(junctionTable, tableA, tableB))
+                    continue;
+
                 // Look up columns
                 if (!junctionTable.ColumnLookup.TryGetValue(childFks[0].ChildColumnNames[0], out var junctionColA))
                     continue;
@@ -137,6 +157,12 @@ namespace BifrostQL.Core.Model.Relationships
                 if (!junctionTable.ColumnLookup.TryGetValue(childFks[1].ChildColumnNames[0], out var junctionColB))
                     continue;
                 if (!tableB.ColumnLookup.TryGetValue(childFks[1].ParentColumnNames[0], out var parentColB))
+                    continue;
+
+                // A negated many-to-many entry on EITHER endpoint prunes the whole
+                // bridge — a single "!Roles" on Users kills Users<->Roles in both
+                // directions.
+                if (IsM2MSuppressed(tableA, tableB) || IsM2MSuppressed(tableB, tableA))
                     continue;
 
                 // A -> junction -> B
@@ -153,6 +179,60 @@ namespace BifrostQL.Core.Model.Relationships
                         parentColB, junctionColB, junctionColA, parentColA, hasPayload);
                 }
             }
+        }
+
+        /// <summary>
+        /// True when <paramref name="source"/> carries a negated many-to-many
+        /// metadata entry (e.g. <c>many-to-many: !Target</c> or
+        /// <c>many-to-many: !Target:Junction</c>) naming <paramref name="target"/>.
+        /// This lets a schema author prune one auto-detected bridge while leaving
+        /// the wide auto-detection net in place for every other pair.
+        /// </summary>
+        private static bool IsM2MSuppressed(IDbTable source, IDbTable target)
+        {
+            var raw = source.GetMetadataValue(MetadataKeys.Relationships.ManyToMany);
+            if (string.IsNullOrWhiteSpace(raw))
+                return false;
+
+            foreach (var entry in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (!MetadataSwitch.IsNegated(entry))
+                    continue;
+
+                // Bare form is "Target" or "Target:Junction" — match on the target.
+                var targetName = MetadataSwitch.StripNegation(entry)
+                    .Split(':', StringSplitOptions.TrimEntries)[0];
+                if (string.Equals(targetName, target.GraphQlName, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(targetName, target.DbName, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// True when the junction table name references BOTH linked tables — the
+        /// conventional <c>tableA_tableB</c> link-table naming. Tolerates
+        /// singular/plural drift (Users &lt;-&gt; user). A self-referencing junction
+        /// (both endpoints the same table) needs that one name present.
+        /// </summary>
+        private static bool JunctionNameReferencesBoth(IDbTable junction, IDbTable a, IDbTable b)
+        {
+            var junctionName = StringNormalizer.NormalizeName(junction.DbName);
+            return NameReferencesTable(junctionName, a.DbName)
+                && NameReferencesTable(junctionName, b.DbName);
+        }
+
+        private static bool NameReferencesTable(string junctionName, string tableName)
+        {
+            var name = StringNormalizer.NormalizeName(tableName);
+            if (name.Length == 0)
+                return false;
+            if (junctionName.Contains(name, StringComparison.Ordinal))
+                return true;
+            // Tolerate singular/plural drift between the table name and how it
+            // appears inside the junction name (roles -> role, sessions -> session).
+            var singular = name.EndsWith("s", StringComparison.Ordinal) ? name[..^1] : name;
+            return singular.Length > 0 && junctionName.Contains(singular, StringComparison.Ordinal);
         }
 
         private static bool TryFindJunctionColumns(

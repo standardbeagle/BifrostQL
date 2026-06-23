@@ -72,11 +72,11 @@ public sealed class ManyToManyLinkTests
     }
 
     [Fact]
-    public void AutoDetect_JunctionWithExtraDataColumns_IsDetectedWithPayload()
+    public void AutoDetect_JunctionWithExtraDataColumns_IsNotDetected()
     {
-        // Skip-with-payload: a junction carrying extra (non-key, non-FK) columns
-        // is still a many-to-many bridge. It is detected like a pure junction, but
-        // flagged HasPayload so the UI can offer to reveal the payload columns.
+        // A junction carrying real extra (non-key, non-FK) columns is a
+        // first-class entity, not a pure link table. Auto-detection bows out;
+        // the schema author can still opt in with explicit many-to-many metadata.
         var model = DbModelTestFixture.Create()
             .WithTable("Users", t => t
                 .WithSchema("dbo")
@@ -97,16 +97,14 @@ public sealed class ManyToManyLinkTests
             .Build();
 
         var users = model.GetTableFromDbName("Users");
-        users.ManyToManyLinks.Should().ContainKey("Roles");
-        users.ManyToManyLinks["Roles"].HasPayload.Should().BeTrue();
+        users.ManyToManyLinks.Should().BeEmpty();
     }
 
     [Fact]
-    public void AutoDetect_JunctionTaggedNotJunction_IsNotDetected()
+    public void AutoDetect_JunctionNameDoesNotReferenceBothTables_IsNotDetected()
     {
-        // An association entity (own surrogate key + payload) tagged not-junction
-        // must surface as an ordinary table, never an auto-detected m2m bridge —
-        // so neither parent gains a many-to-many link through it.
+        // A pure two-FK table whose name does not reference both endpoints
+        // (no `tableA_tableB` signal) is not auto-bridged.
         var model = DbModelTestFixture.Create()
             .WithTable("Users", t => t
                 .WithSchema("dbo")
@@ -116,19 +114,49 @@ public sealed class ManyToManyLinkTests
                 .WithSchema("dbo")
                 .WithPrimaryKey("Id")
                 .WithColumn("Label", "nvarchar"))
-            .WithTable("UserRoles", t => t
+            .WithTable("Memberships", t => t
                 .WithSchema("dbo")
                 .WithPrimaryKey("Id")
                 .WithColumn("UserId", "int")
-                .WithColumn("RoleId", "int")
-                .WithColumn("AssignedDate", "datetime2")
-                .WithMetadata("not-junction", "true"))
-            .WithForeignKey("FK_UserRoles_Users", "UserRoles", "UserId", "Users", "Id")
-            .WithForeignKey("FK_UserRoles_Roles", "UserRoles", "RoleId", "Roles", "Id")
+                .WithColumn("RoleId", "int"))
+            .WithForeignKey("FK_Memberships_Users", "Memberships", "UserId", "Users", "Id")
+            .WithForeignKey("FK_Memberships_Roles", "Memberships", "RoleId", "Roles", "Id")
             .Build();
 
-        model.GetTableFromDbName("Users").ManyToManyLinks.Should().BeEmpty();
-        model.GetTableFromDbName("Roles").ManyToManyLinks.Should().BeEmpty();
+        var users = model.GetTableFromDbName("Users");
+        users.ManyToManyLinks.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AutoDetect_EntityWithTwoFKsAndPayload_IsNotMistakenForJunction()
+    {
+        // Regression for sessions -> session_entries -> participants: session_entries
+        // has two FKs but also carries its own data columns, so it must remain a
+        // first-class entity rather than a many-to-many bridge.
+        var model = DbModelTestFixture.Create()
+            .WithTable("Sessions", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Name", "nvarchar"))
+            .WithTable("Participants", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Name", "nvarchar"))
+            .WithTable("SessionEntries", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("SessionId", "int")
+                .WithColumn("ParticipantId", "int")
+                .WithColumn("Notes", "nvarchar")
+                .WithColumn("Score", "int"))
+            .WithForeignKey("FK_SessionEntries_Sessions", "SessionEntries", "SessionId", "Sessions", "Id")
+            .WithForeignKey("FK_SessionEntries_Participants", "SessionEntries", "ParticipantId", "Participants", "Id")
+            .Build();
+
+        var sessions = model.GetTableFromDbName("Sessions");
+        var participants = model.GetTableFromDbName("Participants");
+        sessions.ManyToManyLinks.Should().BeEmpty();
+        participants.ManyToManyLinks.Should().BeEmpty();
     }
 
     [Fact]
@@ -236,7 +264,8 @@ public sealed class ManyToManyLinkTests
     [Fact]
     public void AutoDetect_JunctionPKColumnsAreAlsoFKs_IsDetected()
     {
-        // Junction table where PK columns are also the FK columns (composite PK)
+        // Junction table where PK columns are also the FK columns (composite PK).
+        // Named StudentCourses so it carries the conventional tableA_tableB signal.
         var model = DbModelTestFixture.Create()
             .WithTable("Students", t => t
                 .WithSchema("dbo")
@@ -246,12 +275,12 @@ public sealed class ManyToManyLinkTests
                 .WithSchema("dbo")
                 .WithPrimaryKey("Id")
                 .WithColumn("Title", "nvarchar"))
-            .WithTable("Enrollments", t => t
+            .WithTable("StudentCourses", t => t
                 .WithSchema("dbo")
                 .WithColumn("StudentId", "int", isPrimaryKey: true)
                 .WithColumn("CourseId", "int", isPrimaryKey: true))
-            .WithForeignKey("FK_Enroll_Students", "Enrollments", "StudentId", "Students", "Id")
-            .WithForeignKey("FK_Enroll_Courses", "Enrollments", "CourseId", "Courses", "Id")
+            .WithForeignKey("FK_Enroll_Students", "StudentCourses", "StudentId", "Students", "Id")
+            .WithForeignKey("FK_Enroll_Courses", "StudentCourses", "CourseId", "Courses", "Id")
             .Build();
 
         var students = model.GetTableFromDbName("Students");
@@ -317,6 +346,77 @@ public sealed class ManyToManyLinkTests
         var users = model.GetTableFromDbName("Users");
         users.ManyToManyLinks.Should().ContainKey("Roles");
         users.ManyToManyLinks["Roles"].HasPayload.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Metadata_NegatedEntry_SuppressesAutoDetectedLink()
+    {
+        // UserRoles is a pure, conventionally-named junction that would auto-detect,
+        // but a negated metadata entry on Users prunes the whole bridge.
+        var model = DbModelTestFixture.Create()
+            .WithTable("Users", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Name", "nvarchar")
+                .WithMetadata("many-to-many", "!Roles"))
+            .WithTable("Roles", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Label", "nvarchar"))
+            .WithTable("UserRoles", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("UserId", "int")
+                .WithColumn("RoleId", "int"))
+            .WithForeignKey("FK_UserRoles_Users", "UserRoles", "UserId", "Users", "Id")
+            .WithForeignKey("FK_UserRoles_Roles", "UserRoles", "RoleId", "Roles", "Id")
+            .Build();
+
+        // Suppressed in BOTH directions by the single negation.
+        model.GetTableFromDbName("Users").ManyToManyLinks.Should().BeEmpty();
+        model.GetTableFromDbName("Roles").ManyToManyLinks.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Metadata_MixedActivateAndDeactivate_AppliesBoth()
+    {
+        // One value adds a miss (Groups:UserGroups, non-conventional name) while
+        // pruning an otherwise auto-detected match (!Roles).
+        var model = DbModelTestFixture.Create()
+            .WithTable("Users", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Name", "nvarchar")
+                .WithMetadata("many-to-many", "Groups:Memberships, !Roles"))
+            .WithTable("Roles", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Label", "nvarchar"))
+            .WithTable("Groups", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Name", "nvarchar"))
+            .WithTable("UserRoles", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("UserId", "int")
+                .WithColumn("RoleId", "int"))
+            .WithTable("Memberships", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("UserId", "int")
+                .WithColumn("GroupId", "int"))
+            .WithForeignKey("FK_UserRoles_Users", "UserRoles", "UserId", "Users", "Id")
+            .WithForeignKey("FK_UserRoles_Roles", "UserRoles", "RoleId", "Roles", "Id")
+            .WithForeignKey("FK_Memberships_Users", "Memberships", "UserId", "Users", "Id")
+            .WithForeignKey("FK_Memberships_Groups", "Memberships", "GroupId", "Groups", "Id")
+            .Build();
+
+        var users = model.GetTableFromDbName("Users");
+        // Activated explicitly despite the non-conventional junction name.
+        users.ManyToManyLinks.Should().ContainKey("Groups");
+        // Pruned despite being an auto-detectable conventional junction.
+        users.ManyToManyLinks.Should().NotContainKey("Roles");
     }
 
     [Fact]

@@ -75,7 +75,7 @@ public abstract class SchemaBuilderBase
     /// </summary>
     protected bool IsRawSqlEnabled()
     {
-        return Model.Metadata.TryGetValue(MetadataKeys.Model.EnableRawSql, out var val) && val?.ToString() == "true";
+        return Model.GetMetadataBool(MetadataKeys.Model.EnableRawSql, false);
     }
 
     /// <summary>
@@ -83,7 +83,7 @@ public abstract class SchemaBuilderBase
     /// </summary>
     protected bool IsGenericTableEnabled()
     {
-        return Model.Metadata.TryGetValue(MetadataKeys.Model.EnableGenericTable, out var val) && val?.ToString() == "true";
+        return Model.GetMetadataBool(MetadataKeys.Model.EnableGenericTable, false);
     }
 
     /// <summary>

@@ -136,7 +136,14 @@ namespace BifrostQL.Core.QueryModel
                 tableJoin.ConnectedTable.FullColumnNames.Select(c => c.ToSelectSql(dbModel, connectedDbTable, dialect, "b", useAsKeyword: true)));
 
             var srcProjection = tableJoin.EmitSrcProjection(dialect, "a");
-            var projection = $"{srcProjection}, {joinColumnSql}";
+            // The connected table may contribute no columns of its own (e.g. a
+            // polymorphic/child collection selected with only the relationship,
+            // no scalar fields). Appending ", {empty}" produced "src_id, FROM"
+            // → "Incorrect syntax near ','". Only join the child projection when
+            // it has content.
+            var projection = string.IsNullOrEmpty(joinColumnSql)
+                ? srcProjection
+                : $"{srcProjection}, {joinColumnSql}";
 
             string fromClause;
             IReadOnlyList<SqlParameterInfo> relationParams;

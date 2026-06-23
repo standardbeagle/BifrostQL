@@ -4,6 +4,18 @@ All notable changes to BifrostQL after `3c42a60` (`[DART-xDCKBXmI5qsv] add app-b
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); pre-1.0 BifrostQL still uses CommitsSinceBaseline-style versioning.
 
+## 0.4.11 — 2026-06-23
+
+### Fixed — polymorphic child with no scalar columns crashed SQL generation
+
+- A polymorphic (or child) collection selected with only the relationship — no scalar fields of its own — produced a malformed connected projection `SELECT [a].[src_id], FROM (...)` → `Incorrect syntax near ','`. The builder hardcoded `"{src}, {childColumns}"` and `childColumns` was empty. Now the child projection is appended only when non-empty.
+- Regression: `PolymorphicJoinSqlTests.CompaniesNotes_NoChildColumns_EmitsValidProjection`.
+
+### Added — generated-SQL parse validation in tests
+
+- New `SqlSyntax` test helper validates generated SQL against each engine's real grammar: Microsoft ScriptDom (TSql160) for SQL Server, `SqlParserCS` (new test-only dependency) for Postgres, MySQL, and SQLite.
+- `GeneratedSqlValidityTests` parses the actual `AddSqlParameterized` output (single-table, select+join, paged child) across all four dialects, so structural defects (stray commas, empty projections) fail fast instead of surfacing only against a live database.
+
 ## 0.4.10 — 2026-06-22
 
 ### Fixed — `time`/`date` columns crashed the String scalar

@@ -396,6 +396,18 @@ namespace BifrostQL.Core.Model
             public const string ForeignJoins = "foreign-joins";
 
             /// <summary>
+            /// Table-level opt-out flag. When <c>true</c>, the table is never
+            /// treated as an auto-detected many-to-many junction even though it
+            /// has exactly two foreign keys. Use for association entities that
+            /// carry their own surrogate key and payload (e.g. a session-entry
+            /// table joining sessions and participants but holding its own data)
+            /// so they surface as ordinary editable tables rather than a hidden
+            /// bridge between the two parents. Does not affect explicit
+            /// <see cref="ManyToMany"/> declarations.
+            /// </summary>
+            public const string NotJunction = "not-junction";
+
+            /// <summary>
             /// Table-level discriminator column for a polymorphic child table
             /// (e.g. <c>entity_type</c> on a shared <c>notes</c> table).
             /// </summary>

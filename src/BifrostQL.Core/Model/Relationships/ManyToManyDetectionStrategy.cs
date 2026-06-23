@@ -99,6 +99,11 @@ namespace BifrostQL.Core.Model.Relationships
                 if (junctionTable == null)
                     continue;
 
+                // Respect the per-table opt-out: an association entity tagged
+                // not-junction stays an ordinary table, never an auto-detected bridge.
+                if (junctionTable.CompareMetadata(MetadataKeys.Relationships.NotJunction, "true"))
+                    continue;
+
                 // Detect payload columns (non-key, non-FK). A junction with payload is
                 // still a many-to-many bridge — skip-with-payload — so it is detected
                 // like a pure junction but flagged so the UI can reveal those columns.

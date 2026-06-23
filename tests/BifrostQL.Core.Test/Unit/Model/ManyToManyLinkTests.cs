@@ -102,6 +102,36 @@ public sealed class ManyToManyLinkTests
     }
 
     [Fact]
+    public void AutoDetect_JunctionTaggedNotJunction_IsNotDetected()
+    {
+        // An association entity (own surrogate key + payload) tagged not-junction
+        // must surface as an ordinary table, never an auto-detected m2m bridge —
+        // so neither parent gains a many-to-many link through it.
+        var model = DbModelTestFixture.Create()
+            .WithTable("Users", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Name", "nvarchar"))
+            .WithTable("Roles", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Label", "nvarchar"))
+            .WithTable("UserRoles", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("UserId", "int")
+                .WithColumn("RoleId", "int")
+                .WithColumn("AssignedDate", "datetime2")
+                .WithMetadata("not-junction", "true"))
+            .WithForeignKey("FK_UserRoles_Users", "UserRoles", "UserId", "Users", "Id")
+            .WithForeignKey("FK_UserRoles_Roles", "UserRoles", "RoleId", "Roles", "Id")
+            .Build();
+
+        model.GetTableFromDbName("Users").ManyToManyLinks.Should().BeEmpty();
+        model.GetTableFromDbName("Roles").ManyToManyLinks.Should().BeEmpty();
+    }
+
+    [Fact]
     public void AutoDetect_TableWithOnlyOneFK_IsNotDetected()
     {
         var model = DbModelTestFixture.Create()

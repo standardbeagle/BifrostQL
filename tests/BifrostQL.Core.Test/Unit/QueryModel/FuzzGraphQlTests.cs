@@ -18,6 +18,7 @@ namespace BifrostQL.Core.Test.QueryModel;
 /// for each dialect. Exercises the full string→SQL path the server uses. Seeds
 /// are fixed so failures reproduce from the test name.
 /// </summary>
+[Trait("Category", "Fuzz")]
 public sealed class FuzzGraphQlTests
 {
     private static readonly (ISqlDialect Dialect, SqlFlavor Flavor)[] Dialects =

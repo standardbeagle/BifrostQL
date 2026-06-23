@@ -16,6 +16,7 @@ namespace BifrostQL.Core.Test.QueryModel;
 /// generated statement must (1) never throw and (2) parse as valid SQL for its
 /// engine. Seeds are fixed so any failure reproduces from the test name.
 /// </summary>
+[Trait("Category", "Fuzz")]
 public sealed class FuzzObjectQueryTests
 {
     private static readonly (ISqlDialect Dialect, SqlFlavor Flavor)[] Dialects =

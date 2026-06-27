@@ -122,6 +122,93 @@ public sealed class ServerValidationHardeningTests
         Transformer.AppliesTo(table, MutationType.Delete, NewContext(model)).Should().BeFalse();
     }
 
+    [Fact]
+    public async Task Pattern_IsAnchoredLikeHtml5()
+    {
+        var model = PatternModel("[0-9]{3}");
+        var table = model.GetTableFromDbName("T");
+
+        // Unanchored "[0-9]{3}" matches "abc123def" as a substring; anchoring makes
+        // it a full-string match, so the server rejects what the client/HTML reject.
+        (await Run(table, model, new() { ["Code"] = "abc123def" }))
+            .Should().Contain("Code is invalid.");
+
+        (await Run(table, model, new() { ["Code"] = "123" })).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Pattern_AlreadyAnchored_IsNotDoubleWrapped()
+    {
+        var model = PatternModel("^[0-9]{3}$");
+        var table = model.GetTableFromDbName("T");
+
+        (await Run(table, model, new() { ["Code"] = "123" })).Should().BeEmpty();
+        (await Run(table, model, new() { ["Code"] = "12" })).Should().Contain("Code is invalid.");
+    }
+
+    [Fact]
+    public async Task Pattern_Invalid_ReportsCleanErrorInsteadOfThrowing()
+    {
+        var model = PatternModel("(");
+        var table = model.GetTableFromDbName("T");
+
+        (await Run(table, model, new() { ["Code"] = "x" }))
+            .Should().Contain("Code has an invalid validation pattern.");
+    }
+
+    [Fact]
+    public async Task Pattern_Catastrophic_TimesOutInsteadOfHanging()
+    {
+        // A ReDoS pattern + adversarial input must not hang the mutation; the
+        // bounded match time surfaces a clean error.
+        var model = PatternModel("(a+)+$");
+        var table = model.GetTableFromDbName("T");
+
+        var input = new string('a', 50) + "!";
+        (await Run(table, model, new() { ["Code"] = input }))
+            .Should().Contain("Code could not be validated (pattern too complex).");
+    }
+
+    [Fact]
+    public async Task InputType_Email_IsValidated()
+    {
+        var model = InputTypeModel("email");
+        var table = model.GetTableFromDbName("T");
+
+        (await Run(table, model, new() { ["Code"] = "not-an-email" }))
+            .Should().Contain("Code must be a valid email address.");
+        (await Run(table, model, new() { ["Code"] = "a@b.com" })).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task InputType_Url_IsValidatedAndHttpOnly()
+    {
+        var model = InputTypeModel("url");
+        var table = model.GetTableFromDbName("T");
+
+        (await Run(table, model, new() { ["Code"] = "ftp://example.com" }))
+            .Should().Contain("Code must be a valid URL.");
+        (await Run(table, model, new() { ["Code"] = "https://example.com" })).Should().BeEmpty();
+    }
+
+    private static IDbModel PatternModel(string pattern)
+        => DbModelTestFixture.Create()
+            .WithTable("T", t => t
+                .WithPrimaryKey("Id")
+                .WithColumn("Code", "varchar")
+                .WithMetadata(MetadataKeys.Validation.Server, "enabled")
+                .WithColumnMetadata("Code", MetadataKeys.Validation.Pattern, pattern))
+            .Build();
+
+    private static IDbModel InputTypeModel(string inputType)
+        => DbModelTestFixture.Create()
+            .WithTable("T", t => t
+                .WithPrimaryKey("Id")
+                .WithColumn("Code", "varchar")
+                .WithMetadata(MetadataKeys.Validation.Server, "enabled")
+                .WithColumnMetadata("Code", MetadataKeys.Validation.InputType, inputType))
+            .Build();
+
     private static async Task<IReadOnlyList<string>> Run(IDbTable table, IDbModel model, Dictionary<string, object?> data)
         => (await Transformer.TransformAsync(table, MutationType.Insert, data, NewContext(model))).Errors;
 

@@ -123,6 +123,7 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
             ValidateLength(column, rules, value, errors);
             ValidateRange(column, rules, value, errors);
             ValidatePattern(column, rules, value, errors);
+            ValidateInputType(column, rules, value, errors);
         }
     }
 
@@ -180,15 +181,69 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
         }
     }
 
+    // Bounds a single pattern match so a pathological (ReDoS) metadata pattern
+    // can't hang a mutation.
+    private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(250);
+
     private static void ValidatePattern(ColumnDto column, ValidationRules rules, object? value, List<string> errors)
     {
         if (rules.Pattern == null)
             return;
 
         var text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? "";
-        if (!Regex.IsMatch(text, rules.Pattern))
-            errors.Add(rules.PatternMessage ?? $"{column.GraphQlName} is invalid.");
+
+        // Anchor the pattern exactly like the HTML5 `pattern` attribute, the React
+        // client validator, and the legacy form validator: a full-string match,
+        // not a substring one. Without this the server is MORE permissive than the
+        // client/HTML form, so a value the UI rejects would still be accepted here.
+        var pattern = rules.Pattern.StartsWith('^') ? rules.Pattern : $"^(?:{rules.Pattern})$";
+
+        try
+        {
+            if (!Regex.IsMatch(text, pattern, RegexOptions.None, RegexTimeout))
+                errors.Add(rules.PatternMessage ?? $"{column.GraphQlName} is invalid.");
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            errors.Add($"{column.GraphQlName} could not be validated (pattern too complex).");
+        }
+        catch (ArgumentException)
+        {
+            errors.Add($"{column.GraphQlName} has an invalid validation pattern.");
+        }
     }
+
+    private static void ValidateInputType(ColumnDto column, ValidationRules rules, object? value, List<string> errors)
+    {
+        if (rules.InputType == null)
+            return;
+
+        var text = Convert.ToString(value, CultureInfo.InvariantCulture);
+        if (string.IsNullOrEmpty(text))
+            return;
+
+        if (string.Equals(rules.InputType, "email", StringComparison.OrdinalIgnoreCase) && !IsValidEmail(text))
+            errors.Add($"{column.GraphQlName} must be a valid email address.");
+        else if (string.Equals(rules.InputType, "url", StringComparison.OrdinalIgnoreCase) && !IsValidUrl(text))
+            errors.Add($"{column.GraphQlName} must be a valid URL.");
+    }
+
+    private static bool IsValidEmail(string value)
+    {
+        try
+        {
+            var addr = new System.Net.Mail.MailAddress(value);
+            return addr.Address == value;
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsValidUrl(string value)
+        => Uri.TryCreate(value, UriKind.Absolute, out var uri)
+           && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 
     private static bool IsTableValidationEnabled(IDbTable table)
         => IsEnabled(table.GetMetadataValue(MetadataKeys.Validation.Server));

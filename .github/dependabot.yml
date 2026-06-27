@@ -1,0 +1,30 @@
+version: 2
+updates:
+  # .NET dependencies across every csproj in the repo (src, tests, samples,
+  # benchmarks). Grouped so a single PR carries a coherent bump set.
+  - package-ecosystem: "nuget"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      dotnet-dependencies:
+        patterns:
+          - "*"
+
+  # GitHub Actions used by the workflows below.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Node tooling for the React editor / SPA packages (pnpm workspace).
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      npm-dependencies:
+        patterns:
+          - "*"

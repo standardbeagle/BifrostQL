@@ -85,12 +85,16 @@ namespace BifrostQL.Core.Model.Relationships
         /// <summary>
         /// Auto-detects many-to-many relationships by analyzing foreign key patterns.
         /// A junction table must have exactly 2 (non-composite) FKs, NO extra
-        /// non-key data columns, AND a name that references both linked tables
-        /// (the conventional <c>tableA_tableB</c> link-table naming). The last two
-        /// guards keep ordinary entities that merely carry two FKs (e.g.
-        /// sessions -> session_entries -> participants) from being mistaken for a
-        /// pure bridge. Either guard can be overridden with explicit
-        /// <c>many-to-many:</c> metadata (see <see cref="DetectFromMetadata"/>).
+        /// non-key data columns, AND a junction signal: either its name references
+        /// both linked tables (the conventional <c>tableA_tableB</c> link-table
+        /// naming) OR its primary key is composed of exactly those two FK columns
+        /// (the textbook composite-key bridge, e.g. <c>enrollments(student_id,
+        /// course_id)</c> whose name references neither endpoint). The guards keep
+        /// ordinary entities that merely carry two FKs (e.g. sessions ->
+        /// session_entries -> participants, which has a surrogate PK and/or its own
+        /// data columns) from being mistaken for a pure bridge. Any guard can be
+        /// overridden with explicit <c>many-to-many:</c> metadata (see
+        /// <see cref="DetectFromMetadata"/>).
         /// </summary>
         public void AutoDetect(IDbModel model, IReadOnlyCollection<DbForeignKey> foreignKeys)
         {
@@ -143,10 +147,14 @@ namespace BifrostQL.Core.Model.Relationships
                 var tableA = parentTables[0]!;
                 var tableB = parentTables[1]!;
 
-                // Require the link-table naming signal: the junction name must
-                // reference both endpoints (e.g. `user_roles`, `StudentCourses`).
-                // Without it, a coincidental two-FK entity would be mis-bridged.
-                if (!JunctionNameReferencesBoth(junctionTable, tableA, tableB))
+                // Require a junction signal: either the link-table naming
+                // convention (e.g. `user_roles`, `StudentCourses`) OR a primary key
+                // composed of exactly the two FK columns (e.g. `enrollments`). The
+                // PK-shape signal catches semantically-named bridges the naming
+                // convention misses; a surrogate-PK entity satisfies neither and is
+                // left alone, so a coincidental two-FK entity is not mis-bridged.
+                if (!JunctionNameReferencesBoth(junctionTable, tableA, tableB)
+                    && !JunctionPkIsExactlyForeignKeys(junctionTable, childFks[0], childFks[1]))
                     continue;
 
                 // Look up columns
@@ -220,6 +228,33 @@ namespace BifrostQL.Core.Model.Relationships
             var junctionName = StringNormalizer.NormalizeName(junction.DbName);
             return NameReferencesTable(junctionName, a.DbName)
                 && NameReferencesTable(junctionName, b.DbName);
+        }
+
+        /// <summary>
+        /// True when the junction's primary key is composed of exactly the two FK
+        /// child columns and nothing else — the canonical composite-key bridge
+        /// (e.g. <c>enrollments(student_id, course_id)</c>). A surrogate-PK entity
+        /// (PK = <c>Id</c>) fails this, keeping ordinary two-FK entities from being
+        /// mistaken for a pure junction.
+        /// </summary>
+        private static bool JunctionPkIsExactlyForeignKeys(IDbTable junction, DbForeignKey fkA, DbForeignKey fkB)
+        {
+            var pkColumns = junction.Columns
+                .Where(c => c.IsPrimaryKey)
+                .Select(c => c.ColumnName)
+                .ToList();
+            if (pkColumns.Count != 2)
+                return false;
+
+            // The two FKs are non-composite (filtered upstream), so each carries a
+            // single child column.
+            var fkColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                fkA.ChildColumnNames[0],
+                fkB.ChildColumnNames[0],
+            };
+            // Two distinct FK columns that together cover the entire PK.
+            return fkColumns.Count == 2 && pkColumns.All(fkColumns.Contains);
         }
 
         private static bool NameReferencesTable(string junctionName, string tableName)

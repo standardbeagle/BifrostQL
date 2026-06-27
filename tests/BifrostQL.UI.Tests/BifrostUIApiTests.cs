@@ -1,6 +1,7 @@
 using Xunit;
 using Xunit.Abstractions;
 using System;
+using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -9,48 +10,29 @@ using System.Threading.Tasks;
 namespace BifrostQL.UI.Tests;
 
 /// <summary>
-/// Tests for the BifrostQL UI API endpoints.
-/// These tests verify the backend API functionality for connection management
-/// and database creation without requiring browser automation.
+/// Exercises the BifrostQL UI HTTP API + static-file endpoints against a real
+/// host booted in headless mode by <see cref="HeadlessUiServer"/>. Runs fully
+/// in-process — no manually started server and no browser automation.
 /// </summary>
 [Trait("Category", "API")]
 [Trait("Category", "Connection")]
+[Collection(HeadlessUiServerCollection.Name)]
 public class BifrostUIApiTests
 {
     private readonly ITestOutputHelper _output;
-    private const string BaseUrl = "http://localhost:5000";
+    private readonly HeadlessUiServer _server;
+    private HttpClient Client => _server.Client;
 
-    public BifrostUIApiTests(ITestOutputHelper output)
+    public BifrostUIApiTests(HeadlessUiServer server, ITestOutputHelper output)
     {
+        _server = server;
         _output = output;
-    }
-
-    private async Task<bool> IsServerRunning()
-    {
-        try
-        {
-            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-            var response = await client.GetAsync($"{BaseUrl}/api/health");
-            return response.IsSuccessStatusCode;
-        }
-        catch
-        {
-            return false;
-        }
     }
 
     [Fact]
     public async Task HealthEndpoint_ReturnsOkStatus()
     {
-        if (!await IsServerRunning())
-        {
-            _output.WriteLine("Server is not running. Test skipped.");
-            return;
-        }
-
-        using var client = new HttpClient();
-        var response = await client.GetAsync($"{BaseUrl}/api/health");
-
+        var response = await Client.GetAsync("/api/health");
         response.EnsureSuccessStatusCode();
 
         var content = await response.Content.ReadAsStringAsync();
@@ -63,21 +45,13 @@ public class BifrostUIApiTests
     [Fact]
     public async Task HealthEndpoint_ShowsConnectedStatus()
     {
-        if (!await IsServerRunning())
-        {
-            _output.WriteLine("Server is not running. Test skipped.");
-            return;
-        }
-
-        using var client = new HttpClient();
-        var response = await client.GetAsync($"{BaseUrl}/api/health");
-
+        var response = await Client.GetAsync("/api/health");
         response.EnsureSuccessStatusCode();
 
         var content = await response.Content.ReadAsStringAsync();
         var health = JsonDocument.Parse(content);
 
-        // Initially should not be connected
+        // The host starts with no connection string, so it reports disconnected.
         var connected = health.RootElement.GetProperty("connected").GetBoolean();
         Assert.False(connected, "Should not be connected initially");
 
@@ -87,25 +61,12 @@ public class BifrostUIApiTests
     [Fact]
     public async Task TestConnectionEndpoint_RejectsEmptyConnectionString()
     {
-        if (!await IsServerRunning())
-        {
-            _output.WriteLine("Server is not running. Test skipped.");
-            return;
-        }
+        var payload = new { connectionString = "" };
+        var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
 
-        using var client = new HttpClient();
+        var response = await Client.PostAsync("/api/connection/test", content);
 
-        var payload = new
-        {
-            connectionString = ""
-        };
-
-        var json = JsonSerializer.Serialize(payload);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-        var response = await client.PostAsync($"{BaseUrl}/api/connection/test", content);
-
-        Assert.Equal(System.Net.HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
         var responseText = await response.Content.ReadAsStringAsync();
         Assert.Contains("required", responseText.ToLower());
@@ -116,25 +77,12 @@ public class BifrostUIApiTests
     [Fact]
     public async Task TestConnectionEndpoint_InvalidConnection_ReturnsError()
     {
-        if (!await IsServerRunning())
-        {
-            _output.WriteLine("Server is not running. Test skipped.");
-            return;
-        }
+        var payload = new { connectionString = "Server=invalid;Database=nonexistent;User Id=test;Password=test" };
+        var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
 
-        using var client = new HttpClient();
+        var response = await Client.PostAsync("/api/connection/test", content);
 
-        var payload = new
-        {
-            connectionString = "Server=invalid;Database=nonexistent;User Id=test;Password=test"
-        };
-
-        var json = JsonSerializer.Serialize(payload);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-        var response = await client.PostAsync($"{BaseUrl}/api/connection/test", content);
-
-        // Should return error for invalid connection
+        // An unreachable server surfaces as a failed connection attempt.
         Assert.False(response.IsSuccessStatusCode);
 
         var responseText = await response.Content.ReadAsStringAsync();
@@ -148,62 +96,44 @@ public class BifrostUIApiTests
     [InlineData("simple-blog")]
     public async Task CreateDatabaseEndpoint_IsDisabled(string template)
     {
-        if (!await IsServerRunning())
-        {
-            _output.WriteLine("Server is not running. Test skipped.");
-            return;
-        }
-
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-
         var payload = new
         {
-            template = template,
+            template,
             connectionString = "Server=localhost;Database=master;User Id=sa;Password=test;TrustServerCertificate=True"
         };
+        var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
 
-        var json = JsonSerializer.Serialize(payload);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-        var request = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/api/database/create") { Content = content };
-        var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        var response = await Client.PostAsync("/api/database/create", content);
         var responseText = await response.Content.ReadAsStringAsync();
 
         _output.WriteLine($"Template '{template}' endpoint status: {response.StatusCode}");
         _output.WriteLine($"Response: {responseText}");
 
-        Assert.Equal(System.Net.HttpStatusCode.Gone, response.StatusCode);
+        // The legacy password-bearing endpoint is permanently disabled (410 Gone)
+        // and must never echo the submitted password back.
+        Assert.Equal(HttpStatusCode.Gone, response.StatusCode);
         Assert.DoesNotContain("Password=test", responseText);
     }
 
     [Fact]
     public async Task CreateDatabaseEndpoint_InvalidTemplate_IsDisabledBeforeProcessing()
     {
-        if (!await IsServerRunning())
-        {
-            _output.WriteLine("Server is not running. Test skipped.");
-            return;
-        }
-
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-
         var payload = new
         {
             template = "invalid-template-name",
             connectionString = "Server=localhost;Database=master;User Id=sa;Password=test;TrustServerCertificate=True"
         };
+        var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
 
-        var json = JsonSerializer.Serialize(payload);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-        var request = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/api/database/create") { Content = content };
-        var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        var response = await Client.PostAsync("/api/database/create", content);
         var responseText = await response.Content.ReadAsStringAsync();
 
         _output.WriteLine($"Invalid template status: {response.StatusCode} (expected: Gone)");
         _output.WriteLine($"Response: {responseText}");
 
-        Assert.Equal(System.Net.HttpStatusCode.Gone, response.StatusCode);
+        // The endpoint is disabled before any template lookup, so even a bogus
+        // template returns Gone rather than a 404/400.
+        Assert.Equal(HttpStatusCode.Gone, response.StatusCode);
         Assert.DoesNotContain("Password=test", responseText);
     }
 
@@ -221,27 +151,14 @@ public class BifrostUIApiTests
     [Fact]
     public async Task GraphQL_EndpointIsAccessible()
     {
-        if (!await IsServerRunning())
-        {
-            _output.WriteLine("Server is not running. Test skipped.");
-            return;
-        }
+        var payload = new { query = "{ __schema { types { name } } }" };
+        var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
 
-        using var client = new HttpClient();
+        var response = await Client.PostAsync("/graphql", content);
 
-        // GraphQL introspection query
-        var query = "{ __schema { types { name } } }";
-
-        var payload = new { query };
-        var json = JsonSerializer.Serialize(payload);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-        var response = await client.PostAsync($"{BaseUrl}/graphql", content);
-
-        // Without a database connection, GraphQL might not be initialized
-        // but the endpoint should still respond
+        // Without a database connection GraphQL may not be fully initialized, but
+        // the endpoint must still respond rather than refuse the connection.
         _output.WriteLine($"GraphQL endpoint status: {response.StatusCode}");
-
         if (response.IsSuccessStatusCode)
         {
             var responseText = await response.Content.ReadAsStringAsync();
@@ -252,15 +169,7 @@ public class BifrostUIApiTests
     [Fact]
     public async Task StaticFiles_ServeIndexHtml()
     {
-        if (!await IsServerRunning())
-        {
-            _output.WriteLine("Server is not running. Test skipped.");
-            return;
-        }
-
-        using var client = new HttpClient();
-        var response = await client.GetAsync($"{BaseUrl}/index.html");
-
+        var response = await Client.GetAsync("/index.html");
         response.EnsureSuccessStatusCode();
 
         var content = await response.Content.ReadAsStringAsync();
@@ -273,16 +182,10 @@ public class BifrostUIApiTests
     [Fact]
     public async Task StaticAssets_ServeJavaScript()
     {
-        if (!await IsServerRunning())
-        {
-            _output.WriteLine("Server is not running. Test skipped.");
-            return;
-        }
+        // The bundle filename is content-hashed and changes per SPA build, so a
+        // miss here is informational rather than a failure.
+        var response = await Client.GetAsync("/assets/index-BuX1V4Qj.js");
 
-        using var client = new HttpClient();
-        var response = await client.GetAsync($"{BaseUrl}/assets/index-BuX1V4Qj.js");
-
-        // The JS file should be served
         if (response.IsSuccessStatusCode)
         {
             var content = await response.Content.ReadAsByteArrayAsync();

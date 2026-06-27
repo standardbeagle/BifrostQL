@@ -1,0 +1,24 @@
+<Project>
+
+  <!--
+    Repo-wide build hardening. Imported automatically by every project under
+    this directory; individual .csproj files may still override any property.
+  -->
+  <PropertyGroup>
+    <!-- Fail the build on any compiler or analyzer warning. The solution
+         currently builds clean, so this only guards against regressions. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!-- Built-in .NET code-quality + style analyzers, pinned to the latest
+         ruleset the SDK ships. -->
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+
+    <!-- NuGet vulnerability audit covers direct AND transitive packages and
+         the NU190x warnings it raises are promoted to errors above, so a
+         known-vulnerable dependency blocks the build (e.g. GHSA-2m69-gcr7-jv3q). -->
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+  </PropertyGroup>
+
+</Project>

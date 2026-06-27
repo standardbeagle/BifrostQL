@@ -75,6 +75,12 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 9.0.x
+      - name: Setup .NET 10.0
+        # Projects multi-target net10.0; pin the SDK instead of relying on
+        # whatever the runner image happens to preinstall.
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
       - name: Restore dependencies
         run: dotnet restore
       - name: Build
@@ -86,6 +92,13 @@ jobs:
         run: dotnet test tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj --no-build --verbosity normal --configuration Release --filter "Category!=Fuzz"
       - name: Test Server
         run: dotnet test tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj --no-build --verbosity normal --configuration Release
+      - name: Test Host
+        # In-memory ASP.NET host (Mvc.Testing) over the Sqlite dialect — no
+        # external service containers required.
+        run: dotnet test tests/BifrostQL.Host.Test/BifrostQL.Host.Test.csproj --no-build --verbosity normal --configuration Release
+      - name: Test UI
+        # Pure xunit logic tests for the desktop tool — no GUI/display needed.
+        run: dotnet test tests/BifrostQL.UI.Tests/BifrostQL.UI.Tests.csproj --no-build --verbosity normal --configuration Release
       - name: Raise MySQL max_connections
         # GH Actions services don't expose post-image server args, so the
         # default 151 connection ceiling is lifted at runtime via SET GLOBAL.

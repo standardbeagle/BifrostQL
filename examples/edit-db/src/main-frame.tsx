@@ -146,7 +146,7 @@ function Layout() {
                         </ErrorBoundary>
                     </div>
                 </div>
-                <nav aria-label="Tables" className={`border-r border-border overflow-y-auto sticky top-14 ${sidebarOpen ? '' : 'hidden'} md:block`}>
+                <nav aria-label="Tables" className={`border-r border-border overflow-hidden min-h-0 ${sidebarOpen ? '' : 'hidden'} md:block`}>
                     <ErrorBoundary section="Table List">
                         <TableList />
                     </ErrorBoundary>

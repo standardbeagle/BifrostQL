@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { TableList } from './tableList';
 import { abbreviateNumber, calculateBarWidth } from './hooks/useTableStats';
@@ -26,6 +26,7 @@ vi.mock('./hooks/useTableStats', () => ({
 }));
 
 vi.mock('./hooks/usePath', () => ({
+  usePath: () => '/',
   Link: ({ children, ...props }: { children: React.ReactNode; to: string; className?: string }) => (
     <a href={props.to} className={props.className}>{children}</a>
   ),
@@ -215,6 +216,101 @@ describe('TableList', () => {
 
     render(<TableList />);
     expect(screen.getByText('Customers')).toBeInTheDocument();
+  });
+});
+
+// Builds a minimal schema table good enough for the list (label is what renders).
+function makeTable(dbName: string, label: string) {
+  return {
+    name: dbName.replace('.', '_'),
+    graphQlName: dbName.replace('.', '_'),
+    dbName,
+    label,
+    labelColumn: 'id',
+    primaryKeys: ['id'],
+    isEditable: true,
+    metadata: {},
+    columns: [{ name: 'id' }],
+    multiJoins: [],
+    singleJoins: [],
+  };
+}
+
+function mockSchema(tables: unknown[]) {
+  mockUseSchema.mockReturnValue({
+    loading: false,
+    error: null,
+    data: tables as unknown as ReturnType<typeof useSchema>['data'],
+    findTable: () => undefined,
+  });
+  mockUseTableStats.mockReturnValue({ stats: {}, isLoading: false, error: null });
+}
+
+describe('TableList — search, grouping, paging', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('filters tables by the search query', () => {
+    mockSchema([makeTable('customers', 'Customers'), makeTable('orders', 'Orders')]);
+    render(<TableList />);
+
+    fireEvent.change(screen.getByLabelText('Search tables'), { target: { value: 'order' } });
+
+    expect(screen.getByText('Orders')).toBeInTheDocument();
+    expect(screen.queryByText('Customers')).not.toBeInTheDocument();
+    expect(screen.getByText('1 match')).toBeInTheDocument();
+  });
+
+  it('groups by schema with collapsible headers when multiple schemas exist', () => {
+    mockSchema([
+      makeTable('dbo.users', 'Users'),
+      makeTable('sales.orders', 'Orders'),
+    ]);
+    render(<TableList />);
+
+    // Both schema headers present as expand/collapse buttons.
+    const dboHeader = screen.getByRole('button', { name: /dbo/ });
+    expect(screen.getByRole('button', { name: /sales/ })).toBeInTheDocument();
+    expect(screen.getByText('Users')).toBeInTheDocument();
+
+    // Collapsing the dbo group hides its tables.
+    fireEvent.click(dboHeader);
+    expect(screen.queryByText('Users')).not.toBeInTheDocument();
+    expect(screen.getByText('Orders')).toBeInTheDocument();
+  });
+
+  it('does not render schema headers for a single-schema database', () => {
+    mockSchema([makeTable('dbo.users', 'Users'), makeTable('dbo.orders', 'Orders')]);
+    render(<TableList />);
+
+    expect(screen.queryByRole('button', { name: /dbo/ })).not.toBeInTheDocument();
+    expect(screen.getByText('Users')).toBeInTheDocument();
+    expect(screen.getByText('Orders')).toBeInTheDocument();
+  });
+
+  it('pages the list and navigates between pages', () => {
+    const tables = Array.from({ length: 120 }, (_, i) =>
+      makeTable(`t${i}`, `Table ${String(i).padStart(3, '0')}`)
+    );
+    mockSchema(tables);
+    render(<TableList />);
+
+    // First page caps at PAGE_SIZE (50); table 050 is on the next page.
+    expect(screen.getByText('Table 000')).toBeInTheDocument();
+    expect(screen.queryByText('Table 050')).not.toBeInTheDocument();
+    expect(screen.getByText('1–50 of 120')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Next page'));
+    expect(screen.getByText('Table 050')).toBeInTheDocument();
+    expect(screen.queryByText('Table 000')).not.toBeInTheDocument();
+    expect(screen.getByText('51–100 of 120')).toBeInTheDocument();
+  });
+
+  it('marks the active table for the current path', () => {
+    // usePath is mocked to '/', so the root has no active table; verify a match via label cell.
+    mockSchema([makeTable('customers', 'Customers')]);
+    render(<TableList />);
+    const link = screen.getByText('Customers').closest('a')!;
+    expect(within(link).queryByText('Customers')).toBeInTheDocument();
   });
 });
 

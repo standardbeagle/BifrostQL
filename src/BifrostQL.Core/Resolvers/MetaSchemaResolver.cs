@@ -61,6 +61,11 @@ namespace BifrostQL.Core.Resolvers
                                 // Get enum values from metadata if present
                                 var enumValues = c.GetMetadataValue(MetadataKeys.Enum.Values)?.Split(',').Select(v => v.Trim()).ToArray();
                                 var enumLabels = c.GetMetadataValue(MetadataKeys.Enum.Labels)?.Split(',').Select(v => v.Trim()).ToArray();
+                                // Labels map to values positionally, so a count mismatch would shift
+                                // every label onto the wrong value. Drop the labels in that case and
+                                // let the client fall back to the raw values rather than mislabel them.
+                                if (enumLabels != null && (enumValues == null || enumLabels.Length != enumValues.Length))
+                                    enumLabels = null;
 
                                 return new
                                 {

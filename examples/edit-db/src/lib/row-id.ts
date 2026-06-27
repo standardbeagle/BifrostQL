@@ -22,6 +22,16 @@ function decodePkPart(raw: string): string | null {
     return decodeURIComponent(raw);
 }
 
+/**
+ * Encodes an ordered list of key values into a route string. The single source
+ * of truth for composite-key route encoding — every producer (row lists) and
+ * consumer (composite-FK selects) must funnel through this so the two sides can
+ * never drift apart and silently fail to match.
+ */
+export function encodeRouteParts(values: readonly unknown[]): string {
+    return values.map(encodePkPart).join(DELIMITER);
+}
+
 export function rowIdOf(
     row: Record<string, unknown> | null | undefined,
     table: TableLike,
@@ -29,7 +39,7 @@ export function rowIdOf(
 ): string {
     const keys = table.primaryKeys ?? [];
     if (keys.length === 0) return `row-${index}`;
-    return keys.map((pk) => encodePkPart(row?.[pk])).join(DELIMITER);
+    return encodeRouteParts(keys.map((pk) => row?.[pk]));
 }
 
 export function pkFilterFor(
@@ -98,7 +108,7 @@ export function buildPkEqFilter(
 export function encodePkRoute(filter: PkFilter, table: TableLike): string {
     const keys = table.primaryKeys ?? [];
     if (keys.length === 0) return '';
-    return keys.map((pk) => encodePkPart(filter[pk])).join(DELIMITER);
+    return encodeRouteParts(keys.map((pk) => filter[pk]));
 }
 
 export function parsePkRoute(raw: string, table: TableLike): PkFilter | null {

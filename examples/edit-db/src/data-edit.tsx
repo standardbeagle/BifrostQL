@@ -8,7 +8,8 @@ import { TableRefValue, useTableRef } from "./hooks/useTableRef";
 import { useCompositeTableRef } from "./hooks/useCompositeTableRef";
 import { useFetcher } from "./common/fetcher";
 import { useTableMutation } from "./hooks/useTableMutation";
-import { parsePkRoute, buildPkEqFilter } from "./lib/row-id";
+import { parsePkRoute, buildPkEqFilter, encodeRouteParts } from "./lib/row-id";
+import { validateFieldValue } from "./lib/field-validation";
 import { isComposite } from "./lib/fk";
 import {
     Dialog,
@@ -396,47 +397,10 @@ function EditField({ column, join, fkRole, form, schema }: EditFieldProps) {
     // Determine input type based on schema metadata or paramType
     const inputType = column.inputType || (isDate ? "date" : isNumeric ? "number" : "text");
 
-    // Build validators based on schema constraints
+    // Build validators based on schema constraints. Shared with the server via
+    // validateFieldValue so client and server enforce identical rules.
     const validators = {
-        onSubmit: ({ value }: { value: unknown }) => {
-            // Required validation
-            if (isRequired && (value === undefined || value === null || value === '')) {
-                return `${column.label} is required`;
-            }
-
-            // Pattern validation
-            if (column.pattern && value && typeof value === 'string') {
-                const regex = new RegExp(column.pattern);
-                if (!regex.test(value)) {
-                    return column.patternMessage || `${column.label} format is invalid`;
-                }
-            }
-
-            // Min length validation
-            if (column.minLength && value && typeof value === 'string' && value.length < column.minLength) {
-                return `${column.label} must be at least ${column.minLength} characters`;
-            }
-
-            // Max length validation (also checked by input, but validate here too)
-            if (column.maxLength && value && typeof value === 'string' && value.length > column.maxLength) {
-                return `${column.label} must be at most ${column.maxLength} characters`;
-            }
-
-            // Numeric min/max validation
-            if (isNumeric && value !== '' && value !== undefined && value !== null) {
-                const numValue = Number(value);
-                if (!isNaN(numValue)) {
-                    if (column.min !== undefined && column.min !== null && numValue < column.min) {
-                        return `${column.label} must be at least ${column.min}`;
-                    }
-                    if (column.max !== undefined && column.max !== null && numValue > column.max) {
-                        return `${column.label} must be at most ${column.max}`;
-                    }
-                }
-            }
-
-            return undefined;
-        },
+        onSubmit: ({ value }: { value: unknown }) => validateFieldValue(column, value, isRequired),
     };
 
     return (
@@ -492,7 +456,12 @@ interface EnumFieldProps {
 function EnumField({ column, form, isRequired }: EnumFieldProps) {
     const name = column.name;
     const enumValues = column.enumValues || [];
-    const enumLabels = column.enumLabels || enumValues;
+    // Labels are positional, so a count mismatch would mislabel options. Trust
+    // them only when they line up 1:1; otherwise show the raw values.
+    const enumLabels =
+        column.enumLabels && column.enumLabels.length === enumValues.length
+            ? column.enumLabels
+            : enumValues;
 
     return (
         <form.Field
@@ -665,13 +634,15 @@ function CompositeParentField({ column, join, form, schema, isRequired }: Compos
     // form.useStore subscribes to the slice so the Select stays in sync if other code paths
     // mutate any source column directly.
     const currentRoute: string = form.useStore((s: { values: Record<string, unknown> }) => {
-        const parts: string[] = [];
+        const vals: unknown[] = [];
         for (const c of sourceCols) {
             const v = s.values?.[c];
             if (v === undefined || v === null || v === '') return '';
-            parts.push(encodeURIComponent(String(v)));
+            vals.push(v);
         }
-        return parts.join('::');
+        // Shared encoder with the row producer (useCompositeTableRef -> rowIdOf),
+        // so the selected route always matches a parent row's route.
+        return encodeRouteParts(vals);
     });
 
     const onChange = (route: string) => {

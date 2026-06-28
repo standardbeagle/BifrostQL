@@ -165,7 +165,12 @@ namespace BifrostQL.Core.Model
             /// <summary>Whether the field is required.</summary>
             public const string Required = "required";
 
-            /// <summary>Enables server-side enforcement of validation metadata.</summary>
+            /// <summary>
+            /// Opt-out switch for server-side validation enforcement. Validation runs
+            /// by default on Insert/Update; set this to off/false/disabled/none/no/0
+            /// (at the table or column level) to turn it off. Legacy enable values
+            /// (true/enabled/server) are honoured as no-ops since validation is on.
+            /// </summary>
             public const string Server = "server-validation";
 
             /// <summary>Comma-separated server validation provider names.</summary>

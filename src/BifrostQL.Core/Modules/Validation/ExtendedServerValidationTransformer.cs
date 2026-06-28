@@ -24,9 +24,7 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
 
     public bool AppliesTo(IDbTable table, MutationType mutationType, MutationTransformContext context)
         => mutationType is MutationType.Insert or MutationType.Update
-           && (IsTableValidationEnabled(table)
-               || table.Columns.Any(IsColumnValidationEnabled)
-               || HasPluginValidation(table));
+           && !IsValidationDisabled(table.GetMetadataValue(MetadataKeys.Validation.Server));
 
     public async ValueTask<MutationTransformResult> TransformAsync(
         IDbTable table,
@@ -36,7 +34,9 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
     {
         var errors = new List<string>();
 
-        if (IsTableValidationEnabled(table) || table.Columns.Any(IsColumnValidationEnabled))
+        // Validation is on by default for writes; a table opts out with
+        // server-validation: off/false/disabled.
+        if (!IsValidationDisabled(table.GetMetadataValue(MetadataKeys.Validation.Server)))
             ValidateStandardMetadata(table, mutationType, data, errors);
 
         await RunPluginValidatorsAsync(table, mutationType, data, context, errors);
@@ -102,8 +102,8 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
     {
         foreach (var column in table.Columns)
         {
-            var enabled = IsColumnValidationEnabled(column);
-            if (!enabled && !IsTableValidationEnabled(table))
+            // A column can opt out individually with server-validation: off.
+            if (IsValidationDisabled(column.GetMetadataValue(MetadataKeys.Validation.Server)))
                 continue;
 
             var valuePresent = data.TryGetValue(column.ColumnName, out var value)
@@ -245,26 +245,23 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
         => Uri.TryCreate(value, UriKind.Absolute, out var uri)
            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 
-    private static bool IsTableValidationEnabled(IDbTable table)
-        => IsEnabled(table.GetMetadataValue(MetadataKeys.Validation.Server));
-
-    private static bool IsColumnValidationEnabled(ColumnDto column)
-        => IsEnabled(column.GetMetadataValue(MetadataKeys.Validation.Server));
-
-    private static bool HasPluginValidation(IDbTable table)
-        => ValidationPlugins(table.GetMetadataValue(MetadataKeys.Validation.Plugin)).Any()
-           || table.Columns.Any(c => ValidationPlugins(c.GetMetadataValue(MetadataKeys.Validation.Plugin)).Any());
-
     private static IEnumerable<string> ValidationPlugins(string? raw)
         => string.IsNullOrWhiteSpace(raw)
             ? Array.Empty<string>()
             : raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-    private static bool IsEnabled(string? value)
+    // Validation runs by default; this is the opt-out switch. Any explicit
+    // "off"-like value on the server-validation key disables enforcement (at the
+    // table or column level). Legacy enable values (true/enabled/server) are not
+    // disable values, so existing opt-in metadata keeps validation on.
+    private static bool IsValidationDisabled(string? value)
         => value != null
-           && (string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
-               || string.Equals(value, "enabled", StringComparison.OrdinalIgnoreCase)
-               || string.Equals(value, "server", StringComparison.OrdinalIgnoreCase));
+           && (string.Equals(value, "false", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(value, "off", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(value, "disabled", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(value, "none", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(value, "no", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(value, "0", StringComparison.Ordinal));
 
     private static bool IsMissing(object? value)
         => value == null || value is DBNull || value is string text && string.IsNullOrWhiteSpace(text);

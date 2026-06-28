@@ -77,8 +77,10 @@ public sealed class ServerValidationHardeningTests
     }
 
     [Fact]
-    public void Disabled_WhenNoTableOrColumnFlag_DoesNotApply()
+    public async Task AppliesByDefault_WithoutAnyFlag()
     {
+        // Validation is on by default: a declared rule is enforced without any
+        // server-validation enablement metadata.
         var model = DbModelTestFixture.Create()
             .WithTable("T", t => t
                 .WithPrimaryKey("Id")
@@ -87,28 +89,43 @@ public sealed class ServerValidationHardeningTests
             .Build();
         var table = model.GetTableFromDbName("T");
 
-        // Required flag alone, without server-validation enablement, must not run.
-        Transformer.AppliesTo(table, MutationType.Insert, NewContext(model)).Should().BeFalse();
+        Transformer.AppliesTo(table, MutationType.Insert, NewContext(model)).Should().BeTrue();
+        (await Run(table, model, new() { ["Name"] = "" })).Should().Contain("Name is required.");
     }
 
     [Fact]
-    public async Task ColumnLevelEnablement_ValidatesOnlyFlaggedColumn()
+    public async Task Disabled_AtTableLevel_TurnsValidationOff()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("T", t => t
+                .WithPrimaryKey("Id")
+                .WithColumn("Name", "varchar")
+                .WithMetadata(MetadataKeys.Validation.Server, "off")
+                .WithColumnMetadata("Name", MetadataKeys.Validation.Required, "true"))
+            .Build();
+        var table = model.GetTableFromDbName("T");
+
+        Transformer.AppliesTo(table, MutationType.Insert, NewContext(model)).Should().BeFalse();
+        // Even if invoked directly, a disabled table produces no errors.
+        (await Run(table, model, new() { ["Name"] = "" })).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ValidatesAllColumnsByDefault_ColumnCanOptOut()
     {
         var model = DbModelTestFixture.Create()
             .WithTable("T", t => t
                 .WithPrimaryKey("Id")
                 .WithColumn("Name", "varchar")
                 .WithColumn("Note", "varchar")
-                .WithColumnMetadata("Name", MetadataKeys.Validation.Server, "true")
                 .WithColumnMetadata("Name", MetadataKeys.Validation.Required, "true")
-                .WithColumnMetadata("Note", MetadataKeys.Validation.Required, "true"))
+                .WithColumnMetadata("Note", MetadataKeys.Validation.Required, "true")
+                // Note opts out individually; Name still validates.
+                .WithColumnMetadata("Note", MetadataKeys.Validation.Server, "off"))
             .Build();
         var table = model.GetTableFromDbName("T");
 
-        Transformer.AppliesTo(table, MutationType.Insert, NewContext(model)).Should().BeTrue();
-
-        // Note is required but not server-enabled → no error; Name is.
-        var errors = await Run(table, model, new() { ["Note"] = null });
+        var errors = await Run(table, model, new() { ["Name"] = null, ["Note"] = null });
         errors.Should().Contain("Name is required.");
         errors.Should().NotContain("Note is required.");
     }

@@ -1,6 +1,6 @@
 ---
 title: Computed columns and server validation
-description: Add SQL-based virtual fields, provider-backed .NET computed fields, and opt-in server validation to BifrostQL schemas.
+description: Add SQL-based virtual fields, provider-backed .NET computed fields, and default-on server validation to BifrostQL schemas.
 ---
 
 BifrostQL can expose table-level virtual fields without changing the database schema. The same module surface also supports server-side mutation validation.
@@ -84,10 +84,10 @@ Or use table/database `storage` metadata as the default bucket config and keep t
 
 ## Server validation
 
-Set `server-validation: enabled` on a table or column to enforce validation metadata during insert and update mutations:
+Server-side validation runs **by default** on every insert and update mutation:
+any validation metadata you declare is enforced, with no enable flag required.
 
 ```text
-dbo.contacts { server-validation: enabled }
 dbo.contacts.name { required: true }
 dbo.contacts.age { min: 18 }
 dbo.contacts.email {
@@ -96,7 +96,19 @@ dbo.contacts.email {
 }
 ```
 
-Supported built-in rules are `required`, `min`, `max`, `minlength`, `maxlength`, `pattern`, and `pattern-message`.
+Supported built-in rules are `required`, `min`, `max`, `minlength`, `maxlength`,
+`step`, `pattern`, `pattern-message`, and `input-type` (`email`/`url`). Patterns
+are anchored as a full-string match (like the HTML5 `pattern` attribute), schema
+`VARCHAR(n)` lengths are enforced as `maxlength`, and a pathological pattern is
+bounded so it cannot hang a mutation.
+
+To turn validation off for a table or column, set `server-validation` to an
+off value (`off`, `false`, `disabled`, `none`, `no`, `0`):
+
+```text
+dbo.imports { server-validation: off }          # whole table
+dbo.contacts.legacy_blob { server-validation: off }   # single column
+```
 
 For custom validation, use `validation-plugin` with registered `IServerValidationProvider` implementations:
 

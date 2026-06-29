@@ -326,4 +326,115 @@ public sealed class VisualQueryBuilderTests
 
         act.Should().Throw<BifrostExecutionError>().WithMessage("*distinct alias*");
     }
+
+    // ---- nested filter trees ------------------------------------------------
+
+    [Fact]
+    public void NestedAndOr_RendersGroupedParenthesesAndParameters()
+    {
+        // tenant_id = 7 AND (name CONTAINS smith OR id IN (1,2))
+        var spec = new VisualQuerySpec(
+            [new VisualTable("dbo.users", null)],
+            [Col("dbo.users", "id")],
+            [],
+            Filter: new VisualFilter(VisualFilterOp.And,
+            [
+                Leaf("dbo.users", "tenant_id", VisualFilterOperator.Eq, 7),
+                new VisualFilter(VisualFilterOp.Or,
+                [
+                    Leaf("dbo.users", "name", VisualFilterOperator.Contains, "smith"),
+                    Leaf("dbo.users", "id", VisualFilterOperator.In, new[] { 1, 2 }),
+                ], Criterion: null),
+            ], Criterion: null),
+            RowLimit: null);
+
+        var result = VisualQueryBuilder.Build(spec, TwoTableModel(), SqlServerDialect.Instance);
+
+        // Outer AND wraps an inner OR group: ( eq AND ( like OR in ) )
+        result.Sql.Should().MatchRegex(@"WHERE \(.*tenant_id\] = @p\d+ AND \(.*LIKE.* OR .*IN \(@p\d+, @p\d+\)\)\)");
+        result.Parameters.Should().HaveCount(4); // 7, smith, 1, 2
+    }
+
+    [Fact]
+    public void EmptyAndGroup_ProducesNoWhereClause()
+    {
+        var spec = new VisualQuerySpec(
+            [new VisualTable("dbo.users", null)],
+            [Col("dbo.users", "id")],
+            [],
+            Filter: new VisualFilter(VisualFilterOp.And, [], Criterion: null),
+            RowLimit: null);
+
+        var result = VisualQueryBuilder.Build(spec, TwoTableModel(), SqlServerDialect.Instance);
+
+        result.Sql.Should().NotContain("WHERE");
+    }
+
+    // ---- operator argument guards -------------------------------------------
+
+    [Fact]
+    public void EmptyIn_Throws()
+    {
+        var spec = new VisualQuerySpec(
+            [new VisualTable("dbo.users", null)],
+            [Col("dbo.users", "id")],
+            [],
+            Filter: Leaf("dbo.users", "id", VisualFilterOperator.In, Array.Empty<int>()),
+            RowLimit: null);
+
+        var act = () => VisualQueryBuilder.Build(spec, TwoTableModel(), SqlServerDialect.Instance);
+
+        act.Should().Throw<BifrostExecutionError>().WithMessage("*at least one value*");
+    }
+
+    [Fact]
+    public void BetweenWrongArity_Throws()
+    {
+        var spec = new VisualQuerySpec(
+            [new VisualTable("dbo.users", null)],
+            [Col("dbo.users", "id")],
+            [],
+            Filter: Leaf("dbo.users", "id", VisualFilterOperator.Between, new[] { 1, 2, 3 }),
+            RowLimit: null);
+
+        var act = () => VisualQueryBuilder.Build(spec, TwoTableModel(), SqlServerDialect.Instance);
+
+        act.Should().Throw<BifrostExecutionError>().WithMessage("*exactly two values*");
+    }
+
+    [Fact]
+    public void InWithBareString_Throws()
+    {
+        // A raw string must not be silently treated as a char array.
+        var spec = new VisualQuerySpec(
+            [new VisualTable("dbo.users", null)],
+            [Col("dbo.users", "id")],
+            [],
+            Filter: Leaf("dbo.users", "name", VisualFilterOperator.In, "abc"),
+            RowLimit: null);
+
+        var act = () => VisualQueryBuilder.Build(spec, TwoTableModel(), SqlServerDialect.Instance);
+
+        act.Should().Throw<BifrostExecutionError>().WithMessage("*array of values*");
+    }
+
+    // ---- self-join via alias ------------------------------------------------
+
+    [Fact]
+    public void SelfJoin_WithAliases_QualifiesEachInstanceDistinctly()
+    {
+        // users joined to users (e.g. manager hierarchy) — disambiguated by alias.
+        var spec = new VisualQuerySpec(
+            [new VisualTable("dbo.users", "emp"), new VisualTable("dbo.users", "mgr")],
+            [Col("emp", "id"), Col("mgr", "name")],
+            [new VisualJoin("emp", ["tenant_id"], "mgr", ["id"], VisualJoinType.Inner)],
+            Filter: null, RowLimit: null);
+
+        var result = VisualQueryBuilder.Build(spec, TwoTableModel(), SqlServerDialect.Instance);
+
+        // Both instances appear, each under its own alias.
+        result.Sql.Should().Contain("[dbo].[users] AS [emp]");
+        result.Sql.Should().Contain("[dbo].[users] AS [mgr]");
+        result.Sql.Should().Contain("INNER JOIN");
+    }
 }

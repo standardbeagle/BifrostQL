@@ -21,6 +21,11 @@ namespace BifrostQL.Core.Model
                 _ => $"_{((byte)c):x}"
             });
             var result = string.Concat(translations);
+            // An empty input yields an empty translation; fall back to the prefix
+            // (or a bare underscore) so a valid GraphQL name is always produced and
+            // the result[0] check below can't throw.
+            if (result.Length == 0)
+                return (string.IsNullOrEmpty(prefix) ? "_" : prefix).ToLowerFirstChar();
             if (result[0] >= '0' && result[0] <= '9')
                 result = "_" + result;
             if (result.StartsWith("_"))

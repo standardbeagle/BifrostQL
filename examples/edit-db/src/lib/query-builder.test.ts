@@ -576,7 +576,7 @@ describe('buildQuery', () => {
         expect(q).toContain('categories_children(limit: $limit offset: $offset sort: $sort)');
     });
 
-    it('pushes grid filters into the nested child field args', () => {
+    it('does NOT push the main grid filters into the nested child field args', () => {
         const child = makeTable({
             name: 'assignments',
             graphQlName: 'assignments',
@@ -595,9 +595,11 @@ describe('buildQuery', () => {
         const schema = makeSchema([parent, child]);
         const cf = [{ id: 'credits', value: { operator: '_gt', value: 3 } as ColumnFilterValue }];
         const q = buildQuery(child, schema, '', cf, '5', 'courses')!;
-        expect(q).toContain('$cf_credits: Int');
-        // The child filter rides inside the nested field, not the parent.
-        expect(q).toMatch(/assignments\(limit: \$limit offset: \$offset sort: \$sort filter: \{credits: \{_gt: \$cf_credits\}\}\)/);
+        // The header filter + column filters are global URL params scoped to the
+        // MAIN grid's table. Drill child grids must ignore them — no $cf param decl
+        // and no filter arg on the nested child field.
+        expect(q).not.toContain('$cf_credits');
+        expect(q).toMatch(/assignments\(limit: \$limit offset: \$offset sort: \$sort\)/);
     });
 
     it('falls back to the standard query when no parent multi-join targets the child', () => {

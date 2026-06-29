@@ -42,6 +42,7 @@ import {
     ChevronsLeft,
     ChevronsRight,
     Columns3,
+    FilterX,
     PanelRight,
     Rows3,
     Trash2,
@@ -418,6 +419,17 @@ export function DataTable<TData>({
         <div className="flex flex-col w-full min-h-0 flex-1">
             <div className="flex items-center justify-between py-1 px-2">
                 <div className="flex items-center gap-2">
+                    {columnFilters.length > 0 && (
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => table.resetColumnFilters()}
+                            title="Clear all column filters"
+                        >
+                            <FilterX className="size-3.5" />
+                            Clear filters
+                        </Button>
+                    )}
                     {selectedCount > 0 && onDeleteSelected && (
                         <>
                             <span className="text-xs text-muted-foreground">

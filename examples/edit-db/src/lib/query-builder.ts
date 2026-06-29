@@ -323,21 +323,24 @@ export function buildQuery(
         // INTO the nested child field args so server paging drives the grid.
         const drill = resolveDrillDown(table, schema, tableFilter, filterColumn);
         if (drill) {
-            // Grid filters (filter string + column filters) now scope the CHILD.
-            const childFilterArg = filterText ? ` filter: ${filterText}` : '';
-            const childField = `${drill.childField}(limit: $limit offset: $offset sort: $sort${childFilterArg}) { total offset limit data {${allFields}} }`;
+            // The header filter + column filters are global URL params keyed off the
+            // MAIN (first) grid's table. Drill child grids show a different table
+            // scoped to one parent row, so those filters must NOT bleed into the
+            // child. Drop the grid filter args here (and the $filter/$cf param decls
+            // they require — declaring unused GraphQL variables is an error).
+            const childField = `${drill.childField}(limit: $limit offset: $offset sort: $sort) { total offset limit data {${allFields}} }`;
 
             const parentPkTypes = getPkTypes(drill.parentTable);
             if (parentPkTypes.length <= 1) {
                 const parentPk = parentPkTypes[0]?.name ?? "id";
                 const parentPkType = parentPkTypes[0]?.gqlType ?? "Int";
-                param = `, $id: ${parentPkType}` + param;
+                param = `, $id: ${parentPkType}`;
                 const parentFilter = `{ ${parentPk}: { _eq: $id}}`;
                 return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${drill.parentTable.name}(filter: ${parentFilter}) { data { ${childField} } } }`;
             }
             // Composite parent PK — one $pk_${name} variable per parent PK column.
             const pkParamDecls = parentPkTypes.map((t) => `$pk_${t.name}: ${t.gqlType}`).join(', ');
-            param = `, ${pkParamDecls}` + param;
+            param = `, ${pkParamDecls}`;
             const clauses = parentPkTypes.map((t) => `{${t.name}: {_eq: $pk_${t.name}}}`);
             const parentFilter = `{and: [${clauses.join(', ')}]}`;
             return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${drill.parentTable.name}(filter: ${parentFilter}) { data { ${childField} } } }`;

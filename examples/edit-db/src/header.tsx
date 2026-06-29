@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSchema } from './hooks/useSchema';
 import { useColumnNav } from './hooks/useColumnNav';
-import { useNavigate, useNavigation, useParams } from './hooks/usePath';
+import { useNavigate, useNavigation, useParams, useSearchParams } from './hooks/usePath';
 import { Table, Column } from './types/schema';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,6 +33,8 @@ export function Header() {
     const { mainTable, columns, focusedIndex, focusColumn, closeColumn } = useColumnNav();
     const [searchVal, setSearchVal] = useState("");
     const navigate = useNavigate();
+    const { search } = useSearchParams();
+    const hasFilter = !!search.get('filter');
     const { back, hasBack } = useNavigation();
     const tableName = tableData?.table;
     const hasOpenColumns = columns.length > 0;
@@ -53,6 +55,15 @@ export function Header() {
             navigate(`?filter=["${columnName}", "_eq", ${searchVal}, "${type}"]`);
         if (type === "String" || type === "String!")
             navigate(`?filter=["${columnName}", "_contains", "${searchVal}", "${type}"]`);
+    }
+    // Clear only the header filter param, preserving the current table/route and
+    // any column filters (cf). The adjacent "Clear" button below goes home instead.
+    const clearFilter = () => {
+        setSearchVal("");
+        const params = new URLSearchParams(search.toString());
+        params.delete('filter');
+        const qs = params.toString();
+        navigate(qs ? `?${qs}` : '?');
     }
     if (loading) return (
         <div className="flex items-center gap-2 p-2.5">
@@ -155,6 +166,18 @@ export function Header() {
                         <Filter className="size-3.5" />
                         Filter
                     </Button>
+                    {hasFilter && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={clearFilter}
+                            title="Clear filter"
+                            aria-label="Clear filter"
+                            className="shrink-0 rounded-none border-l border-border h-8 px-2 text-xs text-muted-foreground"
+                        >
+                            <X className="size-3.5" />
+                        </Button>
+                    )}
                 </div>
                 <div className="flex items-center gap-px border border-border rounded-md overflow-hidden shrink-0">
                     <Button variant="ghost" size="sm" onClick={() => navigate("/")} className="text-muted-foreground text-xs h-8 px-3 rounded-none">

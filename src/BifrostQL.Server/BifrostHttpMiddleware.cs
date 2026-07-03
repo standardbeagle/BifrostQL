@@ -141,16 +141,26 @@ namespace BifrostQL.Server
             {
                 // Surface connection/schema errors as GraphQL errors instead of 500
                 var innerMessage = ex.InnerException?.Message ?? ex.Message;
-                
+
                 // Log full exception with stack trace for debugging
                 var logger = options.RequestServices!.GetService<ILogger<BifrostDocumentExecutor>>();
                 logger?.LogError(ex, "Schema resolution failed: {Message}", innerMessage);
-                
+
+                // The raw connection/driver message can expose host names, credentials
+                // hints, and infrastructure detail; keep it server-side only. Opt into
+                // the raw text for local debugging via BIFROST_EXPOSE_DB_ERRORS.
+                var expose = Environment.GetEnvironmentVariable(BifrostExecutionError.ExposeDbErrorsEnvVar);
+                var reveal = string.Equals(expose, "1", StringComparison.Ordinal)
+                    || string.Equals(expose, "true", StringComparison.OrdinalIgnoreCase);
+                var clientMessage = reveal
+                    ? $"Database connection failed: {innerMessage}"
+                    : "Database connection failed.";
+
                 return new ExecutionResult
                 {
                     Errors = new ExecutionErrors
                     {
-                        new ExecutionError($"Database connection failed: {innerMessage}")
+                        new ExecutionError(clientMessage)
                     }
                 };
             }

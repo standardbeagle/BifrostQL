@@ -199,3 +199,61 @@ public class BifrostErrorHandlerTests
         return exception;
     }
 }
+
+public class DatabaseErrorSanitizationTests
+{
+    [Fact]
+    public void FromDatabaseException_RawDbError_ReturnsGenericMessage_PreservesInner()
+    {
+        var raw = new InvalidOperationException("relation \"secret_table\".\"ssn\" does not exist");
+
+        var error = BifrostExecutionError.FromDatabaseException(raw);
+
+        error.Message.Should().Be("A database error occurred while processing the request.");
+        error.Message.Should().NotContain("secret_table");
+        error.ErrorCode.Should().Be("DATABASE_ERROR");
+        error.InnerException.Should().BeSameAs(raw);
+    }
+
+    [Fact]
+    public void FromDatabaseException_UniqueViolation_ReturnsSafeConflictMessageAndCode()
+    {
+        var raw = new InvalidOperationException("SQLite Error 19: 'UNIQUE constraint failed: users.email'");
+
+        var error = BifrostExecutionError.FromDatabaseException(raw);
+
+        error.Message.Should().Be(BifrostExecutionError.ConflictMessage);
+        error.Message.Should().NotContain("users.email");
+        error.ErrorCode.Should().Be("CONFLICT");
+        error.InnerException.Should().BeSameAs(raw);
+    }
+
+    [Fact]
+    public void FromDatabaseException_ExistingBifrostError_PassesThroughUnchanged()
+    {
+        var intentional = new BifrostExecutionError("Tenant context required but not found.");
+
+        var error = BifrostExecutionError.FromDatabaseException(intentional);
+
+        error.Should().BeSameAs(intentional);
+    }
+
+    [Fact]
+    public void FromDatabaseException_RevealsRawText_WhenEnvVarSet()
+    {
+        var previous = Environment.GetEnvironmentVariable(BifrostExecutionError.ExposeDbErrorsEnvVar);
+        try
+        {
+            Environment.SetEnvironmentVariable(BifrostExecutionError.ExposeDbErrorsEnvVar, "1");
+            var raw = new InvalidOperationException("column mismatch on internal_table");
+
+            var error = BifrostExecutionError.FromDatabaseException(raw);
+
+            error.Message.Should().Contain("column mismatch on internal_table");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(BifrostExecutionError.ExposeDbErrorsEnvVar, previous);
+        }
+    }
+}

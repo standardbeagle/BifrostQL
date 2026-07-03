@@ -69,7 +69,7 @@ namespace BifrostQL.Core.Resolvers
             catch (Exception ex)
             {
                 await transaction.RollbackAsync();
-                throw new BifrostExecutionError(ex.Message, ex);
+                throw BifrostExecutionError.FromDatabaseException(ex);
             }
 
             // Observers fire only after commit so audit/state-transition

@@ -361,7 +361,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (Exception ex)
             {
-                throw new BifrostExecutionError(ex.Message, ex);
+                throw BifrostExecutionError.FromDatabaseException(ex);
             }
         }
 
@@ -395,7 +395,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (Exception ex)
             {
-                throw new BifrostExecutionError(ex.Message, ex);
+                throw BifrostExecutionError.FromDatabaseException(ex);
             }
         }
         private static async ValueTask<int> ExecuteNonQuery(IDbConnFactory connFactory, string sql,
@@ -413,7 +413,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (Exception ex)
             {
-                throw new BifrostExecutionError(ex.Message, ex);
+                throw BifrostExecutionError.FromDatabaseException(ex);
             }
         }
 

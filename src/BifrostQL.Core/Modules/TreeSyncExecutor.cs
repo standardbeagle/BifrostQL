@@ -138,7 +138,7 @@ public sealed class TreeSyncExecutor
         catch (Exception ex)
         {
             try { await ExecuteRawAsync(conn, _dialect.RollbackTransactionSql); } catch { /* surface the original error */ }
-            throw new BifrostExecutionError(ex.Message, ex);
+            throw BifrostExecutionError.FromDatabaseException(ex);
         }
     }
 

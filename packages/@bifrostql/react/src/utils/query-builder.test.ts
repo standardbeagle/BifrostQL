@@ -46,6 +46,15 @@ describe('buildGraphqlQuery', () => {
     expect(result).toContain('_null: true');
   });
 
+  it('translates _nnull to _null: false (schema has no _nnull)', () => {
+    const result = buildGraphqlQuery('users', {
+      filter: { email: { _nnull: true } },
+      fields: ['id'],
+    });
+    expect(result).toContain('_null: false');
+    expect(result).not.toContain('_nnull');
+  });
+
   it('builds a query with sort options', () => {
     const result = buildGraphqlQuery('users', {
       sort: [{ field: 'name', direction: 'asc' }],

@@ -39,6 +39,12 @@ function buildFilterObject(filter: AdvancedFilter): string {
         if (op === '_between' && Array.isArray(val) && val.length === 2) {
           return `_gte: ${JSON.stringify(val[0])}, _lte: ${JSON.stringify(val[1])}`;
         }
+        // The schema exposes only `_null: Boolean`; map the client-side
+        // `_nnull` convenience onto it so it round-trips to a real query
+        // instead of emitting an operator the server rejects.
+        if (op === '_nnull') {
+          return `_null: ${val ? 'false' : 'true'}`;
+        }
         return `${op}: ${JSON.stringify(val)}`;
       })
       .join(', ');

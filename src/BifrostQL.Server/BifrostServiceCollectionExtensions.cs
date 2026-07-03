@@ -356,6 +356,16 @@ namespace BifrostQL.Server
             if (!configured.Any(t => t is SoftDeleteMutationTransformer))
                 combined.Add(new SoftDeleteMutationTransformer());
 
+            // Tenant isolation, like soft delete, is one feature split across a
+            // read-side filter and a write-side mutation transformer. Auto-
+            // registering only TenantFilterTransformer (see
+            // WithBuiltInFilterTransformers) would guard reads while leaving
+            // UPDATE/DELETE/INSERT able to cross tenant boundaries — a one-
+            // directional guarantee is no guarantee. A no-op for tables without
+            // the tenant-filter metadata key, so always safe to auto-register.
+            if (!configured.Any(t => t is TenantMutationTransformer))
+                combined.Add(new TenantMutationTransformer());
+
             // Audit-column population (created/updated/deleted on/by). Keys off
             // per-column "populate" metadata plus the model-level user-audit-key, so
             // it is a no-op for tables without audit columns and always safe to

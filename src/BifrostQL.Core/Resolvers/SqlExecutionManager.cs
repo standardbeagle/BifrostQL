@@ -66,9 +66,16 @@ namespace BifrostQL.Core.Resolvers
             // Apply filter transformers (tenant isolation, soft-delete, etc.)
             // Capture module arguments (e.g. _includeDeleted, _onlyDeleted) into the
             // user context under table-scoped keys for the matching transformers.
-            Modules.ModuleApiRegistry.CaptureQueryArguments(context, dbTable, userContext);
+            //
+            // Write into a per-call copy, not the shared request UserContext:
+            // GraphQL.NET resolves sibling root fields in parallel, so mutating
+            // the shared (non-thread-safe) Dictionary from concurrent resolvers
+            // races. The scoped keys are ephemeral to this node's transform pass,
+            // so a private overlay is the correct scope regardless.
+            var scopedContext = new Dictionary<string, object?>(userContext);
+            Modules.ModuleApiRegistry.CaptureQueryArguments(context, dbTable, scopedContext);
 
-            _transformerService.ApplyTransformers(table, _dbModel, userContext);
+            _transformerService.ApplyTransformers(table, _dbModel, scopedContext);
 
             // Rewrite enum-name filter operands to their stored DB values before
             // SQL is generated, for the root table and every nested join.

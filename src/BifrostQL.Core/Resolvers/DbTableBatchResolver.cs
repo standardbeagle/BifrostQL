@@ -189,9 +189,10 @@ namespace BifrostQL.Core.Resolvers
                 throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
             // Adopt the (possibly rewritten) data so transformer output — e.g.
-            // enum-name → DB-value mapping — reaches the SQL. When no transformer
-            // applies, Transform returns the same data reference, so this is a no-op.
-            data = transformResult.Data;
+            // enum-name → DB-value mapping — reaches the SQL, rekeyed from GraphQL
+            // field names to real DB column names. When no transformer applies and
+            // names already match, this is effectively a no-op.
+            data = ToDbColumnKeys(table, transformResult.Data);
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var columns = string.Join(",", data.Keys.Select(k => dialect.EscapeIdentifier(k)));
@@ -219,9 +220,13 @@ namespace BifrostQL.Core.Resolvers
             if (data.Count == 0) return null;
 
             var caseData = new Dictionary<string, object?>(data, StringComparer.OrdinalIgnoreCase);
-            var keyData = caseData.Where(d => table.ColumnLookup[d.Key].IsPrimaryKey)
-                .ToDictionary(kv => kv.Key, kv => kv.Value);
-            var standardData = caseData.Where(d => !table.ColumnLookup[d.Key].IsPrimaryKey)
+            // keyData is DB-name space (drives WHERE + current-row load); tolerant of
+            // GraphQL field names. standardData keeps GraphQL names for transformers
+            // and is normalized to DB names before SQL generation.
+            var keyData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var d in caseData.Where(d => IsPrimaryKeyColumn(table, d.Key)))
+                keyData[ToDbColumnName(table, d.Key)] = d.Value;
+            var standardData = caseData.Where(d => !IsPrimaryKeyColumn(table, d.Key))
                 .ToDictionary(kv => kv.Key, kv => kv.Value);
 
             if (!keyData.Any() || !standardData.Any()) return null;
@@ -253,7 +258,7 @@ namespace BifrostQL.Core.Resolvers
             // is recomputed against the (unchanged) primary-key set; enum columns are
             // non-key. When no transformer applies, Transform returns the same data
             // reference, so standardData is re-derived identically (no-op).
-            var updatedData = transformResult.Data;
+            var updatedData = ToDbColumnKeys(table, transformResult.Data);
             standardData = updatedData
                 .Where(d => !keyData.ContainsKey(d.Key))
                 .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
@@ -334,12 +339,16 @@ namespace BifrostQL.Core.Resolvers
             // replaces — the primary-key predicate.
             var additionalFilter = RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
 
+            // Rekey to DB column names so the PK split (via ColumnLookup) and the
+            // emitted WHERE/SET share one name space even for sanitized columns.
+            var dbData = ToDbColumnKeys(table, transformResult.Data);
+
             if (transformResult.MutationType == MutationType.Update)
             {
                 var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-                var keyData = transformResult.Data.Where(d => table.ColumnLookup.ContainsKey(d.Key) && table.ColumnLookup[d.Key].IsPrimaryKey)
+                var keyData = dbData.Where(d => table.ColumnLookup.ContainsKey(d.Key) && table.ColumnLookup[d.Key].IsPrimaryKey)
                     .ToDictionary(kv => kv.Key, kv => kv.Value);
-                var setData = transformResult.Data.Where(d => !table.ColumnLookup.ContainsKey(d.Key) || !table.ColumnLookup[d.Key].IsPrimaryKey)
+                var setData = dbData.Where(d => !table.ColumnLookup.ContainsKey(d.Key) || !table.ColumnLookup[d.Key].IsPrimaryKey)
                     .ToDictionary(kv => kv.Key, kv => kv.Value);
                 var setClause = string.Join(",", setData.Select(kv => SetAssignment(dialect, table, kv.Key)));
                 var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
@@ -347,7 +356,7 @@ namespace BifrostQL.Core.Resolvers
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = sql;
                 cmd.Transaction = transaction;
-                AddParameters(cmd, transformResult.Data);
+                AddParameters(cmd, dbData);
                 AddExtraParameters(cmd, additionalFilter.Parameters);
                 var softAffected = await cmd.ExecuteNonQueryAsync();
                 return new BatchActionOutcome(softAffected, MutationType.Update, transformResult.Data, transformResult.StateTransition);
@@ -356,7 +365,7 @@ namespace BifrostQL.Core.Resolvers
             // Adopt the (possibly rewritten) data so transformer output (e.g.
             // enum-name → DB-value mapping on a predicate column) reaches the
             // WHERE clause and parameters, mirroring the soft-delete branch above.
-            var deleteData = transformResult.Data;
+            var deleteData = dbData;
             var deleteTableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var deleteWhereClause = string.Join(" AND ", deleteData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause}{additionalFilter.WhereSuffix};";
@@ -383,10 +392,14 @@ namespace BifrostQL.Core.Resolvers
             if (data.Count == 0) return null;
 
             var caseData = new Dictionary<string, object?>(data, StringComparer.OrdinalIgnoreCase);
-            var keyColumns = caseData.Keys.Where(k => table.ColumnLookup[k].IsPrimaryKey).ToList();
-            var updateColumns = caseData.Keys.Where(k => !table.ColumnLookup[k].IsPrimaryKey).ToList();
+            // Build the statement in DB-column-name space so sanitized GraphQL
+            // field names resolve to real columns; transform still runs on the
+            // GraphQL-keyed caseData below, and the bound data is rekeyed to match.
+            var dbColumns = caseData.Keys.Select(k => ToDbColumnName(table, k)).ToList();
+            var keyColumns = dbColumns.Where(k => table.ColumnLookup[k].IsPrimaryKey).ToList();
+            var updateColumns = dbColumns.Where(k => !table.ColumnLookup[k].IsPrimaryKey).ToList();
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var upsertSql = dialect.UpsertSql(tableRef, keyColumns, caseData.Keys.ToList(), updateColumns);
+            var upsertSql = dialect.UpsertSql(tableRef, keyColumns, dbColumns, updateColumns);
 
             if (upsertSql != null)
             {
@@ -401,7 +414,7 @@ namespace BifrostQL.Core.Resolvers
                 // split (and therefore upsertSql) is unaffected because transformers
                 // rewrite values, not primary-key membership. When no transformer
                 // applies, Transform returns the same data reference (no-op).
-                var upsertData = transformResult.Data;
+                var upsertData = ToDbColumnKeys(table, transformResult.Data);
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = upsertSql;
                 cmd.Transaction = transaction;

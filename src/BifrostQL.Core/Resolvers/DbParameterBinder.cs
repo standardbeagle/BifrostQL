@@ -33,6 +33,40 @@ namespace BifrostQL.Core.Resolvers
             => table.ColumnLookup.TryGetValue(column, out var c) ? c.DataType : null;
 
         /// <summary>
+        /// Resolves a mutation-input key to its database column name. Client input
+        /// is keyed by GraphQL field name (which can be sanitized/prefixed and so
+        /// differ from the real column), while transformer-added keys (tenant,
+        /// soft-delete, audit) are already database names. Map GraphQL → DB and
+        /// pass through anything already a database column, so downstream SQL and
+        /// parameters use one consistent name space.
+        /// </summary>
+        public static string ToDbColumnName(IDbTable table, string key)
+            => table.GraphQlLookup.TryGetValue(key, out var col) ? col.DbName : key;
+
+        /// <summary>
+        /// Rekeys a mutation data map from GraphQL field names to database column
+        /// names via <see cref="ToDbColumnName"/>.
+        /// </summary>
+        public static Dictionary<string, object?> ToDbColumnKeys(IDbTable table, IReadOnlyDictionary<string, object?> data)
+        {
+            var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kv in data)
+                result[ToDbColumnName(table, kv.Key)] = kv.Value;
+            return result;
+        }
+
+        /// <summary>
+        /// True when the given mutation-input key maps to a primary-key column,
+        /// tolerant of both GraphQL field names and raw database column names.
+        /// </summary>
+        public static bool IsPrimaryKeyColumn(IDbTable table, string key)
+        {
+            if (table.GraphQlLookup.TryGetValue(key, out var byGraphQl))
+                return byGraphQl.IsPrimaryKey;
+            return table.ColumnLookup.TryGetValue(key, out var byDb) && byDb.IsPrimaryKey;
+        }
+
+        /// <summary>
         /// Binds <c>@columnName</c> parameters from a column → value map.
         /// </summary>
         public static void AddParameters(DbCommand cmd, IReadOnlyDictionary<string, object?> data)

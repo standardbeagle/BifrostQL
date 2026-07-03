@@ -19,7 +19,14 @@ function encodePkPart(value: unknown): string {
 
 function decodePkPart(raw: string): string | null {
     if (raw === '') return null;
-    return decodeURIComponent(raw);
+    // Malformed percent-encoding (e.g. a bare "%") makes decodeURIComponent
+    // throw URIError. A hostile or hand-edited route must not crash the
+    // component tree — fall back to the raw segment instead.
+    try {
+        return decodeURIComponent(raw);
+    } catch {
+        return raw;
+    }
 }
 
 /**

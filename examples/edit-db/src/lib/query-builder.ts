@@ -5,7 +5,7 @@
 
 import type { Table, Column, Join, Schema } from '../types/schema';
 import type { ColumnFiltersState } from '@tanstack/react-table';
-import { rowIdOf, buildPkEqFilter, parsePkRoute } from './row-id';
+import { rowIdOf, buildPkEqFilter, parsePkRoute, encodeRouteParts } from './row-id';
 import { resolveChildJoin, childFieldName } from './polymorphic';
 
 export interface FilterResult {
@@ -91,8 +91,12 @@ export function toLocaleDate(d: string): string {
 
 export function getRowPkValue(row: RowData, table: Table): string {
     const keys = table.primaryKeys ?? [];
-    if (keys.length === 0) return String(row?.id ?? "");
-    if (keys.length === 1) return String(row?.[keys[0]] ?? "");
+    // This value is consumed as a route segment and decoded with
+    // decodeURIComponent (see parsePkRoute), so the single-key case must
+    // route-encode too — a raw value containing "%", "/", or "::" would
+    // otherwise produce a broken link that never round-trips.
+    if (keys.length === 0) return encodeRouteParts([row?.id]);
+    if (keys.length === 1) return encodeRouteParts([row?.[keys[0]]]);
     return rowIdOf(row as Record<string, unknown>, table, 0);
 }
 

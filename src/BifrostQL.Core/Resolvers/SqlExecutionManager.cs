@@ -116,17 +116,25 @@ namespace BifrostQL.Core.Resolvers
                 });
             }
 
-            var countObj = data.First(kv => kv.Key == (table.KeyName + "=>count")).Value.data[0][0];
-            var count = countObj != null ? (int?)Convert.ToInt32(countObj) : null;
-
             var enumColumns = _dbModel.EnumColumns;
             var logger = context.RequestServices?.GetService<ILogger<SqlExecutionManager>>();
 
             if (table.IncludeResult)
             {
+                // The "=>count" result set exists only when IncludeResult is set.
+                // Look it up defensively — an unconditional .First()/[0][0] threw
+                // when the count row was absent or empty.
+                var total = 0;
+                if (data.TryGetValue(table.KeyName + "=>count", out var countEntry)
+                    && countEntry.data.Count > 0 && countEntry.data[0].Length > 0
+                    && countEntry.data[0][0] is { } countObj)
+                {
+                    total = Convert.ToInt32(countObj);
+                }
+
                 return new TableResult
                 {
-                    Total = count ?? 0,
+                    Total = total,
                     Offset = table.Offset,
                     Limit = table.Limit,
                     Data = new ReaderEnum(table, data, enumColumns, logger)

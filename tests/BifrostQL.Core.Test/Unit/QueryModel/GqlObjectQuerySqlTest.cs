@@ -757,6 +757,41 @@ public sealed class GqlObjectQuerySqlTest
         aggregateSql.Parameters.Should().NotBeEmpty();
     }
 
+    [Fact]
+    public void AddSqlParameterized_RelationshipFilter_EmitsJoinBeforeWhere_NotWhereInnerJoin()
+    {
+        // Arrange — filter Orders by a column on the related Users table. This
+        // renders as an INNER JOIN that must sit in the FROM clause, not after
+        // WHERE. The old code prepended WHERE onto the join fragment, producing
+        // the invalid "WHERE INNER JOIN ...".
+        var dbModel = StandardTestFixtures.UsersWithOrders();
+        var ordersTable = dbModel.GetTableFromDbName("Orders");
+        var filter = TableFilter.FromObject(new Dictionary<string, object?>
+        {
+            { "user", new Dictionary<string, object?> { { "Name", new Dictionary<string, object?> { { "_eq", "bob" } } } } }
+        }, "Orders");
+
+        var query = GqlObjectQueryBuilder.Create()
+            .WithDbTable(ordersTable)
+            .WithColumns("Id")
+            .WithFilter(filter)
+            .Build();
+
+        var sqls = new Dictionary<string, ParameterizedSql>();
+        var parameters = new SqlParameterCollection();
+
+        // Act
+        query.AddSqlParameterized(dbModel, Dialect, sqls, parameters);
+
+        // Assert
+        var main = sqls["Orders"].Sql;
+        main.Should().Contain("INNER JOIN");
+        main.Should().NotContain("WHERE INNER JOIN");
+        // The generated SQL must actually parse — the old "WHERE INNER JOIN"
+        // output failed the grammar; a Contains check alone missed it.
+        BifrostQL.Core.Test.TestSupport.SqlSyntax.AssertValid(main, "relationship filter emits a valid join");
+    }
+
     #endregion
 
     #region FullColumnNames Tests

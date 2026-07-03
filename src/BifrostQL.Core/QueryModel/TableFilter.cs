@@ -235,24 +235,40 @@ namespace BifrostQL.Core.QueryModel
                 "Mutation additional filter has an unsupported shape.");
         }
 
+        /// <summary>
+        /// A rendered filter split into its FROM-clause join fragments and its
+        /// WHERE predicate. Relationship filters (nested-table columns) inject an
+        /// <c>INNER JOIN</c> that belongs after the table reference; leaf filters
+        /// produce a WHERE predicate. Keeping them separate is what lets a filter
+        /// tree mix the two — e.g. a tenant leaf ANDed onto a relationship join —
+        /// without emitting the invalid <c>WHERE INNER JOIN ...</c> that a single
+        /// combined fragment produced.
+        /// </summary>
+        internal readonly record struct FilterParts(string Joins, string Where, List<SqlParameterInfo> Parameters);
+
+        /// <summary>
+        /// Backwards-compatible single-fragment render. Leaf/AND/OR filters return
+        /// their WHERE predicate; a pure relationship filter returns its join
+        /// fragment; a mixed filter returns "<c>{joins} WHERE {where}</c>". Prefer
+        /// <see cref="RenderParts"/> when assembling SQL so joins and predicates
+        /// land in their correct clauses.
+        /// </summary>
         public ParameterizedSql ToSqlParameterized(IDbModel model, ISqlDialect dialect, SqlParameterCollection parameters, string? alias = null)
+        {
+            var parts = RenderParts(model, dialect, parameters, alias);
+            var hasWhere = !string.IsNullOrWhiteSpace(parts.Where);
+            var sql = string.IsNullOrWhiteSpace(parts.Joins)
+                ? parts.Where
+                : hasWhere ? $"{parts.Joins} WHERE {parts.Where}" : parts.Joins;
+            return new ParameterizedSql(sql, parts.Parameters);
+        }
+
+        internal FilterParts RenderParts(IDbModel model, ISqlDialect dialect, SqlParameterCollection parameters, string? alias)
         {
             if (Next == null)
             {
-                if (And.Count > 0)
-                {
-                    var results = And.Select(f => f.ToSqlParameterized(model, dialect, parameters, alias)).ToArray();
-                    var filters = results.Where(r => !string.IsNullOrWhiteSpace(r.Sql)).Select(r => r.Sql).ToArray();
-                    var sql = filters.Length == 1 ? filters[0] : $"(({string.Join(") AND (", filters)}))";
-                    return new ParameterizedSql(sql, results.SelectMany(r => r.Parameters).ToList());
-                }
-                if (Or.Count > 0)
-                {
-                    var results = Or.Select(f => f.ToSqlParameterized(model, dialect, parameters, alias)).ToArray();
-                    var filters = results.Where(r => !string.IsNullOrWhiteSpace(r.Sql)).Select(r => r.Sql).ToArray();
-                    var sql = filters.Length == 1 ? filters[0] : $"(({string.Join(") OR (", filters)}))";
-                    return new ParameterizedSql(sql, results.SelectMany(r => r.Parameters).ToList());
-                }
+                if (And.Count > 0) return CombineParts(And, "AND", model, dialect, parameters, alias);
+                if (Or.Count > 0) return CombineParts(Or, "OR", model, dialect, parameters, alias);
                 throw new BifrostExecutionError("Filter object missing all required fields.");
             }
 
@@ -260,21 +276,32 @@ namespace BifrostQL.Core.QueryModel
             if (Next.Next == null)
             {
                 var lookup = table.GraphQlLookup;
-                return GetSingleFilterParameterized(dialect, parameters, alias ?? TableName, lookup[ColumnName].DbName, Next.RelationName, Next.Value, lookup[ColumnName].DataType);
+                var leaf = GetSingleFilterParameterized(dialect, parameters, alias ?? TableName, lookup[ColumnName].DbName, Next.RelationName, Next.Value, lookup[ColumnName].DataType);
+                return new FilterParts("", leaf.Sql, leaf.Parameters.ToList());
             }
 
-            // For complex joins, use parameterized SQL throughout
+            // Relationship filter: the nested-column predicate lives inside the
+            // joined sub-query, so this contributes an INNER JOIN fragment (for
+            // the FROM clause) and no WHERE predicate of its own.
             var link = table.SingleLinks[ColumnName];
             var (joinSql, joinParams) = BuildSqlParameterized(Next, link, dialect, parameters, includeValue: false);
-            var (filterSql, filterParams) = GetFilterParameterized(Next, link, dialect, parameters, "j", includeValue: false);
-
             var ej = dialect.EscapeIdentifier("j");
-            var fullJoin = $" INNER JOIN ({joinSql}) {ej} ON {ej}.{dialect.EscapeIdentifier("joinid")} = {dialect.EscapeIdentifier(alias ?? table.DbName)}.{dialect.EscapeIdentifier(table.SingleLinks[ColumnName].ChildId.ColumnName)}";
-            var allParams = joinParams.Concat(filterParams).ToList();
+            var fullJoin = $" INNER JOIN ({joinSql}) {ej} ON {ej}.{dialect.EscapeIdentifier("joinid")} = {dialect.EscapeIdentifier(alias ?? table.DbName)}.{dialect.EscapeIdentifier(link.ChildId.ColumnName)}";
+            return new FilterParts(fullJoin, "", joinParams.ToList());
+        }
 
-            if (string.IsNullOrEmpty(filterSql))
-                return new ParameterizedSql(fullJoin, allParams);
-            return new ParameterizedSql(fullJoin + " WHERE " + filterSql, allParams);
+        private FilterParts CombineParts(List<TableFilter> children, string op, IDbModel model, ISqlDialect dialect, SqlParameterCollection parameters, string? alias)
+        {
+            var rendered = children.Select(f => f.RenderParts(model, dialect, parameters, alias)).ToList();
+            var joins = string.Concat(rendered.Select(r => r.Joins));
+            var wheres = rendered.Where(r => !string.IsNullOrWhiteSpace(r.Where)).Select(r => r.Where).ToArray();
+            var where = wheres.Length switch
+            {
+                0 => "",
+                1 => wheres[0],
+                _ => $"(({string.Join($") {op} (", wheres)}))",
+            };
+            return new FilterParts(joins, where, rendered.SelectMany(r => r.Parameters).ToList());
         }
 
         private static (string sql, List<SqlParameterInfo> parameters) BuildSqlParameterized(
@@ -313,32 +340,6 @@ namespace BifrostQL.Core.QueryModel
                                 $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid} FROM {dialect.EscapeIdentifier(link.ParentTable.DbName)} WHERE {filterResult.Sql}",
                                 filterResult.Parameters.ToList());
                         }
-                }
-            }
-
-            return ("", new List<SqlParameterInfo>());
-        }
-
-        private static (string sql, List<SqlParameterInfo> parameters) GetFilterParameterized(
-            TableFilter filter,
-            TableLinkDto link,
-            ISqlDialect dialect,
-            SqlParameterCollection parameters,
-            string joinName,
-            bool includeValue = false)
-        {
-            if (!includeValue) return ("", new List<SqlParameterInfo>());
-
-            if (filter is { Next: { } } || (filter.Next == null && filter.And.Count > 0) || (filter.Next == null && filter.Or.Count > 0))
-            {
-                switch (filter.FilterType)
-                {
-                    case FilterType.Join
-                        when link.ParentTable.SingleLinks.TryGetValue(filter.ColumnName, out var nextLink):
-                        return GetFilterParameterized(filter.Next!, nextLink, dialect, parameters, joinName, includeValue);
-                    case FilterType.Join:
-                        var filterResult = GetSingleFilterParameterized(dialect, parameters, joinName, "value", filter.Next!.RelationName, filter.Next.Value);
-                        return (filterResult.Sql, filterResult.Parameters.ToList());
                 }
             }
 

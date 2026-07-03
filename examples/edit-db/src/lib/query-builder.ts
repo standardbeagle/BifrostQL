@@ -116,7 +116,8 @@ export function buildColumnFilters(columnFilters: ColumnFiltersState, table: Tab
     const params: string[] = [];
     const filterTexts: string[] = [];
 
-    for (const cf of columnFilters) {
+    for (let i = 0; i < columnFilters.length; i++) {
+        const cf = columnFilters[i];
         const filterValue = cf.value as ColumnFilterValue;
         if (filterValue.value === undefined || filterValue.value === null || filterValue.value === "") continue;
 
@@ -124,7 +125,10 @@ export function buildColumnFilters(columnFilters: ColumnFiltersState, table: Tab
         if (!col) continue;
         if (!isGraphQlName(cf.id) || !isFilterOperator(filterValue.operator, col.paramType)) continue;
 
-        const varName = `cf_${cf.id}`;
+        // Suffix with the filter index so two filters on the same column (e.g.
+        // _gte and _lte) get distinct variable names instead of colliding into
+        // one duplicated GraphQL variable.
+        const varName = `cf_${cf.id}_${i}`;
         const gqlType = getGraphQlType(col.paramType);
 
         if (filterValue.operator === "_null") {

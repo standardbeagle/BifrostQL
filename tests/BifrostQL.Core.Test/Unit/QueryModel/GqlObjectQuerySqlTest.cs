@@ -1,6 +1,7 @@
 using FluentAssertions;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.QueryModel.TestFixtures;
+using BifrostQL.Core.Modules;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Schema;
 using BifrostQL.Ngsql;
@@ -716,6 +717,44 @@ public sealed class GqlObjectQuerySqlTest
 
         // Assert
         sqls.Should().ContainKey("Users=>agg_totalOrderAmount");
+    }
+
+    [Fact]
+    public void AddSqlParameterized_AggregateWithLinkFilter_ScopesDestinationTable()
+    {
+        // Arrange — a tenant/soft-delete style filter on the aggregate's
+        // destination table (Orders) must reach the join chain; otherwise the
+        // aggregate reads every tenant's rows (a cross-tenant leak).
+        var dbModel = StandardTestFixtures.UsersWithOrders();
+        var usersTable = dbModel.GetTableFromDbName("Users");
+        var link = usersTable.MultiLinks["orders"];
+
+        var aggregateColumn = new GqlAggregateColumn(
+            new List<(LinkDirection, TableLinkDto)> { (LinkDirection.OneToMany, link) },
+            "Total",
+            "totalOrderAmount",
+            AggregateOperationType.Sum);
+        aggregateColumn.LinkFilters.Add(TableFilterFactory.Equals("Orders", "Status", "active"));
+
+        var query = GqlObjectQueryBuilder.Create()
+            .WithDbTable(usersTable)
+            .WithColumns("Id")
+            .WithAggregateColumn(aggregateColumn)
+            .Build();
+
+        var sqls = new Dictionary<string, ParameterizedSql>();
+        var parameters = new SqlParameterCollection();
+
+        // Act
+        query.AddSqlParameterized(dbModel, Dialect, sqls, parameters);
+
+        // Assert — the destination filter is rendered against the `next` alias
+        // and applied as a WHERE within the aggregate SQL, with a bound param.
+        var aggregateSql = sqls["Users=>agg_totalOrderAmount"];
+        aggregateSql.Sql.Should().Contain("WHERE");
+        aggregateSql.Sql.Should().Contain("Status");
+        aggregateSql.Sql.Should().Contain("GROUP BY");
+        aggregateSql.Parameters.Should().NotBeEmpty();
     }
 
     #endregion

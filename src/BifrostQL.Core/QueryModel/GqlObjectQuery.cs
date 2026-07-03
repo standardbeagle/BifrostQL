@@ -102,7 +102,7 @@ namespace BifrostQL.Core.QueryModel
 
             foreach (var col in AggregateColumns)
             {
-                var aggregateSql = col.ToSqlParameterized(dialect, filter);
+                var aggregateSql = col.ToSqlParameterized(dbModel, dialect, parameters, filter);
                 col.SqlKey = $"{sqlKeyName}=>agg_{col.FinalColumnGraphQlName}";
                 sqls[col.SqlKey] = aggregateSql;
             }

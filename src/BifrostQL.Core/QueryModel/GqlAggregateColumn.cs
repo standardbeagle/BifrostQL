@@ -27,9 +27,19 @@ namespace BifrostQL.Core.QueryModel
         public string FinalColumnGraphQlName { get; init; }
         public string? SqlKey { get; set; }
 
+        /// <summary>
+        /// Transformer-derived WHERE filters (tenant isolation, soft-delete,
+        /// authorization policy) for each linked destination table, aligned by
+        /// index with <see cref="Links"/>. Populated by the query transformer
+        /// service; empty when no transformers apply. Without these, the
+        /// aggregate's INNER JOIN chain reads every destination row regardless
+        /// of tenant/soft-delete scope — a cross-tenant data leak.
+        /// </summary>
+        public List<TableFilter?> LinkFilters { get; } = new();
+
         public AggregateOperationType? AggregateType { get; init; }
 
-        public ParameterizedSql ToSqlParameterized(ISqlDialect dialect, ParameterizedSql filterSql)
+        public ParameterizedSql ToSqlParameterized(IDbModel model, ISqlDialect dialect, SqlParameterCollection parameters, ParameterizedSql filterSql)
         {
             if (Links.Count == 0)
                 throw new BifrostExecutionError(
@@ -46,6 +56,7 @@ namespace BifrostQL.Core.QueryModel
             var (firstDirection, firstLink) = Links[0];
             var sql = $"SELECT {firstLink.GetSqlSourceColumns(dialect, firstDirection, columnName: "joinId")}, {firstLink.GetSqlSourceColumns(dialect, firstDirection, columnName: "srcId")} FROM {firstLink.GetSqlSourceTableRef(dialect, firstDirection)}{filterSql.Sql}";
 
+            var linkFilterParams = new List<SqlParameterInfo>();
             for (var i = 0; i < Links.Count; ++i)
             {
                 var (direction, link) = Links[i];
@@ -56,9 +67,26 @@ namespace BifrostQL.Core.QueryModel
                     _ => $"SELECT {link.GetSqlSourceColumns(dialect, direction, columnName: "joinId", tableName: "next")}, {src}.{srcId}",
                 };
                 sql = selectSql + fromSql;
+
+                // Scope this destination table's rows by any tenant/soft-delete/
+                // policy filter the transformers produced for it. The filter is
+                // rendered against the `next` alias and applied at this join
+                // level, so scoped rows are excluded before they propagate up the
+                // aggregate chain. Security transformers emit leaf/AND equality
+                // filters here, which render as plain WHERE predicates.
+                var linkFilter = i < LinkFilters.Count ? LinkFilters[i] : null;
+                if (linkFilter != null)
+                {
+                    var rendered = linkFilter.ToSqlParameterized(model, dialect, parameters, alias: "next");
+                    if (!string.IsNullOrWhiteSpace(rendered.Sql))
+                    {
+                        sql += $" WHERE {rendered.Sql}";
+                        linkFilterParams.AddRange(rendered.Parameters);
+                    }
+                }
             }
 
-            return new ParameterizedSql(sql + $" GROUP BY {src}.{srcId}", filterSql.Parameters);
+            return new ParameterizedSql(sql + $" GROUP BY {src}.{srcId}", filterSql.Parameters.Concat(linkFilterParams).ToList());
         }
     }
     public enum LinkDirection

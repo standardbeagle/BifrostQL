@@ -159,6 +159,13 @@ namespace BifrostQL.Core.QueryModel
             if (op is "_in" or "_nin")
             {
                 var values = (value as IEnumerable<object?>) ?? Array.Empty<object?>();
+                // An empty list makes "col IN ()" / "col NOT IN ()" — a syntax
+                // error every dialect rejects, turning a client-supplied empty
+                // array into a 500. Emit the equivalent constant predicate
+                // instead: nothing is IN an empty set (always false); everything
+                // is NOT IN it (always true).
+                if (!values.Any())
+                    return new ParameterizedSql(op == "_in" ? "1 = 0" : "1 = 1", Array.Empty<SqlParameterInfo>());
                 parameters.AddParameters(values);
                 var added = parameters.Parameters.TakeLast(values.Count()).ToList();
                 var paramRefs = string.Join(",", added.Select(p => dialect.CastParameterReference(p.Name, columnType)));

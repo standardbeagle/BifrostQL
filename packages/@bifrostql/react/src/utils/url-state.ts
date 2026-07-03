@@ -1,4 +1,19 @@
 import type { SortOption, TableFilter } from '../types';
+import { isGraphqlName } from './graphql-identifiers';
+
+/**
+ * Drop filter entries whose field name is not a valid GraphQL name. URL and
+ * localStorage state is attacker-controllable; validating here means a hostile
+ * field name is filtered out at parse time instead of throwing deep in query
+ * construction (assertGraphqlName) and tearing down the component tree.
+ */
+export function sanitizeFilter(filter: TableFilter): TableFilter {
+  const clean: TableFilter = {};
+  for (const [field, value] of Object.entries(filter)) {
+    if (isGraphqlName(field)) clean[field] = value;
+  }
+  return clean;
+}
 
 /** Table state that can be persisted to and restored from URL search parameters. */
 export interface UrlTableState {
@@ -34,7 +49,8 @@ export function parseSort(raw: string): SortOption[] {
     .split(',')
     .map((part) => {
       const [field, direction] = part.split(':');
-      if (!field || (direction !== 'asc' && direction !== 'desc')) return null;
+      if (!field || !isGraphqlName(field) || (direction !== 'asc' && direction !== 'desc'))
+        return null;
       return { field, direction };
     })
     .filter((s): s is SortOption => s !== null);
@@ -67,7 +83,7 @@ export function parseFilter(raw: string): TableFilter | undefined {
     ) {
       return undefined;
     }
-    return parsed as TableFilter;
+    return sanitizeFilter(parsed as TableFilter);
   } catch {
     return undefined;
   }

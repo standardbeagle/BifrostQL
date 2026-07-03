@@ -24,6 +24,16 @@ const FILTER_OPERATORS = new Set([
   '_nnull',
 ]);
 
+/** Non-throwing check: is `value` a syntactically valid GraphQL name? */
+export function isGraphqlName(value: string): boolean {
+  return GRAPHQL_NAME.test(value);
+}
+
+/** Non-throwing check: is `value` a filter operator the schema accepts? */
+export function isFilterOperator(value: string): boolean {
+  return FILTER_OPERATORS.has(value);
+}
+
 export function assertGraphqlName(value: string, kind: string): void {
   if (!GRAPHQL_NAME.test(value)) {
     throw new Error(`Invalid GraphQL ${kind}: ${value}`);

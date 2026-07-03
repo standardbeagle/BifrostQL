@@ -6,6 +6,7 @@ import {
   parseFilter,
   writeToUrl,
   readFromUrl,
+  sanitizeFilter,
 } from './url-state';
 
 describe('serializeSort', () => {
@@ -280,6 +281,27 @@ describe('readFromUrl', () => {
 
     const state = readFromUrl('table');
     expect(state.pageSize).toBeUndefined();
+  });
+});
+
+describe('hostile input is filtered at parse', () => {
+  it('sanitizeFilter drops fields with invalid GraphQL names', () => {
+    const clean = sanitizeFilter({
+      status: { _eq: 'active' },
+      'status) { injected': 'x',
+    } as never);
+    expect(clean).toEqual({ status: { _eq: 'active' } });
+  });
+
+  it('parseFilter strips injection field names', () => {
+    const raw = JSON.stringify({ 'a) { hacked': 1, name: { _eq: 'ok' } });
+    expect(parseFilter(raw)).toEqual({ name: { _eq: 'ok' } });
+  });
+
+  it('parseSort drops entries with invalid field names', () => {
+    expect(parseSort('name) { injected:asc,age:desc')).toEqual([
+      { field: 'age', direction: 'desc' },
+    ]);
   });
 });
 

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using BifrostQL.Core.Resolvers;
 
 namespace BifrostQL.Core.Workflows;
 
@@ -132,13 +133,28 @@ public sealed class WorkflowRunner : IWorkflowRunner
         }
         catch (Exception ex) when (ex is not ArgumentException)
         {
-            var code = ex.Message.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase)
-                ? "conflict"
-                : "step_failed";
+            // Classify server-side against the full exception chain: the raw
+            // driver message (e.g. "UNIQUE constraint failed") now lives on the
+            // InnerException because the client-facing message is sanitized.
+            var code = MentionsUniqueViolation(ex) ? "conflict" : "step_failed";
             return StepRunResult.Failure(
                 new WorkflowStepTrace(step.Name, step.Type, false, Error: StepError),
                 code);
         }
+    }
+
+    private static bool MentionsUniqueViolation(Exception? ex)
+    {
+        // The raw driver text (e.g. "UNIQUE constraint failed") is sanitized out
+        // of client-facing messages, so match either the safe conflict message
+        // that survives the pipeline or any raw driver fingerprint still present
+        // on the exception chain.
+        for (var current = ex; current != null; current = current.InnerException)
+        {
+            if (current.Message.Contains(BifrostExecutionError.ConflictMessage, StringComparison.Ordinal))
+                return true;
+        }
+        return BifrostExecutionError.IsUniqueViolation(ex);
     }
 
     private async Task<object?> RunQueryAsync(WorkflowStep step, WorkflowExecutionContext context)

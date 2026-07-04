@@ -2,6 +2,7 @@ using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.QueryModel.TestFixtures;
+using BifrostQL.Core.Resolvers;
 using Xunit;
 
 namespace BifrostQL.Core.Test.Modules;
@@ -262,6 +263,99 @@ public class MutationTransformerTests
             Model = model,
             UserContext = userContext ?? new Dictionary<string, object?>()
         };
+    }
+
+    #endregion
+
+    #region TenantMutationTransformer Tests
+
+    private static IDbModel CreateTenantModel()
+    {
+        return DbModelTestFixture.Create()
+            .WithTable("Orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Name", "nvarchar")
+                .WithColumn("tenant_id", "int")
+                .WithMetadata("tenant-filter", "tenant_id"))
+            .Build();
+    }
+
+    [Fact]
+    public void TenantMutationTransformer_AppliesTo_FalseWhenNoMetadata()
+    {
+        var model = StandardTestFixtures.SimpleUsers();
+        var transformer = new TenantMutationTransformer();
+        var table = model.GetTableFromDbName("Users");
+        var context = CreateMutationContext(model);
+
+        Assert.False(transformer.AppliesTo(table, MutationType.Delete, context));
+    }
+
+    [Fact]
+    public async Task TenantMutationTransformer_Insert_PinsTenantColumn_OverridingClientValue()
+    {
+        var model = CreateTenantModel();
+        var transformer = new TenantMutationTransformer();
+        var table = model.GetTableFromDbName("Orders");
+        var context = CreateMutationContext(model, new Dictionary<string, object?> { ["tenant_id"] = 7 });
+
+        // Client tries to plant a row in another tenant.
+        var data = new Dictionary<string, object?> { ["Name"] = "x", ["tenant_id"] = 999 };
+
+        var result = await transformer.TransformAsync(table, MutationType.Insert, data, context);
+
+        Assert.Equal(MutationType.Insert, result.MutationType);
+        Assert.Equal(7, result.Data["tenant_id"]);
+        Assert.Null(result.AdditionalFilter);
+    }
+
+    [Fact]
+    public async Task TenantMutationTransformer_Delete_ScopesWhereToCallerTenant()
+    {
+        var model = CreateTenantModel();
+        var transformer = new TenantMutationTransformer();
+        var table = model.GetTableFromDbName("Orders");
+        var context = CreateMutationContext(model, new Dictionary<string, object?> { ["tenant_id"] = 7 });
+
+        var result = await transformer.TransformAsync(table, MutationType.Delete,
+            new Dictionary<string, object?> { ["Id"] = 1 }, context);
+
+        Assert.NotNull(result.AdditionalFilter);
+        Assert.Equal("tenant_id", result.AdditionalFilter!.ColumnName);
+        Assert.Equal(7, result.AdditionalFilter.Next!.Value);
+        Assert.Equal("_eq", result.AdditionalFilter.Next.RelationName);
+    }
+
+    [Fact]
+    public async Task TenantMutationTransformer_Update_ScopesWhereAndPinsColumn()
+    {
+        var model = CreateTenantModel();
+        var transformer = new TenantMutationTransformer();
+        var table = model.GetTableFromDbName("Orders");
+        var context = CreateMutationContext(model, new Dictionary<string, object?> { ["tenant_id"] = 7 });
+
+        // Client tries to reassign the row to another tenant.
+        var data = new Dictionary<string, object?> { ["Id"] = 1, ["tenant_id"] = 999 };
+
+        var result = await transformer.TransformAsync(table, MutationType.Update, data, context);
+
+        Assert.Equal(7, result.Data["tenant_id"]);
+        Assert.NotNull(result.AdditionalFilter);
+        Assert.Equal(7, result.AdditionalFilter!.Next!.Value);
+    }
+
+    [Fact]
+    public async Task TenantMutationTransformer_MissingTenantContext_Throws()
+    {
+        var model = CreateTenantModel();
+        var transformer = new TenantMutationTransformer();
+        var table = model.GetTableFromDbName("Orders");
+        var context = CreateMutationContext(model); // no tenant_id in context
+
+        await Assert.ThrowsAsync<BifrostExecutionError>(() =>
+            transformer.TransformAsync(table, MutationType.Delete,
+                new Dictionary<string, object?> { ["Id"] = 1 }, context).AsTask());
     }
 
     #endregion

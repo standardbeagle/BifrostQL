@@ -53,9 +53,13 @@ namespace BifrostQL.Core.Resolvers
                     return 0;
 
                 var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+                // Build in DB-column-name space: keyData is already DB-named, and
+                // standardData (GraphQL field names) is mapped so sanitized columns
+                // resolve correctly. The bound upsertData is rekeyed to match below.
                 var keyColumns = propertyInfo.keyData.Keys.ToList();
-                var updateColumns = propertyInfo.standardData.Keys.ToList();
-                var upsertSql = dialect.UpsertSql(tableRef, keyColumns, propertyInfo.data.Keys.ToList(), updateColumns);
+                var updateColumns = propertyInfo.standardData.Keys.Select(k => DbParameterBinder.ToDbColumnName(table, k)).ToList();
+                var allColumns = keyColumns.Concat(updateColumns).ToList();
+                var upsertSql = dialect.UpsertSql(tableRef, keyColumns, allColumns, updateColumns);
 
                 if (upsertSql != null)
                 {
@@ -73,7 +77,7 @@ namespace BifrostQL.Core.Resolvers
                     if (transformResult.Errors.Length > 0)
                         throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
-                    var upsertData = transformResult.Data;
+                    var upsertData = DbParameterBinder.ToDbColumnKeys(table, transformResult.Data);
                     var returning = dialect.ReturningIdentityClauseFor(table.KeyColumns.Select(k => k.ColumnName).ToList());
                     var identitySql = returning != null
                         ? upsertSql.TrimEnd(';') + returning + ";"
@@ -101,13 +105,27 @@ namespace BifrostQL.Core.Resolvers
 
             var data = new Dictionary<string, object?>(baseData!, StringComparer.OrdinalIgnoreCase);
 
+            // keyData is keyed by database column name (it drives WHERE clauses and
+            // the current-row load, which are pure DB-name space). The _primaryKey
+            // argument already yields DB names; the fallback maps each PK field from
+            // its GraphQL name. standardData keeps GraphQL field names so mutation
+            // transformers (enum-name mapping) still resolve columns by GraphQlName;
+            // it is normalized to DB names just before SQL generation.
             var pkKeyData = ResolvePrimaryKeyArgument(context, table);
-            var keyData = pkKeyData
-                ?? data.Where(d => table.ColumnLookup[d.Key].IsPrimaryKey)
-                    .ToDictionary(kv => kv.Key, kv => kv.Value);
+            Dictionary<string, object?> keyData;
+            if (pkKeyData != null)
+            {
+                keyData = pkKeyData;
+            }
+            else
+            {
+                keyData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                foreach (var d in data.Where(d => DbParameterBinder.IsPrimaryKeyColumn(table, d.Key)))
+                    keyData[DbParameterBinder.ToDbColumnName(table, d.Key)] = d.Value;
+            }
 
             var standardData = data
-                .Where(d => !keyData.ContainsKey(d.Key))
+                .Where(d => !DbParameterBinder.IsPrimaryKeyColumn(table, d.Key))
                 .ToDictionary(kv => kv.Key, kv => kv.Value);
 
             var allData = new Dictionary<string, object?>(standardData, StringComparer.OrdinalIgnoreCase);
@@ -173,22 +191,27 @@ namespace BifrostQL.Core.Resolvers
             // replaces — the primary-key predicate.
             var additionalFilter = RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
 
+            // Rekey to DB column names once so the PK split (via ColumnLookup) and
+            // the emitted WHERE/SET use one consistent name space even when a
+            // GraphQL field name differs from its column.
+            var dbData = DbParameterBinder.ToDbColumnKeys(table, transformResult.Data);
+
             if (transformResult.MutationType == MutationType.Update)
             {
                 // Soft-delete: transformed to UPDATE
                 var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
 
-                var keyData = transformResult.Data.Where(d => table.ColumnLookup.ContainsKey(d.Key) && table.ColumnLookup[d.Key].IsPrimaryKey)
+                var keyData = dbData.Where(d => table.ColumnLookup.ContainsKey(d.Key) && table.ColumnLookup[d.Key].IsPrimaryKey)
                     .ToDictionary(kv => kv.Key, kv => kv.Value);
-                var setData = transformResult.Data.Where(d => !table.ColumnLookup.ContainsKey(d.Key) || !table.ColumnLookup[d.Key].IsPrimaryKey)
+                var setData = dbData.Where(d => !table.ColumnLookup.ContainsKey(d.Key) || !table.ColumnLookup[d.Key].IsPrimaryKey)
                     .ToDictionary(kv => kv.Key, kv => kv.Value);
 
                 var setClause = string.Join(",", setData.Select(kv => SetAssignment(dialect, table, kv.Key)));
                 var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
                 var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
-                await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, transformResult.Data, userContext);
-                var result = await ExecuteNonQuery(conFactory, sql, transformResult.Data, additionalFilter.Parameters);
-                await NotifyMutationAsync(context.RequestServices, table, MutationType.Update, transformResult.Data, result, userContext);
+                await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, dbData, userContext);
+                var result = await ExecuteNonQuery(conFactory, sql, dbData, additionalFilter.Parameters);
+                await NotifyMutationAsync(context.RequestServices, table, MutationType.Update, dbData, result, userContext);
                 return result;
             }
 
@@ -196,7 +219,7 @@ namespace BifrostQL.Core.Resolvers
             // output (e.g. enum-name → DB-value mapping on a predicate column)
             // reaches the WHERE clause and parameters, mirroring the soft-delete
             // branch above.
-            var deleteData = transformResult.Data;
+            var deleteData = dbData;
             var deleteTableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var deleteWhereClause = string.Join(" AND ", deleteData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause}{additionalFilter.WhereSuffix};";
@@ -244,9 +267,11 @@ namespace BifrostQL.Core.Resolvers
             var additionalFilter = RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
 
             // Adopt the (possibly rewritten) data so transformer output — e.g.
-            // enum-name → DB-value mapping — reaches the SQL. Keys are split anew
-            // against the (unchanged) primary-key set; enum columns are non-key.
-            var updatedData = transformResult.Data;
+            // enum-name → DB-value mapping — reaches the SQL, rekeyed to real DB
+            // column names. keyData is already DB-named (see GetPropertyInfo), so
+            // the non-key split and WHERE share one name space; enum columns are
+            // non-key.
+            var updatedData = DbParameterBinder.ToDbColumnKeys(table, transformResult.Data);
             var standardData = updatedData
                 .Where(d => !propertyInfo.keyData.ContainsKey(d.Key))
                 .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
@@ -331,9 +356,10 @@ namespace BifrostQL.Core.Resolvers
                 throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
             // Adopt the (possibly rewritten) data so transformer output — e.g.
-            // enum-name → DB-value mapping — actually reaches the SQL. Mirrors the
-            // delete path; equals the original data when no transformer applies.
-            data = transformResult.Data;
+            // enum-name → DB-value mapping — actually reaches the SQL, and rekey
+            // GraphQL field names to real DB column names so sanitized/prefixed
+            // columns land in the right column. Mirrors the delete path.
+            data = DbParameterBinder.ToDbColumnKeys(table, transformResult.Data);
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var columns = string.Join(",", data.Keys.Select(k => dialect.EscapeIdentifier(k)));
@@ -361,7 +387,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (Exception ex)
             {
-                throw new BifrostExecutionError(ex.Message, ex);
+                throw BifrostExecutionError.FromDatabaseException(ex);
             }
         }
 
@@ -395,7 +421,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (Exception ex)
             {
-                throw new BifrostExecutionError(ex.Message, ex);
+                throw BifrostExecutionError.FromDatabaseException(ex);
             }
         }
         private static async ValueTask<int> ExecuteNonQuery(IDbConnFactory connFactory, string sql,
@@ -413,7 +439,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (Exception ex)
             {
-                throw new BifrostExecutionError(ex.Message, ex);
+                throw BifrostExecutionError.FromDatabaseException(ex);
             }
         }
 

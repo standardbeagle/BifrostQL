@@ -79,8 +79,6 @@ namespace BifrostQL.Core.Test.Model
         [Theory]
         [InlineData(MetadataKeys.SoftDelete.Column, "soft-delete")]
         [InlineData(MetadataKeys.SoftDelete.DeletedBy, "soft-delete-by")]
-        [InlineData(MetadataKeys.SoftDelete.LegacyType, "soft-delete-type")]
-        [InlineData(MetadataKeys.SoftDelete.LegacyColumn, "soft-delete-column")]
         [InlineData(MetadataKeys.SoftDelete.DeleteType, "delete-type")]
         public void SoftDeleteKeys_HaveCorrectValues(string actual, string expected)
         {

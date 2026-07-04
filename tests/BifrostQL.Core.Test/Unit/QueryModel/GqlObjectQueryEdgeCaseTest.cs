@@ -283,8 +283,10 @@ public sealed class GqlObjectQueryEdgeCaseTest
         // Act
         query.AddSqlParameterized(dbModel, Dialect, sqls, parameters);
 
-        // Assert - empty IN should generate valid SQL (database handles semantics)
-        sqls["Users"].Sql.Should().Contain("IN");
+        // Assert - an empty IN list must not emit "IN ()" (a syntax error every
+        // dialect rejects); it degrades to an always-false constant instead.
+        sqls["Users"].Sql.Should().Contain("1 = 0");
+        sqls["Users"].Sql.Should().NotContain("IN (");
     }
 
     [Fact]

@@ -22,7 +22,10 @@ function coerceDetail(
     for (const { column: col } of editColumns) {
         if (numericTypes.some(t => t === col.paramType)) {
             const val = coerced[col.name];
-            coerced[col.name] = val != null ? +val : undefined;
+            // An empty field means "no value": clear it with null rather than
+            // coercing "" to 0 via +val (a silent, wrong data write). null/
+            // undefined stay undefined so inserts omit the column entirely.
+            coerced[col.name] = val == null ? undefined : val === "" ? null : +val;
         }
         if (booleanTypes.some(t => t === col.paramType)) {
             coerced[col.name] = !!coerced[col.name];

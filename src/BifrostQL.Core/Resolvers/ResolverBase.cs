@@ -145,7 +145,7 @@ public abstract class DatabaseResolverBase : ResolverBase
         }
         catch (Exception ex)
         {
-            throw new BifrostExecutionError(ex.Message, ex);
+            throw BifrostExecutionError.FromDatabaseException(ex);
         }
     }
 
@@ -168,7 +168,7 @@ public abstract class DatabaseResolverBase : ResolverBase
         }
         catch (Exception ex)
         {
-            throw new BifrostExecutionError(ex.Message, ex);
+            throw BifrostExecutionError.FromDatabaseException(ex);
         }
     }
 

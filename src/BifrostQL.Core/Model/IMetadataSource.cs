@@ -236,8 +236,6 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Schema.Default,
             MetadataKeys.Schema.Excluded,
             MetadataKeys.Schema.Permissions,
-            MetadataKeys.SoftDelete.LegacyType,
-            MetadataKeys.SoftDelete.LegacyColumn,
             MetadataKeys.StoredProcedures.Include,
             MetadataKeys.StoredProcedures.Exclude,
             MetadataKeys.AppSchema.PrefixGroups,

@@ -66,9 +66,16 @@ namespace BifrostQL.Core.Resolvers
             // Apply filter transformers (tenant isolation, soft-delete, etc.)
             // Capture module arguments (e.g. _includeDeleted, _onlyDeleted) into the
             // user context under table-scoped keys for the matching transformers.
-            Modules.ModuleApiRegistry.CaptureQueryArguments(context, dbTable, userContext);
+            //
+            // Write into a per-call copy, not the shared request UserContext:
+            // GraphQL.NET resolves sibling root fields in parallel, so mutating
+            // the shared (non-thread-safe) Dictionary from concurrent resolvers
+            // races. The scoped keys are ephemeral to this node's transform pass,
+            // so a private overlay is the correct scope regardless.
+            var scopedContext = new Dictionary<string, object?>(userContext);
+            Modules.ModuleApiRegistry.CaptureQueryArguments(context, dbTable, scopedContext);
 
-            _transformerService.ApplyTransformers(table, _dbModel, userContext);
+            _transformerService.ApplyTransformers(table, _dbModel, scopedContext);
 
             // Rewrite enum-name filter operands to their stored DB values before
             // SQL is generated, for the root table and every nested join.
@@ -116,17 +123,25 @@ namespace BifrostQL.Core.Resolvers
                 });
             }
 
-            var countObj = data.First(kv => kv.Key == (table.KeyName + "=>count")).Value.data[0][0];
-            var count = countObj != null ? (int?)Convert.ToInt32(countObj) : null;
-
             var enumColumns = _dbModel.EnumColumns;
             var logger = context.RequestServices?.GetService<ILogger<SqlExecutionManager>>();
 
             if (table.IncludeResult)
             {
+                // The "=>count" result set exists only when IncludeResult is set.
+                // Look it up defensively — an unconditional .First()/[0][0] threw
+                // when the count row was absent or empty.
+                var total = 0;
+                if (data.TryGetValue(table.KeyName + "=>count", out var countEntry)
+                    && countEntry.data.Count > 0 && countEntry.data[0].Length > 0
+                    && countEntry.data[0][0] is { } countObj)
+                {
+                    total = Convert.ToInt32(countObj);
+                }
+
                 return new TableResult
                 {
-                    Total = count ?? 0,
+                    Total = total,
                     Offset = table.Offset,
                     Limit = table.Limit,
                     Data = new ReaderEnum(table, data, enumColumns, logger)
@@ -208,7 +223,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (Exception ex)
             {
-                throw new BifrostExecutionError(ex.Message, ex);
+                throw BifrostExecutionError.FromDatabaseException(ex);
             }
         }
 

@@ -69,7 +69,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (Exception ex)
             {
-                throw new BifrostExecutionError(ex.Message, ex);
+                throw BifrostExecutionError.FromDatabaseException(ex);
             }
         }
 

@@ -76,6 +76,29 @@ public sealed class QueryTransformerService : IQueryTransformerService
                 : CombineFilters(query.Filter, additionalFilter);
         }
 
+        // Aggregate columns (`_agg`) join to destination tables through their own
+        // INNER JOIN chain that never passes through query.Joins, so recursing
+        // Joins alone leaves those joins unfiltered — a tenant/soft-delete bypass.
+        // Compute each linked destination table's combined filter and hand it to
+        // the aggregate column so it can scope every join level.
+        foreach (var aggregate in query.AggregateColumns)
+        {
+            aggregate.LinkFilters.Clear();
+            foreach (var (direction, link) in aggregate.Links)
+            {
+                var destinationTable = direction == LinkDirection.ManyToOne ? link.ParentTable : link.ChildTable;
+                var destinationContext = new QueryTransformContext
+                {
+                    Model = model,
+                    UserContext = userContext,
+                    QueryType = query.QueryType,
+                    Path = query.Path,
+                    IsNestedQuery = true,
+                };
+                aggregate.LinkFilters.Add(_filterTransformers.GetCombinedFilter(destinationTable, destinationContext));
+            }
+        }
+
         // Recursively apply to joined/linked tables
         foreach (var join in query.Joins)
         {

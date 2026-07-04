@@ -531,11 +531,13 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     }, [pageIndex, pageCount]);
 
     const syncFiltersToUrl = useCallback((filters: ColumnFiltersState) => {
-        const params = new URLSearchParams();
-        const currentFilter = search.get('filter');
-        if (currentFilter) params.set('filter', currentFilter);
+        // Start from the current query string so only 'cf' is rewritten —
+        // building a fresh URLSearchParams dropped every other param (sort,
+        // page, and any app-level params) on each filter change.
+        const params = new URLSearchParams(search);
         const serialized = serializeColumnFilters(filters);
         if (serialized) params.set('cf', serialized);
+        else params.delete('cf');
         const qs = params.toString();
         navigate(qs ? `?${qs}` : '?');
     }, [search, navigate]);

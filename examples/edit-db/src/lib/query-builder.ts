@@ -5,7 +5,7 @@
 
 import type { Table, Column, Join, Schema } from '../types/schema';
 import type { ColumnFiltersState } from '@tanstack/react-table';
-import { rowIdOf, buildPkEqFilter, parsePkRoute } from './row-id';
+import { rowIdOf, buildPkEqFilter, parsePkRoute, encodeRouteParts } from './row-id';
 import { resolveChildJoin, childFieldName } from './polymorphic';
 
 export interface FilterResult {
@@ -91,8 +91,12 @@ export function toLocaleDate(d: string): string {
 
 export function getRowPkValue(row: RowData, table: Table): string {
     const keys = table.primaryKeys ?? [];
-    if (keys.length === 0) return String(row?.id ?? "");
-    if (keys.length === 1) return String(row?.[keys[0]] ?? "");
+    // This value is consumed as a route segment and decoded with
+    // decodeURIComponent (see parsePkRoute), so the single-key case must
+    // route-encode too — a raw value containing "%", "/", or "::" would
+    // otherwise produce a broken link that never round-trips.
+    if (keys.length === 0) return encodeRouteParts([row?.id]);
+    if (keys.length === 1) return encodeRouteParts([row?.[keys[0]]]);
     return rowIdOf(row as Record<string, unknown>, table, 0);
 }
 
@@ -112,7 +116,8 @@ export function buildColumnFilters(columnFilters: ColumnFiltersState, table: Tab
     const params: string[] = [];
     const filterTexts: string[] = [];
 
-    for (const cf of columnFilters) {
+    for (let i = 0; i < columnFilters.length; i++) {
+        const cf = columnFilters[i];
         const filterValue = cf.value as ColumnFilterValue;
         if (filterValue.value === undefined || filterValue.value === null || filterValue.value === "") continue;
 
@@ -120,7 +125,10 @@ export function buildColumnFilters(columnFilters: ColumnFiltersState, table: Tab
         if (!col) continue;
         if (!isGraphQlName(cf.id) || !isFilterOperator(filterValue.operator, col.paramType)) continue;
 
-        const varName = `cf_${cf.id}`;
+        // Suffix with the filter index so two filters on the same column (e.g.
+        // _gte and _lte) get distinct variable names instead of colliding into
+        // one duplicated GraphQL variable.
+        const varName = `cf_${cf.id}_${i}`;
         const gqlType = getGraphQlType(col.paramType);
 
         if (filterValue.operator === "_null") {

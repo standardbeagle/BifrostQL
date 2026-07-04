@@ -52,10 +52,14 @@ Filters use Directus-style syntax. Pass a `filter` argument with column names an
 | `_contains` | Contains substring | `{ name: { _contains: "smith" } }` |
 | `_ncontains` | Does not contain | `{ name: { _ncontains: "test" } }` |
 | `_starts_with` | Starts with | `{ name: { _starts_with: "A" } }` |
+| `_nstarts_with` | Does not start with | `{ name: { _nstarts_with: "A" } }` |
 | `_ends_with` | Ends with | `{ email: { _ends_with: ".com" } }` |
-| `_null` | Is null | `{ deletedAt: { _null: true } }` |
-| `_nnull` | Is not null | `{ email: { _nnull: true } }` |
+| `_nends_with` | Does not end with | `{ email: { _nends_with: ".test" } }` |
+| `_like` | SQL LIKE pattern | `{ name: { _like: "A%" } }` |
+| `_nlike` | Negated SQL LIKE | `{ name: { _nlike: "A%" } }` |
+| `_null` | Is null (`true`) / is not null (`false`) | `{ deletedAt: { _null: true } }` |
 | `_between` | Between two values | `{ price: { _between: [10, 50] } }` |
+| `_nbetween` | Not between two values | `{ price: { _nbetween: [10, 50] } }` |
 
 ### Combining filters
 

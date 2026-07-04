@@ -10,7 +10,7 @@ import { useBifrostQuery } from './use-bifrost-query';
 import { BifrostContext } from '../components/bifrost-provider';
 import { executeGraphQL } from '../utils/graphql-client';
 import { buildGraphqlQuery } from '../utils/query-builder';
-import { readFromUrl, writeToUrl } from '../utils/url-state';
+import { readFromUrl, writeToUrl, sanitizeFilter } from '../utils/url-state';
 import type { UseBifrostOptions } from './use-bifrost';
 import type {
   SortOption,
@@ -666,7 +666,9 @@ function readFiltersFromLocalStorage(key: string): TableFilter | null {
     const parsed = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
       return null;
-    return parsed as TableFilter;
+    // localStorage is attacker-controllable; drop invalid field names at parse
+    // so they can't throw later in query construction.
+    return sanitizeFilter(parsed as TableFilter);
   } catch {
     return null;
   }

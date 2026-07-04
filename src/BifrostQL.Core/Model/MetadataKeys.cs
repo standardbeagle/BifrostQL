@@ -364,12 +364,6 @@ namespace BifrostQL.Core.Model
             /// </summary>
             public const string HardDeleteRole = "soft-delete-hard-role";
 
-            /// <summary>Legacy model-level soft-delete type setting.</summary>
-            public const string LegacyType = "soft-delete-type";
-
-            /// <summary>Legacy model-level soft-delete column setting.</summary>
-            public const string LegacyColumn = "soft-delete-column";
-
             /// <summary>Table-level delete behavior selector.</summary>
             public const string DeleteType = "delete-type";
         }

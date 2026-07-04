@@ -11,11 +11,28 @@ const FILTER_OPERATORS = new Set([
   '_contains',
   '_ncontains',
   '_starts_with',
+  '_nstarts_with',
   '_ends_with',
+  '_nends_with',
+  '_like',
+  '_nlike',
   '_between',
+  '_nbetween',
   '_null',
+  // Client-only convenience: translated to `_null: false` by the query
+  // builder before it reaches GraphQL text (the schema has no `_nnull`).
   '_nnull',
 ]);
+
+/** Non-throwing check: is `value` a syntactically valid GraphQL name? */
+export function isGraphqlName(value: string): boolean {
+  return GRAPHQL_NAME.test(value);
+}
+
+/** Non-throwing check: is `value` a filter operator the schema accepts? */
+export function isFilterOperator(value: string): boolean {
+  return FILTER_OPERATORS.has(value);
+}
 
 export function assertGraphqlName(value: string, kind: string): void {
   if (!GRAPHQL_NAME.test(value)) {

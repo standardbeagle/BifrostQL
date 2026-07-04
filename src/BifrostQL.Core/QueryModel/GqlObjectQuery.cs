@@ -102,7 +102,7 @@ namespace BifrostQL.Core.QueryModel
 
             foreach (var col in AggregateColumns)
             {
-                var aggregateSql = col.ToSqlParameterized(dialect, filter);
+                var aggregateSql = col.ToSqlParameterized(dbModel, dialect, parameters, filter);
                 col.SqlKey = $"{sqlKeyName}=>agg_{col.FinalColumnGraphQlName}";
                 sqls[col.SqlKey] = aggregateSql;
             }
@@ -411,9 +411,22 @@ namespace BifrostQL.Core.QueryModel
         public ParameterizedSql GetFilterSqlParameterized(IDbModel model, ISqlDialect dialect, SqlParameterCollection parameters, string? alias = null)
         {
             if (Filter == null) return ParameterizedSql.Empty;
-            var result = Filter.ToSqlParameterized(model, dialect, parameters, alias);
-            if (string.IsNullOrEmpty(result.Sql)) return ParameterizedSql.Empty;
-            return result.Prepend(" WHERE ");
+
+            // Assemble join fragments and the WHERE predicate in clause order:
+            // "{joins} WHERE {where}". A relationship filter contributes an INNER
+            // JOIN (which must sit before WHERE); leaf/tenant/soft-delete filters
+            // contribute the predicate. Callers append this immediately after the
+            // FROM table reference, so the joins land in the FROM clause and the
+            // predicate in a real WHERE — never the invalid "WHERE INNER JOIN".
+            var parts = Filter.RenderParts(model, dialect, parameters, alias);
+            var hasWhere = !string.IsNullOrWhiteSpace(parts.Where);
+            var joins = parts.Joins ?? "";
+            if (string.IsNullOrWhiteSpace(joins) && !hasWhere) return ParameterizedSql.Empty;
+
+            var sql = joins;
+            if (hasWhere) sql += " WHERE " + parts.Where;
+            if (!sql.StartsWith(" ")) sql = " " + sql;
+            return new ParameterizedSql(sql, parts.Parameters);
         }
 
         public TableJoin? GetJoin(string? alias, string name)

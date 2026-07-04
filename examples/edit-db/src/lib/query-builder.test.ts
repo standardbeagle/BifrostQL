@@ -249,9 +249,23 @@ describe('buildColumnFilters', () => {
     it('builds simple equality filter', () => {
         const filters = [{ id: 'name', value: { operator: '_eq', value: 'test' } as ColumnFilterValue }];
         const result = buildColumnFilters(filters, table);
-        expect(result.variables).toEqual({ cf_name: 'test' });
-        expect(result.params).toEqual(['$cf_name: String']);
-        expect(result.filterTexts).toEqual(['{name: {_eq: $cf_name}}']);
+        expect(result.variables).toEqual({ cf_name_0: 'test' });
+        expect(result.params).toEqual(['$cf_name_0: String']);
+        expect(result.filterTexts).toEqual(['{name: {_eq: $cf_name_0}}']);
+    });
+
+    it('gives two filters on the same column distinct variable names', () => {
+        const filters = [
+            { id: 'age', value: { operator: '_gte', value: 10 } as ColumnFilterValue },
+            { id: 'age', value: { operator: '_lte', value: 20 } as ColumnFilterValue },
+        ];
+        const result = buildColumnFilters(filters, table);
+        expect(result.variables).toEqual({ cf_age_0: 10, cf_age_1: 20 });
+        expect(result.params).toEqual(['$cf_age_0: Int', '$cf_age_1: Int']);
+        expect(result.filterTexts).toEqual([
+            '{age: {_gte: $cf_age_0}}',
+            '{age: {_lte: $cf_age_1}}',
+        ]);
     });
 
     it('builds _null filter without variable', () => {
@@ -271,9 +285,9 @@ describe('buildColumnFilters', () => {
     it('builds _between filter with two variables', () => {
         const filters = [{ id: 'age', value: { operator: '_between', value: [10, 20] } as ColumnFilterValue }];
         const result = buildColumnFilters(filters, table);
-        expect(result.variables).toEqual({ cf_age_lo: 10, cf_age_hi: 20 });
-        expect(result.params).toEqual(['$cf_age_lo: Int', '$cf_age_hi: Int']);
-        expect(result.filterTexts).toEqual(['{age: {_between: [$cf_age_lo, $cf_age_hi]}}']);
+        expect(result.variables).toEqual({ cf_age_0_lo: 10, cf_age_0_hi: 20 });
+        expect(result.params).toEqual(['$cf_age_0_lo: Int', '$cf_age_0_hi: Int']);
+        expect(result.filterTexts).toEqual(['{age: {_between: [$cf_age_0_lo, $cf_age_0_hi]}}']);
     });
 
     it('skips filters with empty value', () => {
@@ -320,7 +334,7 @@ describe('buildColumnFilters', () => {
             { id: 'age', value: { operator: '_gt', value: 18 } as ColumnFilterValue },
         ];
         const result = buildColumnFilters(filters, table);
-        expect(result.variables).toEqual({ cf_name: 'test', cf_age: 18 });
+        expect(result.variables).toEqual({ cf_name_0: 'test', cf_age_1: 18 });
         expect(result.params.length).toBe(2);
         expect(result.filterTexts.length).toBe(2);
     });
@@ -330,7 +344,7 @@ describe('buildColumnFilters', () => {
             { id: 'score', value: { operator: '_gt', value: 3.14 } as ColumnFilterValue },
         ];
         const result = buildColumnFilters(filters, table);
-        expect(result.params).toEqual(['$cf_score: Float']);
+        expect(result.params).toEqual(['$cf_score_0: Float']);
     });
 });
 
@@ -470,8 +484,8 @@ describe('buildQuery', () => {
     it('includes column filter params and text', () => {
         const cf = [{ id: 'credits', value: { operator: '_gt', value: 3 } as ColumnFilterValue }];
         const q = buildQuery(table, schema, '', cf)!;
-        expect(q).toContain('$cf_credits: Int');
-        expect(q).toContain('{credits: {_gt: $cf_credits}}');
+        expect(q).toContain('$cf_credits_0: Int');
+        expect(q).toContain('{credits: {_gt: $cf_credits_0}}');
     });
 
     it('combines filter string and column filters with AND', () => {

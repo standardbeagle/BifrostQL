@@ -134,12 +134,23 @@ export function targetDisplay(
  * The insert detail for a new link: the parent key on the junction source FK and
  * the chosen target key on the junction target FK. Any payload columns are left
  * unset so the database applies its defaults; the user edits them afterwards.
+ *
+ * Single-column junction FKs only. `parentId`/`targetId` are route-encoded
+ * strings; for a composite FK they carry multiple values joined by "::", which
+ * would be written verbatim into one column — silent data corruption. Rather
+ * than guess a decomposition, fail loudly until composite-FK support is built.
  */
 export function attachJunctionDetail(
     m2m: ManyToManyJoin,
     parentId: string,
     targetId: string,
 ): Record<string, unknown> {
+    if (m2m.junctionSourceColumnNames.length !== 1 || m2m.junctionTargetColumnNames.length !== 1) {
+        throw new Error(
+            'attachJunctionDetail supports single-column junction FKs only; ' +
+            'this relationship uses a composite key which is not yet supported.',
+        );
+    }
     return {
         [m2m.junctionSourceColumnNames[0]]: parentId,
         [m2m.junctionTargetColumnNames[0]]: targetId,

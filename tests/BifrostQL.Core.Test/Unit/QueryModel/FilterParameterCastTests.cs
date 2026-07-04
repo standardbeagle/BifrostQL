@@ -97,6 +97,32 @@ public sealed class FilterParameterCastTests
     }
 
     [Fact]
+    public void InFilterWithEmptyList_EmitsAlwaysFalse_NoParameters()
+    {
+        // "col IN ()" is a syntax error in every dialect; a client-supplied
+        // empty array must degrade to an always-false predicate, not a 500.
+        var parameters = new SqlParameterCollection();
+        var result = TableFilter.GetSingleFilterParameterized(
+            PostgresDialect.Instance, parameters, "meetings", "week_of", "_in",
+            Array.Empty<object?>(), "date");
+
+        result.Sql.Should().Be("1 = 0");
+        result.Parameters.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void NotInFilterWithEmptyList_EmitsAlwaysTrue_NoParameters()
+    {
+        var parameters = new SqlParameterCollection();
+        var result = TableFilter.GetSingleFilterParameterized(
+            PostgresDialect.Instance, parameters, "meetings", "week_of", "_nin",
+            Array.Empty<object?>(), "date");
+
+        result.Sql.Should().Be("1 = 1");
+        result.Parameters.Should().BeEmpty();
+    }
+
+    [Fact]
     public void BetweenFilterOnDateColumn_CastsBothParameters_Postgres()
     {
         var parameters = new SqlParameterCollection();

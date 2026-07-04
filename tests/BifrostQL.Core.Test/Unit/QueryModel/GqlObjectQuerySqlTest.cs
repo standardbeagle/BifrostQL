@@ -1,6 +1,7 @@
 using FluentAssertions;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.QueryModel.TestFixtures;
+using BifrostQL.Core.Modules;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Schema;
 using BifrostQL.Ngsql;
@@ -716,6 +717,79 @@ public sealed class GqlObjectQuerySqlTest
 
         // Assert
         sqls.Should().ContainKey("Users=>agg_totalOrderAmount");
+    }
+
+    [Fact]
+    public void AddSqlParameterized_AggregateWithLinkFilter_ScopesDestinationTable()
+    {
+        // Arrange — a tenant/soft-delete style filter on the aggregate's
+        // destination table (Orders) must reach the join chain; otherwise the
+        // aggregate reads every tenant's rows (a cross-tenant leak).
+        var dbModel = StandardTestFixtures.UsersWithOrders();
+        var usersTable = dbModel.GetTableFromDbName("Users");
+        var link = usersTable.MultiLinks["orders"];
+
+        var aggregateColumn = new GqlAggregateColumn(
+            new List<(LinkDirection, TableLinkDto)> { (LinkDirection.OneToMany, link) },
+            "Total",
+            "totalOrderAmount",
+            AggregateOperationType.Sum);
+        aggregateColumn.LinkFilters.Add(TableFilterFactory.Equals("Orders", "Status", "active"));
+
+        var query = GqlObjectQueryBuilder.Create()
+            .WithDbTable(usersTable)
+            .WithColumns("Id")
+            .WithAggregateColumn(aggregateColumn)
+            .Build();
+
+        var sqls = new Dictionary<string, ParameterizedSql>();
+        var parameters = new SqlParameterCollection();
+
+        // Act
+        query.AddSqlParameterized(dbModel, Dialect, sqls, parameters);
+
+        // Assert — the destination filter is rendered against the `next` alias
+        // and applied as a WHERE within the aggregate SQL, with a bound param.
+        var aggregateSql = sqls["Users=>agg_totalOrderAmount"];
+        aggregateSql.Sql.Should().Contain("WHERE");
+        aggregateSql.Sql.Should().Contain("Status");
+        aggregateSql.Sql.Should().Contain("GROUP BY");
+        aggregateSql.Parameters.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public void AddSqlParameterized_RelationshipFilter_EmitsJoinBeforeWhere_NotWhereInnerJoin()
+    {
+        // Arrange — filter Orders by a column on the related Users table. This
+        // renders as an INNER JOIN that must sit in the FROM clause, not after
+        // WHERE. The old code prepended WHERE onto the join fragment, producing
+        // the invalid "WHERE INNER JOIN ...".
+        var dbModel = StandardTestFixtures.UsersWithOrders();
+        var ordersTable = dbModel.GetTableFromDbName("Orders");
+        var filter = TableFilter.FromObject(new Dictionary<string, object?>
+        {
+            { "user", new Dictionary<string, object?> { { "Name", new Dictionary<string, object?> { { "_eq", "bob" } } } } }
+        }, "Orders");
+
+        var query = GqlObjectQueryBuilder.Create()
+            .WithDbTable(ordersTable)
+            .WithColumns("Id")
+            .WithFilter(filter)
+            .Build();
+
+        var sqls = new Dictionary<string, ParameterizedSql>();
+        var parameters = new SqlParameterCollection();
+
+        // Act
+        query.AddSqlParameterized(dbModel, Dialect, sqls, parameters);
+
+        // Assert
+        var main = sqls["Orders"].Sql;
+        main.Should().Contain("INNER JOIN");
+        main.Should().NotContain("WHERE INNER JOIN");
+        // The generated SQL must actually parse — the old "WHERE INNER JOIN"
+        // output failed the grammar; a Contains check alone missed it.
+        BifrostQL.Core.Test.TestSupport.SqlSyntax.AssertValid(main, "relationship filter emits a valid join");
     }
 
     #endregion

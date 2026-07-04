@@ -265,40 +265,12 @@ namespace BifrostQL.Server
             // raw default profile, preserving existing behavior.
             var profileRegistry = _profileRegistry;
             var extensionsLoader = new PathCache<Inputs>();
-            extensionsLoader.AddLoader(path, async () =>
-            {
-                IDictionary<string, IDictionary<string, object?>>? additionalMetadata = null;
-                if (metadataSources.Count > 0)
-                {
-                    var composite = new CompositeMetadataSource(metadataSources);
-                    additionalMetadata = await composite.LoadTableMetadataAsync();
-                }
-                var provider = string.IsNullOrWhiteSpace(_provider)
-                    ? (BifrostDbProvider?)null
-                    : DbConnFactoryResolver.ParseProviderName(_provider);
-                var connFactory = DbConnFactoryResolver.Create(
-                    _connectionString ?? throw new InvalidOperationException("Connection string has not been configured."),
-                    provider);
-                // Read the DB schema once; ProfileModelCache builds a model+schema per profile
-                // from this shared read, varying only the metadata (CPU-only, memoized).
-                var loader = new DbModelLoader(connFactory, new MetadataLoader(configMetadataRules));
-                var read = await loader.ReadAsync();
-                // Pre-load enum lookup values once (async DB read) so the
-                // synchronous per-profile cache can attach the enum map.
-                var baseModel = loader.BuildModel(read, new MetadataLoader(configMetadataRules), additionalMetadata);
-                var enumValues = await loader.LoadEnumValuesAsync(baseModel);
-                var profileCache = new ProfileModelCache(
-                    loader, read, configMetadataRules, additionalMetadata, profileRegistry, enumValues);
-                // Default/base build (null → empty default profile) for back-compat extensions.
-                var (model, schema) = profileCache.GetFor(null);
-                return new Inputs(new Dictionary<string, object?>
-                {
-                    { "model", model},
-                    { "connFactory", connFactory },
-                    { "dbSchema", schema },
-                    { "profileModelCache", profileCache },
-                });
-            });
+            extensionsLoader.AddLoader(path, () => ProfileCacheBootstrapper.BuildInputsAsync(
+                _connectionString ?? throw new InvalidOperationException("Connection string has not been configured."),
+                _provider,
+                configMetadataRules,
+                metadataSources,
+                profileRegistry));
 
             services.AddSingleton(this);
             services.AddSingleton(extensionsLoader);

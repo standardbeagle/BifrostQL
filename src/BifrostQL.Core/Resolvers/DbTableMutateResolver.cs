@@ -82,8 +82,15 @@ namespace BifrostQL.Core.Resolvers
                     var identitySql = returning != null
                         ? upsertSql.TrimEnd(';') + returning + ";"
                         : upsertSql + $"SELECT {dialect.LastInsertedIdentity} ID;";
-                    await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, upsertData, context.UserContext);
-                    return HandleDecimals(await ExecuteScalar(conFactory, identitySql, upsertData));
+                    // Before-commit hooks and the upsert (with its identity SELECT)
+                    // commit atomically or roll back together.
+                    object? upsertResult = null;
+                    await RunInTransactionAsync(conFactory, async (conn, transaction) =>
+                    {
+                        await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, upsertData, context.UserContext);
+                        upsertResult = await ExecuteScalar(conn, transaction, identitySql, upsertData);
+                    });
+                    return HandleDecimals(upsertResult);
                 }
 
                 if (propertyInfo.keyData.Any())
@@ -209,8 +216,13 @@ namespace BifrostQL.Core.Resolvers
                 var setClause = string.Join(",", setData.Select(kv => SetAssignment(dialect, table, kv.Key)));
                 var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
                 var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
-                await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, dbData, userContext);
-                var result = await ExecuteNonQuery(conFactory, sql, dbData, additionalFilter.Parameters);
+                // Before-commit hooks and the soft-delete write commit atomically.
+                var result = 0;
+                await RunInTransactionAsync(conFactory, async (conn, transaction) =>
+                {
+                    await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, dbData, userContext);
+                    result = await ExecuteNonQuery(conn, transaction, sql, dbData, additionalFilter.Parameters);
+                });
                 await NotifyMutationAsync(context.RequestServices, table, MutationType.Update, dbData, result, userContext);
                 return result;
             }
@@ -223,8 +235,13 @@ namespace BifrostQL.Core.Resolvers
             var deleteTableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var deleteWhereClause = string.Join(" AND ", deleteData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause}{additionalFilter.WhereSuffix};";
-            await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Delete, deleteData, userContext);
-            var deleteResult = await ExecuteNonQuery(conFactory, deleteSql, deleteData, additionalFilter.Parameters);
+            // Before-commit hooks and the delete write commit atomically.
+            var deleteResult = 0;
+            await RunInTransactionAsync(conFactory, async (conn, transaction) =>
+            {
+                await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Delete, deleteData, userContext);
+                deleteResult = await ExecuteNonQuery(conn, transaction, deleteSql, deleteData, additionalFilter.Parameters);
+            });
             await NotifyMutationAsync(context.RequestServices, table, MutationType.Delete, deleteData, deleteResult, userContext);
             return deleteResult;
         }
@@ -243,47 +260,58 @@ namespace BifrostQL.Core.Resolvers
             if (!propertyInfo.standardData.Any())
                 return 0;
 
-            // Mutation transformers (e.g. the authorization policy engine) gate
-            // the update before any SQL is built; non-empty Errors abort it.
-            var currentRow = await LoadCurrentStateMachineRow(
-                conFactory,
-                dialect,
-                table,
-                propertyInfo.keyData);
-            var transformContext = new MutationTransformContext
+            // The state-machine load, mutation transformers, before-commit hooks and
+            // the update run inside one transaction so the read the transformer gates
+            // on and the write it produces commit atomically or roll back together.
+            Dictionary<string, object?> updatedData = null!;
+            int result = 0;
+            StateTransitionInfo? stateTransition = null;
+            await RunInTransactionAsync(conFactory, async (conn, transaction) =>
             {
-                Model = model,
-                UserContext = context.UserContext,
-                CurrentRow = currentRow,
-                Services = context.RequestServices,
-            };
-            var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Update, propertyInfo.data, transformContext);
-            if (transformResult.Errors.Length > 0)
-                throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
+                // Mutation transformers (e.g. the authorization policy engine) gate
+                // the update before any SQL is built; non-empty Errors abort it.
+                var currentRow = await LoadCurrentStateMachineRow(
+                    conn,
+                    transaction,
+                    dialect,
+                    table,
+                    propertyInfo.keyData);
+                var transformContext = new MutationTransformContext
+                {
+                    Model = model,
+                    UserContext = context.UserContext,
+                    CurrentRow = currentRow,
+                    Services = context.RequestServices,
+                };
+                var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Update, propertyInfo.data, transformContext);
+                if (transformResult.Errors.Length > 0)
+                    throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
-            // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
-            // IS NULL) is ANDed onto the WHERE clause so it narrows — never
-            // replaces — the primary-key predicate.
-            var additionalFilter = RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
+                // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
+                // IS NULL) is ANDed onto the WHERE clause so it narrows — never
+                // replaces — the primary-key predicate.
+                var additionalFilter = RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
 
-            // Adopt the (possibly rewritten) data so transformer output — e.g.
-            // enum-name → DB-value mapping — reaches the SQL, rekeyed to real DB
-            // column names. keyData is already DB-named (see GetPropertyInfo), so
-            // the non-key split and WHERE share one name space; enum columns are
-            // non-key.
-            var updatedData = DbParameterBinder.ToDbColumnKeys(table, transformResult.Data);
-            var standardData = updatedData
-                .Where(d => !propertyInfo.keyData.ContainsKey(d.Key))
-                .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+                // Adopt the (possibly rewritten) data so transformer output — e.g.
+                // enum-name → DB-value mapping — reaches the SQL, rekeyed to real DB
+                // column names. keyData is already DB-named (see GetPropertyInfo), so
+                // the non-key split and WHERE share one name space; enum columns are
+                // non-key.
+                updatedData = DbParameterBinder.ToDbColumnKeys(table, transformResult.Data);
+                var standardData = updatedData
+                    .Where(d => !propertyInfo.keyData.ContainsKey(d.Key))
+                    .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
 
-            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var setClause = string.Join(",", standardData.Select(kv => SetAssignment(dialect, table, kv.Key)));
-            var whereClause = string.Join(" AND ", propertyInfo.keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
-            var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
-            await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, updatedData, context.UserContext);
-            var result = await ExecuteNonQuery(conFactory, sql, updatedData, additionalFilter.Parameters);
+                var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+                var setClause = string.Join(",", standardData.Select(kv => SetAssignment(dialect, table, kv.Key)));
+                var whereClause = string.Join(" AND ", propertyInfo.keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+                var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
+                await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, updatedData, context.UserContext);
+                result = await ExecuteNonQuery(conn, transaction, sql, updatedData, additionalFilter.Parameters);
+                stateTransition = transformResult.StateTransition;
+            });
             await NotifyMutationAsync(context.RequestServices, table, MutationType.Update, updatedData, result, context.UserContext);
-            await NotifyStateTransitionAsync(context.RequestServices, transformResult.StateTransition, context.UserContext);
+            await NotifyStateTransitionAsync(context.RequestServices, stateTransition, context.UserContext);
             return propertyInfo.keyData.Values.First();
         }
 
@@ -368,31 +396,61 @@ namespace BifrostQL.Core.Resolvers
             var sql = returning != null
                 ? $"INSERT INTO {tableRef}({columns}) VALUES({values}){returning};"
                 : $"INSERT INTO {tableRef}({columns}) VALUES({values});SELECT {dialect.LastInsertedIdentity} ID;";
-            await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Insert, data, context.UserContext);
-            var result = HandleDecimals(await ExecuteScalar(conFactory, sql, data));
+
+            // Before-commit hooks and the insert (with its identity SELECT) run in
+            // one transaction so a hook veto or a failed write rolls back as a unit.
+            object? result = null;
+            await RunInTransactionAsync(conFactory, async (conn, transaction) =>
+            {
+                await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Insert, data, context.UserContext);
+                result = HandleDecimals(await ExecuteScalar(conn, transaction, sql, data));
+            });
             await NotifyMutationAsync(context.RequestServices, table, MutationType.Insert, data, result, context.UserContext);
             return result;
         }
 
-        private static async ValueTask<object?> ExecuteScalar(IDbConnFactory connFactory, string sql, Dictionary<string, object?> data)
+        // Runs a single-row mutation's reads (state-machine load, identity SELECT)
+        // and its one write inside a single connection + transaction, so the whole
+        // path — before-commit hooks included — commits atomically or rolls back as
+        // a unit. Mirrors DbTableBatchResolver's transaction handling. Observer
+        // notifications must fire from the caller AFTER this returns so they never
+        // describe rolled-back work.
+        private static async Task RunInTransactionAsync(
+            IDbConnFactory connFactory,
+            Func<DbConnection, DbTransaction, Task> work)
         {
             await using var conn = connFactory.GetConnection();
+            await conn.OpenAsync();
+            await using var transaction = await conn.BeginTransactionAsync();
             try
             {
-                await conn.OpenAsync();
-                await using var cmd = conn.CreateCommand();
-                cmd.CommandText = sql;
-                AddParameters(cmd, data);
-                return await cmd.ExecuteScalarAsync();
+                await work(conn, transaction);
+                await transaction.CommitAsync();
+            }
+            catch (BifrostExecutionError)
+            {
+                await transaction.RollbackAsync();
+                throw;
             }
             catch (Exception ex)
             {
+                await transaction.RollbackAsync();
                 throw BifrostExecutionError.FromDatabaseException(ex);
             }
         }
 
+        private static async ValueTask<object?> ExecuteScalar(DbConnection conn, DbTransaction transaction, string sql, Dictionary<string, object?> data)
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            cmd.Transaction = transaction;
+            AddParameters(cmd, data);
+            return await cmd.ExecuteScalarAsync();
+        }
+
         private static async Task<IReadOnlyDictionary<string, object?>?> LoadCurrentStateMachineRow(
-            IDbConnFactory connFactory,
+            DbConnection conn,
+            DbTransaction transaction,
             ISqlDialect dialect,
             IDbTable table,
             Dictionary<string, object?> keyData)
@@ -406,41 +464,26 @@ namespace BifrostQL.Core.Resolvers
             var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
             var sql = $"SELECT {stateColumn} FROM {tableRef} WHERE {whereClause};";
 
-            await using var conn = connFactory.GetConnection();
-            try
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            cmd.Transaction = transaction;
+            AddParameters(cmd, keyData);
+            var currentState = await cmd.ExecuteScalarAsync();
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
-                await conn.OpenAsync();
-                await using var cmd = conn.CreateCommand();
-                cmd.CommandText = sql;
-                AddParameters(cmd, keyData);
-                var currentState = await cmd.ExecuteScalarAsync();
-                return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                {
-                    [definition.StateColumn] = currentState == DBNull.Value ? null : currentState,
-                };
-            }
-            catch (Exception ex)
-            {
-                throw BifrostExecutionError.FromDatabaseException(ex);
-            }
+                [definition.StateColumn] = currentState == DBNull.Value ? null : currentState,
+            };
         }
-        private static async ValueTask<int> ExecuteNonQuery(IDbConnFactory connFactory, string sql,
+
+        private static async ValueTask<int> ExecuteNonQuery(DbConnection conn, DbTransaction transaction, string sql,
             Dictionary<string, object?> data, IReadOnlyList<SqlParameterInfo>? extraParameters = null)
         {
-            await using var conn = connFactory.GetConnection();
-            try
-            {
-                await conn.OpenAsync();
-                await using var cmd = conn.CreateCommand();
-                cmd.CommandText = sql;
-                AddParameters(cmd, data);
-                AddExtraParameters(cmd, extraParameters);
-                return await cmd.ExecuteNonQueryAsync();
-            }
-            catch (Exception ex)
-            {
-                throw BifrostExecutionError.FromDatabaseException(ex);
-            }
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            cmd.Transaction = transaction;
+            AddParameters(cmd, data);
+            AddExtraParameters(cmd, extraParameters);
+            return await cmd.ExecuteNonQueryAsync();
         }
 
         // Renders MutationTransformResult.AdditionalFilter into an AND-prefixed

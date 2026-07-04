@@ -32,11 +32,15 @@ public sealed class BeforeCommitMutationHookTests : IAsyncLifetime
         await _keepAlive.OpenAsync();
 
         await Exec("DROP TABLE IF EXISTS widgets");
+        // The CHECK constraint is enforced by the database but invisible to the
+        // GraphQL layer, so a write of name = 'boom' passes GraphQL validation and
+        // the before-commit hook, then fails at the DB — exercising the
+        // transaction's rollback path in DbTableMutateResolver.
         await Exec(
             """
             CREATE TABLE widgets (
                 id INTEGER PRIMARY KEY,
-                name TEXT NOT NULL
+                name TEXT NOT NULL CHECK (name <> 'boom')
             )
             """);
         await Exec("INSERT INTO widgets(id, name) VALUES (1, 'original')");
@@ -107,6 +111,42 @@ public sealed class BeforeCommitMutationHookTests : IAsyncLifetime
         (await CountAsync("name = 'allowed'")).Should().Be(1, "a passing hook lets the INSERT proceed");
         observer.Contexts.Should().ContainSingle("the post-commit observer fires once on success")
             .Which.MutationType.Should().Be(MutationType.Insert);
+    }
+
+    [Fact]
+    public async Task FailedWrite_RollsBack_NoPartialData_AndPostCommitObserverDoesNotFire()
+    {
+        var observer = new CapturingObserver();
+        var hook = new VetoHook(veto: false);
+
+        // The hook passes, so the write is attempted inside the transaction and the
+        // DB rejects it via the CHECK constraint. The transaction must roll back:
+        // the table is unchanged and the post-commit observer never fires.
+        var result = await ExecuteMutationAsync(
+            "mutation { widgets(insert: { name: \"boom\" }) }", hook, observer);
+
+        result.Errors.Should().NotBeNullOrEmpty("the CHECK violation surfaces as an execution error");
+        hook.Calls.Should().Be(1, "the hook ran before the failed write");
+        (await CountAsync("name = 'boom'")).Should().Be(0, "the failed write is rolled back");
+        (await CountAsync("1 = 1")).Should().Be(1, "only the seeded row remains after rollback");
+        observer.Contexts.Should().BeEmpty("the post-commit observer must not fire when the write fails");
+    }
+
+    [Fact]
+    public async Task FailedWrite_RollsBack_LeavesRowUnchanged_OnUpdate()
+    {
+        var observer = new CapturingObserver();
+        var hook = new VetoHook(veto: false);
+
+        // CHECK violation on an UPDATE: the hook passes, the write is attempted
+        // and the DB rejects name = 'boom', so the transaction rolls back and the
+        // original row value survives.
+        var result = await ExecuteMutationAsync(
+            "mutation { widgets(update: { id: 1, name: \"boom\" }) }", hook, observer);
+
+        result.Errors.Should().NotBeNullOrEmpty("the CHECK violation surfaces as an execution error");
+        (await CountAsync("id = 1 AND name = 'original'")).Should().Be(1, "the rejected UPDATE is rolled back");
+        observer.Contexts.Should().BeEmpty("the post-commit observer must not fire when the write fails");
     }
 
     private async Task<ExecutionResult> ExecuteMutationAsync(

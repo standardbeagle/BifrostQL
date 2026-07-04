@@ -52,8 +52,17 @@
 		<InternalsVisibleTo Include="BifrostQL.SqlServer" />
 	</ItemGroup>
 	<ItemGroup>
-		<PackageReference Include="GraphQL.Server.All" Version="8.3.3" />
-		<PackageReference Include="GraphQL.Server.Ui.GraphiQL" Version="8.3.3" />
+		<!-- Core only needs the GraphQL execution engine + parser, not the
+		     ASP.NET Core server transports or GraphiQL UI (those are presentation
+		     concerns and live in BifrostQL.Server). -->
+		<PackageReference Include="GraphQL" Version="8.3.0" />
+		<!-- Logging / configuration / DI abstractions Core uses directly. These
+		     were previously supplied transitively through the ASP.NET Core
+		     framework reference that GraphQL.Server.All dragged in; referenced
+		     explicitly now that the server bundle lives only in BifrostQL.Server. -->
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+		<PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="8.0.0" />
+		<PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
 		<PackageReference Include="Pluralize.NET.Core" Version="1.0.0" />
 	</ItemGroup>
 	<ItemGroup>

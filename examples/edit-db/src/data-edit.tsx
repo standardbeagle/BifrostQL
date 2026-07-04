@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { ReactElement, useMemo } from "react";
-import { useForm } from "@tanstack/react-form";
+import { useForm, useStore, AnyFieldApi, ReactFormExtendedApi } from "@tanstack/react-form";
 import { useSchema } from "./hooks/useSchema";
 import { useParams, useNavigate } from "./hooks/usePath";
 import { Schema, Table, Column, Join } from "./types/schema";
@@ -309,15 +309,26 @@ export function DataEditDialog({ table, editid, onClose }: { table: string; edit
     return <DataEditDetail table={table} schema={schema} editid={editid} onClose={onClose} />;
 }
 
+/**
+ * Type-erased form handle for field components that don't care about the
+ * specific field-level validator generics — mirrors the library's own
+ * `AnyFieldApi` pattern (see `@tanstack/form-core`), applied to the React
+ * form object returned by `useForm`. Form values are always keyed by column
+ * name (see `defaultValues` in `DataEditDetail`), so `TFormData` is pinned to
+ * `Record<string, unknown>` — only the per-validator generics (which every
+ * field component here leaves unset) are erased to `any`. Pinning `TFormData`
+ * also avoids a TS variance quirk where `any` there breaks contravariant
+ * method params (e.g. `pushFieldValue`) and drops `.useStore` from the
+ * intersection type.
+ */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyFieldApi = any;
+type AnyReactFormApi = ReactFormExtendedApi<Record<string, unknown>, any, any, any, any, any, any, any, any, any, any, any>;
 
 interface EditFieldProps {
     column: Column;
     join?: Join;
     fkRole?: FkRole;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    form: any;
+    form: AnyReactFormApi;
     schema?: Schema;
 }
 
@@ -448,8 +459,7 @@ function EditField({ column, join, fkRole, form, schema }: EditFieldProps) {
 
 interface EnumFieldProps {
     column: Column;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    form: any;
+    form: AnyReactFormApi;
     isRequired: boolean;
 }
 
@@ -502,7 +512,7 @@ function EnumField({ column, form, isRequired }: EnumFieldProps) {
     );
 }
 
-function BooleanField({ column, form }: { column: Column; form: AnyFieldApi }) {
+function BooleanField({ column, form }: { column: Column; form: AnyReactFormApi }) {
     const name = column.name;
     return (
         <form.Field
@@ -522,7 +532,7 @@ function BooleanField({ column, form }: { column: Column; form: AnyFieldApi }) {
     );
 }
 
-function ContentField({ column, form }: { column: Column; form: AnyFieldApi }) {
+function ContentField({ column, form }: { column: Column; form: AnyReactFormApi }) {
     const name = column.name;
     const isRequired = !column.isNullable;
     return (
@@ -562,8 +572,7 @@ function ContentField({ column, form }: { column: Column; form: AnyFieldApi }) {
 interface ParentFieldProps {
     column: Column;
     join: Join;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    form: any;
+    form: AnyReactFormApi;
     schema: Schema;
     isRequired: boolean;
 }
@@ -614,8 +623,7 @@ function ParentField({ column, join, form, schema, isRequired }: ParentFieldProp
 interface CompositeParentFieldProps {
     column: Column;
     join: Join;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    form: any;
+    form: AnyReactFormApi;
     schema: Schema;
     isRequired: boolean;
 }
@@ -631,9 +639,10 @@ function CompositeParentField({ column, join, form, schema, isRequired }: Compos
     const parents = useCompositeTableRef(schema, join.destinationTable, destCols);
 
     // Build the currently selected route from the form state of every source column.
-    // form.useStore subscribes to the slice so the Select stays in sync if other code paths
-    // mutate any source column directly.
-    const currentRoute: string = form.useStore((s: { values: Record<string, unknown> }) => {
+    // useStore subscribes to the form's underlying store slice so the Select stays in
+    // sync if other code paths mutate any source column directly. (`form.useStore` isn't
+    // a real API — the hook lives on the package export and takes the store directly.)
+    const currentRoute: string = useStore(form.store, (s: { values: Record<string, unknown> }) => {
         const vals: unknown[] = [];
         for (const c of sourceCols) {
             const v = s.values?.[c];

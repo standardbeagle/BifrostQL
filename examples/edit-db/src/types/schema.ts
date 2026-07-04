@@ -11,12 +11,9 @@
  */
 export interface TableMetadata {
   /** Lookup configuration for reference tables */
-  type?: {
-    type: 'lookup';
-    id: string;
-    label: string;
-  };
-  [key: string]: any;
+  type?: LookupMetadata;
+  /** Other free-form metadata entries keyed by metadata name (parsed from key/value pairs). */
+  [key: string]: string | LookupMetadata | undefined;
 }
 
 /**

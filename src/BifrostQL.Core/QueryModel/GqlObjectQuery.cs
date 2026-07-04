@@ -66,6 +66,26 @@ namespace BifrostQL.Core.QueryModel
             return dependencies.Select(d => Modules.ComputedColumns.ComputedColumnDefinition.ResolveDependencyColumn(DbTable, d));
         }
 
+        /// <summary>
+        /// Translates GraphQL sort tokens (e.g. "name_asc", "id_desc") into dialect-escaped
+        /// ORDER BY column expressions. Centralizes the `_asc`/`_desc` suffix parsing and
+        /// identifier escaping used by every pagination call site below, optionally
+        /// qualifying each column with an escaped alias prefix (e.g. "b" -> `b`.`col`).
+        /// </summary>
+        private static IEnumerable<string>? RenderSortColumns(ISqlDialect dialect, IReadOnlyList<string> sort, string? alias = null)
+        {
+            if (!sort.Any())
+                return null;
+
+            var prefix = alias == null ? "" : $"{dialect.EscapeIdentifier(alias)}.";
+            return sort.Select(s => s switch
+            {
+                { } when s.EndsWith("_asc") => $"{prefix}{dialect.EscapeIdentifier(s[..^4])} asc",
+                { } when s.EndsWith("_desc") => $"{prefix}{dialect.EscapeIdentifier(s[..^5])} desc",
+                _ => throw new BifrostExecutionError($"Unsupported sort token '{s}'; expected suffix '_asc' or '_desc'.")
+            });
+        }
+
         public void AddSqlParameterized(IDbModel dbModel, ISqlDialect dialect, IDictionary<string, ParameterizedSql> sqls, SqlParameterCollection parameters, QueryLink? queryLink = null)
         {
             var fullColumns = FullColumnNames.ToList();
@@ -79,12 +99,7 @@ namespace BifrostQL.Core.QueryModel
                 var columnSql = string.Join(",", fullColumns.Select(n => n.ToSelectSql(dbModel, DbTable, dialect)));
                 var cmdText = $"SELECT {columnSql} FROM {tableRef}";
 
-                var sortCols = Sort.Any() ? Sort.Select(s => s switch
-                {
-                    { } when s.EndsWith("_asc") => dialect.EscapeIdentifier(s[..^4]) + " asc",
-                    { } when s.EndsWith("_desc") => dialect.EscapeIdentifier(s[..^5]) + " desc",
-                    _ => throw new BifrostExecutionError($"Unsupported sort token '{s}'; expected suffix '_asc' or '_desc'.")
-                }) : null;
+                var sortCols = RenderSortColumns(dialect, Sort);
                 var pagination = dialect.Pagination(sortCols, Offset, Limit);
 
                 var baseSql = new ParameterizedSql(cmdText, Array.Empty<SqlParameterInfo>())
@@ -190,14 +205,7 @@ namespace BifrostQL.Core.QueryModel
                 var srcCount = tableJoin.FromColumns.Count;
                 var partitionCols = Enumerable.Range(0, srcCount)
                     .Select(i => $"{ea}.{dialect.EscapeIdentifier(JoinKeyNames.JoinIdAt(i, srcCount))}");
-                var windowOrder = tableJoin.ConnectedTable.Sort.Any()
-                    ? tableJoin.ConnectedTable.Sort.Select(s => s switch
-                    {
-                        { } when s.EndsWith("_asc") => $"{eb}.{dialect.EscapeIdentifier(s[..^4])} asc",
-                        { } when s.EndsWith("_desc") => $"{eb}.{dialect.EscapeIdentifier(s[..^5])} desc",
-                        _ => throw new BifrostExecutionError($"Unsupported sort token '{s}'; expected suffix '_asc' or '_desc'.")
-                    })
-                    : null;
+                var windowOrder = RenderSortColumns(dialect, tableJoin.ConnectedTable.Sort, "b");
 
                 var pagedSql = dialect.ConnectedPaging(
                     projection,
@@ -212,12 +220,7 @@ namespace BifrostQL.Core.QueryModel
                 return new ParameterizedSql(pagedSql, main.Parameters.Concat(relationParams).Concat(filter.Parameters).ToList());
             }
 
-            var sortCols = tableJoin.ConnectedTable.Sort.Any() ? tableJoin.ConnectedTable.Sort.Select(s => s switch
-            {
-                { } when s.EndsWith("_asc") => dialect.EscapeIdentifier(s[..^4]) + " asc",
-                { } when s.EndsWith("_desc") => dialect.EscapeIdentifier(s[..^5]) + " desc",
-                _ => throw new BifrostExecutionError($"Unsupported sort token '{s}'; expected suffix '_asc' or '_desc'.")
-            }) : null;
+            var sortCols = RenderSortColumns(dialect, tableJoin.ConnectedTable.Sort);
             var pagination = dialect.Pagination(sortCols, tableJoin.ConnectedTable.Offset, tableJoin.ConnectedTable.Limit);
 
             return new ParameterizedSql(wrap, main.Parameters.Concat(relationParams).ToList())
@@ -253,12 +256,7 @@ namespace BifrostQL.Core.QueryModel
                 // ORDER BY {pk}` is rejected by SQL Server because the sort (pk) columns
                 // aren't in the DISTINCT projection. A non-DISTINCT inner can ORDER BY any
                 // column, and the outer wrap then de-duplicates the join-id set.
-                var sortCols = query.FromTable.Sort.Any() ? query.FromTable.Sort.Select(s => s switch
-                {
-                    { } when s.EndsWith("_asc") => dialect.EscapeIdentifier(s[..^4]) + " asc",
-                    { } when s.EndsWith("_desc") => dialect.EscapeIdentifier(s[..^5]) + " desc",
-                    _ => throw new BifrostExecutionError($"Unsupported sort token '{s}'; expected suffix '_asc' or '_desc'.")
-                }) : null;
+                var sortCols = RenderSortColumns(dialect, query.FromTable.Sort);
                 var pagination = dialect.Pagination(sortCols, query.FromTable.Offset, query.FromTable.Limit);
 
                 var inner = new ParameterizedSql($"SELECT {projection} FROM {tableRef}", Array.Empty<SqlParameterInfo>())

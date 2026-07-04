@@ -9,9 +9,12 @@ namespace BifrostQL.Core.Storage
 
         public StorageProviderFactory()
         {
-            // Register default providers
+            // The local filesystem provider is always built in. Cloud providers
+            // (e.g. S3 from BifrostQL.Aws) opt in via StorageProviderRegistry so
+            // Core carries no compile-time dependency on any cloud SDK.
             RegisterProvider(new LocalStorageProvider());
-            RegisterProvider(new S3StorageProvider());
+            foreach (var provider in StorageProviderRegistry.CreateRegistered())
+                RegisterProvider(provider);
         }
 
         /// <summary>

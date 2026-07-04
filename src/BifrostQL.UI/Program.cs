@@ -1,4 +1,5 @@
 using System.CommandLine;
+using BifrostQL.Aws;
 using BifrostQL.Core.Model;
 using BifrostQL.MySql;
 using BifrostQL.Ngsql;
@@ -13,6 +14,9 @@ DbConnFactoryResolver.Register(BifrostDbProvider.SqlServer, cs => new SqlServerD
 DbConnFactoryResolver.Register(BifrostDbProvider.PostgreSql, cs => new PostgresDbConnFactory(cs));
 DbConnFactoryResolver.Register(BifrostDbProvider.MySql, cs => new MySqlDbConnFactory(cs));
 DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
+
+// Register the AWS S3 storage provider so "s3" file-storage columns resolve.
+AwsStorageRegistration.Register();
 
 var connectionStringArg = new Argument<string?>("connection")
 {

@@ -12,6 +12,16 @@ public class StorageProviderFactoryTests
         var factory = new StorageProviderFactory();
 
         Assert.True(factory.IsSupported("local"));
+    }
+
+    [Fact]
+    public void Constructor_IncludesRegisteredCloudProviders()
+    {
+        // S3 lives in BifrostQL.Aws and opts in via the storage registry.
+        BifrostQL.Aws.AwsStorageRegistration.Register();
+
+        var factory = new StorageProviderFactory();
+
         Assert.True(factory.IsSupported("s3"));
     }
 

@@ -37,13 +37,15 @@
 	<ProjectReference Include="..\..\src\data\BifrostQL.Sqlite\BifrostQL.Sqlite.csproj" />
 	<ProjectReference Include="..\..\src\data\BifrostQL.MySql\BifrostQL.MySql.csproj" />
 	<ProjectReference Include="..\..\src\data\BifrostQL.SqlServer\BifrostQL.SqlServer.csproj" />
+	<ProjectReference Include="..\..\src\BifrostQL.Aws\BifrostQL.Aws.csproj" />
 	</ItemGroup>
 
-	<!-- SqlServerDialect / SqlServerTypeMapper live in the BifrostQL.SqlServer
-	     assembly. Import globally so the many existing tests that reference them
-	     by short name keep compiling without per-file using edits. -->
+	<!-- SqlServer / S3 provider types now live in their own assemblies. Import
+	     them globally so the existing tests that reference them by short name
+	     keep compiling without per-file using edits. -->
 	<ItemGroup>
 		<Using Include="BifrostQL.SqlServer" />
+		<Using Include="BifrostQL.Aws" />
 	</ItemGroup>
 
 </Project>

@@ -1,8 +1,9 @@
 using Amazon;
 using Amazon.S3;
 using Amazon.S3.Model;
+using BifrostQL.Core.Storage;
 
-namespace BifrostQL.Core.Storage;
+namespace BifrostQL.Aws;
 
 public sealed class S3StorageProvider : IStorageProvider, IStorageFolderProvider
 {

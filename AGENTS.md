@@ -1,45 +1,201 @@
 # BifrostQL Agent Guide
 
-This repo has several generated surfaces and string-driven extension points. Treat this file as the maintainer map before making automated edits.
+AI 治 BifrostQL，宜循此約。此庫多生成面、字串驅動擴點；凡自動改作，先視此為維護圖。
+
+## Project Overview
+
+BifrostQL 乃 .NET 函庫，以 SQL 資料庫發布為 GraphQL APIs；由資料庫 schema 直建 GraphQL schema。
+
+## Build & Test
+
+```bash
+dotnet build BifrostQL.sln
+dotnet test
+dotnet test --filter "FullyQualifiedName=TestName"
+./bifrostui "connection-string"  # Desktop UI
+dotnet run --project src/BifrostQL.Host  # Web server
+```
 
 ## Edit Source, Not Generated Output
 
-- Frontend source for the desktop UI lives in `src/BifrostQL.UI/frontend`.
-- `src/BifrostQL.UI/wwwroot` is Vite output from that frontend. Do not hand-edit bundled JS, CSS, font files, or `index.html`; rebuild them with `pnpm --dir src/BifrostQL.UI/frontend build`.
-- `src/**/bin`, `src/**/obj`, `node_modules`, package `dist`, coverage, and Storybook output are build artifacts.
+- Desktop UI 前端源在 `src/BifrostQL.UI/frontend`。
+- `src/BifrostQL.UI/wwwroot` 為該前端 Vite 產物。勿手改 bundled JS、CSS、font files、`index.html`；以 `pnpm --dir src/BifrostQL.UI/frontend build` 重建。
+- `src/**/bin`, `src/**/obj`, `node_modules`, package `dist`, coverage, Storybook output 皆 build artifacts。
 
 ## Package Manager
 
-- Use pnpm 11.1.1 from the root `packageManager` field.
-- Use the root `pnpm-lock.yaml` for all workspace packages, including docs.
-- Do not add `package-lock.json` or nested pnpm lockfiles unless a package is intentionally removed from `pnpm-workspace.yaml`.
-- Prefer `pnpm --dir <package> <script>` or `pnpm --filter <package> <script>` over `npm`, `npx`, or directory-changing script chains.
+- 用 root `packageManager` 所載 pnpm 11.1.1。
+- workspace 諸包含 docs，皆用 root `pnpm-lock.yaml`。
+- 勿增 `package-lock.json` 或巢狀 pnpm lockfiles，除非該包有意自 `pnpm-workspace.yaml` 移除。
+- 宜用 `pnpm --dir <package> <script>` 或 `pnpm --filter <package> <script>`，勝於 `npm`, `npx`, 或 cd 串令。
+
+## Architecture
+
+### Request Flow
+
+1. GraphQL request → `BifrostHttpMiddleware`
+2. `BifrostDocumentExecutor` 載 cached `DbModel` + `ISchema`
+3. `SqlVisitor` 解析成 `GqlObjectQuery` tree
+4. 套 Filter/Mutation transformers
+5. SQL 由 `GqlObjectQuery.AddSqlParameterized()` 生
+6. `SqlExecutionManager` 執 SQL
+7. 結果返為 GraphQL response
+
+### Key Components
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `DbModel` | `Model/DbModel.cs` | Database schema representation (pure data) |
+| `TableRelationshipOrchestrator` | `Model/Relationships/` | Strategy pattern for relationship detection |
+| `GqlObjectQuery` | `QueryModel/GqlObjectQuery.cs` | Query tree → SQL generator |
+| `ISqlDialect` | `QueryModel/ISqlDialect.cs` | Database-specific SQL abstraction |
+| `ResolverBase` | `Resolvers/ResolverBase.cs` | Base class for all resolvers |
+| `StringNormalizer` | `Utils/StringNormalizer.cs` | Centralized string normalization |
+| `MetadataKeys` | `Model/MetadataKeys.cs` | Constants for metadata keys |
+| `AppMetadataModel` | `AppMetadata/` | App-metadata overlay — client presentation layer (labels, forms, grids, relationships) |
+
+## Design Patterns
+
+- **Strategy Pattern** - Relationship detection, transformers
+- **Template Method** - SQL dialect base classes  
+- **Base Classes** - Resolvers, transformers (reduce boilerplate)
+- **Collector Pattern** - EAV configuration gathering
+
+## Base Classes (Extend These)
+
+### SQL Dialects
+
+```csharp
+// For dialects with LIMIT/OFFSET and || concatenation
+public class MyDialect : StandardConcatDialectBase {
+    public MyDialect() : base('"', "lastval()") { }
+}
+```
+
+### Filter Transformers
+
+```csharp
+public class MyFilter : SingleColumnFilterTransformerBase {
+    public MyFilter() : base("metadata-key", priority: 100) { }
+    protected override TableFilter BuildFilter(...) { }
+}
+```
+
+### Mutation Transformers
+
+```csharp
+public class MyMutation : MetadataMutationTransformerBase {
+    public MyMutation() : base("metadata-key", priority: 100) { }
+    protected override MutationTransformResult TransformCore(...) { }
+}
+```
+
+### Resolvers
+
+```csharp
+public class MyResolver : TableResolverBase {
+    public MyResolver(IDbTable table) : base(table) { }
+    public override ValueTask<object?> ResolveAsync(IBifrostFieldContext ctx) { }
+}
+```
+
+## Utilities (Use These)
+
+```csharp
+// Instead of ToLowerInvariant().Trim()
+StringNormalizer.NormalizeType(column.DataType);
+StringNormalizer.NormalizeName(tableName);
+
+// Instead of magic strings
+table.GetMetadataValue(MetadataKeys.Eav.Parent);
+table.GetMetadataValue(MetadataKeys.Eav.ForeignKey);
+```
 
 ## Metadata Keys
 
-- Metadata key names belong in `src/BifrostQL.Core/Model/MetadataKeys.cs`.
-- Core implementation code should use those constants for metadata dictionary lookups and module names.
-- When adding metadata, update `MetadataKeys`, metadata validation allow-lists, docs, and tests together.
-- Keep tenant isolation and soft-delete keys especially consistent; they affect security and mutation semantics.
+- Metadata key 名皆置 `src/BifrostQL.Core/Model/MetadataKeys.cs`。
+- Core 實作查 metadata dictionary 與 module names，須用其 constants。
+- 新增 metadata，須同改 `MetadataKeys`、metadata validation allow-lists、docs、tests。
+- tenant isolation 與 soft-delete keys 尤須一致；關 security 與 mutation semantics。
+
+## Module System
+
+| Type | Interface | Base Class | Purpose |
+|------|-----------|------------|---------|
+| Filter | `IFilterTransformer` | `SingleColumnFilterTransformerBase` | Inject WHERE clauses |
+| Mutation | `IMutationTransformer` | `MetadataMutationTransformerBase` | Transform mutations |
+| Observer | `IQueryObserver` | - | Lifecycle hooks |
+
+Priority ranges: 0-99 (security), 100-199 (data filtering), 200+ (app)
+
+## SQL Dialects
+
+| Dialect | Base Class | Identifiers | Concat |
+|---------|------------|-------------|--------|
+| SqlServer | `SqlDialectBase` | `[name]` | `+` |
+| Postgres | `StandardConcatDialectBase` | `"name"` | `\|\|` |
+| MySQL | `LimitOffsetDialectBase` | `` `name` `` | `CONCAT()` |
+| SQLite | `StandardConcatDialectBase` | `"name"` | `\|\|` |
 
 ## GraphQL Query Builders
 
-- Do not interpolate user-provided table, field, operator, or type names directly into GraphQL text.
-- Use the existing query-builder validation helpers and schema-derived names.
-- The edit-db app supports composite primary keys. Use the helpers in `examples/edit-db/src/lib/row-id.ts` and `examples/edit-db/src/lib/query-builder.ts`; avoid direct `primaryKeys[0]` shortcuts.
-- Relationship joins that use first source/destination columns are single-column FK assumptions, not composite-PK helpers. Document and test any expansion beyond that.
+- 勿將 user-provided table, field, operator, type names 直插 GraphQL text。
+- 用既有 query-builder validation helpers 與 schema-derived names。
+- edit-db app 支援 composite primary keys。用 `examples/edit-db/src/lib/row-id.ts` 與 `examples/edit-db/src/lib/query-builder.ts` helpers；勿取巧直用 `primaryKeys[0]`。
+- relationship joins 若取 first source/destination columns，即 single-column FK assumptions，非 composite-PK helpers。若擴之，須 document 且 test。
 
 ## React Table Hook
 
-- `packages/@bifrostql/react/src/hooks/use-bifrost-table.ts` is intentionally broad for public API compatibility. Prefer extracting internals into focused helpers/hooks over adding more cross-cutting state directly to the main hook.
-- Check URL sync, local storage, editing, export, grouping, pagination, and virtualization behavior when changing this hook.
+- `packages/@bifrostql/react/src/hooks/use-bifrost-table.ts` 為 public API compatibility 故廣。宜抽 internals 入 focused helpers/hooks，勿再增 cross-cutting state 於 main hook。
+- 改此 hook 須查 URL sync、local storage、editing、export、grouping、pagination、virtualization。
 
 ## Transport
 
-- The BifrostQL.UI header can probe HTTP and binary transports, but `@standardbeagle/edit-db` still executes editor queries through its HTTP `uri` prop.
-- Do not treat the transport toggle as full editor transport routing until the editor accepts a `QueryTransport` or equivalent hook.
+- BifrostQL.UI header 可 probe HTTP 與 binary transports；惟 `@standardbeagle/edit-db` 仍由 HTTP `uri` prop 執 editor queries。
+- editor 未受 `QueryTransport` 或等價 hook 前，勿視 transport toggle 為 full editor transport routing。
+
+## Testing
+
+- xUnit + NSubstitute + FluentAssertions
+- SQL validation: `Microsoft.SqlServer.TransactSql.ScriptDom`
+- Pattern: Arrange-Act-Assert with comments
+
+## Anti-Patterns
+
+❌ 勿 concatenate user input into SQL (use parameters)
+❌ 勿 sync I/O in resolvers
+❌ 勿 magic strings (use `MetadataKeys`)
+❌ 勿 duplicate `ToLowerInvariant().Trim()` (use `StringNormalizer`)
+
+## Quick Reference
+
+```csharp
+// Schema metadata — controls API behavior (server-side)
+"dbo.users { tenant-filter: tenant_id }"
+"dbo.orders { soft-delete: deleted_at }"
+
+// App-metadata overlay — controls client presentation (SPA/RN)
+// Standalone camelCase JSON, separate coexisting pipeline. Never merged
+// into schema metadata. Load via AddBifrostAppMetadata, serve via
+// UseBifrostAppMetadata (GET /_app-metadata). See AppMetadata/ and
+// docs concepts/app-metadata-overlay.
+
+// Filter operators
+_eq, _neq, _lt, _lte, _gt, _gte, _contains, _in, _between, _null
+
+// Register module
+builder.Services.AddBifrostQL(o => o
+    .AddFilterTransformer<MyFilter>()
+    .AddMutationTransformer<MyMutation>());
+```
 
 ## Docs Authority
 
-- Canonical user docs live under `docs/src/content/docs`.
-- `docs-research` is exploratory/reference material and may be stale. Do not copy behavior from it without checking source and canonical docs.
+- Canonical user docs 在 `docs/src/content/docs`。
+- `docs-research` 為 exploratory/reference material，或 stale。勿據其摹行，必先核 source 與 canonical docs。
+
+## Documentation
+
+- `SKILLS.md` - Comprehensive developer guide
+- `README.md` - Project overview
+- Folder `README.md` files - Component-specific docs

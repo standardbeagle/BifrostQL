@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import Editor from '@standardbeagle/edit-db';
 import '@standardbeagle/edit-db/style.css';
 import {
@@ -24,9 +24,9 @@ import {
   createTransport,
   loadTransportMode,
   saveTransportMode,
-  type QueryTransport,
   type TransportMode,
 } from './lib/transport';
+import { TransportGraphQLFetcher } from './lib/transport-fetcher';
 import {
   requestCredential,
   saveVaultEntry,
@@ -187,46 +187,11 @@ export default function App() {
 
   // GraphQL transport selection (HTTP/JSON vs WebSocket binary).
   // Persisted in localStorage under `bifrost-ui:transport` and toggled from
-  // the editor header. The transport instance itself is held in a ref so
-  // its lifecycle is independent of React renders — see the effect below.
+  // the editor header. The active transport instance is derived from this
+  // mode (and the active profile) further down, once `activeProfile` is
+  // resolved, and injected into the embedded editor as its GraphQL fetcher.
   const [transportMode, setTransportMode] = useState<TransportMode>(() => loadTransportMode());
   const [transportConnected, setTransportConnected] = useState<boolean>(false);
-  const transportRef = useRef<QueryTransport | null>(null);
-
-  // Build (and tear down) the active transport whenever the mode flips. The
-  // binary transport opens its WebSocket lazily on first query, so we issue
-  // a tiny no-op probe to actually exercise the connection and drive the
-  // health indicator. The probe failure surfaces as a red badge but never
-  // blocks the UI — HTTP mode keeps working regardless.
-  useEffect(() => {
-    const transport = createTransport(transportMode, { endpoint: window.location.origin });
-    transportRef.current = transport;
-    setTransportConnected(transport.connected);
-
-    let cancelled = false;
-    if (transportMode === 'binary') {
-      // Probe with a trivial introspection query so we can show a real
-      // connected/disconnected state without waiting for the editor to
-      // issue its first query (the editor doesn't yet route through this
-      // transport — see TODO at the <Editor> render site).
-      transport
-        .query('{ __typename }')
-        .then(() => {
-          if (!cancelled) setTransportConnected(transport.connected);
-        })
-        .catch(() => {
-          if (!cancelled) setTransportConnected(false);
-        });
-    }
-
-    return () => {
-      cancelled = true;
-      transport.close();
-      if (transportRef.current === transport) {
-        transportRef.current = null;
-      }
-    };
-  }, [transportMode]);
 
   const handleToggleTransport = useCallback(() => {
     setTransportMode((prev) => {
@@ -291,9 +256,63 @@ export default function App() {
   }, []);
 
   const activeProfile = apiProfiles.find((p) => p.id === activeProfileId) ?? apiProfiles[0];
-  const graphqlUri = activeProfile.serverProfile
-    ? `${window.location.origin}/graphql?profile=${encodeURIComponent(activeProfile.serverProfile)}`
-    : `${window.location.origin}/graphql`;
+  // The server serves each module profile's schema behind a `?profile=` query
+  // param. We thread that onto both the HTTP GraphQL path and the binary
+  // WebSocket path so the selected transport hits the right profile-scoped
+  // endpoint.
+  const serverProfile = activeProfile.serverProfile;
+  const graphqlPath = serverProfile
+    ? `/graphql?profile=${encodeURIComponent(serverProfile)}`
+    : '/graphql';
+  const binaryPath = serverProfile
+    ? `/bifrost-ws?profile=${encodeURIComponent(serverProfile)}`
+    : '/bifrost-ws';
+
+  // The active transport is rebuilt whenever the mode flips or the profile
+  // changes. Constructing a transport has no side effects (the binary client
+  // opens its socket lazily on first query), so it is safe to create during
+  // render via useMemo; the effect below owns its lifecycle and health probe.
+  const transport = useMemo(
+    () =>
+      createTransport(transportMode, {
+        endpoint: window.location.origin,
+        graphqlPath,
+        binaryPath,
+      }),
+    [transportMode, graphqlPath, binaryPath],
+  );
+
+  // Drive the header health indicator and tear the transport down when it is
+  // superseded. The binary transport opens its WebSocket lazily on first
+  // query, so we issue a tiny probe to exercise the connection up front; the
+  // editor shares this same instance so its queries reuse the probed socket.
+  // A probe failure surfaces as a red badge but never blocks the UI.
+  useEffect(() => {
+    setTransportConnected(transport.connected);
+    let cancelled = false;
+    if (transport.mode === 'binary') {
+      transport
+        .query('{ __typename }')
+        .then(() => {
+          if (!cancelled) setTransportConnected(transport.connected);
+        })
+        .catch(() => {
+          if (!cancelled) setTransportConnected(false);
+        });
+    }
+    return () => {
+      cancelled = true;
+      transport.close();
+    };
+  }, [transport]);
+
+  // Adapter that lets the embedded editor route every GraphQL request through
+  // the selected transport. Rebuilt alongside the transport so the editor
+  // remount (keyed on transportMode below) picks up the new routing.
+  const editorFetcher = useMemo(
+    () => new TransportGraphQLFetcher(transport),
+    [transport],
+  );
 
   const activateSavedVaultEntry = useCallback(async (
     vaultName: string,
@@ -725,7 +744,7 @@ export default function App() {
           <div
             className="bifrost-transport-toggle"
             role="group"
-            aria-label="GraphQL transport probe"
+            aria-label="GraphQL transport"
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -738,16 +757,16 @@ export default function App() {
               aria-label={
                 transportMode === 'binary'
                   ? transportConnected
-                    ? 'Binary probe connected'
-                    : 'Binary probe disconnected'
-                  : 'GraphQL transport'
+                    ? 'Binary transport connected'
+                    : 'Binary transport disconnected'
+                  : 'HTTP transport'
               }
               title={
                 transportMode === 'binary'
                   ? transportConnected
-                    ? 'Binary WebSocket probe connected; editor queries still use HTTP'
-                    : 'Binary WebSocket probe disconnected; editor queries still use HTTP'
-                  : 'Editor queries use HTTP'
+                    ? 'Editor queries route over the binary WebSocket transport (connected)'
+                    : 'Binary WebSocket transport disconnected; reconnecting'
+                  : 'Editor queries route over the HTTP/JSON transport'
               }
               style={{
                 width: 8,
@@ -766,7 +785,7 @@ export default function App() {
               type="button"
               onClick={handleToggleTransport}
               aria-pressed={transportMode === 'binary'}
-              title="Probe HTTP/JSON or WebSocket binary transport. Editor queries still use HTTP until @standardbeagle/edit-db accepts a transport."
+              title="Route editor queries over the HTTP/JSON or WebSocket binary transport."
               style={{
                 background: 'transparent',
                 border: '1px solid currentColor',
@@ -824,14 +843,14 @@ export default function App() {
           </button>
         </div>
         {/*
-          TODO(transport-integration): The Editor from @standardbeagle/edit-db
-          owns its own GraphQL client built from `uri` and does not yet accept
-          a pluggable QueryTransport instance. Once the Editor exposes a
-          transport hook (or accepts a `transport` prop), pass
-          `transportRef.current` here so editor queries actually route through
-          the selected mode. Until then the header toggle exercises the
-          binary client via a probe and the editor stays on HTTP regardless of
-          the toggle. Tracked alongside the binary transport rollout work.
+          The Editor from @standardbeagle/edit-db accepts a `fetcher` prop
+          implementing its GraphQLFetcher interface. We inject a
+          TransportGraphQLFetcher that delegates to the selected QueryTransport,
+          so every editor data path (schema introspection, table data,
+          mutations, stats) routes through the active HTTP/JSON or binary
+          WebSocket transport. Toggling the header control rebuilds the
+          transport and remounts the editor (via the transportMode key) so new
+          queries flow over the newly selected mode.
         */}
         {editorPane === 'sql' ? (
           <SqlConsole />
@@ -841,8 +860,8 @@ export default function App() {
           <FormBuilderPane />
         ) : (
           <Editor
-            key={editorKey}
-            uri={graphqlUri}
+            key={`${editorKey}-${transportMode}`}
+            fetcher={editorFetcher}
             showStats
             onLocate={(location) => {
               window.history.pushState(null, '', location);

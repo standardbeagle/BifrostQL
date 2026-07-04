@@ -159,8 +159,9 @@ Priority ranges: 0-99 (security), 100-199 (data filtering), 200+ (app)
 
 ## Transport
 
-- BifrostQL.UI header 可 probe HTTP 與 binary transports；惟 `@standardbeagle/edit-db` 仍由 HTTP `uri` prop 執 editor queries。
-- editor 未受 `QueryTransport` 或等價 hook 前，勿視 transport toggle 為 full editor transport routing。
+- BifrostQL.UI header toggle 切 HTTP 與 binary transports，且**實路由** editor queries。`src/BifrostQL.UI/frontend/src/lib/transport-fetcher.ts` 之 `TransportGraphQLFetcher` 以 `QueryTransport` 造 edit-db `GraphQLFetcher` adapter，注入 `<Editor fetcher=...>`；故 editor 全數據路徑（`useSchema`、`useDataTable`、mutation hooks、stats）皆行經所選 transport。
+- edit-db `Editor` 受 `fetcher?: GraphQLFetcher` prop；其諸 hook 由 `useFetcher()` context 取之，故單一注入即覆全部 query。改此縫須確保新增數據路徑仍經 `useFetcher()`，勿另建 HTTP client。
+- App.tsx 依 `transportMode` + active profile 建 transport（`useMemo`，無副作用；binary socket 惰性開），並以 `key={editorKey-transportMode}` remount editor 使 toggle 即時改路由。profile `?profile=` query param 同灌 `graphqlPath` 與 `binaryPath`。
 
 ## Testing
 

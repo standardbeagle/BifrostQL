@@ -27,7 +27,11 @@ import {
   loadTransportMode,
   normalizeTransportMode,
   saveTransportMode,
+  type QueryTransport,
+  type QueryTransportResult,
+  type TransportMode,
 } from "./transport";
+import { TransportGraphQLFetcher } from "./transport-fetcher";
 
 /**
  * Minimal in-memory storage that satisfies the slice of the Storage
@@ -377,5 +381,73 @@ describe("BinaryTransport", () => {
       (() => new FakeBinaryClient()) as unknown as any
     );
     expect(() => t.close()).not.toThrow();
+  });
+});
+
+/**
+ * Fake QueryTransport used to exercise the edit-db fetcher adapter without
+ * any real I/O. Records the calls it receives and returns a canned envelope so
+ * the tests can assert delegation, data unwrapping, and error rejection.
+ */
+class FakeTransport implements QueryTransport {
+  readonly mode: TransportMode = "http";
+  readonly connected = true;
+  calls: Array<{ text: string; variables?: Record<string, unknown> }> = [];
+  next: QueryTransportResult = { data: null, errors: [] };
+  closeCalls = 0;
+
+  async query(
+    text: string,
+    variables?: Record<string, unknown>
+  ): Promise<QueryTransportResult> {
+    this.calls.push({ text, variables });
+    return this.next;
+  }
+
+  close(): void {
+    this.closeCalls++;
+  }
+}
+
+describe("TransportGraphQLFetcher", () => {
+  it("delegates the query and variables to the underlying transport", async () => {
+    const fake = new FakeTransport();
+    fake.next = { data: { rows: [] }, errors: [] };
+    const fetcher = new TransportGraphQLFetcher(fake);
+
+    await fetcher.query("{ rows }", { limit: 10 });
+
+    expect(fake.calls).toEqual([{ text: "{ rows }", variables: { limit: 10 } }]);
+  });
+
+  it("unwraps the data payload on success", async () => {
+    const fake = new FakeTransport();
+    fake.next = { data: { hello: "world" }, errors: [] };
+    const fetcher = new TransportGraphQLFetcher(fake);
+
+    const result = await fetcher.query<{ hello: string }>("{ hello }");
+
+    expect(result).toEqual({ hello: "world" });
+  });
+
+  it("rejects with a joined message when the transport reports errors", async () => {
+    const fake = new FakeTransport();
+    fake.next = { data: null, errors: ["boom", "kaboom"] };
+    const fetcher = new TransportGraphQLFetcher(fake);
+
+    await expect(fetcher.query("{ broken }")).rejects.toThrow("boom; kaboom");
+  });
+
+  it("routes through whichever transport instance it was given", async () => {
+    // Simulates the app swapping the HTTP transport for the binary one on
+    // toggle: a fetcher built around the new instance issues its queries there.
+    const httpLike = new FakeTransport();
+    const binaryLike = new FakeTransport();
+
+    await new TransportGraphQLFetcher(httpLike).query("{ a }");
+    await new TransportGraphQLFetcher(binaryLike).query("{ b }");
+
+    expect(httpLike.calls.map((c) => c.text)).toEqual(["{ a }"]);
+    expect(binaryLike.calls.map((c) => c.text)).toEqual(["{ b }"]);
   });
 });

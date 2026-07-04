@@ -2,7 +2,7 @@
   "name": "@bifrostql/react",
   "private": false,
   "version": "0.1.0",
-  "description": "React hooks and components for BifrostQL GraphQL APIs",
+  "description": "[EXPERIMENTAL, not consumed by the shipped product] React hooks and components for BifrostQL GraphQL APIs",
   "license": "MIT",
   "author": "BifrostQL",
   "repository": {

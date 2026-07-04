@@ -1,5 +1,7 @@
 # @bifrostql/react
 
+> **Status: Experimental.** This package is not consumed by the shipped BifrostQL product. The Desktop UI (`src/BifrostQL.UI/frontend`) ships with `@standardbeagle/edit-db`, which has its own fetcher, query-builder, and mutation hooks. `@bifrostql/react` is a parallel, in-progress API surface — expect breaking changes without notice. See `AGENTS.md` for the architecture note on this split.
+
 React hooks and components for [BifrostQL](https://github.com/standardbeagle/bifrostql) GraphQL APIs. Built on [TanStack Query](https://tanstack.com/query) for caching, background refetching, and optimistic updates.
 
 ## Installation

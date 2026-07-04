@@ -2,7 +2,7 @@
   "name": "@bifrostql/app-shell",
   "private": false,
   "version": "0.1.0",
-  "description": "Reusable React app shell and CRUD primitives for BifrostQL",
+  "description": "[EXPERIMENTAL, not consumed by the shipped product] Reusable React app shell and CRUD primitives for BifrostQL",
   "license": "MIT",
   "author": "BifrostQL",
   "repository": {

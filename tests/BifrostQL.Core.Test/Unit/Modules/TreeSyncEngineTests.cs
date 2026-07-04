@@ -10,6 +10,33 @@ public class TreeSyncEngineTests
     #region Insert Tests
 
     [Fact]
+    public void ComputeOperations_SanitizedFieldName_MapsToDbColumn_NotDropped()
+    {
+        // A column whose GraphQL field name differs from its DB column name must
+        // still reach the operation data (keyed by DB column name) instead of
+        // being silently dropped by the scalar extraction.
+        var model = DbModelTestFixture.Create()
+            .WithTable("Users", t => t
+                .WithColumn("id", "int", isPrimaryKey: true)
+                .WithColumn("email_address", "nvarchar", graphQlName: "emailAddress"))
+            .Build();
+        var engine = new TreeSyncEngine(model);
+        var table = model.GetTableFromDbName("Users");
+
+        var submitted = new Dictionary<string, object?>
+        {
+            ["emailAddress"] = "alice@example.com"
+        };
+
+        var ops = engine.ComputeOperations(table, submitted, existing: null);
+
+        Assert.Single(ops);
+        Assert.Equal(TreeSyncOperationType.Insert, ops[0].OperationType);
+        Assert.Equal("alice@example.com", ops[0].Data["email_address"]);
+        Assert.False(ops[0].Data.ContainsKey("emailAddress"));
+    }
+
+    [Fact]
     public void ComputeOperations_NewRootRecord_InfersInsert()
     {
         var model = StandardTestFixtures.SimpleUsers();

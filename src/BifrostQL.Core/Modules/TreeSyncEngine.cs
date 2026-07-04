@@ -303,7 +303,15 @@ public sealed class TreeSyncEngine
         var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         foreach (var kvp in data)
         {
-            if (table.ColumnLookup.ContainsKey(kvp.Key))
+            // Submitted input is keyed by GraphQL field name; existing DB rows are
+            // keyed by column name. Resolve either to the DB column name so the
+            // rest of the engine (which works in DB-name space) sees the field —
+            // a ColumnLookup-only filter silently dropped sanitized/prefixed
+            // columns whose GraphQL name differs. Non-column keys (child links)
+            // match neither lookup and are skipped, as before.
+            if (table.GraphQlLookup.TryGetValue(kvp.Key, out var byGraphQl))
+                result[byGraphQl.DbName] = kvp.Value;
+            else if (table.ColumnLookup.ContainsKey(kvp.Key))
                 result[kvp.Key] = kvp.Value;
         }
         return result;

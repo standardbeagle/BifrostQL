@@ -420,22 +420,30 @@ namespace BifrostQL.Core.Resolvers
             Func<DbConnection, DbTransaction, Task> work)
         {
             await using var conn = connFactory.GetConnection();
-            await conn.OpenAsync();
-            await using var transaction = await conn.BeginTransactionAsync();
+            DbTransaction? transaction = null;
             try
             {
+                await conn.OpenAsync();
+                transaction = await conn.BeginTransactionAsync();
                 await work(conn, transaction);
                 await transaction.CommitAsync();
             }
             catch (BifrostExecutionError)
             {
-                await transaction.RollbackAsync();
+                if (transaction != null)
+                    await transaction.RollbackAsync();
                 throw;
             }
             catch (Exception ex)
             {
-                await transaction.RollbackAsync();
+                if (transaction != null)
+                    await transaction.RollbackAsync();
                 throw BifrostExecutionError.FromDatabaseException(ex);
+            }
+            finally
+            {
+                if (transaction != null)
+                    await transaction.DisposeAsync();
             }
         }
 

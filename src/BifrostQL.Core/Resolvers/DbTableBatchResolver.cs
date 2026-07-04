@@ -48,11 +48,12 @@ namespace BifrostQL.Core.Resolvers
             var moduleArguments = ModuleApiRegistry.CaptureMutationArguments(context, _table);
 
             await using var conn = conFactory.GetConnection();
-            await conn.OpenAsync();
-            await using var transaction = await conn.BeginTransactionAsync();
             var outcomes = new List<BatchActionOutcome>();
+            DbTransaction? transaction = null;
             try
             {
+                await conn.OpenAsync();
+                transaction = await conn.BeginTransactionAsync();
                 foreach (var action in actions)
                 {
                     var outcome = await ExecuteAction(action, _table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext, moduleArguments);
@@ -63,13 +64,20 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (BifrostExecutionError)
             {
-                await transaction.RollbackAsync();
+                if (transaction != null)
+                    await transaction.RollbackAsync();
                 throw;
             }
             catch (Exception ex)
             {
-                await transaction.RollbackAsync();
+                if (transaction != null)
+                    await transaction.RollbackAsync();
                 throw BifrostExecutionError.FromDatabaseException(ex);
+            }
+            finally
+            {
+                if (transaction != null)
+                    await transaction.DisposeAsync();
             }
 
             // Observers fire only after commit so audit/state-transition

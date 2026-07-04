@@ -1,6 +1,20 @@
+using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
+using BifrostQL.MySql;
+using BifrostQL.Ngsql;
 using BifrostQL.Server;
+using BifrostQL.Sqlite;
+using BifrostQL.SqlServer;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+
+// Register all dialect factories so DbConnFactoryResolver can route by
+// provider. BifrostQL.Host is the reference server implementation, so it
+// wires up every shipped dialect rather than requiring callers to add
+// project references themselves.
+DbConnFactoryResolver.Register(BifrostDbProvider.SqlServer, cs => new SqlServerDbConnFactory(cs));
+DbConnFactoryResolver.Register(BifrostDbProvider.PostgreSql, cs => new PostgresDbConnFactory(cs));
+DbConnFactoryResolver.Register(BifrostDbProvider.MySql, cs => new MySqlDbConnFactory(cs));
+DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
 
 var builder = WebApplication.CreateBuilder(args);
 

@@ -32,7 +32,7 @@ export class TransportGraphQLFetcher implements GraphQLFetcher {
     variables?: Record<string, unknown>
   ): Promise<T> {
     const { data, errors } = await this.transport.query(query, variables);
-    if (errors.length > 0) {
+    if ((errors ?? []).length > 0) {
       // The Editor's hooks rely on the fetcher rejecting so react-query can
       // surface the failure; a joined message keeps parity with the built-in
       // HttpGraphQLFetcher's GraphQLRequestError message.

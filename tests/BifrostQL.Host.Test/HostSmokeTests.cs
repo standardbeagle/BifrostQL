@@ -26,6 +26,26 @@ public sealed class HostSmokeTests : IClassFixture<HostSmokeTests.HostFactory>
     public HostSmokeTests(HostFactory factory) => _factory = factory;
 
     [Fact]
+    public void Program_RegistersAllDialectFactories()
+    {
+        // Boots the host (running Program.cs's top-level statements) if it
+        // hasn't already, then asserts every shipped dialect self-registered.
+        // Regression for the HIGH finding: BifrostQL.Host's appsettings.json
+        // defaults to Provider=sqlserver, but the host previously referenced
+        // no dialect packages and registered nothing, so DbConnFactoryResolver
+        // .Create would always throw at startup.
+        using var client = _factory.CreateClient();
+
+        DbConnFactoryResolver.GetRegisteredProviders().Should().Contain(new[]
+        {
+            BifrostDbProvider.SqlServer,
+            BifrostDbProvider.PostgreSql,
+            BifrostDbProvider.MySql,
+            BifrostDbProvider.Sqlite,
+        });
+    }
+
+    [Fact]
     public async Task GraphQL_DbSchemaIntrospection_ReturnsTableList()
     {
         using var client = _factory.CreateClient();

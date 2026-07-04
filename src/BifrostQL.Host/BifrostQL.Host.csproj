@@ -17,6 +17,10 @@
   <ItemGroup>
     <ProjectReference Include="..\BifrostQL.Core\BifrostQL.Core.csproj" />
     <ProjectReference Include="..\BifrostQL.Server\BifrostQL.Server.csproj" />
+    <ProjectReference Include="..\data\BifrostQL.SqlServer\BifrostQL.SqlServer.csproj" />
+    <ProjectReference Include="..\data\BifrostQL.Ngsql\BifrostQL.Ngsql.csproj" />
+    <ProjectReference Include="..\data\BifrostQL.MySql\BifrostQL.MySql.csproj" />
+    <ProjectReference Include="..\data\BifrostQL.Sqlite\BifrostQL.Sqlite.csproj" />
   </ItemGroup>
 
   <ItemGroup>

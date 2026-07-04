@@ -25,13 +25,36 @@ export default defineConfig(({ mode }) => ({
       fileName: (format) => `editor.${format}.${( format ==='umd' ? "c" : "")}js`,
     },
     rollupOptions: {
-      external: ['react', 'react-dom', '@tanstack/react-query'],
+      // Externalized packages are regular `dependencies` (not peerDependencies) of this
+      // package, so any real installer (npm/pnpm) pulls them in transitively for a consumer —
+      // the same pattern already relied on for @tanstack/react-query. Verified against both
+      // in-repo consumers (examples/host-edit-db, src/BifrostQL.UI/frontend): neither declares
+      // these packages directly, but their builds still resolve them, because the bundled dist
+      // file lives inside this package's own directory tree, so Node's node_modules walk-up
+      // finds them under examples/edit-db/node_modules regardless of the consumer's own deps.
+      // Bundling them instead would duplicate ~240KB (radix-ui + lucide-react + react-table +
+      // react-form) into every consumer bundle for no benefit.
+      external: [
+        'react',
+        'react-dom',
+        '@tanstack/react-query',
+        '@tanstack/react-table',
+        '@tanstack/react-form',
+        'lucide-react',
+        'radix-ui',
+        '@radix-ui/react-slot',
+      ],
       output: {
         exports: 'named',
         globals: {
           react: 'React',
           'react-dom': 'ReactDOM',
           '@tanstack/react-query': 'ReactQuery',
+          '@tanstack/react-table': 'ReactTable',
+          '@tanstack/react-form': 'ReactForm',
+          'lucide-react': 'LucideReact',
+          'radix-ui': 'RadixUI',
+          '@radix-ui/react-slot': 'RadixReactSlot',
         },
       },
     },

@@ -6,8 +6,11 @@ name: .NET
 on:
   push:
     branches: [ "main" ]
+    tags: [ "v*" ]
   pull_request:
     branches: [ "main" ]
+  release:
+    types: [ published ]
 
 # Opt every JavaScript-based action into the Node.js 24 runtime ahead of
 # the 2026-09-16 Node.js 20 sunset, suppressing the runner deprecation
@@ -16,7 +19,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  build:
+  build-test:
 
     runs-on: ubuntu-latest
 
@@ -69,12 +72,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.1
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           # 24 to match react-package.yml; the workspace tooling uses node:sqlite
           # (requires Node 22+), which errored under Node 20.
           node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
       - name: Build SPA workspace dependencies
@@ -101,6 +108,13 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'global.json') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
       - name: Restore dependencies
         run: dotnet restore
       - name: Build
@@ -142,14 +156,58 @@ jobs:
         # publish/deploy steps. Investigate failures from the run log, not the gate.
         continue-on-error: true
         run: dotnet test tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj --no-build --verbosity normal --configuration Release --filter "Category=Fuzz"
+
+  pack-publish:
+    needs: build-test
+    # Only cut/publish packages on a version tag push or a GitHub release —
+    # not on every push to main, which build-test already gates.
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.1
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Setup .NET 8.0
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Setup .NET 9.0
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+      - name: Setup .NET 10.0
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'global.json') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+      - name: Restore dependencies
+        run: dotnet restore
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
       - name: Pack
         run: |
-          dotnet pack "src/BifrostQL.Core/BifrostQL.Core.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }} 
-          dotnet pack "src/BifrostQL.Server/BifrostQL.Server.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }} 
-          dotnet pack "src/data/BifrostQL.Ngsql/BifrostQL.Ngsql.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }} 
-          dotnet pack "src/data/BifrostQL.SqlServer/BifrostQL.SqlServer.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }} 
-          dotnet pack "src/data/BifrostQL.Sqlite/BifrostQL.Sqlite.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }} 
-          dotnet pack "src/data/BifrostQL.MySql/BifrostQL.MySql.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }} 
+          dotnet pack "src/BifrostQL.Core/BifrostQL.Core.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }}
+          dotnet pack "src/BifrostQL.Server/BifrostQL.Server.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }}
+          dotnet pack "src/data/BifrostQL.Ngsql/BifrostQL.Ngsql.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }}
+          dotnet pack "src/data/BifrostQL.SqlServer/BifrostQL.SqlServer.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }}
+          dotnet pack "src/data/BifrostQL.Sqlite/BifrostQL.Sqlite.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }}
+          dotnet pack "src/data/BifrostQL.MySql/BifrostQL.MySql.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }}
       - name: add source
         env:
           REPO_NUGET: ${{ secrets.REPO_NUGET }}
@@ -267,21 +325,10 @@ jobs:
           else
             echo "Skipping nuget.org publish: NUGET_API_KEY not set"
           fi
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11.1.1
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
       - name: set editor version
         run: pnpm --dir examples/edit-db version 0.4.${{ github.run_number }} --no-git-tag-version
-      - name: install editor
-        run: pnpm install --frozen-lockfile
       - name: build editor
         run: pnpm --dir examples/edit-db build
       - name: publish npm package

@@ -129,23 +129,36 @@ public class DbConnFactoryResolverTests : IDisposable
 
     #endregion
 
-    #region Create - Default SQL Server
+    #region Create - Registered SQL Server
 
     [Fact]
-    public void Create_NoProvider_SqlServerConnectionString_ReturnsDbConnFactory()
+    public void Create_NoProvider_SqlServerConnectionString_ReturnsRegisteredFactory()
     {
+        DbConnFactoryResolver.Register(BifrostDbProvider.SqlServer, cs => new SqlServerDbConnFactory(cs));
+
         var factory = DbConnFactoryResolver.Create("Server=localhost;Database=mydb;User Id=sa;Password=xxx;");
 
-        factory.Should().BeOfType<DbConnFactory>();
+        factory.Should().BeOfType<SqlServerDbConnFactory>();
         factory.Dialect.Should().BeAssignableTo<ISqlDialect>();
     }
 
     [Fact]
-    public void Create_ExplicitSqlServer_ReturnsDbConnFactory()
+    public void Create_ExplicitSqlServer_ReturnsRegisteredFactory()
     {
+        DbConnFactoryResolver.Register(BifrostDbProvider.SqlServer, cs => new SqlServerDbConnFactory(cs));
+
         var factory = DbConnFactoryResolver.Create("Server=localhost;Database=mydb;", BifrostDbProvider.SqlServer);
 
-        factory.Should().BeOfType<DbConnFactory>();
+        factory.Should().BeOfType<SqlServerDbConnFactory>();
+    }
+
+    [Fact]
+    public void Create_UnregisteredSqlServer_ThrowsInvalidOperation()
+    {
+        var act = () => DbConnFactoryResolver.Create("Server=localhost;Database=mydb;", BifrostDbProvider.SqlServer);
+
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*No factory registered*SqlServer*");
     }
 
     #endregion

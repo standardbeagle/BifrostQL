@@ -571,9 +571,9 @@ public class TypeMapperTests
     public class DbConnFactoryTypeMapperTests
     {
         [Fact]
-        public void DefaultDbConnFactory_UsesSqlServerTypeMapper()
+        public void SqlServerDbConnFactory_UsesSqlServerTypeMapper()
         {
-            var factory = new DbConnFactory("Server=localhost;Database=test;User Id=sa;Password=test;TrustServerCertificate=True");
+            var factory = new SqlServerDbConnFactory("Server=localhost;Database=test;User Id=sa;Password=test;TrustServerCertificate=True");
             Assert.IsType<SqlServerTypeMapper>(factory.TypeMapper);
             Assert.Same(SqlServerTypeMapper.Instance, factory.TypeMapper);
         }

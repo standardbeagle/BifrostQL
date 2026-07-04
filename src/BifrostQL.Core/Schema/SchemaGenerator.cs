@@ -154,7 +154,7 @@ namespace BifrostQL.Core.Schema
         /// <summary>
         /// Default type mapper used when no dialect-specific mapper is available.
         /// </summary>
-        internal static ITypeMapper DefaultTypeMapper => SqlServerTypeMapper.Instance;
+        internal static ITypeMapper DefaultTypeMapper => AnsiSqlTypeMapper.Instance;
 
         public static string GetGraphQlInsertTypeName(string dataType, bool isNullable = false)
             => GetGraphQlInsertTypeName(dataType, isNullable, DefaultTypeMapper);

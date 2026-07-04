@@ -162,10 +162,14 @@ namespace BifrostQL.Core.Resolvers
             string userMessage;
             string bifrostCode;
 
-            // SQL Server specific error detection
-            if (exception is Microsoft.Data.SqlClient.SqlException sqlEx)
+            // SQL Server specific error detection. Detected by type name (and the
+            // integer Number read via reflection) so Core carries no compile-time
+            // dependency on a concrete SQL Server client library.
+            var exceptionTypeName = exception.GetType().Name;
+            if (exceptionTypeName == "SqlException")
             {
-                switch (sqlEx.Number)
+                var sqlErrorNumber = (exception.GetType().GetProperty("Number")?.GetValue(exception) as int?) ?? 0;
+                switch (sqlErrorNumber)
                 {
                     case 18456: // Login failed
                         userMessage = "Database login failed. Please check your credentials.";
@@ -202,14 +206,14 @@ namespace BifrostQL.Core.Resolvers
                         suggestions.Add("Ensure unique values for unique columns");
                         break;
                     default:
-                        userMessage = $"Database error ({sqlEx.Number}): {message}";
+                        userMessage = $"Database error ({sqlErrorNumber}): {message}";
                         bifrostCode = "DB_ERROR";
                         break;
                 }
             }
             // PostgreSQL specific
-            else if (exception.GetType().Name.Contains("Postgres", StringComparison.OrdinalIgnoreCase) ||
-                     exception.GetType().Name.Contains("Npgsql", StringComparison.OrdinalIgnoreCase))
+            else if (exceptionTypeName.Contains("Postgres", StringComparison.OrdinalIgnoreCase) ||
+                     exceptionTypeName.Contains("Npgsql", StringComparison.OrdinalIgnoreCase))
             {
                 if (message.Contains("28P01", StringComparison.OrdinalIgnoreCase))
                 {

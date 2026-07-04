@@ -1,6 +1,5 @@
 ﻿using System.Collections.Concurrent;
 using System.Data.Common;
-using Microsoft.Data.SqlClient;
 using BifrostQL.Core.QueryModel;
 
 namespace BifrostQL.Core.Model
@@ -58,40 +57,6 @@ namespace BifrostQL.Core.Model
     }
 
     /// <summary>
-    /// Default SQL Server connection factory in the Core package.
-    /// For explicit dialect selection, prefer <see cref="BifrostQL.SqlServer.SqlServerDbConnFactory"/>
-    /// from the BifrostQL.SqlServer package.
-    /// </summary>
-    public class DbConnFactory : IDbConnFactory
-    {
-        private readonly string _connectionString;
-
-        /// <summary>
-        /// Creates a new SQL Server connection factory.
-        /// </summary>
-        /// <param name="connectionString">SQL Server connection string.</param>
-        public DbConnFactory(string connectionString)
-        {
-            _connectionString = connectionString;
-        }
-
-        /// <inheritdoc />
-        public ISqlDialect Dialect => SqlServerDialect.Instance;
-
-        /// <inheritdoc />
-        public ISchemaReader SchemaReader => new SqlServerSchemaReader();
-
-        /// <inheritdoc />
-        public ITypeMapper TypeMapper => SqlServerTypeMapper.Instance;
-
-        /// <inheritdoc />
-        public DbConnection GetConnection()
-        {
-            return new SqlConnection(_connectionString);
-        }
-    }
-
-    /// <summary>
     /// Resolves the appropriate <see cref="IDbConnFactory"/> for a connection string,
     /// either by explicit provider selection or by auto-detecting the database type
     /// from connection string patterns.
@@ -112,7 +77,6 @@ namespace BifrostQL.Core.Model
 
         /// <summary>
         /// Returns the set of providers that have been explicitly registered via <see cref="Register"/>.
-        /// Does not include SQL Server's built-in fallback factory.
         /// </summary>
         public static IReadOnlyCollection<BifrostDbProvider> GetRegisteredProviders()
         {
@@ -131,8 +95,9 @@ namespace BifrostQL.Core.Model
         /// Creates an <see cref="IDbConnFactory"/> for the given connection string.
         /// If <paramref name="provider"/> is specified, uses that provider directly.
         /// Otherwise, auto-detects the provider from connection string patterns.
-        /// Falls back to SQL Server (via the built-in <see cref="DbConnFactory"/>) when
-        /// a dialect package is not registered.
+        /// The resolved provider must have been registered via <see cref="Register"/>
+        /// (dialect packages register themselves at startup); Core carries no
+        /// built-in provider fallback.
         /// </summary>
         public static IDbConnFactory Create(string connectionString, BifrostDbProvider? provider = null)
         {
@@ -142,9 +107,6 @@ namespace BifrostQL.Core.Model
 
             if (_registry.TryGetValue(resolvedProvider, out var creator))
                 return creator(connectionString);
-
-            if (resolvedProvider == BifrostDbProvider.SqlServer)
-                return new DbConnFactory(connectionString);
 
             throw new InvalidOperationException(
                 $"No factory registered for provider '{resolvedProvider}'. " +

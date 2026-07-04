@@ -46,7 +46,7 @@ public class SqlServerSchemaLoadingTests : IAsyncLifetime
         await CreateComplexSchemaAsync(conn);
 
         // Load schema using DbModelLoader
-        var factory = new DbConnFactory(_connectionString);
+        var factory = new SqlServerDbConnFactory(_connectionString);
         var metadataLoader = new MetadataLoader(Array.Empty<string>());
         var loader = new DbModelLoader(factory, metadataLoader);
         _loadedModel = await loader.LoadAsync();

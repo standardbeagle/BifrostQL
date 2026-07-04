@@ -183,7 +183,7 @@ public sealed class CompositeForeignKeyTests
         ordersQuery.Links.Add(customersLink);
         ordersQuery.ConnectLinks(model);
 
-        var dialect = BifrostQL.Core.QueryModel.SqlServerDialect.Instance;
+        var dialect = BifrostQL.SqlServer.SqlServerDialect.Instance;
         var parameters = new BifrostQL.Core.QueryModel.SqlParameterCollection();
         var sqls = new Dictionary<string, BifrostQL.Core.QueryModel.ParameterizedSql>();
         ordersQuery.AddSqlParameterized(model, dialect, sqls, parameters);

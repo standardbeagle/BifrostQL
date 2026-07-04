@@ -14,9 +14,12 @@ namespace BifrostQL.Model
         private readonly IDbConnFactory _connFactory;
         private readonly IMetadataLoader _metadataLoader;
 
-        // Backward compatibility constructor
+        // Convenience constructor: resolves the connection factory from the connection
+        // string via the provider registry. The matching dialect package must be
+        // registered (see DbConnFactoryResolver.Register) — Core carries no built-in
+        // provider fallback.
         public DbModelLoader(string connectionString, IMetadataLoader metadataLoader)
-            : this(new DbConnFactory(connectionString), metadataLoader)
+            : this(BifrostQL.Core.Model.DbConnFactoryResolver.Create(connectionString), metadataLoader)
         {
         }
 

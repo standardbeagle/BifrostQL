@@ -1,8 +1,9 @@
 using System.Data;
 using System.Text.RegularExpressions;
+using BifrostQL.Core.Model;
 using Microsoft.Data.SqlClient;
 
-namespace BifrostQL.Core.Model
+namespace BifrostQL.SqlServer
 {
     /// <summary>
     /// Wraps a <see cref="SqlConnection"/> with database-level authentication setup

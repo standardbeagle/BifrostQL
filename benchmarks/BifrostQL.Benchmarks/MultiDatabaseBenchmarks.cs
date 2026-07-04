@@ -5,6 +5,7 @@ using BenchmarkDotNet.Jobs;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Sqlite;
+using BifrostQL.SqlServer;
 using Microsoft.Data.Sqlite;
 
 namespace BifrostQL.Benchmarks;

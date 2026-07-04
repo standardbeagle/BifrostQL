@@ -21,11 +21,11 @@ namespace BifrostQL.Core.Model
 
         /// <summary>
         /// The type mapper for converting database data types to GraphQL types.
-        /// Defaults to SqlServerTypeMapper for backward compatibility.
-        /// Dialect-specific implementations (PostgreSQL, MySQL, SQLite) override this
-        /// to correctly map their native types.
+        /// Defaults to the provider-neutral <see cref="AnsiSqlTypeMapper"/>.
+        /// Dialect packages (SQL Server, PostgreSQL, MySQL, SQLite) supply their own
+        /// mapper (via the connection factory) to correctly map their native types.
         /// </summary>
-        ITypeMapper TypeMapper => SqlServerTypeMapper.Instance;
+        ITypeMapper TypeMapper => AnsiSqlTypeMapper.Instance;
 
         /// <summary>
         /// EAV (Entity-Attribute-Value) configurations linking meta tables to parent tables.
@@ -48,7 +48,7 @@ namespace BifrostQL.Core.Model
         public IReadOnlyCollection<IDbTable> Tables { get; init; } = null!;
         public IReadOnlyCollection<DbStoredProcedure> StoredProcedures { get; init; } = Array.Empty<DbStoredProcedure>();
         public IDictionary<string, object?> Metadata { get; init; } = null!;
-        public ITypeMapper TypeMapper { get; set; } = SqlServerTypeMapper.Instance;
+        public ITypeMapper TypeMapper { get; set; } = AnsiSqlTypeMapper.Instance;
         public IReadOnlyList<EavConfig> EavConfigs { get; set; } = Array.Empty<EavConfig>();
         public BifrostQL.Core.Schema.EnumColumnMap? EnumColumns { get; set; }
         public string? GetMetadataValue(string property) => Metadata.TryGetValue(property, out var v) ? v?.ToString() : null;

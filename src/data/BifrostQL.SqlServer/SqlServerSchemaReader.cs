@@ -1,8 +1,9 @@
 using System.Data;
 using System.Data.Common;
+using BifrostQL.Core.Model;
 using Microsoft.Data.SqlClient;
 
-namespace BifrostQL.Core.Model;
+namespace BifrostQL.SqlServer;
 
 /// <summary>
 /// SQL Server implementation of schema reader using INFORMATION_SCHEMA views.

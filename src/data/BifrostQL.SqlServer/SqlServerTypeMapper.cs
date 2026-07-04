@@ -1,6 +1,7 @@
+using BifrostQL.Core.Model;
 using BifrostQL.Core.Utils;
 
-namespace BifrostQL.Core.Model;
+namespace BifrostQL.SqlServer;
 
 /// <summary>
 /// Maps SQL Server data types to GraphQL types.

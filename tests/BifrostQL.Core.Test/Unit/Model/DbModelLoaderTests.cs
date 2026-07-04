@@ -43,7 +43,9 @@ public class DbModelLoaderTests
         var connectionString = "Server=localhost;Database=test;";
         var mockMetadataLoader = Substitute.For<IMetadataLoader>();
 
-        // This constructor should internally create a DbConnFactory
+        // The string constructor resolves the factory via the provider registry,
+        // so the matching dialect package must be registered first.
+        DbConnFactoryResolver.Register(BifrostDbProvider.SqlServer, cs => new SqlServerDbConnFactory(cs));
         var loader = new DbModelLoader(connectionString, mockMetadataLoader);
 
         // Act - This will fail to connect, but we're just testing the constructor works

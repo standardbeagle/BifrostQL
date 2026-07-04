@@ -647,7 +647,7 @@ public sealed class PivotQueryTests
         var pivotValues = new List<object?> { "Open", "Closed" };
 
         var result = PivotSqlGenerator.GeneratePivot(
-            BifrostQL.Core.QueryModel.SqlServerDialect.Instance, config, "[dbo].[T]", pivotValues);
+            BifrostQL.SqlServer.SqlServerDialect.Instance, config, "[dbo].[T]", pivotValues);
 
         result.Sql.Should().Contain("PIVOT (");
         result.Sql.Should().NotContain("CASE WHEN");
@@ -699,7 +699,7 @@ public sealed class PivotQueryTests
     [Fact]
     public void SupportsNativePivot_OnlySqlServerReturnsTrue()
     {
-        BifrostQL.Core.QueryModel.SqlServerDialect.Instance.SupportsNativePivot.Should().BeTrue();
+        BifrostQL.SqlServer.SqlServerDialect.Instance.SupportsNativePivot.Should().BeTrue();
         BifrostQL.Sqlite.SqliteDialect.Instance.SupportsNativePivot.Should().BeFalse();
         BifrostQL.Ngsql.PostgresDialect.Instance.SupportsNativePivot.Should().BeFalse();
         BifrostQL.MySql.MySqlDialect.Instance.SupportsNativePivot.Should().BeFalse();

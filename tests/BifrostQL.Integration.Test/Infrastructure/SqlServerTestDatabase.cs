@@ -40,7 +40,7 @@ public sealed class SqlServerTestDatabase : IIntegrationTestDatabase
         {
             InitialCatalog = _testDbName
         };
-        ConnFactory = new DbConnFactory(builder.ConnectionString);
+        ConnFactory = new SqlServerDbConnFactory(builder.ConnectionString);
         DbModel = TestSchema.BuildDbModel();
 
         using var conn = ConnFactory.GetConnection();

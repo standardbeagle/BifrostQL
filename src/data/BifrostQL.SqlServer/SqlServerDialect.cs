@@ -1,4 +1,6 @@
-namespace BifrostQL.Core.QueryModel;
+using BifrostQL.Core.QueryModel;
+
+namespace BifrostQL.SqlServer;
 
 /// <summary>
 /// SQL Server dialect implementation.

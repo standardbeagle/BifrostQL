@@ -29,4 +29,8 @@
 		<ProjectReference Include="..\..\src\data\BifrostQL.SqlServer\BifrostQL.SqlServer.csproj" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<Using Include="BifrostQL.SqlServer" />
+	</ItemGroup>
+
 </Project>

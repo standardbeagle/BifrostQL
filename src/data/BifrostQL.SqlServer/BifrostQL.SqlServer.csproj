@@ -19,6 +19,10 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<InternalsVisibleTo Include="BifrostQL.Core.Test" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<ProjectReference Include="..\..\BifrostQL.Core\BifrostQL.Core.csproj" />
 	</ItemGroup>
 

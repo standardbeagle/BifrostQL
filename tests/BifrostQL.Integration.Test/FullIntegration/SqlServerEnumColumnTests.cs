@@ -33,7 +33,7 @@ public class SqlServerEnumColumnTests : EnumColumnIntegrationTestBase, IAsyncLif
         var builder = new SqlConnectionStringBuilder(masterConnString) { InitialCatalog = _testDbName };
         _connectionString = builder.ConnectionString;
 
-        var factory = new DbConnFactory(_connectionString);
+        var factory = new SqlServerDbConnFactory(_connectionString);
         await base.InitializeAsync(factory, CreateSchemaAsync, SeedDataAsync, EnumMetadataRules);
     }
 

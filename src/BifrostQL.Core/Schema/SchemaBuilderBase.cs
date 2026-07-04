@@ -15,7 +15,7 @@ public abstract class SchemaBuilderBase
     protected SchemaBuilderBase(IDbModel model)
     {
         Model = model ?? throw new ArgumentNullException(nameof(model));
-        TypeMapper = model.TypeMapper ?? SqlServerTypeMapper.Instance;
+        TypeMapper = model.TypeMapper ?? AnsiSqlTypeMapper.Instance;
     }
 
     /// <summary>

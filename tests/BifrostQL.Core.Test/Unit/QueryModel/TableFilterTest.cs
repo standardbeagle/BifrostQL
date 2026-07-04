@@ -7,6 +7,8 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules;
+using BifrostQL.Core.QueryModel.TestFixtures;
 using Xunit;
 
 namespace BifrostQL.Core.QueryModel
@@ -14,6 +16,28 @@ namespace BifrostQL.Core.QueryModel
     public sealed class TableFilterTest
     {
         private static readonly ISqlDialect Dialect = SqlServerDialect.Instance;
+
+        [Fact]
+        public void LeafFilter_WithDbColumnName_RendersEvenWhenGraphQlNameDiffers()
+        {
+            // Security transformers (tenant, soft-delete) build filters keyed by
+            // the raw DB column name, which differs from the GraphQL field name for
+            // sanitized/prefixed columns. The leaf render must resolve either name
+            // space instead of throwing KeyNotFoundException.
+            var model = DbModelTestFixture.Create()
+                .WithTable("Orders", t => t
+                    .WithColumn("id", "int", isPrimaryKey: true)
+                    .WithColumn("tenant_id", "int", graphQlName: "tenantId"))
+                .Build();
+
+            var filter = TableFilterFactory.Equals("Orders", "tenant_id", 7);
+            var parameters = new SqlParameterCollection();
+
+            var sut = filter.ToSqlParameterized(model, Dialect, parameters, "Orders");
+
+            sut.Sql.Should().Be("[Orders].[tenant_id] = @p0");
+            sut.Parameters.Should().ContainSingle().Which.Value.Should().Be(7);
+        }
 
         [Fact]
         public void FilterNoOperationThrows()

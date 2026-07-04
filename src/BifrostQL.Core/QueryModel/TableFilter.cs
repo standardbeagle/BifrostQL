@@ -275,8 +275,15 @@ namespace BifrostQL.Core.QueryModel
             var table = model.GetTableFromDbName(TableName ?? throw new BifrostExecutionError("TableFilter with undefined TableName"));
             if (Next.Next == null)
             {
-                var lookup = table.GraphQlLookup;
-                var leaf = GetSingleFilterParameterized(dialect, parameters, alias ?? TableName, lookup[ColumnName].DbName, Next.RelationName, Next.Value, lookup[ColumnName].DataType);
+                // Resolve the column tolerant of both name spaces: user filters key
+                // by GraphQL name, but security transformers (tenant, soft-delete)
+                // build filters keyed by the raw DB column name. A GraphQlLookup-only
+                // lookup threw KeyNotFoundException whenever the two names differ.
+                var column = table.GraphQlLookup.TryGetValue(ColumnName, out var byGraphQl) ? byGraphQl
+                    : table.ColumnLookup.TryGetValue(ColumnName, out var byDb) ? byDb
+                    : throw new BifrostExecutionError(
+                        $"Filter references unknown column '{ColumnName}' on table '{TableName}'.");
+                var leaf = GetSingleFilterParameterized(dialect, parameters, alias ?? TableName, column.DbName, Next.RelationName, Next.Value, column.DataType);
                 return new FilterParts("", leaf.Sql, leaf.Parameters.ToList());
             }
 

@@ -229,6 +229,20 @@ public class DatabaseErrorSanitizationTests
     }
 
     [Fact]
+    public void FromDatabaseException_NonUniqueErrorMentioningDigits_IsNotMisclassifiedAsConflict()
+    {
+        // A CHECK/NOT-NULL failure whose text happens to quote a value like 2627
+        // must NOT be remapped to a conflict — short numeric driver codes are not
+        // matched precisely to avoid exactly this false positive.
+        var raw = new InvalidOperationException("CHECK constraint failed: quantity must exceed 2627");
+
+        var error = BifrostExecutionError.FromDatabaseException(raw);
+
+        error.ErrorCode.Should().Be("DATABASE_ERROR");
+        error.Message.Should().Be("A database error occurred while processing the request.");
+    }
+
+    [Fact]
     public void FromDatabaseException_ExistingBifrostError_PassesThroughUnchanged()
     {
         var intentional = new BifrostExecutionError("Tenant context required but not found.");

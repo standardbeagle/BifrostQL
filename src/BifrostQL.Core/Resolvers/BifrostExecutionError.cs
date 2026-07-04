@@ -89,9 +89,13 @@ namespace BifrostQL.Core.Resolvers
 
         /// <summary>
         /// Walks the exception chain for the fingerprints of a unique/duplicate-key
-        /// violation across the supported drivers (SQLite "UNIQUE constraint",
-        /// SQL Server 2627/2601, PostgreSQL SQLSTATE 23505, MySQL 1062). Message-
-        /// based so Core need not reference every driver assembly.
+        /// violation. Keys off the words every supported driver puts in these
+        /// messages — SQLite/SQL Server "UNIQUE constraint", MySQL "Duplicate
+        /// entry", PostgreSQL "duplicate key ... unique constraint" — plus the
+        /// distinctive Postgres SQLSTATE. Short numeric driver codes (1062, 2627,
+        /// …) are deliberately NOT matched: those digits occur in ordinary error
+        /// text (values, ids, offsets), so a substring test on them misclassifies
+        /// unrelated failures as conflicts.
         /// </summary>
         public static bool IsUniqueViolation(Exception? ex)
         {
@@ -100,10 +104,7 @@ namespace BifrostQL.Core.Resolvers
                 var m = current.Message;
                 if (m.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase)
                     || m.Contains("duplicate", StringComparison.OrdinalIgnoreCase)
-                    || m.Contains("23505", StringComparison.Ordinal)     // Postgres unique_violation
-                    || m.Contains("1062", StringComparison.Ordinal)      // MySQL ER_DUP_ENTRY
-                    || m.Contains("2627", StringComparison.Ordinal)      // SQL Server PK/unique
-                    || m.Contains("2601", StringComparison.Ordinal))     // SQL Server unique index
+                    || m.Contains("23505", StringComparison.Ordinal))    // Postgres SQLSTATE unique_violation
                     return true;
             }
             return false;

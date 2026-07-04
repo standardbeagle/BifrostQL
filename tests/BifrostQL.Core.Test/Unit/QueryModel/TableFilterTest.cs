@@ -133,14 +133,15 @@ namespace BifrostQL.Core.QueryModel
         }
 
         [Theory]
-        [InlineData("and", "id")]
-        [InlineData("or", "id")]
-        [InlineData("and", "sessionId")]
-        [InlineData("or", "sessionId")]
-        public void DoubleAndOrNestedFilterSuccess(string joinType, string column2)
+        [InlineData("id")]
+        [InlineData("sessionId")]
+        public void And_RelationshipPlusScalar_ProducesValidSql(string column2)
         {
+            // A relationship filter ANDed with a scalar predicate: the relationship
+            // contributes an INNER JOIN, the scalar a WHERE. This is the supported
+            // combine and must render valid SQL.
             var filter = TableFilter.FromObject(new Dictionary<string, object?> {
-                { joinType,
+                { "and",
                     new List<object?> { new Dictionary<string, object?> {
                         { "sessions",new Dictionary<string, object?> {
                             { "id", new Dictionary<string, object?> {
@@ -160,33 +161,25 @@ namespace BifrostQL.Core.QueryModel
             var parameters = new SqlParameterCollection();
             var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
 
-            // Complex nested joins produce parameterized SQL
             sut.Sql.Should().Contain("INNER JOIN");
             sut.Sql.Should().Contain("[table].[sessionId_db]");
-            // The nested filter value and direct filter should both be parameterized
             sut.Parameters.Count.Should().BeGreaterThanOrEqualTo(1);
         }
 
-        [Theory]
-        [InlineData("and", "id")]
-        [InlineData("or", "id")]
-        [InlineData("and", "sessionId")]
-        [InlineData("or", "sessionId")]
-        public void DoubleAndOrNestedOrFilterSuccess(string joinType, string column2)
+        [Fact]
+        public void And_TwoRelationshipFilters_UseDistinctJoinAliases()
         {
+            // Two relationship sub-filters at one AND level must get distinct join
+            // aliases (j0, j1); a shared "[j]" was a duplicate-alias syntax error.
             var filter = TableFilter.FromObject(new Dictionary<string, object?> {
-                { joinType,
-                    new List<object?> { new Dictionary<string, object?> {
-                        { "or",  new List<object?> { new Dictionary<string, object?> {
-                            { "sessions",new Dictionary<string, object?> {
-                                { "id",  new Dictionary<string, object?> {{ "_eq", "321" }}
-                                } } }
-                            } }
-                        } },
+                { "and",
+                    new List<object?> {
                         new Dictionary<string, object?> {
-                        { column2, new Dictionary<string, object?> {
-                            { "_gt", "321" }
-                        } } },
+                            { "sessions", new Dictionary<string, object?> {
+                                { "id", new Dictionary<string, object?> {{ "_eq", "321" }} } } } },
+                        new Dictionary<string, object?> {
+                            { "sessions", new Dictionary<string, object?> {
+                                { "id", new Dictionary<string, object?> {{ "_eq", "322" }} } } } },
                     } }
             }, "tableName");
             var dbModel = Substitute.For<IDbModel>();
@@ -196,36 +189,26 @@ namespace BifrostQL.Core.QueryModel
             var parameters = new SqlParameterCollection();
             var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
 
-            // Complex nested joins produce parameterized SQL
-            sut.Sql.Should().Contain("INNER JOIN");
-            sut.Sql.Should().Contain("[table].[sessionId_db]");
-            sut.Parameters.Count.Should().BeGreaterThanOrEqualTo(1);
+            sut.Sql.Should().Contain("[j0]");
+            sut.Sql.Should().Contain("[j1]");
+            // A "SELECT * FROM [t] {joins}" wrapper must parse — the duplicate-alias
+            // bug produced two "[j]" and failed the grammar.
+            BifrostQL.Core.Test.TestSupport.SqlSyntax.AssertValid($"SELECT * FROM [table]{sut.Sql}", "two relationship filters use distinct aliases");
         }
 
-        [Theory]
-        [InlineData("and", "id")]
-        [InlineData("or", "id")]
-        [InlineData("and", "sessionId")]
-        [InlineData("or", "sessionId")]
-        public void DoubleAndOrNestedOrDoubleFilterSuccess(string joinType, string column2)
+        [Fact]
+        public void Or_RelationshipWithOtherBranch_ThrowsNotSupported()
         {
+            // OR cannot be expressed by concatenating INNER JOINs; rather than
+            // silently returning AND'd rows, this must fail loudly.
             var filter = TableFilter.FromObject(new Dictionary<string, object?> {
-                { joinType,
-                    new List<object?> { new Dictionary<string, object?> {
-                        { "or",  new List<object?> { new Dictionary<string, object?> {
-                                { "sessions",new Dictionary<string, object?> {
-                                { "id",  new Dictionary<string, object?> {{ "_eq", "321" }}
-                                } } }
-                            }, new Dictionary<string, object?> {
-                                { "sessions",new Dictionary<string, object?> {
-                                { "id",  new Dictionary<string, object?> {{ "_eq", "322" }}
-                                } } }
-                            }, }
-                        } },
+                { "or",
+                    new List<object?> {
                         new Dictionary<string, object?> {
-                        { column2, new Dictionary<string, object?> {
-                            { "_gt", "321" }
-                        } } },
+                            { "sessions", new Dictionary<string, object?> {
+                                { "id", new Dictionary<string, object?> {{ "_eq", "321" }} } } } },
+                        new Dictionary<string, object?> {
+                            { "id", new Dictionary<string, object?> {{ "_gt", "321" }} } },
                     } }
             }, "tableName");
             var dbModel = Substitute.For<IDbModel>();
@@ -233,13 +216,10 @@ namespace BifrostQL.Core.QueryModel
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var parameters = new SqlParameterCollection();
-            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
+            var act = () => filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
 
-            // Complex nested joins produce parameterized SQL
-            sut.Sql.Should().Contain("INNER JOIN");
-            sut.Sql.Should().Contain("[table].[sessionId_db]");
-            // Should have parameters for both "321" and "322" values
-            sut.Parameters.Count.Should().BeGreaterThanOrEqualTo(2);
+            act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
+                .WithMessage("*OR over relationship*");
         }
 
         [Theory]

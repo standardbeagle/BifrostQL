@@ -263,12 +263,20 @@ namespace BifrostQL.Core.QueryModel
             return new ParameterizedSql(sql, parts.Parameters);
         }
 
+        /// <summary>Allocates unique relationship-join aliases (j0, j1, …) across a
+        /// single render pass so two relationship sub-filters at the same combine
+        /// level don't collide on one alias.</summary>
+        private sealed class JoinAliasAllocator { private int _n; public string Next() => $"j{_n++}"; }
+
         internal FilterParts RenderParts(IDbModel model, ISqlDialect dialect, SqlParameterCollection parameters, string? alias)
+            => RenderParts(model, dialect, parameters, alias, new JoinAliasAllocator());
+
+        private FilterParts RenderParts(IDbModel model, ISqlDialect dialect, SqlParameterCollection parameters, string? alias, JoinAliasAllocator aliases)
         {
             if (Next == null)
             {
-                if (And.Count > 0) return CombineParts(And, "AND", model, dialect, parameters, alias);
-                if (Or.Count > 0) return CombineParts(Or, "OR", model, dialect, parameters, alias);
+                if (And.Count > 0) return CombineParts(And, "AND", model, dialect, parameters, alias, aliases);
+                if (Or.Count > 0) return CombineParts(Or, "OR", model, dialect, parameters, alias, aliases);
                 throw new BifrostExecutionError("Filter object missing all required fields.");
             }
 
@@ -289,17 +297,30 @@ namespace BifrostQL.Core.QueryModel
 
             // Relationship filter: the nested-column predicate lives inside the
             // joined sub-query, so this contributes an INNER JOIN fragment (for
-            // the FROM clause) and no WHERE predicate of its own.
+            // the FROM clause) and no WHERE predicate of its own. Each join gets a
+            // unique alias so sibling relationship filters at one AND level don't
+            // both emit `[j]` (a duplicate-alias syntax error).
             var link = table.SingleLinks[ColumnName];
             var (joinSql, joinParams) = BuildSqlParameterized(Next, link, dialect, parameters, includeValue: false);
-            var ej = dialect.EscapeIdentifier("j");
+            var ej = dialect.EscapeIdentifier(aliases.Next());
             var fullJoin = $" INNER JOIN ({joinSql}) {ej} ON {ej}.{dialect.EscapeIdentifier("joinid")} = {dialect.EscapeIdentifier(alias ?? table.DbName)}.{dialect.EscapeIdentifier(link.ChildId.ColumnName)}";
             return new FilterParts(fullJoin, "", joinParams.ToList());
         }
 
-        private FilterParts CombineParts(List<TableFilter> children, string op, IDbModel model, ISqlDialect dialect, SqlParameterCollection parameters, string? alias)
+        private FilterParts CombineParts(List<TableFilter> children, string op, IDbModel model, ISqlDialect dialect, SqlParameterCollection parameters, string? alias, JoinAliasAllocator aliases)
         {
-            var rendered = children.Select(f => f.RenderParts(model, dialect, parameters, alias)).ToList();
+            var rendered = children.Select(f => f.RenderParts(model, dialect, parameters, alias, aliases)).ToList();
+
+            // A relationship sub-filter contributes an INNER JOIN, which narrows
+            // (AND semantics). ORing it with other branches can't be expressed by
+            // concatenating joins — doing so silently drops the OR and returns
+            // AND'd rows. Reject it rather than return wrong data; OR over
+            // relationship filters needs EXISTS/subquery support that does not
+            // exist yet.
+            if (op == "OR" && rendered.Count > 1 && rendered.Any(r => !string.IsNullOrWhiteSpace(r.Joins)))
+                throw new BifrostExecutionError(
+                    "OR over relationship (nested-table) filters is not supported.");
+
             var joins = string.Concat(rendered.Select(r => r.Joins));
             var wheres = rendered.Where(r => !string.IsNullOrWhiteSpace(r.Where)).Select(r => r.Where).ToArray();
             var where = wheres.Length switch

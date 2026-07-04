@@ -1,0 +1,75 @@
+name: E2E (Desktop UI)
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  playwright:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.1
+      - name: Setup Node
+        # Pinned to 22, NOT 24 like the main .NET workflow: Playwright 1.61.0
+        # (latest stable at time of writing) throws
+        # `TypeError: context.conditions?.includes is not a function` under
+        # Node 24 — Node 24's ESM loader passes `conditions` as a Set, but
+        # playwright/lib/transform/esmLoader.js still calls `.includes()` on
+        # it (Array-only API). Only fixed in unreleased 1.62.0 alphas as of
+        # this writing. Node 22 satisfies the workspace's node:sqlite floor
+        # (see AGENTS.md) and does not hit this loader bug. Revisit once
+        # @playwright/test ships a stable release with the fix.
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+      - name: Build SPA workspace dependencies
+        # The desktop SPA imports built workspace packages (@standardbeagle/edit-db,
+        # @bifrostql/binary-client and their deps). Build them in topological order
+        # first so their dist/types exist when the SPA's tsc runs.
+        run: pnpm --filter "...@standardbeagle/edit-db" --filter "...@bifrostql/binary-client" build
+      - name: Build desktop UI SPA
+        # wwwroot is Vite output and gitignored; the UI host serves index.html
+        # from it, and global-setup.ts's `dotnet build` copies wwwroot/** into
+        # the Debug output during the server build below.
+        run: pnpm --dir src/BifrostQL.UI/frontend build
+      - name: Install Playwright browsers
+        run: pnpm --dir tests/BifrostQL.UI.E2E exec playwright install --with-deps chromium
+      - name: Setup .NET 10.0
+        # global-setup.ts builds and runs src/BifrostQL.UI (net10.0-only) headless.
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'global.json') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+      - name: Run Playwright E2E suite
+        # Self-contained: global-setup.ts builds+starts BifrostQL.UI in
+        # --headless mode with no connection string. Specs drive the bundled
+        # "Try it now" quickstart schemas, which seed an in-memory SQLite DB
+        # from embedded SQL resources — no external DB or GUI required.
+        run: pnpm --dir tests/BifrostQL.UI.E2E test
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: tests/BifrostQL.UI.E2E/playwright-report
+          retention-days: 14

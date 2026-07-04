@@ -49,7 +49,11 @@ export function parseSort(raw: string): SortOption[] {
     .split(',')
     .map((part) => {
       const [field, direction] = part.split(':');
-      if (!field || !isGraphqlName(field) || (direction !== 'asc' && direction !== 'desc'))
+      if (
+        !field ||
+        !isGraphqlName(field) ||
+        (direction !== 'asc' && direction !== 'desc')
+      )
         return null;
       return { field, direction };
     })

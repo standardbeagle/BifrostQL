@@ -28,52 +28,52 @@ function createMockWebSocket() {
     url: string,
     protocol: string,
   ) {
-      const handler: WsHandler = {
-        onopen: null,
-        onmessage: null,
-        onerror: null,
-        onclose: null,
-      };
+    const handler: WsHandler = {
+      onopen: null,
+      onmessage: null,
+      onerror: null,
+      onclose: null,
+    };
 
-      const instance = {
-        url,
-        protocol,
-        handler,
-        sent: [] as string[],
-        readyState: 1,
-        close: vi.fn(),
-        send: vi.fn((data: string) => {
-          instance.sent.push(data);
-        }),
-        set onopen(fn: (() => void) | null) {
-          handler.onopen = fn;
-        },
-        get onopen() {
-          return handler.onopen;
-        },
-        set onmessage(fn: ((event: { data: string }) => void) | null) {
-          handler.onmessage = fn;
-        },
-        get onmessage() {
-          return handler.onmessage;
-        },
-        set onerror(fn: (() => void) | null) {
-          handler.onerror = fn;
-        },
-        get onerror() {
-          return handler.onerror;
-        },
-        set onclose(fn: (() => void) | null) {
-          handler.onclose = fn;
-        },
-        get onclose() {
-          return handler.onclose;
-        },
-      };
+    const instance = {
+      url,
+      protocol,
+      handler,
+      sent: [] as string[],
+      readyState: 1,
+      close: vi.fn(),
+      send: vi.fn((data: string) => {
+        instance.sent.push(data);
+      }),
+      set onopen(fn: (() => void) | null) {
+        handler.onopen = fn;
+      },
+      get onopen() {
+        return handler.onopen;
+      },
+      set onmessage(fn: ((event: { data: string }) => void) | null) {
+        handler.onmessage = fn;
+      },
+      get onmessage() {
+        return handler.onmessage;
+      },
+      set onerror(fn: (() => void) | null) {
+        handler.onerror = fn;
+      },
+      get onerror() {
+        return handler.onerror;
+      },
+      set onclose(fn: (() => void) | null) {
+        handler.onclose = fn;
+      },
+      get onclose() {
+        return handler.onclose;
+      },
+    };
 
-      instances.push(instance);
-      return instance;
-    });
+    instances.push(instance);
+    return instance;
+  });
 
   (MockWebSocket as unknown as Record<string, number>).OPEN = 1;
   (MockWebSocket as unknown as Record<string, number>).CLOSED = 3;

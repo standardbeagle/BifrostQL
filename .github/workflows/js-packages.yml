@@ -1,0 +1,60 @@
+name: JS Packages
+
+# Runs the vitest suites for every shipped JS package — @standardbeagle/edit-db
+# (published to npm), the UI frontend, the binary client, app-shell, codegen, and
+# types. Previously only @bifrostql/react was tested in CI (see react-package.yml);
+# these suites existed but nothing ran them. The Playwright E2E suite is excluded
+# here — it has its own workflow (e2e.yml).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/**'
+      - 'examples/edit-db/**'
+      - 'src/BifrostQL.UI/frontend/**'
+      - 'samples/HostedSpa/spa/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/js-packages.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/**'
+      - 'examples/edit-db/**'
+      - 'src/BifrostQL.UI/frontend/**'
+      - 'samples/HostedSpa/spa/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/js-packages.yml'
+
+# Opt JavaScript-based actions into Node.js 24 ahead of the 2026-09-16
+# Node.js 20 sunset.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  test:
+    name: Test shipped JS packages
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm -r --if-present --sort build
+
+      - name: Test shipped JS packages
+        run: pnpm test:js

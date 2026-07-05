@@ -290,6 +290,9 @@ FakesAssemblies/
 .ntvs_analysis.dat
 node_modules/
 
+# Vite dependency pre-bundle / cache (never commit)
+.vite/
+
 # Visual Studio 6 build log
 *.plg
 

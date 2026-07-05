@@ -141,12 +141,12 @@ public class StorageBucketConfigTests
     }
 
     [Fact]
-    public void FromMetadata_WithInvalidMaxSize_IgnoresValue()
+    public void FromMetadata_WithInvalidMaxSize_Throws()
     {
-        var config = StorageBucketConfig.FromMetadata("bucket:my-bucket;maxSize:invalid");
+        // A typo'd size must fail rather than silently keep the default limit.
+        var act = () => StorageBucketConfig.FromMetadata("bucket:my-bucket;maxSize:invalid");
 
-        Assert.NotNull(config);
-        Assert.Equal(10 * 1024 * 1024, config.MaxFileSize);
+        Assert.Throws<InvalidOperationException>(act);
     }
 
     #endregion

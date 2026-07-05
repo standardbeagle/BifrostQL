@@ -86,16 +86,12 @@ namespace BifrostQL.Core.Resolvers
         }
 
         private int GetConfiguredTimeout()
-        {
-            var value = _model.GetMetadataValue(TimeoutMetadataKey);
-            return int.TryParse(value, out var timeout) && timeout > 0 ? timeout : DefaultTimeoutSeconds;
-        }
+            => Utils.MetadataNumber.PositiveInt(
+                _model.GetMetadataValue(TimeoutMetadataKey), DefaultTimeoutSeconds, TimeoutMetadataKey);
 
         private int GetConfiguredMaxRows()
-        {
-            var value = _model.GetMetadataValue(MaxRowsMetadataKey);
-            return int.TryParse(value, out var maxRows) && maxRows > 0 ? maxRows : DefaultMaxRows;
-        }
+            => Utils.MetadataNumber.PositiveInt(
+                _model.GetMetadataValue(MaxRowsMetadataKey), DefaultMaxRows, MaxRowsMetadataKey);
 
         private static async Task<List<Dictionary<string, object?>>> ExecuteQueryAsync(
             IDbConnFactory connFactory, string sql, Dictionary<string, object?>? parameters, int timeoutSeconds, int maxRows)

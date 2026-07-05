@@ -69,8 +69,10 @@ namespace BifrostQL.Core.Storage
                         break;
                     case "maxsize":
                     case "maxfilesize":
-                        if (long.TryParse(value, out var maxSize))
-                            config.MaxFileSize = maxSize;
+                        // Present value must parse; a typo'd size must fail rather
+                        // than silently leaving the limit at its default.
+                        if (!string.IsNullOrWhiteSpace(value))
+                            config.MaxFileSize = Utils.MetadataNumber.PositiveLong(value, 0, key);
                         break;
                     case "accept":
                     case "acceptmimetypes":

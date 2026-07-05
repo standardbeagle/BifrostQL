@@ -47,18 +47,24 @@ public sealed record ValidationRules
 
     public static ValidationRules ForColumn(ColumnDto column)
     {
-        var metadataMaxLength = TryInt(column.GetMetadataValue(MetadataKeys.Validation.MaxLength));
+        var metadataMaxLength = Utils.MetadataNumber.PositiveIntOrNull(
+            column.GetMetadataValue(MetadataKeys.Validation.MaxLength), MetadataKeys.Validation.MaxLength);
         return new ValidationRules
         {
             Min = Clean(column.GetMetadataValue(MetadataKeys.Validation.Min)),
             Max = Clean(column.GetMetadataValue(MetadataKeys.Validation.Max)),
             Step = Clean(column.GetMetadataValue(MetadataKeys.Validation.Step)),
-            MinLength = TryInt(column.GetMetadataValue(MetadataKeys.Validation.MinLength)),
+            MinLength = Utils.MetadataNumber.PositiveIntOrNull(
+                column.GetMetadataValue(MetadataKeys.Validation.MinLength), MetadataKeys.Validation.MinLength),
             MaxLength = metadataMaxLength ?? ExtractDbMaxLength(column.DataType),
             Pattern = Clean(column.GetMetadataValue(MetadataKeys.Validation.Pattern)),
             PatternMessage = Clean(column.GetMetadataValue(MetadataKeys.Validation.PatternMessage)),
             InputType = Clean(column.GetMetadataValue(MetadataKeys.Validation.InputType)),
-            RequiredExplicit = IsTrue(column.GetMetadataValue(MetadataKeys.Validation.Required)),
+            // Recognize the shared on/off switch vocabulary (true/on/yes/1/enabled…)
+            // rather than only the literal "true"/"enabled", so a plausibly-truthy
+            // `required` value is not silently treated as not-required.
+            RequiredExplicit = Utils.MetadataSwitch.Parse(
+                column.GetMetadataValue(MetadataKeys.Validation.Required), defaultValue: false),
             RequiredImplied = !column.IsNullable
                 && !column.IsIdentity
                 && !column.IsComputed
@@ -111,9 +117,6 @@ public sealed record ValidationRules
 
     private static string? Clean(string? raw) => string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
 
-    private static int? TryInt(string? raw) =>
-        int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) ? value : null;
-
     private static bool TryDecimalStr(string? raw, out decimal value)
     {
         value = 0;
@@ -125,8 +128,4 @@ public sealed record ValidationRules
         value = default;
         return raw != null && DateTime.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out value);
     }
-
-    private static bool IsTrue(string? value) =>
-        string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(value, "enabled", StringComparison.OrdinalIgnoreCase);
 }

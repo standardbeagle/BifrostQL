@@ -139,12 +139,8 @@ namespace BifrostQL.Core.Resolvers
         }
 
         private static int GetMaxBatchSize(IDbTable table)
-        {
-            var metaValue = table.GetMetadataValue(MetadataKeys.Batch.MaxSize);
-            if (metaValue != null && int.TryParse(metaValue, out var size) && size > 0)
-                return size;
-            return DefaultMaxBatchSize;
-        }
+            => Utils.MetadataNumber.PositiveInt(
+                table.GetMetadataValue(MetadataKeys.Batch.MaxSize), DefaultMaxBatchSize, MetadataKeys.Batch.MaxSize);
 
         private static async Task<BatchActionOutcome?> ExecuteAction(
             Dictionary<string, object?> action,

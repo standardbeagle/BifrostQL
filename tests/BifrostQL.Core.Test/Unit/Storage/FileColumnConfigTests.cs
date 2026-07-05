@@ -93,12 +93,12 @@ public class FileColumnConfigTests
     }
 
     [Fact]
-    public void FromMetadata_WithInvalidMaxSize_IgnoresValue()
+    public void FromMetadata_WithInvalidMaxSize_Throws()
     {
-        var config = FileColumnConfig.FromMetadata("maxSize:invalid");
+        // A typo'd size must fail rather than silently leaving the limit unset.
+        var act = () => FileColumnConfig.FromMetadata("maxSize:invalid");
 
-        Assert.NotNull(config);
-        Assert.Null(config.MaxFileSize);
+        Assert.Throws<InvalidOperationException>(act);
     }
 
     #endregion

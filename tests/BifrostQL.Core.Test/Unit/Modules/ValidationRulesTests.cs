@@ -204,6 +204,44 @@ public sealed class ValidationRulesTests
         BifrostFormBuilder.MergeWithSchemaRules(column, configured).Should().BeSameAs(configured);
     }
 
+    [Theory]
+    [InlineData("yes")]
+    [InlineData("on")]
+    [InlineData("1")]
+    [InlineData("enabled")]
+    public void ForColumn_Required_RecognizesSwitchVocabulary(string token)
+    {
+        // Previously only literal "true"/"enabled" enforced; a plausibly-truthy
+        // value silently meant not-required. Now the shared on/off vocabulary applies.
+        var column = Column("Price", "decimal(10,2)", t => t
+            .WithColumnMetadata("Price", MetadataKeys.Validation.Required, token));
+
+        ValidationRules.ForColumn(column).RequiredExplicit.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ForColumn_InvalidMaxLength_Throws()
+    {
+        // A typo'd length must fail rather than silently dropping the constraint.
+        var column = Column("Name", "varchar(50)", t => t
+            .WithColumnMetadata("Name", MetadataKeys.Validation.MaxLength, "abc"));
+
+        var act = () => ValidationRules.ForColumn(column);
+
+        act.Should().Throw<InvalidOperationException>().WithMessage("*positive integer*");
+    }
+
+    [Fact]
+    public void ForColumn_InvalidMinLength_Throws()
+    {
+        var column = Column("Name", "varchar(50)", t => t
+            .WithColumnMetadata("Name", MetadataKeys.Validation.MinLength, "-3"));
+
+        var act = () => ValidationRules.ForColumn(column);
+
+        act.Should().Throw<InvalidOperationException>();
+    }
+
     #endregion
 
     #region Helpers

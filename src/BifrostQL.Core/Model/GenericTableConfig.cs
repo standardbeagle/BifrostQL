@@ -47,8 +47,8 @@ namespace BifrostQL.Core.Model
 
             var role = model.GetMetadataValue(RoleMetadataKey) ?? DefaultRequiredRole;
 
-            var maxRowsStr = model.GetMetadataValue(MaxRowsMetadataKey);
-            var maxRows = int.TryParse(maxRowsStr, out var m) && m > 0 ? m : DefaultMaxRows;
+            var maxRows = Utils.MetadataNumber.PositiveInt(
+                model.GetMetadataValue(MaxRowsMetadataKey), DefaultMaxRows, MaxRowsMetadataKey);
 
             var allowedStr = model.GetMetadataValue(AllowedTablesMetadataKey);
             var allowed = string.IsNullOrWhiteSpace(allowedStr)

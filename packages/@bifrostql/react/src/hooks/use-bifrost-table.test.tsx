@@ -1730,6 +1730,112 @@ describe('useBifrostTable', () => {
     });
   });
 
+  describe('column management - capability gates', () => {
+    it('hideable: false makes visibility mutators no-ops', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            columnManagement: { hideable: false },
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.hideColumn('email');
+        result.current.columnManagement.toggleColumn('name');
+      });
+      expect(result.current.columnManagement.visibleColumns).toEqual([
+        'id',
+        'name',
+        'email',
+      ]);
+    });
+
+    it('reorderable: false makes reorderColumn a no-op', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            columnManagement: { reorderable: false },
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.reorderColumn(0, 2);
+      });
+      expect(result.current.columnManagement.columnOrder).toEqual([
+        'id',
+        'name',
+        'email',
+      ]);
+    });
+
+    it('resizable: false makes resizeColumn a no-op', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            columnManagement: { resizable: false },
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      const before = result.current.columnManagement.columnWidths.name;
+      act(() => {
+        result.current.columnManagement.resizeColumn('name', 999);
+      });
+      expect(result.current.columnManagement.columnWidths.name).toBe(before);
+    });
+
+    it('freezable: false makes pinColumn a no-op', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            query: 'users',
+            columns: defaultColumns,
+            columnManagement: { freezable: false },
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.pinColumn('id', 'left');
+      });
+      expect(result.current.columnManagement.pinnedColumns).toEqual({});
+    });
+
+    it('omitted config leaves every operation enabled', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const { result } = renderHook(
+        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      act(() => {
+        result.current.columnManagement.hideColumn('email');
+        result.current.columnManagement.pinColumn('id', 'left');
+      });
+      expect(result.current.columnManagement.visibleColumns).not.toContain(
+        'email',
+      );
+      expect(result.current.columnManagement.pinnedColumns.id).toBe('left');
+    });
+  });
+
   describe('column management - show/hide helpers', () => {
     it('showColumn makes a hidden column visible', async () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });

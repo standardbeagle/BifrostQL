@@ -9,6 +9,7 @@ import {
 } from '../../utils/table-storage';
 import type {
   ColumnConfig,
+  ColumnManagementConfig,
   ColumnManagementState,
   ColumnPreset,
   LocalStorageConfig,
@@ -19,6 +20,12 @@ export interface UseTableColumnManagementOptions {
   columns: ColumnConfig[];
   data: Record<string, unknown>[];
   localStorageConfig: LocalStorageConfig | undefined;
+  /**
+   * Capability gates. An omitted config (or omitted flag) leaves every
+   * operation enabled — disabling a flag turns the matching mutator into a
+   * no-op so a host can present read-only column controls.
+   */
+  config: ColumnManagementConfig | undefined;
 }
 
 export interface UseTableColumnManagementResult {
@@ -34,7 +41,12 @@ export function useTableColumnManagement({
   columns,
   data,
   localStorageConfig,
+  config,
 }: UseTableColumnManagementOptions): UseTableColumnManagementResult {
+  const hideable = config?.hideable ?? true;
+  const reorderable = config?.reorderable ?? true;
+  const resizable = config?.resizable ?? true;
+  const freezable = config?.freezable ?? true;
   const defaultColumnFields = useMemo(
     () => columns.map((c) => c.field),
     [columns],
@@ -68,80 +80,113 @@ export function useTableColumnManagement({
   const [columnPresets, setColumnPresets] =
     useState<ColumnPreset[]>(initialColumnPresets);
 
-  const toggleColumn = useCallback((field: string) => {
-    setVisibleColumns((prev) =>
-      prev.includes(field) ? prev.filter((f) => f !== field) : [...prev, field],
-    );
-  }, []);
+  const toggleColumn = useCallback(
+    (field: string) => {
+      if (!hideable) return;
+      setVisibleColumns((prev) =>
+        prev.includes(field)
+          ? prev.filter((f) => f !== field)
+          : [...prev, field],
+      );
+    },
+    [hideable],
+  );
 
-  const showColumn = useCallback((field: string) => {
-    setVisibleColumns((prev) =>
-      prev.includes(field) ? prev : [...prev, field],
-    );
-  }, []);
+  const showColumn = useCallback(
+    (field: string) => {
+      if (!hideable) return;
+      setVisibleColumns((prev) =>
+        prev.includes(field) ? prev : [...prev, field],
+      );
+    },
+    [hideable],
+  );
 
-  const hideColumn = useCallback((field: string) => {
-    setVisibleColumns((prev) => prev.filter((f) => f !== field));
-  }, []);
+  const hideColumn = useCallback(
+    (field: string) => {
+      if (!hideable) return;
+      setVisibleColumns((prev) => prev.filter((f) => f !== field));
+    },
+    [hideable],
+  );
 
   const showAllColumns = useCallback(() => {
+    if (!hideable) return;
     setVisibleColumns([...defaultColumnFields]);
-  }, [defaultColumnFields]);
+  }, [hideable, defaultColumnFields]);
 
-  const reorderColumn = useCallback((from: number, to: number) => {
-    setColumnOrder((prev) => {
-      if (from < 0 || from >= prev.length || to < 0 || to >= prev.length) {
-        return prev;
-      }
-      const next = [...prev];
-      const [moved] = next.splice(from, 1);
-      next.splice(to, 0, moved);
-      return next;
-    });
-  }, []);
+  const reorderColumn = useCallback(
+    (from: number, to: number) => {
+      if (!reorderable) return;
+      setColumnOrder((prev) => {
+        if (from < 0 || from >= prev.length || to < 0 || to >= prev.length) {
+          return prev;
+        }
+        const next = [...prev];
+        const [moved] = next.splice(from, 1);
+        next.splice(to, 0, moved);
+        return next;
+      });
+    },
+    [reorderable],
+  );
 
-  const resizeColumn = useCallback((field: string, width: number) => {
-    const clamped = Math.max(30, width);
-    setColumnWidths((prev) => ({ ...prev, [field]: clamped }));
-  }, []);
+  const resizeColumn = useCallback(
+    (field: string, width: number) => {
+      if (!resizable) return;
+      const clamped = Math.max(30, width);
+      setColumnWidths((prev) => ({ ...prev, [field]: clamped }));
+    },
+    [resizable],
+  );
 
   const autoFitColumn = useCallback(
     (field: string) => {
+      if (!resizable) return;
       const col = columns.find((c) => c.field === field);
       if (!col) return;
       const width = estimateColumnWidth(field, col.header, data);
       setColumnWidths((prev) => ({ ...prev, [field]: width }));
     },
-    [columns, data],
+    [resizable, columns, data],
   );
 
   const autoFitAllColumns = useCallback(() => {
+    if (!resizable) return;
     const widths: Record<string, number> = {};
     for (const col of columns) {
       widths[col.field] = estimateColumnWidth(col.field, col.header, data);
     }
     setColumnWidths(widths);
-  }, [columns, data]);
+  }, [resizable, columns, data]);
 
-  const pinColumn = useCallback((field: string, position: PinPosition) => {
-    setPinnedColumns((prev) => {
-      if (position === null) {
+  const pinColumn = useCallback(
+    (field: string, position: PinPosition) => {
+      if (!freezable) return;
+      setPinnedColumns((prev) => {
+        if (position === null) {
+          const next = { ...prev };
+          delete next[field];
+          return next;
+        }
+        return { ...prev, [field]: position };
+      });
+    },
+    [freezable],
+  );
+
+  const unpinColumn = useCallback(
+    (field: string) => {
+      if (!freezable) return;
+      setPinnedColumns((prev) => {
+        if (!(field in prev)) return prev;
         const next = { ...prev };
         delete next[field];
         return next;
-      }
-      return { ...prev, [field]: position };
-    });
-  }, []);
-
-  const unpinColumn = useCallback((field: string) => {
-    setPinnedColumns((prev) => {
-      if (!(field in prev)) return prev;
-      const next = { ...prev };
-      delete next[field];
-      return next;
-    });
-  }, []);
+      });
+    },
+    [freezable],
+  );
 
   const saveColumnPreset = useCallback(
     (name: string) => {

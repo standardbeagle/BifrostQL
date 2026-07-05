@@ -82,7 +82,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
     autoSave = false,
     onRowUpdate,
     onBatchSave,
-    columnManagement: _columnManagementConfig,
+    columnManagement: columnManagementConfig,
     export: exportConfig,
     tableLabel,
     responsiveColumns,
@@ -166,6 +166,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
       columns,
       data: dataAsRecords,
       localStorageConfig,
+      config: columnManagementConfig,
     });
 
   const exportState = useTableExport({

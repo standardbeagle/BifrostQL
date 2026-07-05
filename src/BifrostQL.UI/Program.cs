@@ -40,12 +40,20 @@ var vaultPathOption = new Option<string?>("--vault", "-V")
     Description = "Path to encrypted vault file (default: ~/.config/bifrost/vault.json.enc)"
 };
 
+var exposeOption = new Option<bool>("--expose")
+{
+    Description = "Bind 0.0.0.0 to expose the server to the LAN. Off by default: " +
+                  "the server binds 127.0.0.1 only. Authentication is disabled, so " +
+                  "only enable this on a trusted network."
+};
+
 var rootCommand = new RootCommand("BifrostQL UI - Desktop database explorer")
 {
     connectionStringArg,
     portOption,
     headlessOption,
-    vaultPathOption
+    vaultPathOption,
+    exposeOption
 };
 
 // Vault CLI subcommands (vault add/list/remove/export)
@@ -62,6 +70,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     var connectionString = parseResult.GetValue(connectionStringArg);
     var port = parseResult.GetValue(portOption);
     var headless = parseResult.GetValue(headlessOption);
+    var expose = parseResult.GetValue(exposeOption);
     state.VaultPath = parseResult.GetValue(vaultPathOption);
 
     state.ConnectionString = connectionString;
@@ -69,14 +78,17 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         state.Provider = DbConnFactoryResolver.DetectProvider(connectionString);
 
     var localUrl = $"http://localhost:{port}";
-    var serverUrl = $"http://0.0.0.0:{port}";
+    var serverUrl = expose ? $"http://0.0.0.0:{port}" : localUrl;
 
-    var app = BifrostUiWebHost.Build(connectionString, port, state, sshTunnel);
+    var app = BifrostUiWebHost.Build(connectionString, port, state, sshTunnel, expose);
 
     // Start the server in the background
     var serverTask = app.RunAsync(cancellationToken);
 
     Console.WriteLine($"BifrostQL server started at {serverUrl}");
+    if (expose)
+        Console.WriteLine("WARNING: --expose binds 0.0.0.0 with authentication disabled. " +
+                          "The GraphQL, connection, SSH, and vault APIs are reachable by any host on the LAN.");
     if (!string.IsNullOrEmpty(connectionString))
     {
         Console.WriteLine($"GraphQL endpoint: {localUrl}/graphql");

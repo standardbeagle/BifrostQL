@@ -15,9 +15,18 @@ namespace BifrostQL.UI.Web
     /// </summary>
     public static class BifrostUiWebHost
     {
-        public static WebApplication Build(string? connectionString, int port, ConnectionState state, SshTunnelManager sshTunnel)
+        /// <param name="expose">
+        /// When <c>false</c> (default) the host binds <c>127.0.0.1</c> only — the
+        /// desktop window and local processes can reach it, but the LAN cannot.
+        /// This tool ships DB credentials, an SSH config, and a secrets vault with
+        /// authentication disabled, so external exposure must be an explicit opt-in.
+        /// When <c>true</c> the host binds <c>0.0.0.0</c> and the developer
+        /// exception page and any-origin CORS are suppressed.
+        /// </param>
+        public static WebApplication Build(string? connectionString, int port, ConnectionState state, SshTunnelManager sshTunnel, bool expose = false)
         {
-            var serverUrl = $"http://0.0.0.0:{port}";
+            var bindHost = expose ? "0.0.0.0" : "127.0.0.1";
+            var serverUrl = $"http://{bindHost}:{port}";
 
             // Set content root to the binary's directory so wwwroot is found
             // regardless of the current working directory.
@@ -64,11 +73,25 @@ namespace BifrostQL.UI.Web
 
             var app = builder.Build();
 
-            app.UseDeveloperExceptionPage();
-            app.UseCors(x => x
-                .AllowAnyMethod()
-                .AllowAnyHeader()
-                .AllowAnyOrigin());
+            // The developer exception page leaks stack traces and config; only
+            // enable it when bound to loopback. Any-origin CORS is likewise only
+            // acceptable when the LAN cannot reach the host. When exposed, restrict
+            // CORS to same-origin (the SPA is served from this host anyway).
+            if (expose)
+            {
+                app.UseCors(x => x
+                    .AllowAnyMethod()
+                    .AllowAnyHeader()
+                    .SetIsOriginAllowed(_ => false));
+            }
+            else
+            {
+                app.UseDeveloperExceptionPage();
+                app.UseCors(x => x
+                    .AllowAnyMethod()
+                    .AllowAnyHeader()
+                    .AllowAnyOrigin());
+            }
 
             app.MapMetadataEndpoints(state);
             app.MapConnectionEndpoints(state);

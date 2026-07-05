@@ -2,6 +2,7 @@ using System.Security.Claims;
 using BifrostQL.Server.Auth;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Server
@@ -21,8 +22,8 @@ namespace BifrostQL.Server
                 }
                 else
                 {
-                    await NormalizeOidcPrincipalAsync(context);
-                    await next.Invoke(context);
+                    if (await NormalizeOidcPrincipalAsync(context))
+                        await next.Invoke(context);
                 }
             });
             return app;
@@ -37,20 +38,38 @@ namespace BifrostQL.Server
         /// path. A principal already in the local-auth shape (no issuer claim, or no
         /// mapper registered for its issuer) is left untouched.
         /// </summary>
-        private static async Task NormalizeOidcPrincipalAsync(HttpContext context)
+        /// <returns>
+        /// <c>true</c> when the request may proceed; <c>false</c> when it was rejected
+        /// (the response status has been set and the caller must not continue).
+        /// </returns>
+        private static async Task<bool> NormalizeOidcPrincipalAsync(HttpContext context)
         {
             var registry = context.RequestServices.GetService<OidcClaimMapperRegistry>();
             if (registry == null)
-                return;
+                return true;
 
             var principal = context.User;
             var mapper = registry.ResolveFor(principal);
             if (mapper == null)
-                return;
+            {
+                // No mapper resolved. A principal with no issuer claim is a local-auth
+                // login and is read through the local claim path — fine. But a principal
+                // that carries an `iss` from a provider this deployment has NOT mapped
+                // must be rejected: falling through would read it through the local claim
+                // shape, silently dropping its tenant/role claims and running security
+                // checks against a stripped identity. Fail closed instead.
+                var issuer = principal.FindFirstValue("iss");
+                if (!string.IsNullOrWhiteSpace(issuer))
+                {
+                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    return false;
+                }
+                return true;
+            }
 
             // Already normalized on a previous request in this cookie session.
             if (principal.FindFirstValue(LocalAuthClaims.Provider) == mapper.Provider)
-                return;
+                return true;
 
             var identity = mapper.Map(principal);
             var normalized = LocalAuthEndpoint.BuildPrincipal(identity);
@@ -58,6 +77,7 @@ namespace BifrostQL.Server
             await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, normalized)
                 .ConfigureAwait(false);
             context.User = normalized;
+            return true;
         }
     }
 }

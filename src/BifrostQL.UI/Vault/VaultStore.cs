@@ -1,4 +1,7 @@
+using System.Runtime.Versioning;
+using System.Security.AccessControl;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -168,7 +171,9 @@ public static class VaultStore
     }
 
     /// <summary>
-    /// Set file to owner-only read/write (chmod 600) on Unix systems.
+    /// Restrict the file to the current user: chmod 600 on Unix, an owner-only ACL on
+    /// Windows. Leaving the Windows branch unimplemented left the AES master key readable
+    /// by any account with default-inherited ACLs, voiding the vault encryption there.
     /// </summary>
     private static void SetFilePermissions(string path)
     {
@@ -177,5 +182,32 @@ public static class VaultStore
             File.SetUnixFileMode(path,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite);
         }
+        else if (OperatingSystem.IsWindows())
+        {
+            RestrictToCurrentUserWindows(path);
+        }
+    }
+
+    /// <summary>
+    /// Replaces the file's ACL with a single owner-only Full Control rule and disables
+    /// inheritance, so the master key is not exposed through inherited directory ACLs.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private static void RestrictToCurrentUserWindows(string path)
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        var owner = identity.User
+            ?? throw new InvalidOperationException("Cannot determine current Windows user to secure the vault key.");
+
+        var security = new FileSecurity();
+        // Protect the ACL (drop inherited rules) and grant only the current user.
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.SetOwner(owner);
+        security.AddAccessRule(new FileSystemAccessRule(
+            owner,
+            FileSystemRights.FullControl,
+            AccessControlType.Allow));
+
+        new FileInfo(path).SetAccessControl(security);
     }
 }

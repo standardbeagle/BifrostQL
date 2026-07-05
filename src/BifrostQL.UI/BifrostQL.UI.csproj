@@ -13,6 +13,8 @@
   <ItemGroup>
     <PackageReference Include="Photino.NET" Version="4.0.16" />
     <PackageReference Include="System.CommandLine" Version="2.0.2" />
+    <!-- Windows ACL APIs (FileSecurity/FileSystemAccessRule) to lock down the vault master key. -->
+    <PackageReference Include="System.IO.FileSystem.AccessControl" Version="5.0.0" />
   </ItemGroup>
 
   <ItemGroup>

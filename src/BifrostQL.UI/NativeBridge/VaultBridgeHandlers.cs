@@ -115,10 +115,21 @@ namespace BifrostQL.UI.NativeBridge
                 payload.TryGetProperty(key, out var p) && p.ValueKind == JsonValueKind.Number && p.TryGetInt32(out var i)
                     ? i
                     : null;
-            bool? ReadBool(string key) =>
-                payload.TryGetProperty(key, out var p) && (p.ValueKind == JsonValueKind.True || p.ValueKind == JsonValueKind.False)
-                    ? p.GetBoolean()
-                    : null;
+            bool? ReadBool(string key)
+            {
+                if (!payload.TryGetProperty(key, out var p) || p.ValueKind == JsonValueKind.Null)
+                    return null;
+                // A present-but-non-boolean value (e.g. the string "true") must fail,
+                // not be treated as absent: for `ssl`, silently reading it as null
+                // downgrades the persisted SSL mode to an opportunistic/plaintext-
+                // fallback setting the user did not intend.
+                return p.ValueKind switch
+                {
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    _ => throw new ArgumentException($"'{key}' must be a boolean, got {p.ValueKind}."),
+                };
+            }
             List<string> ReadStringArray(string key)
             {
                 if (!payload.TryGetProperty(key, out var p) || p.ValueKind != JsonValueKind.Array)

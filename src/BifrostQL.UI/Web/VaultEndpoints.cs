@@ -37,9 +37,14 @@ namespace BifrostQL.UI.Web
                     });
                     return Results.Ok(result);
                 }
-                catch
+                catch (Exception ex)
                 {
-                    return Results.Ok(Array.Empty<object>());
+                    // Do not mask a corrupt/tampered vault as an empty list — the UI
+                    // must be able to tell "no servers configured" from "vault broken".
+                    return Results.Problem(
+                        title: "Vault could not be read",
+                        detail: ex.Message,
+                        statusCode: StatusCodes.Status500InternalServerError);
                 }
             });
 

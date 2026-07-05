@@ -25,17 +25,15 @@ public static class VaultServerProvider
     {
         var servers = new List<(VaultServer Server, string Source)>();
 
-        // Load from vault file (lowest priority)
+        // Load from vault file (lowest priority). VaultStore.Load already returns an
+        // empty vault when the file is simply absent, so any exception here is a real
+        // integrity failure — a corrupt master key, a truncated file, or an AES-GCM
+        // authentication-tag mismatch (tampering). Those must surface, not be swallowed
+        // into a silent env-only fallback: hiding the GCM tamper signal defeats the
+        // point of the authenticated encryption.
         var vaultPath = vaultPathOverride ?? VaultStore.DefaultVaultPath;
-        try
-        {
-            var vault = await VaultStore.Load(vaultPath);
-            servers.AddRange(vault.Servers.Select(s => (s, "vault")));
-        }
-        catch
-        {
-            // Vault doesn't exist or can't be read — continue with env vars only
-        }
+        var vault = await VaultStore.Load(vaultPath);
+        servers.AddRange(vault.Servers.Select(s => (s, "vault")));
 
         // Load from environment variables (highest priority, override by name)
         var envServers = LoadFromEnvironment();

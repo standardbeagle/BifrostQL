@@ -93,31 +93,35 @@ public sealed class GenericTableQueryTests
     }
 
     [Fact]
-    public void Config_FromModel_WithInvalidMaxRows_UsesDefault()
+    public void Config_FromModel_WithInvalidMaxRows_Throws()
     {
+        // A non-numeric max-rows is an operator typo — fail rather than silently
+        // capping at the default.
         var model = DbModelTestFixture.Create()
             .WithModelMetadata("generic-table", "enabled")
             .WithModelMetadata("generic-table-max-rows", "not-a-number")
             .WithTable("Users", t => t.WithPrimaryKey("Id"))
             .Build();
 
-        var config = GenericTableConfig.FromModel(model);
+        var act = () => GenericTableConfig.FromModel(model);
 
-        config.MaxRows.Should().Be(GenericTableConfig.DefaultMaxRows);
+        act.Should().Throw<InvalidOperationException>().WithMessage("*positive integer*");
     }
 
     [Fact]
-    public void Config_FromModel_WithZeroMaxRows_UsesDefault()
+    public void Config_FromModel_WithZeroMaxRows_Throws()
     {
+        // Zero rows is nonsensical config; treat it as invalid rather than a
+        // silent "use the default" sentinel.
         var model = DbModelTestFixture.Create()
             .WithModelMetadata("generic-table", "enabled")
             .WithModelMetadata("generic-table-max-rows", "0")
             .WithTable("Users", t => t.WithPrimaryKey("Id"))
             .Build();
 
-        var config = GenericTableConfig.FromModel(model);
+        var act = () => GenericTableConfig.FromModel(model);
 
-        config.MaxRows.Should().Be(GenericTableConfig.DefaultMaxRows);
+        act.Should().Throw<InvalidOperationException>();
     }
 
     [Fact]
@@ -569,8 +573,10 @@ public sealed class GenericTableQueryTests
     }
 
     [Fact]
-    public void BuildWhereClause_UnknownColumn_IsIgnored()
+    public void BuildWhereClause_UnknownColumn_Throws()
     {
+        // Silently dropping the predicate would return rows the caller filtered
+        // out — an unknown column must fail, not widen the result set.
         var model = DbModelTestFixture.Create()
             .WithTable("Users", t => t.WithPrimaryKey("Id").WithColumn("Name", "nvarchar"))
             .Build();
@@ -580,14 +586,14 @@ public sealed class GenericTableQueryTests
             ["NonExistentColumn"] = new Dictionary<string, object?> { ["_eq"] = "value" },
         };
 
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
+        var act = () => GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
 
-        whereSql.Should().BeEmpty();
-        parameters.Should().BeEmpty();
+        act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
+            .WithMessage("*unknown column*");
     }
 
     [Fact]
-    public void BuildWhereClause_UnknownOperator_IsIgnored()
+    public void BuildWhereClause_UnknownOperator_Throws()
     {
         var model = DbModelTestFixture.Create()
             .WithTable("Users", t => t.WithPrimaryKey("Id").WithColumn("Name", "nvarchar"))
@@ -598,10 +604,30 @@ public sealed class GenericTableQueryTests
             ["Name"] = new Dictionary<string, object?> { ["_unknown_op"] = "value" },
         };
 
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
+        var act = () => GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
 
-        whereSql.Should().BeEmpty();
-        parameters.Should().BeEmpty();
+        act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
+            .WithMessage("*Unsupported filter operator*");
+    }
+
+    [Fact]
+    public void BuildWhereClause_MalformedFilterShape_Throws()
+    {
+        // A scalar where an operator object is expected must fail rather than be
+        // silently skipped (which would drop the intended predicate).
+        var model = DbModelTestFixture.Create()
+            .WithTable("Users", t => t.WithPrimaryKey("Id").WithColumn("Name", "nvarchar"))
+            .Build();
+        var table = model.GetTableByFullGraphQlName("Users");
+        var filter = new Dictionary<string, object?>
+        {
+            ["Name"] = "John",
+        };
+
+        var act = () => GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
+
+        act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
+            .WithMessage("*must be an object of operators*");
     }
 
     [Fact]
@@ -620,24 +646,6 @@ public sealed class GenericTableQueryTests
 
         whereSql.Should().Contain("[Name] = @gp0");
         parameters[0].value.Should().Be(DBNull.Value);
-    }
-
-    [Fact]
-    public void BuildWhereClause_NonDictionaryFilterValue_IsIgnored()
-    {
-        var model = DbModelTestFixture.Create()
-            .WithTable("Users", t => t.WithPrimaryKey("Id").WithColumn("Name", "nvarchar"))
-            .Build();
-        var table = model.GetTableByFullGraphQlName("Users");
-        var filter = new Dictionary<string, object?>
-        {
-            ["Name"] = "not-a-dictionary",
-        };
-
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
-
-        whereSql.Should().BeEmpty();
-        parameters.Should().BeEmpty();
     }
 
     #endregion

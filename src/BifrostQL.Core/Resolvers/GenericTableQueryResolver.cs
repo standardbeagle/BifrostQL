@@ -109,24 +109,26 @@ namespace BifrostQL.Core.Resolvers
 
             foreach (var (columnName, filterValue) in filter)
             {
+                // A malformed filter entry must fail rather than be silently
+                // skipped: dropping a predicate here widens the result set and
+                // over-exposes rows the caller meant to filter out.
                 if (filterValue is not Dictionary<string, object?> ops)
-                    continue;
+                    throw new BifrostExecutionError(
+                        $"Filter for '{columnName}' must be an object of operators (e.g. {{ _eq: ... }}).");
 
                 var column = table.Columns.FirstOrDefault(c =>
                     string.Equals(c.GraphQlName, columnName, StringComparison.OrdinalIgnoreCase));
                 if (column == null)
-                    continue;
+                    throw new BifrostExecutionError(
+                        $"Filter references unknown column '{columnName}' on table '{table.GraphQlName}'.");
 
                 foreach (var (op, value) in ops)
                 {
                     var paramName = $"@gp{paramIndex++}";
                     var (condition, param) = BuildCondition(dialect, column.DbName, op, paramName, value);
-                    if (condition != null)
-                    {
-                        conditions.Add(condition);
-                        if (param != null)
-                            parameters.Add(param.Value);
-                    }
+                    conditions.Add(condition);
+                    if (param != null)
+                        parameters.Add(param.Value);
                 }
             }
 
@@ -136,7 +138,7 @@ namespace BifrostQL.Core.Resolvers
             return ($" WHERE {string.Join(" AND ", conditions)}", parameters);
         }
 
-        private static (string? condition, (string name, object? value)? parameter) BuildCondition(
+        private static (string condition, (string name, object? value)? parameter) BuildCondition(
             ISqlDialect dialect, string dbColumnName, string op, string paramName, object? value)
         {
             var escapedColumn = dialect.EscapeIdentifier(dbColumnName);
@@ -149,7 +151,11 @@ namespace BifrostQL.Core.Resolvers
                 "_lt" => ($"{escapedColumn} < {paramName}", (paramName, value ?? (object)DBNull.Value)),
                 "_lte" => ($"{escapedColumn} <= {paramName}", (paramName, value ?? (object)DBNull.Value)),
                 "_like" => ($"{escapedColumn} LIKE {paramName}", (paramName, value ?? (object)DBNull.Value)),
-                _ => (null, null),
+                // An unrecognized operator must throw, not silently drop the
+                // predicate — the same fail-fast rule as SqlDialectBase.GetOperator.
+                _ => throw new BifrostExecutionError(
+                    $"Unsupported filter operator '{op}'. Valid operators: " +
+                    $"_eq, _neq, _gt, _gte, _lt, _lte, _like."),
             };
         }
 

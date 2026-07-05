@@ -31,10 +31,34 @@ import { Button } from "@/components/ui/button";
 import { LoaderCircle, Save, X, AlertCircle } from "lucide-react";
 import { ContentEditor } from "@/components/content-editor";
 import { isBinaryDbType, isLongTextDbType } from "@/lib/content-detect";
+import { resolveDisplayFormat } from "./lib/format-value";
 
 const booleanTypes = ["Boolean", "Boolean!"];
 const dateTypes = ["DateTime", "DateTime!"];
 const numericTypes = ["Int", "Int!", "Float", "Float!"];
+
+/** True when a date-ish column carries a time-of-day component (datetime, not a bare date). */
+function isDateTimeColumn(column: Column): boolean {
+    return resolveDisplayFormat(column) === 'datetime';
+}
+
+/**
+ * Normalizes a stored date/datetime string into the value an `<input type="date">`
+ * or `<input type="datetime-local">` expects. For datetime columns the time-of-day is
+ * preserved (fractional seconds and timezone offset are trimmed) so re-saving an
+ * unrelated field does not overwrite the time with midnight. Returns '' for the
+ * SQL "zero" date and unparseable input.
+ */
+function toDateInputValue(raw: string | undefined, withTime: boolean): string {
+    if (!raw) return '';
+    const m = raw.match(/^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?))?/);
+    if (!m) return '';
+    if (m[1] === '0001-01-01') return '';
+    if (!withTime) return m[1];
+    if (!m[2]) return m[1]; // datetime column with no time part stored
+    const time = m[2].length === 5 ? `${m[2]}:00` : m[2];
+    return `${m[1]}T${time}`;
+}
 
 const EMPTY_PK_EQ_FILTER = { filterText: "", variables: {} as Record<string, unknown>, params: [] as string[] };
 
@@ -131,8 +155,7 @@ function DataEditDetail({ table, schema, editid, onClose }: { table: string, sch
         const values: Record<string, unknown> = {};
         for (const { column: c } of editColumns) {
             if (dateTypes.some(t => t === c.paramType)) {
-                const dateValue = (value[c.name] as string)?.split("T")?.[0];
-                values[c.name] = dateValue === '0001-01-01' ? '' : (dateValue ?? '');
+                values[c.name] = toDateInputValue(value[c.name] as string | undefined, isDateTimeColumn(c));
             } else if (booleanTypes.some(t => t === c.paramType)) {
                 values[c.name] = !!value[c.name];
             } else {
@@ -405,8 +428,11 @@ function EditField({ column, join, fkRole, form, schema }: EditFieldProps) {
         return <ParentField column={column} join={join} form={form} schema={schema} isRequired={isRequired} />;
     }
 
-    // Determine input type based on schema metadata or paramType
-    const inputType = column.inputType || (isDate ? "date" : isNumeric ? "number" : "text");
+    // Determine input type based on schema metadata or paramType. Datetime columns get a
+    // datetime-local input so the time-of-day is editable and preserved on save; a bare
+    // date column keeps a date input.
+    const inputType = column.inputType
+        || (isDate ? (isDateTimeColumn(column) ? "datetime-local" : "date") : isNumeric ? "number" : "text");
 
     // Build validators based on schema constraints. Shared with the server via
     // validateFieldValue so client and server enforce identical rules.

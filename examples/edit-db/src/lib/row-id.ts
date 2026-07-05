@@ -39,6 +39,22 @@ export function encodeRouteParts(values: readonly unknown[]): string {
     return values.map(encodePkPart).join(DELIMITER);
 }
 
+/**
+ * Inverse of {@link encodeRouteParts}: splits a route-encoded id into its ordered
+ * values and percent-decodes each. `expectedCount <= 1` treats the whole string as a
+ * single value (never split, so a value that itself contains the delimiter survives).
+ * Throws when a multi-part id does not carry exactly `expectedCount` parts, so a caller
+ * building a composite filter cannot silently under-constrain it.
+ */
+export function decodeRouteParts(raw: string, expectedCount: number): string[] {
+    const parts = expectedCount <= 1 ? [raw] : raw.split(DELIMITER);
+    if (parts.length !== expectedCount)
+        throw new Error(
+            `Route id '${raw}' has ${parts.length} part(s) but ${expectedCount} were expected.`,
+        );
+    return parts.map((p) => (p === '' ? '' : (decodePkPart(p) ?? '')));
+}
+
 export function rowIdOf(
     row: Record<string, unknown> | null | undefined,
     table: TableLike,

@@ -147,12 +147,40 @@ describe('m2mRowsQuery', () => {
 
         // Paged junction query scoped to the parent via the junction source FK.
         expect(query).toContain('enrollments(');
-        expect(query).toContain('student_id: { _eq: $id }');
+        expect(query).toContain('student_id: { _eq: $src0 }');
         // Junction PK + payload selected so we can detach and reveal payload.
         expect(query).toContain('grade');
         // Nested target selection by the junction's target field, with target key + label.
         expect(query).toMatch(/courses\s*\{[^}]*\btitle\b/);
-        expect(variables.id).toBe(42);
+        expect(variables.src0).toBe(42);
+    });
+
+    it('constrains every column of a composite junction source FK', () => {
+        // A junction whose source FK spans two columns. Filtering on only the first
+        // (school_id) would match another student's rows that share the same school —
+        // detaching then deletes the wrong parent's link.
+        const compositeJunction = table('enrollments', {
+            columns: [
+                col('id', { isPrimaryKey: true }),
+                col('school_id', { paramType: 'Int' }),
+                col('student_no', { paramType: 'Int' }),
+                col('course_id', { paramType: 'Int' }),
+            ],
+        });
+        const compositeM2m: ManyToManyJoin = {
+            ...m2m,
+            sourceColumnNames: ['school_id', 'student_no'],
+            junctionSourceColumnNames: ['school_id', 'student_no'],
+        };
+
+        const { query, variables } = m2mRowsQuery(compositeJunction, target, compositeM2m, '7::42');
+
+        // Both source columns are constrained, combined with `and`.
+        expect(query).toContain('and: [');
+        expect(query).toContain('school_id: { _eq: $src0 }');
+        expect(query).toContain('student_no: { _eq: $src1 }');
+        expect(variables.src0).toBe(7);
+        expect(variables.src1).toBe(42);
     });
 });
 

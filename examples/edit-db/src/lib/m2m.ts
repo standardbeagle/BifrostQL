@@ -10,7 +10,7 @@
  */
 
 import type { Column, Join, ManyToManyJoin, Table } from '../types/schema';
-import { rowIdOf } from './row-id';
+import { rowIdOf, decodeRouteParts } from './row-id';
 import { getPkTypes } from './query-builder';
 
 /** A tab in the detail panel: an ordinary child collection or a m2m bridge. */
@@ -69,9 +69,28 @@ export function m2mRowsQuery(
     m2m: ManyToManyJoin,
     parentId: string,
 ): { query: string; variables: Record<string, unknown> } {
-    const srcFk = m2m.junctionSourceColumnNames[0];
-    const srcCol = junction.columns.find((c) => c.name === srcFk);
-    const idType = srcCol ? srcCol.paramType.replace('!', '') : 'Int';
+    const srcCols = m2m.junctionSourceColumnNames;
+    if (srcCols.length === 0)
+        throw new Error(`Many-to-many relationship '${m2m.name}' has no junction source columns.`);
+
+    // Decompose the route-encoded parent id into one value per junction source column.
+    // A composite junction FK MUST be filtered on every column: filtering on the first
+    // column alone can match another parent's junction rows whose first-column value
+    // collides, and detaching then deletes that other parent's link.
+    const parentParts = decodeRouteParts(parentId, srcCols.length);
+
+    const columnByName = new Map(junction.columns.map((c) => [c.name, c] as const));
+    const paramDecls: string[] = [];
+    const clauses: string[] = [];
+    const variables: Record<string, unknown> = {};
+    srcCols.forEach((col, i) => {
+        const gqlType = (columnByName.get(col)?.paramType ?? 'Int').replace('!', '');
+        const varName = `src${i}`;
+        paramDecls.push(`$${varName}: ${gqlType}`);
+        clauses.push(`{ ${col}: { _eq: $${varName} } }`);
+        variables[varName] = coerceId(parentParts[i], gqlType);
+    });
+    const filterText = clauses.length === 1 ? clauses[0] : `{ and: [${clauses.join(', ')}] }`;
 
     const junctionPks = junction.primaryKeys ?? [];
     const payload = payloadColumns(junction, m2m).map((c) => c.name);
@@ -85,11 +104,11 @@ export function m2mRowsQuery(
     const fields = [...junctionPks, ...payload, targetSelection].join(' ');
 
     const query =
-        `query GetLinks_${junction.name}($id: ${idType}, $limit: Int, $offset: Int) ` +
-        `{ ${junction.name}(filter: { ${srcFk}: { _eq: $id } } limit: $limit offset: $offset) ` +
+        `query GetLinks_${junction.name}(${paramDecls.join(', ')}, $limit: Int, $offset: Int) ` +
+        `{ ${junction.name}(filter: ${filterText} limit: $limit offset: $offset) ` +
         `{ total offset limit data { ${fields} } } }`;
 
-    return { query, variables: { id: coerceId(parentId, idType) } };
+    return { query, variables };
 }
 
 export interface M2mTargetPickerPlan {

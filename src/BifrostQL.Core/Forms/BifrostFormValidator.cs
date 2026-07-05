@@ -94,7 +94,10 @@ namespace BifrostQL.Core.Forms
 
             if (TypeMapper.IsNumericType(dataType))
             {
-                if (!decimal.TryParse(value, out _))
+                // Use InvariantCulture to match the min/max parse in ValidateMetadata;
+                // a culture-sensitive check here could accept a value that the
+                // invariant parse rejects, silently skipping the range validation.
+                if (!decimal.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out _))
                     errors.Add(new ValidationError(column.ColumnName, $"{column.ColumnName} must be a valid number"));
             }
             else if (TypeMapper.IsBooleanType(dataType))
@@ -162,6 +165,14 @@ namespace BifrostQL.Core.Forms
 
             if (metadata.InputType == "url" && !IsValidUrl(value))
                 errors.Add(new ValidationError(column.ColumnName, "Invalid URL"));
+
+            // The HTML form only offers the enum options, but a hand-crafted POST can
+            // submit anything — reject a value outside the declared set rather than
+            // silently accepting it server-side.
+            if (metadata.EnumValues is { Length: > 0 } enumValues
+                && !enumValues.Contains(value, StringComparer.Ordinal))
+                errors.Add(new ValidationError(column.ColumnName,
+                    $"{label} must be one of: {string.Join(", ", enumValues)}"));
         }
 
         private static bool IsValidEmail(string value)

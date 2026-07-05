@@ -38,6 +38,37 @@ public class BifrostFormValidatorTests
     }
 
     [Fact]
+    public void Validate_EnumValueOutOfSet_ReturnsError()
+    {
+        // The HTML form only offers the enum options, but a hand-crafted POST can
+        // submit anything. The server must reject an out-of-set value, not accept it.
+        var table = CreateUsersTable();
+        var config = new FormsMetadataConfiguration()
+            .ConfigureColumn("Users", "Name", m => m.EnumValues = new[] { "active", "inactive" });
+        var validator = new BifrostFormValidator();
+        var form = new Dictionary<string, string?> { ["Name"] = "bogus", ["Email"] = "x@y.com" };
+
+        var result = validator.Validate(form, table, FormMode.Insert, config);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.FieldName == "Name" && e.Message.Contains("must be one of"));
+    }
+
+    [Fact]
+    public void Validate_EnumValueInSet_NoError()
+    {
+        var table = CreateUsersTable();
+        var config = new FormsMetadataConfiguration()
+            .ConfigureColumn("Users", "Name", m => m.EnumValues = new[] { "active", "inactive" });
+        var validator = new BifrostFormValidator();
+        var form = new Dictionary<string, string?> { ["Name"] = "active", ["Email"] = "x@y.com" };
+
+        var result = validator.Validate(form, table, FormMode.Insert, config);
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
     public void Validate_NullableFieldMissing_NoError()
     {
         var table = CreateUsersTableWithNullableField();

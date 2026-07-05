@@ -67,7 +67,16 @@ public sealed class EnumTableConfig
     public string? ResolveValueColumn(IDbTable table)
     {
         if (ValueColumn != null)
-            return table.ColumnLookup.ContainsKey(ValueColumn) ? ValueColumn : null;
+        {
+            // An explicitly configured value column that doesn't exist is a config
+            // typo — fail rather than silently degrading the table to a plain scalar
+            // (which hides the mistake). Auto-detection returning null below is the
+            // legitimate best-effort case.
+            if (table.ColumnLookup.ContainsKey(ValueColumn))
+                return ValueColumn;
+            throw new InvalidOperationException(
+                $"Enum value column '{ValueColumn}' configured on table '{table.DbName}' does not exist.");
+        }
 
         // Auto-detect: first non-PK string-typed column
         var stringTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)

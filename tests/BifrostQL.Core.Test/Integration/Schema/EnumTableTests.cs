@@ -181,8 +181,10 @@ public class EnumTableConfigTests
     }
 
     [Fact]
-    public void ResolveValueColumn_ReturnsNull_WhenExplicitColumnNotFound()
+    public void ResolveValueColumn_Throws_WhenExplicitColumnNotFound()
     {
+        // An explicitly named value column that doesn't exist is a config typo and
+        // must fail rather than silently degrading the table to a plain scalar.
         var model = DbModelTestFixture.Create()
             .WithTable("Status", t => t
                 .WithSchema("dbo")
@@ -194,9 +196,9 @@ public class EnumTableConfigTests
         var table = model.GetTableFromDbName("Status");
         var config = EnumTableConfig.FromTable(table)!;
 
-        var resolved = config.ResolveValueColumn(table);
+        var act = () => config.ResolveValueColumn(table);
 
-        resolved.Should().BeNull();
+        act.Should().Throw<InvalidOperationException>().WithMessage("*nonexistent*");
     }
 }
 

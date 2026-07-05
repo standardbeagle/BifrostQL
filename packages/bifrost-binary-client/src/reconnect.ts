@@ -189,6 +189,12 @@ export class ReconnectController {
   private state: ReconnectState = "idle";
   private attempt = 0;
   private timer: unknown = null;
+  /**
+   * True once {@link stop} has run (client permanently closed). Distinguishes a
+   * terminal `stopped` state from the `stopped` a give-up leaves behind, so
+   * {@link rearm} can revive the latter but never the former.
+   */
+  private permanentlyStopped = false;
   private readonly policy: BackoffPolicy;
   private readonly connect: ReconnectAttemptFn;
   private readonly maxAttempts: number;
@@ -272,6 +278,22 @@ export class ReconnectController {
   stop(): void {
     this.cancel();
     this.state = "stopped";
+    this.permanentlyStopped = true;
+  }
+
+  /**
+   * Revives a controller that transitioned to `stopped` by exhausting its retry
+   * budget (give-up) back to `idle`, so a subsequent manual `connect()` re-arms
+   * auto-reconnect. A no-op once {@link stop} has permanently stopped it (after
+   * `client.close()`) and a no-op in any non-stopped state.
+   */
+  rearm(): void {
+    if (this.permanentlyStopped) return;
+    if (this.state === "stopped") {
+      this.state = "idle";
+      this.attempt = 0;
+      this.policy.reset();
+    }
   }
 
   private scheduleNext(lastError: Error): void {
@@ -299,7 +321,10 @@ export class ReconnectController {
     this.state = "connecting";
     this.connect().then(
       () => {
-        if (this.state === "stopped") {
+        // Bail if the state moved out from under this in-flight attempt — a
+        // cancel() (→ idle), stop() (→ stopped), or a fresh start() means this
+        // resolution is stale and must not fire onSuccess or re-open a socket.
+        if (this.state !== "connecting") {
           return;
         }
         const completedAttempt = this.attempt;
@@ -309,7 +334,9 @@ export class ReconnectController {
         this.onSuccess?.(completedAttempt);
       },
       (err: unknown) => {
-        if (this.state === "stopped") {
+        // Same guard: a cancel/stop during the in-flight connect must abort the
+        // retry loop rather than schedule yet another attempt.
+        if (this.state !== "connecting") {
           return;
         }
         const wrapped = err instanceof Error ? err : new Error(String(err));

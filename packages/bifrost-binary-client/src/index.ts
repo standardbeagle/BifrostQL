@@ -407,6 +407,14 @@ export class BifrostBinaryClient implements StreamingClientInternals {
   private reconnecting = false;
   /** True once `close()` has been called, to make it permanent. */
   private closed = false;
+  /**
+   * The in-flight socket-open promise, shared by every concurrent `connect()`
+   * and by the reconnect controller's attempts. Deduping through it prevents a
+   * second overlapping `openSocket()` from creating an orphaned WebSocket whose
+   * handlers overwrite the first — the socket-leak footgun. Cleared when the
+   * open settles (resolve or reject).
+   */
+  private connectPromise: Promise<void> | null = null;
 
   constructor(options: BifrostClientOptions) {
     this.url = options.url;
@@ -448,9 +456,17 @@ export class BifrostBinaryClient implements StreamingClientInternals {
    * once the in-flight reconnect succeeds (or rejects if it gives up).
    */
   connect(): Promise<void> {
+    if (this.closed) {
+      return Promise.reject(new Error("Client is closed"));
+    }
     if (this.ws && this.ws.readyState === this.wsConstructor.OPEN) {
       return Promise.resolve();
     }
+    // A manual reconnect after the retry budget was exhausted re-arms the
+    // controller so a future drop auto-reconnects again, and clears the
+    // `reconnecting` latch that a wedged give-up would otherwise leave set.
+    this.reconnectController?.rearm();
+    this.reconnecting = false;
     return this.openSocket();
   }
 
@@ -462,7 +478,15 @@ export class BifrostBinaryClient implements StreamingClientInternals {
    * yet) or on a close event that fires before the socket ever opened.
    */
   private openSocket(): Promise<void> {
-    return new Promise((resolve, reject) => {
+    // Dedupe overlapping opens: return the in-flight attempt rather than
+    // spawning a second socket that would leak (its handlers would clobber the
+    // first socket's, and the first would never be closed).
+    if (this.connectPromise) {
+      return this.connectPromise;
+    }
+
+    let guarded: Promise<void>;
+    const attempt = new Promise<void>((resolve, reject) => {
       if (this.closed) {
         reject(new Error("Client is closed"));
         return;
@@ -473,6 +497,20 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       let settled = false;
 
       ws.onopen = () => {
+        // close() may have run while this socket was still connecting. Adopting
+        // it now would revive a closed client (a zombie connection); discard it.
+        if (this.closed) {
+          try {
+            ws.close(1000, "Client closed");
+          } catch {
+            /* ignore */
+          }
+          if (!settled) {
+            settled = true;
+            reject(new Error("Client is closed"));
+          }
+          return;
+        }
         this.ws = ws;
         this.onOpen?.();
         if (!settled) {
@@ -511,6 +549,14 @@ export class BifrostBinaryClient implements StreamingClientInternals {
         this.handleMessage(event.data as ArrayBuffer);
       };
     });
+
+    guarded = attempt.finally(() => {
+      if (this.connectPromise === guarded) {
+        this.connectPromise = null;
+      }
+    });
+    this.connectPromise = guarded;
+    return guarded;
   }
 
   /**
@@ -619,19 +665,43 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       return;
     }
 
-    for (const [requestId, pending] of this.pending) {
+    // Snapshot entries first: the mutation-rejection branch mutates `pending`
+    // and `streamingRequests` while we iterate.
+    for (const [requestId, pending] of Array.from(this.pending)) {
       const resumeFrom = this.resumeFromByRequestId.get(requestId);
       if (resumeFrom !== undefined && resumeFrom >= 0) {
+        // Chunks were already received — resuming only pulls the missing tail,
+        // so there is no re-execution to worry about.
         this.sendResumeFrame(requestId, resumeFrom);
+      } else if (pending.meta.type === BifrostMessageType.Mutation) {
+        // A mutation that yielded no chunks before the drop may already have
+        // committed on the server. Re-sending it risks applying it twice, so
+        // reject it (at-most-once) and let the caller decide whether to retry.
+        clearTimeout(pending.timer);
+        this.pending.delete(requestId);
+        pending.reject(
+          new Error(
+            `Mutation for request ${requestId} was interrupted by a reconnect and was not automatically retried to avoid double execution.`
+          )
+        );
       } else {
         this.sendOriginalFrame(requestId, pending.meta);
       }
     }
 
-    for (const [requestId, meta] of this.streamingRequests) {
+    for (const [requestId, meta] of Array.from(this.streamingRequests)) {
       const resumeFrom = this.streamingResumeFrom.get(requestId);
       if (resumeFrom !== undefined && resumeFrom >= 0) {
         this.sendResumeFrame(requestId, resumeFrom);
+      } else if (meta.type === BifrostMessageType.Mutation) {
+        // Same at-most-once guard for streaming mutations.
+        const queue = this.streamingQueues.get(requestId);
+        this.removeStreamingQueue(requestId);
+        queue?.error(
+          new Error(
+            `Streaming mutation for request ${requestId} was interrupted by a reconnect and was not automatically retried to avoid double execution.`
+          )
+        );
       } else {
         this.sendOriginalFrame(requestId, meta);
       }
@@ -809,6 +879,10 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       this.reconnectController.stop();
     }
     this.reconnecting = false;
+    // Drop the in-flight open latch: a socket still connecting is discarded by
+    // the `this.closed` guard in openSocket's onopen, and its promise settles
+    // via the close/error path.
+    this.connectPromise = null;
     this.reassemblers.clear();
     this.resumeFromByRequestId.clear();
     this.streamingResumeFrom.clear();
@@ -1010,8 +1084,21 @@ export class BifrostBinaryClient implements StreamingClientInternals {
 
     let data: unknown = null;
     if (response.payload.length > 0) {
-      const decoded = new TextDecoder().decode(response.payload);
-      data = JSON.parse(decoded);
+      try {
+        data = JSON.parse(new TextDecoder().decode(response.payload));
+      } catch (err) {
+        // A malformed payload must reject the promise. The timer was already
+        // cleared and the entry removed above, so without this the caller's
+        // promise would hang forever with no timeout to rescue it.
+        pending.reject(
+          new Error(
+            `Failed to parse response payload for request ${response.requestId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          )
+        );
+        return;
+      }
     }
 
     pending.resolve({ data, errors: response.errors });

@@ -307,14 +307,31 @@ export class BinaryTransport implements QueryTransport {
       return;
     }
     if (!this.connectPromise) {
-      this.client = this.clientFactory(this.url);
-      this.connectPromise = this.client.connect().catch((err) => {
+      // Reuse an existing client so its own auto-reconnect/rearm applies; only
+      // build one on the very first connect (or after a hard failure nulled it).
+      if (!this.client) {
+        this.client = this.clientFactory(this.url);
+      }
+      const client = this.client;
+      const p = client.connect().catch((err) => {
         // Reset state so a subsequent query can retry from scratch instead
         // of being stuck behind a permanently-rejected promise.
-        this.client = null;
-        this.connectPromise = null;
+        if (this.client === client) this.client = null;
+        if (this.connectPromise === p) this.connectPromise = null;
         throw err;
       });
+      this.connectPromise = p;
+      // Clear the latch once resolved, too. Leaving a resolved promise in place
+      // makes a later ensureConnected() (after the socket dropped) short-circuit
+      // on the stale promise and skip reconnecting entirely.
+      void p.then(
+        () => {
+          if (this.connectPromise === p) this.connectPromise = null;
+        },
+        () => {
+          /* failure already handled in the catch above */
+        }
+      );
     }
     await this.connectPromise;
   }

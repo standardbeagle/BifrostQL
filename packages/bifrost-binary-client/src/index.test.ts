@@ -259,6 +259,31 @@ describe("BifrostBinaryClient", () => {
       await expect(fresh.query("{ x }")).rejects.toThrowError("Not connected");
     });
 
+    it("rejects the pending request when the response payload is not valid JSON", async () => {
+      const ws = tracker.last;
+      const promise = client.query("{ x }");
+      const requestId = decodeMessage(ws.sentFrames[0]!).requestId;
+
+      // A Result frame whose payload is malformed JSON. Before the fix the timer
+      // was already cleared and the pending entry removed, so a throw from
+      // JSON.parse left the promise hanging forever with no timeout to rescue it.
+      const assertion = expect(promise).rejects.toThrowError(
+        /Failed to parse response payload/
+      );
+      ws.receive(
+        encodeMessage(
+          emptyMessage({
+            requestId,
+            type: BifrostMessageType.Result,
+            payload: new TextEncoder().encode("{ not valid json"),
+          })
+        )
+      );
+
+      await assertion;
+      expect(client.pendingCount).toBe(0);
+    });
+
     it("encodes a query frame and uses requestId starting at 1", async () => {
       const ws = tracker.last;
       void client.query("{ users { id name } }", { limit: 10 });
@@ -454,6 +479,44 @@ describe("BifrostBinaryClient", () => {
 
       expect(onError).toHaveBeenCalledOnce();
       expect(c.pendingCount).toBe(1); // pending request not affected
+    });
+  });
+
+  describe("mutation replay safety after reconnect", () => {
+    it("rejects an interrupted mutation instead of re-sending it (at-most-once)", async () => {
+      vi.useFakeTimers();
+      const c = new BifrostBinaryClient({
+        url: TEST_URL,
+        WebSocket: tracker.ctor,
+        autoReconnect: true,
+        // Constant, deterministic backoff so the reconnect timer is trivial to fire.
+        backoff: { nextDelayMs: () => 10, reset: () => {} },
+      });
+      const cp = c.connect();
+      tracker.last.simulateOpen();
+      await cp;
+
+      const firstWs = tracker.last;
+      const mutationPromise = c.mutate("mutation { doThing }");
+      expect(firstWs.sentFrames).toHaveLength(1); // original mutation sent exactly once
+
+      const assertion = expect(mutationPromise).rejects.toThrowError(
+        /was not automatically retried to avoid double execution/
+      );
+
+      // Abnormal drop with the mutation still pending → the client reconnects.
+      firstWs.simulateClose(1006, "abnormal");
+      await vi.advanceTimersByTimeAsync(10); // fire the backoff timer → fresh socket
+      const secondWs = tracker.last;
+      expect(secondWs).not.toBe(firstWs);
+      secondWs.simulateOpen();
+      await vi.advanceTimersByTimeAsync(0); // let the reconnect-success replay run
+
+      await assertion;
+      // The mutation must NOT be replayed on the fresh socket — re-sending could
+      // apply a non-idempotent mutation twice.
+      expect(secondWs.sentFrames).toHaveLength(0);
+      c.close();
     });
   });
 

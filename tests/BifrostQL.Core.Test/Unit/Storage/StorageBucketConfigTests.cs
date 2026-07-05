@@ -149,6 +149,26 @@ public class StorageBucketConfigTests
         Assert.Throws<InvalidOperationException>(act);
     }
 
+    [Theory]
+    [InlineData("yes")]
+    [InlineData("on")]
+    [InlineData("1")]
+    public void FromMetadata_PathStyleSwitchVocabulary_Parses(string token)
+    {
+        // bool.TryParse only accepted true/false, so "yes" silently became false.
+        Assert.True(StorageBucketConfig.FromMetadata($"bucket:b;pathStyle:{token}")!.UsePathStyle);
+    }
+
+    [Fact]
+    public void FromMetadata_WithInvalidPathStyle_Throws()
+    {
+        // A typo'd switch must fail rather than silently disabling path-style
+        // (which breaks S3-compatible endpoints that require it).
+        var act = () => StorageBucketConfig.FromMetadata("bucket:my-bucket;pathStyle:enable-plz");
+
+        Assert.Throws<InvalidOperationException>(act);
+    }
+
     #endregion
 
     #region FromMetadata - Alternative Property Names

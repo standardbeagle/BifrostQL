@@ -90,7 +90,7 @@ namespace BifrostQL.Core.Storage
                         break;
                     case "pathstyle":
                     case "usepathstyle":
-                        config.UsePathStyle = bool.TryParse(value, out var ps) && ps;
+                        config.UsePathStyle = Utils.MetadataSwitch.ParseStrict(value, config.UsePathStyle, key);
                         break;
                     case "maxsize":
                     case "maxfilesize":

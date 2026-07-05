@@ -43,6 +43,29 @@ public class FileColumnConfigTests
         Assert.True(config.GenerateThumbnails);
     }
 
+    [Theory]
+    [InlineData("yes")]
+    [InlineData("on")]
+    [InlineData("1")]
+    public void FromMetadata_ThumbnailsSwitchVocabulary_Parses(string token)
+    {
+        // Previously only literal true/false parsed; a plausibly-truthy token
+        // silently became false. The shared switch vocabulary now applies.
+        Assert.True(FileColumnConfig.FromMetadata($"thumbnails:{token}")!.GenerateThumbnails);
+    }
+
+    [Fact]
+    public void FromMetadata_InvalidThumbnails_Throws()
+    {
+        Assert.Throws<InvalidOperationException>(() => FileColumnConfig.FromMetadata("thumbnails:maybe"));
+    }
+
+    [Fact]
+    public void FromMetadata_InvalidPublic_Throws()
+    {
+        Assert.Throws<InvalidOperationException>(() => FileColumnConfig.FromMetadata("public:yess"));
+    }
+
     [Fact]
     public void FromMetadata_WithSizes_ParsesThumbnailSizes()
     {

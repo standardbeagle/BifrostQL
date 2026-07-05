@@ -66,4 +66,47 @@ public sealed class MetadataSwitchTests
     {
         MetadataSwitch.StripNegation(entry).Should().Be(expected);
     }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ParseStrict_AbsentValue_ReturnsDefault(string? value)
+    {
+        MetadataSwitch.ParseStrict(value, defaultValue: true, "path-style").Should().BeTrue();
+        MetadataSwitch.ParseStrict(value, defaultValue: false, "path-style").Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("true")]
+    [InlineData("yes")]
+    [InlineData("on")]
+    [InlineData("1")]
+    public void ParseStrict_OnTokens_ReturnTrue(string value)
+    {
+        MetadataSwitch.ParseStrict(value, defaultValue: false, "path-style").Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("false")]
+    [InlineData("no")]
+    [InlineData("off")]
+    [InlineData("0")]
+    public void ParseStrict_OffTokens_ReturnFalse(string value)
+    {
+        MetadataSwitch.ParseStrict(value, defaultValue: true, "path-style").Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("yess")]
+    [InlineData("maybe")]
+    [InlineData("2")]
+    public void ParseStrict_UnrecognizedToken_Throws(string value)
+    {
+        // Unlike the lenient Parse (which returns the default), the strict variant
+        // used for explicit single-value config keys fails on a typo'd token.
+        var act = () => MetadataSwitch.ParseStrict(value, defaultValue: false, "path-style");
+
+        act.Should().Throw<InvalidOperationException>().WithMessage("*path-style*");
+    }
 }

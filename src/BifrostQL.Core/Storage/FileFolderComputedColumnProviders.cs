@@ -53,7 +53,7 @@ public abstract class FileFolderComputedColumnProviderBase : IComputedColumnProv
             if (options.TryGetValue("endpoint", out var endpoint))
                 config.EndpointUrl = endpoint;
             if (options.TryGetValue("pathstyle", out var pathStyle))
-                config.UsePathStyle = bool.TryParse(pathStyle, out var enabled) && enabled;
+                config.UsePathStyle = Utils.MetadataSwitch.ParseStrict(pathStyle, config.UsePathStyle, "pathstyle");
         }
 
         if (string.IsNullOrWhiteSpace(config.BucketName))
@@ -81,8 +81,7 @@ public abstract class FileFolderComputedColumnProviderBase : IComputedColumnProv
     private static bool TryBool(IReadOnlyDictionary<string, string>? options, string key)
         => options != null
            && options.TryGetValue(key, out var raw)
-           && bool.TryParse(raw, out var value)
-           && value;
+           && Utils.MetadataSwitch.ParseStrict(raw, false, key);
 }
 
 public sealed class LocalFileFolderComputedColumnProvider : FileFolderComputedColumnProviderBase

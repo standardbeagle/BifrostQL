@@ -39,6 +39,28 @@ namespace BifrostQL.Core.Utils
             return defaultValue;
         }
 
+        /// <summary>
+        /// Strict variant for explicit single-value boolean config keys (not the
+        /// breadth-matched list values <see cref="Parse"/> also serves). Null/blank
+        /// yields <paramref name="defaultValue"/>, a recognized on/off token yields
+        /// its value, and any other present token throws
+        /// <see cref="InvalidOperationException"/> naming the key — so an operator
+        /// typo (e.g. <c>path-style: yess</c>) fails rather than silently reverting
+        /// to the default.
+        /// </summary>
+        public static bool ParseStrict(string? value, bool defaultValue, string key)
+        {
+            var v = value?.Trim();
+            if (string.IsNullOrEmpty(v))
+                return defaultValue;
+            if (OnTokens.Contains(v))
+                return true;
+            if (OffTokens.Contains(v))
+                return false;
+            throw new InvalidOperationException(
+                $"Metadata '{key}' must be a boolean switch (true/false/on/off/yes/no/1/0), but was '{value}'.");
+        }
+
         /// <summary>True when a list entry is negated with a leading <c>!</c>.</summary>
         public static bool IsNegated(string? entry)
             => entry != null && entry.TrimStart().StartsWith("!", StringComparison.Ordinal);

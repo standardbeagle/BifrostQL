@@ -82,7 +82,7 @@ namespace BifrostQL.Core.Storage
                         break;
                     case "thumbnails":
                     case "generatethumbnails":
-                        config.GenerateThumbnails = bool.TryParse(value, out var genThumb) && genThumb;
+                        config.GenerateThumbnails = Utils.MetadataSwitch.ParseStrict(value, config.GenerateThumbnails, key);
                         break;
                     case "sizes":
                     case "thumbnailsizes":
@@ -92,7 +92,7 @@ namespace BifrostQL.Core.Storage
                         break;
                     case "public":
                     case "publicaccess":
-                        config.PublicAccess = bool.TryParse(value, out var pubAccess) && pubAccess;
+                        config.PublicAccess = Utils.MetadataSwitch.ParseStrict(value, config.PublicAccess, key);
                         break;
                     case "path":
                     case "custompath":

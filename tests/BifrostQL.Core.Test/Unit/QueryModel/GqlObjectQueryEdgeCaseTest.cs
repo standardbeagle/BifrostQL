@@ -55,6 +55,36 @@ public sealed class GqlObjectQueryEdgeCaseTest
     }
 
     [Fact]
+    public void AddSqlParameterized_SortByColumnWhoseGraphQlNameDiffersFromDbName_OrdersByDbName()
+    {
+        // A column whose GraphQL name differs from its DB name (e.g. a DB column
+        // "Order Date" exposed as "orderDate"). The sort token carries the GraphQL
+        // name; it must be mapped back to the DB name for ORDER BY, otherwise SQL
+        // Server errors on an unknown identifier in the paged/OFFSET path.
+        var dbModel = DbModelTestFixture.Create()
+            .WithTable("Orders", t => t
+                .WithPrimaryKey("Id", "int")
+                .WithColumn("Order Date", "datetime2", graphQlName: "orderDate"))
+            .Build();
+        var ordersTable = dbModel.GetTableFromDbName("Orders");
+        var query = GqlObjectQueryBuilder.Create()
+            .WithDbTable(ordersTable)
+            .WithColumn("Id")
+            .WithSort("orderDate_asc")
+            .WithPagination(0, 20)
+            .Build();
+
+        var sqls = new Dictionary<string, ParameterizedSql>();
+        var parameters = new SqlParameterCollection();
+
+        query.AddSqlParameterized(dbModel, Dialect, sqls, parameters);
+
+        var sql = sqls["Orders"].Sql;
+        sql.Should().Contain("[Order Date]", "sort must reference the DB column name");
+        sql.Should().NotContain("[orderDate]", "the GraphQL name is not a real DB column");
+    }
+
+    [Fact]
     public void AddSqlParameterized_EmptySortList_UsesDefaultPaginationWithNullOrder()
     {
         // Arrange

@@ -53,11 +53,17 @@ namespace BifrostQL.Core.Resolvers
             if (!string.IsNullOrWhiteSpace(metadataJson))
             {
                 var fileMetadata = FileMetadata.FromJson(metadataJson);
-                if (fileMetadata != null)
-                {
-                    // Delete file from storage
-                    await _storageService.DeleteFileAsync(fileMetadata, model, context.CancellationToken);
-                }
+                if (fileMetadata == null)
+                    // The column holds a value that is not parseable file metadata. Clearing the
+                    // DB pointer now would orphan whatever the value referenced while telling the
+                    // client the delete succeeded. Fail fast and preserve the pointer instead.
+                    throw new BifrostExecutionError(
+                        $"File metadata for '{table.DbName}.{column.ColumnName}' record '{recordId}' " +
+                        "could not be parsed; refusing to clear the database record and orphan the file.");
+
+                // Delete file from storage first; only clear the DB pointer once the
+                // underlying object is gone, so a storage failure does not orphan it.
+                await _storageService.DeleteFileAsync(fileMetadata, model, context.CancellationToken);
             }
 
             // Clear the database record

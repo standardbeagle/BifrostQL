@@ -71,24 +71,50 @@ namespace BifrostQL.Core.QueryModel
         /// ORDER BY column expressions. Centralizes the `_asc`/`_desc` suffix parsing and
         /// identifier escaping used by every pagination call site below, optionally
         /// qualifying each column with an escaped alias prefix (e.g. "b" -> `b`.`col`).
+        /// The token's column part is the GraphQL column name; it is mapped back to the
+        /// database column name via <paramref name="table"/> before escaping, so a column
+        /// whose GraphQL name differs from its DB name (e.g. "Order Date" -> "Order_Date")
+        /// sorts correctly in nested/paged/restricted paths, not only where a projection
+        /// alias happens to cover it.
         /// </summary>
-        private static IEnumerable<string>? RenderSortColumns(ISqlDialect dialect, IReadOnlyList<string> sort, string? alias = null)
+        private static IEnumerable<string>? RenderSortColumns(ISqlDialect dialect, IDbTable? table, IReadOnlyList<string> sort, string? alias = null)
         {
             if (!sort.Any())
                 return null;
 
             var prefix = alias == null ? "" : $"{dialect.EscapeIdentifier(alias)}.";
-            return sort.Select(s => s switch
+            return sort.Select(s =>
             {
-                { } when s.EndsWith("_asc") => $"{prefix}{dialect.EscapeIdentifier(s[..^4])} asc",
-                { } when s.EndsWith("_desc") => $"{prefix}{dialect.EscapeIdentifier(s[..^5])} desc",
-                _ => throw new BifrostExecutionError($"Unsupported sort token '{s}'; expected suffix '_asc' or '_desc'.")
+                var (graphQlName, direction) = s switch
+                {
+                    { } when s.EndsWith("_asc") => (s[..^4], "asc"),
+                    { } when s.EndsWith("_desc") => (s[..^5], "desc"),
+                    _ => throw new BifrostExecutionError($"Unsupported sort token '{s}'; expected suffix '_asc' or '_desc'.")
+                };
+                // Map the GraphQL column name back to its DB name. When the node has no
+                // resolved table, or the token is not a mapped scalar column (e.g. a
+                // projection alias), leave it as-is — the prior behavior.
+                var dbName = graphQlName;
+                if (table != null && table.GraphQlLookup.TryGetValue(graphQlName, out var col))
+                    dbName = col.DbName;
+                return $"{prefix}{dialect.EscapeIdentifier(dbName)} {direction}";
             });
         }
 
         public void AddSqlParameterized(IDbModel dbModel, ISqlDialect dialect, IDictionary<string, ParameterizedSql> sqls, SqlParameterCollection parameters, QueryLink? queryLink = null)
         {
             var fullColumns = FullColumnNames.ToList();
+            if (fullColumns.Count == 0 && AggregateColumns.Count > 0 && DbTable.KeyColumns.Any())
+            {
+                // Aggregate-only selection (e.g. `data { _agg { ... } }`) with no scalar
+                // columns. Without a base SELECT the primary result set is never emitted,
+                // and ReaderEnum then throws KeyNotFoundException looking up this node's
+                // rows and the parent key that aggregate correlation reads. Select the key
+                // column(s) so the row set and its keys exist; GraphQL still projects only
+                // the requested fields. (A pure count-only selection — IncludeResult with
+                // no columns and no aggregates — legitimately emits no data query.)
+                fullColumns = DbTable.KeyColumns.Select(c => new GqlObjectColumn(c.DbName)).ToList();
+            }
             var tableRef = dialect.TableReference(SchemaName, TableName);
 
             var filter = GetFilterSqlParameterized(dbModel, dialect, parameters);
@@ -99,7 +125,7 @@ namespace BifrostQL.Core.QueryModel
                 var columnSql = string.Join(",", fullColumns.Select(n => n.ToSelectSql(dbModel, DbTable, dialect)));
                 var cmdText = $"SELECT {columnSql} FROM {tableRef}";
 
-                var sortCols = RenderSortColumns(dialect, Sort);
+                var sortCols = RenderSortColumns(dialect, DbTable, Sort);
                 var pagination = dialect.Pagination(sortCols, Offset, Limit);
 
                 var baseSql = new ParameterizedSql(cmdText, Array.Empty<SqlParameterInfo>())
@@ -205,7 +231,7 @@ namespace BifrostQL.Core.QueryModel
                 var srcCount = tableJoin.FromColumns.Count;
                 var partitionCols = Enumerable.Range(0, srcCount)
                     .Select(i => $"{ea}.{dialect.EscapeIdentifier(JoinKeyNames.JoinIdAt(i, srcCount))}");
-                var windowOrder = RenderSortColumns(dialect, tableJoin.ConnectedTable.Sort, "b");
+                var windowOrder = RenderSortColumns(dialect, tableJoin.ConnectedTable.DbTable, tableJoin.ConnectedTable.Sort, "b");
 
                 var pagedSql = dialect.ConnectedPaging(
                     projection,
@@ -220,7 +246,7 @@ namespace BifrostQL.Core.QueryModel
                 return new ParameterizedSql(pagedSql, main.Parameters.Concat(relationParams).Concat(filter.Parameters).ToList());
             }
 
-            var sortCols = RenderSortColumns(dialect, tableJoin.ConnectedTable.Sort);
+            var sortCols = RenderSortColumns(dialect, tableJoin.ConnectedTable.DbTable, tableJoin.ConnectedTable.Sort);
             var pagination = dialect.Pagination(sortCols, tableJoin.ConnectedTable.Offset, tableJoin.ConnectedTable.Limit);
 
             return new ParameterizedSql(wrap, main.Parameters.Concat(relationParams).ToList())
@@ -256,7 +282,7 @@ namespace BifrostQL.Core.QueryModel
                 // ORDER BY {pk}` is rejected by SQL Server because the sort (pk) columns
                 // aren't in the DISTINCT projection. A non-DISTINCT inner can ORDER BY any
                 // column, and the outer wrap then de-duplicates the join-id set.
-                var sortCols = RenderSortColumns(dialect, query.FromTable.Sort);
+                var sortCols = RenderSortColumns(dialect, query.FromTable.DbTable, query.FromTable.Sort);
                 var pagination = dialect.Pagination(sortCols, query.FromTable.Offset, query.FromTable.Limit);
 
                 var inner = new ParameterizedSql($"SELECT {projection} FROM {tableRef}", Array.Empty<SqlParameterInfo>())

@@ -186,13 +186,17 @@ namespace BifrostQL.Core.QueryModel
             if (op is "_between" or "_nbetween")
             {
                 var values = ((value as IEnumerable<object?>) ?? Array.Empty<object?>()).ToArray();
-                if (values.Length >= 2)
-                {
-                    var p1 = dialect.CastParameterReference(parameters.AddParameter(values[0]), columnType);
-                    var p2 = dialect.CastParameterReference(parameters.AddParameter(values[1]), columnType);
-                    return new ParameterizedSql($"{columnRef} {sqlOp} {p1} AND {p2}",
-                        parameters.Parameters.TakeLast(2).ToList());
-                }
+                if (values.Length < 2)
+                    // Fewer than two bounds cannot form a BETWEEN. Falling through to the
+                    // default comparison would emit `col BETWEEN @p` with the whole array
+                    // bound to one parameter — malformed SQL surfacing as an opaque 500.
+                    throw new BifrostExecutionError(
+                        $"Operator '{op}' requires exactly two values (lower and upper bound); got {values.Length}.");
+
+                var p1 = dialect.CastParameterReference(parameters.AddParameter(values[0]), columnType);
+                var p2 = dialect.CastParameterReference(parameters.AddParameter(values[1]), columnType);
+                return new ParameterizedSql($"{columnRef} {sqlOp} {p1} AND {p2}",
+                    parameters.Parameters.TakeLast(2).ToList());
             }
 
             // Simple comparison (default)
@@ -310,7 +314,17 @@ namespace BifrostQL.Core.QueryModel
             // the FROM clause) and no WHERE predicate of its own. Each join gets a
             // unique alias so sibling relationship filters at one AND level don't
             // both emit `[j]` (a duplicate-alias syntax error).
-            var link = table.SingleLinks[ColumnName];
+            // Tolerate an unknown/relationship-typed column with a clear error rather
+            // than a raw KeyNotFoundException 500. A multi-link (one-to-many) target is
+            // not filterable through this single-link INNER JOIN path.
+            if (!table.SingleLinks.TryGetValue(ColumnName, out var link))
+            {
+                var hint = table.MultiLinks.ContainsKey(ColumnName)
+                    ? " It is a one-to-many relationship, which cannot be used as a single-link filter target."
+                    : "";
+                throw new BifrostExecutionError(
+                    $"Filter references unknown single-link relationship '{ColumnName}' on table '{TableName}'.{hint}");
+            }
             var (joinSql, joinParams) = BuildSqlParameterized(Next, link, dialect, parameters, includeValue: false);
             var ej = dialect.EscapeIdentifier(aliases.Next());
             var fullJoin = $" INNER JOIN ({joinSql}) {ej} ON {ej}.{dialect.EscapeIdentifier("joinid")} = {dialect.EscapeIdentifier(alias ?? table.DbName)}.{dialect.EscapeIdentifier(link.ChildId.ColumnName)}";

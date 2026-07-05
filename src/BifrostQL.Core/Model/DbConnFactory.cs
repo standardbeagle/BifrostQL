@@ -139,7 +139,33 @@ namespace BifrostQL.Core.Model
             if (IsMySql(connectionString))
                 return BifrostDbProvider.MySql;
 
-            return BifrostDbProvider.SqlServer;
+            if (IsSqlServer(connectionString))
+                return BifrostDbProvider.SqlServer;
+
+            // Fail fast rather than silently assuming SQL Server: an unrecognized
+            // connection string routed to the wrong provider produces a confusing
+            // downstream failure. Callers who know the provider can pass it explicitly.
+            throw new ArgumentException(
+                $"Could not detect a database provider from the connection string. " +
+                $"Pass the provider explicitly (sqlserver, postgresql, mysql, sqlite) " +
+                $"or use a connection string with recognizable keys.",
+                nameof(connectionString));
+        }
+
+        private static bool IsSqlServer(string connectionString)
+        {
+            var parts = ParseConnectionStringParts(connectionString);
+
+            // By this point SQLite, PostgreSQL, and MySQL have been ruled out, so a
+            // "Server=" or "Data Source=" endpoint is SQL Server. The remaining keys
+            // are SQL Server-specific and disambiguate credential-only strings.
+            return parts.ContainsKey("server")
+                || parts.ContainsKey("data source")
+                || parts.ContainsKey("initial catalog")
+                || parts.ContainsKey("integrated security")
+                || parts.ContainsKey("trusted_connection")
+                || parts.ContainsKey("trustservercertificate")
+                || parts.ContainsKey("user id");
         }
 
         /// <summary>
@@ -181,8 +207,10 @@ namespace BifrostQL.Core.Model
                     return true;
             }
 
-            // "Mode=Memory" is a SQLite-specific key
-            if (parts.ContainsKey("mode"))
+            // "Mode=Memory" is SQLite-specific, but only in company of a file/data
+            // source — a bare "Mode=" must not hijack another provider's string.
+            if (parts.ContainsKey("mode") &&
+                (parts.ContainsKey("data source") || parts.ContainsKey("filename")))
                 return true;
 
             return false;

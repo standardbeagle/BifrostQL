@@ -121,6 +121,8 @@ public abstract class SqlDialectBase : ISqlDialect
     /// <inheritdoc />
     public virtual string GetOperator(string op) => op switch
     {
+        // A join ON clause carries an empty/null operator to mean plain equality.
+        null or "" => "=",
         "_eq" => "=",
         "_neq" => "!=",
         "_lt" => "<",
@@ -133,7 +135,11 @@ public abstract class SqlDialectBase : ISqlDialect
         "_nin" => "NOT IN",
         "_between" => "BETWEEN",
         "_nbetween" => "NOT BETWEEN",
-        _ => "="
+        _ => throw new ArgumentException(
+            $"Unknown filter operator '{op}'. A silent fallback to '=' would match the " +
+            $"wrong rows. Valid operators: _eq, _neq, _lt, _lte, _gt, _gte, _contains, " +
+            $"_starts_with, _ends_with, _like, _ncontains, _nstarts_with, _nends_with, " +
+            $"_nlike, _in, _nin, _between, _nbetween.", nameof(op))
     };
 
     /// <inheritdoc />

@@ -89,6 +89,26 @@ public class DbConnFactoryResolverTests : IDisposable
         act.Should().Throw<ArgumentException>();
     }
 
+    [Theory]
+    [InlineData("Foo=bar;Baz=qux")]
+    [InlineData("Uri=https://example.com")]
+    public void DetectProvider_UnrecognizedConnectionString_Throws(string connectionString)
+    {
+        // Fail fast rather than silently routing an unknown string to SQL Server.
+        var act = () => DbConnFactoryResolver.DetectProvider(connectionString);
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void DetectProvider_BareModeKey_DoesNotHijackAsSqlite()
+    {
+        // A "Mode=" key on a SQL Server string must not be mistaken for SQLite's
+        // "Mode=Memory" — SQLite detection requires a data source / filename too.
+        DbConnFactoryResolver
+            .DetectProvider("Server=localhost;Database=mydb;User Id=sa;Password=x;Mode=ReadOnly")
+            .Should().Be(BifrostDbProvider.SqlServer);
+    }
+
     #endregion
 
     #region ParseProviderName

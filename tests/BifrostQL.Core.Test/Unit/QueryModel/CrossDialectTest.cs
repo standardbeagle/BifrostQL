@@ -554,17 +554,21 @@ public sealed class CrossDialectTest
 
     [Theory]
     [MemberData(nameof(AllDialectData))]
-    public void GetOperator_UnknownOperator_DefaultsToEquals(ISqlDialect dialect)
+    public void GetOperator_UnknownOperator_Throws(ISqlDialect dialect)
     {
-        dialect.GetOperator("_unknown").Should().Be("=");
+        // An unknown operator must fail rather than silently matching the wrong
+        // rows; an empty operator is the join-equality marker and maps to "=".
+        var act = () => dialect.GetOperator("_unknown");
+        act.Should().Throw<ArgumentException>();
         dialect.GetOperator("").Should().Be("=");
     }
 
     [Theory]
     [MemberData(nameof(AllDialectData))]
-    public void GetOperator_CaseSensitive_UppercaseDefaultsToEquals(ISqlDialect dialect)
+    public void GetOperator_CaseSensitive_UppercaseThrows(ISqlDialect dialect)
     {
-        dialect.GetOperator("_EQ").Should().Be("=", "unrecognized case defaults to =");
+        var act = () => dialect.GetOperator("_EQ");
+        act.Should().Throw<ArgumentException>();
     }
 
     #endregion

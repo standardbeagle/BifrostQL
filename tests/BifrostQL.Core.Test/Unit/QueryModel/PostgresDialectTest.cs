@@ -564,16 +564,16 @@ public sealed class PostgresDialectTest
     }
 
     [Fact]
-    public void GetOperator_UnknownOperator_DefaultsToEquals()
+    public void GetOperator_UnknownOperator_Throws()
     {
         // Arrange
         const string unknownOp = "_unknown";
 
         // Act
-        var result = _sut.GetOperator(unknownOp);
+        var act = () => _sut.GetOperator(unknownOp);
 
-        // Assert
-        result.Should().Be("=");
+        // Assert — a silent fallback to "=" would match the wrong rows.
+        act.Should().Throw<ArgumentException>();
     }
 
     [Fact]
@@ -591,11 +591,12 @@ public sealed class PostgresDialectTest
     {
         // Act
         var lower = _sut.GetOperator("_eq");
-        var upper = _sut.GetOperator("_EQ");
+        var upper = () => _sut.GetOperator("_EQ");
 
-        // Assert
+        // Assert — matching is case-sensitive; a wrong-case operator is unknown
+        // and throws rather than silently falling back to "=".
         lower.Should().Be("=");
-        upper.Should().Be("=", "unknown operators default to =");
+        upper.Should().Throw<ArgumentException>();
     }
 
     #endregion

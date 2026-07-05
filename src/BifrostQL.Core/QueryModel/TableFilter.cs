@@ -117,6 +117,16 @@ namespace BifrostQL.Core.QueryModel
             if (op == "_neq" && value == null)
                 return new ParameterizedSql($"{columnRef} IS NOT NULL", Array.Empty<SqlParameterInfo>());
 
+            // The schema-advertised `_null: Boolean` operator: `_null: true` tests
+            // for NULL, `_null: false` for NOT NULL. It never binds a parameter and
+            // must not fall through to a `column = @param` comparison.
+            if (op == "_null")
+            {
+                var wantsNull = value is not bool b || b;
+                return new ParameterizedSql(
+                    $"{columnRef} IS {(wantsNull ? "" : "NOT ")}NULL", Array.Empty<SqlParameterInfo>());
+            }
+
             // Handle FieldRef (column-to-column comparison, no parameters)
             if (value is FieldRef fieldRef)
             {

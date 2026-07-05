@@ -1,10 +1,18 @@
 using BifrostQL.Core.Model;
+using BifrostQL.MySql;
+using BifrostQL.Ngsql;
+using BifrostQL.Sqlite;
 using BifrostQL.SqlServer;
 using BifrostQL.Tool.Commands;
 
-// Register the SQL Server dialect so connection-string based loaders can resolve it.
-// Core carries no built-in provider fallback; dialect packages register themselves.
+// Register every dialect so the database-generic CLI resolves any provider the
+// user's connection string points at. Core carries no built-in provider fallback;
+// registering only one dialect would turn a Postgres/MySQL/SQLite connection
+// string into a runtime InvalidOperationException.
 DbConnFactoryResolver.Register(BifrostDbProvider.SqlServer, cs => new SqlServerDbConnFactory(cs));
+DbConnFactoryResolver.Register(BifrostDbProvider.PostgreSql, cs => new PostgresDbConnFactory(cs));
+DbConnFactoryResolver.Register(BifrostDbProvider.MySql, cs => new MySqlDbConnFactory(cs));
+DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
 
 var config = ToolConfig.Parse(args);
 var output = new OutputFormatter(Console.Out, config.JsonOutput);

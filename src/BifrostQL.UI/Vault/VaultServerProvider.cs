@@ -65,9 +65,13 @@ public static class VaultServerProvider
                 if (parsed is not null)
                     servers.AddRange(parsed);
             }
-            catch
+            catch (JsonException ex)
             {
-                // Malformed JSON — skip silently
+                // BIFROST_SERVERS was explicitly set — malformed JSON is a deployment
+                // misconfiguration. Fail rather than silently dropping every server it
+                // was meant to define (which surfaces later as a confusing "not found").
+                throw new InvalidOperationException(
+                    $"BIFROST_SERVERS contains malformed JSON: {ex.Message}", ex);
             }
         }
 
@@ -95,9 +99,13 @@ public static class VaultServerProvider
                 servers.RemoveAll(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
                 servers.Add(server);
             }
-            catch
+            catch (Exception ex)
             {
-                // Can't detect provider — skip
+                // An explicitly-set BIFROST_SERVER_<NAME> that can't be parsed is a
+                // deployment error; skipping it silently drops the server and surfaces
+                // later as a confusing "not found". Fail naming the offending variable.
+                throw new InvalidOperationException(
+                    $"Environment variable '{key}' is not a valid connection string: {ex.Message}", ex);
             }
         }
 

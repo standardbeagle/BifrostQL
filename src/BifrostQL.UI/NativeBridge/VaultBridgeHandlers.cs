@@ -186,12 +186,20 @@ namespace BifrostQL.UI.NativeBridge
 
                 var sshHost = ReadSshString("host");
                 var sshUsername = ReadSshString("username");
-                if (!string.IsNullOrWhiteSpace(sshHost) && !string.IsNullOrWhiteSpace(sshUsername))
+                var hasHost = !string.IsNullOrWhiteSpace(sshHost);
+                var hasUsername = !string.IsNullOrWhiteSpace(sshUsername);
+                // An SSH object was supplied — a partial one (host without username or
+                // vice versa) must fail rather than being silently discarded. Dropping
+                // it would save the server with no tunnel and later connect directly to
+                // the database host, defeating the tunnel the user configured.
+                if (hasHost != hasUsername)
+                    throw new ArgumentException("SSH config requires both 'host' and 'username'.");
+                if (hasHost && hasUsername)
                 {
                     ssh = new VaultSshConfig(
-                        sshHost,
+                        sshHost!,
                         ReadSshInt("port") ?? 22,
-                        sshUsername,
+                        sshUsername!,
                         ReadSshString("identityFile"));
                 }
             }

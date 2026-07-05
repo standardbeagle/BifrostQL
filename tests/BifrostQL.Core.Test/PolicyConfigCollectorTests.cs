@@ -171,4 +171,34 @@ public class PolicyConfigCollectorTests
                 "global lookup table '{0}' is read-only through CRUD", tableName);
         }
     }
+
+    [Fact]
+    public void Collector_UnknownActionToken_Throws()
+    {
+        // A typo'd action token (e.g. SQL-style "select,insert") must fail rather
+        // than be silently dropped. If it were the only policy metadata on a table,
+        // an empty allow-list collapses HasPolicy to false, which the evaluator
+        // treats as "no policy = unrestricted" — a silent fail-OPEN.
+        var table = TableWithMetadata("orders",
+            (MetadataKeys.Policy.Actions, "select,insert"));
+
+        var act = () => PolicyConfigCollector.FromTable(table);
+
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*Unknown policy action*");
+    }
+
+    [Fact]
+    public void Collector_ValidActionAmongTypos_StillThrows()
+    {
+        // Even a partially-valid list must fail on the first bad token so the
+        // operator learns the grant is not what they wrote.
+        var table = TableWithMetadata("orders",
+            (MetadataKeys.Policy.Actions, "read,destroy"));
+
+        var act = () => PolicyConfigCollector.FromTable(table);
+
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*destroy*");
+    }
 }

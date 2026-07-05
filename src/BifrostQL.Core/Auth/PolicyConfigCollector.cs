@@ -49,9 +49,19 @@ public static class PolicyConfigCollector
         foreach (var token in SplitList(raw))
         {
             if (Enum.TryParse<PolicyAction>(token, ignoreCase: true, out var action))
+            {
                 yield return action;
-            // Unrecognized tokens are intentionally ignored — config typos
-            // must not silently widen access.
+                continue;
+            }
+
+            // Fail fast on an unrecognized action token. Silently dropping it is a
+            // fail-OPEN hazard: if `policy-actions` is the only policy metadata on a
+            // table and every token is a typo, the resulting empty allow-list makes
+            // TablePolicy.HasPolicy false, which the evaluator treats as "no policy
+            // = unrestricted" — the intended lockdown silently becomes allow-all.
+            throw new InvalidOperationException(
+                $"Unknown policy action '{token}' in 'policy-actions'. " +
+                $"Valid actions: {string.Join(", ", Enum.GetNames<PolicyAction>())}.");
         }
     }
 

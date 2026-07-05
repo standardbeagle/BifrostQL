@@ -87,17 +87,17 @@ public class PolicyEvaluatorTests
     }
 
     [Fact]
-    public void Collector_InvalidActionToken_IsIgnored()
+    public void Collector_InvalidActionToken_Throws()
     {
+        // A bogus action token must fail rather than be silently dropped: silently
+        // narrowing the grant hides the operator's mistake, and in the all-invalid
+        // case collapses the policy to allow-all (fail-open). See PolicyConfigCollector.
         var table = TableWithMetadata("orders",
             (MetadataKeys.Policy.Actions, "read, bogus, delete"));
 
-        var policy = PolicyConfigCollector.FromTable(table);
+        var act = () => PolicyConfigCollector.FromTable(table);
 
-        policy.AllowedActions.Should().BeEquivalentTo(new[]
-        {
-            PolicyAction.Read, PolicyAction.Delete
-        });
+        act.Should().Throw<InvalidOperationException>().WithMessage("*bogus*");
     }
 
     // ---- PolicyEvaluator: table-action checks ----

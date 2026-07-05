@@ -221,7 +221,11 @@ namespace BifrostQL.Server
             return this;
         }
 
-        public bool IsUsingAuth => _bifrostConfig is not null && !_bifrostConfig.GetValue<bool>("DisableAuth", true);
+        // Default missing DisableAuth to false (auth ON), matching the BindStandardConfig
+        // startup guard which requires JwtSettings whenever DisableAuth is not explicitly true.
+        // Defaulting to true here would fail open: JwtSettings present + DisableAuth unset would
+        // pass startup validation yet serve /graphql unauthenticated.
+        public bool IsUsingAuth => _bifrostConfig is not null && !_bifrostConfig.GetValue<bool>("DisableAuth", false);
         public string EndpointPath => _bifrostConfig?.GetValue<string>("Path", "/graphql") ?? "/graphql";
         public string PlaygroundPath => _bifrostConfig?.GetValue<string>("Playground", "/") ?? "/";
 
@@ -362,7 +366,9 @@ namespace BifrostQL.Server
             services.AddSingleton<IComputedColumnProvider, EavMetaProvider>();
             services.AddSingleton<IComputedColumnProviders>(sp => new ComputedColumnProviders(sp.GetServices<IComputedColumnProvider>()));
 
-            var isAuthEnabled = !_bifrostConfig.GetValue<bool>("DisableAuth", true);
+            // Fail-secure default: missing DisableAuth means auth ON, consistent with
+            // IsUsingAuth and the BindStandardConfig startup guard.
+            var isAuthEnabled = !_bifrostConfig.GetValue<bool>("DisableAuth", false);
 
             //JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 

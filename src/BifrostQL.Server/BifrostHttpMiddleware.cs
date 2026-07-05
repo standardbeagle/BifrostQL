@@ -44,6 +44,18 @@ namespace BifrostQL.Server
                 return;
             }
 
+            IDictionary<string, object?> userContext;
+            try
+            {
+                userContext = BuildUserContext(context);
+            }
+            catch (UnmappedOidcIssuerException)
+            {
+                // Token from an OIDC issuer this deployment has not mapped — fail closed.
+                context.Response.StatusCode = 403;
+                return;
+            }
+
             var options = new ExecutionOptions
             {
                 Query = request.Query,
@@ -52,7 +64,7 @@ namespace BifrostQL.Server
                 Extensions = request.Extensions,
                 RequestServices = context.RequestServices,
                 CancellationToken = context.RequestAborted,
-                UserContext = BuildUserContext(context),
+                UserContext = userContext,
             };
 
             ExecutionResult result;
@@ -96,6 +108,19 @@ namespace BifrostQL.Server
         }
     }
 
+    /// <summary>
+    /// Raised when a GraphQL request path matches no registered endpoint in a deployment
+    /// that has more than one. Prevents an unrouted path from silently resolving to the
+    /// first registered database's schema.
+    /// </summary>
+    internal sealed class UnknownBifrostEndpointException : Exception
+    {
+        public UnknownBifrostEndpointException(string? pathBase, string? path)
+            : base($"No BifrostQL endpoint registered for pathBase='{pathBase}' path='{path}'.")
+        {
+        }
+    }
+
     public class BifrostDocumentExecutor : IDocumentExecuter
     {
         private readonly IDocumentExecuter _documentExecutor;
@@ -136,6 +161,20 @@ namespace BifrostQL.Server
             try
             {
                 sharedExtensions = await ResolveExtensionsAsync(extensionsLoader, context);
+            }
+            catch (UnknownBifrostEndpointException ex)
+            {
+                // Unmatched request path in a multi-endpoint deployment. Do NOT fall back to
+                // another database's schema — report the endpoint as not found.
+                var logger = options.RequestServices!.GetService<ILogger<BifrostDocumentExecutor>>();
+                logger?.LogWarning("No BifrostQL endpoint configured for request path: {Message}", ex.Message);
+                return new ExecutionResult
+                {
+                    Errors = new ExecutionErrors
+                    {
+                        new ExecutionError("No BifrostQL endpoint is configured for this path.")
+                    }
+                };
             }
             catch (Exception ex)
             {
@@ -275,6 +314,14 @@ namespace BifrostQL.Server
             var path = context.Request.Path.Value;
             if (!string.IsNullOrEmpty(path) && cache.HasPath(path))
                 return await cache.GetValueAsync(path);
+
+            // No explicit path match. Falling back to the first registered endpoint is only
+            // safe with a single endpoint (single-DB deployment). With multiple endpoints,
+            // serving the first DB's schema for an unmatched path silently answers the query
+            // against the wrong database — reject instead so a caller can't cross DB
+            // boundaries by hitting an unrouted path.
+            if (cache.Count > 1)
+                throw new UnknownBifrostEndpointException(pathBase, path);
 
             return await cache.GetFirstValueAsync()
                 ?? throw new InvalidOperationException("No BifrostQL schemas are configured. Set a connection string first.");

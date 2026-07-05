@@ -23,6 +23,13 @@ namespace BifrostQL.Core.Schema
         public bool HasPath(string path) => _schemas.ContainsKey(path);
 
         /// <summary>
+        /// Number of registered endpoint loaders. Used to decide whether an unmatched
+        /// request path may safely fall back to the single registered endpoint (1) or
+        /// must be rejected because it could resolve to the wrong database (2+).
+        /// </summary>
+        public int Count => _schemas.Count;
+
+        /// <summary>
         /// Returns the cached value for a path, loading it on first access.
         /// </summary>
         public Task<T> GetValueAsync(string path)

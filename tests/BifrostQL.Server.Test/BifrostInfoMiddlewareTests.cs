@@ -30,7 +30,7 @@ namespace BifrostQL.Server.Test
         [Fact]
         public async Task InfoMiddleware_ReturnsJsonOnGetToConfiguredPath()
         {
-            var options = new BifrostInfoOptions { Path = "/_info" };
+            var options = new BifrostInfoOptions { Path = "/_info", RequireAuth = false };
             var clock = CreateClock();
             var called = false;
             RequestDelegate next = _ => { called = true; return Task.CompletedTask; };
@@ -128,7 +128,7 @@ namespace BifrostQL.Server.Test
         [Fact]
         public async Task InfoMiddleware_MatchesPathCaseInsensitively()
         {
-            var options = new BifrostInfoOptions { Path = "/_info" };
+            var options = new BifrostInfoOptions { Path = "/_info", RequireAuth = false };
             var clock = CreateClock();
             var called = false;
             RequestDelegate next = _ => { called = true; return Task.CompletedTask; };
@@ -148,7 +148,7 @@ namespace BifrostQL.Server.Test
         [Fact]
         public async Task InfoMiddleware_IncludesUptimeInResponse()
         {
-            var options = new BifrostInfoOptions();
+            var options = new BifrostInfoOptions { RequireAuth = false };
             var clock = CreateClock();
             RequestDelegate next = _ => Task.CompletedTask;
             var middleware = new BifrostInfoMiddleware(next, options);
@@ -169,7 +169,7 @@ namespace BifrostQL.Server.Test
         [Fact]
         public async Task InfoMiddleware_ReportsNoneForSchemaCacheWhenNoCacheRegistered()
         {
-            var options = new BifrostInfoOptions();
+            var options = new BifrostInfoOptions { RequireAuth = false };
             var clock = CreateClock();
             RequestDelegate next = _ => Task.CompletedTask;
             var middleware = new BifrostInfoMiddleware(next, options);
@@ -189,7 +189,7 @@ namespace BifrostQL.Server.Test
         [Fact]
         public async Task InfoMiddleware_ReportsUnknownDatabaseWhenNoOptionsRegistered()
         {
-            var options = new BifrostInfoOptions();
+            var options = new BifrostInfoOptions { RequireAuth = false };
             var clock = CreateClock();
             RequestDelegate next = _ => Task.CompletedTask;
             var middleware = new BifrostInfoMiddleware(next, options);
@@ -209,7 +209,7 @@ namespace BifrostQL.Server.Test
         [Fact]
         public async Task InfoMiddleware_ReturnsEmptyModulesListByDefault()
         {
-            var options = new BifrostInfoOptions();
+            var options = new BifrostInfoOptions { RequireAuth = false };
             var clock = CreateClock();
             RequestDelegate next = _ => Task.CompletedTask;
             var middleware = new BifrostInfoMiddleware(next, options);
@@ -229,7 +229,7 @@ namespace BifrostQL.Server.Test
         [Fact]
         public async Task InfoMiddleware_UsesCustomPath()
         {
-            var options = new BifrostInfoOptions { Path = "/_status" };
+            var options = new BifrostInfoOptions { Path = "/_status", RequireAuth = false };
             var clock = CreateClock();
             var called = false;
             RequestDelegate next = _ => { called = true; return Task.CompletedTask; };
@@ -286,7 +286,7 @@ namespace BifrostQL.Server.Test
 
             options.Enabled.Should().BeTrue();
             options.Path.Should().Be("/_info");
-            options.RequireAuth.Should().BeFalse();
+            options.RequireAuth.Should().BeTrue();
             options.IncludeSchemaHash.Should().BeTrue();
         }
 

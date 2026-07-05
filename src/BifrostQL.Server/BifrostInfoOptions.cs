@@ -23,9 +23,12 @@ namespace BifrostQL.Server
         public string Path { get; set; } = "/_info";
 
         /// <summary>
-        /// Whether authentication is required to access the info endpoint. Default: false.
+        /// Whether authentication is required to access the info endpoint. Default: true.
+        /// The response leaks the server version, database engine, active security-module
+        /// class names, and schema hash — reconnaissance an attacker can use — so it is
+        /// gated by default. Set to false to expose an anonymous status/health endpoint.
         /// </summary>
-        public bool RequireAuth { get; set; }
+        public bool RequireAuth { get; set; } = true;
 
         /// <summary>
         /// Whether to include the X-BifrostQL-Schema-Hash header on responses. Default: true.

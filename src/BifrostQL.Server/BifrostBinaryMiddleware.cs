@@ -340,6 +340,13 @@ namespace BifrostQL.Server
                     response.Payload = JsonSerializer.SerializeToUtf8Bytes(result.Data);
                 }
             }
+            catch (UnmappedOidcIssuerException)
+            {
+                // Token from an OIDC issuer this deployment has not mapped — fail closed
+                // instead of degrading the principal through the local claim path.
+                response.Type = BifrostMessageType.Error;
+                response.Errors.Add("Forbidden: unrecognized token issuer");
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error executing binary request {RequestId}", request.RequestId);

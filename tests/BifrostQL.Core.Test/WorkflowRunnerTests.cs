@@ -116,6 +116,39 @@ public class WorkflowRunnerTests
         executor.Queries.Should().BeEmpty();
     }
 
+    [Theory]
+    // Unknown root ("input" vs "inputs") and a malformed one-part template must
+    // abort the step rather than write the literal "{{ ... }}" text into the DB.
+    [InlineData("""{ "table": "members", "id": "{{ input.memberId }}" }""")]
+    [InlineData("""{ "table": "members", "id": "{{ inputs }}" }""")]
+    public async Task RunAsync_MalformedTemplate_FailsStepInsteadOfWritingLiteral(string payload)
+    {
+        var executor = new CapturingWorkflowDataExecutor();
+        var workflow = new WorkflowDefinition
+        {
+            Name = "bad-template",
+            Trigger = new WorkflowTrigger { Type = "manual" },
+            Steps = new[]
+            {
+                new WorkflowStep
+                {
+                    Name = "load",
+                    Type = "query",
+                    Payload = Json(payload),
+                },
+            },
+        };
+
+        var result = await new WorkflowRunner(
+                new Dictionary<string, WorkflowDefinition> { [workflow.Name] = workflow },
+                executor)
+            .RunAsync("bad-template", new Dictionary<string, object?> { ["memberId"] = 1L },
+                new Dictionary<string, object?>());
+
+        result.Succeeded.Should().BeFalse();
+        result.Trace.Should().Contain(t => t.StepName == "load" && !t.Succeeded);
+    }
+
     [Fact]
     public async Task RunAsync_StepFailureAbortsAndSurfacesTypedError()
     {

@@ -376,20 +376,28 @@ public sealed class WorkflowRunner : IWorkflowRunner
 
         var path = trimmed[2..^2].Trim();
         var parts = path.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        // A malformed template (e.g. "{{ inputs }}") or an unknown root (a typo like
+        // "{{ input.x }}") must fail rather than be written verbatim into a mutation
+        // or state-transition payload — a silent "{{ ... }}" literal in the database
+        // is a data-integrity hazard, not a valid default.
         if (parts.Length < 2)
-            return value;
+            throw new BifrostExecutionError(
+                $"Malformed workflow template '{value}'; expected '{{{{ inputs.<name> }}}}' or '{{{{ steps.<step>.<name> }}}}'.");
 
         if (string.Equals(parts[0], "inputs", StringComparison.OrdinalIgnoreCase))
             return ResolvePath(context.Inputs, parts.Skip(1));
 
-        if (string.Equals(parts[0], "steps", StringComparison.OrdinalIgnoreCase) && parts.Length >= 2)
+        if (string.Equals(parts[0], "steps", StringComparison.OrdinalIgnoreCase))
         {
+            // A missing step output is legitimately null (the step may not have run,
+            // e.g. a skipped conditional branch); only the structural cases throw.
             if (!context.NamedOutputs.TryGetValue(parts[1], out var stepOutput))
                 return null;
             return ResolvePath(stepOutput, parts.Skip(2));
         }
 
-        return value;
+        throw new BifrostExecutionError(
+            $"Unknown workflow template root '{parts[0]}' in '{value}'; expected 'inputs' or 'steps'.");
     }
 
     private static object? ResolvePath(object? value, IEnumerable<string> path)

@@ -304,9 +304,20 @@ namespace BifrostQL.Server
                 return response;
             }
 
+            IReadOnlyDictionary<string, object?>? variables;
             try
             {
-                var variables = ParseVariables(request.VariablesJson);
+                variables = ParseVariables(request.VariablesJson);
+            }
+            catch (JsonException)
+            {
+                response.Type = BifrostMessageType.Error;
+                response.Errors.Add("Invalid variables JSON");
+                return response;
+            }
+
+            try
+            {
                 var bifrostRequest = new BifrostRequest
                 {
                     Query = request.Query,
@@ -344,15 +355,10 @@ namespace BifrostQL.Server
             if (string.IsNullOrEmpty(variablesJson))
                 return null;
 
-            try
-            {
-                var dict = JsonSerializer.Deserialize<Dictionary<string, object?>>(variablesJson);
-                return dict;
-            }
-            catch (JsonException)
-            {
-                return null;
-            }
+            // Malformed variables JSON must surface as an error rather than silently
+            // executing the operation with no variables (which would run against
+            // wrong/default inputs). The caller maps JsonException to an Error reply.
+            return JsonSerializer.Deserialize<Dictionary<string, object?>>(variablesJson);
         }
 
         private static IDictionary<string, object?> BuildUserContext(HttpContext context)

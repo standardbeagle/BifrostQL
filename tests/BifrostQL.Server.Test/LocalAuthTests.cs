@@ -216,6 +216,31 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public void BuildAppIdentity_AuthenticatedPrincipalWithoutSubject_Throws()
+        {
+            // A misconfigured token (authenticated but carrying no subject claim)
+            // must fail rather than silently collapse to the "anonymous" sentinel,
+            // which would run tenant/row-scope checks against a bogus identity.
+            var principal = new ClaimsPrincipal(
+                new ClaimsIdentity(new[] { new Claim(ClaimTypes.Email, "x@y.test") }, "TestAuth"));
+
+            var act = () => BifrostContext.BuildAppIdentity(principal);
+
+            act.Should().Throw<InvalidOperationException>().WithMessage("*no subject*");
+        }
+
+        [Fact]
+        public void BuildAppIdentity_UnauthenticatedPrincipal_IsAnonymous()
+        {
+            // An unauthenticated principal legitimately has no subject → anonymous.
+            var principal = new ClaimsPrincipal(new ClaimsIdentity());
+
+            var identity = BifrostContext.BuildAppIdentity(principal);
+
+            identity.Id.Should().Be("anonymous");
+        }
+
+        [Fact]
         public async Task SessionEndpoint_Unauthenticated_Returns401()
         {
             // Arrange: a context whose User is an anonymous (unauthenticated) principal.

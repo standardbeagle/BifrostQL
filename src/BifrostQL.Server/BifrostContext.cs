@@ -51,7 +51,19 @@ namespace BifrostQL.Server
                 ?? principal.Identity?.Name
                 ?? string.Empty;
             if (string.IsNullOrWhiteSpace(id))
+            {
+                // An authenticated principal with no subject claim is a misconfigured
+                // token (bad OIDC mapping, malformed cookie). Collapsing it to the
+                // "anonymous" sentinel would merge distinct broken principals and run
+                // tenant/row-scope checks against a bogus identity — fail instead.
+                // OidcClaimMapperBase.Map is already strict here; keep the local path
+                // symmetric. An unauthenticated principal legitimately has no subject.
+                if (principal.Identity?.IsAuthenticated == true)
+                    throw new InvalidOperationException(
+                        "Authenticated principal has no subject claim (NameIdentifier/sub/Name); " +
+                        "refusing to collapse it to an anonymous identity.");
                 id = "anonymous";
+            }
 
             var provider = principal.FindFirstValue(LocalAuthClaims.Provider) ?? "unknown";
             var email = principal.FindFirstValue(ClaimTypes.Email);

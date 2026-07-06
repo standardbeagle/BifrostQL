@@ -22,16 +22,22 @@
  */
 
 import type { GraphQLFetcher } from "@standardbeagle/edit-db";
-import type { QueryTransport } from "./transport";
+import type { QueryTransport, QueryTransportOptions } from "./transport";
 
 export class TransportGraphQLFetcher implements GraphQLFetcher {
   constructor(private readonly transport: QueryTransport) {}
 
+  // `options` is structurally the package's GraphQLQueryOptions ({ signal? });
+  // that type isn't re-exported from the package root, so we reuse the
+  // transport's own option shape — the two are interchangeable.
   async query<T = unknown>(
     query: string,
-    variables?: Record<string, unknown>
+    variables?: Record<string, unknown>,
+    options?: QueryTransportOptions
   ): Promise<T> {
-    const { data, errors } = await this.transport.query(query, variables);
+    // Forward the abort signal so superseded binary/HTTP requests are cancelled
+    // rather than left to run to completion (or to the request timeout).
+    const { data, errors } = await this.transport.query(query, variables, options);
     if ((errors ?? []).length > 0) {
       // The Editor's hooks rely on the fetcher rejecting so react-query can
       // surface the failure; a joined message keeps parity with the built-in

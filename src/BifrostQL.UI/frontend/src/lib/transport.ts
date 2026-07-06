@@ -39,10 +39,15 @@ export interface QueryTransport {
   /**
    * Executes a GraphQL operation. The transport decides whether the request
    * goes over HTTP or the binary WebSocket; callers don't need to care.
+   *
+   * `options.signal` cancels a superseded request — react-query passes one per
+   * query so stale fetches (rapid paging/filtering) are aborted. Both the HTTP
+   * and binary transports honor it.
    */
   query(
     text: string,
-    variables?: Record<string, unknown>
+    variables?: Record<string, unknown>,
+    options?: QueryTransportOptions
   ): Promise<QueryTransportResult>;
 
   /**
@@ -74,6 +79,12 @@ export interface QueryTransport {
 export interface QueryTransportResult {
   data: unknown;
   errors: string[];
+}
+
+/** Per-request options common to every transport. */
+export interface QueryTransportOptions {
+  /** Aborts the request when fired (superseded/unmounted queries). */
+  signal?: AbortSignal;
 }
 
 export type TransportMode = "http" | "binary";
@@ -208,12 +219,14 @@ export class HttpTransport implements QueryTransport {
 
   async query(
     text: string,
-    variables?: Record<string, unknown>
+    variables?: Record<string, unknown>,
+    options?: QueryTransportOptions
   ): Promise<QueryTransportResult> {
     const response = await fetch(this.url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: text, variables }),
+      signal: options?.signal,
     });
 
     if (!response.ok) {
@@ -271,7 +284,8 @@ export class BinaryTransport implements QueryTransport {
 
   async query(
     text: string,
-    variables?: Record<string, unknown>
+    variables?: Record<string, unknown>,
+    options?: QueryTransportOptions
   ): Promise<QueryTransportResult> {
     if (this.closed) {
       throw new Error("BinaryTransport is closed");
@@ -282,7 +296,8 @@ export class BinaryTransport implements QueryTransport {
     // site.
     const result = (await this.client!.query(
       text,
-      variables
+      variables,
+      options?.signal
     )) as BifrostQueryResult;
     return { data: result.data, errors: result.errors };
   }
@@ -314,6 +329,13 @@ export class BinaryTransport implements QueryTransport {
       }
       const client = this.client;
       const p = client.connect().catch((err) => {
+        // Close the client we're abandoning before dropping the reference.
+        // A live socket that dropped mid-query left this client's own
+        // auto-reconnect controller retrying in the background; nulling
+        // `this.client` without closing would orphan it — its backoff timers
+        // keep firing and it holds the old pending/streaming requests forever.
+        // close() stops the controller and rejects those requests.
+        client.close();
         // Reset state so a subsequent query can retry from scratch instead
         // of being stuck behind a permanently-rejected promise.
         if (this.client === client) this.client = null;

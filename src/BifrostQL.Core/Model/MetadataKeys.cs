@@ -7,6 +7,20 @@ namespace BifrostQL.Core.Model
     public static class MetadataKeys
     {
         /// <summary>
+        /// Normalizes a metadata property key written in the preferred kebab-case
+        /// spelling onto the canonical stored key. Lets configuration authors use
+        /// a consistent kebab-case style for keys whose stored form predates that
+        /// convention (e.g. <c>min-length</c> → <c>minlength</c>) without changing
+        /// the constants that consumers read. Unknown keys pass through unchanged.
+        /// </summary>
+        public static string NormalizeKey(string key) => key switch
+        {
+            "min-length" => Validation.MinLength,
+            "max-length" => Validation.MaxLength,
+            _ => key,
+        };
+
+        /// <summary>
         /// Metadata keys for EAV (Entity-Attribute-Value) configuration.
         /// </summary>
         public static class Eav

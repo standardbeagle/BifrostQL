@@ -73,8 +73,38 @@ The rule string is parsed structurally, not delimiter-agnostically:
   name), so a table named `data(2024)` is matched as written.
 
 Malformed rules fail fast at load: a missing brace, an empty selector, a
-property with no `:`, an empty key, or a duplicate key throws an
-`ArgumentException` naming the offending rule rather than being silently ignored.
+property with no `:`, an empty key, a duplicate key, or an unbalanced backtick
+throws an `ArgumentException` naming the offending rule rather than being
+silently ignored.
+
+### Verbatim values for complex properties
+
+A value that itself needs `;` (its only otherwise-reserved character) can be
+wrapped in backticks. The interior is taken verbatim — no `;` splitting, no
+trimming — so a complex value keeps its natural form:
+
+```
+"dbo.orders { computed-sql: `full:String:{first} + {last}; other:String:{a} || {b}` }"
+```
+
+Without the backticks the internal `;` would be read as a property separator and
+tear the value apart. For very large expressions, keep the rule in its own JSON
+file and rely on standard `IConfiguration` layering rather than inlining a huge
+string.
+
+### Repeated properties
+
+Most properties are last-writer-wins when several rules target the same element.
+Two exceptions accumulate instead, comma-joined across rules, because they carry
+list values: `join` and `many-to-many`. For example, two `many-to-many` rules on
+`dbo.posts` combine into a single `Roles:UserRoles, Tags:PostTags` declaration.
+
+### Key spelling
+
+Keys are kebab-case. A few validation keys have a legacy glued spelling still
+stored internally (`minlength`, `maxlength`); the kebab forms `min-length` and
+`max-length` are accepted and normalized to them, so a config can use kebab-case
+consistently.
 
 ### Selectors
 
@@ -105,7 +135,7 @@ property with no `:`, an empty key, or a duplicate key throws an
 | `visibility` | `hidden` | table/column | Hide from GraphQL schema |
 | `label` | column name | table | Display label column |
 | `join` | join declaration | table/column | Declare explicit relationships |
-| `many-to-many` | `TargetTable:JunctionTable` | table | Declare a many-to-many relationship |
+| `many-to-many` | `TargetTable:JunctionTable` | table | Declare a many-to-many relationship (accumulates across rules) |
 | `auto-join` | `true`/`false` | model/table | Enable automatic join inference |
 | `foreign-joins` | `true`/`false` | model | Enable FK-based join inference |
 | `dynamic-joins` | `true`/`false` | model | Emit `_join` / `_single` containers |

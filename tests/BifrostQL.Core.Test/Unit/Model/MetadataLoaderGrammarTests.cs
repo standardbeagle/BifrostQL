@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules.ComputedColumns;
+using BifrostQL.Core.QueryModel.TestFixtures;
 using FluentAssertions;
 using Xunit;
 
@@ -165,6 +168,139 @@ namespace BifrostQL.Core.Test.Model
             var unmatched = new Dictionary<string, object?>();
             loader.ApplyDatabaseMetadata(unmatched, "other_users");
             unmatched.Should().NotContainKey(MetadataKeys.Ui.Label);
+        }
+
+        // ---- Verbatim (backtick) values: complex natural-form values ---------
+
+        [Fact]
+        public void VerbatimValue_PreservesSemicolons()
+        {
+            // Multi-column computed-sql: the internal ';' separator must survive
+            // the property-block ';' delimiter.
+            var props = ApplyToSchema(
+                "dbo { computed-sql: `full:String:{first} + {last}; other:String:{a} || {b}` }");
+
+            props[MetadataKeys.Computed.Sql]
+                .Should().Be("full:String:{first} + {last}; other:String:{a} || {b}");
+        }
+
+        [Fact]
+        public void VerbatimValue_PreservesInteriorExactly()
+        {
+            // Interior whitespace and colons are kept verbatim, not trimmed/split.
+            var props = ApplyToSchema("dbo { computed-sql: `  a:b:c  ` }");
+
+            props[MetadataKeys.Computed.Sql].Should().Be("  a:b:c  ");
+        }
+
+        [Fact]
+        public void VerbatimValue_CoexistsWithPlainProperties()
+        {
+            var props = ApplyToSchema(
+                "dbo { computed-sql: `a:String:{x}; b:String:{y}`; label: Orders }");
+
+            props[MetadataKeys.Computed.Sql].Should().Be("a:String:{x}; b:String:{y}");
+            props[MetadataKeys.Ui.Label].Should().Be("Orders");
+        }
+
+        [Fact]
+        public void VerbatimComputedSql_ParsesIntoMultipleColumns_EndToEnd()
+        {
+            // The loader-preserved multi-column value must feed the computed-sql
+            // collector as two distinct definitions.
+            var props = new Dictionary<string, object?>();
+            new MetadataLoader(new[] { "dbo { computed-sql: `a:Float:{subtotal}; b:Float:{tax}` }" })
+                .ApplyDatabaseMetadata(props, "dbo");
+            var stored = (string)props[MetadataKeys.Computed.Sql]!;
+
+            var model = DbModelTestFixture.Create()
+                .WithTable("Orders", t => t.WithPrimaryKey("Id")
+                    .WithColumn("subtotal", "decimal")
+                    .WithColumn("tax", "decimal")
+                    .WithMetadata(MetadataKeys.Computed.Sql, stored))
+                .Build();
+            var table = model.GetTableFromDbName("Orders");
+
+            ComputedColumnConfigCollector.FromTable(table).Select(c => c.Name)
+                .Should().BeEquivalentTo("a", "b");
+        }
+
+        [Fact]
+        public void UnbalancedBacktick_Throws()
+        {
+            Action act = () => new MetadataLoader(new[] { "dbo { computed-sql: `a:b:c }" });
+
+            act.Should().Throw<ArgumentException>().WithMessage("*Unbalanced backtick*");
+        }
+
+        // ---- Append semantics across rules -----------------------------------
+
+        [Fact]
+        public void ManyToMany_AppendsAcrossRules()
+        {
+            var props = new Dictionary<string, object?>();
+            var loader = new MetadataLoader(new[]
+            {
+                "dbo { many-to-many: Roles:UserRoles }",
+                "dbo { many-to-many: Tags:PostTags }",
+            });
+
+            loader.ApplyDatabaseMetadata(props, "dbo");
+
+            props[MetadataKeys.Relationships.ManyToMany]
+                .Should().Be("Roles:UserRoles, Tags:PostTags");
+        }
+
+        [Fact]
+        public void Join_StillAppendsAcrossRules()
+        {
+            var props = new Dictionary<string, object?>();
+            var loader = new MetadataLoader(new[]
+            {
+                "dbo { join: a }",
+                "dbo { join: b }",
+            });
+
+            loader.ApplyDatabaseMetadata(props, "dbo");
+
+            props[MetadataKeys.Relationships.Join].Should().Be("a, b");
+        }
+
+        [Fact]
+        public void NonAppendProperty_LastRuleWins()
+        {
+            var props = new Dictionary<string, object?>();
+            var loader = new MetadataLoader(new[]
+            {
+                "dbo { label: First }",
+                "dbo { label: Second }",
+            });
+
+            loader.ApplyDatabaseMetadata(props, "dbo");
+
+            props[MetadataKeys.Ui.Label].Should().Be("Second");
+        }
+
+        // ---- Key alias normalization -----------------------------------------
+
+        [Theory]
+        [InlineData("min-length", "5")]
+        [InlineData("max-length", "50")]
+        public void KebabLengthKeys_NormalizeToStoredKey(string alias, string value)
+        {
+            var props = ApplyToSchema($"dbo {{ {alias}: {value} }}", "dbo");
+
+            var canonical = alias == "min-length"
+                ? MetadataKeys.Validation.MinLength
+                : MetadataKeys.Validation.MaxLength;
+            props[canonical].Should().Be(value);
+        }
+
+        [Fact]
+        public void NormalizeKey_LeavesUnknownKeysUnchanged()
+        {
+            MetadataKeys.NormalizeKey("tenant-filter").Should().Be("tenant-filter");
+            MetadataKeys.NormalizeKey("min-length").Should().Be(MetadataKeys.Validation.MinLength);
         }
 
         // ---- Regression: existing simple rules unaffected --------------------

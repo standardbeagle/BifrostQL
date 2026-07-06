@@ -70,7 +70,17 @@ namespace BifrostQL.Core.Model
     {
         private readonly MetadataMatcher[][] _rules;
         private readonly Dictionary<string, string> _metadata;
-        private static readonly HashSet<string> _appendProperties = new() { "join" };
+
+        // Properties whose values accumulate across every rule that targets the
+        // same schema element, comma-joined, instead of the last rule winning.
+        // Both carry comma-separated lists (join declarations, "Target:Junction"
+        // many-to-many pairs) that multiple rules are expected to contribute to.
+        private static readonly HashSet<string> _appendProperties =
+            new(StringComparer.OrdinalIgnoreCase)
+            {
+                MetadataKeys.Relationships.Join,
+                MetadataKeys.Relationships.ManyToMany,
+            };
 
         // Selectors are the brace-free prefix; the property block spans the FIRST
         // '{' to the LAST '}'. Greedy properties let a value carry balanced braces
@@ -95,22 +105,64 @@ namespace BifrostQL.Core.Model
             _rules = selectorList.Select(s => s.Split(new[] { '.' }).Select(m => new MetadataMatcher(m)).ToArray()).ToArray();
 
             var properties = split.Groups["properties"].Value;
-            var propertyList = properties.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries).Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
             _metadata = new Dictionary<string, string>();
-            foreach (var raw in propertyList)
+            foreach (var segment in SplitProperties(properties, rule))
             {
                 // Split on the FIRST ':' only so values may themselves contain ':'
                 // (e.g. many-to-many "Target:Junction", computed-sql "name:Type:expr").
-                var kv = raw.Split(new[] { ':' }, 2);
+                var kv = segment.Split(new[] { ':' }, 2);
                 if (kv.Length != 2)
-                    throw new ArgumentException($"Invalid metadata property '{raw.Trim()}' in rule '{rule}': expected 'key: value'.", nameof(rule));
-                var key = kv[0].Trim();
-                var value = kv[1].Trim();
+                    throw new ArgumentException($"Invalid metadata property '{segment.Trim()}' in rule '{rule}': expected 'key: value'.", nameof(rule));
+                var key = MetadataKeys.NormalizeKey(kv[0].Trim());
+                var value = UnwrapValue(kv[1].Trim());
                 if (key.Length == 0)
                     throw new ArgumentException($"Empty metadata key in rule '{rule}'.", nameof(rule));
                 if (!_metadata.TryAdd(key, value))
                     throw new ArgumentException($"Duplicate metadata key '{key}' in rule '{rule}'.", nameof(rule));
             }
+        }
+
+        // Splits the property block on ';', but a ';' inside a backtick-quoted
+        // verbatim value does not split. This lets a complex value keep its own
+        // ';' — e.g. multi-column computed-sql
+        //   computed-sql: `a:String:{x}; b:String:{y}`
+        // — without the block delimiter tearing it apart.
+        private static IEnumerable<string> SplitProperties(string block, string rule)
+        {
+            var segments = new List<string>();
+            var sb = new StringBuilder();
+            var inVerbatim = false;
+            foreach (var ch in block)
+            {
+                if (ch == '`')
+                {
+                    inVerbatim = !inVerbatim;
+                    sb.Append(ch);
+                }
+                else if (ch == ';' && !inVerbatim)
+                {
+                    segments.Add(sb.ToString());
+                    sb.Clear();
+                }
+                else
+                {
+                    sb.Append(ch);
+                }
+            }
+            if (inVerbatim)
+                throw new ArgumentException($"Unbalanced backtick in metadata rule '{rule}': every verbatim value must open and close with '`'.", nameof(rule));
+            segments.Add(sb.ToString());
+            return segments.Where(s => !string.IsNullOrWhiteSpace(s));
+        }
+
+        // A value wrapped in a single pair of backticks is taken verbatim: its
+        // interior is preserved exactly (no trimming, no ';'/':' interpretation).
+        // Otherwise the already-trimmed value is used as-is.
+        private static string UnwrapValue(string value)
+        {
+            if (value.Length >= 2 && value[0] == '`' && value[^1] == '`')
+                return value.Substring(1, value.Length - 2);
+            return value;
         }
 
         public bool ApplyToSchema(string schema, IDictionary<string, object?> properties)

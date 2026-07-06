@@ -201,10 +201,17 @@ export function targetDisplay(
  * the chosen target key on the junction target FK. Any payload columns are left
  * unset so the database applies its defaults; the user edits them afterwards.
  *
- * Single-column junction FKs only. `parentId`/`targetId` are route-encoded
- * strings; for a composite FK they carry multiple values joined by "::", which
- * would be written verbatim into one column — silent data corruption. Rather
- * than guess a decomposition, fail loudly until composite-FK support is built.
+ * Single-column junction FKs only. `parentId` is a route-encoded string
+ * (produced by rowIdOf/encodePkRoute); for a composite FK it carries multiple
+ * values joined by "::", which would be written verbatim into one column —
+ * silent data corruption. Rather than guess a decomposition, fail loudly until
+ * composite-FK support is built.
+ *
+ * The parent value is percent-DECODED before being written: the read side
+ * (m2mRowsQuery) decodes the route id before filtering, so writing the encoded
+ * form (e.g. 'caf%C3%A9' for a 'café' key) would insert a dangling FK that the
+ * panel's filter never matches. `targetId` is NOT route-encoded — it comes raw
+ * from the picker row — so it is written as-is.
  */
 export function attachJunctionDetail(
     m2m: ManyToManyJoin,
@@ -217,8 +224,9 @@ export function attachJunctionDetail(
             'this relationship uses a composite key which is not yet supported.',
         );
     }
+    const [parentValue] = decodeRouteParts(parentId, 1);
     return {
-        [m2m.junctionSourceColumnNames[0]]: parentId,
+        [m2m.junctionSourceColumnNames[0]]: parentValue,
         [m2m.junctionTargetColumnNames[0]]: targetId,
     };
 }

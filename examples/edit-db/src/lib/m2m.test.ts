@@ -8,6 +8,7 @@ import {
     attachJunctionDetail,
     targetDisplay,
 } from './m2m';
+import { rowIdOf } from './row-id';
 import type { Column, Join, ManyToManyJoin, Table } from '../types/schema';
 
 function col(name: string, opts: Partial<Column> = {}): Column {
@@ -314,5 +315,33 @@ describe('attachJunctionDetail', () => {
     it('maps parent + target keys onto the junction FK columns', () => {
         const detail = attachJunctionDetail(m2m, '7', '99');
         expect(detail).toEqual({ student_id: '7', course_id: '99' });
+    });
+
+    it('decodes a route-encoded parent id so the junction column gets the real DB value', () => {
+        // parentId is route-encoded (encodeURIComponent); the read side
+        // (m2mRowsQuery) filters on the decoded value, so writing the encoded
+        // form would insert a dangling link the panel never shows.
+        const detail = attachJunctionDetail(m2m, 'caf%C3%A9', '99');
+        expect(detail).toEqual({ student_id: 'café', course_id: '99' });
+    });
+
+    it('writes the target id verbatim — picker ids are raw, not route-encoded', () => {
+        const detail = attachJunctionDetail(m2m, '7', 'a%20b');
+        expect(detail).toEqual({ student_id: '7', course_id: 'a%20b' });
+    });
+
+    it('round-trips a parent value written by rowIdOf back to the original', () => {
+        const parent = table('students', { primaryKeys: ['code'] });
+        const routeId = rowIdOf({ code: 'a/b::c d' }, parent, 0);
+        const detail = attachJunctionDetail(m2m, routeId, '1');
+        expect(detail.student_id).toBe('a/b::c d');
+    });
+
+    it('rejects composite junction FKs loudly', () => {
+        const composite: ManyToManyJoin = {
+            ...m2m,
+            junctionSourceColumnNames: ['student_id', 'term_id'],
+        };
+        expect(() => attachJunctionDetail(composite, '1::2', '9')).toThrow(/single-column/);
     });
 });

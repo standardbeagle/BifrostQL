@@ -190,6 +190,47 @@ describe('useDeleteMutation', () => {
         });
     });
 
+    describe('cache invalidation after a delete', () => {
+        const users = tbl('users', ['id'], [col('id', 'Int!', true), col('name', 'String')]);
+
+        it('invalidates editRecord, cross-table data, counts, and own-table ref lookups', async () => {
+            const { wrapper, queryClient } = createHarness();
+            const seededKeys = [
+                ['editRecord', 'users', '1'],
+                ['tableData', 'orders', 'q', {}],
+                ['tableRowCounts', ['users', 'orders']],
+                ['tableRef', 'users', 'name', ''],
+                ['m2mRows', 'user_roles', 'roles', '1'],
+            ];
+            const untouchedKey = ['tableRef', 'orders', 'sku', ''];
+            for (const key of [...seededKeys, untouchedKey]) queryClient.setQueryData(key, {});
+
+            const { result } = renderHook(() => useDeleteMutation(users), { wrapper });
+            await result.current.deleteRow('1');
+
+            await waitFor(() => {
+                expect(queryClient.getQueryState(seededKeys[0])?.isInvalidated).toBe(true);
+            });
+            for (const key of seededKeys) {
+                expect(queryClient.getQueryState(key)?.isInvalidated, JSON.stringify(key)).toBe(true);
+            }
+            expect(queryClient.getQueryState(untouchedKey)?.isInvalidated).toBe(false);
+        });
+
+        it('invalidates after a batch delete too', async () => {
+            const { wrapper, queryClient } = createHarness();
+            const key = ['editRecord', 'users', '2'];
+            queryClient.setQueryData(key, {});
+
+            const { result } = renderHook(() => useDeleteMutation(users), { wrapper });
+            await result.current.deleteRows(['1', '2']);
+
+            await waitFor(() => {
+                expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
+            });
+        });
+    });
+
     describe('error surfacing', () => {
         it('surfaces mutation errors via the hook result', async () => {
             const query = vi.fn().mockRejectedValue(new Error('boom'));

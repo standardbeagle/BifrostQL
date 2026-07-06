@@ -4,9 +4,15 @@ import { useFetcher } from "../common/fetcher";
 import { Table, Column } from "../types/schema";
 import { parsePkRoute, type PkFilter } from "../lib/row-id";
 import { isJsonColumn } from "../lib/content-detect";
+import { invalidateAfterTableWrite } from "../lib/invalidate";
 import { useToast } from "./useToast";
 
-const numericTypes = ["Int", "Int!", "Float", "Float!", "BigInt", "BigInt!"];
+const numericTypes = ["Int", "Int!", "Float", "Float!"];
+// BigInt exceeds Number's 2^53 safe-integer range: coercing through +val /
+// Number() silently rounds large keys and values. The read path (fk.ts /
+// row-id.ts coerceForGql) already passes BigInt as strings, so the write path
+// must too — otherwise an edited BigInt PK targets the wrong row.
+const bigIntTypes = ["BigInt", "BigInt!"];
 const booleanTypes = ["Boolean", "Boolean!"];
 
 interface ColumnJoin {
@@ -30,10 +36,22 @@ function coerceDetail(
         }
         if (numericTypes.some(t => t === col.paramType)) {
             const val = coerced[col.name];
-            // An empty field means "no value": clear it with null rather than
-            // coercing "" to 0 via +val (a silent, wrong data write). null/
+            // An empty field means "no value": on update clear it with null
+            // rather than coercing "" to 0 via +val (a silent, wrong data
+            // write); on insert omit the column entirely (undefined) so an
+            // explicit null doesn't bypass the column's DB default. null/
             // undefined stay undefined so inserts omit the column entirely.
-            coerced[col.name] = val == null ? undefined : val === "" ? null : +val;
+            coerced[col.name] = val == null ? undefined
+                : val === "" ? (isInsert ? undefined : null)
+                : +val;
+        }
+        if (bigIntTypes.some(t => t === col.paramType)) {
+            const val = coerced[col.name];
+            // Same empty-value semantics as numeric, but the value itself is
+            // passed as a string to preserve precision beyond 2^53.
+            coerced[col.name] = val == null ? undefined
+                : val === "" ? (isInsert ? undefined : null)
+                : String(val);
         }
         if (booleanTypes.some(t => t === col.paramType)) {
             const v = coerced[col.name];
@@ -61,6 +79,8 @@ function coerceDetail(
             if (numericTypes.some(t => t === col.paramType)) {
                 coerced[col.name] = raw == null ? null : Number(raw);
             } else {
+                // Strings — including BigInt PKs, which must stay strings so a
+                // key above 2^53 targets the exact row it was read from.
                 coerced[col.name] = raw;
             }
         }
@@ -103,7 +123,7 @@ export function useTableMutation(
     const updateMutation = useMutation({
         mutationFn: (detail: Record<string, unknown>) => fetcher.query(updateQueryStr, { detail }),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['tableData', table.name] });
+            invalidateAfterTableWrite(queryClient, table.name);
             toast(`${table.label ?? table.name} saved`);
         },
     });
@@ -111,7 +131,7 @@ export function useTableMutation(
     const insertMutation = useMutation({
         mutationFn: (detail: Record<string, unknown>) => fetcher.query(insertQueryStr, { detail }),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['tableData', table.name] });
+            invalidateAfterTableWrite(queryClient, table.name);
             toast(`${table.label ?? table.name} created`);
         },
     });

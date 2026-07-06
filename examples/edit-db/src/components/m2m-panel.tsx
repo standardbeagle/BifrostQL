@@ -10,6 +10,7 @@ import { useDeleteMutation } from '../hooks/useDeleteMutation';
 import { useToast } from '../hooks/useToast';
 import { m2mRowsQuery, payloadColumns, targetDisplay, attachJunctionDetail, m2mTargetPickerPlan } from '../lib/m2m';
 import { pkFilterFor } from '../lib/row-id';
+import { getPkTypes } from '../lib/query-builder';
 import { matchesLabel } from '../lib/label-match';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -96,6 +97,24 @@ export function M2mPanel({ parentTable, m2m, parentRowId, onOpenColumn }: M2mPan
     const rows = data?.[junction.name]?.data ?? [];
     const payload = payloadColumns(junction, m2m);
     const isEditable = junction.isEditable !== false;
+
+    // Raw target-key values already linked to this parent, so the picker can
+    // refuse a duplicate: re-linking would silently insert a duplicate junction
+    // row (surrogate-PK junction) or fail with a raw PK-violation (composite
+    // (src,tgt) PK junction). Keys compare as raw strings — the same form the
+    // picker reads from its target rows. Bounded by M2M_ROW_LIMIT: links beyond
+    // the fetched window can't be detected, which at worst re-allows the
+    // pre-guard behavior for extreme link counts.
+    // Key on the same column the picker uses as its row id (getPkTypes → first
+    // PK, falling back to the junction's target column), so the linked-set
+    // membership test compares like-for-like with the picked targetId.
+    const targetKeyColumn = getPkTypes(target)[0]?.name ?? m2m.targetColumnNames[0];
+    const linkedTargetIds = new Set<string>();
+    for (const row of rows) {
+        const nested = row[m2m.junctionTargetField] as Record<string, unknown> | undefined;
+        const key = nested?.[targetKeyColumn];
+        if (key != null) linkedTargetIds.add(String(key));
+    }
 
     return (
         <div className="flex flex-col min-h-0 flex-1 overflow-hidden">
@@ -197,6 +216,7 @@ export function M2mPanel({ parentTable, m2m, parentRowId, onOpenColumn }: M2mPan
                     junction={junction}
                     m2m={m2m}
                     parentRowId={parentRowId}
+                    linkedIds={linkedTargetIds}
                     onClose={() => setPicking(false)}
                     onLinked={invalidate}
                 />
@@ -228,12 +248,14 @@ interface TargetPickerProps {
     junction: Table;
     m2m: ManyToManyJoin;
     parentRowId: string;
+    /** Raw target-key values already linked to the parent — disabled in the list. */
+    linkedIds: ReadonlySet<string>;
     onClose: () => void;
     onLinked: () => Promise<void> | void;
 }
 
 /** Dialog that lists target rows and inserts a junction row for the chosen one. */
-function TargetPicker({ target, junction, m2m, parentRowId, onClose, onLinked }: TargetPickerProps) {
+function TargetPicker({ target, junction, m2m, parentRowId, linkedIds, onClose, onLinked }: TargetPickerProps) {
     const fetcher = useFetcher();
     // The two bridge FK columns are the only fields we insert; pass them as the
     // mutation's edit columns so their string route ids get numeric coercion.
@@ -284,10 +306,12 @@ function TargetPicker({ target, junction, m2m, parentRowId, onClose, onLinked }:
     const windowFull = allRows.length >= pickerLimit;
 
     const handlePick = useCallback(async (targetId: string) => {
+        // Belt-and-braces with the disabled button: never insert a duplicate link.
+        if (linkedIds.has(targetId)) return;
         await attach.insert(attachJunctionDetail(m2m, parentRowId, targetId));
         await onLinked();
         onClose();
-    }, [attach, m2m, parentRowId, onLinked, onClose]);
+    }, [attach, m2m, parentRowId, linkedIds, onLinked, onClose]);
 
     if (planError) {
         return (
@@ -325,15 +349,19 @@ function TargetPicker({ target, junction, m2m, parentRowId, onClose, onLinked }:
                     {rows.map((r, i) => {
                         const id = String(r[idColumn] ?? '');
                         const label = r.label != null ? String(r.label) : id;
+                        const alreadyLinked = linkedIds.has(id);
                         return (
                             <button
                                 key={i}
                                 type="button"
-                                className="block w-full text-left px-3 py-1.5 text-sm hover:bg-muted/50 disabled:opacity-50"
-                                disabled={attach.isPending}
+                                className="flex w-full items-center justify-between gap-2 text-left px-3 py-1.5 text-sm hover:bg-muted/50 disabled:opacity-50 disabled:hover:bg-transparent"
+                                disabled={attach.isPending || alreadyLinked}
                                 onClick={() => handlePick(id)}
                             >
-                                {label}
+                                <span className="truncate">{label}</span>
+                                {alreadyLinked && (
+                                    <span className="shrink-0 text-xs text-muted-foreground italic">Already linked</span>
+                                )}
                             </button>
                         );
                     })}

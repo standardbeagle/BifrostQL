@@ -28,7 +28,7 @@ import {
     resolveDrillDown,
     unwrapDrillDownPage,
 } from "../lib/query-builder";
-import { rowIdOf } from "../lib/row-id";
+import { rowIdOf, encodeRouteParts } from "../lib/row-id";
 import { isComposite } from "../lib/fk";
 
 // Re-export for existing filter component imports.
@@ -48,9 +48,13 @@ interface ColumnWithJoin extends Column {
 // Joined rows in GraphQL responses are aliased as `{ id: destCol }` for single-PK destinations.
 // Composite-PK destinations come back with every PK column verbatim; produce a composite
 // route via rowIdOf so links navigate to /<table>/<pk1>::<pk2>.
-function getJoinedRowPkValue(row: RowData | undefined, joinSchema: Table | undefined): string {
+// The single-key case must route-encode too (matching getRowPkValue): the value
+// becomes a route segment decoded by parsePkRoute, so a raw string PK containing
+// "/", "%", "::", or spaces would otherwise build a broken or mis-split link.
+// Exported for tests.
+export function getJoinedRowPkValue(row: RowData | undefined, joinSchema: Table | undefined): string {
     if (!row) return "";
-    if (!joinSchema || (joinSchema.primaryKeys?.length ?? 0) <= 1) return String(row?.id ?? "");
+    if (!joinSchema || (joinSchema.primaryKeys?.length ?? 0) <= 1) return encodeRouteParts([row?.id]);
     return rowIdOf(row as Record<string, unknown>, joinSchema, 0);
 }
 

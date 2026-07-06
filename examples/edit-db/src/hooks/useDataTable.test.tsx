@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { getMultiJoinRows, clampPageIndex } from './useDataTable';
-import type { Join } from '../types/schema';
+import { getMultiJoinRows, clampPageIndex, getJoinedRowPkValue } from './useDataTable';
+import type { Join, Table } from '../types/schema';
 
 describe('clampPageIndex', () => {
     it('snaps an out-of-range page back to the last valid page ("page 2 of 1")', () => {
@@ -50,5 +50,36 @@ describe('getMultiJoinRows', () => {
         };
 
         expect(getMultiJoinRows(row, join)).toEqual([{ id: 10 }]);
+    });
+});
+
+describe('getJoinedRowPkValue', () => {
+    const tbl = (primaryKeys: string[]): Table => ({
+        dbName: 't', graphQlName: 't', name: 't', label: 't', labelColumn: 'name',
+        primaryKeys, isEditable: true, metadata: {}, columns: [],
+        multiJoins: [], singleJoins: [],
+    });
+
+    it('route-encodes a single-PK joined id so special characters survive the route', () => {
+        // The value becomes a route segment decoded by parsePkRoute; raw "/",
+        // "%", "::", or spaces would build a broken or mis-split link.
+        expect(getJoinedRowPkValue({ id: 'a/b c' }, tbl(['id']))).toBe('a%2Fb%20c');
+        expect(getJoinedRowPkValue({ id: 'x::y' }, tbl(['id']))).toBe('x%3A%3Ay');
+        expect(getJoinedRowPkValue({ id: '50%' }, tbl(['id']))).toBe('50%25');
+    });
+
+    it('leaves plain numeric ids unchanged (encoding is identity)', () => {
+        expect(getJoinedRowPkValue({ id: 42 }, tbl(['id']))).toBe('42');
+        expect(getJoinedRowPkValue({ id: 42 }, undefined)).toBe('42');
+    });
+
+    it('returns an empty string for a missing row or null id', () => {
+        expect(getJoinedRowPkValue(undefined, tbl(['id']))).toBe('');
+        expect(getJoinedRowPkValue({ id: undefined }, tbl(['id']))).toBe('');
+    });
+
+    it('builds a composite route via rowIdOf for multi-column PK destinations', () => {
+        const row = { region: 'eu/west', code: 7 };
+        expect(getJoinedRowPkValue(row, tbl(['region', 'code']))).toBe('eu%2Fwest::7');
     });
 });

@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { useFetcher } from "../common/fetcher";
 import { Table } from "../types/schema";
 import type { PkFilter } from "../lib/row-id";
+import { invalidateAfterTableWrite } from "../lib/invalidate";
 import { useToast } from "./useToast";
 
 export type DeleteInput = PkFilter | string | number;
@@ -84,7 +85,7 @@ export function useDeleteMutation(table: Table): UseDeleteMutationResult {
     const deleteMutation = useMutation({
         mutationFn: (detail: PkFilter) => fetcher.query(deleteQueryStr, { detail }),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['tableData', table.name] });
+            invalidateAfterTableWrite(queryClient, table.name);
             toast('Row deleted');
         },
     });
@@ -92,7 +93,7 @@ export function useDeleteMutation(table: Table): UseDeleteMutationResult {
     const batchMutation = useMutation({
         mutationFn: (actions: Record<string, unknown>[]) => fetcher.query(batchQueryStr, { actions }),
         onSuccess: (_data, actions) => {
-            queryClient.invalidateQueries({ queryKey: ['tableData', table.name] });
+            invalidateAfterTableWrite(queryClient, table.name);
             const n = actions.length;
             toast(`${n} ${n === 1 ? 'row' : 'rows'} deleted`);
         },

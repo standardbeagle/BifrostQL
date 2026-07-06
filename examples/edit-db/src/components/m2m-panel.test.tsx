@@ -115,4 +115,48 @@ describe('M2mPanel', () => {
         fireEvent.click(screen.getByLabelText('Open Algebra in side column'));
         expect(onOpenColumn).toHaveBeenCalledWith({ tableName: 'courses', filterId: '10' });
     });
+
+    describe('target picker duplicate guard', () => {
+        // The picker plan needs the target's columns (label lookup fails fast
+        // on schema drift), so enrich the target for these tests.
+        const targetWithColumns = table('courses', {
+            label: 'Courses',
+            labelColumn: 'title',
+            columns: [col('id', { isPrimaryKey: true, paramType: 'Int' }), col('title')],
+        });
+
+        beforeEach(() => {
+            findTable.mockImplementation((n: string) =>
+                n === 'enrollments' ? junction : n === 'courses' ? targetWithColumns : undefined);
+            fetcherQuery.mockImplementation(async (q: string) =>
+                q.includes('PickTarget')
+                    ? { courses: { data: [{ id: 10, label: 'Algebra' }, { id: 30, label: 'Chemistry' }] } }
+                    : { enrollments: { data: junctionRows } });
+        });
+
+        async function openPicker() {
+            renderPanel();
+            await screen.findByText('Algebra'); // linked rows loaded
+            fireEvent.click(screen.getByRole('button', { name: /Add link/ }));
+            await screen.findByRole('button', { name: /Chemistry/ }); // picker list loaded
+        }
+
+        it('disables targets that are already linked and marks them', async () => {
+            await openPicker();
+            // Algebra (id 10) is already linked through junction row 1.
+            const linked = screen.getByRole('button', { name: /Algebra/ });
+            expect(linked).toBeDisabled();
+            expect(screen.getByText('Already linked')).toBeInTheDocument();
+            // Chemistry (id 30) is not linked and stays pickable.
+            expect(screen.getByRole('button', { name: /Chemistry/ })).toBeEnabled();
+        });
+
+        it('inserts a junction row only for an unlinked target', async () => {
+            await openPicker();
+            fireEvent.click(screen.getByRole('button', { name: /Chemistry/ }));
+            await waitFor(() =>
+                expect(insert).toHaveBeenCalledWith({ student_id: '42', course_id: '30' }));
+            expect(insert).toHaveBeenCalledTimes(1);
+        });
+    });
 });

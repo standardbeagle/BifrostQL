@@ -87,8 +87,8 @@ namespace BifrostQL.Core.Resolvers
                     await MutationCommandExecutor.RunInTransactionAsync(conFactory, async (conn, transaction) =>
                     {
                         await MutationNotifier.RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, upsertData, context.UserContext);
-                        upsertResult = await MutationCommandExecutor.ExecuteScalar(conn, transaction, identitySql, upsertData);
-                    });
+                        upsertResult = await MutationCommandExecutor.ExecuteScalar(conn, transaction, identitySql, upsertData, context.CancellationToken);
+                    }, context.CancellationToken);
                     return HandleDecimals(upsertResult);
                 }
 
@@ -178,8 +178,8 @@ namespace BifrostQL.Core.Resolvers
                 await MutationCommandExecutor.RunInTransactionAsync(conFactory, async (conn, transaction) =>
                 {
                     await MutationNotifier.RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, dbData, userContext);
-                    result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, dbData, additionalFilter.Parameters);
-                });
+                    result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, dbData, additionalFilter.Parameters, context.CancellationToken);
+                }, context.CancellationToken);
                 await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, MutationType.Update, dbData, result, userContext);
                 return result;
             }
@@ -197,8 +197,8 @@ namespace BifrostQL.Core.Resolvers
             await MutationCommandExecutor.RunInTransactionAsync(conFactory, async (conn, transaction) =>
             {
                 await MutationNotifier.RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Delete, deleteData, userContext);
-                deleteResult = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, deleteSql, deleteData, additionalFilter.Parameters);
-            });
+                deleteResult = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, deleteSql, deleteData, additionalFilter.Parameters, context.CancellationToken);
+            }, context.CancellationToken);
             await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, MutationType.Delete, deleteData, deleteResult, userContext);
             return deleteResult;
         }
@@ -232,7 +232,8 @@ namespace BifrostQL.Core.Resolvers
                     transaction,
                     dialect,
                     table,
-                    propertyInfo.keyData);
+                    propertyInfo.keyData,
+                    context.CancellationToken);
                 var transformContext = new MutationTransformContext
                 {
                     Model = model,
@@ -264,12 +265,20 @@ namespace BifrostQL.Core.Resolvers
                 var whereClause = string.Join(" AND ", propertyInfo.keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
                 var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
                 await MutationNotifier.RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, updatedData, context.UserContext);
-                result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, updatedData, additionalFilter.Parameters);
+                result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, updatedData, additionalFilter.Parameters, context.CancellationToken);
                 stateTransition = transformResult.StateTransition;
-            });
+            }, context.CancellationToken);
             await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, MutationType.Update, updatedData, result, context.UserContext);
             await MutationNotifier.NotifyStateTransitionAsync(context.RequestServices, stateTransition, context.UserContext);
-            return propertyInfo.keyData.Values.First();
+            // The update mutation field is typed `Int`, so its scalar return cannot
+            // carry a composite key. For a single-key table we keep returning the key
+            // value (identifies the affected row, back-compat). For a composite key
+            // `keyData.Values.First()` would silently surface only the FIRST key
+            // component — misleading — so instead return the affected row count
+            // (0 or 1), consistent with the delete mutation.
+            return propertyInfo.keyData.Count == 1
+                ? propertyInfo.keyData.Values.First()
+                : result;
         }
 
         // Nested ("tree") sync: accepts a parent object with nested child
@@ -360,8 +369,8 @@ namespace BifrostQL.Core.Resolvers
             await MutationCommandExecutor.RunInTransactionAsync(conFactory, async (conn, transaction) =>
             {
                 await MutationNotifier.RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Insert, data, context.UserContext);
-                result = HandleDecimals(await MutationCommandExecutor.ExecuteScalar(conn, transaction, sql, data));
-            });
+                result = HandleDecimals(await MutationCommandExecutor.ExecuteScalar(conn, transaction, sql, data, context.CancellationToken));
+            }, context.CancellationToken);
             await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, MutationType.Insert, data, result, context.UserContext);
             return result;
         }

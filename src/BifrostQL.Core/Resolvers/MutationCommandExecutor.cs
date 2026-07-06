@@ -20,19 +20,33 @@ namespace BifrostQL.Core.Resolvers
     {
         public static async Task RunInTransactionAsync(
             IDbConnFactory connFactory,
-            Func<DbConnection, DbTransaction, Task> work)
+            Func<DbConnection, DbTransaction, Task> work,
+            CancellationToken cancellationToken = default)
         {
+            // Honour a client abort before we take a connection or open a
+            // transaction; once the write is in flight the individual ADO calls
+            // observe the token themselves (rollback deliberately does not — it must
+            // run to completion even when the request is being torn down).
+            cancellationToken.ThrowIfCancellationRequested();
             await using var conn = connFactory.GetConnection();
             DbTransaction? transaction = null;
             try
             {
-                await conn.OpenAsync();
-                transaction = await conn.BeginTransactionAsync();
+                await conn.OpenAsync(cancellationToken);
+                transaction = await conn.BeginTransactionAsync(cancellationToken);
                 await work(conn, transaction);
-                await transaction.CommitAsync();
+                await transaction.CommitAsync(cancellationToken);
             }
             catch (BifrostExecutionError)
             {
+                if (transaction != null)
+                    await transaction.RollbackAsync();
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                // Propagate request aborts as-is (after rolling back) so the pipeline
+                // can short-circuit; wrapping them would mask the cancellation.
                 if (transaction != null)
                     await transaction.RollbackAsync();
                 throw;
@@ -50,24 +64,24 @@ namespace BifrostQL.Core.Resolvers
             }
         }
 
-        public static async ValueTask<object?> ExecuteScalar(DbConnection conn, DbTransaction transaction, string sql, Dictionary<string, object?> data)
+        public static async ValueTask<object?> ExecuteScalar(DbConnection conn, DbTransaction transaction, string sql, Dictionary<string, object?> data, CancellationToken cancellationToken = default)
         {
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
             cmd.Transaction = transaction;
             AddParameters(cmd, data);
-            return await cmd.ExecuteScalarAsync();
+            return await cmd.ExecuteScalarAsync(cancellationToken);
         }
 
         public static async ValueTask<int> ExecuteNonQuery(DbConnection conn, DbTransaction transaction, string sql,
-            Dictionary<string, object?> data, IReadOnlyList<SqlParameterInfo>? extraParameters = null)
+            Dictionary<string, object?> data, IReadOnlyList<SqlParameterInfo>? extraParameters = null, CancellationToken cancellationToken = default)
         {
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
             cmd.Transaction = transaction;
             AddParameters(cmd, data);
             AddExtraParameters(cmd, extraParameters);
-            return await cmd.ExecuteNonQueryAsync();
+            return await cmd.ExecuteNonQueryAsync(cancellationToken);
         }
 
         /// <summary>
@@ -80,7 +94,8 @@ namespace BifrostQL.Core.Resolvers
             DbTransaction transaction,
             ISqlDialect dialect,
             IDbTable table,
-            Dictionary<string, object?> keyData)
+            Dictionary<string, object?> keyData,
+            CancellationToken cancellationToken = default)
         {
             var definition = StateMachineConfigCollector.FromTable(table);
             if (definition is null || keyData.Count == 0)
@@ -95,7 +110,7 @@ namespace BifrostQL.Core.Resolvers
             cmd.CommandText = sql;
             cmd.Transaction = transaction;
             AddParameters(cmd, keyData);
-            var currentState = await cmd.ExecuteScalarAsync();
+            var currentState = await cmd.ExecuteScalarAsync(cancellationToken);
             return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
                 [definition.StateColumn] = currentState == DBNull.Value ? null : currentState,

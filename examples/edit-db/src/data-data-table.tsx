@@ -46,6 +46,13 @@ interface PanelState {
     pk: PkFilter | null;
     /** Grid index at open time — prev/next seed and PK-less-table fallback. */
     rowIndex: number;
+    /**
+     * Table the panel was opened on. The component instance is reused across
+     * table switches, so without this a stale panel would match the NEW
+     * table's rows by index (PK-less fallback) or fire the row-gone error
+     * toast on routine navigation.
+     */
+    tableName: string;
 }
 
 export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRowId, onRowSelect, onOpenColumn, stackingEnabled, onToggleStacking }: DataDataTableParams): JSX.Element {
@@ -81,7 +88,7 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
 
     const handleExpandContent = useCallback((rowIndex: number, columnName: string) => {
         const row = rowsRef.current[rowIndex];
-        setPanel({ columnName, pk: row ? pkFilterFor(row, table) : null, rowIndex });
+        setPanel({ columnName, pk: row ? pkFilterFor(row, table) : null, rowIndex, tableName: table.name });
     }, [table]);
 
     const {
@@ -132,6 +139,9 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
     // open-time index is only trusted for PK-less tables (view-only there).
     const panelRowIndex = useMemo(() => {
         if (!panel) return -1;
+        // Stale panel from a previous table (cleanup effect hasn't run yet):
+        // never resolve it against the new table's rows.
+        if (panel.tableName !== table.name) return -1;
         if (panelPkRoute === null) return panel.rowIndex < rows.length ? panel.rowIndex : -1;
         return rows.findIndex((r) => {
             const pk = pkFilterFor(r as Record<string, unknown>, table);
@@ -140,15 +150,24 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
     }, [panel, panelPkRoute, rows, table]);
     const panelRow = panelRowIndex >= 0 ? (rows[panelRowIndex] as Record<string, unknown>) : undefined;
 
+    // Table switched under a reused component instance: drop the stale panel
+    // silently — it belongs to the previous table, so neither the row-gone
+    // error toast nor the PK-less index fallback should see the new rows.
+    useEffect(() => {
+        if (panel !== null && panel.tableName !== table.name) {
+            setPanel(null);
+        }
+    }, [panel, table.name]);
+
     // Row gone: the snapshotted row left the current page (deleted, or filtered/
     // paged away by a refetch). Close the panel rather than showing — or worse,
     // saving — some other row's data.
     useEffect(() => {
-        if (panel !== null && !loading && panelRowIndex === -1) {
+        if (panel !== null && panel.tableName === table.name && !loading && panelRowIndex === -1) {
             setPanel(null);
             toast('Row is no longer in the current view; panel closed.', 'error');
         }
-    }, [panel, loading, panelRowIndex, toast]);
+    }, [panel, table.name, loading, panelRowIndex, toast]);
 
     // Memoized: JSON columns re-stringify the raw value, which for multi-MB
     // payloads would otherwise run on every grid render while the panel is open.

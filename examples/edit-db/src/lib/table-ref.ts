@@ -7,14 +7,13 @@
  */
 import type { Table } from '../types/schema';
 import { getPkTypes } from './query-builder';
+import { coerceForGql } from './fk';
 
 // Cap the FK-option fetch. `limit: -1` previously pulled the entire parent
 // table, which froze the edit dialog for large tables. Searches narrow
 // server-side where possible, so a smaller window suffices for matches.
 export const TABLE_REF_LIMIT = 1000;
 export const TABLE_REF_SEARCH_LIMIT = 50;
-
-const NUMERIC_KEY_TYPES = new Set(['Int', 'Float', 'BigInt']);
 
 /**
  * The column used as the display label for a table's FK dropdown rows.
@@ -89,7 +88,11 @@ export function tableRefLookupPlan(table: Table, keyColumn: string): TableRefLoo
     return { query, keyType };
 }
 
-/** Coerce a stored/route FK value to what the lookup's `$key` variable expects. */
+/**
+ * Coerce a stored/route FK value to what the lookup's `$key` variable expects.
+ * Delegates to the shared coerceForGql so BigInt keys stay strings (Number()
+ * loses precision past 2^53) and Boolean keys stay booleans.
+ */
 export function coerceKeyValue(keyType: string, value: unknown): unknown {
-    return NUMERIC_KEY_TYPES.has(keyType) ? Number(value) : String(value);
+    return coerceForGql(value, keyType);
 }

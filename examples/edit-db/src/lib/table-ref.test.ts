@@ -96,8 +96,18 @@ describe('tableRefLookupPlan', () => {
 describe('coerceKeyValue', () => {
     it('coerces numeric key types to numbers and leaves strings as strings', () => {
         expect(coerceKeyValue('Int', '5')).toBe(5);
-        expect(coerceKeyValue('BigInt', '9007')).toBe(9007);
         expect(coerceKeyValue('String', 5)).toBe('5');
         expect(coerceKeyValue('String', 'abc')).toBe('abc');
+    });
+
+    it('keeps BigInt keys as strings so 64-bit ids survive intact', () => {
+        // Number('9007199254740993') rounds to ...992; the lookup would then
+        // miss (or match the wrong parent). Strings pass through untouched.
+        expect(coerceKeyValue('BigInt', '9007199254740993')).toBe('9007199254740993');
+    });
+
+    it('sends real booleans for Boolean key columns', () => {
+        expect(coerceKeyValue('Boolean', 'true')).toBe(true);
+        expect(coerceKeyValue('Boolean', false)).toBe(false);
     });
 });

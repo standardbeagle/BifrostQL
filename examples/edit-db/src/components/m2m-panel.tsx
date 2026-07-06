@@ -53,9 +53,20 @@ export function M2mPanel({ parentTable, m2m, parentRowId, onOpenColumn }: M2mPan
 
     const detach = useDeleteMutation(junction ?? parentTable);
 
-    const { query, variables } = junction && target
-        ? m2mRowsQuery(junction, target, m2m, parentRowId)
-        : { query: null as string | null, variables: {} };
+    // Plan building fails fast on schema drift (junction/label column missing
+    // from the schema). Contain the throw here so one broken relationship
+    // degrades this panel alone instead of unwinding to the section-level
+    // error boundary and taking the whole data surface with it.
+    let rowsPlan = { query: null as string | null, variables: {} as Record<string, unknown> };
+    let planError: Error | null = null;
+    if (junction && target) {
+        try {
+            rowsPlan = m2mRowsQuery(junction, target, m2m, parentRowId);
+        } catch (e) {
+            planError = e as Error;
+        }
+    }
+    const { query, variables } = rowsPlan;
 
     const queryKey = ['m2mRows', m2m.junctionTable, m2m.targetTable, parentRowId];
     const { data, isLoading, error } = useQuery({
@@ -76,6 +87,10 @@ export function M2mPanel({ parentTable, m2m, parentRowId, onOpenColumn }: M2mPan
 
     if (!junction || !target) {
         return <div className="p-4 text-sm text-muted-foreground">Relationship schema unavailable.</div>;
+    }
+
+    if (planError) {
+        return <div className="p-4 text-sm text-destructive">Relationship misconfigured: {planError.message}</div>;
     }
 
     const rows = data?.[junction.name]?.data ?? [];
@@ -237,7 +252,16 @@ function TargetPicker({ target, junction, m2m, parentRowId, onClose, onLinked }:
     }, [search]);
 
     const term = debounced.trim();
-    const { query, idColumn, serverSearch } = m2mTargetPickerPlan(target, m2m, term);
+    // Contained like M2mPanel's rows plan: a schema-drift throw degrades the
+    // picker to an inline error instead of hitting the section error boundary.
+    let pickerPlan: { query: string; idColumn: string; serverSearch: boolean } | null = null;
+    let planError: Error | null = null;
+    try {
+        pickerPlan = m2mTargetPickerPlan(target, m2m, term);
+    } catch (e) {
+        planError = e as Error;
+    }
+    const { query, idColumn, serverSearch } = pickerPlan ?? { query: '', idColumn: '', serverSearch: false };
     const pickerLimit = serverSearch ? M2M_PICKER_SERVER_LIMIT : M2M_PICKER_CLIENT_LIMIT;
 
     const { data, isLoading } = useQuery({
@@ -249,6 +273,7 @@ function TargetPicker({ target, junction, m2m, parentRowId, onClose, onLinked }:
             serverSearch && term ? { limit: pickerLimit, search: term } : { limit: pickerLimit },
             { signal },
         ),
+        enabled: pickerPlan !== null,
     });
 
     const allRows = data?.[target.name]?.data ?? [];
@@ -263,6 +288,19 @@ function TargetPicker({ target, junction, m2m, parentRowId, onClose, onLinked }:
         await onLinked();
         onClose();
     }, [attach, m2m, parentRowId, onLinked, onClose]);
+
+    if (planError) {
+        return (
+            <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Add {target.label} link</DialogTitle>
+                    </DialogHeader>
+                    <p className="text-sm text-destructive">Relationship misconfigured: {planError.message}</p>
+                </DialogContent>
+            </Dialog>
+        );
+    }
 
     return (
         <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>

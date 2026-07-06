@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link2, Plus, Unlink, Search, Loader2 } from 'lucide-react';
 import type { ManyToManyJoin, Table } from '../types/schema';
@@ -7,13 +7,21 @@ import { useSchema } from '../hooks/useSchema';
 import { useFetcher } from '../common/fetcher';
 import { useTableMutation } from '../hooks/useTableMutation';
 import { useDeleteMutation } from '../hooks/useDeleteMutation';
+import { useToast } from '../hooks/useToast';
 import { m2mRowsQuery, payloadColumns, targetDisplay, attachJunctionDetail, m2mTargetPickerPlan } from '../lib/m2m';
 import { pkFilterFor } from '../lib/row-id';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Link } from '../hooks/usePath';
 import { formatColumnValue } from '../lib/format-value';
+
+const M2M_ROW_LIMIT = 200;
+// Server-side search narrows on the server, so a small window suffices; the
+// client-filter fallback (non-String label) needs a larger window to stay usable.
+const M2M_PICKER_SERVER_LIMIT = 50;
+const M2M_PICKER_CLIENT_LIMIT = 500;
 
 interface M2mPanelProps {
     parentTable: Table;
@@ -35,7 +43,9 @@ export function M2mPanel({ parentTable, m2m, parentRowId, onOpenColumn }: M2mPan
     const schema = useSchema();
     const fetcher = useFetcher();
     const queryClient = useQueryClient();
+    const { toast } = useToast();
     const [picking, setPicking] = useState(false);
+    const [detachRow, setDetachRow] = useState<JunctionRow | null>(null);
 
     const junction = schema.findTable(m2m.junctionTable);
     const target = schema.findTable(m2m.targetTable);
@@ -49,7 +59,7 @@ export function M2mPanel({ parentTable, m2m, parentRowId, onOpenColumn }: M2mPan
     const queryKey = ['m2mRows', m2m.junctionTable, m2m.targetTable, parentRowId];
     const { data, isLoading, error } = useQuery({
         queryKey,
-        queryFn: () => fetcher.query<Record<string, { data: JunctionRow[] }>>(query!, { ...variables, limit: 200, offset: 0 }),
+        queryFn: () => fetcher.query<Record<string, { data: JunctionRow[] }>>(query!, { ...variables, limit: M2M_ROW_LIMIT, offset: 0 }),
         enabled: !!query,
     });
 
@@ -143,7 +153,7 @@ export function M2mPanel({ parentTable, m2m, parentRowId, onOpenColumn }: M2mPan
                                                     variant="ghost"
                                                     size="icon-sm"
                                                     className="size-6 text-muted-foreground hover:text-destructive"
-                                                    onClick={() => handleDetach(row)}
+                                                    onClick={() => setDetachRow(row)}
                                                     disabled={detach.isPending}
                                                     aria-label={`Detach ${display?.label ?? 'link'}`}
                                                     title="Detach"
@@ -158,6 +168,11 @@ export function M2mPanel({ parentTable, m2m, parentRowId, onOpenColumn }: M2mPan
                         </tbody>
                     </table>
                 )}
+                {rows.length >= M2M_ROW_LIMIT && (
+                    <div className="px-3 py-2 text-xs text-muted-foreground italic border-t border-border">
+                        Showing the first {M2M_ROW_LIMIT} links. Detach some or narrow the parent selection to see more.
+                    </div>
+                )}
             </div>
 
             {picking && (
@@ -170,6 +185,24 @@ export function M2mPanel({ parentTable, m2m, parentRowId, onOpenColumn }: M2mPan
                     onLinked={invalidate}
                 />
             )}
+            <ConfirmDialog
+                open={detachRow !== null}
+                onOpenChange={(open) => { if (!open) setDetachRow(null); }}
+                title="Detach this link?"
+                description={<p>This removes the link row. The {target.label} record itself is not deleted.</p>}
+                confirmLabel="Detach"
+                variant="destructive"
+                isPending={detach.isPending}
+                onConfirm={async () => {
+                    try {
+                        if (detachRow) await handleDetach(detachRow);
+                    } catch (e) {
+                        toast(`Detach failed: ${(e as Error).message}`, 'error');
+                    } finally {
+                        setDetachRow(null);
+                    }
+                }}
+            />
         </div>
     );
 }
@@ -193,19 +226,36 @@ function TargetPicker({ target, junction, m2m, parentRowId, onClose, onLinked }:
         .map((column) => ({ column }));
     const attach = useTableMutation(junction, fkColumns, []);
     const [search, setSearch] = useState('');
+    const [debounced, setDebounced] = useState('');
 
-    const { query, idColumn } = m2mTargetPickerPlan(target, m2m);
+    // Debounce so each keystroke doesn't fire a query; the search runs
+    // server-side so matches beyond the fetch limit stay findable.
+    useEffect(() => {
+        const t = setTimeout(() => setDebounced(search), 300);
+        return () => clearTimeout(t);
+    }, [search]);
+
+    const term = debounced.trim();
+    const { query, idColumn, serverSearch } = m2mTargetPickerPlan(target, m2m, term);
+    const pickerLimit = serverSearch ? M2M_PICKER_SERVER_LIMIT : M2M_PICKER_CLIENT_LIMIT;
 
     const { data, isLoading } = useQuery({
-        queryKey: ['m2mTargets', target.name],
-        queryFn: () => fetcher.query<Record<string, { data: Record<string, unknown>[] }>>(query, { limit: 500 }),
+        // Only vary the query by term when the server actually filters; otherwise
+        // one fetch is reused and filtering happens client-side.
+        queryKey: ['m2mTargets', target.name, serverSearch ? term : ''],
+        queryFn: ({ signal }) => fetcher.query<Record<string, { data: Record<string, unknown>[] }>>(
+            query,
+            serverSearch && term ? { limit: pickerLimit, search: term } : { limit: pickerLimit },
+            { signal },
+        ),
     });
 
     const allRows = data?.[target.name]?.data ?? [];
-    const term = search.trim().toLowerCase();
-    const rows = term
-        ? allRows.filter((r) => String(r.label ?? r[idColumn] ?? '').toLowerCase().includes(term))
-        : allRows;
+    const rows = serverSearch || !term
+        ? allRows
+        : allRows.filter((r) => String(r.label ?? r[idColumn] ?? '').toLowerCase().includes(term.toLowerCase()));
+    // Truncation is about the fetched window (allRows), not the client-filtered view.
+    const windowFull = allRows.length >= pickerLimit;
 
     const handlePick = useCallback(async (targetId: string) => {
         await attach.insert(attachJunctionDetail(m2m, parentRowId, targetId));
@@ -248,6 +298,13 @@ function TargetPicker({ target, junction, m2m, parentRowId, onClose, onLinked }:
                             </button>
                         );
                     })}
+                    {!isLoading && windowFull && (
+                        <div className="px-3 py-1.5 text-xs text-muted-foreground italic border-t border-border">
+                            {serverSearch
+                                ? `Showing the first ${pickerLimit} matches — type to narrow.`
+                                : `Showing the first ${pickerLimit} rows; some may not be listed.`}
+                        </div>
+                    )}
                 </div>
             </DialogContent>
         </Dialog>

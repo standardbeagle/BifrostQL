@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { useFetcher } from "../common/fetcher";
 import { Table } from "../types/schema";
 import type { PkFilter } from "../lib/row-id";
+import { useToast } from "./useToast";
 
 export type DeleteInput = PkFilter | string | number;
 
@@ -39,6 +40,7 @@ function coerceValue(value: unknown, paramType: string | undefined): unknown {
 export function useDeleteMutation(table: Table): UseDeleteMutationResult {
     const fetcher = useFetcher();
     const queryClient = useQueryClient();
+    const { toast } = useToast();
 
     const columnParamType = useMemo(() => {
         const map = new Map<string, string>();
@@ -81,12 +83,19 @@ export function useDeleteMutation(table: Table): UseDeleteMutationResult {
 
     const deleteMutation = useMutation({
         mutationFn: (detail: PkFilter) => fetcher.query(deleteQueryStr, { detail }),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tableData', table.name] }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['tableData', table.name] });
+            toast('Row deleted');
+        },
     });
 
     const batchMutation = useMutation({
         mutationFn: (actions: Record<string, unknown>[]) => fetcher.query(batchQueryStr, { actions }),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tableData', table.name] }),
+        onSuccess: (_data, actions) => {
+            queryClient.invalidateQueries({ queryKey: ['tableData', table.name] });
+            const n = actions.length;
+            toast(`${n} ${n === 1 ? 'row' : 'rows'} deleted`);
+        },
     });
 
     const deleteRow = (detail: DeleteInput) => {

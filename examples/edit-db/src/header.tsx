@@ -12,7 +12,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select';
-import { ChevronLeft, Filter, Plus, Search, X, Loader2 } from 'lucide-react';
+import { ChevronLeft, Filter, Plus, Search, X, Loader2, Home } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { humanizeName } from './lib/humanize';
 
@@ -39,8 +39,16 @@ export function Header() {
     const tableName = tableData?.table;
     const hasOpenColumns = columns.length > 0;
     const tableSchema = useMemo(() => schema?.find((t: Table) => t.graphQlName === tableName), [schema, tableName]);
+    // Quick search only supports the text/number operators built below, so limit
+    // the column picker to String/Int/Float. DateTime and Boolean still filter via
+    // the per-column grid header filters; offering them here would silently no-op.
     const options: ColumnOption[] | undefined = useMemo(
-        () => tableSchema?.columns?.map((c: Column) => ({ key: c.name, value: `${c.name},${c.paramType}`, label: c.label })),
+        () => tableSchema?.columns
+            ?.filter((c: Column) => {
+                const base = c.paramType.replace('!', '');
+                return base === 'String' || base === 'Int' || base === 'Float';
+            })
+            .map((c: Column) => ({ key: c.name, value: `${c.name},${c.paramType}`, label: c.label })),
         [tableSchema]
     );
     const [column, setColumn] = useState(options?.at(0)?.value ?? "");
@@ -51,10 +59,20 @@ export function Header() {
     const filter = () => {
         if (!searchVal) return;
         const [columnName, type] = column.split(",");
-        if (type === "Int" || type === "Int!" || type === "Float" || type === "Float!")
-            navigate(`?filter=["${columnName}", "_eq", ${searchVal}, "${type}"]`);
-        if (type === "String" || type === "String!")
-            navigate(`?filter=["${columnName}", "_contains", "${searchVal}", "${type}"]`);
+        // No column selected (e.g. table has no searchable column) — nothing to do.
+        if (!type) return;
+        const base = type.replace("!", "");
+        if (base === "Int" || base === "Float") {
+            // Guard against interpolating non-numeric input straight into the
+            // filter JSON (which produced a malformed param).
+            const n = Number(searchVal);
+            if (!Number.isFinite(n)) return;
+            navigate(`?filter=["${columnName}", "_eq", ${n}, "${type}"]`);
+        } else if (base === "String") {
+            // JSON.stringify escapes quotes/backslashes so a search term can't
+            // break out of the filter string.
+            navigate(`?filter=["${columnName}", "_contains", ${JSON.stringify(searchVal)}, "${type}"]`);
+        }
     }
     // Clear only the header filter param, preserving the current table/route and
     // any column filters (cf). The adjacent "Clear" button below goes home instead.
@@ -107,38 +125,40 @@ export function Header() {
                             const colTable = schema?.find((t: Table) => t.graphQlName === col.panel.tableName);
                             const colLabel = colTable?.label ?? humanizeName(col.panel.tableName);
                             return (
-                                <button
-                                    type="button"
+                                <span
                                     key={`${col.panel.tableName}-${col.panel.filterId ?? i}`}
-                                    onClick={() => focusColumn(i + 1)}
-                                    className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap transition-colors ${
+                                    className={`inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded text-xs font-medium whitespace-nowrap transition-colors ${
                                         focusedIndex === i + 1
                                             ? 'bg-primary text-primary-foreground'
                                             : 'bg-muted/50 text-muted-foreground hover:bg-muted'
                                     }`}
                                 >
-                                    {colLabel}
-                                    <span
-                                        role="button"
-                                        tabIndex={0}
+                                    <button
+                                        type="button"
+                                        onClick={() => focusColumn(i + 1)}
+                                        className="whitespace-nowrap"
+                                    >
+                                        {colLabel}
+                                    </button>
+                                    <button
+                                        type="button"
                                         onClick={(e) => { e.stopPropagation(); closeColumn(i + 1); }}
-                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); closeColumn(i + 1); } }}
-                                        className="ml-0.5 rounded-sm hover:bg-background/50 p-px"
+                                        className="rounded-sm hover:bg-background/50 p-px"
                                         aria-label={`Close ${colLabel}`}
                                     >
                                         <X className="size-3" />
-                                    </span>
-                                </button>
+                                    </button>
+                                </span>
                             );
                         })}
                     </div>
                 ) : (
                     <h2 className="text-sm font-semibold whitespace-nowrap">
-                        {tableSchema?.dbName ?? tableData?.table ?? "(Select)"}
+                        {tableSchema?.label ?? tableData?.table ?? "(Select)"}
                     </h2>
                 )}
             </div>
-            {options ? <>
+            {options && options.length > 0 && (
                 <div className="flex items-center border border-border rounded-md overflow-hidden flex-[2_2_16rem] min-w-[12rem]">
                     <Select value={column} onValueChange={setColumn}>
                         <SelectTrigger size="sm" className="w-auto min-w-[120px] shrink-0 border-0 rounded-none border-r border-border h-8 text-xs">
@@ -179,10 +199,12 @@ export function Header() {
                         </Button>
                     )}
                 </div>
+            )}
+            {tableSchema && (
                 <div className="flex items-center gap-px border border-border rounded-md overflow-hidden shrink-0">
-                    <Button variant="ghost" size="sm" onClick={() => navigate("/")} className="text-muted-foreground text-xs h-8 px-3 rounded-none">
-                        <X className="size-3.5" />
-                        Clear
+                    <Button variant="ghost" size="sm" onClick={() => navigate("/")} title="Back to table list" className="text-muted-foreground text-xs h-8 px-3 rounded-none">
+                        <Home className="size-3.5" />
+                        Home
                     </Button>
                     {tableSchema?.isEditable && (
                         <Button variant="default" size="sm" onClick={() => navigate(`edit/`)} className="h-8 text-xs px-4 rounded-none">
@@ -191,7 +213,7 @@ export function Header() {
                         </Button>
                     )}
                 </div>
-            </> : null}
+            )}
         </header>
     )
 }

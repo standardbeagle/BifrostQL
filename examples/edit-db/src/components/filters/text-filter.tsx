@@ -37,12 +37,16 @@ export function TextFilter<TData, TValue>({ column }: TextFilterProps<TData, TVa
         currentFilter?.operator === '_null' ? '' : String(currentFilter?.value ?? '')
     );
     const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+    // Pending-apply closure, flushed on unmount so a value typed just before the
+    // menu closes (Radix unmounts the content) isn't silently dropped.
+    const flushRef = useRef<(() => void) | null>(null);
 
     const isNullOperator = operator === '_null';
 
     useEffect(() => {
         return () => {
             if (debounceRef.current) clearTimeout(debounceRef.current);
+            flushRef.current?.();
         };
     }, []);
 
@@ -50,18 +54,23 @@ export function TextFilter<TData, TValue>({ column }: TextFilterProps<TData, TVa
         if (debounceRef.current) clearTimeout(debounceRef.current);
 
         if (op === '_null') {
+            flushRef.current = null;
             column.setFilterValue({ operator: '_null', value: true } as ColumnFilterValue);
             return;
         }
 
         if (!val) {
+            flushRef.current = null;
             column.setFilterValue(undefined);
             return;
         }
 
-        debounceRef.current = setTimeout(() => {
+        flushRef.current = () => {
+            if (debounceRef.current) clearTimeout(debounceRef.current);
+            flushRef.current = null;
             column.setFilterValue({ operator: op, value: val } as ColumnFilterValue);
-        }, DEBOUNCE_MS);
+        };
+        debounceRef.current = setTimeout(() => flushRef.current?.(), DEBOUNCE_MS);
     };
 
     const handleOperatorChange = (newOp: string) => {
@@ -83,6 +92,7 @@ export function TextFilter<TData, TValue>({ column }: TextFilterProps<TData, TVa
 
     const handleClear = () => {
         if (debounceRef.current) clearTimeout(debounceRef.current);
+        flushRef.current = null;
         setOperator('_contains');
         setInputValue('');
         column.setFilterValue(undefined);

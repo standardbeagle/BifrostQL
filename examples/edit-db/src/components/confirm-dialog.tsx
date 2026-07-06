@@ -54,7 +54,7 @@ export function ConfirmDialog({
                         onClick={onConfirm}
                         disabled={isPending}
                     >
-                        {isPending ? 'Deleting...' : confirmLabel}
+                        {isPending ? `${confirmLabel}…` : confirmLabel}
                     </Button>
                 </DialogFooter>
             </DialogContent>

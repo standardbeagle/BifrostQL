@@ -58,6 +58,8 @@ export function RowActions({ anchorEl, onEdit, onDelete, onMouseEnter, onDismiss
             onClick={(e) => e.stopPropagation()}
             onMouseEnter={onMouseEnter}
             onMouseLeave={onDismiss}
+            onFocusCapture={onMouseEnter}
+            onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) onDismiss(); }}
         >
             {onEdit && (
                 <Button

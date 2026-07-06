@@ -5,6 +5,7 @@ import { PathProvider } from './hooks/usePath';
 import { SchemaProvider } from './hooks/useSchema';
 import { GraphQLFetcher, HttpGraphQLFetcher, FetcherProvider } from './common/fetcher';
 import { EditorConfigProvider } from './hooks/useEditorConfig';
+import { ToastProvider } from './hooks/useToast';
 import './globals.css';
 
 /**
@@ -79,11 +80,13 @@ export function Editor({
         <QueryClientProvider client={queryClient}>
             <FetcherProvider value={resolvedFetcher}>
                 <EditorConfigProvider config={{ showStats }}>
-                    <PathProvider path={uiPath || "/"}>
-                        <SchemaProvider>
-                            <MainFrame onLocate={onLocate} />
-                        </SchemaProvider>
-                    </PathProvider>
+                    <ToastProvider>
+                        <PathProvider path={uiPath || "/"}>
+                            <SchemaProvider>
+                                <MainFrame onLocate={onLocate} />
+                            </SchemaProvider>
+                        </PathProvider>
+                    </ToastProvider>
                 </EditorConfigProvider>
             </FetcherProvider>
         </QueryClientProvider>

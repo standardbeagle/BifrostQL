@@ -64,10 +64,14 @@ export function NumberFilter<TData, TValue>({ column }: NumberFilterProps<TData,
     });
 
     const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+    // Pending-apply closure, flushed on unmount so a value typed just before the
+    // menu closes isn't dropped when Radix unmounts the dropdown content.
+    const flushRef = useRef<(() => void) | null>(null);
 
     useEffect(() => {
         return () => {
             if (debounceRef.current) clearTimeout(debounceRef.current);
+            flushRef.current?.();
         };
     }, []);
 
@@ -75,19 +79,24 @@ export function NumberFilter<TData, TValue>({ column }: NumberFilterProps<TData,
         if (debounceRef.current) clearTimeout(debounceRef.current);
 
         if (op === '_null') {
+            flushRef.current = null;
             column.setFilterValue({ operator: '_null', value: true } as ColumnFilterValue);
             return;
         }
 
         const parsed = parseNumeric(val, isInt);
         if (parsed === null) {
+            flushRef.current = null;
             column.setFilterValue(undefined);
             return;
         }
 
-        debounceRef.current = setTimeout(() => {
+        flushRef.current = () => {
+            if (debounceRef.current) clearTimeout(debounceRef.current);
+            flushRef.current = null;
             column.setFilterValue({ operator: op, value: parsed } as ColumnFilterValue);
-        }, DEBOUNCE_MS);
+        };
+        debounceRef.current = setTimeout(() => flushRef.current?.(), DEBOUNCE_MS);
     };
 
     const applyBetweenFilter = (min: string, max: string) => {
@@ -97,13 +106,17 @@ export function NumberFilter<TData, TValue>({ column }: NumberFilterProps<TData,
         const parsedMax = parseNumeric(max, isInt);
 
         if (parsedMin === null || parsedMax === null) {
+            flushRef.current = null;
             column.setFilterValue(undefined);
             return;
         }
 
-        debounceRef.current = setTimeout(() => {
+        flushRef.current = () => {
+            if (debounceRef.current) clearTimeout(debounceRef.current);
+            flushRef.current = null;
             column.setFilterValue({ operator: '_between', value: [parsedMin, parsedMax] } as ColumnFilterValue);
-        }, DEBOUNCE_MS);
+        };
+        debounceRef.current = setTimeout(() => flushRef.current?.(), DEBOUNCE_MS);
     };
 
     const handleOperatorChange = (newOp: string) => {
@@ -148,6 +161,7 @@ export function NumberFilter<TData, TValue>({ column }: NumberFilterProps<TData,
 
     const handleClear = () => {
         if (debounceRef.current) clearTimeout(debounceRef.current);
+        flushRef.current = null;
         setOperator('_eq');
         setInputValue('');
         setMinValue('');

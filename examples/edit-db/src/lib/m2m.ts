@@ -114,19 +114,34 @@ export function m2mRowsQuery(
 export interface M2mTargetPickerPlan {
     query: string;
     idColumn: string;
+    /** True when the label column is String-typed and thus supports the
+     *  server-side `_contains` search; callers fall back to client filtering. */
+    serverSearch: boolean;
 }
 
 /**
  * Build the target-list query used when adding a many-to-many link.
  * Sort values are BifrostQL enum literals, so they must not be quoted.
+ *
+ * When `search` is non-empty the list is filtered server-side (a `_contains` on
+ * the label column) so a large target table stays findable beyond the fetch
+ * limit, instead of searching only within a client-side window.
  */
-export function m2mTargetPickerPlan(target: Table, m2m: ManyToManyJoin): M2mTargetPickerPlan {
+export function m2mTargetPickerPlan(target: Table, m2m: ManyToManyJoin, search?: string): M2mTargetPickerPlan {
     const idColumn = getPkTypes(target)[0]?.name ?? m2m.targetColumnNames[0];
     const labelColumn = target.labelColumn || idColumn;
     const fields = labelColumn !== idColumn ? `${idColumn} label: ${labelColumn}` : idColumn;
-    const query = `query PickTarget($limit: Int) { ${target.name}(limit: $limit sort: [${labelColumn}_asc]) { data { ${fields} } } }`;
+    // `_contains` is only generated for String columns, so server-side search is
+    // only valid when the label column is String; otherwise the caller filters
+    // client-side over the fetched window.
+    const labelType = target.columns.find((c) => c.name === labelColumn)?.paramType?.replace('!', '');
+    const serverSearch = labelType === 'String';
+    const hasSearch = !!search && search.trim() !== '' && serverSearch;
+    const paramDecls = hasSearch ? '$limit: Int, $search: String' : '$limit: Int';
+    const filterText = hasSearch ? `filter: {${labelColumn}: {_contains: $search}} ` : '';
+    const query = `query PickTarget(${paramDecls}) { ${target.name}(${filterText}limit: $limit sort: [${labelColumn}_asc]) { data { ${fields} } } }`;
 
-    return { query, idColumn };
+    return { query, idColumn, serverSearch };
 }
 
 /**

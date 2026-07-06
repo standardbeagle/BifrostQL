@@ -40,10 +40,17 @@ function getPreviewColumns(columns: Column[]): Column[] {
         .slice(0, MAX_PREVIEW_COLUMNS);
 }
 
-function buildSinglePreviewQuery(tableName: string, columns: Column[], pkColumn: string, pkType: string): string {
+/** Map a column paramType to the GraphQL scalar used to declare the `$id` variable. */
+function gqlDeclType(paramType: string): "Int" | "Float" | "String" {
+    const base = paramType.replace("!", "");
+    if (base === "Int") return "Int";
+    if (base === "Float") return "Float";
+    return "String";
+}
+
+function buildSinglePreviewQuery(tableName: string, columns: Column[], pkColumn: string, declType: string): string {
     const fields = columns.map((c) => c.name).join(" ");
-    const gqlType = pkType === "Int" || pkType === "Int!" ? "Int" : "String";
-    return `query FkPreview($id: ${gqlType}) { ${tableName}(filter: { ${pkColumn}: { _eq: $id } } limit: 1) { data { ${fields} } } }`;
+    return `query FkPreview($id: ${declType}) { ${tableName}(filter: { ${pkColumn}: { _eq: $id } } limit: 1) { data { ${fields} } } }`;
 }
 
 function buildCompositePreviewQuery(tableName: string, columns: Column[], paramsDecl: string, filterText: string): string {
@@ -78,12 +85,16 @@ function buildPreviewPlan(
         };
     }
     const lookupType = destTable.columns.find((c) => c.name === filterColumn)?.paramType ?? "Int";
-    const numericLookupTypes = ["Int", "Int!", "Float", "Float!"];
-    const variables = { id: numericLookupTypes.includes(lookupType) ? Number(recordId) : recordId };
+    const declType = gqlDeclType(lookupType);
+    // Declared type and coercion come from the same source so a Float FK isn't
+    // sent as a number under a String declaration (a GraphQL validation error).
+    const variables = { id: declType === "String" ? recordId : Number(recordId) };
     return {
-        query: buildSinglePreviewQuery(tableName, previewColumns, filterColumn, lookupType),
+        query: buildSinglePreviewQuery(tableName, previewColumns, filterColumn, declType),
         variables,
-        cacheKey: recordId,
+        // Include filterColumn: two FKs to the same target on different columns
+        // can share a recordId value but must not share a cache entry.
+        cacheKey: `${filterColumn}:${recordId}`,
     };
 }
 

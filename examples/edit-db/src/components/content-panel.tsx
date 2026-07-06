@@ -77,7 +77,7 @@ interface ContentPanelProps {
     target: ContentPanelTarget | null;
     onClose: () => void;
     onNavigate: (direction: 'prev' | 'next') => void;
-    onSave?: (value: string) => void;
+    onSave?: (value: string) => void | Promise<void>;
     canNavigatePrev: boolean;
     canNavigateNext: boolean;
 }
@@ -94,6 +94,7 @@ export function ContentPanel({
     const [editing, setEditing] = useState(false);
     const [editValue, setEditValue] = useState('');
     const [copied, setCopied] = useState(false);
+    const [saving, setSaving] = useState(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
     const value = target?.value ?? '';
@@ -106,6 +107,7 @@ export function ContentPanel({
         setEditing(false);
         setEditValue('');
         setCopied(false);
+        setSaving(false);
     }, [target?.rowIndex, target?.columnName]);
 
     // Keyboard navigation
@@ -142,12 +144,27 @@ export function ContentPanel({
         setEditValue('');
     }, []);
 
-    const handleSaveEdit = useCallback(() => {
-        if (onSave && editValue !== value) {
-            onSave(editValue);
+    const handleSaveEdit = useCallback(async () => {
+        // Compare against the formatted text the editor was seeded with, so an
+        // untouched Save doesn't rewrite the row with reformatted content.
+        if (editValue === formatted) {
+            setEditing(false);
+            return;
         }
-        setEditing(false);
-    }, [onSave, editValue, value]);
+        // No save handler right now (e.g. data is refetching) — keep the editor
+        // open rather than silently discarding the edit.
+        if (!onSave || saving) return;
+        setSaving(true);
+        try {
+            await onSave(editValue);
+            setEditing(false);
+        } catch {
+            // Save failed (error surfaced by the caller) — keep the editor open so
+            // the user's edit isn't lost.
+        } finally {
+            setSaving(false);
+        }
+    }, [onSave, editValue, formatted, saving]);
 
     const handleFormat = useCallback(() => {
         if (kind === 'json') {
@@ -160,7 +177,9 @@ export function ContentPanel({
     }, [editValue, kind]);
 
     const canFormat = kind === 'json' || kind === 'xml';
-    const canEdit = !target?.isReadOnly && kind !== 'binary';
+    // Only offer editing when a save handler is actually wired — otherwise the
+    // Save button would silently discard the edit.
+    const canEdit = !!onSave && !target?.isReadOnly && kind !== 'binary';
 
     const headerContent = (
         <div className="flex items-center gap-2 min-w-0">
@@ -260,11 +279,11 @@ export function ContentPanel({
                         )}
                     />
                     <div className="flex items-center gap-2 justify-end">
-                        <Button type="button" variant="ghost" size="sm" onClick={handleCancelEdit}>
+                        <Button type="button" variant="ghost" size="sm" onClick={handleCancelEdit} disabled={saving}>
                             Cancel
                         </Button>
-                        <Button type="button" size="sm" onClick={handleSaveEdit}>
-                            Save
+                        <Button type="button" size="sm" onClick={handleSaveEdit} disabled={saving}>
+                            {saving ? 'Saving…' : 'Save'}
                         </Button>
                     </div>
                 </div>

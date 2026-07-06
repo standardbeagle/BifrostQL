@@ -116,7 +116,14 @@ export function DetailPanel({ parentTable, selectedRowId, onClose, onOpenColumn 
             </div>
             {!collapsed && (
                 <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-                    {activeTab.kind === 'child' ? (
+                    {activeTab.kind === 'child' && !childTable ? (
+                        // The child's destination table isn't in the published schema
+                        // (e.g. hidden by visibility metadata) — show a notice instead
+                        // of dereferencing an undefined table and crashing.
+                        <div className="p-4 text-sm text-muted-foreground">
+                            This related table is not available.
+                        </div>
+                    ) : activeTab.kind === 'child' ? (
                         <>
                             <div className={childHasMultiJoins && childSelectedRowId
                                 ? 'flex-1 min-h-0 max-h-[50%] overflow-hidden flex flex-col'

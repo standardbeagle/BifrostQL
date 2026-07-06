@@ -101,7 +101,10 @@ describe('M2mPanel', () => {
     it('detaches a link by deleting its junction row primary key', async () => {
         renderPanel();
         await screen.findByText('Algebra');
+        // Detach now requires confirmation before deleting the junction row.
         fireEvent.click(screen.getByLabelText('Detach Algebra'));
+        const confirm = await screen.findByRole('button', { name: 'Detach' });
+        fireEvent.click(confirm);
         await waitFor(() => expect(deleteRow).toHaveBeenCalledWith({ id: 1 }));
     });
 

@@ -6,6 +6,7 @@ import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
+    DropdownMenuLabel,
     DropdownMenuSeparator,
     DropdownMenuSub,
     DropdownMenuSubContent,
@@ -247,6 +248,19 @@ export function DataTableColumnHeader<TData, TValue>({
                     </HoverCardTrigger>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start">
+                    {/* Column metadata, also surfaced here (not only in the pointer-only
+                        HoverCard) so keyboard and touch users can read type/nullability/FK. */}
+                    {columnSchema && (
+                        <>
+                            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                                {formatDataType(columnSchema)}
+                                {columnSchema.isNullable ? ' · nullable' : ' · required'}
+                                {columnSchema.isPrimaryKey ? ' · PK' : ''}
+                                {fkMeta ? ` · FK → ${fkMeta.joinTable}` : ''}
+                            </DropdownMenuLabel>
+                            <DropdownMenuSeparator />
+                        </>
+                    )}
                     <DropdownMenuItem onClick={() => column.toggleSorting(false)}>
                         <ArrowUp className="size-3.5 text-muted-foreground" />
                         Asc

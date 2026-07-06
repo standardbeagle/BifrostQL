@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ReactElement, useMemo } from "react";
+import { ReactElement, useMemo, useState } from "react";
 import { useForm, useStore, AnyFieldApi, ReactFormExtendedApi } from "@tanstack/react-form";
 import { useSchema } from "./hooks/useSchema";
 import { useParams, useNavigate } from "./hooks/usePath";
@@ -28,14 +28,29 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { LoaderCircle, Save, X, AlertCircle } from "lucide-react";
 import { ContentEditor } from "@/components/content-editor";
-import { isBinaryDbType, isLongTextDbType } from "@/lib/content-detect";
+import { isBinaryDbType, isLongTextDbType, isJsonDbType } from "@/lib/content-detect";
 import { resolveDisplayFormat } from "./lib/format-value";
 
 const booleanTypes = ["Boolean", "Boolean!"];
 const dateTypes = ["DateTime", "DateTime!"];
 const numericTypes = ["Int", "Int!", "Float", "Float!"];
+
+// Sentinel for the "(none)" option in FK/enum selects. Radix's Select rejects an
+// empty-string item value, so we round-trip this and map it back to '' on change.
+const NONE_VALUE = "__none__";
+
+/** JSON columns arrive parsed (object/array) from the JSON scalar. */
+function isJsonColumn(c: Column): boolean {
+    return isJsonDbType(c.dbType) || c.paramType === 'JSON';
+}
+
+/** Columns edited through the ContentEditor (textarea) rather than a plain input. */
+function isContentColumn(c: Column): boolean {
+    return isBinaryDbType(c.dbType) || isLongTextDbType(c.dbType) || isJsonColumn(c);
+}
 
 /** True when a date-ish column carries a time-of-day component (datetime, not a bare date). */
 function isDateTimeColumn(column: Column): boolean {
@@ -153,11 +168,31 @@ function DataEditDetail({ table, schema, editid, onClose }: { table: string, sch
 
     const defaultValues = useMemo(() => {
         const values: Record<string, unknown> = {};
-        for (const { column: c } of editColumns) {
+        for (const { column: c, fkRole } of editColumns) {
+            const isFkOrEnum = fkRole !== 'none' || (c.enumValues !== undefined && c.enumValues.length > 0);
             if (dateTypes.some(t => t === c.paramType)) {
                 values[c.name] = toDateInputValue(value[c.name] as string | undefined, isDateTimeColumn(c));
             } else if (booleanTypes.some(t => t === c.paramType)) {
-                values[c.name] = !!value[c.name];
+                // Preserve NULL for nullable booleans so re-saving an unrelated
+                // field doesn't silently coerce an unset boolean to false.
+                const raw = value[c.name];
+                values[c.name] = c.isNullable && (raw === null || raw === undefined)
+                    ? null
+                    : !!raw;
+            } else if (isJsonColumn(c)) {
+                // JSON columns arrive already parsed (object/array/number/string).
+                // Always serialize — including string values — so the editor shows
+                // canonical JSON (a stored JSON string "123" reads as "123", not the
+                // bare 123), keeping the parse-back on save lossless.
+                const raw = value[c.name];
+                values[c.name] = raw === undefined || raw === null
+                    ? ''
+                    : JSON.stringify(raw, null, 2);
+            } else if (isFkOrEnum) {
+                // Keep NULL for an unset FK/enum so re-saving an untouched row
+                // doesn't turn it into '' (a bogus value / FK violation).
+                const raw = value[c.name];
+                values[c.name] = raw === null || raw === undefined ? null : raw;
             } else {
                 values[c.name] = value[c.name] ?? '';
             }
@@ -174,22 +209,45 @@ function DataEditDetail({ table, schema, editid, onClose }: { table: string, sch
         },
     });
 
-    if (isLoading && !isInsert) return null;
+    // Guard against silently dropping unsaved edits: closing a dirty form
+    // (Escape, overlay click, header X, Cancel) prompts for confirmation first.
+    const isDirty = useStore(form.store, (s: { isDirty: boolean }) => s.isDirty);
+    const [confirmDiscard, setConfirmDiscard] = useState(false);
+    const requestClose = () => {
+        if (isDirty) setConfirmDiscard(true);
+        else onClose();
+    };
+
+    // Show the dialog shell with a spinner while the record loads, instead of
+    // rendering nothing (which left the Edit click with no feedback).
+    if (isLoading && !isInsert) {
+        return (
+            <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+                <DialogContent showCloseButton={false} className="sm:max-w-2xl">
+                    <DialogTitle className="sr-only">Loading record</DialogTitle>
+                    <DialogDescription className="sr-only">Loading record for editing</DialogDescription>
+                    <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+                        <LoaderCircle className="size-4 animate-spin" />
+                        Loading…
+                    </div>
+                </DialogContent>
+            </Dialog>
+        );
+    }
     if (error) return <div>Error: {(error as Error).message}</div>;
 
     const labelIdValue = (value?.[labelColumn] as string | number | undefined) ?? editid;
 
     // Separate fields into types for layout grouping
     const booleanFields = editColumns.filter(({ column: c }) => booleanTypes.some(t => t === c.paramType));
-    const contentFields = editColumns.filter(({ column: c }) => isBinaryDbType(c.dbType) || isLongTextDbType(c.dbType));
+    const contentFields = editColumns.filter(({ column: c }) => isContentColumn(c));
     const standardFields = editColumns.filter(({ column: c }) =>
         !booleanTypes.some(t => t === c.paramType) &&
-        !isBinaryDbType(c.dbType) &&
-        !isLongTextDbType(c.dbType)
+        !isContentColumn(c)
     );
 
     return (
-        <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+        <Dialog open onOpenChange={(open) => { if (!open) requestClose(); }}>
             <DialogContent
                 showCloseButton={false}
                 className="sm:max-w-2xl max-h-[90vh] flex flex-col gap-0 p-0 overflow-hidden"
@@ -205,9 +263,10 @@ function DataEditDetail({ table, schema, editid, onClose }: { table: string, sch
                         </DialogDescription>
                     </div>
                     <Button
+                        type="button"
                         variant="ghost"
                         size="icon-sm"
-                        onClick={onClose}
+                        onClick={requestClose}
                         aria-label="Close"
                         className="shrink-0 -mr-1"
                     >
@@ -274,7 +333,7 @@ function DataEditDetail({ table, schema, editid, onClose }: { table: string, sch
 
                     {/* Footer */}
                     <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border bg-muted/30 shrink-0">
-                        <Button variant="outline" size="sm" onClick={onClose}>
+                        <Button type="button" variant="outline" size="sm" onClick={requestClose}>
                             Cancel
                         </Button>
                         <Button type="submit" size="sm" disabled={mutation.isPending}>
@@ -288,6 +347,16 @@ function DataEditDetail({ table, schema, editid, onClose }: { table: string, sch
                     </div>
                 </form>
             </DialogContent>
+            <ConfirmDialog
+                open={confirmDiscard}
+                onOpenChange={setConfirmDiscard}
+                title="Discard unsaved changes?"
+                description={<p>You have unsaved changes. Closing now will discard them.</p>}
+                confirmLabel="Discard"
+                cancelLabel="Keep editing"
+                variant="destructive"
+                onConfirm={() => { setConfirmDiscard(false); onClose(); }}
+            />
         </Dialog>
     );
 }
@@ -435,16 +504,22 @@ function EditField({ column, join, fkRole, form, schema }: EditFieldProps) {
         || (isDate ? (isDateTimeColumn(column) ? "datetime-local" : "date") : isNumeric ? "number" : "text");
 
     // Build validators based on schema constraints. Shared with the server via
-    // validateFieldValue so client and server enforce identical rules.
+    // validateFieldValue so client and server enforce identical rules. Also runs
+    // on blur so the user gets per-field feedback before hitting Save.
     const validators = {
         onSubmit: ({ value }: { value: unknown }) => validateFieldValue(column, value, isRequired),
+        onBlur: ({ value }: { value: unknown }) => validateFieldValue(column, value, isRequired),
     };
+
+    const errorId = `${name}-error`;
 
     return (
         <form.Field
             name={name}
             validators={validators}
-            children={(field: AnyFieldApi) => (
+            children={(field: AnyFieldApi) => {
+                const hasError = field.state.meta.errors.length > 0;
+                return (
                 <div className="grid gap-1">
                     <Label htmlFor={name} className="text-xs text-muted-foreground">
                         {column.label}
@@ -464,21 +539,23 @@ function EditField({ column, join, fkRole, form, schema }: EditFieldProps) {
                         step={column.step}
                         pattern={column.pattern}
                         title={column.patternMessage}
-                        aria-invalid={field.state.meta.errors.length > 0}
+                        aria-invalid={hasError}
+                        aria-describedby={hasError ? errorId : undefined}
                         className="h-8 text-sm"
                     />
                     {showCharCounter && (
-                        <CharacterCounter 
-                            current={String(field.state.value ?? '').length} 
-                            max={column.maxLength!} 
+                        <CharacterCounter
+                            current={String(field.state.value ?? '').length}
+                            max={column.maxLength!}
                         />
                     )}
                     {isNumeric && (column.min !== undefined || column.max !== undefined) && (
                         <RangeHint min={column.min} max={column.max} step={column.step} />
                     )}
-                    <FieldErrors errors={field.state.meta.errors} />
+                    <FieldErrors errors={field.state.meta.errors} id={errorId} />
                 </div>
-            )}
+                );
+            }}
         />
     );
 }
@@ -499,18 +576,18 @@ function EnumField({ column, form, isRequired }: EnumFieldProps) {
             ? column.enumLabels
             : enumValues;
 
+    const errorId = `${name}-error`;
+
     return (
         <form.Field
             name={name}
-            validators={isRequired ? {
-                onSubmit: ({ value }: { value: unknown }) => {
-                    if (value === undefined || value === null || value === '') {
-                        return `${column.label} is required`;
-                    }
-                    return undefined;
-                },
-            } : undefined}
-            children={(field: AnyFieldApi) => (
+            validators={{
+                onSubmit: ({ value }: { value: unknown }) => validateFieldValue(column, value, isRequired),
+                onBlur: ({ value }: { value: unknown }) => validateFieldValue(column, value, isRequired),
+            }}
+            children={(field: AnyFieldApi) => {
+                const hasError = field.state.meta.errors.length > 0;
+                return (
                 <div className="grid gap-1">
                     <Label htmlFor={name} className="text-xs text-muted-foreground">
                         {column.label}
@@ -518,12 +595,15 @@ function EnumField({ column, form, isRequired }: EnumFieldProps) {
                     </Label>
                     <Select
                         value={String(field.state.value ?? '')}
-                        onValueChange={(val) => field.handleChange(val)}
+                        onValueChange={(val) => field.handleChange(val === NONE_VALUE ? null : val)}
                     >
-                        <SelectTrigger id={name} className="w-full h-8 text-sm" aria-invalid={field.state.meta.errors.length > 0}>
+                        <SelectTrigger id={name} className="w-full h-8 text-sm" aria-invalid={hasError} aria-describedby={hasError ? errorId : undefined}>
                             <SelectValue placeholder={`Select ${column.label}`} />
                         </SelectTrigger>
                         <SelectContent>
+                            {!isRequired && (
+                                <SelectItem value={NONE_VALUE} className="text-muted-foreground">(none)</SelectItem>
+                            )}
                             {enumValues.map((value, index) => (
                                 <SelectItem key={value} value={value}>
                                     {enumLabels[index] || value}
@@ -531,15 +611,56 @@ function EnumField({ column, form, isRequired }: EnumFieldProps) {
                             ))}
                         </SelectContent>
                     </Select>
-                    <FieldErrors errors={field.state.meta.errors} />
+                    <FieldErrors errors={field.state.meta.errors} id={errorId} />
                 </div>
-            )}
+                );
+            }}
         />
     );
 }
 
+const BOOL_TRUE = "true";
+const BOOL_FALSE = "false";
+
 function BooleanField({ column, form }: { column: Column; form: AnyReactFormApi }) {
     const name = column.name;
+
+    // Nullable booleans get a tri-state control (Unset / Yes / No) so an unset
+    // value stays NULL instead of collapsing to false on the next save.
+    if (column.isNullable) {
+        return (
+            <form.Field
+                name={name}
+                children={(field: AnyFieldApi) => {
+                    const v = field.state.value;
+                    const current = v === null || v === undefined
+                        ? NONE_VALUE
+                        : v ? BOOL_TRUE : BOOL_FALSE;
+                    return (
+                        <div className="grid gap-1 min-w-[10rem]">
+                            <Label htmlFor={name} className="text-xs text-muted-foreground">{column.label}</Label>
+                            <Select
+                                value={current}
+                                onValueChange={(val) => field.handleChange(
+                                    val === NONE_VALUE ? null : val === BOOL_TRUE,
+                                )}
+                            >
+                                <SelectTrigger id={name} className="w-full h-8 text-sm">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value={NONE_VALUE} className="text-muted-foreground">(unset)</SelectItem>
+                                    <SelectItem value={BOOL_TRUE}>Yes</SelectItem>
+                                    <SelectItem value={BOOL_FALSE}>No</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    );
+                }}
+            />
+        );
+    }
+
     return (
         <form.Field
             name={name}
@@ -561,18 +682,17 @@ function BooleanField({ column, form }: { column: Column; form: AnyReactFormApi 
 function ContentField({ column, form }: { column: Column; form: AnyReactFormApi }) {
     const name = column.name;
     const isRequired = !column.isNullable;
+    const errorId = `${name}-error`;
     return (
         <form.Field
             name={name}
-            validators={isRequired ? {
-                onSubmit: ({ value }: { value: unknown }) => {
-                    if (value === undefined || value === null || value === '') {
-                        return `${column.label} is required`;
-                    }
-                    return undefined;
-                },
-            } : undefined}
-            children={(field: AnyFieldApi) => (
+            validators={{
+                onSubmit: ({ value }: { value: unknown }) => validateFieldValue(column, value, isRequired),
+                onBlur: ({ value }: { value: unknown }) => validateFieldValue(column, value, isRequired),
+            }}
+            children={(field: AnyFieldApi) => {
+                const hasError = field.state.meta.errors.length > 0;
+                return (
                 <div className="grid gap-1">
                     <Label htmlFor={name} className="text-xs text-muted-foreground">
                         {column.label}
@@ -586,11 +706,12 @@ function ContentField({ column, form }: { column: Column; form: AnyReactFormApi 
                         onChange={(val) => field.handleChange(val)}
                         onBlur={field.handleBlur}
                         required={isRequired}
-                        invalid={field.state.meta.errors.length > 0}
+                        invalid={hasError}
                     />
-                    <FieldErrors errors={field.state.meta.errors} />
+                    <FieldErrors errors={field.state.meta.errors} id={errorId} />
                 </div>
-            )}
+                );
+            }}
         />
     );
 }
@@ -606,19 +727,24 @@ interface ParentFieldProps {
 function ParentField({ column, join, form, schema, isRequired }: ParentFieldProps) {
     const name = column.name;
     const parentData = useTableRef(schema, join.destinationTable, join.destinationColumnNames[0]);
+    const [search, setSearch] = useState('');
+    const errorId = `${name}-error`;
+
+    const term = search.trim().toLowerCase();
+    const filteredRows = term
+        ? parentData.data.filter((r: TableRefValue) => String(r.label ?? r.key ?? '').toLowerCase().includes(term))
+        : parentData.data;
 
     return (
         <form.Field
             name={name}
-            validators={isRequired ? {
-                onSubmit: ({ value }: { value: unknown }) => {
-                    if (value === undefined || value === null || value === '') {
-                        return `${column.label} is required`;
-                    }
-                    return undefined;
-                },
-            } : undefined}
-            children={(field: AnyFieldApi) => (
+            validators={{
+                onSubmit: ({ value }: { value: unknown }) => validateFieldValue(column, value, isRequired),
+                onBlur: ({ value }: { value: unknown }) => validateFieldValue(column, value, isRequired),
+            }}
+            children={(field: AnyFieldApi) => {
+                const hasError = field.state.meta.errors.length > 0;
+                return (
                 <div className="grid gap-1">
                     <Label htmlFor={name} className="text-xs text-muted-foreground">
                         {column.label}
@@ -626,22 +752,47 @@ function ParentField({ column, join, form, schema, isRequired }: ParentFieldProp
                     </Label>
                     <Select
                         value={String(field.state.value ?? '')}
-                        onValueChange={(val) => field.handleChange(val)}
+                        onValueChange={(val) => field.handleChange(val === NONE_VALUE ? null : val)}
+                        onOpenChange={(open) => { if (!open) setSearch(''); }}
                     >
-                        <SelectTrigger id={name} className="w-full h-8 text-sm" aria-invalid={field.state.meta.errors.length > 0}>
+                        <SelectTrigger id={name} className="w-full h-8 text-sm" aria-invalid={hasError} aria-describedby={hasError ? errorId : undefined}>
                             <SelectValue placeholder={`Select ${column.label}`} />
                         </SelectTrigger>
                         <SelectContent>
-                            {parentData.data.map((row: TableRefValue) => (
+                            {/* Search box for FK lists that can hold many parent rows.
+                                Stop propagation only for typing keys so Radix's
+                                typeahead doesn't hijack them — Escape (close) and
+                                Arrow/Enter (move into the list) still pass through. */}
+                            <div className="px-1 pb-1 sticky top-0 bg-popover z-10">
+                                <Input
+                                    value={search}
+                                    onChange={(e) => setSearch(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete') {
+                                            e.stopPropagation();
+                                        }
+                                    }}
+                                    placeholder="Search…"
+                                    className="h-7 text-xs"
+                                />
+                            </div>
+                            {!isRequired && (
+                                <SelectItem value={NONE_VALUE} className="text-muted-foreground">(none)</SelectItem>
+                            )}
+                            {filteredRows.map((row: TableRefValue) => (
                                 <SelectItem key={row.key} value={String(row.key)}>
                                     {row.label}
                                 </SelectItem>
                             ))}
+                            {filteredRows.length === 0 && (
+                                <div className="px-2 py-1.5 text-xs text-muted-foreground">No matches.</div>
+                            )}
                         </SelectContent>
                     </Select>
-                    <FieldErrors errors={field.state.meta.errors} />
+                    <FieldErrors errors={field.state.meta.errors} id={errorId} />
                 </div>
-            )}
+                );
+            }}
         />
     );
 }
@@ -690,40 +841,57 @@ function CompositeParentField({ column, join, form, schema, isRequired }: Compos
         }
     };
 
+    const errorId = `${column.name}-error`;
+
+    // Register a validator on the anchor source column so a required composite FK
+    // can't submit empty. onChange writes every source column via setFieldValue,
+    // so validating the anchor is sufficient to gate the whole FK.
     return (
-        <div className="grid gap-1 sm:col-span-2">
-            <Label htmlFor={column.name} className="text-xs text-muted-foreground">
-                {column.label}
-                {isRequired && <span className="text-destructive ml-0.5">*</span>}
-                <span className="ml-2 px-1 rounded bg-primary/10 text-[10px] font-medium text-primary">
-                    composite FK ({sourceCols.length} cols)
-                </span>
-            </Label>
-            <Select value={currentRoute} onValueChange={onChange}>
-                <SelectTrigger id={column.name} className="w-full h-8 text-sm">
-                    <SelectValue placeholder={`Select ${column.label}`} />
-                </SelectTrigger>
-                <SelectContent>
-                    {parents.data.map((row) => (
-                        <SelectItem key={row.route} value={row.route}>
-                            {row.label}
-                        </SelectItem>
-                    ))}
-                </SelectContent>
-            </Select>
-        </div>
+        <form.Field
+            name={column.name}
+            validators={{
+                onSubmit: ({ value }: { value: unknown }) => validateFieldValue(column, value, isRequired),
+            }}
+            children={(field: AnyFieldApi) => {
+                const hasError = field.state.meta.errors.length > 0;
+                return (
+                <div className="grid gap-1 sm:col-span-2">
+                    <Label htmlFor={column.name} className="text-xs text-muted-foreground">
+                        {column.label}
+                        {isRequired && <span className="text-destructive ml-0.5">*</span>}
+                        <span className="ml-2 px-1 rounded bg-primary/10 text-[10px] font-medium text-primary">
+                            composite FK ({sourceCols.length} cols)
+                        </span>
+                    </Label>
+                    <Select value={currentRoute} onValueChange={onChange}>
+                        <SelectTrigger id={column.name} className="w-full h-8 text-sm" aria-invalid={hasError} aria-describedby={hasError ? errorId : undefined}>
+                            <SelectValue placeholder={`Select ${column.label}`} />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {parents.data.map((row) => (
+                                <SelectItem key={row.route} value={row.route}>
+                                    {row.label}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                    <FieldErrors errors={field.state.meta.errors} id={errorId} />
+                </div>
+                );
+            }}
+        />
     );
 }
 
-function FieldErrors({ errors }: { errors: unknown[] }) {
+function FieldErrors({ errors, id }: { errors: unknown[]; id?: string }) {
     if (errors.length === 0) return null;
     return (
-        <>
+        <div id={id} role="alert">
             {errors.map((error, i) => (
                 <p key={i} className="text-xs text-destructive">
                     {String(error)}
                 </p>
             ))}
-        </>
+        </div>
     );
 }

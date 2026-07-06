@@ -202,6 +202,32 @@ describe('m2mTargetPickerPlan', () => {
         expect(query).toContain('sort: [id_asc]');
         expect(query).toContain('data { id }');
     });
+
+    it('emits a server-side _contains filter for a String label column', () => {
+        const target = table('courses', {
+            labelColumn: 'title',
+            primaryKeys: ['id'],
+            columns: [col('title', { paramType: 'String' })],
+        });
+        const plan = m2mTargetPickerPlan(target, m2m, 'alg');
+
+        expect(plan.serverSearch).toBe(true);
+        expect(plan.query).toContain('$search: String');
+        expect(plan.query).toContain('filter: {title: {_contains: $search}}');
+    });
+
+    it('does not emit a server filter when the label column is not String', () => {
+        const target = table('courses', {
+            labelColumn: 'code',
+            primaryKeys: ['id'],
+            columns: [col('code', { paramType: 'Int' })],
+        });
+        const plan = m2mTargetPickerPlan(target, m2m, 'alg');
+
+        expect(plan.serverSearch).toBe(false);
+        expect(plan.query).not.toContain('$search');
+        expect(plan.query).not.toContain('_contains');
+    });
 });
 
 describe('targetDisplay', () => {

@@ -66,7 +66,25 @@ namespace BifrostQL.Core.QueryModel
         {
             if (!filter.Any()) throw new BifrostExecutionError($"Filter on {tableName} has no properties");
 
-            var kv = filter.FirstOrDefault();
+            // Sibling keys form an implicit AND: `{ status: {_eq:...}, owner_id: {_eq:...} }`
+            // must constrain on BOTH columns. Previously only `filter.FirstOrDefault()`
+            // was taken and every remaining key was silently dropped, producing an
+            // over-broad WHERE clause (a security/correctness hazard). Wrap each entry
+            // in an AND so no sibling is lost.
+            if (filter.Count > 1)
+            {
+                return new TableFilter
+                {
+                    And = filter.Select(kv => StackSingle(kv, tableName)).ToList(),
+                    FilterType = FilterType.And,
+                };
+            }
+
+            return StackSingle(filter.First(), tableName);
+        }
+
+        private static TableFilter StackSingle(KeyValuePair<string, object?> kv, string? tableName)
+        {
             if (string.IsNullOrWhiteSpace(kv.Key)) throw new BifrostExecutionError($"Filter on {tableName} has empty property name");
             return kv switch
             {
@@ -398,7 +416,13 @@ namespace BifrostQL.Core.QueryModel
                 }
             }
 
-            return ("", new List<SqlParameterInfo>());
+            // No branch produced a sub-query. Returning ("", empty) here let the
+            // caller splice an empty parenthesis into `INNER JOIN () ...`, a syntax
+            // error surfacing as an opaque 500. Fail loudly with the shape instead,
+            // mirroring the guards above.
+            throw new BifrostExecutionError(
+                $"Relationship filter on '{link.ChildTable.DbName}' via link '{link.Name}' " +
+                $"has an unsupported shape (filter type '{filter.FilterType}') and cannot be rendered.");
         }
 
     }

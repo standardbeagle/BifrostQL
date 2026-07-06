@@ -274,6 +274,96 @@ namespace BifrostQL.Core.QueryModel
             sut.Parameters[0].Value.Should().Be(321);
         }
 
+        [Fact]
+        public void SiblingKeys_FormImplicitAnd_ConstrainEveryColumn()
+        {
+            // `{ status: {_eq:...}, ownerId: {_eq:...} }` must constrain BOTH
+            // columns. The former `filter.FirstOrDefault()` kept only the first key
+            // and silently dropped every sibling, producing an over-broad WHERE
+            // clause (a correctness/security hazard).
+            var filter = TableFilter.FromObject(new Dictionary<string, object?>
+            {
+                { "status", new Dictionary<string, object?> { { "_eq", "open" } } },
+                { "ownerId", new Dictionary<string, object?> { { "_eq", 7 } } },
+            }, "tableName");
+
+            var dbModel = Substitute.For<IDbModel>();
+            dbModel.GetTableFromDbName("tableName").Returns(new DbTable
+            {
+                GraphQlLookup = new Dictionary<string, ColumnDto>
+                {
+                    { "status", new ColumnDto { ColumnName = "status" } },
+                    { "ownerId", new ColumnDto { ColumnName = "owner_id" } },
+                }
+            });
+
+            var parameters = new SqlParameterCollection();
+            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "t");
+
+            sut.Sql.Should().Be("(([t].[status] = @p0) AND ([t].[owner_id] = @p1))");
+            sut.Parameters.Should().HaveCount(2);
+            sut.Parameters[0].Value.Should().Be("open");
+            sut.Parameters[1].Value.Should().Be(7);
+        }
+
+        [Fact]
+        public void SiblingKeys_ThreeColumns_AllRendered()
+        {
+            var filter = TableFilter.FromObject(new Dictionary<string, object?>
+            {
+                { "a", new Dictionary<string, object?> { { "_eq", 1 } } },
+                { "b", new Dictionary<string, object?> { { "_eq", 2 } } },
+                { "c", new Dictionary<string, object?> { { "_eq", 3 } } },
+            }, "tableName");
+
+            var dbModel = Substitute.For<IDbModel>();
+            dbModel.GetTableFromDbName("tableName").Returns(new DbTable
+            {
+                GraphQlLookup = new Dictionary<string, ColumnDto>
+                {
+                    { "a", new ColumnDto { ColumnName = "a" } },
+                    { "b", new ColumnDto { ColumnName = "b" } },
+                    { "c", new ColumnDto { ColumnName = "c" } },
+                }
+            });
+
+            var parameters = new SqlParameterCollection();
+            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "t");
+
+            sut.Sql.Should().Contain("[t].[a] = @p0");
+            sut.Sql.Should().Contain("[t].[b] = @p1");
+            sut.Sql.Should().Contain("[t].[c] = @p2");
+            sut.Parameters.Should().HaveCount(3);
+        }
+
+        [Fact]
+        public void RelationshipFilter_WithUnsupportedNestedShape_ThrowsInsteadOfEmptyJoin()
+        {
+            // A relationship whose nested body is an OR reaches the
+            // BuildSqlParameterized fall-through, which once returned ("", empty)
+            // and was spliced into `INNER JOIN () ...` — a syntax error surfacing as
+            // an opaque 500. It must now fail loudly with the offending shape.
+            var filter = TableFilter.FromObject(new Dictionary<string, object?>
+            {
+                { "sessions", new Dictionary<string, object?> {
+                    { "workshops", new Dictionary<string, object?> {
+                        { "or", new List<object?> {
+                            new Dictionary<string, object?> { { "id", new Dictionary<string, object?> { { "_eq", 1 } } } },
+                            new Dictionary<string, object?> { { "id", new Dictionary<string, object?> { { "_eq", 2 } } } },
+                        } } } } } }
+            }, "tableName");
+
+            var dbModel = Substitute.For<IDbModel>();
+            var tables = GetTableModel();
+            dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
+
+            var parameters = new SqlParameterCollection();
+            var act = () => filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
+
+            act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
+                .WithMessage("*unsupported shape*");
+        }
+
         private static Dictionary<string, DbTable> GetTableModel()
         {
             var table1Columns = new Dictionary<string, ColumnDto>

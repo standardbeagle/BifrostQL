@@ -174,4 +174,83 @@ public sealed class ProfileModelCacheTests
         // Assert — a fresh build after reset.
         after.Model.Should().NotBeSameAs(before.Model);
     }
+
+    [Fact]
+    public async Task GetFor_ConcurrentRequestsForSameProfile_BuildExactlyOnce()
+    {
+        // Arrange
+        var cache = await MakeCacheAsync();
+        var buildCount = 0;
+        cache.OnBuilding = _ => Interlocked.Increment(ref buildCount);
+
+        // Act — a burst of concurrent requests for one profile.
+        var tasks = Enumerable.Range(0, 8)
+            .Select(_ => Task.Run(() => cache.GetFor("poly")))
+            .ToArray();
+        var built = await Task.WhenAll(tasks);
+
+        // Assert — one build, every caller got the same memoized pair.
+        buildCount.Should().Be(1);
+        built.Should().OnlyContain(b => ReferenceEquals(b.Model, built[0].Model));
+    }
+
+    [Fact]
+    public async Task GetFor_MemoizedProfileHit_IsNotBlockedByAnotherProfilesBuild()
+    {
+        // Arrange — "dev" is memoized; a "poly" build is then parked mid-flight.
+        var cache = await MakeCacheAsync();
+        var dev = cache.GetFor("dev");
+
+        using var polyBuildStarted = new SemaphoreSlim(0, 1);
+        using var releasePolyBuild = new SemaphoreSlim(0, 1);
+        cache.OnBuilding = name =>
+        {
+            if (!string.Equals(name, "poly", StringComparison.OrdinalIgnoreCase))
+                return;
+            polyBuildStarted.Release();
+            releasePolyBuild.Wait(TimeSpan.FromSeconds(30)).Should().BeTrue();
+        };
+
+        var polyTask = Task.Run(() => cache.GetFor("poly"));
+        (await polyBuildStarted.WaitAsync(TimeSpan.FromSeconds(30))).Should().BeTrue();
+
+        try
+        {
+            // Act — while the poly build is blocked, a memoized dev hit must complete.
+            var devHit = await Task.Run(() => cache.GetFor("dev"))
+                .WaitAsync(TimeSpan.FromSeconds(10));
+
+            // Assert — served from the memo, not queued behind the in-flight build.
+            devHit.Model.Should().BeSameAs(dev.Model);
+            polyTask.IsCompleted.Should().BeFalse("the poly build is still parked");
+        }
+        finally
+        {
+            releasePolyBuild.Release();
+        }
+
+        (await polyTask).Model.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task GetFor_FailedBuild_IsRetriedOnNextRequest()
+    {
+        // Arrange — first build attempt fails; the failure must not be memoized.
+        var cache = await MakeCacheAsync();
+        var attempts = 0;
+        cache.OnBuilding = _ =>
+        {
+            if (Interlocked.Increment(ref attempts) == 1)
+                throw new InvalidOperationException("transient build failure");
+        };
+
+        // Act + Assert — first call surfaces the failure.
+        var act = () => cache.GetFor("poly");
+        act.Should().Throw<InvalidOperationException>();
+
+        // Act + Assert — next call retries and succeeds.
+        var recovered = cache.GetFor("poly");
+        recovered.Model.Should().NotBeNull();
+        attempts.Should().Be(2);
+    }
 }

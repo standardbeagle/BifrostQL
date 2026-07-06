@@ -132,16 +132,22 @@ public abstract class DatabaseResolverBase : ResolverBase
     protected static async ValueTask<object?> ExecuteScalarAsync(
         IDbConnFactory connFactory,
         string sql,
-        Dictionary<string, object?> parameters)
+        Dictionary<string, object?> parameters,
+        CancellationToken cancellationToken = default)
     {
         await using var conn = connFactory.GetConnection();
         try
         {
-            await conn.OpenAsync();
+            await conn.OpenAsync(cancellationToken);
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
             AddParameters(cmd, parameters);
-            return await cmd.ExecuteScalarAsync();
+            return await cmd.ExecuteScalarAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // Propagate request aborts as-is; wrapping would mask the cancellation.
+            throw;
         }
         catch (Exception ex)
         {
@@ -155,16 +161,22 @@ public abstract class DatabaseResolverBase : ResolverBase
     protected static async ValueTask<int> ExecuteNonQueryAsync(
         IDbConnFactory connFactory,
         string sql,
-        Dictionary<string, object?> parameters)
+        Dictionary<string, object?> parameters,
+        CancellationToken cancellationToken = default)
     {
         await using var conn = connFactory.GetConnection();
         try
         {
-            await conn.OpenAsync();
+            await conn.OpenAsync(cancellationToken);
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
             AddParameters(cmd, parameters);
-            return await cmd.ExecuteNonQueryAsync();
+            return await cmd.ExecuteNonQueryAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // Propagate request aborts as-is; wrapping would mask the cancellation.
+            throw;
         }
         catch (Exception ex)
         {

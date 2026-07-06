@@ -3,8 +3,10 @@ using BifrostQL.Core.Modules;
 using BifrostQL.Model;
 using GraphQL.Types;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 
 namespace BifrostQL.Core.Schema
 {
@@ -27,9 +29,16 @@ namespace BifrostQL.Core.Schema
         private readonly BifrostProfileRegistry? _registry;
         private readonly EnumValueLoader.LoadResult? _enumValues;
 
-        private readonly object _lock = new();
-        private readonly Dictionary<string, (IDbModel Model, ISchema Schema)> _memo =
+        // Per-profile memo: builds are seconds-long (model clone + metadata +
+        // full schema generation), so a single cache-wide lock would serialize
+        // every profile behind whichever build is in flight — hits included.
+        // Lazy<T> with ExecutionAndPublication makes each profile build exactly
+        // once while hits and builds for other profiles proceed concurrently.
+        private readonly ConcurrentDictionary<string, Lazy<(IDbModel Model, ISchema Schema)>> _memo =
             new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Test hook: invoked with the profile name at the start of each build.</summary>
+        internal Action<string>? OnBuilding { get; set; }
 
         public ProfileModelCache(
             DbModelLoader loader,
@@ -56,24 +65,30 @@ namespace BifrostQL.Core.Schema
         {
             var profile = ResolveProfile(profileName);
 
-            lock (_lock)
-            {
-                if (_memo.TryGetValue(profile.Name, out var cached))
-                    return cached;
+            var lazy = _memo.GetOrAdd(
+                profile.Name,
+                _ => new Lazy<(IDbModel Model, ISchema Schema)>(
+                    () => Build(profile),
+                    LazyThreadSafetyMode.ExecutionAndPublication));
 
-                var built = Build(profile);
-                _memo[profile.Name] = built;
-                return built;
+            try
+            {
+                return lazy.Value;
+            }
+            catch
+            {
+                // Lazy caches exceptions under ExecutionAndPublication; evict the
+                // failed entry (only if it is still ours) so the next request
+                // retries the build instead of replaying the cached failure.
+                _memo.TryRemove(KeyValuePair.Create(profile.Name, lazy));
+                throw;
             }
         }
 
         /// <summary>Clears the per-profile memo (called on reconnect).</summary>
         public void Reset()
         {
-            lock (_lock)
-            {
-                _memo.Clear();
-            }
+            _memo.Clear();
         }
 
         private BifrostProfile ResolveProfile(string? profileName)
@@ -91,6 +106,8 @@ namespace BifrostQL.Core.Schema
 
         private (IDbModel Model, ISchema Schema) Build(BifrostProfile profile)
         {
+            OnBuilding?.Invoke(profile.Name);
+
             var rules = profile.Metadata is { Count: > 0 }
                 ? _baseMetadataRules.Concat(profile.Metadata).ToList()
                 : (IReadOnlyCollection<string>)_baseMetadataRules;

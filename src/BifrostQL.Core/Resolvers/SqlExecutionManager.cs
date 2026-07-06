@@ -100,7 +100,7 @@ namespace BifrostQL.Core.Resolvers
             var conFactory = bifrost.ConnFactory;
 
             var sw = Stopwatch.StartNew();
-            var (data, sql) = await LoadDataParameterizedAsync(table, conFactory);
+            var (data, sql) = await LoadDataParameterizedAsync(table, conFactory, context.CancellationToken);
             await ApplyProviderComputedColumnsAsync(table, data, context, conFactory);
             sw.Stop();
 
@@ -179,7 +179,7 @@ namespace BifrostQL.Core.Resolvers
             return newTables;
         }
 
-        private async Task<(IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> results, string sql)> LoadDataParameterizedAsync(GqlObjectQuery query, IDbConnFactory connFactory)
+        private async Task<(IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> results, string sql)> LoadDataParameterizedAsync(GqlObjectQuery query, IDbConnFactory connFactory, CancellationToken cancellationToken)
         {
             var dialect = connFactory.Dialect;
             var parameters = new QueryModel.SqlParameterCollection();
@@ -192,13 +192,13 @@ namespace BifrostQL.Core.Resolvers
             await using var conn = connFactory.GetConnection();
             try
             {
-                await conn.OpenAsync();
+                await conn.OpenAsync(cancellationToken);
                 await using var command = conn.CreateCommand();
                 command.CommandText = sql;
 
                 DbParameterBinder.AddExtraParameters(command, parameters.Parameters);
 
-                await using var reader = await command.ExecuteReaderAsync();
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
                 var results = new Dictionary<string, (IDictionary<string, int> index, IList<object?[]> data)>();
                 var resultIndex = 0;
                 do
@@ -207,7 +207,7 @@ namespace BifrostQL.Core.Resolvers
                     var index = Enumerable.Range(0, reader.FieldCount).Select(i => (i, reader.GetName(i)))
                         .ToDictionary(x => x.Item2, x => x.i, StringComparer.OrdinalIgnoreCase);
                     var result = new List<object?[]>();
-                    while (await reader.ReadAsync())
+                    while (await reader.ReadAsync(cancellationToken))
                     {
                         var row = new object?[reader.FieldCount];
                         reader.GetValues(row!);
@@ -218,8 +218,14 @@ namespace BifrostQL.Core.Resolvers
                         (index, new List<object?[]>()) :
                         (index, result);
                     results.Add(resultName, currentResult);
-                } while (await reader.NextResultAsync());
+                } while (await reader.NextResultAsync(cancellationToken));
                 return (results, sql);
+            }
+            catch (OperationCanceledException)
+            {
+                // Propagate request aborts as-is so the pipeline can short-circuit;
+                // wrapping them as execution errors would mask the cancellation.
+                throw;
             }
             catch (Exception ex)
             {
@@ -268,28 +274,61 @@ namespace BifrostQL.Core.Resolvers
                 var newIndex = tableData.index.Count;
                 tableData.index[column.GraphQlDbName] = newIndex;
 
-                for (var rowIndex = 0; rowIndex < tableData.data.Count; rowIndex++)
+                // The provider contract is per-row, so a large result set would
+                // otherwise mean one sequential await per row (N+1). Compute rows
+                // with bounded parallelism instead: a fixed pool of workers pulls
+                // row indexes off a shared counter, capping concurrent provider/DB
+                // calls while keeping every worker busy. Values land in a side
+                // array (rows stay untouched during compute), then all rows are
+                // expanded in one pass.
+                var rowCount = tableData.data.Count;
+                var values = new object?[rowCount];
+                var workerCount = Math.Min(MaxComputeConcurrency, rowCount);
+                if (workerCount > 0)
+                {
+                    var nextRow = -1;
+                    var workers = new Task[workerCount];
+                    for (var w = 0; w < workerCount; w++)
+                    {
+                        workers[w] = Task.Run(async () =>
+                        {
+                            int rowIndex;
+                            while ((rowIndex = Interlocked.Increment(ref nextRow)) < rowCount)
+                            {
+                                var rowMap = ToRowMap(tableData.data[rowIndex], tableData.index, skipColumn: column.GraphQlDbName);
+                                values[rowIndex] = await provider.ComputeAsync(new ComputedColumnContext
+                                {
+                                    Model = _dbModel,
+                                    Table = query.DbTable,
+                                    Column = column.ComputedColumn,
+                                    Row = rowMap,
+                                    UserContext = context.UserContext,
+                                    Services = context.RequestServices,
+                                    ConnFactory = connFactory,
+                                }, context.CancellationToken);
+                            }
+                        }, context.CancellationToken);
+                    }
+                    await Task.WhenAll(workers);
+                }
+
+                for (var rowIndex = 0; rowIndex < rowCount; rowIndex++)
                 {
                     var row = tableData.data[rowIndex];
-                    var rowMap = ToRowMap(row, tableData.index, skipColumn: column.GraphQlDbName);
-                    var value = await provider.ComputeAsync(new ComputedColumnContext
-                    {
-                        Model = _dbModel,
-                        Table = query.DbTable,
-                        Column = column.ComputedColumn,
-                        Row = rowMap,
-                        UserContext = context.UserContext,
-                        Services = context.RequestServices,
-                        ConnFactory = connFactory,
-                    });
-
                     var expanded = new object?[tableData.index.Count];
                     Array.Copy(row, expanded, row.Length);
-                    expanded[newIndex] = value;
+                    expanded[newIndex] = values[rowIndex];
                     tableData.data[rowIndex] = expanded;
                 }
             }
         }
+
+        /// <summary>
+        /// Cap on concurrent per-row provider computations. Providers may run their
+        /// own auxiliary queries (e.g. the EAV <c>_meta</c> provider), so unbounded
+        /// parallelism could exhaust the connection pool or overwhelm the database.
+        /// </summary>
+        private const int MaxComputeConcurrency = 8;
 
         private static IReadOnlyDictionary<string, object?> ToRowMap(
             object?[] row,

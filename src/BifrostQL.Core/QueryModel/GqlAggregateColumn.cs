@@ -54,17 +54,17 @@ namespace BifrostQL.Core.QueryModel
             var srcId = dialect.EscapeIdentifier("srcId");
 
             var (firstDirection, firstLink) = Links[0];
-            var sql = $"SELECT {firstLink.GetSqlSourceColumns(dialect, firstDirection, columnName: "joinId")}, {firstLink.GetSqlSourceColumns(dialect, firstDirection, columnName: "srcId")} FROM {firstLink.GetSqlSourceTableRef(dialect, firstDirection)}{filterSql.Sql}";
+            var sql = $"SELECT {TableLinkSql.SourceColumns(firstLink, dialect, firstDirection, columnName: "joinId")}, {TableLinkSql.SourceColumns(firstLink, dialect, firstDirection, columnName: "srcId")} FROM {TableLinkSql.SourceTableRef(firstLink, dialect, firstDirection)}{filterSql.Sql}";
 
             var linkFilterParams = new List<SqlParameterInfo>();
             for (var i = 0; i < Links.Count; ++i)
             {
                 var (direction, link) = Links[i];
-                var fromSql = $" FROM ({sql}) {src} INNER JOIN {link.GetSqlDestTableRef(dialect, direction)} {next} ON {src}.{joinId} = {next}.{dialect.EscapeIdentifier(link.GetSqlDestJoinColumn(direction))}";
+                var fromSql = $" FROM ({sql}) {src} INNER JOIN {TableLinkSql.DestTableRef(link, dialect, direction)} {next} ON {src}.{joinId} = {next}.{dialect.EscapeIdentifier(TableLinkSql.DestJoinColumn(link, direction))}";
                 var selectSql = (i, Links.Count - i) switch
                 {
                     (_, 1) => $"SELECT {src}.{srcId}, {AggregateType}({next}.{dialect.EscapeIdentifier(FinalColumnName)}) {dialect.EscapeIdentifier(FinalColumnGraphQlName)}",
-                    _ => $"SELECT {link.GetSqlSourceColumns(dialect, direction, columnName: "joinId", tableName: "next")}, {src}.{srcId}",
+                    _ => $"SELECT {TableLinkSql.SourceColumns(link, dialect, direction, columnName: "joinId", tableName: "next")}, {src}.{srcId}",
                 };
                 sql = selectSql + fromSql;
 

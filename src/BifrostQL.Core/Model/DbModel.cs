@@ -488,45 +488,9 @@ namespace BifrostQL.Core.Model
             ? $"{ChildTable.GraphQlName}_children"
             : ChildTable.GraphQlName);
 
-        public string GetSqlSourceTableRef(QueryModel.ISqlDialect dialect, LinkDirection direction)
-        {
-            var table = direction == LinkDirection.ManyToOne ? ChildTable : ParentTable;
-            return dialect.TableReference(table.TableSchema, table.DbName);
-        }
-
-        public string GetSqlDestTableRef(QueryModel.ISqlDialect dialect, LinkDirection direction)
-        {
-            var table = direction == LinkDirection.ManyToOne ? ParentTable : ChildTable;
-            return dialect.TableReference(table.TableSchema, table.DbName);
-        }
-
-        public string GetSqlDestJoinColumn(LinkDirection direction)
-        {
-            if (direction == LinkDirection.ManyToOne)
-                return ParentId.DbName;
-            return ChildId.DbName;
-        }
-
-        public string GetSqlSourceColumns(QueryModel.ISqlDialect dialect, LinkDirection direction, string? tableName = null, string? columnName = null)
-        {
-            var builder = new StringBuilder();
-            if (!string.IsNullOrWhiteSpace(tableName))
-                builder.Append($"{dialect.EscapeIdentifier(tableName)}.");
-            else if (direction == LinkDirection.ManyToOne)
-                builder.Append($"{dialect.EscapeIdentifier(ChildTable.DbName)}.");
-            else
-                builder.Append($"{dialect.EscapeIdentifier(ParentTable.DbName)}.");
-
-            if (direction == LinkDirection.ManyToOne)
-                builder.Append(dialect.EscapeIdentifier(ChildId.DbName));
-            else
-                builder.Append(dialect.EscapeIdentifier(ParentId.DbName));
-
-            if (!string.IsNullOrWhiteSpace(columnName))
-                builder.Append($" AS {dialect.EscapeIdentifier(columnName)}");
-
-            return builder.ToString();
-        }
+        // SQL-fragment builders for this link now live in QueryModel.TableLinkSql so
+        // the Model layer stays pure data (no dialect, no SQL text). See that class
+        // and its sole consumer GqlAggregateColumn.
         public override string ToString() => $"{Name}-[{ChildId.TableName}.{ChildId.ColumnName}={ParentId.TableName}.{ParentId.ColumnName}]";
     }
 

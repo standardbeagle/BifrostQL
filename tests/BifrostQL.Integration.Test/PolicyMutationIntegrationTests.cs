@@ -37,8 +37,7 @@ public sealed class PolicyMutationIntegrationTests : IAsyncLifetime
 
     // Policy: Orders permits read + update only (no create, no delete);
     // the "secret" column is write-denied. Row-scope compilation is exercised
-    // exhaustively by the unit tests — it cannot be expressed through a
-    // MetadataLoader rule string because the rule grammar reserves '{ }', and
+    // exhaustively by the unit tests, and
     // the resolver SQL path does not yet consume MutationTransformResult
     // .AdditionalFilter (a pre-existing gap shared with soft-delete), so the
     // resolver-path coverage here is the action-deny and column-write-deny

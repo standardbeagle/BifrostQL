@@ -73,10 +73,9 @@ public sealed class MembershipManagerPolicyBypassPreventionTests : IAsyncLifetim
     private const string ProfileName = "policy";
 
     // The verbatim Membership Manager policy configuration documented in the
-    // membership-manager seed-sample SQL headers. Row scope cannot be expressed
-    // through a MetadataLoader rule string — the rule grammar reserves '{ }' —
-    // so the two row-scope expressions are applied directly to the loaded
-    // tables' metadata in InitializeAsync.
+    // membership-manager seed-sample SQL headers. Row-scope expressions carry
+    // '{placeholder}' braces; the two are applied directly to the loaded tables'
+    // metadata in InitializeAsync to keep this fixture's setup explicit.
     private static readonly string[] PolicyMetadata =
     {
         "main.members { policy-actions: read,create,update,delete }",

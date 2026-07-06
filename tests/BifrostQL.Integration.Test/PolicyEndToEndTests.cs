@@ -52,10 +52,9 @@ public sealed class PolicyEndToEndTests : IAsyncLifetime
     //     and write-denied; row scope (added below as a raw metadata value)
     //     limits non-admins to their own tenant's rows.
     //
-    // Row scope cannot be expressed through a MetadataLoader rule string — the
-    // rule grammar reserves '{ }' — so it is applied directly to the loaded
-    // table's mutable metadata in InitializeAsync, the same seam
-    // DbModel.ApplyAdditionalMetadata uses.
+    // The row-scope expression (carrying '{placeholder}' braces) is applied
+    // directly to the loaded table's mutable metadata in InitializeAsync, the
+    // same seam DbModel.ApplyAdditionalMetadata uses.
     private static readonly string[] PolicyMetadata =
     {
         "main.Documents { policy-read-deny: body }",

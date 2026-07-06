@@ -54,6 +54,28 @@ Metadata rules use a CSS-like selector syntax to target tables and columns. Each
 "selector { property: value; property: value; }"
 ```
 
+### Grammar and reserved characters
+
+The rule string is parsed structurally, not delimiter-agnostically:
+
+- **`{` and `}`** delimit the property block. The block runs from the first `{`
+  to the last `}`. Selectors may not contain braces, but **property values may** —
+  a value like `policy-row-scope: user_id = {user_id}` is preserved verbatim,
+  so `{placeholder}` expressions are legal.
+- **`;`** separates one property from the next inside the block. A value cannot
+  contain a literal `;`.
+- **`:`** separates a property key from its value. Only the **first** `:` splits;
+  the rest of the line is the value, so values may contain `:` (e.g.
+  `many-to-many: Target:Junction`, `computed-sql: name:Type:expr`).
+- **`,`** separates multiple selectors sharing one property block.
+- **`*`** is a wildcard in selectors. Every other character in a selector is
+  matched literally, including regex metacharacters (`+`, `(`, `)`, `.` within a
+  name), so a table named `data(2024)` is matched as written.
+
+Malformed rules fail fast at load: a missing brace, an empty selector, a
+property with no `:`, an empty key, or a duplicate key throws an
+`ArgumentException` naming the offending rule rather than being silently ignored.
+
 ### Selectors
 
 | Pattern | Matches |

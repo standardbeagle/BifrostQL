@@ -41,9 +41,7 @@ public sealed class MutationAdditionalFilterIntegrationTests : IAsyncLifetime
 
     // Policy: Orders permits read + update + delete for everyone. The row-scope
     // expression (which restricts update/delete to the caller's own tenant) is
-    // applied directly to the loaded table's metadata in InitializeAsync — the
-    // MetadataLoader rule grammar reserves '{ }' as the rule delimiter, so the
-    // '{tenant_id}' placeholder cannot be expressed through a rule string. The
+    // applied directly to the loaded table's metadata in InitializeAsync. The
     // unit tests (PolicyMutationTransformerTests) set it the same way via the
     // test fixture; here we set it post-load on the real loaded model.
     private static readonly string[] PolicyMetadata =

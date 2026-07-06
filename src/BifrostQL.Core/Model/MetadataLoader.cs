@@ -72,19 +72,45 @@ namespace BifrostQL.Core.Model
         private readonly Dictionary<string, string> _metadata;
         private static readonly HashSet<string> _appendProperties = new() { "join" };
 
-        private static readonly Regex RuleRegex = new(@"(?<selectors>.+)\s*{\s*(?<properties>.*)}", RegexOptions.IgnoreCase);
+        // Selectors are the brace-free prefix; the property block spans the FIRST
+        // '{' to the LAST '}'. Greedy properties let a value carry balanced braces
+        // (e.g. "policy-row-scope: user_id = {user_id}") without the '{' being
+        // mistaken for the block opener.
+        private static readonly Regex RuleRegex = new(@"^\s*(?<selectors>[^{}]+?)\s*\{(?<properties>.*)\}\s*$", RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
         public MetadataLoaderRule(string rule)
         {
             ArgumentNullException.ThrowIfNull(rule, nameof(rule));
 
             var split = RuleRegex.Match(rule);
+            if (!split.Success)
+                throw new ArgumentException(
+                    $"Invalid metadata rule '{rule}': expected 'selector[, selector...] {{ key: value[; key: value...] }}'.",
+                    nameof(rule));
+
             var selectors = split.Groups["selectors"].Value;
             var selectorList = selectors.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries).Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToArray();
+            if (selectorList.Length == 0)
+                throw new ArgumentException($"Invalid metadata rule '{rule}': no selector was specified before '{{'.", nameof(rule));
             _rules = selectorList.Select(s => s.Split(new[] { '.' }).Select(m => new MetadataMatcher(m)).ToArray()).ToArray();
+
             var properties = split.Groups["properties"].Value;
             var propertyList = properties.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries).Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
-            _metadata = propertyList.Select(p => p.Split(new[] { ':' })).ToDictionary(p => p[0].Trim(), p => p[1].Trim());
+            _metadata = new Dictionary<string, string>();
+            foreach (var raw in propertyList)
+            {
+                // Split on the FIRST ':' only so values may themselves contain ':'
+                // (e.g. many-to-many "Target:Junction", computed-sql "name:Type:expr").
+                var kv = raw.Split(new[] { ':' }, 2);
+                if (kv.Length != 2)
+                    throw new ArgumentException($"Invalid metadata property '{raw.Trim()}' in rule '{rule}': expected 'key: value'.", nameof(rule));
+                var key = kv[0].Trim();
+                var value = kv[1].Trim();
+                if (key.Length == 0)
+                    throw new ArgumentException($"Empty metadata key in rule '{rule}'.", nameof(rule));
+                if (!_metadata.TryAdd(key, value))
+                    throw new ArgumentException($"Duplicate metadata key '{key}' in rule '{rule}'.", nameof(rule));
+            }
         }
 
         public bool ApplyToSchema(string schema, IDictionary<string, object?> properties)
@@ -140,15 +166,21 @@ namespace BifrostQL.Core.Model
             var split = RuleRegex.Match(rule);
             if (split.Success && split.Groups["attributeRule"].Value != "")
             {
-                _nameRule = new Regex($"^{split.Groups["nameRule"].Value.Replace("*", ".*")}$", RegexOptions.IgnoreCase);
-                _attributeRule = new Regex($"^{split.Groups["attributeRule"].Value.Replace("*", ".*")}$", RegexOptions.IgnoreCase);
+                _nameRule = BuildGlobRegex(split.Groups["nameRule"].Value.Trim());
+                _attributeRule = BuildGlobRegex(split.Groups["attributeRule"].Value.Trim());
             }
             else
             {
-                _nameRule = new Regex($"^{rule.Replace("*", ".*")}$", RegexOptions.IgnoreCase);
+                _nameRule = BuildGlobRegex(rule.Trim());
                 _attributeRule = null;
             }
         }
+
+        // Treats the pattern as a literal glob: every character is escaped so
+        // regex metacharacters in identifiers (e.g. "order+items", "data(2024)")
+        // match literally, then '*' alone is restored as the ".*" wildcard.
+        private static Regex BuildGlobRegex(string glob) =>
+            new($"^{Regex.Escape(glob).Replace("\\*", ".*")}$", RegexOptions.IgnoreCase);
 
         public bool MatchName(string name)
         {

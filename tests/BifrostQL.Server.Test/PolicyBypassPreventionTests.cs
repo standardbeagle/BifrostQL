@@ -60,8 +60,8 @@ public sealed class PolicyBypassPreventionTests : IAsyncLifetime
 
     // Documents is read-denied entirely; Orders permits read + update, denies
     // the "secret" column for read and write, and scopes non-admin rows by
-    // tenant. The row-scope expression is applied to the loaded table's metadata
-    // because the MetadataLoader rule grammar reserves '{ }'.
+    // tenant. The row-scope expression (carrying '{placeholder}' braces) is
+    // applied directly to the loaded table's metadata to keep setup explicit.
     private static readonly string[] PolicyMetadata =
     {
         "main.Documents { policy-read-deny: body }",

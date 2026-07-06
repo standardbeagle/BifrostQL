@@ -300,6 +300,24 @@ export class ReconnectController {
     }
   }
 
+  /**
+   * Runs the pending retry immediately instead of waiting out the backoff
+   * delay. Used when a manual `connect()` arrives mid-backoff: routing the
+   * open through the controller keeps the cycle's bookkeeping intact — on
+   * success `onSuccess` fires now (replaying/rejecting requests pending since
+   * the drop) and the timer is consumed, so it cannot fire later and report a
+   * stale "reconnect success" against healthy in-flight traffic. No-op unless
+   * a retry is actually scheduled (`waiting` with a live timer).
+   */
+  attemptNow(): void {
+    if (this.state !== "waiting" || this.timer === null) {
+      return;
+    }
+    this.clearTimer(this.timer);
+    this.timer = null;
+    this.runAttempt(new Error("manual connect during backoff"));
+  }
+
   private scheduleNext(lastError: Error): void {
     if (this.state === "gave-up" || this.state === "closed") {
       return;

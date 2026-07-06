@@ -248,6 +248,48 @@ describe("ReconnectController", () => {
     expect(connect).not.toHaveBeenCalled();
   });
 
+  it("attemptNow() runs the pending retry immediately and consumes the timer", async () => {
+    const connect = vi.fn().mockResolvedValue(undefined);
+    const onSuccess = vi.fn();
+    const ctrl = new ReconnectController({
+      policy: new FixedBackoff(30000),
+      connect,
+      onSuccess,
+    });
+
+    ctrl.start(new Error("boom"));
+    expect(ctrl.currentState).toBe("waiting");
+
+    ctrl.attemptNow();
+    // Success path runs without waiting out the 30s backoff...
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connect).toHaveBeenCalledOnce();
+    expect(onSuccess).toHaveBeenCalledWith(1);
+    expect(ctrl.currentState).toBe("idle");
+
+    // ...and the original timer was consumed: no second attempt later.
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(connect).toHaveBeenCalledOnce();
+    expect(onSuccess).toHaveBeenCalledOnce();
+  });
+
+  it("attemptNow() is a no-op outside a scheduled wait", async () => {
+    const connect = vi.fn().mockResolvedValue(undefined);
+    const ctrl = new ReconnectController({
+      policy: new FixedBackoff(100),
+      connect,
+    });
+
+    ctrl.attemptNow(); // idle
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connect).not.toHaveBeenCalled();
+
+    ctrl.stop();
+    ctrl.attemptNow(); // closed
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connect).not.toHaveBeenCalled();
+  });
+
   it("invokes onGiveUp when maxAttempts is exhausted", async () => {
     const connect = vi
       .fn<() => Promise<void>>()

@@ -182,7 +182,8 @@ export function deriveBinaryUrl(endpoint: string, binaryPath: string): string {
 /**
  * Determines whether a GraphQL document's operation is a mutation. Strips the
  * ignored tokens that can legally precede the operation keyword — whitespace,
- * commas, and `#` line comments — then tests for a leading `mutation` keyword.
+ * commas, and `#` line comments — and skips any fragment definitions that
+ * precede the operation, then tests for a leading `mutation` keyword.
  *
  * The binary transport uses this to pick the wire message type: the binary
  * client's reconnect logic applies an at-most-once guard to Mutation-typed
@@ -191,8 +192,52 @@ export function deriveBinaryUrl(endpoint: string, binaryPath: string): string {
  * re-execute it.
  */
 export function isMutationDocument(text: string): boolean {
-  const stripped = text.replace(/^(?:[\s,]+|#[^\n\r]*)+/, "");
-  return /^mutation\b/i.test(stripped);
+  let rest = stripIgnored(text);
+  // Fragment definitions may legally precede the operation; skip each one
+  // (keyword through its balanced selection set) so a fragment-first mutation
+  // document isn't misclassified as a query and stripped of the at-most-once
+  // guard.
+  while (/^fragment\b/i.test(rest)) {
+    const afterBody = skipBraceBlock(rest);
+    if (afterBody === null) {
+      // Malformed/unbalanced document — classify conservatively as a query.
+      return false;
+    }
+    rest = stripIgnored(afterBody);
+  }
+  return /^mutation\b/i.test(rest);
+}
+
+/** Drops leading GraphQL ignored tokens: whitespace, commas, # comments. */
+function stripIgnored(text: string): string {
+  return text.replace(/^(?:[\s,]+|#[^\n\r]*)+/, "");
+}
+
+/**
+ * Skips past the first `{ ... }` block in `text` (brace-counted, ignoring
+ * braces inside string literals) and returns the remainder, or null when no
+ * balanced block is found.
+ */
+function skipBraceBlock(text: string): string | null {
+  const open = text.indexOf("{");
+  if (open === -1) return null;
+  let depth = 0;
+  let inString = false;
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (ch === "\\") i++;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return text.slice(i + 1);
+    }
+  }
+  return null;
 }
 
 /**

@@ -489,6 +489,16 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     // No other state bookkeeping is needed here: `reconnecting` is derived
     // from the controller, so an active waiting/connecting cycle stays intact.
     this.reconnectController?.rearm();
+    if (this.reconnectController?.currentState === "waiting") {
+      // Complete the in-flight reconnect cycle now instead of opening an
+      // independent socket beside it. Routing through the controller makes
+      // its success path run immediately — pending requests from the drop are
+      // replayed/rejected now rather than sitting until the backoff timer
+      // fires (possibly timing out on a live socket) — and consumes the
+      // timer, which otherwise fires later, short-circuits on the OPEN
+      // socket, and "replays" healthy in-flight traffic.
+      this.reconnectController.attemptNow();
+    }
     return this.openSocket();
   }
 

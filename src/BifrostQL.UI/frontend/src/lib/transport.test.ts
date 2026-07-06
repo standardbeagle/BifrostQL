@@ -215,6 +215,34 @@ describe("isMutationDocument", () => {
       false
     );
   });
+
+  it("detects a mutation behind leading fragment definitions", () => {
+    expect(
+      isMutationDocument(
+        'fragment F on User { id name(format: "{a}") }\nmutation M { updateUser { ...F } }'
+      )
+    ).toBe(true);
+    expect(
+      isMutationDocument(
+        "fragment A on T { x }\nfragment B on T { y }\nmutation { save }"
+      )
+    ).toBe(true);
+  });
+
+  it("does not flag fragment-first query documents", () => {
+    expect(
+      isMutationDocument("fragment F on User { id }\nquery Q { users { ...F } }")
+    ).toBe(false);
+    expect(
+      isMutationDocument("fragment F on User { id }\n{ users { ...F } }")
+    ).toBe(false);
+  });
+
+  it("classifies an unbalanced fragment document as a query", () => {
+    expect(isMutationDocument("fragment F on User { id\nmutation { save }")).toBe(
+      false
+    );
+  });
 });
 
 describe("deriveBinaryUrl", () => {

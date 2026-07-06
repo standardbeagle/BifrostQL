@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { memo, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
     ColumnDef,
     ColumnFiltersState,
     ColumnSizingState,
+    Row,
     RowSelectionState,
     SortingState,
     VisibilityState,
@@ -246,9 +247,12 @@ export function DataTable<TData>({
     const [fitMode, setFitMode] = useState(true);
     const scrollRef = useRef<HTMLDivElement>(null);
 
-    // Persist column sizing to localStorage when it changes
+    // Persist column sizing to localStorage, debounced so a live ('onChange')
+    // resize drag doesn't write on every mousemove.
     useEffect(() => {
-        if (tableName) saveColumnSizing(tableName, columnSizing);
+        if (!tableName) return;
+        const t = setTimeout(() => saveColumnSizing(tableName, columnSizing), 300);
+        return () => clearTimeout(t);
     }, [tableName, columnSizing]);
 
     // Reset persisted sizing when table changes
@@ -286,7 +290,9 @@ export function DataTable<TData>({
         return Math.max(5, Math.floor((el.clientHeight - TABLE_HEADER_HEIGHT) / TABLE_ROW_HEIGHT));
     }, []);
 
-    // Apply fit on mount and when the container resizes
+    // Apply fit on mount and when the container resizes. The resize path is
+    // debounced so dragging a splitter/window doesn't fire a burst of queries
+    // (each distinct page size is a new query key) — only the settled size runs.
     useEffect(() => {
         if (!fitMode) return;
         const el = scrollRef.current;
@@ -298,9 +304,17 @@ export function DataTable<TData>({
             onPageSizeChange(size);
         };
         const raf = requestAnimationFrame(apply);
-        const ro = new ResizeObserver(() => requestAnimationFrame(apply));
+        let debounce: ReturnType<typeof setTimeout> | null = null;
+        const ro = new ResizeObserver(() => {
+            if (debounce) clearTimeout(debounce);
+            debounce = setTimeout(() => requestAnimationFrame(apply), 200);
+        });
         ro.observe(el);
-        return () => { cancelAnimationFrame(raf); ro.disconnect(); };
+        return () => {
+            cancelAnimationFrame(raf);
+            if (debounce) clearTimeout(debounce);
+            ro.disconnect();
+        };
     }, [fitMode, computeFitSize, onPageSizeChange]);
 
     // Clear selection when data/page changes
@@ -308,35 +322,38 @@ export function DataTable<TData>({
         setRowSelection({});
     }, [data, pageIndex]);
 
-    // Build columns with optional select and delete columns
-    const allColumns: ColumnDef<TData, unknown>[] = [];
-
-    if (selectable) {
-        allColumns.push({
-            id: '_select',
-            header: ({ table: t }) => (
-                <Checkbox
-                    checked={t.getIsAllPageRowsSelected() || (t.getIsSomePageRowsSelected() && 'indeterminate')}
-                    onCheckedChange={(value) => t.toggleAllPageRowsSelected(!!value)}
-                    aria-label="Select all"
-                />
-            ),
-            cell: ({ row }) => (
-                <Checkbox
-                    checked={row.getIsSelected()}
-                    onCheckedChange={(value) => row.toggleSelected(!!value)}
-                    onClick={(e) => e.stopPropagation()}
-                    aria-label="Select row"
-                />
-            ),
-            enableSorting: false,
-            enableHiding: false,
-            enableResizing: false,
-            size: 32,
-        });
-    }
-
-    allColumns.push(...columns);
+    // Build columns with optional select column. Memoized so the table doesn't
+    // see a fresh `columns` identity every render (which forces it to re-derive
+    // its column models) — matters once hover/resize churn is in play.
+    const allColumns = useMemo<ColumnDef<TData, unknown>[]>(() => {
+        const cols: ColumnDef<TData, unknown>[] = [];
+        if (selectable) {
+            cols.push({
+                id: '_select',
+                header: ({ table: t }) => (
+                    <Checkbox
+                        checked={t.getIsAllPageRowsSelected() || (t.getIsSomePageRowsSelected() && 'indeterminate')}
+                        onCheckedChange={(value) => t.toggleAllPageRowsSelected(!!value)}
+                        aria-label="Select all"
+                    />
+                ),
+                cell: ({ row }) => (
+                    <Checkbox
+                        checked={row.getIsSelected()}
+                        onCheckedChange={(value) => row.toggleSelected(!!value)}
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label="Select row"
+                    />
+                ),
+                enableSorting: false,
+                enableHiding: false,
+                enableResizing: false,
+                size: 32,
+            });
+        }
+        cols.push(...columns);
+        return cols;
+    }, [columns, selectable]);
 
     const table = useReactTable({
         data,
@@ -355,6 +372,10 @@ export function DataTable<TData>({
             minSize: COL_MIN_WIDTH,
             size: COL_DEFAULT_WIDTH,
         },
+        // 'onChange' keeps live drag feedback. Cheap now that body rows are
+        // memoized and read width from <colgroup> (a resize re-renders only the
+        // table shell/header/colgroup, not every cell); the localStorage write is
+        // debounced below so it doesn't fire per pixel.
         columnResizeMode: 'onChange',
         enableColumnResizing: true,
         onColumnSizingChange: setColumnSizing,
@@ -388,6 +409,11 @@ export function DataTable<TData>({
 
     const selectedCount = Object.keys(rowSelection).length;
 
+    // Signature of the currently-visible columns. Passed to each memoized row so
+    // toggling column visibility re-renders the body (otherwise rows keep their
+    // old cell set and drift out of alignment with the header under fixed layout).
+    const visibleColumnKey = table.getVisibleLeafColumns().map((c) => c.id).join('|');
+
     const handleDeleteSelected = useCallback(() => {
         if (!onDeleteSelected) return;
         const filters: PkFilter[] = [];
@@ -414,6 +440,20 @@ export function DataTable<TData>({
         const filter = buildRowPkFilter(hoveredRow.rowId);
         if (filter) onDeleteRow(filter);
     }, [hoveredRow, onDeleteRow, buildRowPkFilter]);
+
+    // Keyboard-driven edit/delete so the row actions aren't mouse/touch only.
+    // A focused row responds to 'e' (edit) and Delete/Backspace (delete).
+    const editRowById = useCallback((rowId: string) => {
+        if (!onEditRow) return;
+        const filter = buildRowPkFilter(rowId);
+        if (filter) onEditRow(filter);
+    }, [onEditRow, buildRowPkFilter]);
+
+    const deleteRowById = useCallback((rowId: string) => {
+        if (!onDeleteRow) return;
+        const filter = buildRowPkFilter(rowId);
+        if (filter) onDeleteRow(filter);
+    }, [onDeleteRow, buildRowPkFilter]);
 
     return (
         <div className="flex flex-col w-full min-h-0 flex-1">
@@ -476,21 +516,37 @@ export function DataTable<TData>({
                     <DropdownMenuContent align="end">
                         {table.getAllColumns()
                             .filter((column) => column.getCanHide())
-                            .map((column) => (
-                                <DropdownMenuCheckboxItem
-                                    key={column.id}
-                                    checked={column.getIsVisible()}
-                                    onCheckedChange={(value) => column.toggleVisibility(!!value)}
-                                >
-                                    {column.id}
-                                </DropdownMenuCheckboxItem>
-                            ))}
+                            .map((column) => {
+                                // Prefer the humanized column label (matches every
+                                // other surface) over the raw db column id.
+                                const meta = column.columnDef.meta as { column?: { label?: string } } | undefined;
+                                const label = meta?.column?.label
+                                    ?? (typeof column.columnDef.header === 'string' ? column.columnDef.header : column.id);
+                                return (
+                                    <DropdownMenuCheckboxItem
+                                        key={column.id}
+                                        checked={column.getIsVisible()}
+                                        onCheckedChange={(value) => column.toggleVisibility(!!value)}
+                                    >
+                                        {label}
+                                    </DropdownMenuCheckboxItem>
+                                );
+                            })}
                     </DropdownMenuContent>
                 </DropdownMenu>
                 </div>
             </div>
             <div ref={scrollRef} className="flex-1 overflow-auto min-h-0">
-                <Table style={{ width: table.getTotalSize() }}>
+                <Table style={{ tableLayout: 'fixed', width: table.getTotalSize() }}>
+                    {/* Column widths live on <colgroup> under table-layout:fixed so
+                        body cells don't each carry a width style — that keeps the
+                        memoized rows independent of column sizing, and a resize only
+                        re-renders the colgroup, not every cell. */}
+                    <colgroup>
+                        {table.getVisibleLeafColumns().map((col) => (
+                            <col key={col.id} style={{ width: col.getSize() }} />
+                        ))}
+                    </colgroup>
                     <TableHeader>
                         {table.getHeaderGroups().map((headerGroup) => (
                             <TableRow key={headerGroup.id}>
@@ -499,7 +555,11 @@ export function DataTable<TData>({
                                         key={header.id}
                                         data-col-id={header.column.id}
                                         className="relative"
-                                        style={{ width: header.getSize() }}
+                                        aria-sort={
+                                            header.column.getIsSorted() === 'asc' ? 'ascending'
+                                            : header.column.getIsSorted() === 'desc' ? 'descending'
+                                            : header.column.getCanSort() ? 'none' : undefined
+                                        }
                                     >
                                         {header.isPlaceholder
                                             ? null
@@ -535,42 +595,24 @@ export function DataTable<TData>({
                                 </TableCell>
                             </TableRow>
                         ) : (
-                            table.getRowModel().rows.map((row) => {
-                                const isSelected = selectedRowId != null && row.id === selectedRowId;
-                                return (
-                                    <TableRow
-                                        key={row.id}
-                                        data-state={isSelected ? 'selected' : row.getIsSelected() ? 'selected' : undefined}
-                                        className={onRowSelect ? 'cursor-pointer group/row' : 'group/row'}
-                                        onClick={onRowSelect ? () => {
-                                            // A long-press just opened the actions overlay — swallow
-                                            // the click that follows the finger lift so it doesn't
-                                            // also select the row.
-                                            if (suppressClick.current) { suppressClick.current = false; return; }
-                                            // Don't hijack a text-selection drag as a row click —
-                                            // lets users select/copy cell text without navigating.
-                                            if (window.getSelection()?.toString()) return;
-                                            onRowSelect(isSelected ? null : row.id);
-                                        } : undefined}
-                                        onPointerEnter={(e) => { if (e.pointerType === 'mouse') hoverRow(row.id, e.currentTarget); }}
-                                        onPointerLeave={(e) => { if (e.pointerType === 'mouse') scheduleDismiss(); }}
-                                        onPointerDown={(e) => startPress(row.id, e.currentTarget, e)}
-                                        onPointerMove={onPressMove}
-                                        onPointerUp={cancelPress}
-                                        onPointerCancel={cancelPress}
-                                    >
-                                        {row.getVisibleCells().map((cell) => (
-                                            <TableCell
-                                                key={cell.id}
-                                                data-col-id={cell.column.id}
-                                                style={{ width: cell.column.getSize() }}
-                                            >
-                                                {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                                            </TableCell>
-                                        ))}
-                                    </TableRow>
-                                );
-                            })
+                            table.getRowModel().rows.map((row) => (
+                                <DataTableRow
+                                    key={row.id}
+                                    row={row}
+                                    isSelected={selectedRowId != null && row.id === selectedRowId}
+                                    checked={row.getIsSelected()}
+                                    visibleKey={visibleColumnKey}
+                                    onRowSelect={onRowSelect}
+                                    onEditRow={onEditRow ? editRowById : undefined}
+                                    onDeleteRow={onDeleteRow ? deleteRowById : undefined}
+                                    suppressClick={suppressClick}
+                                    hoverRow={hoverRow}
+                                    scheduleDismiss={scheduleDismiss}
+                                    startPress={startPress}
+                                    onPressMove={onPressMove}
+                                    cancelPress={cancelPress}
+                                />
+                            ))
                         )}
                     </TableBody>
                 </Table>
@@ -662,3 +704,93 @@ export function DataTable<TData>({
         </div>
     );
 }
+
+interface DataTableRowProps<TData> {
+    row: Row<TData>;
+    isSelected: boolean;
+    /** Checkbox selection state, passed explicitly so the memoized row re-renders
+     *  when it toggles (row.getIsSelected() alone wouldn't invalidate the memo). */
+    checked: boolean;
+    /** Visible-column signature; a change invalidates the memo so the row's cell
+     *  set stays in sync with the header when column visibility toggles. */
+    visibleKey: string;
+    onRowSelect?: (rowId: string | null) => void;
+    onEditRow?: (rowId: string) => void;
+    onDeleteRow?: (rowId: string) => void;
+    suppressClick: React.MutableRefObject<boolean>;
+    hoverRow: (rowId: string, el: HTMLElement) => void;
+    scheduleDismiss: () => void;
+    startPress: (rowId: string, el: HTMLElement, e: React.PointerEvent) => void;
+    onPressMove: () => void;
+    cancelPress: () => void;
+}
+
+/**
+ * One data row, memoized so table-level state that doesn't affect a row (mouse
+ * hover tracking, column resize) doesn't re-render every row's cells. Keyboard
+ * users can act on a focused row: Enter/Space selects, `e` edits, Delete removes
+ * — so edit/delete aren't hover/long-press only.
+ */
+function DataTableRowInner<TData>({
+    row,
+    isSelected,
+    checked,
+    onRowSelect,
+    onEditRow,
+    onDeleteRow,
+    suppressClick,
+    hoverRow,
+    scheduleDismiss,
+    startPress,
+    onPressMove,
+    cancelPress,
+}: DataTableRowProps<TData>) {
+    const actionable = !!(onRowSelect || onEditRow || onDeleteRow);
+    return (
+        <TableRow
+            data-state={isSelected || checked ? 'selected' : undefined}
+            className={onRowSelect ? 'cursor-pointer group/row focus-visible:outline-2 focus-visible:outline-primary' : 'group/row focus-visible:outline-2 focus-visible:outline-primary'}
+            tabIndex={actionable ? 0 : undefined}
+            onClick={onRowSelect ? () => {
+                // A long-press just opened the actions overlay — swallow the
+                // click that follows the finger lift so it doesn't also select.
+                if (suppressClick.current) { suppressClick.current = false; return; }
+                // Don't hijack a text-selection drag as a row click — lets users
+                // select/copy cell text without navigating.
+                if (window.getSelection()?.toString()) return;
+                onRowSelect(isSelected ? null : row.id);
+            } : undefined}
+            onKeyDown={actionable ? (e) => {
+                // Ignore keys originating from an interactive child (link, button,
+                // checkbox) so their own handling isn't hijacked.
+                if (e.target !== e.currentTarget) return;
+                if ((e.key === 'Enter' || e.key === ' ') && onRowSelect) {
+                    e.preventDefault();
+                    onRowSelect(isSelected ? null : row.id);
+                } else if ((e.key === 'e' || e.key === 'E') && onEditRow) {
+                    e.preventDefault();
+                    onEditRow(row.id);
+                } else if ((e.key === 'Delete' || e.key === 'Backspace') && onDeleteRow) {
+                    e.preventDefault();
+                    onDeleteRow(row.id);
+                }
+            } : undefined}
+            onFocus={(e) => { if (e.target === e.currentTarget) hoverRow(row.id, e.currentTarget); }}
+            onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) scheduleDismiss(); }}
+            onPointerEnter={(e) => { if (e.pointerType === 'mouse') hoverRow(row.id, e.currentTarget); }}
+            onPointerLeave={(e) => { if (e.pointerType === 'mouse') scheduleDismiss(); }}
+            onPointerDown={(e) => startPress(row.id, e.currentTarget, e)}
+            onPointerMove={onPressMove}
+            onPointerUp={cancelPress}
+            onPointerCancel={cancelPress}
+        >
+            {row.getVisibleCells().map((cell) => (
+                <TableCell key={cell.id} data-col-id={cell.column.id}>
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                </TableCell>
+            ))}
+        </TableRow>
+    );
+}
+
+const DataTableRow = memo(DataTableRowInner) as typeof DataTableRowInner;

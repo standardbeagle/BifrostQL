@@ -25,7 +25,6 @@
     "radix-ui": "^1.4.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "redux-actions": "^3.0.3",
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
@@ -38,7 +37,6 @@
     "@testing-library/react": "^16.3.2",
     "@types/react": "^18.3.29",
     "@types/react-dom": "^18.3.7",
-    "@types/redux-actions": "^2.6.5",
     "@typescript-eslint/eslint-plugin": "^7.18.0",
     "@typescript-eslint/parser": "^7.18.0",
     "@vitejs/plugin-react-swc": "^4.3.1",

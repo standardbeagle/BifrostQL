@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import Editor from '@standardbeagle/edit-db';
 import '@standardbeagle/edit-db/style.css';
 import {
@@ -236,13 +236,24 @@ export default function App() {
   // different set of module profiles. On failure fetchProfiles() falls back to
   // DEFAULT_PROFILES (single raw entry → picker disabled).
   const connectionKey = connectionInfo?.id ?? null;
+  // Tracks the last resolved profile id so the editor only remounts on a real
+  // change (kept in a ref so the comparison stays out of a setState updater).
+  const resolvedProfileRef = useRef(activeProfileId);
   useEffect(() => {
     let cancelled = false;
     fetchProfiles().then((fetched) => {
       if (cancelled) return;
       setApiProfiles(fetched);
-      setActiveProfileId(resolveActiveProfile(fetched).id);
-      setEditorKey((k) => k + 1);
+      const nextId = resolveActiveProfile(fetched).id;
+      // Only remount the editor when the resolved profile actually changed.
+      // Bumping unconditionally made the editor mount twice on every startup
+      // (once on mount, again when profiles resolved to the same default),
+      // re-introspecting the schema and refetching all table data for nothing.
+      if (resolvedProfileRef.current !== nextId) {
+        resolvedProfileRef.current = nextId;
+        setEditorKey((k) => k + 1);
+      }
+      setActiveProfileId(nextId);
     });
     return () => { cancelled = true; };
   }, [connectionKey]);
@@ -250,6 +261,7 @@ export default function App() {
   const handleSelectProfile = useCallback((id: string) => {
     saveActiveProfileId(id);
     setActiveProfileId(id);
+    resolvedProfileRef.current = id;
     // Remount the editor so it re-introspects the newly selected profile's
     // schema from the profile-scoped GraphQL endpoint.
     setEditorKey((k) => k + 1);

@@ -17,18 +17,25 @@ export class GraphQLRequestError extends Error {
     }
 }
 
+export interface GraphQLQueryOptions {
+    /** Abort signal — react-query passes one per query so superseded requests
+     *  (rapid paging/filtering/navigation) can cancel in-flight fetches. */
+    signal?: AbortSignal;
+}
+
 export interface GraphQLFetcher {
-    query<T = unknown>(query: string, variables?: Record<string, unknown>): Promise<T>;
+    query<T = unknown>(query: string, variables?: Record<string, unknown>, options?: GraphQLQueryOptions): Promise<T>;
 }
 
 export class HttpGraphQLFetcher implements GraphQLFetcher {
     constructor(private readonly uri: string) {}
 
-    async query<T = unknown>(query: string, variables?: Record<string, unknown>): Promise<T> {
+    async query<T = unknown>(query: string, variables?: Record<string, unknown>, options?: GraphQLQueryOptions): Promise<T> {
         const response = await fetch(this.uri, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ query, variables }),
+            signal: options?.signal,
         });
 
         if (!response.ok) {

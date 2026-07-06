@@ -1,6 +1,5 @@
 import React from 'react';
-import { useReducer, useContext, DispatchWithoutAction, createContext, forwardRef, ReactElement, ReactNode, Children, isValidElement } from 'react';
-import { createActions, handleActions } from 'redux-actions';
+import { useReducer, useContext, createContext, forwardRef, ReactElement, ReactNode, Children, isValidElement } from 'react';
 
 interface NavContext {
     path: string;
@@ -33,11 +32,6 @@ interface SearchParamsResult {
     hash: string;
 }
 
-interface RouteError {
-    message?: string;
-    status?: number;
-}
-
 interface FlatRoute {
     route: string;
     element: ReactElement;
@@ -62,55 +56,50 @@ const PathContext = createContext(defaultState);
 const PathDispatchContext = createContext<PathDispatchFn | null>(null);
 const RouteContext = createContext<RouteContext>(defaultRoute);
 
-const { navigate, back, forward } = createActions({
-    NAVIGATE: (path: string) => path,
-    BACK: (count: number = 1) => count,
-    FORWARD: (count: number = 1) => count,
-});
+// Plain action creators + reducer (previously redux-actions, dropped to remove
+// a runtime dependency for a three-action store).
+const navigate = (path: string): Action<string> => ({ type: 'NAVIGATE', payload: path });
+const back = (count: number = 1): Action<number> => ({ type: 'BACK', payload: count });
+const forward = (count: number = 1): Action<number> => ({ type: 'FORWARD', payload: count });
 
 interface PathMatch extends PathData {
     isMatch: boolean,
     remainer: string,
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const reducer = handleActions<NavContext, any>({
-    NAVIGATE: (state: NavContext, action: Action<string>): NavContext => {
-        let { history, location } = state;
-        if (location > 0) {
-            history = history.slice(location)
+// Cap retained history so a long browsing session can't grow the array without
+// bound. 100 entries is far more than the back/forward UI ever surfaces.
+const MAX_HISTORY = 100;
+
+function reducer(state: NavContext, action: Action<string> | Action<number>): NavContext {
+    switch (action.type) {
+        case 'NAVIGATE': {
+            let { history, location } = state;
+            if (location > 0) {
+                history = history.slice(location);
+            }
+            return {
+                path: combinePaths(state.path, action.payload as string),
+                history: [action.payload as string, ...history].slice(0, MAX_HISTORY),
+                location: 0,
+            };
         }
-        return {
-            path: combinePaths(state.path, action.payload),
-            history: [action.payload, ...history],
-            location: 0,
+        case 'BACK': {
+            const location = state.location + (action.payload as number);
+            const newPath = state.history.at(location);
+            if (!newPath) return state;
+            return { path: newPath, history: state.history, location };
         }
-    },
-    BACK: (state: NavContext, action: Action<number>): NavContext => {
-        const location = state.location + action.payload;
-        const newPath = state.history.at(location);
-        if (!newPath)
+        case 'FORWARD': {
+            const location = state.location - (action.payload as number);
+            const newPath = state.history.at(location);
+            if (!newPath) return state;
+            return { path: newPath, history: state.history, location };
+        }
+        default:
             return state;
-        return {
-            path: newPath,
-            history: state.history,
-            location
-        }
-    },
-    FORWARD: (state: NavContext, action: Action<number>): NavContext => {
-        const location = state.location - action.payload;
-        const newPath = state.history.at(location);
-        if (!newPath)
-            return state;
-        return {
-            path: newPath,
-            history: state.history,
-            location
-        }
     }
-},
-    defaultState
-)
+}
 
 export function usePath(): string {
     const pathState = useContext(PathContext) as NavContext;
@@ -146,10 +135,6 @@ export function useParams<T extends RouteParams = RouteParams>(): T {
 export function useSearchParams(): SearchParamsResult {
     const { query, hash } = useContext(RouteContext);
     return { search: new URLSearchParams(query), hash };
-}
-
-export function useRouteError(): RouteError {
-    return {};
 }
 
 export function PathProvider({ path, children }: { path: string, children: ReactNode }) {

@@ -1,4 +1,4 @@
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect } from 'react'
 import { TableList } from './tableList';
 import { DataPanel } from './data-panel';
 import { Route, Routes, usePath } from './hooks/usePath';
@@ -111,13 +111,6 @@ function SchemaGate({ children }: { children: React.ReactNode }) {
     return <>{children}</>;
 }
 
-const LoadingFallback = () => (
-    <div className="flex items-center justify-center gap-2 p-4">
-        <Loader2 className="size-4 animate-spin text-muted-foreground" />
-        <span className="text-sm text-muted-foreground">Loading...</span>
-    </div>
-);
-
 function Layout() {
     const [sidebarOpen, setSidebarOpen] = useState(true);
 
@@ -153,31 +146,27 @@ function Layout() {
                 </nav>
                 <main className="flex flex-col overflow-hidden min-h-0 px-1 py-0.5">
                     <ErrorBoundary section="Data Panel">
-                        <Suspense fallback={<LoadingFallback />}>
-                            <Routes>
-                                <Route path='/:table/from/:filterTable/:id/edit/:editid' element={<DataPanel />} />
-                                <Route path='/:table/from/:filterTable/:id' element={<DataPanel />} />
-                                <Route path='/:table/:id/edit/:editid' element={<DataPanel />} />
-                                <Route path='/:table/:id' element={<DataPanel />} />
-                                <Route path='/:table/edit/:editid' element={<DataPanel />} />
-                                {/* Bare create route: keeps the grid mounted behind the New-record
-                                    dialog and stops `:id` from capturing the "edit" keyword
-                                    (which fired a bogus get-by-id with $id="edit"). */}
-                                <Route path='/:table/edit' element={<DataPanel />} />
-                                <Route path='/:table' element={<DataPanel />} />
-                                <Route path='/' element={<StartPage />} />
-                            </Routes>
-                        </Suspense>
+                        <Routes>
+                            <Route path='/:table/from/:filterTable/:id/edit/:editid' element={<DataPanel />} />
+                            <Route path='/:table/from/:filterTable/:id' element={<DataPanel />} />
+                            <Route path='/:table/:id/edit/:editid' element={<DataPanel />} />
+                            <Route path='/:table/:id' element={<DataPanel />} />
+                            <Route path='/:table/edit/:editid' element={<DataPanel />} />
+                            {/* Bare create route: keeps the grid mounted behind the New-record
+                                dialog and stops `:id` from capturing the "edit" keyword
+                                (which fired a bogus get-by-id with $id="edit"). */}
+                            <Route path='/:table/edit' element={<DataPanel />} />
+                            <Route path='/:table' element={<DataPanel />} />
+                            <Route path='/' element={<StartPage />} />
+                        </Routes>
                     </ErrorBoundary>
                     <ErrorBoundary section="Data Edit">
-                        <Suspense fallback={<LoadingFallback />}>
-                            <Routes>
-                                <Route path='/:table/from/:filterTable/:id/edit/:editid' element={<DataEdit />} />
-                                <Route path='/:table/:id/edit/:editid' element={<DataEdit />} />
-                                <Route path='/:table/edit/:editid' element={<DataEdit />} />
-                                <Route path='/:table/edit' element={<DataEdit />} />
-                            </Routes>
-                        </Suspense>
+                        <Routes>
+                            <Route path='/:table/from/:filterTable/:id/edit/:editid' element={<DataEdit />} />
+                            <Route path='/:table/:id/edit/:editid' element={<DataEdit />} />
+                            <Route path='/:table/edit/:editid' element={<DataEdit />} />
+                            <Route path='/:table/edit' element={<DataEdit />} />
+                        </Routes>
                     </ErrorBoundary>
                 </main>
             </div>

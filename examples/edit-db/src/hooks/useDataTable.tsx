@@ -68,10 +68,17 @@ export function clampPageIndex(pageIndex: number, pageCount: number): number {
 
 export function getMultiJoinRows(row: RowData, join: Join): RowData[] {
     const fieldName = join.fieldName ?? join.destinationTable;
-    // Multi-join fields come back as a paged page object ({ data: [...] }),
-    // not a bare array — see buildMultiJoinFields.
+    // Multi-join fields come back as a paged page object ({ total, data: [...] }),
+    // not a bare array — see buildMultiJoinFields. `data` is capped at the preview
+    // limit; use getMultiJoinTotal for the true count.
     const page = row[fieldName] as { data?: RowData[] } | undefined;
     return page?.data ?? [];
+}
+
+export function getMultiJoinTotal(row: RowData, join: Join): number {
+    const fieldName = join.fieldName ?? join.destinationTable;
+    const page = row[fieldName] as { total?: number; data?: RowData[] } | undefined;
+    return page?.total ?? page?.data?.length ?? 0;
 }
 
 const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: ColumnPanel) => void): ColumnDef<RowData, unknown>[] => {
@@ -267,7 +274,9 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                 cell: ({ row }) => {
                     const parentPk = getRowPkValue(row.original, table);
                     const children = getMultiJoinRows(row.original, j);
-                    const count = children.length;
+                    // True count from the paged `total`; `children` is capped at the
+                    // preview limit so the badge stays right without over-fetching.
+                    const count = getMultiJoinTotal(row.original, j);
                     if (count === 0) {
                         return <span className="text-muted-foreground">—</span>;
                     }
@@ -388,8 +397,12 @@ interface UseDataTableResult {
     pageCount: number;
     /** Current page data rows */
     rows: RowData[];
-    /** Whether data is currently loading */
+    /** Whether data is currently loading (no rows to show yet) */
     loading: boolean;
+    /** Whether a fetch is in flight or the shown rows are placeholder (previous)
+     *  data — i.e. the visible rows may be stale. Consumers that write back a
+     *  whole-row snapshot should wait for this to settle. */
+    fetching: boolean;
     /** Error object if the query failed */
     error: Error | null;
     /** Update sorting state */
@@ -486,10 +499,18 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         ...cfVariables,
     }), [appliedSort, pageSize, offset, id, table, schema, filterTable, filterColumn, filterVariables, cfVariables]);
 
-    const { isLoading, error, data } = useQuery({
+    const { isLoading, isFetching, isPlaceholderData, error, data } = useQuery({
         queryKey: ['tableData', table?.name, query, queryVariables],
-        queryFn: () => fetcher.query<QueryData>(query!, queryVariables),
+        queryFn: ({ signal }) => fetcher.query<QueryData>(query!, queryVariables, { signal }),
         enabled: !!query && !!table && appliedSort.length > 0,
+        // Keep the previous rows on screen while the next page/sort/filter loads
+        // (no blank "Loading..." flash) — but only within the SAME table. On a
+        // table switch, drop the placeholder so the new table's columns don't
+        // render over the old table's rows (and stale total/pageCount).
+        placeholderData: (previousData, previousQuery) => {
+            const prevTable = (previousQuery?.queryKey as unknown[] | undefined)?.[1];
+            return prevTable === table?.name ? previousData : undefined;
+        },
     });
 
     const columns = useMemo(
@@ -574,6 +595,7 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         pageCount,
         rows,
         loading: isLoading,
+        fetching: isFetching || isPlaceholderData,
         error: error as Error | null,
         onSortingChange,
         onColumnFiltersChange,

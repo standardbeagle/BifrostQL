@@ -649,7 +649,7 @@ describe('buildQuery', () => {
         });
         const joinSchema = makeSchema([tableWithJoins, assignments]);
         const q = buildQuery(tableWithJoins, joinSchema, '', [])!;
-        expect(q).toContain('assignments { data { assignment_id title } }');
+        expect(q).toContain('assignments(limit: 11) { total data { assignment_id title } }');
     });
 
     it('handles multi-join when label column equals pk', () => {
@@ -667,7 +667,7 @@ describe('buildQuery', () => {
         const joinSchema = makeSchema([tableWithJoins, simple]);
         const q = buildQuery(tableWithJoins, joinSchema, '', [])!;
         // Should not duplicate id column
-        expect(q).toContain('tags { data { id } }');
+        expect(q).toContain('tags(limit: 11) { total data { id } }');
     });
 
     it('handles table with no columns', () => {
@@ -813,7 +813,7 @@ describe('buildQuery — composite primary keys', () => {
         });
         const parentSchema = makeSchema([parent, composite]);
         const q = buildQuery(parent, parentSchema, '', [])!;
-        expect(q).toContain('enrollment { data { student_id course_id grade } }');
+        expect(q).toContain('enrollment(limit: 11) { total data { student_id course_id grade } }');
     });
 
     it('traverses a composite-PK parent for a child collection drill-down', () => {
@@ -938,7 +938,7 @@ describe('buildQuery — relationship field names', () => {
 
         const q = buildQuery(categories, schema, '', [])!;
 
-        expect(q).toContain('categories_children { data { id name } }');
+        expect(q).toContain('categories_children(limit: 11) { total data { id name } }');
     });
 });
 

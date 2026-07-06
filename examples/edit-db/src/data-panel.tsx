@@ -200,7 +200,10 @@ export function DataPanel() {
                     const active = index === lastIndex;
                     return (
                         <StackLevel
-                            key={`${col.tableName}-${col.filterId ?? ''}-${col.filterColumn ?? ''}-${index}`}
+                            // Key by frame content (unique within a stack — pushDrillFrame
+                            // dedups equal frames) rather than array index, so closing a
+                            // middle frame doesn't remount/refetch every deeper frame.
+                            key={`${col.tableName}|${col.filterTable ?? ''}|${col.filterId ?? ''}|${col.filterColumn ?? ''}`}
                             title={getTable(data!, col.tableName)?.label ?? col.tableName}
                             selectedRowId={openColumns[index + 1]?.filterId}
                             expanded={isExpanded(index, active)}

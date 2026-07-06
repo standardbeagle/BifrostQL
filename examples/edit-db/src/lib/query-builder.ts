@@ -230,6 +230,15 @@ export function buildPkEqVariables(idRoute: string, table: Table): Record<string
     return result?.variables ?? {};
 }
 
+/**
+ * Grid multi-join cells only show a count badge and a preview list of up to 10
+ * labels. Capping the nested fetch at 11 rows (10 preview + 1 to prove "more")
+ * and reading the real count from the paged `total` avoids pulling every child
+ * row for every parent row on the page — the dominant payload cost on parent
+ * tables.
+ */
+export const MULTIJOIN_PREVIEW_LIMIT = 11;
+
 function buildMultiJoinFields(schema: Schema, multiJoins: Join[]): string {
     return multiJoins
         .map((j) => {
@@ -240,8 +249,9 @@ function buildMultiJoinFields(schema: Schema, multiJoins: Join[]): string {
             if (labelCol && !fields.includes(labelCol)) fields.push(labelCol);
             // Multi-joins return a paged type (`<table>_paged`), so the row
             // selection must live under `data {}` — selecting fields directly
-            // fails server validation (FIELDS_ON_CORRECT_TYPE).
-            return `${j.fieldName ?? j.destinationTable} { data { ${fields.join(' ')} } }`;
+            // fails server validation (FIELDS_ON_CORRECT_TYPE). `total` carries
+            // the true count so the badge stays correct despite the row cap.
+            return `${j.fieldName ?? j.destinationTable}(limit: ${MULTIJOIN_PREVIEW_LIMIT}) { total data { ${fields.join(' ')} } }`;
         })
         .join(' ');
 }

@@ -284,6 +284,33 @@ describe("BifrostBinaryClient", () => {
       expect(client.pendingCount).toBe(0);
     });
 
+    it("rejects with an AbortError and drops the pending entry when the signal fires", async () => {
+      const controller = new AbortController();
+      const promise = client.query("{ slow }", undefined, controller.signal);
+      expect(client.pendingCount).toBe(1);
+
+      const assertion = expect(promise).rejects.toMatchObject({ name: "AbortError" });
+      controller.abort();
+
+      await assertion;
+      // The superseded request no longer occupies the pending map, so it can't
+      // linger until the request timeout or replay on reconnect.
+      expect(client.pendingCount).toBe(0);
+    });
+
+    it("rejects immediately without sending a frame when the signal is already aborted", async () => {
+      const ws = tracker.last;
+      const framesBefore = ws.sentFrames.length;
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(
+        client.query("{ x }", undefined, controller.signal)
+      ).rejects.toMatchObject({ name: "AbortError" });
+      expect(ws.sentFrames.length).toBe(framesBefore);
+      expect(client.pendingCount).toBe(0);
+    });
+
     it("encodes a query frame and uses requestId starting at 1", async () => {
       const ws = tracker.last;
       void client.query("{ users { id name } }", { limit: 10 });

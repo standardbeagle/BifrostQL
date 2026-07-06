@@ -353,6 +353,21 @@ export interface BifrostQueryResult {
 }
 
 /**
+ * Builds the rejection used when a request's `AbortSignal` fires. Uses a
+ * DOMException with name "AbortError" when available (matching `fetch`), so
+ * callers that special-case aborts see the same shape across transports; falls
+ * back to a plain Error in environments without DOMException.
+ */
+function abortError(): Error {
+  if (typeof DOMException === "function") {
+    return new DOMException("The operation was aborted.", "AbortError");
+  }
+  const err = new Error("The operation was aborted.");
+  err.name = "AbortError";
+  return err;
+}
+
+/**
  * WebSocket client for BifrostQL binary protobuf transport.
  *
  * Connects to the BifrostQL WebSocket binary endpoint, encodes requests as
@@ -466,7 +481,15 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     // controller so a future drop auto-reconnects again, and clears the
     // `reconnecting` latch that a wedged give-up would otherwise leave set.
     this.reconnectController?.rearm();
-    this.reconnecting = false;
+    // Only clear the latch when the controller is NOT mid-cycle. Clearing it
+    // during an active waiting/connecting attempt would let a later drop with no
+    // pending/streaming requests fall through to the terminate path and abandon
+    // the reconnect. rearm() above already revived a wedged give-up (stopped →
+    // idle), which is exactly the state this clear is meant to reset.
+    const controllerState = this.reconnectController?.currentState;
+    if (controllerState !== "waiting" && controllerState !== "connecting") {
+      this.reconnecting = false;
+    }
     return this.openSocket();
   }
 
@@ -750,9 +773,10 @@ export class BifrostBinaryClient implements StreamingClientInternals {
    */
   query(
     queryText: string,
-    variables?: Record<string, unknown>
+    variables?: Record<string, unknown>,
+    signal?: AbortSignal
   ): Promise<BifrostQueryResult> {
-    return this.send(BifrostMessageType.Query, queryText, variables);
+    return this.send(BifrostMessageType.Query, queryText, variables, signal);
   }
 
   /**
@@ -900,9 +924,15 @@ export class BifrostBinaryClient implements StreamingClientInternals {
   private send(
     type: BifrostMessageType,
     queryText: string,
-    variables?: Record<string, unknown>
+    variables?: Record<string, unknown>,
+    signal?: AbortSignal
   ): Promise<BifrostQueryResult> {
     return new Promise((resolve, reject) => {
+      // Already-aborted requests never touch the wire.
+      if (signal?.aborted) {
+        reject(abortError());
+        return;
+      }
       if (!this.ws || this.ws.readyState !== this.wsConstructor.OPEN) {
         reject(new Error("Not connected"));
         return;
@@ -910,13 +940,50 @@ export class BifrostBinaryClient implements StreamingClientInternals {
 
       const requestId = this.allocateRequestId();
 
+      // Wrap the settlers so every settle path — server response, timeout,
+      // disconnect, abort — detaches the abort listener exactly once, so a
+      // superseded request can't leak its listener onto a long-lived signal.
+      let onAbort: (() => void) | undefined;
+      const detach = () => {
+        if (onAbort && signal) signal.removeEventListener("abort", onAbort);
+        onAbort = undefined;
+      };
+      const wrappedResolve = (result: BifrostQueryResult) => {
+        detach();
+        resolve(result);
+      };
+      const wrappedReject = (error: Error) => {
+        detach();
+        reject(error);
+      };
+
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
-        reject(new Error(`Request ${requestId} timed out`));
+        wrappedReject(new Error(`Request ${requestId} timed out`));
       }, this.requestTimeoutMs);
 
       const meta: RequestMetadata = { type, query: queryText, variables };
-      this.pending.set(requestId, { resolve, reject, timer, meta });
+      this.pending.set(requestId, {
+        resolve: wrappedResolve,
+        reject: wrappedReject,
+        timer,
+        meta,
+      });
+
+      if (signal) {
+        onAbort = () => {
+          const entry = this.pending.get(requestId);
+          if (entry) {
+            clearTimeout(entry.timer);
+            this.pending.delete(requestId);
+          }
+          // Reassembly buffers for an in-flight chunked response, if any, are
+          // dropped so an aborted request leaves no partial state behind.
+          this.reassemblers.delete(requestId);
+          wrappedReject(abortError());
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
 
       const msg: BifrostMessage = {
         requestId,

@@ -54,6 +54,16 @@ export {
 export const RESUME_NO_CHUNKS_RECEIVED = 0xffffffff;
 
 /**
+ * Default upper bound for the declared `total_bytes` of a chunked response
+ * (64 MB). A chunked frame whose header claims more than this limit rejects
+ * the pending request instead of allocating the reassembly buffer, so a
+ * corrupt or malicious header can neither exhaust memory nor throw a
+ * RangeError out of the WebSocket message handler. Override per client via
+ * `BifrostClientOptions.maxChunkedResponseBytes`.
+ */
+export const DEFAULT_MAX_CHUNKED_RESPONSE_BYTES = 64 * 1024 * 1024;
+
+/**
  * Minimal WebSocket interface consumed by BifrostBinaryClient.
  * Compatible with the browser WebSocket API and Node.js ws/undici WebSocket.
  */
@@ -289,6 +299,14 @@ export interface BifrostClientOptions {
   ) => void;
 
   /**
+   * Upper bound in bytes for the declared `total_bytes` of a chunked
+   * response. A chunked frame claiming more than this rejects the pending
+   * request before any buffer is allocated. Defaults to
+   * `DEFAULT_MAX_CHUNKED_RESPONSE_BYTES` (64 MB).
+   */
+  maxChunkedResponseBytes?: number;
+
+  /**
    * Whether to attempt automatic reconnection after an abnormal close.
    * Defaults to `true`. A normal close (code 1000) or an explicit
    * `client.close()` call never reconnects regardless of this setting.
@@ -409,6 +427,7 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     received: number,
     total: number
   ) => void;
+  private readonly maxChunkedResponseBytes: number;
   private readonly autoReconnect: boolean;
   private readonly onReconnect?: (attempt: number) => void;
   private readonly onReconnectFailed?: (attempts: number, error: Error) => void;
@@ -445,6 +464,8 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     this.onClose = options.onClose;
     this.onError = options.onError;
     this.onChunkProgress = options.onChunkProgress;
+    this.maxChunkedResponseBytes =
+      options.maxChunkedResponseBytes ?? DEFAULT_MAX_CHUNKED_RESPONSE_BYTES;
     this.autoReconnect = options.autoReconnect ?? true;
     this.onReconnect = options.onReconnect;
     this.onReconnectFailed = options.onReconnectFailed;
@@ -587,7 +608,14 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       };
 
       ws.onmessage = (event) => {
-        this.handleMessage(event.data as ArrayBuffer);
+        // Nothing may throw out of the raw message listener: on Node's `ws`
+        // an exception here escapes as an uncaught 'message' listener error
+        // and can crash the process, killing dispatch for every request.
+        try {
+          this.handleMessage(event.data as ArrayBuffer);
+        } catch (err) {
+          this.onError?.(err instanceof Error ? err : new Error(String(err)));
+        }
       };
     });
 
@@ -1041,11 +1069,16 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       return;
     }
 
-    // ResumeAck is purely informational on the client: the server uses it to
-    // confirm the resume is in progress, then sends the actual remaining Chunk
-    // frames via the normal chunked-frame path. We have no business with the
-    // ack itself.
+    // ResumeAck with chunk_total > 0 is informational: the server confirms the
+    // resume and then sends the remaining Chunk frames via the normal
+    // chunked-frame path. chunk_total == 0 is the server's "cannot resume"
+    // signal (transfer expired or unknown — see BifrostBinaryMiddleware): no
+    // frames will follow, so the request must be unstuck here instead of
+    // hanging until the request timeout.
     if (response.type === BifrostMessageType.ResumeAck) {
+      if (response.chunkInfo.total === 0) {
+        this.handleResumeFailure(response.requestId);
+      }
       return;
     }
 
@@ -1066,6 +1099,89 @@ export class BifrostBinaryClient implements StreamingClientInternals {
   }
 
   /**
+   * Handles a ResumeAck with chunk_total == 0: the server could not resume the
+   * transfer (its chunk buffer expired or never knew the request), so no
+   * frames will follow. Queries are safe to re-execute — drop the stale
+   * partial reassembly and re-send the original frame. Mutations had already
+   * produced partial results before the drop, so re-executing risks applying
+   * them twice; reject instead (at-most-once, matching the replay path).
+   * Streaming consumers have already been handed earlier chunks, so a restart
+   * would emit duplicates — fail the iterator.
+   */
+  private handleResumeFailure(requestId: number): void {
+    this.resumeFromByRequestId.delete(requestId);
+
+    const pending = this.pending.get(requestId);
+    if (pending) {
+      if (pending.meta.type === BifrostMessageType.Mutation) {
+        this.rejectPendingRequest(
+          requestId,
+          new Error(
+            `Server could not resume request ${requestId} after reconnect; the mutation was not automatically retried to avoid double execution.`
+          )
+        );
+      } else {
+        this.reassemblers.delete(requestId);
+        this.sendOriginalFrame(requestId, pending.meta);
+      }
+      return;
+    }
+
+    const queue = this.streamingQueues.get(requestId);
+    if (queue) {
+      // queue.error runs the cleanup callback, which removes the queue and its
+      // resume bookkeeping via removeStreamingQueue.
+      queue.error(
+        new Error(
+          `Server could not resume streaming request ${requestId} after reconnect`
+        )
+      );
+    }
+  }
+
+  /**
+   * Rejects the pending request for `requestId` (if any) with `error`, and
+   * drops its reassembly state. Safe to call for ids with no pending entry.
+   */
+  private rejectPendingRequest(requestId: number, error: Error): void {
+    this.reassemblers.delete(requestId);
+    const pending = this.pending.get(requestId);
+    if (!pending) {
+      return;
+    }
+    clearTimeout(pending.timer);
+    this.pending.delete(requestId);
+    pending.reject(error);
+  }
+
+  /**
+   * Acknowledges receipt of a chunk. The server's ChunkSender pauses after
+   * `ackWindow` (default 8) unacknowledged chunks and blocks in
+   * WaitForAckAsync until an ack arrives, so a client that never acks
+   * deadlocks every response larger than ackWindow × chunkThreshold
+   * (~512 KB with defaults). One ChunkAck per received chunk keeps the
+   * sender's window moving; the frame shape mirrors ChunkReceiver.CreateAck
+   * (request_id + type + chunk_sequence).
+   */
+  private sendChunkAck(requestId: number, sequence: number): void {
+    if (!this.ws || this.ws.readyState !== this.wsConstructor.OPEN) {
+      return;
+    }
+    this.ws.send(
+      encodeMessage({
+        requestId,
+        type: BifrostMessageType.ChunkAck,
+        query: "",
+        variablesJson: "",
+        payload: new Uint8Array(0),
+        errors: [],
+        chunkInfo: { ...emptyChunkInfo(), sequence },
+        lastSequence: 0,
+      })
+    );
+  }
+
+  /**
    * Routes a chunked frame into a per-requestId reassembler, verifies the
    * checksum, and once the final chunk arrives, deserializes the assembled
    * buffer and delivers the inner Result message to the pending promise.
@@ -1082,6 +1198,7 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     if (streamingQueue) {
       const accepted = ingestStreamingChunk(streamingQueue, chunk);
       if (accepted) {
+        this.sendChunkAck(chunk.requestId, chunk.chunkInfo.sequence);
         // Track the highest contiguous sequence the queue has actually
         // accepted, so a mid-stream disconnect knows what to RESUME from. The
         // server's GetChunksAfter retransmits everything strictly after the
@@ -1098,8 +1215,11 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     if (!this.pending.has(chunk.requestId)) {
       if (this.abortedRequests.has(chunk.requestId)) {
         // Late chunk for a client-side-aborted request: expected, drop it
-        // silently. Once the final chunk of the response has passed through,
-        // the tombstone has served its purpose and can be removed.
+        // silently — but still ack it, otherwise the server's send window
+        // stalls mid-response and blocks the shared socket for other traffic.
+        // Once the final chunk of the response has passed through, the
+        // tombstone has served its purpose and can be removed.
+        this.sendChunkAck(chunk.requestId, chunk.chunkInfo.sequence);
         if (chunk.chunkInfo.sequence + 1 >= chunk.chunkInfo.total) {
           this.abortedRequests.delete(chunk.requestId);
         }
@@ -1115,15 +1235,42 @@ export class BifrostBinaryClient implements StreamingClientInternals {
 
     let reassembler = this.reassemblers.get(chunk.requestId);
     if (!reassembler) {
-      reassembler = new ChunkReassembler(
-        chunk.requestId,
-        chunk.chunkInfo.total,
-        chunk.chunkInfo.totalBytes,
-        this.onChunkProgress
-          ? (received, total) =>
-              this.onChunkProgress!(chunk.requestId, received, total)
-          : undefined
-      );
+      // Validate the declared size BEFORE allocating: a corrupt or malicious
+      // header must reject this request, not allocate an oversized buffer or
+      // throw a RangeError that would escape through onmessage and kill the
+      // dispatch loop while the pending promise hangs until its timeout.
+      if (chunk.chunkInfo.totalBytes > this.maxChunkedResponseBytes) {
+        this.rejectPendingRequest(
+          chunk.requestId,
+          new Error(
+            `Chunked response for request ${chunk.requestId} declares ` +
+              `totalBytes ${chunk.chunkInfo.totalBytes}, exceeding the ` +
+              `configured maximum of ${this.maxChunkedResponseBytes} bytes`
+          )
+        );
+        return;
+      }
+      try {
+        reassembler = new ChunkReassembler(
+          chunk.requestId,
+          chunk.chunkInfo.total,
+          chunk.chunkInfo.totalBytes,
+          this.onChunkProgress
+            ? (received, total) =>
+                this.onChunkProgress!(chunk.requestId, received, total)
+            : undefined
+        );
+      } catch (err) {
+        this.rejectPendingRequest(
+          chunk.requestId,
+          new Error(
+            `Invalid chunked response header for request ${chunk.requestId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          )
+        );
+        return;
+      }
       this.reassemblers.set(chunk.requestId, reassembler);
     }
 
@@ -1137,15 +1284,16 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       );
     } catch (err) {
       // Checksum or layout failure: reject the pending request and drop state.
-      this.reassemblers.delete(chunk.requestId);
-      const pending = this.pending.get(chunk.requestId);
-      if (pending) {
-        clearTimeout(pending.timer);
-        this.pending.delete(chunk.requestId);
-        pending.reject(err instanceof Error ? err : new Error(String(err)));
-      }
+      this.rejectPendingRequest(
+        chunk.requestId,
+        err instanceof Error ? err : new Error(String(err))
+      );
       return;
     }
+
+    // The chunk was verified and stored (or was a benign duplicate): ack it so
+    // the server's backpressure window advances.
+    this.sendChunkAck(chunk.requestId, chunk.chunkInfo.sequence);
 
     if (assembled === null) {
       return;
@@ -1157,18 +1305,14 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     try {
       inner = decodeMessage(assembled);
     } catch (err) {
-      const pending = this.pending.get(chunk.requestId);
-      if (pending) {
-        clearTimeout(pending.timer);
-        this.pending.delete(chunk.requestId);
-        pending.reject(
-          new Error(
-            `Failed to decode reassembled chunked message for request ${chunk.requestId}: ${
-              err instanceof Error ? err.message : String(err)
-            }`
-          )
-        );
-      }
+      this.rejectPendingRequest(
+        chunk.requestId,
+        new Error(
+          `Failed to decode reassembled chunked message for request ${chunk.requestId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        )
+      );
       return;
     }
 

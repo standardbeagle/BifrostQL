@@ -751,23 +751,196 @@ describe("BifrostBinaryClient auto-reconnect", () => {
     client.close();
   });
 
-  it("ignores ResumeAck frames at the top level", async () => {
+  it("ignores ResumeAck frames announcing retransmitted chunks (chunk_total > 0)", async () => {
     const client = await makeConnectedClient();
     const ws = tracker.last;
     void client.query("{ a }").catch(() => {});
+    const framesBefore = ws.sentFrames.length;
 
-    // Inject a ResumeAck frame for the pending request: client should silently
-    // accept it without resolving the promise (ResumeAck just signals that
-    // chunks are about to follow).
+    // Inject a ResumeAck with a non-zero chunk_total: the server confirms the
+    // resume and the remaining chunks follow, so the client must neither
+    // settle the promise nor send anything in response.
     ws.receive(
       encodeMessage(
         emptyMessage({
           requestId: 1,
           type: BifrostMessageType.ResumeAck,
+          chunkInfo: { ...emptyChunkInfo(), total: 2 },
         })
       )
     );
     expect(client.pendingCount).toBe(1);
+    expect(ws.sentFrames.length).toBe(framesBefore);
+
+    client.close();
+  });
+
+  it("re-sends the original query when the server cannot resume (ResumeAck chunk_total=0)", async () => {
+    const client = await makeConnectedClient();
+    const firstWs = tracker.last;
+
+    const promise = client.query("{ big }");
+    const requestId = decodeMessage(firstWs.sentFrames[0]!).requestId;
+
+    // Deliver one chunk of a chunked response, then drop the connection so the
+    // reconnect path sends a Resume frame.
+    const inner = emptyMessage({
+      requestId,
+      type: BifrostMessageType.Result,
+      payload: jsonPayload({ rows: ["a", "b", "c", "d"], n: 4 }),
+    });
+    const frames = buildChunkFrames(requestId, inner, 8);
+    expect(frames.length).toBeGreaterThanOrEqual(2);
+    firstWs.receive(frames[0]!);
+
+    firstWs.simulateClose(1006, "drop");
+    await vi.advanceTimersByTimeAsync(100);
+    const secondWs = tracker.last;
+    secondWs.simulateOpen();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(decodeMessage(secondWs.sentFrames[0]!).type).toBe(
+      BifrostMessageType.Resume
+    );
+
+    // Server's chunk buffer expired: ResumeAck with chunk_total = 0 and no
+    // frames to follow. The client must re-send the original Query (fresh
+    // execution) instead of hanging until the request timeout.
+    secondWs.receive(
+      encodeMessage(
+        emptyMessage({
+          requestId,
+          type: BifrostMessageType.ResumeAck,
+        })
+      )
+    );
+
+    const replay = decodeMessage(
+      secondWs.sentFrames[secondWs.sentFrames.length - 1]!
+    );
+    expect(replay.type).toBe(BifrostMessageType.Query);
+    expect(replay.requestId).toBe(requestId);
+    expect(replay.query).toBe("{ big }");
+
+    // The stale partial reassembly was dropped, so a plain (non-chunked)
+    // Result for the re-executed query resolves the original promise.
+    secondWs.receive(
+      encodeMessage(
+        emptyMessage({
+          requestId,
+          type: BifrostMessageType.Result,
+          payload: jsonPayload({ ok: true }),
+        })
+      )
+    );
+    await expect(promise).resolves.toMatchObject({ data: { ok: true } });
+    expect(client.pendingCount).toBe(0);
+
+    client.close();
+  });
+
+  it("rejects an interrupted mutation when the server cannot resume (ResumeAck chunk_total=0)", async () => {
+    const client = await makeConnectedClient();
+    const firstWs = tracker.last;
+
+    const promise = client.mutate("mutation { bulkThing }");
+    const requestId = decodeMessage(firstWs.sentFrames[0]!).requestId;
+    const assertion = expect(promise).rejects.toThrowError(
+      /could not resume request .* not automatically retried to avoid double execution/
+    );
+
+    // The mutation's chunked response started arriving, so the reconnect path
+    // sends Resume (not the at-most-once rejection).
+    const inner = emptyMessage({
+      requestId,
+      type: BifrostMessageType.Result,
+      payload: jsonPayload({ affected: 1000 }),
+    });
+    const frames = buildChunkFrames(requestId, inner, 8);
+    expect(frames.length).toBeGreaterThanOrEqual(2);
+    firstWs.receive(frames[0]!);
+
+    firstWs.simulateClose(1006, "drop");
+    await vi.advanceTimersByTimeAsync(100);
+    const secondWs = tracker.last;
+    secondWs.simulateOpen();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(decodeMessage(secondWs.sentFrames[0]!).type).toBe(
+      BifrostMessageType.Resume
+    );
+
+    // Server cannot resume. Re-executing a mutation that already ran risks
+    // applying it twice, so the promise must reject instead of re-sending.
+    const framesBefore = secondWs.sentFrames.length;
+    secondWs.receive(
+      encodeMessage(
+        emptyMessage({
+          requestId,
+          type: BifrostMessageType.ResumeAck,
+        })
+      )
+    );
+
+    await assertion;
+    expect(client.pendingCount).toBe(0);
+    expect(secondWs.sentFrames.length).toBe(framesBefore); // nothing re-sent
+
+    client.close();
+  });
+
+  it("errors a streaming iterator when the server cannot resume (ResumeAck chunk_total=0)", async () => {
+    const client = await makeConnectedClient();
+    const firstWs = tracker.last;
+
+    const stream = client.stream("{ download }");
+    const requestId = decodeMessage(firstWs.sentFrames[0]!).requestId;
+
+    const inner = emptyMessage({
+      requestId,
+      type: BifrostMessageType.Result,
+      payload: jsonPayload({ rows: ["a", "b", "c", "d"] }),
+    });
+    const frames = buildChunkFrames(requestId, inner, 8);
+    expect(frames.length).toBe(4);
+
+    firstWs.receive(frames[0]!);
+    firstWs.receive(frames[1]!);
+
+    firstWs.simulateClose(1006, "drop");
+    await vi.advanceTimersByTimeAsync(100);
+    const secondWs = tracker.last;
+    secondWs.simulateOpen();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(decodeMessage(secondWs.sentFrames[0]!).type).toBe(
+      BifrostMessageType.Resume
+    );
+
+    // Chunks 0-1 were already yielded to the consumer, so a from-scratch
+    // replay would emit duplicates. The iterator must throw instead of
+    // hanging forever waiting for chunks 2-3 that will never arrive.
+    secondWs.receive(
+      encodeMessage(
+        emptyMessage({
+          requestId,
+          type: BifrostMessageType.ResumeAck,
+        })
+      )
+    );
+
+    const collected: number[] = [];
+    let caught: Error | null = null;
+    try {
+      for await (const chunk of stream) {
+        collected.push(chunk.sequence);
+      }
+    } catch (err) {
+      caught = err as Error;
+    }
+    expect(collected).toEqual([0, 1]);
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught!.message).toMatch(/could not resume streaming request/);
 
     client.close();
   });

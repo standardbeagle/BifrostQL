@@ -912,6 +912,178 @@ describe("BifrostBinaryClient", () => {
       c.close();
     });
 
+    it("rejects a chunked response with an oversized totalBytes header and keeps dispatch alive", async () => {
+      const ws = tracker.last;
+      const promise = chunkedClient.query("{ big }");
+      const sentId = decodeMessage(ws.sentFrames[0]!).requestId;
+
+      // A garbage/malicious header declaring an 8 GB response. Before the fix
+      // `new Uint8Array(totalBytes)` threw synchronously OUTSIDE the addChunk
+      // try/catch, escaping through onmessage (crashing Node's ws dispatch)
+      // while the pending promise hung until its timeout.
+      const fragment = new Uint8Array([1, 2, 3]);
+      const assertion = expect(promise).rejects.toThrowError(
+        /exceeding the configured maximum/
+      );
+      ws.receive(
+        encodeMessage(
+          emptyMessage({
+            requestId: sentId,
+            type: BifrostMessageType.Chunk,
+            payload: fragment,
+            chunkInfo: {
+              sequence: 0,
+              total: 2,
+              offset: 0,
+              totalBytes: 8 * 1024 * 1024 * 1024,
+              checksum: crc32(fragment),
+            },
+          })
+        )
+      );
+      await assertion;
+      expect(chunkedClient.pendingCount).toBe(0);
+
+      // The dispatch loop survived: a follow-up query on the same socket
+      // resolves normally.
+      const followup = chunkedClient.query("{ ok }");
+      const followupId = decodeMessage(
+        ws.sentFrames[ws.sentFrames.length - 1]!
+      ).requestId;
+      ws.receive(
+        encodeMessage(
+          emptyMessage({
+            requestId: followupId,
+            type: BifrostMessageType.Result,
+            payload: jsonPayload({ alive: true }),
+          })
+        )
+      );
+      await expect(followup).resolves.toMatchObject({ data: { alive: true } });
+    });
+
+    it("honors a custom maxChunkedResponseBytes limit", async () => {
+      const tiny = new BifrostBinaryClient({
+        url: TEST_URL,
+        WebSocket: tracker.ctor,
+        maxChunkedResponseBytes: 16,
+      });
+      const p = tiny.connect();
+      tracker.last.simulateOpen();
+      await p;
+
+      const ws = tracker.last;
+      const promise = tiny.query("{ big }");
+      const sentId = decodeMessage(ws.sentFrames[0]!).requestId;
+
+      const inner = emptyMessage({
+        requestId: sentId,
+        type: BifrostMessageType.Result,
+        payload: new TextEncoder().encode(
+          JSON.stringify({ rows: ["a", "b", "c"] })
+        ),
+      });
+      const frames = buildChunkFrames(sentId, inner, 8);
+      const assertion = expect(promise).rejects.toThrowError(
+        /exceeding the configured maximum of 16 bytes/
+      );
+      ws.receive(frames[0]!);
+      await assertion;
+      expect(tiny.pendingCount).toBe(0);
+      tiny.close();
+    });
+
+    it("surfaces a garbage totalBytes varint via onError without throwing out of the ws listener", async () => {
+      const onError = vi.fn();
+      const c = new BifrostBinaryClient({
+        url: TEST_URL,
+        WebSocket: tracker.ctor,
+        onError,
+      });
+      const p = c.connect();
+      tracker.last.simulateOpen();
+      await p;
+      const ws = tracker.last;
+
+      const promise = c.query("{ x }");
+      const sentId = decodeMessage(ws.sentFrames[0]!).requestId;
+
+      // Hand-craft a frame whose total_bytes (field 10, varint) is 2^60 —
+      // beyond Number.MAX_SAFE_INTEGER, so decodeMessage throws. The client
+      // must route that through onError, not let it escape the raw
+      // 'message' listener (which crashes the process on Node's ws).
+      const varint = (n: bigint): number[] => {
+        const out: number[] = [];
+        while (n >= 0x80n) {
+          out.push(Number(n & 0x7fn) | 0x80);
+          n >>= 7n;
+        }
+        out.push(Number(n));
+        return out;
+      };
+      const garbage = new Uint8Array([
+        (1 << 3) | 0, sentId, // field 1: request_id
+        (2 << 3) | 0, BifrostMessageType.Chunk, // field 2: type
+        (8 << 3) | 0, 2, // field 8: chunk_total = 2
+        (10 << 3) | 0, ...varint(1n << 60n), // field 10: total_bytes = 2^60
+      ]);
+      expect(() => ws.receive(garbage)).not.toThrow();
+      expect(onError).toHaveBeenCalledOnce();
+      expect((onError.mock.calls[0]![0] as Error).message).toMatch(
+        /MAX_SAFE_INTEGER/
+      );
+
+      // Dispatch is still alive: the pending query resolves on a valid frame.
+      ws.receive(
+        encodeMessage(
+          emptyMessage({
+            requestId: sentId,
+            type: BifrostMessageType.Result,
+            payload: jsonPayload({ alive: true }),
+          })
+        )
+      );
+      await expect(promise).resolves.toMatchObject({ data: { alive: true } });
+      c.close();
+    });
+
+    it("sends a ChunkAck for every received chunk so the server's ack window advances", async () => {
+      const ws = tracker.last;
+      const promise = chunkedClient.query("{ big }");
+      const sentId = decodeMessage(ws.sentFrames[0]!).requestId;
+
+      const inner = emptyMessage({
+        requestId: sentId,
+        type: BifrostMessageType.Result,
+        payload: new TextEncoder().encode(
+          JSON.stringify({ rows: "x".repeat(120), n: 12 })
+        ),
+      });
+      const frames = buildChunkFrames(sentId, inner, 8);
+      // More chunks than the server's default ack window (8): without acks the
+      // server's ChunkSender would block in WaitForAckAsync forever.
+      expect(frames.length).toBeGreaterThan(8);
+
+      for (const frame of frames) {
+        ws.receive(frame);
+      }
+
+      // Full response still assembles...
+      const result = await promise;
+      expect(result.data).toEqual({ rows: "x".repeat(120), n: 12 });
+
+      // ...and every chunk was individually acknowledged in order.
+      const acks = ws.sentFrames
+        .slice(1) // frame 0 is the original Query
+        .map((f) => decodeMessage(f))
+        .filter((m) => m.type === BifrostMessageType.ChunkAck);
+      expect(acks).toHaveLength(frames.length);
+      expect(acks.every((a) => a.requestId === sentId)).toBe(true);
+      expect(acks.map((a) => a.chunkInfo.sequence)).toEqual(
+        frames.map((_, i) => i)
+      );
+    });
+
     it("clears in-progress reassemblers on close()", async () => {
       const ws = tracker.last;
       const promise = chunkedClient.query("{ big }");

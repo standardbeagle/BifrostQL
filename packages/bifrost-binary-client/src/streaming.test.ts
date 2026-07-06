@@ -532,8 +532,12 @@ describe("BifrostBinaryClient.stream()", () => {
     // so further chunks for the same id are treated as unknown.
     // Use the documented public surface: pendingCount is unaffected by
     // streaming, but a fresh stream should reuse a new requestId cleanly.
+    // (The received chunks were each ChunkAck'd, so the follow-up Query is
+    // the most recent outbound frame, not index 1.)
     const followup = client.stream("{ next }");
-    const followupId = decodeMessage(ws.sentFrames[1]!).requestId;
+    const followupId = decodeMessage(
+      ws.sentFrames[ws.sentFrames.length - 1]!
+    ).requestId;
     expect(followupId).not.toBe(sentId);
     // Cancel the follow-up too.
     await followup.return!();
@@ -568,6 +572,44 @@ describe("BifrostBinaryClient.stream()", () => {
     }
     expect(caught).toBeInstanceOf(Error);
     expect(caught!.message).toMatch(/CRC32 mismatch/);
+  });
+
+  it("acknowledges each streamed chunk with a ChunkAck frame", async () => {
+    const ws = tracker.last;
+    const inner = emptyMessage({
+      requestId: 1,
+      type: BifrostMessageType.Result,
+      payload: new TextEncoder().encode(
+        JSON.stringify({ rows: "y".repeat(100) })
+      ),
+    });
+
+    const iterator = client.stream("{ big }");
+    const sentId = decodeMessage(ws.sentFrames[0]!).requestId;
+    const frames = buildChunkFrames(sentId, inner, 8);
+    // More chunks than the server's default ack window (8), so a client that
+    // never acks would deadlock the server's ChunkSender mid-response.
+    expect(frames.length).toBeGreaterThan(8);
+
+    for (const frame of frames) {
+      ws.receive(frame);
+    }
+
+    const collected: StreamChunk[] = [];
+    for await (const chunk of iterator) {
+      collected.push(chunk);
+    }
+    expect(collected).toHaveLength(frames.length);
+
+    const acks = ws.sentFrames
+      .slice(1) // frame 0 is the original Query
+      .map((f) => decodeMessage(f))
+      .filter((m) => m.type === BifrostMessageType.ChunkAck);
+    expect(acks).toHaveLength(frames.length);
+    expect(acks.every((a) => a.requestId === sentId)).toBe(true);
+    expect(acks.map((a) => a.chunkInfo.sequence)).toEqual(
+      frames.map((_, i) => i)
+    );
   });
 
   it("streamMutation() sends a Mutation-typed frame", async () => {

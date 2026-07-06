@@ -279,12 +279,16 @@ namespace BifrostQL.Core.QueryModel
 
         private static string NormalizeColumnName(string name)
         {
-            var result = name;
+            // Only strip a query-type marker when it is a *leading* prefix. A blanket
+            // string Replace corrupted any name that merely contained the token —
+            // e.g. `order_aggregates` became `orderregates` because "_agg" appears
+            // mid-string. The markers are only meaningful at the start of the field.
             foreach (var (prefix, _) in ColumnTypeMap)
             {
-                result = result.Replace(prefix, "");
+                if (name.StartsWith(prefix, StringComparison.Ordinal))
+                    return name.Substring(prefix.Length);
             }
-            return result;
+            return name;
         }
 
         private static bool IsSpecialColumn(string name)

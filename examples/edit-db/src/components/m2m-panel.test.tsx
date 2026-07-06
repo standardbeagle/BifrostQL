@@ -158,5 +158,16 @@ describe('M2mPanel', () => {
                 expect(insert).toHaveBeenCalledWith({ student_id: '42', course_id: '30' }));
             expect(insert).toHaveBeenCalledTimes(1);
         });
+
+        it('keeps the picker open (no close, no invalidate) when the attach insert fails', async () => {
+            // A rejected insert must not leave an unhandled promise or close the
+            // dialog as if the link succeeded.
+            insert.mockRejectedValueOnce(new Error('attach failed'));
+            await openPicker();
+            fireEvent.click(screen.getByRole('button', { name: /Chemistry/ }));
+            await waitFor(() => expect(insert).toHaveBeenCalledTimes(1));
+            // Dialog title is still present — the picker did not close.
+            expect(screen.getByText('Add Courses link')).toBeInTheDocument();
+        });
     });
 });

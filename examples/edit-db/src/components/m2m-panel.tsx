@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link2, Plus, Unlink, Search, Loader2 } from 'lucide-react';
 import type { ManyToManyJoin, Table } from '../types/schema';
@@ -69,7 +69,13 @@ export function M2mPanel({ parentTable, m2m, parentRowId, onOpenColumn }: M2mPan
     }
     const { query, variables } = rowsPlan;
 
-    const queryKey = ['m2mRows', m2m.junctionTable, m2m.targetTable, parentRowId];
+    // Memoize so the array identity is stable across renders — otherwise the
+    // invalidate callback below (which depends on it) is rebuilt every render,
+    // defeating its useCallback memoization.
+    const queryKey = useMemo(
+        () => ['m2mRows', m2m.junctionTable, m2m.targetTable, parentRowId],
+        [m2m.junctionTable, m2m.targetTable, parentRowId],
+    );
     const { data, isLoading, error } = useQuery({
         queryKey,
         queryFn: () => fetcher.query<Record<string, { data: JunctionRow[] }>>(query!, { ...variables, limit: M2M_ROW_LIMIT, offset: 0 }),
@@ -308,7 +314,15 @@ function TargetPicker({ target, junction, m2m, parentRowId, linkedIds, onClose, 
     const handlePick = useCallback(async (targetId: string) => {
         // Belt-and-braces with the disabled button: never insert a duplicate link.
         if (linkedIds.has(targetId)) return;
-        await attach.insert(attachJunctionDetail(m2m, parentRowId, targetId));
+        try {
+            await attach.insert(attachJunctionDetail(m2m, parentRowId, targetId));
+        } catch {
+            // insert() rejects on a failed attach; the message is already shown
+            // via attach.error above. Swallow the rejection (no unhandled
+            // promise) and keep the picker open so the user can retry — do NOT
+            // invalidate or close as if it succeeded.
+            return;
+        }
         await onLinked();
         onClose();
     }, [attach, m2m, parentRowId, linkedIds, onLinked, onClose]);

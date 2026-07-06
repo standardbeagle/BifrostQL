@@ -263,7 +263,7 @@ const combineRoutes = (base: string, child: string): string => {
     return `/${baseSegments.join('/')}/${childSegments.join('/')}`;
 }
 
-const matchPath = (route: string, path: string): PathMatch => {
+export const matchPath = (route: string, path: string): PathMatch => {
     let routeSegments = route.split('/');
     let pathSegments = path.split('/');
     if (routeSegments.at(-1) === "")
@@ -289,7 +289,21 @@ const matchPath = (route: string, path: string): PathMatch => {
             continue;
         }
         if (routeSegment === "*") {
-            return { isMatch: true, data, remainer: pathSegments.splice(0, i).join('/'), query, hash, path: pathSegments.slice(0, i).join('/') };
+            // '*' captures the rest of the path. Use slice (never splice) so the
+            // caller's pathSegments array is not mutated, and take the tail FROM
+            // i (the part the wildcard matches) rather than the already-matched
+            // prefix. Re-parse the tail's query/hash the same way the per-segment
+            // loop does, so a trailing "?query#hash" after the wildcard survives.
+            const rest = pathSegments.slice(i).join('/');
+            const restSections = [...rest.matchAll(/([?#]?)((?:(?![?#]).)*)/g)];
+            return {
+                isMatch: true,
+                data,
+                remainer: restSections.find(s => s[1] === "")?.[2] ?? "",
+                query: restSections.find(s => s[1] === "?")?.[2] ?? "",
+                hash: restSections.find(s => s[1] === "#")?.[2] ?? "",
+                path: pathSegments.slice(0, i).join('/'),
+            };
         }
         if (routeSegment !== pathSection)
             return { isMatch: false, data: {}, remainer: "", query: "", hash: "", path: "" };

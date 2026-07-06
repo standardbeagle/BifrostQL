@@ -1,5 +1,32 @@
 import { describe, expect, it } from 'vitest';
-import { selectRoute, routeSpecificity } from './usePath';
+import { selectRoute, routeSpecificity, matchPath } from './usePath';
+
+describe('matchPath — wildcard tail', () => {
+    it('returns the tail after "*" as the remainer (not the matched prefix)', () => {
+        const match = matchPath('/users/*', '/users/profile/settings');
+        expect(match.isMatch).toBe(true);
+        expect(match.remainer).toBe('profile/settings');
+        expect(match.path).toBe('/users');
+    });
+
+    it('does not mutate the input path (splice bug regression)', () => {
+        // The old implementation spliced pathSegments in place; a second match
+        // against the same string would then see a corrupted array. Match twice
+        // and assert the result is stable.
+        const first = matchPath('/users/*', '/users/a/b');
+        const second = matchPath('/users/*', '/users/a/b');
+        expect(first.remainer).toBe('a/b');
+        expect(second.remainer).toBe('a/b');
+    });
+
+    it('preserves query and hash that trail the wildcard segment', () => {
+        const match = matchPath('/users/*', '/users/a/b?x=1#frag');
+        expect(match.isMatch).toBe(true);
+        expect(match.remainer).toBe('a/b');
+        expect(match.query).toBe('x=1');
+        expect(match.hash).toBe('frag');
+    });
+});
 
 // The DataPanel route block from main-frame.tsx, in declaration order.
 const DATA_PANEL_ROUTES = [

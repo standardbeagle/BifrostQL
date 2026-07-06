@@ -50,7 +50,17 @@ public sealed class MutationTransformResult
 public interface IMutationTransformer
 {
     /// <summary>
-    /// Priority for transformer ordering. Lower = applied first.
+    /// Priority for transformer ordering. Lower = applied first. Bands (see
+    /// Modules/README.md): 0-99 security, 100-199 data filtering, 200+ app.
+    ///
+    /// ORDERING INVARIANT: <see cref="MutationTransformersWrap.TransformAsync"/>
+    /// re-evaluates <see cref="AppliesTo"/> against the CURRENT mutation type each
+    /// iteration. <c>SoftDeleteMutationTransformer</c> (priority 100) rewrites
+    /// DELETE→UPDATE, so any transformer with priority &gt; 100 that gates on
+    /// <see cref="MutationType.Delete"/> will never fire on a soft-deleted row.
+    /// A transformer that must observe deletes MUST sit below priority 100 (this is
+    /// why <c>AuditMutationTransformer</c> is at 50). Covered by
+    /// MutationTransformerCompositionTests.
     /// </summary>
     int Priority { get; }
 

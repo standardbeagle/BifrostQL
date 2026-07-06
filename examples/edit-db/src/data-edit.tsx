@@ -105,7 +105,7 @@ interface ColumnJoin {
 
 function useTable(schema: Schema, tableName: string) {
     return useMemo(() => {
-        const table = schema?.data?.find((x: { graphQlName: string | undefined; }) => x.graphQlName == tableName)!;
+        const table = schema?.data?.find((x: { graphQlName: string | undefined; }) => x.graphQlName === tableName)!;
         const editColumns = table.columns.filter((c: Column) => !c.isReadOnly && !c.isIdentity);
         const editColumnsJoin: ColumnJoin[] = editColumns.map((c: Column) => {
             const anchorJoin = table.singleJoins.find((j: Join) => j.sourceColumnNames[0] === c.graphQlName);
@@ -411,6 +411,14 @@ export function DataEditDialog({ table, editid, onClose }: { table: string; edit
     if (!table) return <div>Table missing</div>;
     if (schema.loading) return <div>Loading...</div>;
     if (schema.error) return <div>Error: {schema.error.message}</div>;
+    // A stale drill link or a bad :table route resolves to a table that is not
+    // in the schema. Report it here — before mounting DataEditDetail, whose
+    // useTable non-null-asserts the lookup and would otherwise throw a
+    // TypeError (reading `.columns` of undefined) straight into the error
+    // boundary instead of a readable message.
+    if (!schema.findTable(table)) {
+        return <div className="p-4 text-sm text-destructive">Table not found: {table}</div>;
+    }
 
     return <DataEditDetail table={table} schema={schema} editid={editid} onClose={onClose} />;
 }

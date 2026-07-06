@@ -4,7 +4,16 @@ import '@testing-library/jest-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { FormApi } from '@tanstack/react-form';
 import { Column } from './types/schema';
-import { selectControlValue, NONE_VALUE } from './data-edit';
+
+// DataEditDialog reads schema.loading / schema.error / schema.findTable before
+// deciding whether to mount DataEditDetail. Mock useSchema so the not-found
+// branch can be exercised without a live schema.
+const schemaMock = vi.hoisted(() => ({
+  schema: { loading: false, error: null as Error | null, data: [] as unknown[], findTable: vi.fn() },
+}));
+vi.mock('./hooks/useSchema', () => ({ useSchema: () => schemaMock.schema }));
+
+import { selectControlValue, NONE_VALUE, DataEditDialog } from './data-edit';
 
 // Mock the form hook
 const mockForm = {
@@ -544,5 +553,16 @@ describe('selectControlValue', () => {
     expect(selectControlValue(5, true)).toBe('5');
     expect(selectControlValue('active', false)).toBe('active');
     expect(selectControlValue(0, true)).toBe('0'); // falsy but real value
+  });
+});
+
+describe('DataEditDialog table-not-found guard', () => {
+  it('renders a readable message when the table is absent from the schema', () => {
+    // A stale drill link or a bad :table route resolves to an unknown table.
+    // Guarding here keeps DataEditDetail (whose useTable non-null-asserts the
+    // lookup) from throwing a TypeError into the error boundary.
+    schemaMock.schema.findTable.mockReturnValue(undefined);
+    render(<DataEditDialog table="ghost_table" editid="1" onClose={() => {}} />);
+    expect(screen.getByText('Table not found: ghost_table')).toBeInTheDocument();
   });
 });

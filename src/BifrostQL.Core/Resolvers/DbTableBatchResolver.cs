@@ -3,7 +3,6 @@ using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
-using BifrostQL.Core.Workflows;
 using GraphQL;
 using GraphQL.Resolvers;
 using Microsoft.Extensions.DependencyInjection;
@@ -106,7 +105,7 @@ namespace BifrostQL.Core.Resolvers
 
             var mutationObservers = services.GetService<MutationObservers>();
             var transitionObservers = services.GetService<StateTransitionObservers>();
-            var triggersSuppressed = IsWorkflowTriggerSuppressed(userContext);
+            var triggersSuppressed = MutationNotifier.IsWorkflowTriggerSuppressed(userContext);
 
             foreach (var outcome in outcomes)
             {
@@ -127,11 +126,6 @@ namespace BifrostQL.Core.Resolvers
                 }
             }
         }
-
-        private static bool IsWorkflowTriggerSuppressed(IDictionary<string, object?> userContext)
-            => userContext.TryGetValue(WorkflowTriggerHost.SuppressTriggersKey, out var value)
-               && value is bool suppressed
-               && suppressed;
 
         ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
         {
@@ -235,7 +229,7 @@ namespace BifrostQL.Core.Resolvers
 
             if (!keyData.Any() || !standardData.Any()) return null;
 
-            var currentRow = await LoadCurrentStateMachineRow(dialect, table, keyData, conn, transaction);
+            var currentRow = await MutationCommandExecutor.LoadCurrentStateMachineRow(conn, transaction, dialect, table, keyData);
             var updateTransformContext = currentRow is null
                 ? transformContext
                 : new MutationTransformContext
@@ -255,7 +249,7 @@ namespace BifrostQL.Core.Resolvers
             // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
             // IS NULL) is ANDed onto the WHERE clause so it narrows — never
             // replaces — the primary-key predicate.
-            var additionalFilter = RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
+            var additionalFilter = MutationCommandExecutor.RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
 
             // Adopt the (possibly rewritten) data so transformer output — e.g.
             // enum-name → DB-value mapping — reaches the SQL. The non-key SET split
@@ -278,33 +272,6 @@ namespace BifrostQL.Core.Resolvers
             AddExtraParameters(cmd, additionalFilter.Parameters);
             var affected = await cmd.ExecuteNonQueryAsync();
             return new BatchActionOutcome(affected, MutationType.Update, updatedData, transformResult.StateTransition);
-        }
-
-        private static async Task<IReadOnlyDictionary<string, object?>?> LoadCurrentStateMachineRow(
-            ISqlDialect dialect,
-            IDbTable table,
-            Dictionary<string, object?> keyData,
-            DbConnection conn,
-            DbTransaction transaction)
-        {
-            var definition = BifrostQL.Core.Auth.StateMachineConfigCollector.FromTable(table);
-            if (definition is null || keyData.Count == 0)
-                return null;
-
-            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var stateColumn = dialect.EscapeIdentifier(definition.StateColumn);
-            var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
-            var sql = $"SELECT {stateColumn} FROM {tableRef} WHERE {whereClause};";
-
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = sql;
-            cmd.Transaction = transaction;
-            AddParameters(cmd, keyData);
-            var currentState = await cmd.ExecuteScalarAsync();
-            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                [definition.StateColumn] = currentState == DBNull.Value ? null : currentState,
-            };
         }
 
         private static async Task<BatchActionOutcome?> ExecuteDelete(
@@ -341,7 +308,7 @@ namespace BifrostQL.Core.Resolvers
             // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
             // IS NULL) is ANDed onto the WHERE clause so it narrows — never
             // replaces — the primary-key predicate.
-            var additionalFilter = RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
+            var additionalFilter = MutationCommandExecutor.RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
 
             // Rekey to DB column names so the PK split (via ColumnLookup) and the
             // emitted WHERE/SET share one name space even for sanitized columns.
@@ -431,20 +398,6 @@ namespace BifrostQL.Core.Resolvers
                 return await ExecuteUpdate(data, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext);
 
             return await ExecuteInsert(data, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext);
-        }
-
-        // Renders MutationTransformResult.AdditionalFilter into an AND-prefixed
-        // WHERE suffix and its bound parameters. Returns an empty suffix when no
-        // transformer contributed a filter.
-        private static (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) RenderAdditionalFilter(
-            TableFilter? filter, ISqlDialect dialect)
-        {
-            if (filter == null)
-                return ("", Array.Empty<SqlParameterInfo>());
-
-            var parameters = new SqlParameterCollection();
-            var rendered = filter.RenderForMutation(dialect, parameters);
-            return ($" AND ({rendered.Sql})", parameters.Parameters);
         }
 
     }

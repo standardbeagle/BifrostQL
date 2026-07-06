@@ -3,6 +3,7 @@ using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.QueryModel.TestFixtures;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
 using BifrostQL.Ngsql;
 using Xunit;
@@ -755,6 +756,111 @@ public sealed class GqlObjectQuerySqlTest
         aggregateSql.Sql.Should().Contain("Status");
         aggregateSql.Sql.Should().Contain("GROUP BY");
         aggregateSql.Parameters.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public void AddSqlParameterized_AggregateOnKeylessTable_ThrowsClearError()
+    {
+        // Arrange — a keyless source table (a view / table without a PK).
+        // Aggregate correlation reads the parent's key columns, and an
+        // aggregate-only selection needs them for its base SELECT; without a
+        // fail-fast this surfaced as an opaque KeyNotFoundException deep in
+        // ReaderEnum (an HTTP 500), not an actionable message.
+        var dbModel = DbModelTestFixture.Create()
+            .WithTable("UserView", t => t
+                .WithColumn("Id", "int") // NOT a primary key
+                .WithColumn("Name", "nvarchar"))
+            .WithTable("Orders", t => t
+                .WithPrimaryKey("Id")
+                .WithColumn("UserId", "int")
+                .WithColumn("Total", "decimal"))
+            .WithMultiLink("UserView", "Id", "Orders", "UserId", "orders")
+            .Build();
+        var viewTable = dbModel.GetTableFromDbName("UserView");
+        var link = viewTable.MultiLinks["orders"];
+        var aggregateColumn = new GqlAggregateColumn(
+            new List<(LinkDirection, TableLinkDto)> { (LinkDirection.OneToMany, link) },
+            "Total",
+            "totalOrderAmount",
+            AggregateOperationType.Sum);
+        var query = GqlObjectQueryBuilder.Create()
+            .WithDbTable(viewTable)
+            .WithColumns("Id")
+            .WithAggregateColumn(aggregateColumn)
+            .Build();
+
+        // Act
+        var act = () => query.AddSqlParameterized(
+            dbModel, Dialect, new Dictionary<string, ParameterizedSql>(), new SqlParameterCollection());
+
+        // Assert — a clear, named error instead of KeyNotFoundException.
+        act.Should().Throw<BifrostExecutionError>()
+            .WithMessage("*Aggregate queries require a primary key on table 'UserView'*");
+    }
+
+    [Fact]
+    public void AddSqlParameterized_AggregateOnlySelectionOnKeylessTable_ThrowsClearError()
+    {
+        // Arrange — the exact crash shape: `data { _agg { ... } }` with no scalar
+        // columns on a keyless table. The key-column base-SELECT fallback cannot
+        // apply, so the query must be rejected at build time.
+        var dbModel = DbModelTestFixture.Create()
+            .WithTable("UserView", t => t
+                .WithColumn("Id", "int") // NOT a primary key
+                .WithColumn("Name", "nvarchar"))
+            .WithTable("Orders", t => t
+                .WithPrimaryKey("Id")
+                .WithColumn("UserId", "int")
+                .WithColumn("Total", "decimal"))
+            .WithMultiLink("UserView", "Id", "Orders", "UserId", "orders")
+            .Build();
+        var viewTable = dbModel.GetTableFromDbName("UserView");
+        var link = viewTable.MultiLinks["orders"];
+        var aggregateColumn = new GqlAggregateColumn(
+            new List<(LinkDirection, TableLinkDto)> { (LinkDirection.OneToMany, link) },
+            "Total",
+            "totalOrderAmount",
+            AggregateOperationType.Sum);
+        var query = GqlObjectQueryBuilder.Create()
+            .WithDbTable(viewTable)
+            .WithAggregateColumn(aggregateColumn)
+            .Build();
+
+        // Act
+        var act = () => query.AddSqlParameterized(
+            dbModel, Dialect, new Dictionary<string, ParameterizedSql>(), new SqlParameterCollection());
+
+        // Assert
+        act.Should().Throw<BifrostExecutionError>()
+            .WithMessage("*Aggregate queries require a primary key on table 'UserView'*");
+    }
+
+    [Fact]
+    public void AddSqlParameterized_AggregateOnlySelectionWithPrimaryKey_EmitsKeyBaseSelect()
+    {
+        // Regression guard for the fail-fast: a keyed table's aggregate-only
+        // selection still gets its key-column base SELECT and aggregate SQL.
+        var dbModel = StandardTestFixtures.UsersWithOrders();
+        var usersTable = dbModel.GetTableFromDbName("Users");
+        var link = usersTable.MultiLinks["orders"];
+        var aggregateColumn = new GqlAggregateColumn(
+            new List<(LinkDirection, TableLinkDto)> { (LinkDirection.OneToMany, link) },
+            "Total",
+            "totalOrderAmount",
+            AggregateOperationType.Sum);
+        var query = GqlObjectQueryBuilder.Create()
+            .WithDbTable(usersTable)
+            .WithAggregateColumn(aggregateColumn)
+            .Build();
+        var sqls = new Dictionary<string, ParameterizedSql>();
+
+        // Act
+        query.AddSqlParameterized(dbModel, Dialect, sqls, new SqlParameterCollection());
+
+        // Assert — base result set selects the key column; aggregate SQL emitted.
+        sqls.Should().ContainKey("Users");
+        sqls["Users"].Sql.Should().Contain("[Id]");
+        sqls.Should().ContainKey("Users=>agg_totalOrderAmount");
     }
 
     [Fact]

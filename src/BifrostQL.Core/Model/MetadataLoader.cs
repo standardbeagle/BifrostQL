@@ -155,12 +155,17 @@ namespace BifrostQL.Core.Model
             return segments.Where(s => !string.IsNullOrWhiteSpace(s));
         }
 
-        // A value wrapped in a single pair of backticks is taken verbatim: its
-        // interior is preserved exactly (no trimming, no ';'/':' interpretation).
-        // Otherwise the already-trimmed value is used as-is.
+        // A value that is a SINGLE complete verbatim span — it opens with '`' and
+        // its only other '`' is the final character — is unwrapped: the interior is
+        // preserved exactly (no trimming, no ';'/':' interpretation). Any other
+        // backtick placement (multiple spans like "`a` and `b`", or a span embedded
+        // mid-string like "prefix `x;y` suffix") is kept as-is, backticks included:
+        // SplitProperties has already honored those spans for ';' protection, and
+        // stripping only the outer pair would corrupt the value. Backticks surviving
+        // in multi-span / embedded-span values is the documented behavior.
         private static string UnwrapValue(string value)
         {
-            if (value.Length >= 2 && value[0] == '`' && value[^1] == '`')
+            if (value.Length >= 2 && value[0] == '`' && value.IndexOf('`', 1) == value.Length - 1)
                 return value.Substring(1, value.Length - 2);
             return value;
         }

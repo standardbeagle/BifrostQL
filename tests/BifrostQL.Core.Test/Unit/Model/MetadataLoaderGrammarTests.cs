@@ -226,6 +226,38 @@ namespace BifrostQL.Core.Test.Model
         }
 
         [Fact]
+        public void SingleCompleteVerbatimSpan_IsUnwrapped()
+        {
+            // The whole value is one span: opening '`' and the value's only other
+            // '`' at the very end — the pair is stripped, interior kept verbatim.
+            var props = ApplyToSchema("dbo { label: `Orders: pending; archived` }");
+
+            props[MetadataKeys.Ui.Label].Should().Be("Orders: pending; archived");
+        }
+
+        [Fact]
+        public void MultiSpanValue_KeepsBackticksVerbatim()
+        {
+            // Two spans in one value. Unwrap must NOT strip the outer pair —
+            // doing so previously corrupted "`a` and `b`" into "a` and `b".
+            // Backticks surviving in multi-span values is the documented behavior.
+            var props = ApplyToSchema("dbo { label: `a` and `b` }");
+
+            props[MetadataKeys.Ui.Label].Should().Be("`a` and `b`");
+        }
+
+        [Fact]
+        public void MidStringVerbatimSpan_IsPreservedWithBackticks()
+        {
+            // A span embedded mid-string still protects its ';' from the property
+            // splitter, but the value is not "wrapped", so nothing is stripped.
+            var props = ApplyToSchema("dbo { note: prefix `x;y` suffix; label: L }");
+
+            props["note"].Should().Be("prefix `x;y` suffix");
+            props[MetadataKeys.Ui.Label].Should().Be("L");
+        }
+
+        [Fact]
         public void UnbalancedBacktick_Throws()
         {
             Action act = () => new MetadataLoader(new[] { "dbo { computed-sql: `a:b:c }" });

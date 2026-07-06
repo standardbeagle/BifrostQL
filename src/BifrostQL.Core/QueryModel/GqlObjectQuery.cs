@@ -103,8 +103,19 @@ namespace BifrostQL.Core.QueryModel
 
         public void AddSqlParameterized(IDbModel dbModel, ISqlDialect dialect, IDictionary<string, ParameterizedSql> sqls, SqlParameterCollection parameters, QueryLink? queryLink = null)
         {
+            // Aggregate correlation matches each aggregate row back to its parent row
+            // by the parent's primary key (ReaderEnum reads KeyColumns.First()), and an
+            // aggregate-only selection needs the key columns for its base SELECT. A
+            // keyless table (view / table without a PK) can satisfy neither — fail fast
+            // with a clear error instead of the opaque KeyNotFoundException /
+            // "Sequence contains no elements" the execution path would otherwise throw.
+            if (AggregateColumns.Count > 0 && !DbTable.KeyColumns.Any())
+                throw new BifrostExecutionError(
+                    $"Aggregate queries require a primary key on table '{GraphQlName}'; " +
+                    $"table '{TableName}' has no primary key, so aggregate results cannot be correlated to its rows.");
+
             var fullColumns = FullColumnNames.ToList();
-            if (fullColumns.Count == 0 && AggregateColumns.Count > 0 && DbTable.KeyColumns.Any())
+            if (fullColumns.Count == 0 && AggregateColumns.Count > 0)
             {
                 // Aggregate-only selection (e.g. `data { _agg { ... } }`) with no scalar
                 // columns. Without a base SELECT the primary result set is never emitted,

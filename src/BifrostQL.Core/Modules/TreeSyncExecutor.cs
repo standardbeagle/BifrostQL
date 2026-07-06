@@ -112,7 +112,7 @@ public sealed class TreeSyncExecutor
                     // transformer's row-scope / IS-NULL guard filter.
                     mutationType = result.MutationType;
                     data = result.Data;
-                    additionalFilter = RenderAdditionalFilter(result.AdditionalFilter, _dialect);
+                    additionalFilter = MutationCommandExecutor.RenderAdditionalFilter(result.AdditionalFilter, _dialect);
                 }
 
                 switch (mutationType)
@@ -231,21 +231,6 @@ public sealed class TreeSyncExecutor
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
         await cmd.ExecuteNonQueryAsync();
-    }
-
-    // Renders MutationTransformResult.AdditionalFilter into an AND-prefixed WHERE
-    // suffix and its bound parameters — same logic as the single-row resolver's
-    // RenderAdditionalFilter (policy row-scope, soft-delete IS NULL). Returns an
-    // empty suffix when no transformer contributed a filter.
-    private static (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) RenderAdditionalFilter(
-        TableFilter? filter, ISqlDialect dialect)
-    {
-        if (filter == null)
-            return ("", Array.Empty<SqlParameterInfo>());
-
-        var parameters = new SqlParameterCollection();
-        var rendered = filter.RenderForMutation(dialect, parameters);
-        return ($" AND ({rendered.Sql})", parameters.Parameters);
     }
 
     private static bool IsKey(IDbTable table, string column)

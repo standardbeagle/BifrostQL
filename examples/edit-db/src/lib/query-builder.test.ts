@@ -745,6 +745,37 @@ describe('buildPkEqVariables', () => {
             pk_course_id: 'cs-101',
         });
     });
+
+    it('percent-decodes a single String-PK route before filtering (space)', () => {
+        // getRowPkValue route-encodes "Acme Inc" to "Acme%20Inc"; the router keeps
+        // the segment escaped, so buildPkEqVariables must decode or the _eq filter
+        // is built from "Acme%20Inc" and matches nothing ("record not found").
+        const table = makeTable({
+            primaryKeys: ['name'],
+            columns: [makeColumn({ name: 'name', paramType: 'String!', isPrimaryKey: true })],
+        });
+        expect(buildPkEqVariables('Acme%20Inc', table)).toEqual({ id: 'Acme Inc' });
+    });
+
+    it('percent-decodes reserved characters in a single String PK (%, /, ::)', () => {
+        const table = makeTable({
+            primaryKeys: ['code'],
+            columns: [makeColumn({ name: 'code', paramType: 'String!', isPrimaryKey: true })],
+        });
+        expect(buildPkEqVariables('50%25', table)).toEqual({ id: '50%' });
+        expect(buildPkEqVariables('a%2Fb', table)).toEqual({ id: 'a/b' });
+        // '::' is the composite delimiter; a single-PK value that contains it is
+        // encoded to "%3A%3A" by getRowPkValue and must round-trip back verbatim.
+        expect(buildPkEqVariables('x%3A%3Ay', table)).toEqual({ id: 'x::y' });
+    });
+
+    it('leaves a numeric single PK untouched after decoding', () => {
+        const table = makeTable({
+            primaryKeys: ['id'],
+            columns: [makeColumn({ name: 'id', paramType: 'Int!', isPrimaryKey: true })],
+        });
+        expect(buildPkEqVariables('42', table)).toEqual({ id: 42 });
+    });
 });
 
 describe('buildQuery — composite primary keys', () => {

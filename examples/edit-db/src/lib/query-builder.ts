@@ -5,7 +5,7 @@
 
 import type { Table, Column, Join, Schema } from '../types/schema';
 import type { ColumnFiltersState } from '@tanstack/react-table';
-import { rowIdOf, buildPkEqFilter, parsePkRoute, encodeRouteParts, type PkEqFilterResult } from './row-id';
+import { rowIdOf, buildPkEqFilter, parsePkRoute, decodePkPart, encodeRouteParts, type PkEqFilterResult } from './row-id';
 import { coerceForGql } from './fk';
 import { resolveChildJoin, childFieldName } from './polymorphic';
 
@@ -204,7 +204,12 @@ export function getPkTypes(table: Table): PkTypeInfo[] {
 export function buildPkEqVariables(idRoute: string, table: Table): Record<string, unknown> {
     const pkTypes = getPkTypes(table);
     if (pkTypes.length <= 1) {
-        return { id: coerceForGql(idRoute, getPkType(table)) };
+        // The router captures `:id` still percent-encoded (usePath matchPath does
+        // not decode segments), so a single-PK route value containing a space,
+        // "%", or "/" arrives escaped. Decode it here — exactly as parsePkRoute
+        // does for the composite path — before coercing, otherwise a String PK
+        // filter is built from the escaped text and never matches the row.
+        return { id: coerceForGql(decodePkPart(idRoute), getPkType(table)) };
     }
     const parsed = parsePkRoute(idRoute, table);
     if (!parsed) return {};

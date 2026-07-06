@@ -69,7 +69,10 @@ export interface ContentPanelTarget {
     columnName: string;
     columnLabel: string;
     dbType: string;
-    rowIndex: number;
+    /** Stable identity of the shown row — its encoded PK route (or an index
+     *  fallback for PK-less tables). Edit state resets when this changes, so a
+     *  refetch that merely moves the row within the page keeps an open edit. */
+    rowKey: string;
     isReadOnly: boolean;
 }
 
@@ -102,13 +105,14 @@ export function ContentPanel({
     const Icon = kindIcons[kind];
     const formatted = formatContent(value, kind);
 
-    // Reset edit state when target changes
+    // Reset edit state when the target ROW (by PK identity, not grid position)
+    // or column changes.
     useEffect(() => {
         setEditing(false);
         setEditValue('');
         setCopied(false);
         setSaving(false);
-    }, [target?.rowIndex, target?.columnName]);
+    }, [target?.rowKey, target?.columnName]);
 
     // Keyboard navigation
     useEffect(() => {

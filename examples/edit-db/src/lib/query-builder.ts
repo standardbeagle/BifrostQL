@@ -5,7 +5,7 @@
 
 import type { Table, Column, Join, Schema } from '../types/schema';
 import type { ColumnFiltersState } from '@tanstack/react-table';
-import { rowIdOf, buildPkEqFilter, parsePkRoute, encodeRouteParts } from './row-id';
+import { rowIdOf, buildPkEqFilter, parsePkRoute, encodeRouteParts, type PkEqFilterResult } from './row-id';
 import { resolveChildJoin, childFieldName } from './polymorphic';
 
 export interface FilterResult {
@@ -228,6 +228,23 @@ export function buildPkEqVariables(idRoute: string, table: Table): Record<string
     if (!parsed) return {};
     const result = buildPkEqFilter(parsed, table);
     return result?.variables ?? {};
+}
+
+/**
+ * Builds a single-row lookup query keyed by a primary-key equality filter
+ * (produced by {@link buildPkEqFilter}). The row comes back under the `value`
+ * alias: `{ value: { data: [row] } }`. Used by the content panel to re-read a
+ * row fresh before echoing it back in an update.
+ */
+export function buildSingleRowQuery(
+    table: Pick<Table, 'name'>,
+    pkEq: Pick<PkEqFilterResult, 'filterText' | 'params'>,
+    fields: readonly string[],
+): string {
+    // GraphQL forbids an empty `()` variable-definition list — omit it entirely
+    // when the filter carries no params.
+    const paramDecls = pkEq.params.length > 0 ? `(${pkEq.params.join(', ')})` : '';
+    return `query GetSingleRow_${table.name}${paramDecls} { value: ${table.name}(filter: ${pkEq.filterText}) { data { ${fields.join(' ')} } } }`;
 }
 
 /**

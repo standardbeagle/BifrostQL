@@ -14,7 +14,7 @@ import { HoverCard, HoverCardTrigger, HoverCardContent } from "../components/ui/
 import { ContentViewer } from "../components/content-viewer";
 import { EmptyValue } from "../components/empty-value";
 import { formatColumnValue } from "../lib/format-value";
-import { isLongTextDbType, isBinaryDbType, isJsonDbType } from "../lib/content-detect";
+import { isLongTextDbType, isBinaryDbType, isJsonColumn } from "../lib/content-detect";
 import {
     getFilterOperators,
     getFilterObj,
@@ -226,7 +226,7 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                 };
             }
 
-            const useContentViewer = isLongTextDbType(c.dbType) || isBinaryDbType(c.dbType) || isJsonDbType(c.dbType) || c.paramType === "JSON";
+            const useContentViewer = isLongTextDbType(c.dbType) || isBinaryDbType(c.dbType) || isJsonColumn(c);
 
             if (useContentViewer) {
                 return {
@@ -399,10 +399,6 @@ interface UseDataTableResult {
     rows: RowData[];
     /** Whether data is currently loading (no rows to show yet) */
     loading: boolean;
-    /** Whether a fetch is in flight or the shown rows are placeholder (previous)
-     *  data — i.e. the visible rows may be stale. Consumers that write back a
-     *  whole-row snapshot should wait for this to settle. */
-    fetching: boolean;
     /** Error object if the query failed */
     error: Error | null;
     /** Update sorting state */
@@ -499,7 +495,7 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         ...cfVariables,
     }), [appliedSort, pageSize, offset, id, table, schema, filterTable, filterColumn, filterVariables, cfVariables]);
 
-    const { isLoading, isFetching, isPlaceholderData, error, data } = useQuery({
+    const { isLoading, error, data } = useQuery({
         queryKey: ['tableData', table?.name, query, queryVariables],
         queryFn: ({ signal }) => fetcher.query<QueryData>(query!, queryVariables, { signal }),
         enabled: !!query && !!table && appliedSort.length > 0,
@@ -595,7 +591,6 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         pageCount,
         rows,
         loading: isLoading,
-        fetching: isFetching || isPlaceholderData,
         error: error as Error | null,
         onSortingChange,
         onColumnFiltersChange,

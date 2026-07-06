@@ -12,10 +12,12 @@ import {
     getPkTypes,
     buildPkEqVariables,
     buildQuery,
+    buildSingleRowQuery,
     resolveDrillDown,
     unwrapDrillDownPage,
     type ColumnFilterValue,
 } from './query-builder';
+import { buildPkEqFilter } from './row-id';
 import type { Table, Schema, Column, Join } from '../types/schema';
 
 // ── Test Fixtures ──────────────────────────────────────────────
@@ -1020,5 +1022,38 @@ describe('unwrapDrillDownPage', () => {
 
     it('returns an empty page when the child field is absent', () => {
         expect(unwrapDrillDownPage({ companies: { data: [{}] } }, 'companies', 'notes')).toEqual({ data: [], total: 0, offset: 0, limit: 0 });
+    });
+});
+
+describe('buildSingleRowQuery', () => {
+    it('builds a single-row lookup with PK param, filter, and field list', () => {
+        const table = makeTable();
+        const pkEq = buildPkEqFilter({ id: 7 }, table)!;
+        const query = buildSingleRowQuery(table, pkEq, ['id', 'name']);
+        expect(query).toBe(
+            'query GetSingleRow_test($pk_id: Int) { value: test(filter: {id: {_eq: $pk_id}}) { data { id name } } }',
+        );
+    });
+
+    it('declares one variable per composite PK column', () => {
+        const table = makeTable({
+            primaryKeys: ['order_id', 'line_no'],
+            columns: [
+                makeColumn({ name: 'order_id', paramType: 'Int!', isPrimaryKey: true }),
+                makeColumn({ name: 'line_no', paramType: 'Int!', isPrimaryKey: true }),
+                makeColumn({ name: 'qty', paramType: 'Int' }),
+            ],
+        });
+        const pkEq = buildPkEqFilter({ order_id: 1, line_no: 2 }, table)!;
+        const query = buildSingleRowQuery(table, pkEq, ['qty']);
+        expect(query).toContain('($pk_order_id: Int, $pk_line_no: Int)');
+        expect(query).toContain('filter: {and: [{order_id: {_eq: $pk_order_id}}, {line_no: {_eq: $pk_line_no}}]}');
+        expect(query).toContain('data { qty }');
+    });
+
+    it('omits the variable-definition parens entirely when there are no params (empty "()" is invalid GraphQL)', () => {
+        const query = buildSingleRowQuery(makeTable(), { filterText: '{id: {_eq: 1}}', params: [] }, ['name']);
+        expect(query).not.toContain('()');
+        expect(query.startsWith('query GetSingleRow_test {')).toBe(true);
     });
 });

@@ -346,6 +346,141 @@ public sealed class RawSqlValidatorTests
 
     #endregion
 
+    #region Executable Comments (MySQL /*! ... */)
+
+    [Fact]
+    public void Validate_MySqlExecutableComment_ReturnsFail()
+    {
+        var result = _validator.Validate("SELECT 1 /*! ; DROP TABLE Users */");
+        result.IsValid.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Executable comment");
+    }
+
+    [Fact]
+    public void Validate_MySqlVersionConditionalComment_ReturnsFail()
+    {
+        var result = _validator.Validate("/*!50000 DROP TABLE Users */ SELECT 1");
+        result.IsValid.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Executable comment");
+    }
+
+    [Fact]
+    public void Validate_OrdinaryBlockComment_ReturnsValid()
+    {
+        var result = _validator.Validate("SELECT * FROM Users /* fetch everything */");
+        result.IsValid.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_KeywordInsideOrdinaryComment_ReturnsValid()
+    {
+        var result = _validator.Validate("SELECT * FROM Users -- update this later\nWHERE Id = @id");
+        result.IsValid.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_UnterminatedBlockComment_ReturnsFail()
+    {
+        var result = _validator.Validate("SELECT 1 /* trailing");
+        result.IsValid.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Unterminated block comment");
+    }
+
+    #endregion
+
+    #region Statement Boundary and Escape Confusion
+
+    [Fact]
+    public void Validate_SelectThenDrop_ReturnsFail()
+    {
+        var result = _validator.Validate("SELECT 1; DROP TABLE x");
+        result.IsValid.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Multiple SQL statements");
+    }
+
+    [Fact]
+    public void Validate_TrailingSemicolon_ReturnsValid()
+    {
+        var result = _validator.Validate("SELECT * FROM Users;");
+        result.IsValid.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_SemicolonInsideStringLiteral_ReturnsValid()
+    {
+        var result = _validator.Validate("SELECT * FROM Users WHERE Name = 'a;b'");
+        result.IsValid.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_ForbiddenKeywordInsideStringLiteral_ReturnsValid()
+    {
+        var result = _validator.Validate("SELECT * FROM Users WHERE Name = 'DROP TABLE'");
+        result.IsValid.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_DoubledQuoteEscapeInString_ReturnsValid()
+    {
+        var result = _validator.Validate("SELECT 'it''s fine' FROM Users");
+        result.IsValid.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_BracketQuotedIdentifierWithKeyword_ReturnsValid()
+    {
+        var result = _validator.Validate("SELECT [Into] FROM Users");
+        result.IsValid.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_BackslashEscapeSmugglesStatement_ReturnsFail()
+    {
+        // Under ANSI/SQL Server semantics the string ends at the second quote,
+        // exposing "; DROP TABLE Users" as code. Under MySQL backslash semantics
+        // it is one string. Must be rejected because it is code in at least one dialect.
+        var result = _validator.Validate("SELECT '\\'; DROP TABLE Users; SELECT '1'");
+        result.IsValid.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Multiple SQL statements");
+    }
+
+    [Fact]
+    public void Validate_BackslashBeforeClosingQuote_ReturnsFail()
+    {
+        // Ambiguous across dialects: MySQL treats \' as an escaped quote and the
+        // string never terminates; other engines terminate it. Fail-safe reject.
+        var result = _validator.Validate("SELECT '\\'; DROP TABLE Users --'");
+        result.IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Validate_UnterminatedStringLiteral_ReturnsFail()
+    {
+        var result = _validator.Validate("SELECT 'abc FROM Users");
+        result.IsValid.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Unterminated string literal");
+    }
+
+    [Fact]
+    public void Validate_DashDashWithoutWhitespaceHidesSemicolon_ReturnsFail()
+    {
+        // MySQL only treats -- as a comment when followed by whitespace, so
+        // "--x; DROP ..." executes there. The scanner treats it as code.
+        var result = _validator.Validate("SELECT 1 --x; DROP TABLE Users");
+        result.IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Validate_HashCommentHidesSemicolon_ReturnsFail()
+    {
+        // '#' starts a comment on MySQL only; the scanner treats it as code so
+        // the semicolon and DROP are seen.
+        var result = _validator.Validate("SELECT 1 # ; DROP TABLE Users");
+        result.IsValid.Should().BeFalse();
+    }
+
+    #endregion
+
     #region Schema Integration Tests
 
     [Fact]

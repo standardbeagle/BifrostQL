@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/select';
 import { useFetcher } from '@/common/fetcher';
 import { useSchema } from '@/hooks/useSchema';
+import { coerceForGql, gqlTypeOf } from '@/lib/fk';
 import type { ColumnFilterValue } from '@/hooks/useDataTable';
 
 interface LookupRow {
@@ -44,11 +45,10 @@ export function FkFilter<TData, TValue>({ column, joinTable, joinLabelColumn, jo
 
     const query = `query Lookup${joinTable} { ${joinTable}(sort: [${joinLabelColumn}_asc], limit: 100) { data { id: ${joinFkColumn} label: ${joinLabelColumn} } } }`;
 
-    // Whether the FK target column is numeric drives value coercion below — decide
-    // by the column's declared type, not by whether the string looks numeric (a
-    // string key like "0123" must stay a string).
-    const fkColType = joinSchema?.columns.find((c) => c.name === joinFkColumn)?.paramType?.replace('!', '') ?? '';
-    const fkIsNumeric = fkColType === 'Int' || fkColType === 'Float';
+    // Value coercion below follows the FK target column's declared GraphQL type,
+    // not what the string looks like (a string key like "0123" must stay a string;
+    // a Boolean FK must be sent as a boolean, not "true").
+    const fkGqlType = gqlTypeOf(joinSchema?.columns.find((c) => c.name === joinFkColumn));
 
     const { data: lookupData } = useQuery({
         // joinFkColumn is part of the projection (`id: ${joinFkColumn}`), so two
@@ -71,8 +71,7 @@ export function FkFilter<TData, TValue>({ column, joinTable, joinLabelColumn, jo
             column.setFilterValue(undefined);
             return;
         }
-        const filterValue = fkIsNumeric ? Number(value) : value;
-        column.setFilterValue({ operator: '_eq', value: filterValue } as ColumnFilterValue);
+        column.setFilterValue({ operator: '_eq', value: coerceForGql(value, fkGqlType) } as ColumnFilterValue);
     };
 
     const handleClear = () => {

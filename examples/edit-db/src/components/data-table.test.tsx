@@ -210,3 +210,107 @@ describe('DataTable action callback payloads', () => {
         ]);
     });
 });
+
+describe('DataTable column-sizing persistence', () => {
+    const STORAGE_KEY = 'bifrost-col-sizes:enrollments';
+
+    function renderWithTableName(tableName = 'enrollments') {
+        return render(
+            <DataTable<EnrollmentRow>
+                columns={makeColumns()}
+                data={enrollmentRows}
+                tableName={tableName}
+                pageCount={1}
+                pageIndex={0}
+                pageSize={50}
+                sorting={[]}
+                columnFilters={[]}
+                primaryKeys={['student_id', 'course_id']}
+                onSortingChange={() => { /* noop */ }}
+                onColumnFiltersChange={() => { /* noop */ }}
+                onPageIndexChange={() => { /* noop */ }}
+                onPageSizeChange={() => { /* noop */ }}
+            />,
+        );
+    }
+
+    /** The header resize handles; double-click triggers auto-size (a sizing change). */
+    function resizeHandle(container: HTMLElement): Element {
+        const handle = container.querySelector('.cursor-col-resize');
+        expect(handle).not.toBeNull();
+        return handle!;
+    }
+
+    beforeEach(() => {
+        localStorage.clear();
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        localStorage.clear();
+    });
+
+    it('does not write back the just-loaded sizing on mount', () => {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ grade: 120 }));
+        const setItemSpy = vi.spyOn(Storage.prototype, 'setItem');
+
+        renderWithTableName();
+        vi.advanceTimersByTime(400);
+
+        expect(setItemSpy).not.toHaveBeenCalled();
+        setItemSpy.mockRestore();
+    });
+
+    it('persists a resize after the debounce window', () => {
+        const { container } = renderWithTableName();
+
+        fireEvent.doubleClick(resizeHandle(container));
+        expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+
+        vi.advanceTimersByTime(300);
+        const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
+        expect(stored.student_id).toEqual(expect.any(Number));
+    });
+
+    it('flushes a pending resize on unmount instead of dropping it', () => {
+        const { container, unmount } = renderWithTableName();
+
+        fireEvent.doubleClick(resizeHandle(container));
+        // Unmount before the 300ms debounce elapses — the resize must still land.
+        unmount();
+
+        const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
+        expect(stored.student_id).toEqual(expect.any(Number));
+    });
+
+    it('flushes a pending resize when the table changes before the debounce elapses', () => {
+        const { container, rerender } = renderWithTableName();
+
+        fireEvent.doubleClick(resizeHandle(container));
+
+        rerender(
+            <DataTable<EnrollmentRow>
+                columns={makeColumns()}
+                data={enrollmentRows}
+                tableName="other_table"
+                pageCount={1}
+                pageIndex={0}
+                pageSize={50}
+                sorting={[]}
+                columnFilters={[]}
+                primaryKeys={['student_id', 'course_id']}
+                onSortingChange={() => { /* noop */ }}
+                onColumnFiltersChange={() => { /* noop */ }}
+                onPageIndexChange={() => { /* noop */ }}
+                onPageSizeChange={() => { /* noop */ }}
+            />,
+        );
+
+        const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
+        expect(stored.student_id).toEqual(expect.any(Number));
+        // And the new table must not immediately write back its just-loaded sizing.
+        vi.advanceTimersByTime(400);
+        expect(localStorage.getItem('bifrost-col-sizes:other_table')).toBeNull();
+    });
+});

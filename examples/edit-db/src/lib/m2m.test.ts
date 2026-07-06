@@ -211,11 +211,27 @@ describe('m2mRowsQuery', () => {
         expect(variables.src0).toBe(100);
         expect(variables.src1).toBe(200);
     });
+
+    it('throws when a junction source column is missing from the junction schema', () => {
+        // Schema drift: relationship metadata names a junction column the table
+        // doesn't have. Defaulting its type would coerce a GUID key to NaN and
+        // silently return zero links, so this must fail loudly instead.
+        const driftedJunction = table('enrollments', {
+            columns: [col('id', { isPrimaryKey: true }), col('course_id', { paramType: 'Int' })],
+        });
+
+        expect(() => m2mRowsQuery(driftedJunction, target, m2m, '42'))
+            .toThrow(/Junction table 'enrollments' has no column 'student_id'/);
+    });
 });
 
 describe('m2mTargetPickerPlan', () => {
     it('builds a target picker query with an enum sort value', () => {
-        const target = table('courses', { labelColumn: 'title', primaryKeys: ['id'] });
+        const target = table('courses', {
+            labelColumn: 'title',
+            primaryKeys: ['id'],
+            columns: [col('id', { paramType: 'Int', isPrimaryKey: true }), col('title')],
+        });
         const { query, idColumn } = m2mTargetPickerPlan(target, m2m);
 
         expect(idColumn).toBe('id');
@@ -225,7 +241,11 @@ describe('m2mTargetPickerPlan', () => {
     });
 
     it('falls back to the id column when the target has no label column', () => {
-        const target = table('courses', { labelColumn: '', primaryKeys: ['id'] });
+        const target = table('courses', {
+            labelColumn: '',
+            primaryKeys: ['id'],
+            columns: [col('id', { paramType: 'Int', isPrimaryKey: true })],
+        });
         const { query } = m2mTargetPickerPlan(target, m2m);
 
         expect(query).toContain('sort: [id_asc]');
@@ -256,6 +276,19 @@ describe('m2mTargetPickerPlan', () => {
         expect(plan.serverSearch).toBe(false);
         expect(plan.query).not.toContain('$search');
         expect(plan.query).not.toContain('_contains');
+    });
+
+    it('throws when the label column is missing from the target schema', () => {
+        // Schema drift: metadata names a label column the target table doesn't
+        // have — fail loudly rather than silently degrading the picker.
+        const target = table('courses', {
+            labelColumn: 'title',
+            primaryKeys: ['id'],
+            columns: [col('id', { paramType: 'Int', isPrimaryKey: true })],
+        });
+
+        expect(() => m2mTargetPickerPlan(target, m2m))
+            .toThrow(/Target table 'courses' has no column 'title'/);
     });
 });
 

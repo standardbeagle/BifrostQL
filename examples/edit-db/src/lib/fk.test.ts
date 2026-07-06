@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildFkEqFilter, findJoinBySource, fkSourceValues, isComposite, isFkMember } from './fk';
+import { buildFkEqFilter, coerceForGql, findJoinBySource, fkSourceValues, gqlTypeOf, isComposite, isFkMember } from './fk';
 import type { Column, Join, Table } from '../types/schema';
 
 function col(name: string, paramType = 'String'): Column {
@@ -35,6 +35,47 @@ const compositeJoin: Join = {
     destinationTable: 'orders',
     destinationColumnNames: ['tenant_id', 'order_id'],
 };
+
+describe('gqlTypeOf', () => {
+    it('strips the non-null marker from the paramType', () => {
+        expect(gqlTypeOf(col('flag', 'Boolean!'))).toBe('Boolean');
+        expect(gqlTypeOf(col('id', 'Int'))).toBe('Int');
+    });
+
+    it('defaults to String when the column is unknown', () => {
+        expect(gqlTypeOf(undefined)).toBe('String');
+    });
+});
+
+describe('coerceForGql', () => {
+    it('coerces string representations to booleans for Boolean columns', () => {
+        expect(coerceForGql('true', 'Boolean')).toBe(true);
+        expect(coerceForGql('false', 'Boolean')).toBe(false);
+        expect(coerceForGql(true, 'Boolean')).toBe(true);
+        expect(coerceForGql(1, 'Boolean')).toBe(true);
+        expect(coerceForGql(0, 'Boolean')).toBe(false);
+    });
+
+    it('coerces and truncates numeric strings for Int columns', () => {
+        expect(coerceForGql('42', 'Int')).toBe(42);
+        expect(coerceForGql(4.7, 'Int')).toBe(4);
+    });
+
+    it('passes unparseable numerics through untouched', () => {
+        expect(coerceForGql('abc', 'Int')).toBe('abc');
+        expect(coerceForGql('abc', 'Float')).toBe('abc');
+    });
+
+    it('coerces to number for Float columns and to string otherwise', () => {
+        expect(coerceForGql('3.5', 'Float')).toBe(3.5);
+        expect(coerceForGql(42, 'String')).toBe('42');
+    });
+
+    it('maps null and undefined to null', () => {
+        expect(coerceForGql(null, 'Int')).toBeNull();
+        expect(coerceForGql(undefined, 'Boolean')).toBeNull();
+    });
+});
 
 describe('isComposite', () => {
     it('returns false for single-column joins', () => {
@@ -94,6 +135,19 @@ describe('buildFkEqFilter', () => {
         ]);
         const result = buildFkEqFilter({ tenant_id: 1 }, compositeJoin, dest);
         expect(result).toBeNull();
+    });
+
+    it('declares Boolean for a Boolean FK and coerces the value to a boolean', () => {
+        const boolJoin: Join = {
+            name: 'settings',
+            sourceColumnNames: ['is_active'],
+            destinationTable: 'settings',
+            destinationColumnNames: ['is_active'],
+        };
+        const dest = destTable([col('is_active', 'Boolean!')]);
+        const result = buildFkEqFilter({ is_active: 'true' }, boolJoin, dest);
+        expect(result!.params).toEqual(['$fk_is_active: Boolean']);
+        expect(result!.variables).toEqual({ fk_is_active: true });
     });
 
     it('honors a custom variable prefix to avoid collisions', () => {

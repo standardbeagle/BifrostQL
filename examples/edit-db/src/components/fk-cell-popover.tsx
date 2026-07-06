@@ -4,7 +4,8 @@ import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/h
 import { useSchema } from "../hooks/useSchema";
 import { useFetcher } from "../common/fetcher";
 import type { Column, Join, Table } from "../types/schema";
-import { buildFkEqFilter, isComposite } from "../lib/fk";
+import { buildFkEqFilter, coerceForGql, isComposite } from "../lib/fk";
+import { getGraphQlType } from "../lib/query-builder";
 import { formatColumnValue, DISPLAY_FORMAT_PREVIEW_KEY } from "../lib/format-value";
 
 const MAX_PREVIEW_COLUMNS = 5;
@@ -40,14 +41,6 @@ function getPreviewColumns(columns: Column[]): Column[] {
         .slice(0, MAX_PREVIEW_COLUMNS);
 }
 
-/** Map a column paramType to the GraphQL scalar used to declare the `$id` variable. */
-function gqlDeclType(paramType: string): "Int" | "Float" | "String" {
-    const base = paramType.replace("!", "");
-    if (base === "Int") return "Int";
-    if (base === "Float") return "Float";
-    return "String";
-}
-
 function buildSinglePreviewQuery(tableName: string, columns: Column[], pkColumn: string, declType: string): string {
     const fields = columns.map((c) => c.name).join(" ");
     return `query FkPreview($id: ${declType}) { ${tableName}(filter: { ${pkColumn}: { _eq: $id } } limit: 1) { data { ${fields} } } }`;
@@ -64,7 +57,8 @@ interface PreviewPlan {
     cacheKey: unknown;
 }
 
-function buildPreviewPlan(
+/** Exported for tests: pure query-plan derivation with no React/query dependencies. */
+export function buildPreviewPlan(
     tableName: string,
     destTable: Table,
     previewColumns: Column[],
@@ -85,10 +79,10 @@ function buildPreviewPlan(
         };
     }
     const lookupType = destTable.columns.find((c) => c.name === filterColumn)?.paramType ?? "Int";
-    const declType = gqlDeclType(lookupType);
-    // Declared type and coercion come from the same source so a Float FK isn't
-    // sent as a number under a String declaration (a GraphQL validation error).
-    const variables = { id: declType === "String" ? recordId : Number(recordId) };
+    const declType = getGraphQlType(lookupType);
+    // Declared type and coercion come from the same source so a Boolean/Float FK
+    // isn't sent under a String declaration (a GraphQL validation error).
+    const variables = { id: coerceForGql(recordId, declType) };
     return {
         query: buildSinglePreviewQuery(tableName, previewColumns, filterColumn, declType),
         variables,

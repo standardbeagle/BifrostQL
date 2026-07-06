@@ -248,17 +248,45 @@ export function DataTable<TData>({
     const scrollRef = useRef<HTMLDivElement>(null);
 
     // Persist column sizing to localStorage, debounced so a live ('onChange')
-    // resize drag doesn't write on every mousemove.
+    // resize drag doesn't write on every mousemove. `skipPersistRef` suppresses
+    // the first run after mount/table-switch, which would only write back the
+    // sizing just loaded from storage. `pendingSizingRef` carries the latest
+    // unsaved state so a table switch or unmount flushes it instead of dropping
+    // a resize made less than the debounce window ago.
+    const pendingSizingRef = useRef<{ tableName: string; sizing: ColumnSizingState } | null>(null);
+    const skipPersistRef = useRef(true);
+
     useEffect(() => {
+        // A pending write for a previous table can no longer be superseded — flush it.
+        const stale = pendingSizingRef.current;
+        if (stale && stale.tableName !== tableName) {
+            pendingSizingRef.current = null;
+            saveColumnSizing(stale.tableName, stale.sizing);
+        }
         if (!tableName) return;
-        const t = setTimeout(() => saveColumnSizing(tableName, columnSizing), 300);
+        if (skipPersistRef.current) {
+            skipPersistRef.current = false;
+            return;
+        }
+        pendingSizingRef.current = { tableName, sizing: columnSizing };
+        const t = setTimeout(() => {
+            pendingSizingRef.current = null;
+            saveColumnSizing(tableName, columnSizing);
+        }, 300);
         return () => clearTimeout(t);
     }, [tableName, columnSizing]);
+
+    // Flush any still-pending sizing write on unmount rather than dropping it.
+    useEffect(() => () => {
+        const pending = pendingSizingRef.current;
+        if (pending) saveColumnSizing(pending.tableName, pending.sizing);
+    }, []);
 
     // Reset persisted sizing when table changes
     const tableNameRef = useRef(tableName);
     if (tableName && tableName !== tableNameRef.current) {
         tableNameRef.current = tableName;
+        skipPersistRef.current = true;
         const restored = loadColumnSizing(tableName);
         setColumnSizing(restored);
     }
@@ -429,20 +457,8 @@ export function DataTable<TData>({
         return row ? pkFilterFor(row.original as Record<string, unknown>, { primaryKeys }) : null;
     }, [table, primaryKeys]);
 
-    const handleHoverEdit = useCallback(() => {
-        if (!hoveredRow || !onEditRow) return;
-        const filter = buildRowPkFilter(hoveredRow.rowId);
-        if (filter) onEditRow(filter);
-    }, [hoveredRow, onEditRow, buildRowPkFilter]);
-
-    const handleHoverDelete = useCallback(() => {
-        if (!hoveredRow || !onDeleteRow) return;
-        const filter = buildRowPkFilter(hoveredRow.rowId);
-        if (filter) onDeleteRow(filter);
-    }, [hoveredRow, onDeleteRow, buildRowPkFilter]);
-
-    // Keyboard-driven edit/delete so the row actions aren't mouse/touch only.
-    // A focused row responds to 'e' (edit) and Delete/Backspace (delete).
+    // Edit/delete by row id — used by keyboard handling on the focused row
+    // ('e' edits, Delete/Backspace deletes) so the actions aren't mouse/touch only.
     const editRowById = useCallback((rowId: string) => {
         if (!onEditRow) return;
         const filter = buildRowPkFilter(rowId);
@@ -454,6 +470,15 @@ export function DataTable<TData>({
         const filter = buildRowPkFilter(rowId);
         if (filter) onDeleteRow(filter);
     }, [onDeleteRow, buildRowPkFilter]);
+
+    // Hover-toolbar actions: the same operations pre-bound to the hovered row.
+    const handleHoverEdit = useCallback(() => {
+        if (hoveredRow) editRowById(hoveredRow.rowId);
+    }, [hoveredRow, editRowById]);
+
+    const handleHoverDelete = useCallback(() => {
+        if (hoveredRow) deleteRowById(hoveredRow.rowId);
+    }, [hoveredRow, deleteRowById]);
 
     return (
         <div className="flex flex-col w-full min-h-0 flex-1">

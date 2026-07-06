@@ -15,6 +15,11 @@ export function isJsonDbType(dbType: string): boolean {
     return jsonDbTypes.has(dbType.toLowerCase().replace(/\(.*\)/, ''));
 }
 
+/** Column-level JSON check: native JSON dbType or the JSON GraphQL scalar. */
+export function isJsonColumn(col: { dbType: string; paramType?: string }): boolean {
+    return isJsonDbType(col.dbType) || col.paramType === 'JSON';
+}
+
 /** Check if a dbType is a long text type (text, ntext, varchar(max), xml) */
 export function isLongTextDbType(dbType: string): boolean {
     const normalized = dbType.toLowerCase();

@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useFetcher } from "../common/fetcher";
 import { Table, Column } from "../types/schema";
 import { parsePkRoute, type PkFilter } from "../lib/row-id";
-import { isJsonDbType } from "../lib/content-detect";
+import { isJsonColumn } from "../lib/content-detect";
 import { useToast } from "./useToast";
 
 const numericTypes = ["Int", "Int!", "Float", "Float!", "BigInt", "BigInt!"];
@@ -45,7 +45,7 @@ function coerceDetail(
                 coerced[col.name] = !!v;
             }
         }
-        if (col.paramType === 'JSON' || isJsonDbType(col.dbType)) {
+        if (isJsonColumn(col)) {
             // The form edits JSON columns as text; parse back to a JSON value so
             // the JSON scalar isn't fed a double-encoded string. Unparseable text
             // is left as-is for the server to reject.

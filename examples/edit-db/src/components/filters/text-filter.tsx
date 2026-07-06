@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import { Column } from '@tanstack/react-table';
 import { X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
@@ -11,6 +11,7 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import type { ColumnFilterValue } from '@/hooks/useDataTable';
+import { useDebouncedCommit } from './use-debounced-commit';
 
 const operatorLabels: Record<string, string> = {
     _contains: 'Contains',
@@ -36,51 +37,37 @@ export function TextFilter<TData, TValue>({ column }: TextFilterProps<TData, TVa
     const [inputValue, setInputValue] = useState(
         currentFilter?.operator === '_null' ? '' : String(currentFilter?.value ?? '')
     );
-    const debounceRef = useRef<ReturnType<typeof setTimeout>>();
-    // Pending-apply closure, flushed on unmount so a value typed just before the
+    // Debounced apply with unmount flush, so a value typed just before the
     // menu closes (Radix unmounts the content) isn't silently dropped.
-    const flushRef = useRef<(() => void) | null>(null);
+    const { schedule, cancel } = useDebouncedCommit(DEBOUNCE_MS);
 
     const isNullOperator = operator === '_null';
 
-    useEffect(() => {
-        return () => {
-            if (debounceRef.current) clearTimeout(debounceRef.current);
-            flushRef.current?.();
-        };
-    }, []);
-
     const applyFilter = (op: string, val: string) => {
-        if (debounceRef.current) clearTimeout(debounceRef.current);
-
         if (op === '_null') {
-            flushRef.current = null;
+            cancel();
             column.setFilterValue({ operator: '_null', value: true } as ColumnFilterValue);
             return;
         }
 
         if (!val) {
-            flushRef.current = null;
+            cancel();
             column.setFilterValue(undefined);
             return;
         }
 
-        flushRef.current = () => {
-            if (debounceRef.current) clearTimeout(debounceRef.current);
-            flushRef.current = null;
-            column.setFilterValue({ operator: op, value: val } as ColumnFilterValue);
-        };
-        debounceRef.current = setTimeout(() => flushRef.current?.(), DEBOUNCE_MS);
+        schedule(() => column.setFilterValue({ operator: op, value: val } as ColumnFilterValue));
     };
 
     const handleOperatorChange = (newOp: string) => {
         setOperator(newOp);
         if (newOp === '_null') {
             setInputValue('');
-            column.setFilterValue({ operator: '_null', value: true } as ColumnFilterValue);
+            applyFilter('_null', '');
         } else if (inputValue) {
             applyFilter(newOp, inputValue);
         } else {
+            cancel();
             column.setFilterValue(undefined);
         }
     };
@@ -91,8 +78,7 @@ export function TextFilter<TData, TValue>({ column }: TextFilterProps<TData, TVa
     };
 
     const handleClear = () => {
-        if (debounceRef.current) clearTimeout(debounceRef.current);
-        flushRef.current = null;
+        cancel();
         setOperator('_contains');
         setInputValue('');
         column.setFilterValue(undefined);

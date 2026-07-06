@@ -6,7 +6,13 @@ export interface FkEqFilterResult {
     params: string[];
 }
 
-function coerceForGql(value: unknown, gqlType: string): unknown {
+/**
+ * Coerce a raw cell/route value to the JS type matching a GraphQL scalar so the
+ * variable payload agrees with its declared type (e.g. a Boolean FK is sent as
+ * `true`, not `"true"`). Unparseable numerics are passed through untouched so
+ * the server reports the real error instead of receiving `NaN`.
+ */
+export function coerceForGql(value: unknown, gqlType: string): unknown {
     if (value === null || value === undefined) return null;
     switch (gqlType) {
         case 'Int': {
@@ -27,7 +33,8 @@ function coerceForGql(value: unknown, gqlType: string): unknown {
     }
 }
 
-function gqlTypeOf(column: Column | undefined): string {
+/** The base GraphQL scalar of a column (`paramType` minus non-null marker), defaulting to String. */
+export function gqlTypeOf(column: Column | undefined): string {
     return column?.paramType?.replace('!', '') ?? 'String';
 }
 

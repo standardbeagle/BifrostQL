@@ -98,7 +98,17 @@ export function m2mRowsQuery(
     const clauses: string[] = [];
     const variables: Record<string, unknown> = {};
     srcCols.forEach((col, i) => {
-        const gqlType = (columnByName.get(col)?.paramType ?? 'Int').replace('!', '');
+        const junctionCol = columnByName.get(col);
+        // Fail fast on schema drift: silently defaulting the type here (e.g. to Int)
+        // would coerce a GUID/string parent key to NaN and return zero links, which
+        // reads as "no relationships" instead of the configuration error it is.
+        if (!junctionCol) {
+            throw new Error(
+                `Junction table '${junction.name}' has no column '${col}' ` +
+                `(junction source column of many-to-many relationship '${m2m.name}').`,
+            );
+        }
+        const gqlType = junctionCol.paramType.replace('!', '');
         const varName = `src${i}`;
         paramDecls.push(`$${varName}: ${gqlType}`);
         clauses.push(`{ ${col}: { _eq: $${varName} } }`);
@@ -145,11 +155,19 @@ export function m2mTargetPickerPlan(target: Table, m2m: ManyToManyJoin, search?:
     const idColumn = getPkTypes(target)[0]?.name ?? m2m.targetColumnNames[0];
     const labelColumn = target.labelColumn || idColumn;
     const fields = labelColumn !== idColumn ? `${idColumn} label: ${labelColumn}` : idColumn;
+    // Fail fast on schema drift: a label column that isn't in the target's column
+    // list means the relationship metadata and schema are out of sync.
+    const labelColDef = target.columns.find((c) => c.name === labelColumn);
+    if (!labelColDef) {
+        throw new Error(
+            `Target table '${target.name}' has no column '${labelColumn}' ` +
+            `(label column for the '${m2m.name}' many-to-many picker).`,
+        );
+    }
     // `_contains` is only generated for String columns, so server-side search is
     // only valid when the label column is String; otherwise the caller filters
     // client-side over the fetched window.
-    const labelType = target.columns.find((c) => c.name === labelColumn)?.paramType?.replace('!', '');
-    const serverSearch = labelType === 'String';
+    const serverSearch = labelColDef.paramType.replace('!', '') === 'String';
     const hasSearch = !!search && search.trim() !== '' && serverSearch;
     const paramDecls = hasSearch ? '$limit: Int, $search: String' : '$limit: Int';
     const filterText = hasSearch ? `filter: {${labelColumn}: {_contains: $search}} ` : '';

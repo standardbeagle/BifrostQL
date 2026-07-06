@@ -7,32 +7,14 @@ namespace BifrostQL.Core.QueryModel;
 public static class PivotSqlGenerator
 {
     /// <summary>
-    /// Dialect-aware entry point. Routes to native PIVOT when
-    /// <see cref="ISqlDialect.SupportsNativePivot"/> is true, otherwise
-    /// emits the CASE WHEN cross-tab fallback. Use this in preference to
-    /// the per-shape methods below so callers don't have to know which
-    /// dialects ship a PIVOT operator.
+    /// Dialect-aware entry point. Routes to the dialect's native PIVOT via
+    /// <see cref="ISqlDialect.BuildNativePivot"/> when it provides one (only SQL
+    /// Server), otherwise emits the portable CASE WHEN cross-tab fallback. Use this
+    /// in preference to the per-shape methods below so callers don't have to know
+    /// which dialects ship a PIVOT operator, and so no dialect-specific SQL lives in
+    /// Core.
     /// </summary>
     public static ParameterizedSql GeneratePivot(
-        ISqlDialect dialect,
-        PivotQueryConfig config,
-        string tableRef,
-        IReadOnlyList<object?> pivotValues,
-        ParameterizedSql? filter = null)
-        => dialect.SupportsNativePivot
-            ? GenerateSqlServerPivot(dialect, config, tableRef, pivotValues, filter)
-            : GenerateCaseWhenPivot(dialect, config, tableRef, pivotValues, filter);
-
-    /// <summary>
-    /// Generates a SQL Server native PIVOT query.
-    /// </summary>
-    /// <param name="dialect">SQL dialect for identifier escaping.</param>
-    /// <param name="config">Pivot query configuration.</param>
-    /// <param name="tableRef">Fully qualified table reference (e.g., [dbo].[Orders]).</param>
-    /// <param name="pivotValues">Distinct values from the pivot column. NULL values are represented as null entries.</param>
-    /// <param name="filter">Optional WHERE clause filter to apply to the source data.</param>
-    /// <returns>Parameterized SQL for the pivot query.</returns>
-    public static ParameterizedSql GenerateSqlServerPivot(
         ISqlDialect dialect,
         PivotQueryConfig config,
         string tableRef,
@@ -42,42 +24,8 @@ public static class PivotSqlGenerator
         if (pivotValues.Count == 0)
             return GenerateEmptyPivot(dialect, config, tableRef, filter);
 
-        var aggFunc = config.AggregateFunction.ToString().ToUpperInvariant();
-        var groupByCols = string.Join(", ", config.GroupByColumns.Select(c => dialect.EscapeIdentifier(c)));
-        var pivotCol = dialect.EscapeIdentifier(config.PivotColumn);
-        var valueCol = dialect.EscapeIdentifier(config.ValueColumn);
-
-        // Build column aliases for pivot values, replacing NULL with the null label
-        var pivotAliases = pivotValues
-            .Select(v => v == null ? config.NullLabel : v.ToString()!)
-            .ToList();
-
-        var pivotColumnList = string.Join(", ", pivotAliases.Select(a => dialect.EscapeIdentifier(a)));
-
-        // Bind NullLabel as a parameter to prevent SQL injection via user-controlled config values.
-        // The parameter index is offset by the number of filter parameters so names do not collide.
-        var filterParamCount = filter?.Parameters.Count ?? 0;
-        var nullLabelParamName = $"@p{filterParamCount}";
-
-        // Build the source subquery that coalesces NULL pivot values
-        var coalescedPivotCol = $"ISNULL(CAST({pivotCol} AS NVARCHAR(MAX)), {nullLabelParamName})";
-
-        var sourceSql = $"SELECT {groupByCols}, {coalescedPivotCol} AS {dialect.EscapeIdentifier("__pivot_col")}, {valueCol}" +
-                        $" FROM {tableRef}";
-
-        if (filter != null && !string.IsNullOrEmpty(filter.Sql))
-        {
-            sourceSql += filter.Sql;
-        }
-
-        // Build the PIVOT query
-        var sql = $"SELECT {groupByCols}, {pivotColumnList}" +
-                  $" FROM ({sourceSql}) AS __src" +
-                  $" PIVOT ({aggFunc}({valueCol}) FOR {dialect.EscapeIdentifier("__pivot_col")} IN ({pivotColumnList})) AS __pvt";
-
-        var allParameters = (filter?.Parameters ?? Array.Empty<SqlParameterInfo>()).ToList();
-        allParameters.Add(new SqlParameterInfo(nullLabelParamName, config.NullLabel));
-        return new ParameterizedSql(sql, allParameters);
+        return dialect.BuildNativePivot(config, tableRef, pivotValues, filter)
+            ?? GenerateCaseWhenPivot(dialect, config, tableRef, pivotValues, filter);
     }
 
     /// <summary>
@@ -147,9 +95,10 @@ public static class PivotSqlGenerator
 
     /// <summary>
     /// Generates SQL that returns only the group-by columns with no pivot data,
-    /// used when there are no distinct pivot values.
+    /// used when there are no distinct pivot values. Public so a dialect's
+    /// <see cref="ISqlDialect.BuildNativePivot"/> can reuse the portable empty shape.
     /// </summary>
-    private static ParameterizedSql GenerateEmptyPivot(
+    public static ParameterizedSql GenerateEmptyPivot(
         ISqlDialect dialect,
         PivotQueryConfig config,
         string tableRef,

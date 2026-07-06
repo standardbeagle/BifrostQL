@@ -204,11 +204,24 @@ public interface ISqlDialect
         => null;
 
     /// <summary>
-    /// Whether this dialect supports the native `PIVOT (... FOR ... IN (...))`
-    /// operator. Only SQL Server (and Oracle, not implemented) ship a native
-    /// PIVOT; every other dialect uses the CASE WHEN cross-tab fallback.
+    /// Builds a native pivot (cross-tab) query for dialects that ship a `PIVOT`
+    /// operator, or returns null when the dialect has none — in which case
+    /// <see cref="PivotSqlGenerator.GeneratePivot"/> falls back to the portable
+    /// CASE WHEN cross-tab. Only SQL Server implements this; keeping the
+    /// SQL-Server-specific `PIVOT`/`ISNULL(... NVARCHAR(MAX) ...)` syntax inside the
+    /// dialect (not in Core) is why this is a hook rather than a bool flag. Mirrors
+    /// <see cref="UpsertSql"/>'s null-means-unsupported convention.
     /// </summary>
-    bool SupportsNativePivot => false;
+    /// <param name="config">Pivot query configuration.</param>
+    /// <param name="tableRef">Escaped, optionally schema-qualified table reference.</param>
+    /// <param name="pivotValues">Distinct non-empty pivot-column values (null = SQL NULL).</param>
+    /// <param name="filter">Optional WHERE-clause fragment applied to the source rows.</param>
+    ParameterizedSql? BuildNativePivot(
+        PivotQueryConfig config,
+        string tableRef,
+        IReadOnlyList<object?> pivotValues,
+        ParameterizedSql? filter = null)
+        => null;
 
     /// <summary>
     /// Whether a column of the given database type cannot be materialized directly by

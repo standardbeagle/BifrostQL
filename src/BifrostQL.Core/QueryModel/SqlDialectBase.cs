@@ -147,7 +147,12 @@ public abstract class SqlDialectBase : ISqlDialect
         => null;
 
     /// <inheritdoc />
-    public virtual bool SupportsNativePivot => false;
+    public virtual ParameterizedSql? BuildNativePivot(
+        PivotQueryConfig config,
+        string tableRef,
+        IReadOnlyList<object?> pivotValues,
+        ParameterizedSql? filter = null)
+        => null;
 
     /// <inheritdoc />
     public virtual bool RequiresTextCast(string dataType) => false;

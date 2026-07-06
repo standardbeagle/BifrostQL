@@ -29,7 +29,7 @@ public sealed class PivotSqlGeneratorTests
 
         var pivotValues = new List<object?> { "Active", null };
 
-        var result = PivotSqlGenerator.GenerateSqlServerPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[dbo].[Orders]", pivotValues);
 
         // Security property 1: the label must NOT appear as a SQL string literal.
@@ -67,7 +67,7 @@ public sealed class PivotSqlGeneratorTests
 
         var pivotValues = new List<object?> { null };
 
-        var result = PivotSqlGenerator.GenerateSqlServerPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[dbo].[Orders]", pivotValues);
 
         // The escaped identifier must double the ] so the identifier never closes early.
@@ -125,7 +125,7 @@ public sealed class PivotSqlGeneratorTests
             " WHERE [Year] = @p0",
             new List<SqlParameterInfo> { new("@p0", 2024) });
 
-        var result = PivotSqlGenerator.GenerateSqlServerPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[dbo].[Orders]", pivotValues, filter);
 
         result.Sql.Should().NotContain(maliciousLabel);

@@ -221,7 +221,7 @@ public sealed class PivotQueryTests
         var config = PivotQueryConfig.Create("Status", "Id", "COUNT", new[] { "Region" });
         var pivotValues = new List<object?> { "Active", "Inactive", "Pending" };
 
-        var result = PivotSqlGenerator.GenerateSqlServerPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[Orders]", pivotValues);
 
         result.Sql.Should().Contain("SELECT [Region], [Active], [Inactive], [Pending]");
@@ -236,7 +236,7 @@ public sealed class PivotQueryTests
         var config = PivotQueryConfig.Create("Status", "Amount", "SUM", new[] { "Region", "Year" });
         var pivotValues = new List<object?> { "Open", "Closed" };
 
-        var result = PivotSqlGenerator.GenerateSqlServerPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[Sales]", pivotValues);
 
         result.Sql.Should().Contain("SELECT [Region], [Year], [Open], [Closed]");
@@ -249,7 +249,7 @@ public sealed class PivotQueryTests
         var config = PivotQueryConfig.Create("Status", "Id", "COUNT", new[] { "Region" });
         var pivotValues = new List<object?> { "Active", null, "Pending" };
 
-        var result = PivotSqlGenerator.GenerateSqlServerPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[Orders]", pivotValues);
 
         result.Sql.Should().Contain("[_null_]");
@@ -265,7 +265,7 @@ public sealed class PivotQueryTests
         var config = PivotQueryConfig.Create("Status", "Id", "COUNT", new[] { "Region" }, nullLabel: "Unknown");
         var pivotValues = new List<object?> { "Active", null };
 
-        var result = PivotSqlGenerator.GenerateSqlServerPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[Orders]", pivotValues);
 
         result.Sql.Should().Contain("[Unknown]");
@@ -283,7 +283,7 @@ public sealed class PivotQueryTests
         var filter = new ParameterizedSql(" WHERE [Year] = @p0",
             new List<SqlParameterInfo> { new("@p0", 2024) });
 
-        var result = PivotSqlGenerator.GenerateSqlServerPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[Orders]", pivotValues, filter);
 
         result.Sql.Should().Contain("WHERE [Year] = @p0");
@@ -298,7 +298,7 @@ public sealed class PivotQueryTests
         var config = PivotQueryConfig.Create("Status", "Amount", "SUM", new[] { "Region" });
         var pivotValues = new List<object?> { "Open", "Closed" };
 
-        var result = PivotSqlGenerator.GenerateSqlServerPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[Orders]", pivotValues);
 
         result.Sql.Should().Contain("PIVOT (SUM([Amount])");
@@ -310,7 +310,7 @@ public sealed class PivotQueryTests
         var config = PivotQueryConfig.Create("Status", "Amount", "AVG", new[] { "Region" });
         var pivotValues = new List<object?> { "Open", "Closed" };
 
-        var result = PivotSqlGenerator.GenerateSqlServerPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[Orders]", pivotValues);
 
         result.Sql.Should().Contain("PIVOT (AVG([Amount])");
@@ -322,7 +322,7 @@ public sealed class PivotQueryTests
         var config = PivotQueryConfig.Create("Status", "Price", "MIN", new[] { "Category" });
         var pivotValues = new List<object?> { "Small", "Large" };
 
-        var result = PivotSqlGenerator.GenerateSqlServerPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[Products]", pivotValues);
 
         result.Sql.Should().Contain("PIVOT (MIN([Price])");
@@ -334,7 +334,7 @@ public sealed class PivotQueryTests
         var config = PivotQueryConfig.Create("Status", "Price", "MAX", new[] { "Category" });
         var pivotValues = new List<object?> { "Small", "Large" };
 
-        var result = PivotSqlGenerator.GenerateSqlServerPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[Products]", pivotValues);
 
         result.Sql.Should().Contain("PIVOT (MAX([Price])");
@@ -346,7 +346,7 @@ public sealed class PivotQueryTests
         var config = PivotQueryConfig.Create("Status", "Id", "COUNT", new[] { "Region" });
         var pivotValues = new List<object?>();
 
-        var result = PivotSqlGenerator.GenerateSqlServerPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[Orders]", pivotValues);
 
         result.Sql.Should().Contain("SELECT [Region] FROM [Orders]");
@@ -360,7 +360,7 @@ public sealed class PivotQueryTests
         var config = PivotQueryConfig.Create("Status", "Id", "COUNT", new[] { "Region" });
         var pivotValues = new List<object?> { "Active" };
 
-        var result = PivotSqlGenerator.GenerateSqlServerPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[dbo].[Orders]", pivotValues);
 
         result.Sql.Should().Contain("FROM [dbo].[Orders]");
@@ -532,7 +532,7 @@ public sealed class PivotQueryTests
         var tableRef = Dialect.TableReference(table.TableSchema, table.DbName);
         var pivotValues = new List<object?> { "Q1", "Q2", "Q3", "Q4" };
 
-        var pivotSql = PivotSqlGenerator.GenerateSqlServerPivot(
+        var pivotSql = PivotSqlGenerator.GeneratePivot(
             Dialect, config, tableRef, pivotValues);
 
         // Assert
@@ -582,7 +582,7 @@ public sealed class PivotQueryTests
             new List<SqlParameterInfo> { new("@p0", 2020) });
 
         // SQL Server pivot
-        var sqlServerResult = PivotSqlGenerator.GenerateSqlServerPivot(
+        var sqlServerResult = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[dbo].[Orders]", pivotValues, filter);
 
         sqlServerResult.Sql.Should().Contain("[_null_]");
@@ -613,7 +613,7 @@ public sealed class PivotQueryTests
         var config = PivotQueryConfig.Create("Status", "Amount", funcInput, new[] { "Region" });
         var pivotValues = new List<object?> { "X" };
 
-        var result = PivotSqlGenerator.GenerateSqlServerPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[T]", pivotValues);
 
         result.Sql.Should().Contain($"PIVOT ({expectedSql}([Amount])");
@@ -697,12 +697,21 @@ public sealed class PivotQueryTests
     }
 
     [Fact]
-    public void SupportsNativePivot_OnlySqlServerReturnsTrue()
+    public void OnlySqlServerBuildsANativePivot()
     {
-        BifrostQL.SqlServer.SqlServerDialect.Instance.SupportsNativePivot.Should().BeTrue();
-        BifrostQL.Sqlite.SqliteDialect.Instance.SupportsNativePivot.Should().BeFalse();
-        BifrostQL.Ngsql.PostgresDialect.Instance.SupportsNativePivot.Should().BeFalse();
-        BifrostQL.MySql.MySqlDialect.Instance.SupportsNativePivot.Should().BeFalse();
+        // Only SQL Server emits a native PIVOT; every other dialect returns null from
+        // BuildNativePivot so PivotSqlGenerator falls back to the CASE WHEN cross-tab.
+        var config = PivotQueryConfig.Create("Status", "Id", "COUNT", new[] { "Region" });
+        var pivotValues = new List<object?> { "Active", "Inactive" };
+
+        BifrostQL.SqlServer.SqlServerDialect.Instance
+            .BuildNativePivot(config, "[Orders]", pivotValues).Should().NotBeNull();
+        BifrostQL.Sqlite.SqliteDialect.Instance
+            .BuildNativePivot(config, "\"Orders\"", pivotValues).Should().BeNull();
+        BifrostQL.Ngsql.PostgresDialect.Instance
+            .BuildNativePivot(config, "\"Orders\"", pivotValues).Should().BeNull();
+        BifrostQL.MySql.MySqlDialect.Instance
+            .BuildNativePivot(config, "`Orders`", pivotValues).Should().BeNull();
     }
 
     #endregion

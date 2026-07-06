@@ -25,6 +25,7 @@
 
 import {
   BifrostBinaryClient,
+  type BifrostClientOptions,
   type BifrostQueryResult,
 } from "@bifrostql/binary-client";
 
@@ -82,6 +83,22 @@ export interface QueryTransportResult {
 export interface QueryTransportOptions {
   /** Aborts the request when fired (superseded/unmounted queries). */
   signal?: AbortSignal;
+}
+
+/**
+ * Connection-state callbacks a transport surfaces to the UI. Only the binary
+ * transport fires these: its underlying WebSocket connects, drops, and
+ * auto-reconnects, and the header badge must track that live rather than
+ * sampling `connected` once. The HTTP transport is stateless and never invokes
+ * them.
+ */
+export interface TransportStatusCallbacks {
+  /**
+   * Fired whenever the live connection state may have changed — socket open,
+   * close, a successful reconnect, or an exhausted reconnect budget. The
+   * argument is the transport's current `connected` value.
+   */
+  onConnectedChange?: (connected: boolean) => void;
 }
 
 export type TransportMode = "http" | "binary";
@@ -331,8 +348,10 @@ export class BinaryTransport implements QueryTransport {
   constructor(
     private readonly url: string,
     private readonly clientFactory: (
-      url: string
-    ) => BifrostBinaryClient = defaultBinaryClientFactory
+      url: string,
+      options?: Partial<BifrostClientOptions>
+    ) => BifrostBinaryClient = defaultBinaryClientFactory,
+    private readonly statusCallbacks?: TransportStatusCallbacks
   ) {}
 
   get connected(): boolean {
@@ -378,14 +397,38 @@ export class BinaryTransport implements QueryTransport {
    */
   private async ensureConnected(): Promise<void> {
     if (!this.client) {
-      this.client = this.clientFactory(this.url);
+      this.client = this.clientFactory(this.url, this.buildClientOptions());
     }
     await this.client.connect();
   }
+
+  /**
+   * Builds the binary-client lifecycle options that forward socket state to the
+   * UI. Each hook reports the transport's current `connected` value (delegated
+   * to the live client), so the header badge tracks disconnects and the
+   * auto-reconnect cycle instead of freezing on its first sample. Returns an
+   * empty object when no callbacks were supplied.
+   */
+  private buildClientOptions(): Partial<BifrostClientOptions> {
+    const callbacks = this.statusCallbacks;
+    if (!callbacks?.onConnectedChange) {
+      return {};
+    }
+    const report = () => callbacks.onConnectedChange?.(this.connected);
+    return {
+      onOpen: report,
+      onClose: report,
+      onReconnect: report,
+      onReconnectFailed: report,
+    };
+  }
 }
 
-function defaultBinaryClientFactory(url: string): BifrostBinaryClient {
-  return new BifrostBinaryClient({ url });
+function defaultBinaryClientFactory(
+  url: string,
+  options?: Partial<BifrostClientOptions>
+): BifrostBinaryClient {
+  return new BifrostBinaryClient({ url, ...options });
 }
 
 /**
@@ -399,7 +442,11 @@ function defaultBinaryClientFactory(url: string): BifrostBinaryClient {
 export function createTransport(
   mode: TransportMode,
   config: TransportConfig,
-  binaryClientFactory?: (url: string) => BifrostBinaryClient
+  binaryClientFactory?: (
+    url: string,
+    options?: Partial<BifrostClientOptions>
+  ) => BifrostBinaryClient,
+  callbacks?: TransportStatusCallbacks
 ): QueryTransport {
   const graphqlPath = config.graphqlPath ?? "/graphql";
   const binaryPath = config.binaryPath ?? "/bifrost-ws";
@@ -409,7 +456,7 @@ export function createTransport(
 
   if (mode === "binary") {
     const wsUrl = deriveBinaryUrl(config.endpoint, binaryPath);
-    return new BinaryTransport(wsUrl, binaryClientFactory);
+    return new BinaryTransport(wsUrl, binaryClientFactory, callbacks);
   }
   return new HttpTransport(httpUrl);
 }

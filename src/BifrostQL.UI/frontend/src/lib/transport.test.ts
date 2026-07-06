@@ -538,6 +538,56 @@ describe("BinaryTransport", () => {
     );
     expect(() => t.close()).not.toThrow();
   });
+
+  it("forwards live connection-state changes to the status callback", async () => {
+    const changes: boolean[] = [];
+    const fake = new FakeBinaryClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let captured: any;
+    const t = new BinaryTransport(
+      "ws://localhost:5000/bifrost-ws",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ((_url: string, options: any) => {
+        captured = options;
+        return fake;
+      }) as unknown as any,
+      { onConnectedChange: (connected) => changes.push(connected) }
+    );
+
+    await t.query("{ a }");
+
+    // The transport wired the binary client's lifecycle hooks, each of which
+    // reports the transport's current `connected` state (delegated to the
+    // client) — so the badge tracks open/close/reconnect rather than one sample.
+    expect(captured).toBeDefined();
+    fake.isConnected = true;
+    captured.onOpen();
+    fake.isConnected = false;
+    captured.onClose(1006, "drop");
+    fake.isConnected = true;
+    captured.onReconnect(1);
+    fake.isConnected = false;
+    captured.onReconnectFailed(5, new Error("gave up"));
+
+    expect(changes).toEqual([true, false, true, false]);
+  });
+
+  it("passes no lifecycle hooks when no status callbacks are supplied", async () => {
+    const fake = new FakeBinaryClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let captured: any;
+    const t = new BinaryTransport(
+      "ws://localhost:5000/bifrost-ws",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ((_url: string, options: any) => {
+        captured = options;
+        return fake;
+      }) as unknown as any
+    );
+
+    await t.query("{ a }");
+    expect(captured).toEqual({});
+  });
 });
 
 /**

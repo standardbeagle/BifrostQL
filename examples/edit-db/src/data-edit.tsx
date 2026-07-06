@@ -1,16 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
-import { ReactElement, useMemo, useState } from "react";
+import { ReactElement, useEffect, useMemo, useState } from "react";
 import { useForm, useStore, AnyFieldApi, ReactFormExtendedApi } from "@tanstack/react-form";
 import { useSchema } from "./hooks/useSchema";
 import { useParams, useNavigate } from "./hooks/usePath";
 import { Schema, Table, Column, Join } from "./types/schema";
-import { TableRefValue, useTableRef } from "./hooks/useTableRef";
+import { TableRefValue, useTableRef, useTableRefValue } from "./hooks/useTableRef";
 import { useCompositeTableRef } from "./hooks/useCompositeTableRef";
 import { useFetcher } from "./common/fetcher";
 import { useTableMutation } from "./hooks/useTableMutation";
 import { parsePkRoute, buildPkEqFilter, encodeRouteParts } from "./lib/row-id";
 import { validateFieldValue } from "./lib/field-validation";
 import { isComposite } from "./lib/fk";
+import { isDateColumn, isDateTimeColumn, toDateInputValue, preserveUntouchedDateValues } from "./lib/date-input";
+import { matchesLabel } from "./lib/label-match";
 import {
     Dialog,
     DialogContent,
@@ -31,48 +33,51 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { LoaderCircle, Save, X, AlertCircle } from "lucide-react";
 import { ContentEditor } from "@/components/content-editor";
-import { isBinaryDbType, isLongTextDbType, isJsonDbType } from "@/lib/content-detect";
-import { resolveDisplayFormat } from "./lib/format-value";
+import { isBinaryDbType, isLongTextDbType, isJsonColumn } from "@/lib/content-detect";
 
 const booleanTypes = ["Boolean", "Boolean!"];
-const dateTypes = ["DateTime", "DateTime!"];
 const numericTypes = ["Int", "Int!", "Float", "Float!"];
 
 // Sentinel for the "(none)" option in FK/enum selects. Radix's Select rejects an
-// empty-string item value, so we round-trip this and map it back to '' on change.
-const NONE_VALUE = "__none__";
+// empty-string item value, so we round-trip this and map it back to null on change.
+export const NONE_VALUE = "__none__";
 
-/** JSON columns arrive parsed (object/array) from the JSON scalar. */
-function isJsonColumn(c: Column): boolean {
-    return isJsonDbType(c.dbType) || c.paramType === 'JSON';
+/**
+ * Maps a form value to the Radix `<Select>` control value. Radix shows the
+ * placeholder for '', so a cleared/unset value must map to the "(none)" item's
+ * sentinel whenever that item is offered — otherwise clearing a value would be
+ * indistinguishable from never having picked one.
+ */
+export function selectControlValue(value: unknown, offersNone: boolean): string {
+    if (value === null || value === undefined || value === '') return offersNone ? NONE_VALUE : '';
+    return String(value);
+}
+
+/**
+ * Shared onSubmit/onBlur validators for a form field — client and server enforce
+ * identical rules through validateFieldValue, and blur gives per-field feedback
+ * before the user hits Save.
+ */
+function fieldValidators(column: Column, isRequired: boolean) {
+    const validate = ({ value }: { value: unknown }) => validateFieldValue(column, value, isRequired);
+    return { onSubmit: validate, onBlur: validate };
+}
+
+/** Shared error/aria wiring for a form field's control. */
+function fieldA11y(field: AnyFieldApi, errorId: string) {
+    const hasError = field.state.meta.errors.length > 0;
+    return {
+        hasError,
+        ariaProps: {
+            'aria-invalid': hasError,
+            'aria-describedby': hasError ? errorId : undefined,
+        },
+    };
 }
 
 /** Columns edited through the ContentEditor (textarea) rather than a plain input. */
 function isContentColumn(c: Column): boolean {
     return isBinaryDbType(c.dbType) || isLongTextDbType(c.dbType) || isJsonColumn(c);
-}
-
-/** True when a date-ish column carries a time-of-day component (datetime, not a bare date). */
-function isDateTimeColumn(column: Column): boolean {
-    return resolveDisplayFormat(column) === 'datetime';
-}
-
-/**
- * Normalizes a stored date/datetime string into the value an `<input type="date">`
- * or `<input type="datetime-local">` expects. For datetime columns the time-of-day is
- * preserved (fractional seconds and timezone offset are trimmed) so re-saving an
- * unrelated field does not overwrite the time with midnight. Returns '' for the
- * SQL "zero" date and unparseable input.
- */
-function toDateInputValue(raw: string | undefined, withTime: boolean): string {
-    if (!raw) return '';
-    const m = raw.match(/^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?))?/);
-    if (!m) return '';
-    if (m[1] === '0001-01-01') return '';
-    if (!withTime) return m[1];
-    if (!m[2]) return m[1]; // datetime column with no time part stored
-    const time = m[2].length === 5 ? `${m[2]}:00` : m[2];
-    return `${m[1]}T${time}`;
 }
 
 const EMPTY_PK_EQ_FILTER = { filterText: "", variables: {} as Record<string, unknown>, params: [] as string[] };
@@ -170,7 +175,7 @@ function DataEditDetail({ table, schema, editid, onClose }: { table: string, sch
         const values: Record<string, unknown> = {};
         for (const { column: c, fkRole } of editColumns) {
             const isFkOrEnum = fkRole !== 'none' || (c.enumValues !== undefined && c.enumValues.length > 0);
-            if (dateTypes.some(t => t === c.paramType)) {
+            if (isDateColumn(c)) {
                 values[c.name] = toDateInputValue(value[c.name] as string | undefined, isDateTimeColumn(c));
             } else if (booleanTypes.some(t => t === c.paramType)) {
                 // Preserve NULL for nullable booleans so re-saving an unrelated
@@ -203,8 +208,17 @@ function DataEditDetail({ table, schema, editid, onClose }: { table: string, sch
     const form = useForm({
         defaultValues,
         onSubmit: async ({ value: formValues }) => {
+            // Date inputs hold a lossy projection of the stored value (timezone
+            // offset and fractional seconds trimmed). For date fields the user
+            // did not edit, send the original raw value so saving an unrelated
+            // field cannot shift the stored instant.
+            const detail = preserveUntouchedDateValues(
+                formValues,
+                value,
+                editColumns.map(({ column: c }) => c),
+            );
             const mutate = isInsert ? mutation.insert : mutation.update;
-            await mutate({ ...formValues });
+            await mutate(detail);
             onClose();
         },
     });
@@ -475,7 +489,7 @@ function EditField({ column, join, fkRole, form, schema }: EditFieldProps) {
 
     // Composite-FK member columns are driven by the anchor's CompositeParentField — hide the input.
     if (fkRole === 'member-composite') return null;
-    const isDate = dateTypes.some(t => t === column.paramType);
+    const isDate = isDateColumn(column);
     const isNumeric = numericTypes.some(t => t === column.paramType);
     const showCharCounter = column.maxLength && column.maxLength > 0 && !isDate && !isNumeric;
 
@@ -503,22 +517,14 @@ function EditField({ column, join, fkRole, form, schema }: EditFieldProps) {
     const inputType = column.inputType
         || (isDate ? (isDateTimeColumn(column) ? "datetime-local" : "date") : isNumeric ? "number" : "text");
 
-    // Build validators based on schema constraints. Shared with the server via
-    // validateFieldValue so client and server enforce identical rules. Also runs
-    // on blur so the user gets per-field feedback before hitting Save.
-    const validators = {
-        onSubmit: ({ value }: { value: unknown }) => validateFieldValue(column, value, isRequired),
-        onBlur: ({ value }: { value: unknown }) => validateFieldValue(column, value, isRequired),
-    };
-
     const errorId = `${name}-error`;
 
     return (
         <form.Field
             name={name}
-            validators={validators}
+            validators={fieldValidators(column, isRequired)}
             children={(field: AnyFieldApi) => {
-                const hasError = field.state.meta.errors.length > 0;
+                const { ariaProps } = fieldA11y(field, errorId);
                 return (
                 <div className="grid gap-1">
                     <Label htmlFor={name} className="text-xs text-muted-foreground">
@@ -539,8 +545,7 @@ function EditField({ column, join, fkRole, form, schema }: EditFieldProps) {
                         step={column.step}
                         pattern={column.pattern}
                         title={column.patternMessage}
-                        aria-invalid={hasError}
-                        aria-describedby={hasError ? errorId : undefined}
+                        {...ariaProps}
                         className="h-8 text-sm"
                     />
                     {showCharCounter && (
@@ -581,12 +586,9 @@ function EnumField({ column, form, isRequired }: EnumFieldProps) {
     return (
         <form.Field
             name={name}
-            validators={{
-                onSubmit: ({ value }: { value: unknown }) => validateFieldValue(column, value, isRequired),
-                onBlur: ({ value }: { value: unknown }) => validateFieldValue(column, value, isRequired),
-            }}
+            validators={fieldValidators(column, isRequired)}
             children={(field: AnyFieldApi) => {
-                const hasError = field.state.meta.errors.length > 0;
+                const { ariaProps } = fieldA11y(field, errorId);
                 return (
                 <div className="grid gap-1">
                     <Label htmlFor={name} className="text-xs text-muted-foreground">
@@ -594,10 +596,10 @@ function EnumField({ column, form, isRequired }: EnumFieldProps) {
                         {isRequired && <span className="text-destructive ml-0.5">*</span>}
                     </Label>
                     <Select
-                        value={String(field.state.value ?? '')}
+                        value={selectControlValue(field.state.value, !isRequired)}
                         onValueChange={(val) => field.handleChange(val === NONE_VALUE ? null : val)}
                     >
-                        <SelectTrigger id={name} className="w-full h-8 text-sm" aria-invalid={hasError} aria-describedby={hasError ? errorId : undefined}>
+                        <SelectTrigger id={name} className="w-full h-8 text-sm" {...ariaProps}>
                             <SelectValue placeholder={`Select ${column.label}`} />
                         </SelectTrigger>
                         <SelectContent>
@@ -686,12 +688,9 @@ function ContentField({ column, form }: { column: Column; form: AnyReactFormApi 
     return (
         <form.Field
             name={name}
-            validators={{
-                onSubmit: ({ value }: { value: unknown }) => validateFieldValue(column, value, isRequired),
-                onBlur: ({ value }: { value: unknown }) => validateFieldValue(column, value, isRequired),
-            }}
+            validators={fieldValidators(column, isRequired)}
             children={(field: AnyFieldApi) => {
-                const hasError = field.state.meta.errors.length > 0;
+                const { hasError } = fieldA11y(field, errorId);
                 return (
                 <div className="grid gap-1">
                     <Label htmlFor={name} className="text-xs text-muted-foreground">
@@ -726,24 +725,59 @@ interface ParentFieldProps {
 
 function ParentField({ column, join, form, schema, isRequired }: ParentFieldProps) {
     const name = column.name;
-    const parentData = useTableRef(schema, join.destinationTable, join.destinationColumnNames[0]);
+    const destColumn = join.destinationColumnNames[0];
     const [search, setSearch] = useState('');
+    const [debounced, setDebounced] = useState('');
+
+    // Debounce so each keystroke doesn't fire a query; when the parent's label
+    // column is String-typed the search runs server-side, so parents beyond the
+    // fetched window stay findable (otherwise the fetched window is filtered
+    // client-side below).
+    useEffect(() => {
+        const t = setTimeout(() => setDebounced(search), 300);
+        return () => clearTimeout(t);
+    }, [search]);
+
+    const parentData = useTableRef(schema, join.destinationTable, destColumn, debounced);
+
+    // Subscribe to the current FK value at hook level (form.Field's children is
+    // a render prop, so hooks can't live inside it).
+    const currentValue = useStore(form.store, (s: { values: Record<string, unknown> }) => s.values?.[name]);
+    const currentInWindow = currentValue == null || currentValue === ''
+        || parentData.data.some((r: TableRefValue) => String(r.key) === String(currentValue));
+    // When the stored FK points outside the fetched window, resolve its label
+    // with a single-row lookup so the Select shows the stored value instead of
+    // a misleading placeholder.
+    const lookup = useTableRefValue(
+        schema,
+        join.destinationTable,
+        destColumn,
+        !parentData.loading && !currentInWindow ? currentValue : null,
+    );
+
     const errorId = `${name}-error`;
 
-    const term = search.trim().toLowerCase();
-    const filteredRows = term
-        ? parentData.data.filter((r: TableRefValue) => String(r.label ?? r.key ?? '').toLowerCase().includes(term))
-        : parentData.data;
+    const term = debounced.trim();
+    const filteredRows = parentData.serverSearch || !term
+        ? parentData.data
+        : parentData.data.filter((r: TableRefValue) => matchesLabel(r, 'key', term));
+
+    // The currently selected parent must always have a matching item so the
+    // closed Select can display it — even when it's outside the fetched window
+    // (lookup above) or filtered out by the search term. Until the lookup
+    // resolves (or if the FK dangles), fall back to showing the raw key.
+    const selectedRow: TableRefValue | null = currentValue == null || currentValue === ''
+        ? null
+        : parentData.data.find((r: TableRefValue) => String(r.key) === String(currentValue))
+            ?? lookup.value
+            ?? { key: String(currentValue), label: String(currentValue) };
 
     return (
         <form.Field
             name={name}
-            validators={{
-                onSubmit: ({ value }: { value: unknown }) => validateFieldValue(column, value, isRequired),
-                onBlur: ({ value }: { value: unknown }) => validateFieldValue(column, value, isRequired),
-            }}
+            validators={fieldValidators(column, isRequired)}
             children={(field: AnyFieldApi) => {
-                const hasError = field.state.meta.errors.length > 0;
+                const { ariaProps } = fieldA11y(field, errorId);
                 return (
                 <div className="grid gap-1">
                     <Label htmlFor={name} className="text-xs text-muted-foreground">
@@ -751,11 +785,11 @@ function ParentField({ column, join, form, schema, isRequired }: ParentFieldProp
                         {isRequired && <span className="text-destructive ml-0.5">*</span>}
                     </Label>
                     <Select
-                        value={String(field.state.value ?? '')}
+                        value={selectControlValue(field.state.value, !isRequired)}
                         onValueChange={(val) => field.handleChange(val === NONE_VALUE ? null : val)}
-                        onOpenChange={(open) => { if (!open) setSearch(''); }}
+                        onOpenChange={(open) => { if (!open) { setSearch(''); setDebounced(''); } }}
                     >
-                        <SelectTrigger id={name} className="w-full h-8 text-sm" aria-invalid={hasError} aria-describedby={hasError ? errorId : undefined}>
+                        <SelectTrigger id={name} className="w-full h-8 text-sm" {...ariaProps}>
                             <SelectValue placeholder={`Select ${column.label}`} />
                         </SelectTrigger>
                         <SelectContent>
@@ -779,6 +813,9 @@ function ParentField({ column, join, form, schema, isRequired }: ParentFieldProp
                             {!isRequired && (
                                 <SelectItem value={NONE_VALUE} className="text-muted-foreground">(none)</SelectItem>
                             )}
+                            {selectedRow && !filteredRows.some((r: TableRefValue) => String(r.key) === String(selectedRow.key)) && (
+                                <SelectItem value={String(selectedRow.key)}>{selectedRow.label}</SelectItem>
+                            )}
                             {filteredRows.map((row: TableRefValue) => (
                                 <SelectItem key={row.key} value={String(row.key)}>
                                     {row.label}
@@ -789,6 +826,13 @@ function ParentField({ column, join, form, schema, isRequired }: ParentFieldProp
                             )}
                         </SelectContent>
                     </Select>
+                    {/* Fail fast and visibly: a failed option fetch otherwise reads
+                        as an inexplicably empty dropdown. */}
+                    {parentData.error != null && (
+                        <p className="text-xs text-destructive" role="alert">
+                            Failed to load {column.label} options: {String((parentData.error as Error)?.message ?? parentData.error)}
+                        </p>
+                    )}
                     <FieldErrors errors={field.state.meta.errors} id={errorId} />
                 </div>
                 );
@@ -849,11 +893,9 @@ function CompositeParentField({ column, join, form, schema, isRequired }: Compos
     return (
         <form.Field
             name={column.name}
-            validators={{
-                onSubmit: ({ value }: { value: unknown }) => validateFieldValue(column, value, isRequired),
-            }}
+            validators={fieldValidators(column, isRequired)}
             children={(field: AnyFieldApi) => {
-                const hasError = field.state.meta.errors.length > 0;
+                const { ariaProps } = fieldA11y(field, errorId);
                 return (
                 <div className="grid gap-1 sm:col-span-2">
                     <Label htmlFor={column.name} className="text-xs text-muted-foreground">
@@ -864,7 +906,7 @@ function CompositeParentField({ column, join, form, schema, isRequired }: Compos
                         </span>
                     </Label>
                     <Select value={currentRoute} onValueChange={onChange}>
-                        <SelectTrigger id={column.name} className="w-full h-8 text-sm" aria-invalid={hasError} aria-describedby={hasError ? errorId : undefined}>
+                        <SelectTrigger id={column.name} className="w-full h-8 text-sm" {...ariaProps}>
                             <SelectValue placeholder={`Select ${column.label}`} />
                         </SelectTrigger>
                         <SelectContent>

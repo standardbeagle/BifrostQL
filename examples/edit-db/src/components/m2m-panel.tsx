@@ -10,6 +10,7 @@ import { useDeleteMutation } from '../hooks/useDeleteMutation';
 import { useToast } from '../hooks/useToast';
 import { m2mRowsQuery, payloadColumns, targetDisplay, attachJunctionDetail, m2mTargetPickerPlan } from '../lib/m2m';
 import { pkFilterFor } from '../lib/row-id';
+import { matchesLabel } from '../lib/label-match';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -253,7 +254,7 @@ function TargetPicker({ target, junction, m2m, parentRowId, onClose, onLinked }:
     const allRows = data?.[target.name]?.data ?? [];
     const rows = serverSearch || !term
         ? allRows
-        : allRows.filter((r) => String(r.label ?? r[idColumn] ?? '').toLowerCase().includes(term.toLowerCase()));
+        : allRows.filter((r) => matchesLabel(r, idColumn, term));
     // Truncation is about the fetched window (allRows), not the client-filtered view.
     const windowFull = allRows.length >= pickerLimit;
 

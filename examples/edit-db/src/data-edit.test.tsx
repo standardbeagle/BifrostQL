@@ -4,6 +4,7 @@ import '@testing-library/jest-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { FormApi } from '@tanstack/react-form';
 import { Column } from './types/schema';
+import { selectControlValue, NONE_VALUE } from './data-edit';
 
 // Mock the form hook
 const mockForm = {
@@ -520,5 +521,28 @@ describe('Numeric Range Validation', () => {
       expect(validateNumericField(0.005, column, false, true)).toBe('Rate must be at least 0.01');
       expect(validateNumericField(1.0, column, false, true)).toBe('Rate must be at most 0.99');
     });
+  });
+});
+
+describe('selectControlValue', () => {
+  // A cleared nullable FK/enum must select the "(none)" item, not fall back to
+  // '' (which Radix renders as the placeholder — indistinguishable from never
+  // having picked a value).
+  it('maps a cleared/unset value to the (none) sentinel when that item is offered', () => {
+    expect(selectControlValue(null, true)).toBe(NONE_VALUE);
+    expect(selectControlValue(undefined, true)).toBe(NONE_VALUE);
+    expect(selectControlValue('', true)).toBe(NONE_VALUE);
+  });
+
+  it('keeps the placeholder (empty control value) for required selects with no value yet', () => {
+    expect(selectControlValue(null, false)).toBe('');
+    expect(selectControlValue(undefined, false)).toBe('');
+    expect(selectControlValue('', false)).toBe('');
+  });
+
+  it('stringifies present values regardless of the (none) offer', () => {
+    expect(selectControlValue(5, true)).toBe('5');
+    expect(selectControlValue('active', false)).toBe('active');
+    expect(selectControlValue(0, true)).toBe('0'); // falsy but real value
   });
 });

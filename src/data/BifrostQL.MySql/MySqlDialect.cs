@@ -27,4 +27,12 @@ public sealed class MySqlDialect : LimitOffsetDialectBase
         LikePatternType.EndsWith => $"CONCAT('%', {paramName})",
         _ => paramName
     };
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// MySQL string literals treat backslash as an escape character, so naming
+    /// backslash as the LIKE escape requires doubling it in the SQL text:
+    /// <c>ESCAPE '\\'</c>.
+    /// </remarks>
+    public override string LikeEscapeClause => " ESCAPE '\\\\'";
 }

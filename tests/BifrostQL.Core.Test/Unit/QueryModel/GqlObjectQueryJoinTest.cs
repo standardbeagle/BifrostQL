@@ -294,7 +294,7 @@ public sealed class GqlObjectQueryJoinTest
     }
 
     [Fact]
-    public void ToConnectedSqlParameterized_SingleQueryType_NoFilterOrPagination()
+    public void ToConnectedSqlParameterized_SingleQueryType_AppliesFilterButNotPagination()
     {
         // Arrange
         var dbModel = StandardTestFixtures.UsersWithOrders();
@@ -331,8 +331,16 @@ public sealed class GqlObjectQueryJoinTest
         var result = GqlObjectQuery.ToConnectedSqlParameterized(dbModel, Dialect, parameters, mainSql, tableJoin);
 
         // Assert
-        // For Single queries, filter and pagination are NOT applied
-        result.Sql.Should().NotContain("WHERE");
+        // Single links MUST apply the connected table's filter: transformer-derived
+        // security filters (tenant isolation, soft-delete, policy scope) land there,
+        // and skipping them leaked soft-deleted / cross-tenant parent rows. The
+        // filter's parameter is carried through. Pagination is still not applied —
+        // a single link resolves to at most one row.
+        result.Sql.Should().Contain("WHERE");
+        result.Sql.Should().Contain("[b].[Name] = @");
+        result.Sql.Should().NotContain("OFFSET");
+        result.Sql.Should().NotContain("FETCH");
+        parameters.Parameters.Should().ContainSingle();
     }
 
     [Fact]

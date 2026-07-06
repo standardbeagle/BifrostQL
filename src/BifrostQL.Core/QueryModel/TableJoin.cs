@@ -132,6 +132,8 @@ namespace BifrostQL.Core.QueryModel
     public sealed class JunctionBridge
     {
         public string JunctionTable { get; init; } = null!;
+        /// <summary>Schema of the junction table; empty when unknown (unqualified reference).</summary>
+        public string JunctionSchema { get; init; } = "";
         /// <summary>Junction column referencing the source (matched to source JoinId).</summary>
         public string JunctionSourceColumn { get; init; } = null!;
         /// <summary>Junction column referencing the target (matched to target ConnectedColumn).</summary>

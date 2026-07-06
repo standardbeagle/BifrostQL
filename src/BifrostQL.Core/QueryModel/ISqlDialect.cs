@@ -123,6 +123,26 @@ public interface ISqlDialect
     string LikePattern(string paramName, LikePatternType patternType);
 
     /// <summary>
+    /// Escapes LIKE metacharacters (<c>%</c>, <c>_</c>, the escape character
+    /// itself, and dialect extras such as SQL Server's <c>[</c>) inside a value
+    /// destined for a <see cref="LikePattern"/> comparison, using backslash as
+    /// the escape character. Applied to the bound parameter VALUE (not the SQL
+    /// text) for the _contains/_starts_with/_ends_with operator family so the
+    /// user's text matches literally; the raw _like/_nlike operators bypass it.
+    /// Must be paired with <see cref="LikeEscapeClause"/> in the emitted SQL.
+    /// </summary>
+    string EscapeLikeValue(string value) =>
+        value.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
+
+    /// <summary>
+    /// The <c>ESCAPE</c> clause (with leading space) declaring backslash as the
+    /// LIKE escape character, matching <see cref="EscapeLikeValue"/>. MySQL
+    /// overrides it because its string literals themselves treat backslash as
+    /// an escape and need it doubled in the SQL text.
+    /// </summary>
+    string LikeEscapeClause => " ESCAPE '\\'";
+
+    /// <summary>
     /// Maps a Directus-style filter operator string to its SQL operator equivalent.
     /// Supported operators: _eq (=), _neq (!=), _lt, _lte, _gt, _gte,
     /// _contains/_like (LIKE), _ncontains/_nlike (NOT LIKE),
@@ -168,11 +188,11 @@ public interface ISqlDialect
     /// though the equivalent literal succeeds) — override this to append a cast so the value
     /// lands in the column's real type.
     /// </summary>
-    /// <param name="columnName">The unescaped column name (also the parameter name).</param>
+    /// <param name="columnName">The unescaped column name; sanitized via <see cref="SqlParameterNames.Sanitize"/> to form the parameter name.</param>
     /// <param name="dataType">The column's SQL data type, or null when unknown.</param>
     /// <returns>The placeholder SQL fragment, e.g. <c>@started_at</c> or <c>@started_at::timestamp with time zone</c>.</returns>
     string AssignmentPlaceholder(string columnName, string? dataType)
-        => CastParameterReference($"{ParameterPrefix}{columnName}", dataType);
+        => CastParameterReference($"{ParameterPrefix}{SqlParameterNames.Sanitize(columnName)}", dataType);
 
     /// <summary>
     /// Casts an already-rendered bound-parameter reference to a column's SQL type when the

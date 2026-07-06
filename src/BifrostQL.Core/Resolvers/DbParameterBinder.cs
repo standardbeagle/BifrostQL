@@ -67,14 +67,18 @@ namespace BifrostQL.Core.Resolvers
         }
 
         /// <summary>
-        /// Binds <c>@columnName</c> parameters from a column → value map.
+        /// Binds <c>@columnName</c> parameters from a column → value map. Column
+        /// names that are not valid parameter identifiers (spaces, punctuation)
+        /// are sanitized via <see cref="SqlParameterNames.Sanitize"/>, matching
+        /// the placeholders <see cref="ISqlDialect.AssignmentPlaceholder"/>
+        /// renders into the SQL text.
         /// </summary>
         public static void AddParameters(DbCommand cmd, IReadOnlyDictionary<string, object?> data)
         {
             foreach (var kv in data)
             {
                 var p = cmd.CreateParameter();
-                p.ParameterName = $"@{kv.Key}";
+                p.ParameterName = $"@{SqlParameterNames.Sanitize(kv.Key)}";
                 p.Value = kv.Value ?? DBNull.Value;
                 cmd.Parameters.Add(p);
             }

@@ -23,7 +23,9 @@ public sealed class SqliteDialect : StandardConcatDialectBase
             return null;
 
         var columns = string.Join(",", allColumns.Select(EscapeIdentifier));
-        var values = string.Join(",", allColumns.Select(c => $"@{c}"));
+        // Parameter names must match what DbParameterBinder.AddParameters binds,
+        // which sanitizes column names that are not valid parameter identifiers.
+        var values = string.Join(",", allColumns.Select(c => $"@{SqlParameterNames.Sanitize(c)}"));
         var conflictKeys = string.Join(",", keyColumns.Select(EscapeIdentifier));
 
         if (updateColumns.Count == 0)

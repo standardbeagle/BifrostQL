@@ -49,7 +49,7 @@ public abstract class SqlDialectBase : ISqlDialect
 
     /// <inheritdoc />
     public virtual string AssignmentPlaceholder(string columnName, string? dataType)
-        => CastParameterReference($"{ParameterPrefix}{columnName}", dataType);
+        => CastParameterReference($"{ParameterPrefix}{SqlParameterNames.Sanitize(columnName)}", dataType);
 
     /// <inheritdoc />
     public virtual string CastParameterReference(string placeholder, string? dataType) => placeholder;
@@ -117,6 +117,13 @@ public abstract class SqlDialectBase : ISqlDialect
 
         return string.Join($" {_stringConcatOperator} ", parts);
     }
+
+    /// <inheritdoc />
+    public virtual string EscapeLikeValue(string value) =>
+        value.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
+
+    /// <inheritdoc />
+    public virtual string LikeEscapeClause => " ESCAPE '\\'";
 
     /// <inheritdoc />
     public virtual string GetOperator(string op) => op switch

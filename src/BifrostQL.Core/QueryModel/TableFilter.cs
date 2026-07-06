@@ -138,23 +138,21 @@ namespace BifrostQL.Core.QueryModel
 
             var sqlOp = dialect.GetOperator(op);
 
-            // LIKE patterns
-            if (op is "_contains" or "_ncontains")
+            // LIKE patterns. These operators wrap the user's VALUE in wildcards, so
+            // the value itself must match literally: escape LIKE metacharacters in
+            // the bound value and declare the escape character, otherwise
+            // `_contains: "100%"` matches everything starting with "100" and a bare
+            // "%" matches the whole table. (_like/_nlike below intentionally pass
+            // the raw pattern through — the caller owns the wildcards there.)
+            if (op is "_contains" or "_ncontains" or "_starts_with" or "_nstarts_with" or "_ends_with" or "_nends_with")
             {
-                var paramName = parameters.AddParameter(value);
-                return new ParameterizedSql($"{columnRef} {sqlOp} {dialect.LikePattern(paramName, LikePatternType.Contains)}",
-                    parameters.Parameters.TakeLast(1).ToList());
-            }
-            if (op is "_starts_with" or "_nstarts_with")
-            {
-                var paramName = parameters.AddParameter(value);
-                return new ParameterizedSql($"{columnRef} {sqlOp} {dialect.LikePattern(paramName, LikePatternType.StartsWith)}",
-                    parameters.Parameters.TakeLast(1).ToList());
-            }
-            if (op is "_ends_with" or "_nends_with")
-            {
-                var paramName = parameters.AddParameter(value);
-                return new ParameterizedSql($"{columnRef} {sqlOp} {dialect.LikePattern(paramName, LikePatternType.EndsWith)}",
+                var patternType = op is "_contains" or "_ncontains" ? LikePatternType.Contains
+                    : op is "_starts_with" or "_nstarts_with" ? LikePatternType.StartsWith
+                    : LikePatternType.EndsWith;
+                var escapedValue = value is string s ? dialect.EscapeLikeValue(s) : value;
+                var paramName = parameters.AddParameter(escapedValue);
+                return new ParameterizedSql(
+                    $"{columnRef} {sqlOp} {dialect.LikePattern(paramName, patternType)}{dialect.LikeEscapeClause}",
                     parameters.Parameters.TakeLast(1).ToList());
             }
             if (op is "_like" or "_nlike")
@@ -368,20 +366,25 @@ namespace BifrostQL.Core.QueryModel
                 var ej = dialect.EscapeIdentifier("j");
                 var ejoinid = dialect.EscapeIdentifier("joinid");
                 var evalue = dialect.EscapeIdentifier("value");
+                // Schema-qualify the FROM so non-default-schema parents resolve to the
+                // right table. Column references stay table-name-qualified: a
+                // schema-qualified FROM without an alias still exposes the bare table
+                // name in every supported dialect.
+                var parentTableRef = dialect.TableReference(link.ParentTable.TableSchema, link.ParentTable.DbName);
                 switch (filter.FilterType)
                 {
                     case FilterType.Join
                         when link.ParentTable.SingleLinks.TryGetValue(filter.ColumnName, out var nextLink):
                         {
                             var (nextSql, nextParams) = BuildSqlParameterized(filter.Next!, nextLink, dialect, parameters);
-                            var sql = $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid}{(includeValue ? $", {evalue}" : "")} FROM {dialect.EscapeIdentifier(link.ParentTable.DbName)} INNER JOIN ({nextSql}) {ej} ON {ej}.{ejoinid} = {dialect.EscapeIdentifier(link.ParentTable.DbName)}.{dialect.EscapeIdentifier(nextLink.ChildId.ColumnName)}";
+                            var sql = $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid}{(includeValue ? $", {evalue}" : "")} FROM {parentTableRef} INNER JOIN ({nextSql}) {ej} ON {ej}.{ejoinid} = {dialect.EscapeIdentifier(link.ParentTable.DbName)}.{dialect.EscapeIdentifier(nextLink.ChildId.ColumnName)}";
                             return (sql, nextParams);
                         }
                     case FilterType.Join:
                         if (includeValue)
                         {
                             return (
-                                $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid}, {dialect.EscapeIdentifier(filter.ColumnName)} AS {evalue} FROM {dialect.EscapeIdentifier(link.ParentTable.DbName)}",
+                                $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid}, {dialect.EscapeIdentifier(filter.ColumnName)} AS {evalue} FROM {parentTableRef}",
                                 new List<SqlParameterInfo>());
                         }
                         else
@@ -389,7 +392,7 @@ namespace BifrostQL.Core.QueryModel
                             var parentColumnType = link.ParentTable.ColumnLookup.TryGetValue(filter.ColumnName, out var pcol) ? pcol.DataType : null;
                             var filterResult = GetSingleFilterParameterized(dialect, parameters, link.ParentTable.DbName, filter.ColumnName, filter.Next!.RelationName, filter.Next.Value, parentColumnType);
                             return (
-                                $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid} FROM {dialect.EscapeIdentifier(link.ParentTable.DbName)} WHERE {filterResult.Sql}",
+                                $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid} FROM {parentTableRef} WHERE {filterResult.Sql}",
                                 filterResult.Parameters.ToList());
                         }
                 }

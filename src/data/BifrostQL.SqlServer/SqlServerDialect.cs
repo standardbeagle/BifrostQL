@@ -90,4 +90,13 @@ public sealed class SqlServerDialect : SqlDialectBase
             orderBy += $" FETCH NEXT {actualLimit} ROWS ONLY";
         return orderBy;
     }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// T-SQL LIKE additionally treats <c>[</c> as the start of a character
+    /// class, so it must be escaped along with the standard metacharacters.
+    /// (<c>]</c> is only special inside a class and needs no escaping.)
+    /// </remarks>
+    public override string EscapeLikeValue(string value) =>
+        base.EscapeLikeValue(value).Replace("[", "\\[");
 }

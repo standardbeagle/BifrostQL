@@ -114,6 +114,17 @@ namespace BifrostQL.Core.QueryModel
                     $"Aggregate queries require a primary key on table '{GraphQlName}'; " +
                     $"table '{TableName}' has no primary key, so aggregate results cannot be correlated to its rows.");
 
+            // The same correlation is single-column on both sides (one srcId in the
+            // aggregate SQL, KeyColumns.First() in the reader), so a composite primary
+            // key would silently group by only the first key column and hand every
+            // row a value aggregated across all rows sharing that first column — wrong
+            // data, not an error. Fail fast instead; composite-aware correlation is a
+            // deferred feature.
+            if (AggregateColumns.Count > 0 && DbTable.KeyColumns.Skip(1).Any())
+                throw new BifrostExecutionError(
+                    $"Aggregate queries on composite-primary-key table '{GraphQlName}' are not supported; " +
+                    "aggregate correlation uses a single key column and would produce incorrect results.");
+
             var fullColumns = FullColumnNames.ToList();
             if (fullColumns.Count == 0 && AggregateColumns.Count > 0)
             {
@@ -197,6 +208,13 @@ namespace BifrostQL.Core.QueryModel
                 ? srcProjection
                 : $"{srcProjection}, {joinColumnSql}";
 
+            // Schema-qualify the joined tables. The root FROM already qualifies via
+            // TableReference; an unqualified join target resolves against the
+            // connection's default schema — an invalid-object error for tables in
+            // other schemas, or worse, a silent read of a same-named default-schema
+            // table.
+            var connectedTableRef = dialect.TableReference(connectedDbTable.TableSchema, tableJoin.ConnectedTable.TableName);
+
             string fromClause;
             IReadOnlyList<SqlParameterInfo> relationParams;
             if (tableJoin.Bridge is { } bridge)
@@ -209,8 +227,8 @@ namespace BifrostQL.Core.QueryModel
                     .Select(i => $"{ea}.{dialect.EscapeIdentifier(JoinKeyNames.JoinIdAt(i, tableJoin.FromColumns.Count))} = {ej}.{dialect.EscapeIdentifier(bridge.JunctionSourceColumn)}"));
                 var tgtOnClause = $"{ej}.{dialect.EscapeIdentifier(bridge.JunctionTargetColumn)} = {eb}.{dialect.EscapeIdentifier(tableJoin.ConnectedColumn)}";
                 fromClause = $"FROM ({main.Sql}) {ea}"
-                    + $" INNER JOIN {dialect.EscapeIdentifier(bridge.JunctionTable)} {ej} ON {srcOnClause}"
-                    + $" INNER JOIN {dialect.EscapeIdentifier(tableJoin.ConnectedTable.TableName)} {eb} ON {tgtOnClause}";
+                    + $" INNER JOIN {dialect.TableReference(bridge.JunctionSchema, bridge.JunctionTable)} {ej} ON {srcOnClause}"
+                    + $" INNER JOIN {connectedTableRef} {eb} ON {tgtOnClause}";
                 relationParams = Array.Empty<SqlParameterInfo>();
             }
             else
@@ -218,14 +236,22 @@ namespace BifrostQL.Core.QueryModel
                 var (relationSql, rp) = tableJoin.EmitOnClause(dialect, parameters, "a", "b");
                 relationParams = rp;
                 fromClause = $"FROM ({main.Sql}) {ea}"
-                    + $" INNER JOIN {dialect.EscapeIdentifier(tableJoin.ConnectedTable.TableName)} {eb} ON {relationSql}";
+                    + $" INNER JOIN {connectedTableRef} {eb} ON {relationSql}";
             }
             var wrap = $"SELECT {projection} {fromClause}";
 
-            if (tableJoin.QueryType == QueryType.Single)
-                return new ParameterizedSql(wrap, main.Parameters.Concat(relationParams).ToList());
-
+            // Transformer-derived filters (tenant isolation, soft-delete, policy
+            // row scope) land on ConnectedTable.Filter and must constrain EVERY
+            // join type. Single links (forward FK / _single) previously returned
+            // before the filter was applied, silently exposing soft-deleted,
+            // cross-tenant, and policy-scoped-out parent rows. Fail-closed: a
+            // filtered-out parent simply has no matching row, so the field
+            // resolves null.
             var filter = tableJoin.ConnectedTable.GetFilterSqlParameterized(dbModel, dialect, parameters, "b");
+
+            if (tableJoin.QueryType == QueryType.Single)
+                return new ParameterizedSql(wrap, main.Parameters.Concat(relationParams).ToList())
+                    .Append(filter);
 
             // Per-parent paged collection: compute a window partitioned by the
             // parent join-id columns so each parent gets its own row-number and
@@ -346,6 +372,7 @@ namespace BifrostQL.Core.QueryModel
                     || (singleLink = thisDto.SingleLinks.Values.FirstOrDefault(l => string.Equals(l.ParentFieldName, fieldName, StringComparison.OrdinalIgnoreCase))) != null)
                 {
                     link.TableName = singleLink.ParentTable.DbName;
+                    link.SchemaName = singleLink.ParentTable.TableSchema;
                     var join = new TableJoin
                     {
                         Alias = link.Alias,
@@ -365,6 +392,7 @@ namespace BifrostQL.Core.QueryModel
                     || (multiLink = thisDto.MultiLinks.Values.FirstOrDefault(l => string.Equals(l.ChildFieldName, fieldName, StringComparison.OrdinalIgnoreCase))) != null)
                 {
                     link.TableName = multiLink.ChildTable.DbName;
+                    link.SchemaName = multiLink.ChildTable.TableSchema;
                     var join = new TableJoin
                     {
                         Alias = link.Alias,
@@ -408,6 +436,7 @@ namespace BifrostQL.Core.QueryModel
                     // junction->target chain would instead key by the target row
                     // and lose the source partition.
                     link.TableName = m2mLink.TargetTable.DbName;
+                    link.SchemaName = m2mLink.TargetTable.TableSchema;
                     var join = new TableJoin
                     {
                         Alias = link.Alias,
@@ -420,6 +449,7 @@ namespace BifrostQL.Core.QueryModel
                         Bridge = new JunctionBridge
                         {
                             JunctionTable = m2mLink.JunctionTable.DbName,
+                            JunctionSchema = m2mLink.JunctionTable.TableSchema,
                             JunctionSourceColumn = m2mLink.JunctionSourceColumn.ColumnName,
                             JunctionTargetColumn = m2mLink.JunctionTargetColumn.ColumnName,
                         },

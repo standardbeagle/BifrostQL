@@ -77,6 +77,20 @@ export function m2mRowsQuery(
     // A composite junction FK MUST be filtered on every column: filtering on the first
     // column alone can match another parent's junction rows whose first-column value
     // collides, and detaching then deletes that other parent's link.
+    //
+    // COLUMN-ORDER INVARIANT (composite keys): parentId is produced by rowIdOf /
+    // encodePkRoute, which encodes the parent row's key values in `parentTable.primaryKeys`
+    // order. This function pairs `parentParts[i]` with `junctionSourceColumnNames[i]`
+    // positionally, so the three arrays must line up index-for-index:
+    //   parentTable.primaryKeys[i]  ↔  m2m.sourceColumnNames[i]  ↔  m2m.junctionSourceColumnNames[i]
+    // i.e. the i-th junction source column references the i-th parent key column, and the
+    // parent key columns are enumerated in the same order the route was encoded. The server
+    // relationship metadata emits sourceColumnNames / junctionSourceColumnNames as paired
+    // arrays, and single-column keys (the common case) are trivially aligned. Locked by
+    // m2m.test.ts ("composite junction rows query"). If a future server ever emits these
+    // arrays out of parent-PK order, pair by name here instead of by index.
+    // Locked by m2m.test.ts › m2mRowsQuery › "pairs each junction source column with the
+    // route part at the same index".
     const parentParts = decodeRouteParts(parentId, srcCols.length);
 
     const columnByName = new Map(junction.columns.map((c) => [c.name, c] as const));

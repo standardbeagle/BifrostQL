@@ -11,7 +11,8 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { isJsonDbType } from './lib/content-detect';
 import { Table, Column } from './types/schema';
 import { ColumnPanel } from './data-panel';
-import { encodePkRoute, pkFilterFor, type PkFilter } from './lib/row-id';
+import { encodePkRoute, pkFilterFor, buildPkEqFilter, type PkFilter } from './lib/row-id';
+import { useFetcher } from './common/fetcher';
 
 interface DataDataTableParams {
     table: Table;
@@ -73,7 +74,6 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
         pageCount,
         rows,
         loading,
-        fetching,
         error,
         onSortingChange,
         onColumnFiltersChange,
@@ -128,13 +128,18 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
 
     // Single-field save from the content expand panel. Reuses the row update
     // mutation. BifrostQL's Update_ input marks every non-nullable column
-    // required, so the whole editable row is sent (from the row already loaded in
-    // the grid) with just the edited column overridden.
+    // required, so the whole editable row must be sent with just the edited
+    // column overridden. The other columns are re-fetched fresh at save time
+    // (not read from the grid snapshot) so saving one cell can't revert a value
+    // that changed elsewhere — via the edit dialog or a concurrent editor —
+    // after the grid last loaded.
     const { toast } = useToast();
+    const fetcher = useFetcher();
     const isEditable = table.isEditable !== false;
     const panelRow = rows[panelRowIndex] as Record<string, unknown> | undefined;
     const panelPk = useMemo(() => (panelRow ? pkFilterFor(panelRow, table) : null), [panelRow, table]);
     const panelPkRoute = useMemo(() => (panelPk ? encodePkRoute(panelPk, table) : ''), [panelPk, table]);
+    const panelPkEq = useMemo(() => (panelPk ? buildPkEqFilter(panelPk, table) : null), [panelPk, table]);
     const editableColumns = useMemo(
         () => table.columns.filter((c: Column) => !c.isReadOnly && !c.isIdentity),
         [table],
@@ -148,12 +153,12 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
 
     // Save is only possible when the table is editable and the row has a real PK
     // (every key column present); otherwise ContentPanel hides Edit (no silent drop).
-    // Also block while a fetch/refetch is in flight or a save is pending — the
-    // full-row write is built from the visible row snapshot, so saving against
-    // stale/placeholder rows could revert a just-saved (or concurrent) change.
-    const canSaveContent = isEditable && panelPk !== null && !fetching && !contentMutation.isPending;
-    const handlePanelSave = useCallback((value: string) => {
-        if (!panelColumn || !panelRow) return;
+    // Also block while a save is pending. Grid staleness no longer gates saving —
+    // the write re-reads the row fresh below — but a concurrent save still must not
+    // overlap.
+    const canSaveContent = isEditable && panelPkEq !== null && !contentMutation.isPending;
+    const handlePanelSave = useCallback(async (value: string) => {
+        if (!panelColumn || !panelPkEq) return;
         const col = table.columns.find((c: Column) => c.name === panelColumn);
         // Native JSON columns take a JSON value, not a JSON string — parse the
         // edited text back so it isn't stored double-encoded. Non-JSON (longtext,
@@ -162,15 +167,30 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
         if (col && (isJsonDbType(col.dbType) || col.paramType === 'JSON')) {
             try { payload = JSON.parse(value); } catch { /* send raw; server validates */ }
         }
-        const detail: Record<string, unknown> = {};
-        for (const c of editableColumns) detail[c.name] = panelRow[c.name] ?? null;
-        detail[panelColumn] = payload;
-        return contentMutation.update(detail).then(() => {}).catch((e: unknown) => {
+        try {
+            // Re-read the full editable row from the server so non-edited columns
+            // reflect current state, not the possibly-stale grid snapshot. Failing
+            // to fetch aborts the save (editor stays open) rather than writing a
+            // stale full row.
+            const paramDecls = panelPkEq.params.length > 0 ? panelPkEq.params.join(', ') : '';
+            const fieldList = editableColumns.map((c: Column) => c.name).join(' ');
+            const freshQuery =
+                `query GetPanelRow_${table.name}(${paramDecls}) { ` +
+                `value: ${table.name}(filter: ${panelPkEq.filterText}) { data { ${fieldList} } } }`;
+            const res = await fetcher.query<{ value: { data: Record<string, unknown>[] } }>(freshQuery, panelPkEq.variables);
+            const fresh = res?.value?.data?.[0];
+            if (!fresh) throw new Error('Row no longer exists.');
+
+            const detail: Record<string, unknown> = {};
+            for (const c of editableColumns) detail[c.name] = fresh[c.name] ?? null;
+            detail[panelColumn] = payload;
+            await contentMutation.update(detail);
+        } catch (e: unknown) {
             toast(`Save failed: ${(e as Error).message}`, 'error');
             // Rethrow so ContentPanel keeps the editor open on failure.
             throw e;
-        });
-    }, [panelColumn, panelRow, table, editableColumns, contentMutation, toast]);
+        }
+    }, [panelColumn, panelPkEq, table, editableColumns, contentMutation, fetcher, toast]);
 
     const handlePanelClose = useCallback(() => {
         setPanelColumn(null);

@@ -14,6 +14,10 @@ const DELIMITER = '::';
 
 function encodePkPart(value: unknown): string {
     if (value === null || value === undefined) return '';
+    // encodeURIComponent escapes ':' to '%3A', so a key value containing the
+    // '::' delimiter can never survive into the joined route to mis-split it.
+    // (Round-trip covered by row-id.test.ts "round-trips PK values containing
+    // the delimiter".)
     return encodeURIComponent(String(value));
 }
 

@@ -182,6 +182,35 @@ describe('m2mRowsQuery', () => {
         expect(variables.src0).toBe(7);
         expect(variables.src1).toBe(42);
     });
+
+    it('pairs each junction source column with the route part at the same index', () => {
+        // Guards the composite column-order invariant documented in m2mRowsQuery:
+        // junctionSourceColumnNames[i] is bound to the i-th route part. If the pairing
+        // ever drifted (e.g. reversed), src0 would carry the second value and the
+        // wrong parent's junction rows would be listed/detached. Distinct type-coerced
+        // values (100 vs 200) make an index swap unambiguous.
+        const compositeJunction = table('enrollments', {
+            columns: [
+                col('id', { isPrimaryKey: true }),
+                col('school_id', { paramType: 'Int' }),
+                col('student_no', { paramType: 'Int' }),
+                col('course_id', { paramType: 'Int' }),
+            ],
+        });
+        const compositeM2m: ManyToManyJoin = {
+            ...m2m,
+            sourceColumnNames: ['school_id', 'student_no'],
+            junctionSourceColumnNames: ['school_id', 'student_no'],
+        };
+
+        const { query, variables } = m2mRowsQuery(compositeJunction, target, compositeM2m, '100::200');
+
+        // First junction source column ↔ first route part; second ↔ second.
+        expect(query).toContain('school_id: { _eq: $src0 }');
+        expect(query).toContain('student_no: { _eq: $src1 }');
+        expect(variables.src0).toBe(100);
+        expect(variables.src1).toBe(200);
+    });
 });
 
 describe('m2mTargetPickerPlan', () => {

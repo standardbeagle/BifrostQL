@@ -18,7 +18,8 @@ namespace BifrostQL.Core.Resolvers
 
     public sealed class SqlExecutionManager : ISqlExecutionManager
     {
-        private List<GqlObjectQuery>? _objectQueries = null;
+        private Task<List<GqlObjectQuery>>? _objectQueriesTask;
+        private readonly object _objectQueriesLock = new();
         private readonly IDbModel _dbModel;
         private readonly ISchema _schema;
         private readonly IQueryTransformerService _transformerService;
@@ -44,8 +45,22 @@ namespace BifrostQL.Core.Resolvers
             var alias = context.FieldAlias;
             var graphqlName = context.FieldName;
 
-            _objectQueries ??= await GetAllObjectQueries(context);
-            var table = _objectQueries.First(t => (alias != null && t.Alias == alias) || (alias == null && t.GraphQlName == graphqlName));
+            // Sibling root fields resolve in parallel and share this manager, so a
+            // bare `??=` could parse the document (and mutate SqlContext state) twice
+            // under a race. Guard the one-time init with a double-checked lock; the
+            // parse is the same for every field of one request, so the first computed
+            // Task is reused by all.
+            if (_objectQueriesTask == null)
+            {
+                lock (_objectQueriesLock)
+                {
+                    _objectQueriesTask ??= GetAllObjectQueries(context);
+                }
+            }
+            var objectQueries = await _objectQueriesTask;
+            var table = objectQueries.FirstOrDefault(t => (alias != null && t.Alias == alias) || (alias == null && t.GraphQlName == graphqlName))
+                ?? throw new BifrostExecutionError(
+                    $"No parsed query node matched root field '{alias ?? graphqlName}'.");
 
             var userContext = context.UserContext;
 
@@ -183,11 +198,16 @@ namespace BifrostQL.Core.Resolvers
         {
             var dialect = connFactory.Dialect;
             var parameters = new QueryModel.SqlParameterCollection();
-            var sqlList = new Dictionary<string, ParameterizedSql>();
-            query.AddSqlParameterized(_dbModel, dialect, sqlList, parameters);
+            var sqlByName = new Dictionary<string, ParameterizedSql>();
+            query.AddSqlParameterized(_dbModel, dialect, sqlByName, parameters);
 
-            var resultNames = sqlList.Keys.ToArray();
-            string sql = string.Join(";\r\n", sqlList.Values.Select(p => p.Sql));
+            // Materialize to an ordered list so the emitted statement order and the
+            // positional result-set names come from ONE structural snapshot. Reading
+            // .Keys and .Values as two independent Dictionary enumerations left the
+            // reader's set-name alignment resting on an unspecified enumeration order.
+            var sqlList = sqlByName.ToList();
+            var resultNames = sqlList.Select(p => p.Key).ToArray();
+            string sql = string.Join(";\r\n", sqlList.Select(p => p.Value.Sql));
 
             await using var conn = connFactory.GetConnection();
             try

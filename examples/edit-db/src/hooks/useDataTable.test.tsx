@@ -1,6 +1,37 @@
 import { describe, expect, it } from 'vitest';
-import { getMultiJoinRows, clampPageIndex, getJoinedRowPkValue } from './useDataTable';
+import { getMultiJoinRows, clampPageIndex, getJoinedRowPkValue, reconcileColumnFiltersFromUrl } from './useDataTable';
+import { serializeColumnFilters } from '../lib/query-builder';
+import type { ColumnFiltersState } from '@tanstack/react-table';
 import type { Join, Table } from '../types/schema';
+
+describe('reconcileColumnFiltersFromUrl', () => {
+    const cf = (id: string, operator: string, value: unknown): ColumnFiltersState =>
+        [{ id, value: { operator, value } }];
+
+    it('deserializes the URL cf param into filter state (back/forward restore)', () => {
+        const cfParam = serializeColumnFilters(cf('name', '_contains', 'ann'));
+        expect(reconcileColumnFiltersFromUrl([], cfParam)).toEqual(cf('name', '_contains', 'ann'));
+    });
+
+    it('clears filters when the URL drops cf (table switch)', () => {
+        const prev = cf('name', '_contains', 'ann');
+        expect(reconcileColumnFiltersFromUrl(prev, '')).toEqual([]);
+    });
+
+    it('returns the SAME reference when state already matches the URL (no loop, no re-render)', () => {
+        const prev = cf('age', '_gte', 18);
+        const cfParam = serializeColumnFilters(prev);
+        expect(reconcileColumnFiltersFromUrl(prev, cfParam)).toBe(prev);
+    });
+
+    it('replaces state when the URL cf differs (divergence resolves toward the URL)', () => {
+        const prev = cf('name', '_contains', 'old');
+        const cfParam = serializeColumnFilters(cf('name', '_contains', 'new'));
+        const next = reconcileColumnFiltersFromUrl(prev, cfParam);
+        expect(next).not.toBe(prev);
+        expect(next).toEqual(cf('name', '_contains', 'new'));
+    });
+});
 
 describe('clampPageIndex', () => {
     it('snaps an out-of-range page back to the last valid page ("page 2 of 1")', () => {

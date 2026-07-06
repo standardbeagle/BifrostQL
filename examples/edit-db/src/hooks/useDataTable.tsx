@@ -70,6 +70,22 @@ export function clampPageIndex(pageIndex: number, pageCount: number): number {
     return pageIndex;
 }
 
+/**
+ * Reconcile in-memory column-filter state with the URL `cf` param, which is the
+ * source of truth. Returns `prev` unchanged when it already serializes to the
+ * same string as `cfParam` — this both preserves referential identity (no
+ * needless re-render) and stops the setState → syncFiltersToUrl → cfParam →
+ * effect cycle from looping on our own writes. Otherwise it deserializes the URL
+ * value so browser back/forward and table switches (which drop the query string)
+ * drive the filters instead of leaving stale state behind.
+ */
+export function reconcileColumnFiltersFromUrl(
+    prev: ColumnFiltersState,
+    cfParam: string,
+): ColumnFiltersState {
+    return serializeColumnFilters(prev) === cfParam ? prev : deserializeColumnFilters(cfParam);
+}
+
 export function getMultiJoinRows(row: RowData, join: Join): RowData[] {
     const fieldName = join.fieldName ?? join.destinationTable;
     // Multi-join fields come back as a paged page object ({ total, data: [...] }),
@@ -457,14 +473,25 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     const [pageIndex, setPageIndex] = useState(0);
     const [pageSize, setPageSize] = useState(50);
 
-    // Reset sort, filters, and pagination when the table changes
+    // Reset sort and pagination when the table changes. Column filters are NOT
+    // reset here — they are owned by the URL `cf` param (see the effect below),
+    // which the table switch clears by dropping the query string, so resetting
+    // the state here too would fight the source-of-truth reconciliation.
     const tableRef = useRef(table);
     if (table && table !== tableRef.current) {
         tableRef.current = table;
         if (sorting.length > 0) setSorting([]);
-        if (columnFilters.length > 0) setColumnFilters([]);
         if (pageIndex !== 0) setPageIndex(0);
     }
+
+    // Keep column-filter state reconciled with the URL `cf` param. Without this,
+    // cfParam only seeded the initial state, so browser back/forward (which
+    // restores a path whose cf differs from the last in-memory state) and table
+    // switches (which drop cf) left the grid showing stale filters — or filters
+    // belonging to a different table.
+    useEffect(() => {
+        setColumnFilters((prev) => reconcileColumnFiltersFromUrl(prev, cfParam));
+    }, [cfParam]);
 
     const appliedSort = useMemo(() => {
         if (sorting.length > 0 && table) {

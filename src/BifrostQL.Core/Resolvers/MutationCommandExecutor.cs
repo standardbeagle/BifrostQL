@@ -88,7 +88,7 @@ namespace BifrostQL.Core.Resolvers
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var stateColumn = dialect.EscapeIdentifier(definition.StateColumn);
-            var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+            var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
             var sql = $"SELECT {stateColumn} FROM {tableRef} WHERE {whereClause};";
 
             await using var cmd = conn.CreateCommand();

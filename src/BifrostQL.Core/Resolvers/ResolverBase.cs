@@ -52,7 +52,7 @@ public abstract class TableResolverBase : ResolverBase
     /// </summary>
     protected string BuildWhereClause(IEnumerable<KeyValuePair<string, object?>> keyValues, ISqlDialect dialect)
     {
-        return string.Join(" AND ", keyValues.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+        return string.Join(" AND ", keyValues.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
     }
 
     /// <summary>
@@ -60,7 +60,7 @@ public abstract class TableResolverBase : ResolverBase
     /// </summary>
     protected string BuildSetClause(IEnumerable<KeyValuePair<string, object?>> keyValues, ISqlDialect dialect)
     {
-        return string.Join(",", keyValues.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+        return string.Join(",", keyValues.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
     }
 }
 

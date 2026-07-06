@@ -359,6 +359,37 @@ public sealed class SqlServerDialectTest
         result.Should().Be("'%' + @p0 + '%'");
     }
 
+    [Theory]
+    [InlineData("100%", "100\\%")]
+    [InlineData("a_b", "a\\_b")]
+    [InlineData("50%_off", "50\\%\\_off")]
+    [InlineData("back\\slash", "back\\\\slash")]
+    [InlineData("plain", "plain")]
+    public void EscapeLikeValue_EscapesWildcardsAndBackslash(string input, string expected)
+    {
+        // The _contains/_starts_with/_ends_with operators wrap the user's VALUE
+        // in wildcards, so LIKE metacharacters inside the value must be escaped or
+        // the value matches as a pattern (e.g. "100%" would match "100 units").
+        _sut.EscapeLikeValue(input).Should().Be(expected);
+    }
+
+    [Fact]
+    public void EscapeLikeValue_SqlServer_AlsoEscapesOpeningBracket()
+    {
+        // T-SQL LIKE treats '[' as the start of a character class, so it must be
+        // escaped along with the standard metacharacters (']' is only special
+        // inside a class and is left alone).
+        _sut.EscapeLikeValue("a[bc]").Should().Be("a\\[bc]");
+    }
+
+    [Fact]
+    public void LikeEscapeClause_DeclaresBackslashEscape()
+    {
+        // The escape character used by EscapeLikeValue must be declared in the SQL
+        // via an ESCAPE clause, or the backslashes are treated as literals.
+        _sut.LikeEscapeClause.Should().Contain("ESCAPE").And.Contain("\\");
+    }
+
     [Fact]
     public void LikePattern_StartsWith_AppendWildcard()
     {

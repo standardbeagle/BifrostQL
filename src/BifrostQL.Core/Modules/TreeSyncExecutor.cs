@@ -199,7 +199,7 @@ public sealed class TreeSyncExecutor
 
         var tableRef = _dialect.TableReference(table.TableSchema, table.DbName);
         var setClause = string.Join(",", setData.Select(kv => SetAssignment(_dialect, table, kv.Key)));
-        var whereClause = string.Join(" AND ", keyData.Select(kv => $"{_dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+        var whereClause = string.Join(" AND ", keyData.Select(kv => $"{_dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
 
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
@@ -215,7 +215,7 @@ public sealed class TreeSyncExecutor
             return;
 
         var tableRef = _dialect.TableReference(table.TableSchema, table.DbName);
-        var whereClause = string.Join(" AND ", data.Select(kv => $"{_dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+        var whereClause = string.Join(" AND ", data.Select(kv => $"{_dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
 
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"DELETE FROM {tableRef} WHERE {whereClause}{additionalFilter.WhereSuffix};";

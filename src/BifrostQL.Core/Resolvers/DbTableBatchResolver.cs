@@ -263,7 +263,7 @@ namespace BifrostQL.Core.Resolvers
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var setClause = string.Join(",", standardData.Select(kv => SetAssignment(dialect, table, kv.Key)));
-            var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+            var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
             var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
@@ -322,7 +322,7 @@ namespace BifrostQL.Core.Resolvers
                 var setData = dbData.Where(d => !table.ColumnLookup.ContainsKey(d.Key) || !table.ColumnLookup[d.Key].IsPrimaryKey)
                     .ToDictionary(kv => kv.Key, kv => kv.Value);
                 var setClause = string.Join(",", setData.Select(kv => SetAssignment(dialect, table, kv.Key)));
-                var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+                var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
                 var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = sql;
@@ -338,7 +338,7 @@ namespace BifrostQL.Core.Resolvers
             // WHERE clause and parameters, mirroring the soft-delete branch above.
             var deleteData = dbData;
             var deleteTableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var deleteWhereClause = string.Join(" AND ", deleteData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+            var deleteWhereClause = string.Join(" AND ", deleteData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
             var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause}{additionalFilter.WhereSuffix};";
             await using var deleteCmd = conn.CreateCommand();
             deleteCmd.CommandText = deleteSql;

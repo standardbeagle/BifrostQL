@@ -171,7 +171,7 @@ namespace BifrostQL.Core.Resolvers
                     .ToDictionary(kv => kv.Key, kv => kv.Value);
 
                 var setClause = string.Join(",", setData.Select(kv => SetAssignment(dialect, table, kv.Key)));
-                var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+                var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
                 var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
                 // Before-commit hooks and the soft-delete write commit atomically.
                 var result = 0;
@@ -190,7 +190,7 @@ namespace BifrostQL.Core.Resolvers
             // branch above.
             var deleteData = dbData;
             var deleteTableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var deleteWhereClause = string.Join(" AND ", deleteData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+            var deleteWhereClause = string.Join(" AND ", deleteData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
             var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause}{additionalFilter.WhereSuffix};";
             // Before-commit hooks and the delete write commit atomically.
             var deleteResult = 0;
@@ -261,7 +261,7 @@ namespace BifrostQL.Core.Resolvers
 
                 var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
                 var setClause = string.Join(",", standardData.Select(kv => SetAssignment(dialect, table, kv.Key)));
-                var whereClause = string.Join(" AND ", propertyInfo.keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
+                var whereClause = string.Join(" AND ", propertyInfo.keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
                 var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
                 await MutationNotifier.RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, updatedData, context.UserContext);
                 result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, updatedData, additionalFilter.Parameters);

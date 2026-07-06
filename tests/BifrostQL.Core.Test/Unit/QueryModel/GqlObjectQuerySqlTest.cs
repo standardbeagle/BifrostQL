@@ -864,6 +864,46 @@ public sealed class GqlObjectQuerySqlTest
     }
 
     [Fact]
+    public void AddSqlParameterized_AggregateOnCompositePrimaryKeyTable_ThrowsClearError()
+    {
+        // Aggregate correlation is single-column on both the SQL side (one srcId,
+        // GROUP BY that one column) and the reader side (KeyColumns.First()). A
+        // composite-PK parent would group by only its first key column, handing
+        // every row a value aggregated across all rows sharing that column —
+        // silently wrong data. Fail fast instead until composite-aware
+        // correlation exists.
+        var dbModel = DbModelTestFixture.Create()
+            .WithTable("OrderLines", t => t
+                .WithColumn("TenantId", "int", isPrimaryKey: true)
+                .WithColumn("OrderNo", "int", isPrimaryKey: true)
+                .WithColumn("Sku", "nvarchar"))
+            .WithTable("Shipments", t => t
+                .WithPrimaryKey("Id")
+                .WithColumn("OrderNo", "int")
+                .WithColumn("Qty", "int"))
+            .WithMultiLink("OrderLines", "OrderNo", "Shipments", "OrderNo", "shipments")
+            .Build();
+        var linesTable = dbModel.GetTableFromDbName("OrderLines");
+        var link = linesTable.MultiLinks["shipments"];
+        var aggregateColumn = new GqlAggregateColumn(
+            new List<(LinkDirection, TableLinkDto)> { (LinkDirection.OneToMany, link) },
+            "Qty",
+            "totalQty",
+            AggregateOperationType.Sum);
+        var query = GqlObjectQueryBuilder.Create()
+            .WithDbTable(linesTable)
+            .WithColumns("Sku")
+            .WithAggregateColumn(aggregateColumn)
+            .Build();
+
+        var act = () => query.AddSqlParameterized(
+            dbModel, Dialect, new Dictionary<string, ParameterizedSql>(), new SqlParameterCollection());
+
+        act.Should().Throw<BifrostExecutionError>()
+            .WithMessage("*composite-primary-key table 'OrderLines'*");
+    }
+
+    [Fact]
     public void AddSqlParameterized_RelationshipFilter_EmitsJoinBeforeWhere_NotWhereInnerJoin()
     {
         // Arrange — filter Orders by a column on the related Users table. This

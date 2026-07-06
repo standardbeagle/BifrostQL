@@ -45,6 +45,46 @@ namespace BifrostQL.Core.Model
     public sealed class DbModel : IDbModel
     {
         internal static readonly Pluralizer Pluralizer = new();
+
+        // Table lookups run on the query hot path (once per query node). A linear
+        // Tables scan per call is O(tables) each; these case-insensitive indexes make
+        // both lookups O(1). Built lazily because Tables is assigned via object
+        // initializer after construction; first-write-wins mirrors the previous
+        // FirstOrDefault semantics for any duplicate keys.
+        private readonly Lazy<IReadOnlyDictionary<string, IDbTable>> _byGraphQlName;
+        private readonly Lazy<IReadOnlyDictionary<string, IDbTable>> _byDbName;
+
+        public DbModel()
+        {
+            _byGraphQlName = new Lazy<IReadOnlyDictionary<string, IDbTable>>(BuildGraphQlNameIndex);
+            _byDbName = new Lazy<IReadOnlyDictionary<string, IDbTable>>(BuildDbNameIndex);
+        }
+
+        private IReadOnlyDictionary<string, IDbTable> BuildGraphQlNameIndex()
+        {
+            var dict = new Dictionary<string, IDbTable>(StringComparer.InvariantCultureIgnoreCase);
+            foreach (var t in Tables ?? Array.Empty<IDbTable>())
+            {
+                // MatchName accepts either the schema-qualified full name or the bare
+                // GraphQL name, so both are registered. FullName mirrors
+                // DbTable.FullName; kept in sync there.
+                var fullName = string.Equals(t.TableSchema, "dbo", StringComparison.Ordinal)
+                    ? t.GraphQlName
+                    : $"{t.TableSchema}_{t.GraphQlName}";
+                dict.TryAdd(fullName, t);
+                dict.TryAdd(t.GraphQlName, t);
+            }
+            return dict;
+        }
+
+        private IReadOnlyDictionary<string, IDbTable> BuildDbNameIndex()
+        {
+            var dict = new Dictionary<string, IDbTable>(StringComparer.InvariantCultureIgnoreCase);
+            foreach (var t in Tables ?? Array.Empty<IDbTable>())
+                dict.TryAdd(t.DbName, t);
+            return dict;
+        }
+
         public IReadOnlyCollection<IDbTable> Tables { get; init; } = null!;
         public IReadOnlyCollection<DbStoredProcedure> StoredProcedures { get; init; } = Array.Empty<DbStoredProcedure>();
         public IDictionary<string, object?> Metadata { get; init; } = null!;
@@ -66,11 +106,15 @@ namespace BifrostQL.Core.Model
         /// <returns></returns>
         public IDbTable GetTableByFullGraphQlName(string fullName)
         {
-            return Tables?.FirstOrDefault(t => t.MatchName(fullName)) ?? throw new ArgumentOutOfRangeException(nameof(fullName), fullName, $"failed table lookup on graphql name: {fullName}");
+            return _byGraphQlName.Value.TryGetValue(fullName, out var table)
+                ? table
+                : throw new ArgumentOutOfRangeException(nameof(fullName), fullName, $"failed table lookup on graphql name: {fullName}");
         }
         public IDbTable GetTableFromDbName(string tableName)
         {
-            return Tables?.FirstOrDefault(t => string.Equals(t.DbName, tableName, StringComparison.InvariantCultureIgnoreCase)) ?? throw new ArgumentOutOfRangeException(nameof(tableName), tableName, $"failed table lookup on db name: {tableName}");
+            return _byDbName.Value.TryGetValue(tableName, out var table)
+                ? table
+                : throw new ArgumentOutOfRangeException(nameof(tableName), tableName, $"failed table lookup on db name: {tableName}");
         }
 
         /// <summary>

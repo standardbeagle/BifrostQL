@@ -17,13 +17,10 @@
  * chosen mode in `localStorage` under `bifrost-ui:transport`. HTTP is the
  * default for backwards compatibility; users opt-in to binary explicitly.
  *
- * Note on integration: as of this commit the existing `Editor` component
- * from `@standardbeagle/edit-db` constructs its own GraphQL client from the
- * `uri` prop and does not yet accept a transport instance. The actual
- * routing of editor queries through this abstraction is tracked as a
- * follow-up — see the TODO at the Editor render site in App.tsx. The
- * factory and health indicator land here so the binary client gets
- * exercised and the wiring is ready for the editor migration.
+ * Editor integration: `TransportGraphQLFetcher` (transport-fetcher.ts) adapts
+ * a `QueryTransport` to the edit-db `GraphQLFetcher` interface and is injected
+ * into `<Editor fetcher=...>` by App.tsx, so all editor data paths route
+ * through the selected transport.
  */
 
 import {
@@ -183,6 +180,22 @@ export function deriveBinaryUrl(endpoint: string, binaryPath: string): string {
 }
 
 /**
+ * Determines whether a GraphQL document's operation is a mutation. Strips the
+ * ignored tokens that can legally precede the operation keyword — whitespace,
+ * commas, and `#` line comments — then tests for a leading `mutation` keyword.
+ *
+ * The binary transport uses this to pick the wire message type: the binary
+ * client's reconnect logic applies an at-most-once guard to Mutation-typed
+ * frames (an interrupted mutation is rejected, never replayed), so sending a
+ * GraphQL mutation as a Query-typed frame would let a reconnect silently
+ * re-execute it.
+ */
+export function isMutationDocument(text: string): boolean {
+  const stripped = text.replace(/^(?:[\s,]+|#[^\n\r]*)+/, "");
+  return /^mutation\b/i.test(stripped);
+}
+
+/**
  * Returns the global `localStorage` object if present, or null in
  * environments where it isn't (Node, JSDOM with storage disabled, browsers
  * with privacy mode). Wraps the access in a try/catch because reading
@@ -268,7 +281,6 @@ export class HttpTransport implements QueryTransport {
 export class BinaryTransport implements QueryTransport {
   readonly mode: TransportMode = "binary";
   private client: BifrostBinaryClient | null = null;
-  private connectPromise: Promise<void> | null = null;
   private closed = false;
 
   constructor(
@@ -291,20 +303,18 @@ export class BinaryTransport implements QueryTransport {
       throw new Error("BinaryTransport is closed");
     }
     await this.ensureConnected();
-    // After ensureConnected we know the client is non-null; the cast keeps
-    // strict null checks happy without an explicit assertion at the use
-    // site.
-    const result = (await this.client!.query(
-      text,
-      variables,
-      options?.signal
-    )) as BifrostQueryResult;
+    // GraphQL mutations must travel as Mutation-typed frames so the binary
+    // client's at-most-once reconnect guard applies. Sending them as Query
+    // frames would let an interrupted mutation be replayed on reconnect and
+    // execute twice on the server.
+    const result: BifrostQueryResult = isMutationDocument(text)
+      ? await this.client!.mutate(text, variables, options?.signal)
+      : await this.client!.query(text, variables, options?.signal);
     return { data: result.data, errors: result.errors };
   }
 
   close(): void {
     this.closed = true;
-    this.connectPromise = null;
     if (this.client) {
       this.client.close();
       this.client = null;
@@ -312,50 +322,20 @@ export class BinaryTransport implements QueryTransport {
   }
 
   /**
-   * Opens the underlying WebSocket if it isn't open yet. Coalesces
-   * concurrent first calls onto the same in-flight connect promise so we
-   * don't accidentally open two sockets when several queries are issued
-   * back-to-back from the UI.
+   * Lazily builds the client and delegates connection management to it. The
+   * client owns all connect state: `connect()` short-circuits when the socket
+   * is already OPEN, dedupes concurrent opens onto one in-flight promise, and
+   * re-arms a reconnect controller that previously gave up. Keeping a second
+   * latch here would be a parallel state machine chasing the same socket. On
+   * failure we simply rethrow — the client instance is kept so its own
+   * retry/replay design (rearm on the next connect) stays intact; closing it
+   * would permanently stop the reconnect controller.
    */
   private async ensureConnected(): Promise<void> {
-    if (this.client && this.client.connected) {
-      return;
+    if (!this.client) {
+      this.client = this.clientFactory(this.url);
     }
-    if (!this.connectPromise) {
-      // Reuse an existing client so its own auto-reconnect/rearm applies; only
-      // build one on the very first connect (or after a hard failure nulled it).
-      if (!this.client) {
-        this.client = this.clientFactory(this.url);
-      }
-      const client = this.client;
-      const p = client.connect().catch((err) => {
-        // Close the client we're abandoning before dropping the reference.
-        // A live socket that dropped mid-query left this client's own
-        // auto-reconnect controller retrying in the background; nulling
-        // `this.client` without closing would orphan it — its backoff timers
-        // keep firing and it holds the old pending/streaming requests forever.
-        // close() stops the controller and rejects those requests.
-        client.close();
-        // Reset state so a subsequent query can retry from scratch instead
-        // of being stuck behind a permanently-rejected promise.
-        if (this.client === client) this.client = null;
-        if (this.connectPromise === p) this.connectPromise = null;
-        throw err;
-      });
-      this.connectPromise = p;
-      // Clear the latch once resolved, too. Leaving a resolved promise in place
-      // makes a later ensureConnected() (after the socket dropped) short-circuit
-      // on the stale promise and skip reconnecting entirely.
-      void p.then(
-        () => {
-          if (this.connectPromise === p) this.connectPromise = null;
-        },
-        () => {
-          /* failure already handled in the catch above */
-        }
-      );
-    }
-    await this.connectPromise;
+    await this.client.connect();
   }
 }
 

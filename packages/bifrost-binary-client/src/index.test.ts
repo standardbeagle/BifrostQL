@@ -341,6 +341,24 @@ describe("BifrostBinaryClient", () => {
       expect(decoded.requestId).toBe(1);
     });
 
+    it("mutate() honors an abort signal like query() does", async () => {
+      const controller = new AbortController();
+      const promise = client.mutate(
+        "mutation { doThing }",
+        undefined,
+        controller.signal
+      );
+      expect(client.pendingCount).toBe(1);
+
+      const assertion = expect(promise).rejects.toMatchObject({
+        name: "AbortError",
+      });
+      controller.abort();
+
+      await assertion;
+      expect(client.pendingCount).toBe(0);
+    });
+
     it("uses monotonically increasing requestIds", async () => {
       const ws = tracker.last;
       void client.query("{ a { id } }");
@@ -708,11 +726,16 @@ describe("BifrostBinaryClient", () => {
       return frames;
     }
 
-    let onChunkProgress: ReturnType<typeof vi.fn>;
+    type ChunkProgressFn = (
+      requestId: number,
+      received: number,
+      total: number
+    ) => void;
+    let onChunkProgress: ReturnType<typeof vi.fn<ChunkProgressFn>>;
     let chunkedClient: BifrostBinaryClient;
 
     beforeEach(async () => {
-      onChunkProgress = vi.fn();
+      onChunkProgress = vi.fn<ChunkProgressFn>();
       chunkedClient = new BifrostBinaryClient({
         url: TEST_URL,
         WebSocket: tracker.ctor,
@@ -833,6 +856,60 @@ describe("BifrostBinaryClient", () => {
       expect((onError.mock.calls[0]![0] as Error).message).toMatch(
         /unknown requestId 9999/
       );
+    });
+
+    it("silently drops late chunks for an aborted request instead of spraying onError", async () => {
+      const onError = vi.fn();
+      const c = new BifrostBinaryClient({
+        url: TEST_URL,
+        WebSocket: tracker.ctor,
+        onError,
+      });
+      const p = c.connect();
+      tracker.last.simulateOpen();
+      await p;
+
+      const ws = tracker.last;
+      const controller = new AbortController();
+      const promise = c.query("{ big }", undefined, controller.signal);
+      const sentId = decodeMessage(ws.sentFrames[0]!).requestId;
+
+      const inner = emptyMessage({
+        requestId: sentId,
+        type: BifrostMessageType.Result,
+        payload: new TextEncoder().encode(
+          JSON.stringify({ rows: ["a", "b", "c", "d"], n: 4 })
+        ),
+      });
+      const frames = buildChunkFrames(sentId, inner, 8);
+      expect(frames.length).toBeGreaterThanOrEqual(3);
+
+      // First chunk arrives, then the caller aborts mid-transfer.
+      ws.receive(frames[0]!);
+      const assertion = expect(promise).rejects.toMatchObject({
+        name: "AbortError",
+      });
+      controller.abort();
+      await assertion;
+      expect(c.pendingCount).toBe(0);
+
+      // The protocol has no cancel frame, so the server keeps streaming. The
+      // remaining chunks (including the final one) must be dropped silently —
+      // they are expected traffic for a client-side abort, not protocol bugs.
+      for (let i = 1; i < frames.length; i++) {
+        ws.receive(frames[i]!);
+      }
+      expect(onError).not.toHaveBeenCalled();
+
+      // The final chunk cleared the tombstone: a further stray chunk for the
+      // same id is a genuine anomaly again and surfaces through onError.
+      ws.receive(frames[1]!);
+      expect(onError).toHaveBeenCalledOnce();
+      expect((onError.mock.calls[0]![0] as Error).message).toMatch(
+        /unknown requestId/
+      );
+
+      c.close();
     });
 
     it("clears in-progress reassemblers on close()", async () => {

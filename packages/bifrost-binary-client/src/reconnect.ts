@@ -35,7 +35,8 @@
  *
  *   idle → waiting → connecting → idle (on success)
  *                  ↘ idle (on cancel)
- *                  ↘ giving-up (on max attempts exceeded)
+ *                  ↘ gave-up (on max attempts exceeded; revivable via rearm())
+ *   any → closed (on stop(); permanent)
  *
  * The controller does not create WebSockets itself; instead it is given a
  * `connect` callback that returns a Promise. The client wires that callback
@@ -141,8 +142,19 @@ export class ExponentialBackoff implements BackoffPolicy {
 
 /**
  * Lifecycle states for the reconnect state machine. Exposed only for tests.
+ *
+ * Two distinct terminal states:
+ * - `"gave-up"` — the retry budget was exhausted. Revivable via {@link ReconnectController.rearm}
+ *   so a later manual `connect()` re-arms auto-reconnect.
+ * - `"closed"` — {@link ReconnectController.stop} ran (client permanently
+ *   closed). Never revivable.
  */
-export type ReconnectState = "idle" | "waiting" | "connecting" | "stopped";
+export type ReconnectState =
+  | "idle"
+  | "waiting"
+  | "connecting"
+  | "gave-up"
+  | "closed";
 
 /**
  * Callback fired by `ReconnectController` to actually open a new WebSocket.
@@ -189,12 +201,6 @@ export class ReconnectController {
   private state: ReconnectState = "idle";
   private attempt = 0;
   private timer: unknown = null;
-  /**
-   * True once {@link stop} has run (client permanently closed). Distinguishes a
-   * terminal `stopped` state from the `stopped` a give-up leaves behind, so
-   * {@link rearm} can revive the latter but never the former.
-   */
-  private permanentlyStopped = false;
   private readonly policy: BackoffPolicy;
   private readonly connect: ReconnectAttemptFn;
   private readonly maxAttempts: number;
@@ -246,7 +252,7 @@ export class ReconnectController {
    * intervening.
    */
   start(lastError: Error): void {
-    if (this.state === "stopped") {
+    if (this.state === "gave-up" || this.state === "closed") {
       return;
     }
     if (this.state === "waiting" || this.state === "connecting") {
@@ -277,19 +283,17 @@ export class ReconnectController {
    */
   stop(): void {
     this.cancel();
-    this.state = "stopped";
-    this.permanentlyStopped = true;
+    this.state = "closed";
   }
 
   /**
-   * Revives a controller that transitioned to `stopped` by exhausting its retry
-   * budget (give-up) back to `idle`, so a subsequent manual `connect()` re-arms
-   * auto-reconnect. A no-op once {@link stop} has permanently stopped it (after
-   * `client.close()`) and a no-op in any non-stopped state.
+   * Revives a controller that transitioned to `gave-up` by exhausting its retry
+   * budget back to `idle`, so a subsequent manual `connect()` re-arms
+   * auto-reconnect. A no-op once {@link stop} has permanently closed it (after
+   * `client.close()`) and a no-op in any non-terminal state.
    */
   rearm(): void {
-    if (this.permanentlyStopped) return;
-    if (this.state === "stopped") {
+    if (this.state === "gave-up") {
       this.state = "idle";
       this.attempt = 0;
       this.policy.reset();
@@ -297,7 +301,7 @@ export class ReconnectController {
   }
 
   private scheduleNext(lastError: Error): void {
-    if (this.state === "stopped") {
+    if (this.state === "gave-up" || this.state === "closed") {
       return;
     }
     if (this.attempt >= this.maxAttempts) {
@@ -315,7 +319,7 @@ export class ReconnectController {
   }
 
   private runAttempt(lastError: Error): void {
-    if (this.state === "stopped") {
+    if (this.state === "gave-up" || this.state === "closed") {
       return;
     }
     this.state = "connecting";
@@ -355,7 +359,7 @@ export class ReconnectController {
 
   private giveUp(lastError: Error): void {
     const total = this.attempt;
-    this.state = "stopped";
+    this.state = "gave-up";
     this.attempt = 0;
     this.onGiveUp?.(total, lastError);
   }

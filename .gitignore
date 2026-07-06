@@ -396,3 +396,6 @@ src/BifrostQL.UI/wwwroot/index.html
 
 # worktrack runtime artifacts (per-clone, contains lease holder + git email)
 .worktrack/
+
+# TypeScript incremental build state
+*.tsbuildinfo

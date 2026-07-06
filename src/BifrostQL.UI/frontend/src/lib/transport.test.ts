@@ -24,6 +24,7 @@ import {
   TRANSPORT_STORAGE_KEY,
   createTransport,
   deriveBinaryUrl,
+  isMutationDocument,
   loadTransportMode,
   normalizeTransportMode,
   saveTransportMode,
@@ -54,29 +55,59 @@ class MemoryStorage implements Pick<Storage, "getItem" | "setItem"> {
 /**
  * Minimal fake of `BifrostBinaryClient` used by the BinaryTransport tests.
  * Tracks call counts so the test can assert lazy connect, single-connect
- * coalescing, and close cleanup without touching the real WebSocket.
+ * coalescing, mutation routing, and close cleanup without touching the real
+ * WebSocket.
  */
 class FakeBinaryClient {
   connectCalls = 0;
-  queryCalls: Array<{ text: string; variables?: Record<string, unknown> }> = [];
+  queryCalls: Array<{
+    text: string;
+    variables?: Record<string, unknown>;
+    signal?: AbortSignal;
+  }> = [];
+  mutateCalls: Array<{
+    text: string;
+    variables?: Record<string, unknown>;
+    signal?: AbortSignal;
+  }> = [];
   closeCalls = 0;
   isConnected = false;
   connectError: Error | null = null;
   nextResult: { data: unknown; errors: string[] } = { data: { ok: true }, errors: [] };
 
   async connect(): Promise<void> {
+    // Mirrors the real client's OPEN short-circuit: connect() on an already
+    // open client resolves without opening a second socket, so connectCalls
+    // counts actual socket opens.
+    if (this.isConnected) {
+      return;
+    }
     this.connectCalls++;
     if (this.connectError) {
-      throw this.connectError;
+      // Mirrors the real client: a failed connect leaves the client usable
+      // for a later retry, so the error is consumed rather than sticky.
+      const err = this.connectError;
+      this.connectError = null;
+      throw err;
     }
     this.isConnected = true;
   }
 
   async query(
     text: string,
-    variables?: Record<string, unknown>
+    variables?: Record<string, unknown>,
+    signal?: AbortSignal
   ): Promise<{ data: unknown; errors: string[] }> {
-    this.queryCalls.push({ text, variables });
+    this.queryCalls.push({ text, variables, signal });
+    return this.nextResult;
+  }
+
+  async mutate(
+    text: string,
+    variables?: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<{ data: unknown; errors: string[] }> {
+    this.mutateCalls.push({ text, variables, signal });
     return this.nextResult;
   }
 
@@ -145,6 +176,44 @@ describe("loadTransportMode / saveTransportMode", () => {
 
   it("treats a null storage on save as a no-op", () => {
     expect(() => saveTransportMode("binary", null)).not.toThrow();
+  });
+});
+
+describe("isMutationDocument", () => {
+  it("detects a bare mutation keyword", () => {
+    expect(isMutationDocument("mutation { doThing }")).toBe(true);
+  });
+
+  it("detects a named mutation with leading whitespace", () => {
+    expect(isMutationDocument("\n\t  mutation Save($x: Int!) { save(x: $x) }")).toBe(
+      true
+    );
+  });
+
+  it("detects a mutation behind leading comment lines", () => {
+    expect(
+      isMutationDocument("# save the row\n# really\nmutation { save }")
+    ).toBe(true);
+  });
+
+  it("does not flag shorthand queries", () => {
+    expect(isMutationDocument("{ users { id } }")).toBe(false);
+  });
+
+  it("does not flag explicit queries or subscriptions", () => {
+    expect(isMutationDocument("query Users { users { id } }")).toBe(false);
+    expect(isMutationDocument("subscription S { events { id } }")).toBe(false);
+  });
+
+  it("does not flag fields whose name merely starts with 'mutation'", () => {
+    expect(isMutationDocument("{ mutationLog { id } }")).toBe(false);
+    expect(isMutationDocument("mutationLog { id }")).toBe(false);
+  });
+
+  it("does not flag a comment that mentions mutation before a query", () => {
+    expect(isMutationDocument("# mutation in a comment\n{ users { id } }")).toBe(
+      false
+    );
   });
 });
 
@@ -338,27 +407,86 @@ describe("BinaryTransport", () => {
     ]);
   });
 
-  it("clears the in-flight connect promise on connect failure so retries work", async () => {
-    const fakes: FakeBinaryClient[] = [];
+  it("retries connect on the same client after a failed connect without closing it", async () => {
+    let created = 0;
+    const fake = new FakeBinaryClient();
+    fake.connectError = new Error("refused");
     const t = new BinaryTransport(
       "ws://localhost:5000/bifrost-ws",
       (() => {
-        const f = new FakeBinaryClient();
-        if (fakes.length === 0) {
-          f.connectError = new Error("refused");
-        }
-        fakes.push(f);
-        return f;
+        created++;
+        return fake;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
       }) as unknown as any
     );
 
     await expect(t.query("{ a }")).rejects.toThrow("refused");
-    // Second attempt should construct a fresh client and succeed.
+    // The failure must NOT close the client: closing would permanently stop
+    // its reconnect controller and defeat the client's own retry/replay
+    // design. The transport just rethrows and keeps the instance.
+    expect(fake.closeCalls).toBe(0);
+
+    // Second attempt retries connect on the SAME client and succeeds.
     const result = await t.query("{ b }");
     expect(result.data).toEqual({ ok: true });
-    expect(fakes).toHaveLength(2);
-    expect(fakes[1].connectCalls).toBe(1);
+    expect(created).toBe(1);
+    expect(fake.connectCalls).toBe(2);
+  });
+
+  it("routes mutation documents through mutate() so the Mutation frame type is used", async () => {
+    const fake = new FakeBinaryClient();
+    const t = new BinaryTransport(
+      "ws://localhost:5000/bifrost-ws",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (() => fake) as unknown as any
+    );
+
+    const controller = new AbortController();
+    await t.query(
+      "mutation { insert_users(input: { name: \"Bob\" }) { id } }",
+      { name: "Bob" },
+      { signal: controller.signal }
+    );
+
+    expect(fake.queryCalls).toHaveLength(0);
+    expect(fake.mutateCalls).toHaveLength(1);
+    expect(fake.mutateCalls[0].text).toContain("insert_users");
+    expect(fake.mutateCalls[0].variables).toEqual({ name: "Bob" });
+    expect(fake.mutateCalls[0].signal).toBe(controller.signal);
+  });
+
+  it("routes mutations preceded by comments and whitespace through mutate()", async () => {
+    const fake = new FakeBinaryClient();
+    const t = new BinaryTransport(
+      "ws://localhost:5000/bifrost-ws",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (() => fake) as unknown as any
+    );
+
+    await t.query(
+      "# update the row\n  # second comment\n\n  mutation UpdateRow($id: Int!) { update_rows(id: $id) { id } }",
+      { id: 1 }
+    );
+
+    expect(fake.queryCalls).toHaveLength(0);
+    expect(fake.mutateCalls).toHaveLength(1);
+  });
+
+  it("routes queries (named, shorthand, and query-prefixed) through query()", async () => {
+    const fake = new FakeBinaryClient();
+    const t = new BinaryTransport(
+      "ws://localhost:5000/bifrost-ws",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (() => fake) as unknown as any
+    );
+
+    await t.query("{ users { id } }");
+    await t.query("query Users { users { id } }");
+    // A field merely named like the keyword must not be misrouted.
+    await t.query("{ mutationLog { id } }");
+
+    expect(fake.mutateCalls).toHaveLength(0);
+    expect(fake.queryCalls).toHaveLength(3);
   });
 
   it("closes the underlying client and rejects future queries", async () => {

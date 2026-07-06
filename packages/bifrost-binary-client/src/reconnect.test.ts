@@ -271,7 +271,7 @@ describe("ReconnectController", () => {
     expect(onGiveUp).toHaveBeenCalledOnce();
     expect(onGiveUp.mock.calls[0]![0]).toBe(2);
     expect((onGiveUp.mock.calls[0]![1] as Error).message).toBe("nope");
-    expect(ctrl.currentState).toBe("stopped");
+    expect(ctrl.currentState).toBe("gave-up");
   });
 
   it("stop() prevents any further reconnect work even after success races", async () => {
@@ -294,13 +294,47 @@ describe("ReconnectController", () => {
     expect(ctrl.currentState).toBe("connecting");
 
     ctrl.stop();
-    expect(ctrl.currentState).toBe("stopped");
+    expect(ctrl.currentState).toBe("closed");
 
     // Now resolve the in-flight connect - it should be ignored.
     resolveConnect();
     await vi.advanceTimersByTimeAsync(0);
     expect(onSuccess).not.toHaveBeenCalled();
-    expect(ctrl.currentState).toBe("stopped");
+    expect(ctrl.currentState).toBe("closed");
+  });
+
+  it("rearm() revives a gave-up controller but never a closed one", async () => {
+    const connect = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValue(new Error("nope"));
+    const ctrl = new ReconnectController({
+      policy: new FixedBackoff(100),
+      connect,
+      maxAttempts: 1,
+    });
+
+    // Exhaust the retry budget → gave-up (revivable terminal state).
+    ctrl.start(new Error("trigger"));
+    await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ctrl.currentState).toBe("gave-up");
+
+    // start() must not restart a gave-up controller on its own...
+    ctrl.start(new Error("again"));
+    expect(ctrl.currentState).toBe("gave-up");
+
+    // ...but rearm() revives it to idle with a fresh attempt budget.
+    ctrl.rearm();
+    expect(ctrl.currentState).toBe("idle");
+    expect(ctrl.attemptCount).toBe(0);
+
+    // stop() is permanent: rearm() must not revive a closed controller.
+    ctrl.stop();
+    expect(ctrl.currentState).toBe("closed");
+    ctrl.rearm();
+    expect(ctrl.currentState).toBe("closed");
+    ctrl.start(new Error("still closed"));
+    expect(ctrl.currentState).toBe("closed");
   });
 
   it("start() is idempotent while already waiting", () => {
@@ -740,6 +774,51 @@ describe("BifrostBinaryClient auto-reconnect", () => {
     // No second socket created.
     await vi.advanceTimersByTimeAsync(10_000);
     expect(tracker.instances).toHaveLength(1);
+  });
+
+  it("does not open a second socket when a manual connect() races the backoff timer", async () => {
+    const client = await makeConnectedClient();
+    const firstWs = tracker.last;
+
+    const promise = client.query("{ a }");
+    firstWs.simulateClose(1006, "drop");
+    // The controller is now waiting on its 100ms backoff timer. A manual
+    // connect() during the wait opens socket #2 immediately.
+    const manual = client.connect();
+    expect(tracker.instances).toHaveLength(2);
+    const secondWs = tracker.last;
+    secondWs.simulateOpen();
+    await manual;
+    expect(client.connected).toBe(true);
+
+    // The backoff timer fires with the socket already OPEN. The controller's
+    // attempt must short-circuit on the open socket instead of creating a
+    // third socket whose onopen would clobber `this.ws` and leak socket #2.
+    await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(tracker.instances).toHaveLength(2);
+    expect(client.connected).toBe(true);
+
+    // The controller's short-circuited attempt still counts as a reconnect
+    // success, so the pending query is replayed on the surviving socket...
+    expect(secondWs.sentFrames).toHaveLength(1);
+    const replayed = decodeMessage(secondWs.sentFrames[0]!);
+    expect(replayed.query).toBe("{ a }");
+
+    // ...and responding on that socket resolves the original promise, proving
+    // `this.ws` still points at socket #2.
+    secondWs.receive(
+      encodeMessage(
+        emptyMessage({
+          requestId: replayed.requestId,
+          type: BifrostMessageType.Result,
+          payload: jsonPayload({ ok: true }),
+        })
+      )
+    );
+    await expect(promise).resolves.toMatchObject({ data: { ok: true } });
+
+    client.close();
   });
 
   it("uses the default ExponentialBackoff when no backoff option is provided", async () => {

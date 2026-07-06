@@ -413,13 +413,6 @@ export class BifrostBinaryClient implements StreamingClientInternals {
   private readonly onReconnect?: (attempt: number) => void;
   private readonly onReconnectFailed?: (attempts: number, error: Error) => void;
   private readonly reconnectController: ReconnectController | null;
-  /**
-   * True while the client is in the middle of an auto-reconnect cycle. Used to
-   * gate `connect()`'s "already connected" fast-path and to suppress the
-   * `onClose` callback for transient drops (we only fire it after a clean
-   * close or an exhausted retry budget).
-   */
-  private reconnecting = false;
   /** True once `close()` has been called, to make it permanent. */
   private closed = false;
   /**
@@ -430,6 +423,20 @@ export class BifrostBinaryClient implements StreamingClientInternals {
    * open settles (resolve or reject).
    */
   private connectPromise: Promise<void> | null = null;
+
+  /**
+   * True while the client is in the middle of an auto-reconnect cycle. Derived
+   * from the reconnect controller's state machine rather than mirrored in a
+   * separate latch: the controller is mid-cycle exactly when it is waiting for
+   * a backoff timer or has a connect attempt in flight. Used to keep the
+   * reconnect cycle alive when a close event fires with no pending requests,
+   * and to suppress the `onClose` callback for transient drops (we only fire
+   * it after a clean close or an exhausted retry budget).
+   */
+  private get reconnecting(): boolean {
+    const state = this.reconnectController?.currentState;
+    return state === "waiting" || state === "connecting";
+  }
 
   constructor(options: BifrostClientOptions) {
     this.url = options.url;
@@ -478,18 +485,10 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       return Promise.resolve();
     }
     // A manual reconnect after the retry budget was exhausted re-arms the
-    // controller so a future drop auto-reconnects again, and clears the
-    // `reconnecting` latch that a wedged give-up would otherwise leave set.
+    // controller so a future drop auto-reconnects again (gave-up → idle).
+    // No other state bookkeeping is needed here: `reconnecting` is derived
+    // from the controller, so an active waiting/connecting cycle stays intact.
     this.reconnectController?.rearm();
-    // Only clear the latch when the controller is NOT mid-cycle. Clearing it
-    // during an active waiting/connecting attempt would let a later drop with no
-    // pending/streaming requests fall through to the terminate path and abandon
-    // the reconnect. rearm() above already revived a wedged give-up (stopped →
-    // idle), which is exactly the state this clear is meant to reset.
-    const controllerState = this.reconnectController?.currentState;
-    if (controllerState !== "waiting" && controllerState !== "connecting") {
-      this.reconnecting = false;
-    }
     return this.openSocket();
   }
 
@@ -501,6 +500,15 @@ export class BifrostBinaryClient implements StreamingClientInternals {
    * yet) or on a close event that fires before the socket ever opened.
    */
   private openSocket(): Promise<void> {
+    // Already open: short-circuit instead of spawning a duplicate socket. This
+    // covers the manual-connect-during-backoff race — a user calls connect()
+    // while the controller is waiting, the socket opens (settling and clearing
+    // `connectPromise`), and then the backoff timer fires. Without this check
+    // the controller's attempt would open socket B whose onopen clobbers
+    // `this.ws` while socket A is never closed (its handlers stay live).
+    if (this.ws && this.ws.readyState === this.wsConstructor.OPEN) {
+      return Promise.resolve();
+    }
     // Dedupe overlapping opens: return the in-flight attempt rather than
     // spawning a second socket that would leak (its handlers would clobber the
     // first socket's, and the first would never be closed).
@@ -599,6 +607,10 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       return;
     }
     this.ws = null;
+    // A disconnect ends any server-side streaming for aborted requests (the
+    // server loses the socket), so the tombstones guarding against their late
+    // chunks can never match again — clear them to prevent unbounded growth.
+    this.abortedRequests.clear();
 
     const shouldReconnect =
       !this.closed &&
@@ -608,7 +620,6 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       (this.pending.size > 0 || this.streamingRequests.size > 0 || this.reconnecting);
 
     if (shouldReconnect && this.reconnectController) {
-      this.reconnecting = true;
       // Snapshot per-request resume offsets but KEEP the reassembler buffers
       // across the disconnect so partial chunks already received aren't lost
       // — the server's GetChunksAfter only retransmits chunks strictly after
@@ -626,7 +637,6 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     if (this.reconnectController && !this.closed) {
       this.reconnectController.cancel();
     }
-    this.reconnecting = false;
     this.onClose?.(code, reason);
   }
 
@@ -656,9 +666,17 @@ export class BifrostBinaryClient implements StreamingClientInternals {
   private readonly resumeFromByRequestId = new Map<number, number>();
   /** Same idea for streaming requests. */
   private readonly streamingResumeFrom = new Map<number, number>();
+  /**
+   * Tombstones for requests aborted client-side while the server may still be
+   * streaming their chunked response. The protocol has no cancel frame, so the
+   * server keeps sending; without a tombstone every late chunk would surface
+   * as a spurious `onError("Received chunk for unknown requestId ...")`. A
+   * tombstone is dropped once the final chunk of the response passes through
+   * (or wholesale on disconnect/close, when the server-side stream dies).
+   */
+  private readonly abortedRequests = new Set<number>();
 
   private handleReconnectSuccess(attempt: number): void {
-    this.reconnecting = false;
     this.onReconnect?.(attempt);
     this.replayPendingAfterReconnect();
     this.resumeFromByRequestId.clear();
@@ -666,7 +684,6 @@ export class BifrostBinaryClient implements StreamingClientInternals {
   }
 
   private handleReconnectGiveUp(attempts: number, lastError: Error): void {
-    this.reconnecting = false;
     const err = new Error(
       `Reconnect failed after ${attempts} attempts: ${lastError.message}`
     );
@@ -785,9 +802,10 @@ export class BifrostBinaryClient implements StreamingClientInternals {
    */
   mutate(
     mutationText: string,
-    variables?: Record<string, unknown>
+    variables?: Record<string, unknown>,
+    signal?: AbortSignal
   ): Promise<BifrostQueryResult> {
-    return this.send(BifrostMessageType.Mutation, mutationText, variables);
+    return this.send(BifrostMessageType.Mutation, mutationText, variables, signal);
   }
 
   /**
@@ -902,7 +920,6 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     if (this.reconnectController) {
       this.reconnectController.stop();
     }
-    this.reconnecting = false;
     // Drop the in-flight open latch: a socket still connecting is discarded by
     // the `this.closed` guard in openSocket's onopen, and its promise settles
     // via the close/error path.
@@ -980,6 +997,10 @@ export class BifrostBinaryClient implements StreamingClientInternals {
           // Reassembly buffers for an in-flight chunked response, if any, are
           // dropped so an aborted request leaves no partial state behind.
           this.reassemblers.delete(requestId);
+          // The server has no cancel frame and may keep streaming chunks for
+          // this request; tombstone the id so those late frames are dropped
+          // silently instead of surfacing as unknown-requestId errors.
+          this.abortedRequests.add(requestId);
           wrappedReject(abortError());
         };
         signal.addEventListener("abort", onAbort, { once: true });
@@ -1065,6 +1086,15 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     }
 
     if (!this.pending.has(chunk.requestId)) {
+      if (this.abortedRequests.has(chunk.requestId)) {
+        // Late chunk for a client-side-aborted request: expected, drop it
+        // silently. Once the final chunk of the response has passed through,
+        // the tombstone has served its purpose and can be removed.
+        if (chunk.chunkInfo.sequence + 1 >= chunk.chunkInfo.total) {
+          this.abortedRequests.delete(chunk.requestId);
+        }
+        return;
+      }
       this.onError?.(
         new Error(
           `Received chunk for unknown requestId ${chunk.requestId} (sequence ${chunk.chunkInfo.sequence}/${chunk.chunkInfo.total})`
@@ -1143,6 +1173,9 @@ export class BifrostBinaryClient implements StreamingClientInternals {
   private deliverComplete(response: BifrostMessage): void {
     const pending = this.pending.get(response.requestId);
     if (!pending) {
+      // A non-chunked (or fully reassembled) frame is the end of the server's
+      // response for this id — any abort tombstone is no longer needed.
+      this.abortedRequests.delete(response.requestId);
       return;
     }
 
@@ -1219,6 +1252,7 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     }
     this.pending.clear();
     this.reassemblers.clear();
+    this.abortedRequests.clear();
     this.errorAllStreamingQueues(error);
   }
 }

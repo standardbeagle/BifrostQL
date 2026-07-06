@@ -1,5 +1,6 @@
 using System.IO.Hashing;
 using System.Net.WebSockets;
+using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Server
 {
@@ -24,22 +25,40 @@ namespace BifrostQL.Server
         /// </summary>
         public const int DefaultAckWindow = 8;
 
+        /// <summary>
+        /// Default maximum time to wait for a ChunkAck/ChunkNack once the ack window is
+        /// full. A client that stops acknowledging (or never acknowledges) would otherwise
+        /// wedge the connection forever inside the send loop.
+        /// </summary>
+        public static readonly TimeSpan DefaultAckTimeout = TimeSpan.FromSeconds(30);
+
         private readonly int _chunkThreshold;
         private readonly int _ackWindow;
         private readonly ChunkBuffer? _chunkBuffer;
+        private readonly TimeSpan _ackTimeout;
+        private readonly ILogger? _logger;
 
         public ChunkSender(int chunkThreshold = DefaultChunkThreshold, int ackWindow = DefaultAckWindow)
             : this(chunkThreshold, ackWindow, null)
         {
         }
 
-        public ChunkSender(int chunkThreshold, int ackWindow, ChunkBuffer? chunkBuffer)
+        public ChunkSender(
+            int chunkThreshold,
+            int ackWindow,
+            ChunkBuffer? chunkBuffer,
+            TimeSpan? ackTimeout = null,
+            ILogger? logger = null)
         {
             if (chunkThreshold <= 0) throw new ArgumentOutOfRangeException(nameof(chunkThreshold));
             if (ackWindow <= 0) throw new ArgumentOutOfRangeException(nameof(ackWindow));
+            if (ackTimeout.HasValue && ackTimeout.Value <= TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(ackTimeout));
             _chunkThreshold = chunkThreshold;
             _ackWindow = ackWindow;
             _chunkBuffer = chunkBuffer;
+            _ackTimeout = ackTimeout ?? DefaultAckTimeout;
+            _logger = logger;
         }
 
         /// <summary>
@@ -158,17 +177,34 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
-        /// Waits for a single ACK or NACK message from the client.
-        /// Returns the number of ACKs received and optionally a NACK sequence for retransmission.
+        /// Waits for a single ACK or NACK message from the client, bounded by the ack
+        /// timeout. Returns the number of ACKs received and optionally a NACK sequence
+        /// for retransmission.
         /// </summary>
-        private static async Task<(int acksReceived, uint? nackSequence)> WaitForAckAsync(
+        /// <exception cref="TimeoutException">
+        /// The client sent nothing within the ack timeout. Callers should abort the
+        /// transfer rather than block the connection indefinitely.
+        /// </exception>
+        private async Task<(int acksReceived, uint? nackSequence)> WaitForAckAsync(
             WebSocket webSocket,
             byte[] receiveBuffer,
             CancellationToken cancellationToken)
         {
-            var result = await webSocket.ReceiveAsync(
-                new ArraySegment<byte>(receiveBuffer),
-                cancellationToken);
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(_ackTimeout);
+
+            WebSocketReceiveResult result;
+            try
+            {
+                result = await webSocket.ReceiveAsync(
+                    new ArraySegment<byte>(receiveBuffer),
+                    timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException(
+                    $"Client did not acknowledge chunked transfer within {_ackTimeout.TotalSeconds:0.###} seconds");
+            }
 
             if (result.MessageType == WebSocketMessageType.Close)
                 throw new WebSocketException(WebSocketError.ConnectionClosedPrematurely);
@@ -186,6 +222,11 @@ namespace BifrostQL.Server
             if (ackMsg.Type == BifrostMessageType.ChunkNack)
                 return (0, ackMsg.ChunkSequence);
 
+            // Anything else (e.g. a pipelined Query sent mid-transfer) cannot be serviced
+            // while a chunked send is in flight; it is dropped, so make that visible.
+            _logger?.LogWarning(
+                "Discarding unexpected {MessageType} frame received while awaiting chunk acknowledgement for request {RequestId}",
+                ackMsg.Type, ackMsg.RequestId);
             return (0, null);
         }
 

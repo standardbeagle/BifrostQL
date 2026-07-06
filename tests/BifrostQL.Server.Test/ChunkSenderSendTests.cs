@@ -134,6 +134,45 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public async Task SendChunkedAsync_ClientNeverAcks_ThrowsTimeoutInsteadOfBlockingForever()
+        {
+            var sender = new ChunkSender(
+                chunkThreshold: 100, ackWindow: 2, chunkBuffer: null,
+                ackTimeout: TimeSpan.FromMilliseconds(100));
+            var socket = new FakeWebSocket { HangWhenDrained = true };
+            var response = Result(13, 1000); // ~11 chunks, window of 2 forces an ack wait
+
+            var act = async () =>
+                await sender.SendChunkedAsync(socket, response, AckBuffer(), CancellationToken.None);
+
+            await act.Should().ThrowAsync<TimeoutException>();
+        }
+
+        [Fact]
+        public async Task SendChunkedAsync_ExternalCancellation_ThrowsCancellation_NotTimeout()
+        {
+            var sender = new ChunkSender(
+                chunkThreshold: 100, ackWindow: 2, chunkBuffer: null,
+                ackTimeout: TimeSpan.FromSeconds(30));
+            var socket = new FakeWebSocket { HangWhenDrained = true };
+            var response = Result(14, 1000);
+            using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+            var act = async () =>
+                await sender.SendChunkedAsync(socket, response, AckBuffer(), cts.Token);
+
+            await act.Should().ThrowAsync<OperationCanceledException>();
+        }
+
+        [Fact]
+        public void Constructor_RejectsNonPositiveAckTimeout()
+        {
+            var act = () => new ChunkSender(
+                chunkThreshold: 100, ackWindow: 2, chunkBuffer: null, ackTimeout: TimeSpan.Zero);
+            act.Should().Throw<ArgumentOutOfRangeException>();
+        }
+
+        [Fact]
         public async Task SendChunksAsync_NonBinaryAckFrame_TreatedAsNoAck()
         {
             var sender = new ChunkSender(chunkThreshold: 100, ackWindow: 2);

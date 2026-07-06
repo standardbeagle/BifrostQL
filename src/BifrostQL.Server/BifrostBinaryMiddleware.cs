@@ -19,10 +19,12 @@ namespace BifrostQL.Server
     /// Chunk messages with CRC32 integrity checksums and backpressure via ChunkAck.
     /// Incoming chunked requests from clients are reassembled before execution.
     ///
-    /// Supports retry and resumption: clients can send Resume messages after reconnecting
-    /// to request retransmission of chunks from the server-side ChunkBuffer. The buffer
-    /// retains sent chunks with TTL-based eviction so that interrupted transfers can be
-    /// continued without re-executing the query.
+    /// Supports retry within a connection: clients can send Resume or ChunkNack messages
+    /// to request retransmission of chunks from the ChunkBuffer. The buffer is scoped to
+    /// a single connection — request_id values are client-chosen, so buffered chunks are
+    /// never visible to any other connection (which would leak one principal's results to
+    /// another). Completed transfers are removed from the buffer immediately; interrupted
+    /// transfers are released with the connection.
     /// </summary>
     public sealed class BifrostBinaryMiddleware
     {
@@ -30,8 +32,9 @@ namespace BifrostQL.Server
         private readonly IBifrostEngine _engine;
         private readonly string _endpointPath;
         private readonly ILogger<BifrostBinaryMiddleware> _logger;
-        private readonly ChunkSender _chunkSender;
-        private readonly ChunkBuffer _chunkBuffer;
+        private readonly int _chunkThreshold;
+        private readonly int _ackWindow;
+        private readonly TimeSpan _ackTimeout;
 
         /// <summary>
         /// Maximum binary frame size (4 MB). Messages larger than this are rejected.
@@ -56,7 +59,7 @@ namespace BifrostQL.Server
             ILogger<BifrostBinaryMiddleware> logger,
             int chunkThreshold,
             int ackWindow)
-            : this(next, engine, endpointPath, logger, chunkThreshold, ackWindow, new ChunkBuffer())
+            : this(next, engine, endpointPath, logger, chunkThreshold, ackWindow, ChunkSender.DefaultAckTimeout)
         {
         }
 
@@ -67,14 +70,15 @@ namespace BifrostQL.Server
             ILogger<BifrostBinaryMiddleware> logger,
             int chunkThreshold,
             int ackWindow,
-            ChunkBuffer chunkBuffer)
+            TimeSpan ackTimeout)
         {
             _next = next;
             _engine = engine ?? throw new ArgumentNullException(nameof(engine));
             _endpointPath = endpointPath ?? throw new ArgumentNullException(nameof(endpointPath));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _chunkBuffer = chunkBuffer ?? throw new ArgumentNullException(nameof(chunkBuffer));
-            _chunkSender = new ChunkSender(chunkThreshold, ackWindow, _chunkBuffer);
+            _chunkThreshold = chunkThreshold;
+            _ackWindow = ackWindow;
+            _ackTimeout = ackTimeout;
         }
 
         public async Task InvokeAsync(HttpContext context)
@@ -94,6 +98,13 @@ namespace BifrostQL.Server
             var buffer = new byte[MaxFrameSize];
             var chunkReceiver = new ChunkReceiver();
 
+            // Chunk buffering is connection-scoped. request_id values are chosen by the
+            // client, so a shared buffer would let one connection replay another
+            // connection's buffered results via Resume/ChunkNack (cross-principal leak)
+            // or corrupt an entry by reusing the same request_id concurrently.
+            var chunkBuffer = new ChunkBuffer();
+            var chunkSender = new ChunkSender(_chunkThreshold, _ackWindow, chunkBuffer, _ackTimeout, _logger);
+
             try
             {
                 while (webSocket.State == WebSocketState.Open)
@@ -112,7 +123,7 @@ namespace BifrostQL.Server
                         break;
                     }
 
-                    await ProcessMessageAsync(messageBytes, webSocket, httpContext, buffer, chunkReceiver);
+                    await ProcessMessageAsync(messageBytes, webSocket, httpContext, buffer, chunkReceiver, chunkSender, chunkBuffer);
                 }
             }
             catch (WebSocketException ex) when (ex.WebSocketErrorCode == WebSocketError.ConnectionClosedPrematurely)
@@ -147,7 +158,9 @@ namespace BifrostQL.Server
             WebSocket webSocket,
             HttpContext httpContext,
             byte[] receiveBuffer,
-            ChunkReceiver chunkReceiver)
+            ChunkReceiver chunkReceiver,
+            ChunkSender chunkSender,
+            ChunkBuffer chunkBuffer)
         {
             BifrostMessage request;
             try
@@ -202,10 +215,11 @@ namespace BifrostQL.Server
             if (request.Type == BifrostMessageType.ChunkAck)
                 return;
 
-            // ChunkNack at top level: retransmit the requested chunk from buffer
+            // ChunkNack at top level: retransmit the requested chunk from this
+            // connection's buffer (never another connection's transfers).
             if (request.Type == BifrostMessageType.ChunkNack)
             {
-                var retransmitChunk = _chunkBuffer.TryGet(request.RequestId, request.ChunkSequence);
+                var retransmitChunk = chunkBuffer.TryGet(request.RequestId, request.ChunkSequence);
                 if (retransmitChunk != null)
                 {
                     _logger.LogDebug(
@@ -226,10 +240,12 @@ namespace BifrostQL.Server
                 return;
             }
 
-            // Resume: client reconnected and wants chunks retransmitted from last_sequence + 1
+            // Resume: client wants chunks of an interrupted transfer on this connection
+            // retransmitted from last_sequence + 1. The buffer is connection-scoped, so
+            // transfers from other (or previous) connections are never resumable here.
             if (request.Type == BifrostMessageType.Resume)
             {
-                var remainingChunks = _chunkBuffer.GetChunksAfter(request.RequestId, request.LastSequence);
+                var remainingChunks = chunkBuffer.GetChunksAfter(request.RequestId, request.LastSequence);
                 if (remainingChunks.Count > 0)
                 {
                     _logger.LogDebug(
@@ -246,8 +262,16 @@ namespace BifrostQL.Server
                     };
                     await SendResponseAsync(webSocket, resumeAck, httpContext.RequestAborted);
 
-                    await _chunkSender.SendChunksAsync(
-                        webSocket, remainingChunks, 0, receiveBuffer, httpContext.RequestAborted);
+                    try
+                    {
+                        await chunkSender.SendChunksAsync(
+                            webSocket, remainingChunks, 0, receiveBuffer, httpContext.RequestAborted);
+                        chunkBuffer.Complete(request.RequestId);
+                    }
+                    catch (TimeoutException ex)
+                    {
+                        await AbortOnAckTimeoutAsync(webSocket, request.RequestId, ex);
+                    }
                 }
                 else
                 {
@@ -269,16 +293,51 @@ namespace BifrostQL.Server
 
             var response = await ExecuteRequestAsync(request, httpContext);
 
-            if (_chunkSender.RequiresChunking(response))
+            if (chunkSender.RequiresChunking(response))
             {
                 _logger.LogDebug(
                     "Chunking response for request {RequestId}: {PayloadSize} bytes",
                     response.RequestId, response.Payload.Length);
-                await _chunkSender.SendChunkedAsync(webSocket, response, receiveBuffer, httpContext.RequestAborted);
+                try
+                {
+                    await chunkSender.SendChunkedAsync(webSocket, response, receiveBuffer, httpContext.RequestAborted);
+                    // Transfer delivered in full: release the buffered chunks now instead
+                    // of letting the whole payload linger until TTL expiry.
+                    chunkBuffer.Complete(response.RequestId);
+                }
+                catch (TimeoutException ex)
+                {
+                    await AbortOnAckTimeoutAsync(webSocket, response.RequestId, ex);
+                }
             }
             else
             {
                 await SendResponseAsync(webSocket, response, httpContext.RequestAborted);
+            }
+        }
+
+        /// <summary>
+        /// Handles a chunk-acknowledgement timeout: the client stopped acking mid-transfer,
+        /// so the transfer is aborted and the connection closed rather than letting the
+        /// send loop pin the connection indefinitely.
+        /// </summary>
+        private async Task AbortOnAckTimeoutAsync(WebSocket webSocket, uint requestId, TimeoutException ex)
+        {
+            _logger.LogWarning(
+                ex, "Chunk acknowledgement timeout for request {RequestId}; closing connection", requestId);
+            try
+            {
+                await webSocket.CloseAsync(
+                    WebSocketCloseStatus.PolicyViolation,
+                    "Chunk acknowledgement timeout",
+                    CancellationToken.None);
+            }
+            catch (WebSocketException)
+            {
+                // Socket already aborted by the cancelled receive; nothing more to do.
+            }
+            catch (OperationCanceledException)
+            {
             }
         }
 

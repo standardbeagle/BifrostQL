@@ -24,6 +24,18 @@ namespace BifrostQL.Server.Test
         /// <summary>Default frame returned once the scripted queue is empty (defaults to a ChunkAck).</summary>
         public BifrostMessageType DefaultIncomingType { get; set; } = BifrostMessageType.ChunkAck;
 
+        /// <summary>
+        /// When true, ReceiveAsync never completes once the scripted queue is drained
+        /// (honouring cancellation). Simulates a client that stops acknowledging.
+        /// </summary>
+        public bool HangWhenDrained { get; set; }
+
+        /// <summary>
+        /// When set, SendAsync throws ConnectionClosedPrematurely once this many frames
+        /// have been sent. Simulates a client disconnect mid-transfer.
+        /// </summary>
+        public int? FailAfterSends { get; set; }
+
         /// <summary>Queues a ChunkAck to be returned by the next ReceiveAsync.</summary>
         public void EnqueueAck(uint requestId = 0, uint sequence = 0)
         {
@@ -78,6 +90,12 @@ namespace BifrostQL.Server.Test
             bool endOfMessage,
             CancellationToken cancellationToken)
         {
+            if (FailAfterSends.HasValue && SentFrames.Count >= FailAfterSends.Value)
+            {
+                _state = WebSocketState.Aborted;
+                throw new WebSocketException(WebSocketError.ConnectionClosedPrematurely);
+            }
+
             var copy = new byte[buffer.Count];
             Buffer.BlockCopy(buffer.Array!, buffer.Offset, copy, 0, buffer.Count);
             SentFrames.Add(copy);
@@ -89,6 +107,14 @@ namespace BifrostQL.Server.Test
             CancellationToken cancellationToken)
         {
             ReceiveCount++;
+
+            if (_incoming.Count == 0 && HangWhenDrained)
+            {
+                var tcs = new TaskCompletionSource<WebSocketReceiveResult>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken));
+                return tcs.Task;
+            }
 
             var (type, data) = _incoming.Count > 0
                 ? _incoming.Dequeue()

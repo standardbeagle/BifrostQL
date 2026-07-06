@@ -109,6 +109,92 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public void TotalBytesExceedingConfiguredCap_ThrowsBeforeAllocation()
+        {
+            var receiver = new ChunkReceiver();
+            var data = new byte[] { 1, 2, 3 };
+            // Just over the 64 MB default cap: must be rejected up front, not allocated.
+            var chunk = Chunk(1, data, 0, 1, 0, (ulong)ChunkReceiver.DefaultMaxReassemblyBytes + 1);
+
+            var act = () => receiver.AddChunk(chunk);
+
+            act.Should().Throw<InvalidOperationException>().WithMessage("*too large*");
+            receiver.PendingCount.Should().Be(0);
+        }
+
+        [Fact]
+        public void HugeChunkTotal_ThrowsInsteadOfAllocatingTrackingArray()
+        {
+            var receiver = new ChunkReceiver();
+            var data = new byte[] { 1 };
+            // A hostile ChunkTotal near uint.MaxValue would previously allocate a ~4 GB
+            // bool[] from a single frame; it must be rejected before any allocation.
+            var chunk = Chunk(1, data, 0, total: uint.MaxValue, offset: 0, totalBytes: 1);
+
+            var act = () => receiver.AddChunk(chunk);
+
+            act.Should().Throw<InvalidOperationException>().WithMessage("*chunk*limit*");
+            receiver.PendingCount.Should().Be(0);
+        }
+
+        [Fact]
+        public void ChunkTotalJustAboveCap_Throws_AtCapSucceeds()
+        {
+            var receiver = new ChunkReceiver();
+            var overCap = Chunk(1, new byte[] { 1 }, 0, total: (uint)ChunkReceiver.MaxChunkCount + 1, offset: 0, totalBytes: 1);
+            var act = () => receiver.AddChunk(overCap);
+            act.Should().Throw<InvalidOperationException>();
+
+            var atCap = Chunk(2, new byte[] { 1 }, 0, total: ChunkReceiver.MaxChunkCount, offset: 0, totalBytes: 1);
+            receiver.AddChunk(atCap).Should().BeNull("only 1 of 65536 chunks arrived");
+            receiver.PendingCount.Should().Be(1);
+        }
+
+        [Fact]
+        public void PendingReassemblyLimit_RejectsNewTransfersWhenFull()
+        {
+            var receiver = new ChunkReceiver(
+                maxReassemblyBytes: 1024, maxPendingReassemblies: 2, reassemblyTtl: TimeSpan.FromMinutes(5));
+
+            // Two incomplete transfers occupy the pending table.
+            receiver.AddChunk(Chunk(1, new byte[] { 1 }, 0, 2, 0, 2)).Should().BeNull();
+            receiver.AddChunk(Chunk(2, new byte[] { 1 }, 0, 2, 0, 2)).Should().BeNull();
+
+            var act = () => receiver.AddChunk(Chunk(3, new byte[] { 1 }, 0, 2, 0, 2));
+
+            act.Should().Throw<InvalidOperationException>().WithMessage("*pending*");
+            // Existing transfers keep working: completing transfer 1 still succeeds.
+            receiver.AddChunk(Chunk(1, new byte[] { 2 }, 1, 2, 1, 2)).Should().Equal(1, 2);
+        }
+
+        [Fact]
+        public void StalePendingReassembly_IsEvicted_MakingRoomForNewTransfers()
+        {
+            var receiver = new ChunkReceiver(
+                maxReassemblyBytes: 1024, maxPendingReassemblies: 1, reassemblyTtl: TimeSpan.FromMilliseconds(50));
+
+            receiver.AddChunk(Chunk(1, new byte[] { 1 }, 0, 2, 0, 2)).Should().BeNull();
+            receiver.PendingCount.Should().Be(1);
+
+            Thread.Sleep(100); // let the abandoned transfer go stale
+
+            // A new transfer evicts the stale one instead of being rejected.
+            receiver.AddChunk(Chunk(2, new byte[] { 1 }, 0, 2, 0, 2)).Should().BeNull();
+            receiver.PendingCount.Should().Be(1);
+        }
+
+        [Fact]
+        public void ReceiverConstructor_RejectsNonPositiveLimits()
+        {
+            ((Action)(() => new ChunkReceiver(0, 1, TimeSpan.FromSeconds(1))))
+                .Should().Throw<ArgumentOutOfRangeException>();
+            ((Action)(() => new ChunkReceiver(1024, 0, TimeSpan.FromSeconds(1))))
+                .Should().Throw<ArgumentOutOfRangeException>();
+            ((Action)(() => new ChunkReceiver(1024, 1, TimeSpan.Zero)))
+                .Should().Throw<ArgumentOutOfRangeException>();
+        }
+
+        [Fact]
         public void AssembledBufferLength_MatchesDeclaredTotalBytes()
         {
             var receiver = new ChunkReceiver();

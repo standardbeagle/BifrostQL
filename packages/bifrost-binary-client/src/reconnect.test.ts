@@ -945,6 +945,123 @@ describe("BifrostBinaryClient auto-reconnect", () => {
     client.close();
   });
 
+  it("re-arms the request timeout after a reconnect replay so a survived query gets a fresh window", async () => {
+    // A short request timeout with a deterministic 100ms backoff. The request
+    // survives a disconnect that consumes most of the original timeout budget;
+    // without re-arming, the stale timer would reject the replayed request
+    // almost immediately after it is re-sent on the new socket.
+    const client = new BifrostBinaryClient({
+      url: TEST_URL,
+      WebSocket: tracker.ctor,
+      requestTimeoutMs: 1_000,
+      backoff: new ExponentialBackoff({
+        initialMs: 100,
+        factor: 1,
+        jitter: 0,
+        random: () => 0.5,
+      }),
+    });
+    const cp = client.connect();
+    tracker.last.simulateOpen();
+    await cp;
+    const firstWs = tracker.last;
+
+    const promise = client.query("{ users { id } }");
+    let settled: "resolved" | "rejected" | null = null;
+    let resolvedValue: { data: unknown; errors: string[] } | undefined;
+    void promise.then(
+      (r) => {
+        settled = "resolved";
+        resolvedValue = r;
+      },
+      () => {
+        settled = "rejected";
+      }
+    );
+
+    // Burn 500ms of the 1000ms budget, then drop the connection.
+    await vi.advanceTimersByTimeAsync(500);
+    firstWs.simulateClose(1006, "transient");
+    await vi.advanceTimersByTimeAsync(100); // backoff elapses (t≈600)
+    const secondWs = tracker.last;
+    secondWs.simulateOpen();
+    await vi.advanceTimersByTimeAsync(0); // replay runs, timer re-armed at t≈600
+
+    // Advance past the ORIGINAL deadline (t≈1000) but before the re-armed one
+    // (t≈1600). Without the re-arm the request would already have rejected.
+    await vi.advanceTimersByTimeAsync(450); // t≈1050
+    expect(settled).toBeNull();
+
+    // The response lands on the new socket and resolves the original promise.
+    const replayed = decodeMessage(secondWs.sentFrames[0]!);
+    expect(replayed.query).toBe("{ users { id } }");
+    secondWs.receive(
+      encodeMessage(
+        emptyMessage({
+          requestId: replayed.requestId,
+          type: BifrostMessageType.Result,
+          payload: jsonPayload({ ok: true }),
+        })
+      )
+    );
+    await promise;
+    expect(settled).toBe("resolved");
+    expect(resolvedValue!.data).toEqual({ ok: true });
+
+    client.close();
+  });
+
+  it("re-sends the correct stream query after an earlier not-connected stream attempt", async () => {
+    // Regression for the removed `pendingStreamingMeta` stash: a stream issued
+    // before the socket is open used to leave its metadata dangling on the
+    // client. Metadata is now passed at registration time, so only the real,
+    // connected stream's query is tracked and replayed on reconnect.
+    const client = new BifrostBinaryClient({
+      url: TEST_URL,
+      WebSocket: tracker.ctor,
+      requestTimeoutMs: 60_000,
+      backoff: new ExponentialBackoff({
+        initialMs: 100,
+        factor: 1,
+        jitter: 0,
+        random: () => 0.5,
+      }),
+    });
+
+    // Attempt a stream before connecting — errors, and must NOT stash metadata.
+    const offlineIterator = client.stream("{ STALE }");
+    await expect(offlineIterator.next()).rejects.toThrowError("Not connected");
+
+    const cp = client.connect();
+    tracker.last.simulateOpen();
+    await cp;
+    const firstWs = tracker.last;
+
+    const iterator = client.stream("{ REAL }", { a: 1 });
+    const sent = decodeMessage(firstWs.sentFrames[0]!);
+    expect(sent.query).toBe("{ REAL }");
+    const sentId = sent.requestId;
+
+    // Drop before any chunk arrives so the reconnect path re-sends the original
+    // frame (no chunks → not a Resume).
+    firstWs.simulateClose(1006, "transient");
+    await vi.advanceTimersByTimeAsync(100);
+    const secondWs = tracker.last;
+    secondWs.simulateOpen();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const replayQueries = secondWs.sentFrames
+      .map((f) => decodeMessage(f))
+      .filter((m) => m.type === BifrostMessageType.Query);
+    expect(replayQueries).toHaveLength(1);
+    expect(replayQueries[0]!.query).toBe("{ REAL }");
+    expect(replayQueries[0]!.requestId).toBe(sentId);
+    expect(replayQueries[0]!.variablesJson).toBe(JSON.stringify({ a: 1 }));
+
+    void iterator.return?.();
+    client.close();
+  });
+
   it("clears all internal maps after close()", async () => {
     const client = await makeConnectedClient();
     const ws = tracker.last;

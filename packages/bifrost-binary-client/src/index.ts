@@ -347,7 +347,7 @@ export interface BifrostClientOptions {
  * the connection dropped. Stored on both `pending` and `streamingRequests`
  * entries.
  */
-interface RequestMetadata {
+export interface RequestMetadata {
   type: BifrostMessageType;
   query: string;
   variables?: Record<string, unknown>;
@@ -416,6 +416,17 @@ export class BifrostBinaryClient implements StreamingClientInternals {
    * streaming.ts agnostic of reconnect concerns).
    */
   private readonly streamingRequests = new Map<number, RequestMetadata>();
+  /**
+   * Per-request idle-timeout handles for active streaming requests. Armed when
+   * a streaming queue is registered and reset on every accepted chunk, so a
+   * stream whose server goes silent for `requestTimeoutMs` fails its iterator
+   * instead of awaiting forever. Cleared when the stream ends, on disconnect
+   * (re-armed after replay), and on close.
+   */
+  private readonly streamingTimers = new Map<
+    number,
+    ReturnType<typeof setTimeout>
+  >();
   private readonly wsConstructor: IWebSocketConstructor;
   private readonly url: string;
   private readonly requestTimeoutMs: number;
@@ -658,6 +669,11 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       (this.pending.size > 0 || this.streamingRequests.size > 0 || this.reconnecting);
 
     if (shouldReconnect && this.reconnectController) {
+      // The socket is gone, so streaming idle timers would fire against a dead
+      // connection during the backoff window and prematurely fail iterators
+      // that are about to be resumed. Clear them here; replayPendingAfterReconnect
+      // re-arms one for every streaming request it resumes/re-sends.
+      this.clearAllStreamingTimeouts();
       // Snapshot per-request resume offsets but KEEP the reassembler buffers
       // across the disconnect so partial chunks already received aren't lost
       // — the server's GetChunksAfter only retransmits chunks strictly after
@@ -751,6 +767,10 @@ export class BifrostBinaryClient implements StreamingClientInternals {
         // Chunks were already received — resuming only pulls the missing tail,
         // so there is no re-execution to worry about.
         this.sendResumeFrame(requestId, resumeFrom);
+        // The request-timeout clock was set once at send-time and has been
+        // ticking against the dead socket; restart it so the resumed request
+        // gets a full window on the fresh connection.
+        this.rearmRequestTimeout(requestId);
       } else if (pending.meta.type === BifrostMessageType.Mutation) {
         // A mutation that yielded no chunks before the drop may already have
         // committed on the server. Re-sending it risks applying it twice, so
@@ -764,6 +784,7 @@ export class BifrostBinaryClient implements StreamingClientInternals {
         );
       } else {
         this.sendOriginalFrame(requestId, pending.meta);
+        this.rearmRequestTimeout(requestId);
       }
     }
 
@@ -771,6 +792,7 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       const resumeFrom = this.streamingResumeFrom.get(requestId);
       if (resumeFrom !== undefined && resumeFrom >= 0) {
         this.sendResumeFrame(requestId, resumeFrom);
+        this.armStreamingTimeout(requestId);
       } else if (meta.type === BifrostMessageType.Mutation) {
         // Same at-most-once guard for streaming mutations.
         const queue = this.streamingQueues.get(requestId);
@@ -782,6 +804,7 @@ export class BifrostBinaryClient implements StreamingClientInternals {
         );
       } else {
         this.sendOriginalFrame(requestId, meta);
+        this.armStreamingTimeout(requestId);
       }
     }
   }
@@ -865,11 +888,6 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     queryText: string,
     variables?: Record<string, unknown>
   ): AsyncIterableIterator<StreamChunk> {
-    this.pendingStreamingMeta = {
-      type: BifrostMessageType.Query,
-      query: queryText,
-      variables,
-    };
     return createChunkStream(this, BifrostMessageType.Query, queryText, variables);
   }
 
@@ -880,11 +898,6 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     mutationText: string,
     variables?: Record<string, unknown>
   ): AsyncIterableIterator<StreamChunk> {
-    this.pendingStreamingMeta = {
-      type: BifrostMessageType.Mutation,
-      query: mutationText,
-      variables,
-    };
     return createChunkStream(
       this,
       BifrostMessageType.Mutation,
@@ -892,14 +905,6 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       variables
     );
   }
-
-  /**
-   * Set by `stream()`/`streamMutation()` immediately before they call
-   * `createChunkStream`, then consumed by `registerStreamingQueue` so the
-   * client captures the original request metadata for resume/replay without
-   * adding any new arguments to the streaming.ts surface.
-   */
-  private pendingStreamingMeta: RequestMetadata | null = null;
 
   // --- StreamingClientInternals (used by createChunkStream / StreamingQueue) ---
 
@@ -912,20 +917,76 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     return id;
   }
 
-  /** @internal Registers a streaming queue so chunks for `requestId` route to it. */
-  registerStreamingQueue(requestId: number, queue: StreamingQueue): void {
+  /**
+   * @internal Registers a streaming queue so chunks for `requestId` route to
+   * it, records the request metadata for resume/replay, and arms the idle
+   * timeout. `meta` is passed by `createChunkStream` at registration time
+   * rather than stashed on the client, so a failed (not-connected) stream that
+   * never registers can't leave stale metadata for the next request to claim.
+   */
+  registerStreamingQueue(
+    requestId: number,
+    queue: StreamingQueue,
+    meta: RequestMetadata
+  ): void {
     this.streamingQueues.set(requestId, queue);
-    if (this.pendingStreamingMeta) {
-      this.streamingRequests.set(requestId, this.pendingStreamingMeta);
-      this.pendingStreamingMeta = null;
-    }
+    this.streamingRequests.set(requestId, meta);
+    this.armStreamingTimeout(requestId);
   }
 
-  /** @internal Removes a streaming queue (called on stream end / consumer break). */
-  removeStreamingQueue(requestId: number): void {
+  /**
+   * @internal Removes a streaming queue (called on stream end / consumer
+   * break / error). When the stream ended before its final chunk
+   * (`completed === false`), tombstone the id: the protocol has no cancel
+   * frame, so the server may keep streaming on the shared socket, and without
+   * a tombstone every late chunk would surface as an unknown-requestId error
+   * and go un-acked — stalling the server's ack window and, with it, the whole
+   * shared connection.
+   */
+  removeStreamingQueue(requestId: number, completed = false): void {
     this.streamingQueues.delete(requestId);
     this.streamingRequests.delete(requestId);
     this.streamingResumeFrom.delete(requestId);
+    this.clearStreamingTimeout(requestId);
+    if (!completed) {
+      this.abortedRequests.add(requestId);
+    }
+  }
+
+  /**
+   * Arms (or re-arms) the idle timeout for a streaming request. Reset on every
+   * accepted chunk so long transfers with steady progress never trip it; fires
+   * only when the server goes silent for a full `requestTimeoutMs` window with
+   * the stream unfinished.
+   */
+  private armStreamingTimeout(requestId: number): void {
+    const existing = this.streamingTimers.get(requestId);
+    if (existing !== undefined) {
+      clearTimeout(existing);
+    }
+    const timer = setTimeout(() => {
+      this.streamingTimers.delete(requestId);
+      const queue = this.streamingQueues.get(requestId);
+      // queue.error runs the cleanup callback → removeStreamingQueue, which
+      // tombstones the id so the server's later chunks are ack-and-dropped.
+      queue?.error(new Error(`Streaming request ${requestId} timed out`));
+    }, this.requestTimeoutMs);
+    this.streamingTimers.set(requestId, timer);
+  }
+
+  private clearStreamingTimeout(requestId: number): void {
+    const timer = this.streamingTimers.get(requestId);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this.streamingTimers.delete(requestId);
+    }
+  }
+
+  private clearAllStreamingTimeouts(): void {
+    for (const timer of this.streamingTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.streamingTimers.clear();
   }
 
   /** @internal Sends a pre-encoded frame on the underlying socket. */
@@ -965,6 +1026,7 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     this.reassemblers.clear();
     this.resumeFromByRequestId.clear();
     this.streamingResumeFrom.clear();
+    this.clearAllStreamingTimeouts();
     this.errorAllStreamingQueues(new Error("Connection closed: client closed"));
     // Reject any non-streaming pending requests too. The previous version
     // relied on the socket's onclose event to call rejectAllPending, but with
@@ -974,6 +1036,42 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       this.ws.close(1000, "Client closed");
       this.ws = null;
     }
+  }
+
+  /**
+   * Builds the request-timeout timer for a pending request. On fire it mirrors
+   * the abort path: drops any in-flight reassembly buffer and resume snapshot,
+   * and tombstones the id so the server's late chunks for this now-abandoned
+   * response are ack-and-dropped (keeping its send window moving) instead of
+   * stalling the shared socket or spraying unknown-requestId errors.
+   */
+  private scheduleRequestTimeout(
+    requestId: number,
+    reject: (error: Error) => void
+  ): ReturnType<typeof setTimeout> {
+    return setTimeout(() => {
+      this.pending.delete(requestId);
+      this.reassemblers.delete(requestId);
+      this.resumeFromByRequestId.delete(requestId);
+      this.abortedRequests.add(requestId);
+      reject(new Error(`Request ${requestId} timed out`));
+    }, this.requestTimeoutMs);
+  }
+
+  /**
+   * Restarts the request-timeout clock for a still-pending request after a
+   * reconnect re-sends or resumes it on a fresh socket. The original timer was
+   * armed once at send-time and keeps counting through the disconnect, so
+   * without re-arming a request that survived the drop would reject almost
+   * immediately after being replayed.
+   */
+  private rearmRequestTimeout(requestId: number): void {
+    const entry = this.pending.get(requestId);
+    if (!entry) {
+      return;
+    }
+    clearTimeout(entry.timer);
+    entry.timer = this.scheduleRequestTimeout(requestId, entry.reject);
   }
 
   private send(
@@ -1012,10 +1110,7 @@ export class BifrostBinaryClient implements StreamingClientInternals {
         reject(error);
       };
 
-      const timer = setTimeout(() => {
-        this.pending.delete(requestId);
-        wrappedReject(new Error(`Request ${requestId} timed out`));
-      }, this.requestTimeoutMs);
+      const timer = this.scheduleRequestTimeout(requestId, wrappedReject);
 
       const meta: RequestMetadata = { type, query: queryText, variables };
       this.pending.set(requestId, {
@@ -1123,6 +1218,7 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       } else {
         this.reassemblers.delete(requestId);
         this.sendOriginalFrame(requestId, pending.meta);
+        this.rearmRequestTimeout(requestId);
       }
       return;
     }
@@ -1208,6 +1304,12 @@ export class BifrostBinaryClient implements StreamingClientInternals {
           chunk.requestId,
           streamingQueue.lastContiguousSequence
         );
+        // Reset the idle timeout: the stream is making progress. Skip if the
+        // final chunk just auto-completed the queue (which already removed it
+        // and cleared its timer) so we don't arm a timer no chunk will clear.
+        if (this.streamingQueues.has(chunk.requestId)) {
+          this.armStreamingTimeout(chunk.requestId);
+        }
       }
       return;
     }

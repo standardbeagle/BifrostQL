@@ -41,6 +41,7 @@ import {
   BifrostMessageType,
   encodeMessage,
   type BifrostMessage,
+  type RequestMetadata,
 } from "./index.js";
 
 /**
@@ -71,8 +72,13 @@ export const MAX_QUEUE_SIZE = 256;
  */
 export interface StreamingClientHooks {
   readonly connected: boolean;
-  /** Called when the consumer breaks out of the loop or the stream errors. */
-  removeStreamingQueue(requestId: number): void;
+  /**
+   * Called when the stream ends — normal completion, consumer break, or error.
+   * `completed` is true only when the final chunk was received; a false value
+   * signals an early teardown so the client can tombstone the id and ack-drop
+   * any chunks the server is still sending.
+   */
+  removeStreamingQueue(requestId: number, completed?: boolean): void;
 }
 
 /**
@@ -117,6 +123,17 @@ export class StreamingQueue implements AsyncIterableIterator<StreamChunk> {
    */
   get lastContiguousSequence(): number {
     return this.nextSequence - 1;
+  }
+
+  /**
+   * True once every chunk of the declared total has been received (the final
+   * chunk drained into the ready buffer). The client uses this at teardown to
+   * decide whether a tombstone is needed: a fully-received stream means the
+   * server has stopped sending, so no late chunks will arrive. An early
+   * teardown (consumer break, overflow, error) leaves this false.
+   */
+  get streamCompleted(): boolean {
+    return this.totalChunks > 0 && this.nextSequence >= this.totalChunks;
   }
 
   /**
@@ -337,7 +354,11 @@ export function ingestStreamingChunk(
  * BifrostBinaryClient exposes all of these via the methods listed below.
  */
 export interface StreamingClientInternals extends StreamingClientHooks {
-  registerStreamingQueue(requestId: number, queue: StreamingQueue): void;
+  registerStreamingQueue(
+    requestId: number,
+    queue: StreamingQueue,
+    meta: RequestMetadata
+  ): void;
   allocateRequestId(): number;
   sendRawFrame(bytes: Uint8Array): void;
 }
@@ -361,9 +382,15 @@ export function createChunkStream(
 
   const requestId = client.allocateRequestId();
   const queue = new StreamingQueue(requestId, () => {
-    client.removeStreamingQueue(requestId);
+    // Pass whether the stream reached its final chunk so the client only
+    // tombstones the id on an early teardown (break / overflow / error).
+    client.removeStreamingQueue(requestId, queue.streamCompleted);
   });
-  client.registerStreamingQueue(requestId, queue);
+  client.registerStreamingQueue(requestId, queue, {
+    type,
+    query: queryText,
+    variables,
+  });
 
   const frame: BifrostMessage = {
     requestId,

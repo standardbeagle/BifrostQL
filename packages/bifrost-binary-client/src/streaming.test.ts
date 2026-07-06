@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BifrostBinaryClient,
   BifrostMessageType,
@@ -647,5 +647,172 @@ describe("BifrostBinaryClient.stream()", () => {
     });
     const iterator = offline.stream("{ x }");
     await expect(iterator.next()).rejects.toThrowError("Not connected");
+  });
+
+  it("tombstones a stream torn down early so the server's later chunks are ack-dropped, not error-sprayed", async () => {
+    const onError = vi.fn();
+    const c = new BifrostBinaryClient({
+      url: TEST_URL,
+      WebSocket: tracker.ctor,
+      onError,
+      requestTimeoutMs: 5_000,
+    });
+    const cp = c.connect();
+    tracker.last.simulateOpen();
+    await cp;
+    const ws = tracker.last;
+
+    const inner = emptyMessage({
+      requestId: 1,
+      type: BifrostMessageType.Result,
+      payload: new TextEncoder().encode(
+        "a long streaming payload split across several chunks for the break test"
+      ),
+    });
+    const iterator = c.stream("{ big }");
+    const sentId = decodeMessage(ws.sentFrames[0]!).requestId;
+    const frames = buildChunkFrames(sentId, inner, 6);
+    expect(frames.length).toBeGreaterThanOrEqual(4);
+
+    // Deliver the first two chunks, consume one, then break out of the loop.
+    ws.receive(frames[0]!);
+    ws.receive(frames[1]!);
+    let i = 0;
+    for await (const _ of iterator) {
+      if (++i === 1) break;
+    }
+
+    // The server has no cancel frame and keeps streaming the rest on the shared
+    // socket. Before the fix removeStreamingQueue cleared bookkeeping without a
+    // tombstone, so every remaining chunk hit the unknown-requestId branch —
+    // spraying onError and never acking, stalling the server's ack window.
+    for (let k = 2; k < frames.length; k++) {
+      ws.receive(frames[k]!);
+    }
+    expect(onError).not.toHaveBeenCalled();
+
+    // Every chunk was acked so the server's send window keeps moving.
+    const acks = ws.sentFrames
+      .map((f) => decodeMessage(f))
+      .filter(
+        (m) => m.type === BifrostMessageType.ChunkAck && m.requestId === sentId
+      );
+    expect(acks.map((a) => a.chunkInfo.sequence)).toEqual(
+      frames.map((_, idx) => idx)
+    );
+
+    c.close();
+  });
+
+  it("does not tombstone a stream that completed normally (no ack-drop needed)", async () => {
+    const onError = vi.fn();
+    const c = new BifrostBinaryClient({
+      url: TEST_URL,
+      WebSocket: tracker.ctor,
+      onError,
+      requestTimeoutMs: 5_000,
+    });
+    const cp = c.connect();
+    tracker.last.simulateOpen();
+    await cp;
+    const ws = tracker.last;
+
+    const inner = emptyMessage({
+      requestId: 1,
+      type: BifrostMessageType.Result,
+      payload: new TextEncoder().encode("fully consumed streaming payload here"),
+    });
+    const iterator = c.stream("{ big }");
+    const sentId = decodeMessage(ws.sentFrames[0]!).requestId;
+    const frames = buildChunkFrames(sentId, inner, 6);
+
+    for (const frame of frames) ws.receive(frame);
+    const collected: StreamChunk[] = [];
+    for await (const chunk of iterator) collected.push(chunk);
+    expect(collected).toHaveLength(frames.length);
+
+    // The stream received every chunk, so no tombstone was set. A genuinely
+    // stray chunk for the now-finished id is an anomaly again → onError.
+    ws.receive(frames[0]!);
+    expect(onError).toHaveBeenCalledOnce();
+    expect((onError.mock.calls[0]![0] as Error).message).toMatch(
+      /unknown requestId/
+    );
+
+    c.close();
+  });
+
+  it("times out a stream whose server never sends a chunk", async () => {
+    vi.useFakeTimers();
+    try {
+      const c = new BifrostBinaryClient({
+        url: TEST_URL,
+        WebSocket: tracker.ctor,
+        requestTimeoutMs: 3_000,
+      });
+      const cp = c.connect();
+      tracker.last.simulateOpen();
+      await cp;
+
+      const iterator = c.stream("{ silent }");
+      const consume = (async () => {
+        for await (const _ of iterator) {
+          // never reached — the server stays silent
+        }
+      })();
+      const assertion = expect(consume).rejects.toThrowError(
+        /Streaming request \d+ timed out/
+      );
+      await vi.advanceTimersByTimeAsync(3_000);
+      await assertion;
+      c.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resets the streaming idle timeout on each chunk so a steady stream never trips it", async () => {
+    vi.useFakeTimers();
+    try {
+      const c = new BifrostBinaryClient({
+        url: TEST_URL,
+        WebSocket: tracker.ctor,
+        requestTimeoutMs: 1_000,
+      });
+      const cp = c.connect();
+      tracker.last.simulateOpen();
+      await cp;
+      const ws = tracker.last;
+
+      const iterator = c.stream("{ big }");
+      const sentId = decodeMessage(ws.sentFrames[0]!).requestId;
+      const inner = emptyMessage({
+        requestId: sentId,
+        type: BifrostMessageType.Result,
+        payload: new TextEncoder().encode(
+          "payload delivered in a steady drip across many chunks over time"
+        ),
+      });
+      const frames = buildChunkFrames(sentId, inner, 6);
+      expect(frames.length).toBeGreaterThanOrEqual(4);
+
+      const collected: StreamChunk[] = [];
+      const consume = (async () => {
+        for await (const chunk of iterator) collected.push(chunk);
+      })();
+
+      // Deliver a chunk every 800ms — under the 1000ms idle window each time, so
+      // the total elapsed time far exceeds requestTimeoutMs without a timeout.
+      for (const frame of frames) {
+        ws.receive(frame);
+        await vi.advanceTimersByTimeAsync(800);
+      }
+
+      await consume;
+      expect(collected).toHaveLength(frames.length);
+      c.close();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

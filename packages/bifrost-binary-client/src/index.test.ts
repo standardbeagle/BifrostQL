@@ -912,6 +912,69 @@ describe("BifrostBinaryClient", () => {
       c.close();
     });
 
+    it("drops the reassembler and tombstones the id when a chunked request times out", async () => {
+      vi.useFakeTimers();
+      const onError = vi.fn();
+      const c = new BifrostBinaryClient({
+        url: TEST_URL,
+        WebSocket: tracker.ctor,
+        onError,
+        requestTimeoutMs: 5_000,
+      });
+      const cp = c.connect();
+      tracker.last.simulateOpen();
+      await cp;
+      const ws = tracker.last;
+
+      const promise = c.query("{ big }");
+      const sentId = decodeMessage(ws.sentFrames[0]!).requestId;
+      const inner = emptyMessage({
+        requestId: sentId,
+        type: BifrostMessageType.Result,
+        payload: new TextEncoder().encode(
+          JSON.stringify({ rows: ["a", "b", "c", "d", "e"], n: 5 })
+        ),
+      });
+      const frames = buildChunkFrames(sentId, inner, 8);
+      expect(frames.length).toBeGreaterThanOrEqual(3);
+
+      // The first chunk arrives (allocating a reassembler), then the request
+      // times out before the remaining chunks land.
+      ws.receive(frames[0]!);
+      const assertion = expect(promise).rejects.toThrowError(/timed out/);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await assertion;
+      expect(c.pendingCount).toBe(0);
+
+      // The server has no cancel frame and keeps streaming. Before the fix the
+      // timeout only deleted the pending entry, so the reassembler lingered and
+      // every late chunk fell through to the unknown-requestId branch — spraying
+      // onError AND never acking, stalling the server's send window. Now they are
+      // silently ack-and-dropped like the abort path.
+      for (let i = 1; i < frames.length; i++) {
+        ws.receive(frames[i]!);
+      }
+      expect(onError).not.toHaveBeenCalled();
+
+      // Every chunk (the pre-timeout one and the ack-and-dropped tail) was acked.
+      const acks = ws.sentFrames
+        .map((f) => decodeMessage(f))
+        .filter((m) => m.type === BifrostMessageType.ChunkAck);
+      expect(acks.map((a) => a.chunkInfo.sequence)).toEqual(
+        frames.map((_, i) => i)
+      );
+
+      // The final chunk cleared the tombstone: a further stray chunk is an
+      // anomaly again and surfaces through onError.
+      ws.receive(frames[1]!);
+      expect(onError).toHaveBeenCalledOnce();
+      expect((onError.mock.calls[0]![0] as Error).message).toMatch(
+        /unknown requestId/
+      );
+
+      c.close();
+    });
+
     it("rejects a chunked response with an oversized totalBytes header and keeps dispatch alive", async () => {
       const ws = tracker.last;
       const promise = chunkedClient.query("{ big }");

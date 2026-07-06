@@ -12,6 +12,26 @@ namespace BifrostQL.Core.Resolvers
         private readonly EnumColumnMap? _enumColumns;
         private readonly ILogger? _logger;
 
+        // Per-result-set indexes, built once and shared across every parent probe
+        // (including nested sub-readers, which route back through this root). Keyed by
+        // join name / aggregate SQL key, both unique within _tables. Concurrent so
+        // sibling/list field resolution stays safe; GetOrAdd may build twice under a
+        // race, which is idempotent.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, JoinRowIndex> _joinIndexes = new(StringComparer.Ordinal);
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, JoinRowIndex> _aggregateIndexes = new(StringComparer.Ordinal);
+
+        private JoinRowIndex GetJoinIndex(string joinName, (IDictionary<string, int> index, IList<object?[]> data) tableData, int keyLength)
+            => _joinIndexes.GetOrAdd(joinName, _ =>
+            {
+                var indices = new int[keyLength];
+                for (var i = 0; i < keyLength; i++)
+                    indices[i] = tableData.index[JoinKeyNames.SrcIdAt(i, keyLength)];
+                return JoinRowIndex.Build(tableData.data, indices);
+            });
+
+        private JoinRowIndex GetAggregateIndex(string sqlKey, (IDictionary<string, int> index, IList<object?[]> data) tableData, int keyIndex)
+            => _aggregateIndexes.GetOrAdd(sqlKey, _ => JoinRowIndex.Build(tableData.data, new[] { keyIndex }));
+
         public ReaderEnum(
             GqlObjectQuery gqlObjectQuery,
             IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> tableData,
@@ -95,7 +115,8 @@ namespace BifrostQL.Core.Resolvers
                     throw new BifrostExecutionError($"Unable to find aggregate column: {name} on table: {level.Alias}:{level.GraphQlName}");
                 var parentKeyIndex = table.index[level.DbTable.KeyColumns.First().DbName];
                 var parentKeyValue = table.data[row][parentKeyIndex];
-                var value = tableData.data.FirstOrDefault(r => Equals(r[keyIndex], parentKeyValue))?[valueIndex];
+                var aggregateIndex = GetAggregateIndex(aggregate.SqlKey!, tableData, keyIndex);
+                var value = aggregateIndex.First(new[] { parentKeyValue })?[valueIndex];
                 return ValueTask.FromResult<object?>(value);
             }
             throw new BifrostExecutionError($"Unable to find queryField: {name} on table: {level.Alias}:{level.GraphQlName}");
@@ -109,14 +130,21 @@ namespace BifrostQL.Core.Resolvers
 
             if (join.QueryType == QueryType.Join)
             {
-                var subTable = new SubTableEnumerable(this, key, tableData, connected);
+                // A null key (nullable FK) references nothing, so the child
+                // collection is empty rather than a failed query.
+                var matched = key == null
+                    ? (IList<object?[]>)Array.Empty<object?[]>()
+                    : GetJoinIndex(join.JoinName, tableData, key.Length).Match(key);
+                var subTable = new SubTableEnumerable(this, matched, tableData, connected);
                 // Paged nested collections (multi-links) surface the same
                 // wrapper as top-level queries: {total, offset, limit, data}.
                 // The per-parent total is carried on the window column; read it
                 // from the first matched row, or 0 when the parent has none.
                 if (join.ConnectedTable.IncludeResult)
                 {
-                    var total = ReadPerParentTotal(tableData, key);
+                    var total = key == null
+                        ? 0
+                        : ReadPerParentTotal(tableData, GetJoinIndex(join.JoinName, tableData, key.Length), key);
                     return ValueTask.FromResult<object?>(new TableResult
                     {
                         Total = total,
@@ -129,7 +157,10 @@ namespace BifrostQL.Core.Resolvers
             }
             if (join.QueryType == QueryType.Single)
             {
-                var data = JoinKeyMatcher.FindRow(tableData, key);
+                // A null key (nullable FK) resolves the single-link to null.
+                var data = key == null
+                    ? null
+                    : GetJoinIndex(join.JoinName, tableData, key.Length).First(key);
                 return ValueTask.FromResult<object?>(data == null ? null : new SingleRowLookup(data, tableData.index, this, connected));
             }
 
@@ -138,11 +169,12 @@ namespace BifrostQL.Core.Resolvers
 
         private static int ReadPerParentTotal(
             (IDictionary<string, int> index, IList<object?[]> data) tableData,
+            JoinRowIndex joinIndex,
             object?[] key)
         {
             if (!tableData.index.TryGetValue(QueryModel.PagedKeys.Total, out var totalIdx))
                 return 0;
-            var row = JoinKeyMatcher.FindRow(tableData, key);
+            var row = joinIndex.First(key);
             if (row == null) return 0;
             var raw = row[totalIdx];
             return raw is null or DBNull ? 0 : Convert.ToInt32(raw);
@@ -227,7 +259,15 @@ namespace BifrostQL.Core.Resolvers
     /// </summary>
     internal static class JoinKeyValues
     {
-        public static object?[] FromParentRow(
+        /// <summary>
+        /// Returns the FK key components for a parent row, or <c>null</c> when any
+        /// component is NULL. A NULL FK is ordinary, valid data — the parent simply
+        /// references nothing on this link — so it signals "no match" rather than
+        /// throwing. Throwing here (as it once did) failed the entire query for a
+        /// single nullable-FK row; the caller resolves a null single-link to null and
+        /// a null multi-link to an empty collection.
+        /// </summary>
+        public static object?[]? FromParentRow(
             TableJoin join,
             (IDictionary<string, int> index, IList<object?[]> data) table,
             int row)
@@ -240,53 +280,67 @@ namespace BifrostQL.Core.Resolvers
                     throw new BifrostExecutionError("join column not found.");
                 values[i] = table.data[row][idx];
                 if (values[i] == null)
-                    throw new BifrostExecutionError("key value is null");
+                    return null;
             }
             return values;
         }
     }
 
     /// <summary>
-    /// Matches join-key value arrays against join-result rows using the
-    /// <see cref="JoinKeyNames"/> alias scheme. Single source of truth for
-    /// composite-key lookups — both <see cref="SubTableEnumerable"/> and
-    /// <see cref="ReaderEnum.GetJoinResult"/> route through here so the
-    /// single-column / composite branching never escapes this class.
+    /// A structural-equality wrapper over a join-key value array so keys can be used
+    /// as dictionary/lookup keys (arrays use reference equality by default).
     /// </summary>
-    internal static class JoinKeyMatcher
+    internal readonly struct KeyBox : IEquatable<KeyBox>
     {
-        public static IList<object?[]> FilterRows(
-            (IDictionary<string, int> index, IList<object?[]> data) tableData,
-            object?[] key) =>
-            tableData.data
-                .Where(r => MatchesKey(r, ResolveSrcIdIndices(tableData.index, key.Length), key))
-                .ToList();
+        private readonly object?[] _values;
+        public KeyBox(object?[] values) => _values = values;
 
-        public static object?[]? FindRow(
-            (IDictionary<string, int> index, IList<object?[]> data) tableData,
-            object?[] key)
+        public bool Equals(KeyBox other)
         {
-            var indices = ResolveSrcIdIndices(tableData.index, key.Length);
-            return tableData.data.FirstOrDefault(r => MatchesKey(r, indices, key));
-        }
-
-        private static int[] ResolveSrcIdIndices(IDictionary<string, int> index, int keyCount)
-        {
-            var result = new int[keyCount];
-            for (var i = 0; i < keyCount; i++)
-                result[i] = index[JoinKeyNames.SrcIdAt(i, keyCount)];
-            return result;
-        }
-
-        private static bool MatchesKey(object?[] row, int[] keyIndices, object?[] key)
-        {
-            for (var i = 0; i < keyIndices.Length; i++)
-            {
-                if (!Equals(row[keyIndices[i]], key[i]))
-                    return false;
-            }
+            if (_values.Length != other._values.Length) return false;
+            for (var i = 0; i < _values.Length; i++)
+                if (!object.Equals(_values[i], other._values[i])) return false;
             return true;
         }
+
+        public override bool Equals(object? obj) => obj is KeyBox other && Equals(other);
+
+        public override int GetHashCode()
+        {
+            var hash = new HashCode();
+            foreach (var v in _values)
+                hash.Add(v);
+            return hash.ToHashCode();
+        }
+    }
+
+    /// <summary>
+    /// A prebuilt index over one join/aggregate result set: source-id key →
+    /// matching rows. Built once per result set and probed per parent, turning the
+    /// former O(parents × children) linear stitch (which also re-resolved the srcId
+    /// column indices for every child row) into O(parents + children). Grouping
+    /// preserves source row order, so per-parent child ordering is unchanged.
+    /// </summary>
+    internal sealed class JoinRowIndex
+    {
+        private readonly ILookup<KeyBox, object?[]> _byKey;
+        private JoinRowIndex(ILookup<KeyBox, object?[]> byKey) => _byKey = byKey;
+
+        public static JoinRowIndex Build(IList<object?[]> data, int[] keyIndices)
+        {
+            var lookup = data.ToLookup(r =>
+            {
+                var key = new object?[keyIndices.Length];
+                for (var i = 0; i < keyIndices.Length; i++)
+                    key[i] = r[keyIndices[i]];
+                return new KeyBox(key);
+            });
+            return new JoinRowIndex(lookup);
+        }
+
+        public IList<object?[]> Match(object?[] key) => _byKey[new KeyBox(key)].ToList();
+
+        public object?[]? First(object?[] key) => _byKey[new KeyBox(key)].FirstOrDefault();
     }
 
     public sealed class SubTableEnumerable : IEnumerable<object?>
@@ -295,12 +349,14 @@ namespace BifrostQL.Core.Resolvers
         private readonly IList<object?[]> _data;
         private readonly ReaderEnum _root;
         private readonly GqlObjectQuery _level;
-        public SubTableEnumerable(ReaderEnum root, object?[] key, (IDictionary<string, int> index, IList<object?[]> data) @table, GqlObjectQuery level)
+        public SubTableEnumerable(ReaderEnum root, IList<object?[]> data, (IDictionary<string, int> index, IList<object?[]> data) @table, GqlObjectQuery level)
         {
             _root = root;
             _table = table;
             _level = level;
-            _data = JoinKeyMatcher.FilterRows(table, key);
+            // Rows are pre-matched by the caller against the shared per-result-set
+            // index, so the O(children) scan no longer runs per parent.
+            _data = data;
         }
 
         public IEnumerator<object?> GetEnumerator()

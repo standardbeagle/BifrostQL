@@ -6,6 +6,7 @@
 import type { Table, Column, Join, Schema } from '../types/schema';
 import type { ColumnFiltersState } from '@tanstack/react-table';
 import { rowIdOf, buildPkEqFilter, parsePkRoute, encodeRouteParts, type PkEqFilterResult } from './row-id';
+import { coerceForGql } from './fk';
 import { resolveChildJoin, childFieldName } from './polymorphic';
 
 export interface FilterResult {
@@ -192,25 +193,6 @@ export function getPkTypes(table: Table): PkTypeInfo[] {
     }));
 }
 
-function coerceGqlValue(raw: unknown, gqlType: string): unknown {
-    if (raw === null || raw === undefined) return null;
-    switch (gqlType) {
-        case "Int": {
-            const n = typeof raw === "number" ? raw : Number(raw);
-            return Number.isFinite(n) ? Math.trunc(n) : raw;
-        }
-        case "Float": {
-            const n = typeof raw === "number" ? raw : Number(raw);
-            return Number.isFinite(n) ? n : raw;
-        }
-        case "Boolean":
-            if (typeof raw === "boolean") return raw;
-            return raw === "true" || raw === 1;
-        default:
-            return String(raw);
-    }
-}
-
 /**
  * Builds the variables dict that accompanies a buildQuery result for a single-record lookup.
  * - Single PK: returns `{ id: <coerced value> }` matching the `$id` variable in the query.
@@ -222,7 +204,7 @@ function coerceGqlValue(raw: unknown, gqlType: string): unknown {
 export function buildPkEqVariables(idRoute: string, table: Table): Record<string, unknown> {
     const pkTypes = getPkTypes(table);
     if (pkTypes.length <= 1) {
-        return { id: coerceGqlValue(idRoute, getPkType(table)) };
+        return { id: coerceForGql(idRoute, getPkType(table)) };
     }
     const parsed = parsePkRoute(idRoute, table);
     if (!parsed) return {};
@@ -254,7 +236,7 @@ export function buildSingleRowQuery(
  * row for every parent row on the page — the dominant payload cost on parent
  * tables.
  */
-export const MULTIJOIN_PREVIEW_LIMIT = 11;
+const MULTIJOIN_PREVIEW_LIMIT = 11;
 
 function buildMultiJoinFields(schema: Schema, multiJoins: Join[]): string {
     return multiJoins

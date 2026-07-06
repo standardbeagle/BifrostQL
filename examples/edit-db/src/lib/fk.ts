@@ -50,10 +50,6 @@ export function findJoinBySource(joins: Join[], columnName: string): Join | unde
     return joins.find((j) => isFkMember(j, columnName));
 }
 
-export function findJoinByDestinationTable(joins: Join[], destinationTable: string): Join | undefined {
-    return joins.find((j) => j.destinationTable === destinationTable);
-}
-
 /**
  * Build a `{_eq}`-per-column composite filter against the destination side of a join,
  * using values pulled from a source-side row. Single-column joins emit a single

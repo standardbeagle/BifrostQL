@@ -1,4 +1,5 @@
-import type { Column, Table } from '../types/schema';
+import type { Table } from '../types/schema';
+import { coerceForGql, gqlTypeOf } from './fk';
 
 export type PkFilter = Record<string, unknown>;
 
@@ -21,7 +22,7 @@ function encodePkPart(value: unknown): string {
     return encodeURIComponent(String(value));
 }
 
-function decodePkPart(raw: string): string | null {
+export function decodePkPart(raw: string): string | null {
     if (raw === '') return null;
     // Malformed percent-encoding (e.g. a bare "%") makes decodeURIComponent
     // throw URIError. A hostile or hand-edited route must not crash the
@@ -81,31 +82,6 @@ export function pkFilterFor(
         filter[pk] = row[pk];
     }
     return filter;
-}
-
-function coerceForGql(value: unknown, gqlType: string): unknown {
-    if (value === null || value === undefined) return null;
-    switch (gqlType) {
-        case 'Int': {
-            const n = typeof value === 'number' ? value : Number(value);
-            return Number.isFinite(n) ? Math.trunc(n) : value;
-        }
-        case 'Float': {
-            const n = typeof value === 'number' ? value : Number(value);
-            return Number.isFinite(n) ? n : value;
-        }
-        case 'Boolean':
-            if (typeof value === 'boolean') return value;
-            if (value === 'true' || value === 1) return true;
-            if (value === 'false' || value === 0) return false;
-            return Boolean(value);
-        default:
-            return String(value);
-    }
-}
-
-function gqlTypeOf(column: Column | undefined): string {
-    return column?.paramType?.replace('!', '') ?? 'String';
 }
 
 export function buildPkEqFilter(

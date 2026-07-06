@@ -1,4 +1,3 @@
-using System.Data.Common;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
@@ -85,10 +84,10 @@ namespace BifrostQL.Core.Resolvers
                     // Before-commit hooks and the upsert (with its identity SELECT)
                     // commit atomically or roll back together.
                     object? upsertResult = null;
-                    await RunInTransactionAsync(conFactory, async (conn, transaction) =>
+                    await MutationCommandExecutor.RunInTransactionAsync(conFactory, async (conn, transaction) =>
                     {
-                        await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, upsertData, context.UserContext);
-                        upsertResult = await ExecuteScalar(conn, transaction, identitySql, upsertData);
+                        await MutationNotifier.RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, upsertData, context.UserContext);
+                        upsertResult = await MutationCommandExecutor.ExecuteScalar(conn, transaction, identitySql, upsertData);
                     });
                     return HandleDecimals(upsertResult);
                 }
@@ -106,64 +105,22 @@ namespace BifrostQL.Core.Resolvers
             return ResolveAsync(new BifrostFieldContextAdapter(context));
         }
 
+        // Reads the mutation argument dictionary and optional positional _primaryKey
+        // off the GraphQL context, then delegates the (pure) key/standard split to
+        // MutationArgumentBinder — which is directly unit-tested.
         private (Dictionary<string, object?> data, Dictionary<string, object?> keyData, Dictionary<string, object?> standardData) GetPropertyInfo(IBifrostFieldContext context, IDbTable table, string parameterName)
         {
             var baseData = context.GetArgument<Dictionary<string, object?>>(parameterName) ?? new();
-
-            var data = new Dictionary<string, object?>(baseData!, StringComparer.OrdinalIgnoreCase);
-
-            // keyData is keyed by database column name (it drives WHERE clauses and
-            // the current-row load, which are pure DB-name space). The _primaryKey
-            // argument already yields DB names; the fallback maps each PK field from
-            // its GraphQL name. standardData keeps GraphQL field names so mutation
-            // transformers (enum-name mapping) still resolve columns by GraphQlName;
-            // it is normalized to DB names just before SQL generation.
-            var pkKeyData = ResolvePrimaryKeyArgument(context, table);
-            Dictionary<string, object?> keyData;
-            if (pkKeyData != null)
-            {
-                keyData = pkKeyData;
-            }
-            else
-            {
-                keyData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-                foreach (var d in data.Where(d => DbParameterBinder.IsPrimaryKeyColumn(table, d.Key)))
-                    keyData[DbParameterBinder.ToDbColumnName(table, d.Key)] = d.Value;
-            }
-
-            var standardData = data
-                .Where(d => !DbParameterBinder.IsPrimaryKeyColumn(table, d.Key))
-                .ToDictionary(kv => kv.Key, kv => kv.Value);
-
-            var allData = new Dictionary<string, object?>(standardData, StringComparer.OrdinalIgnoreCase);
-            foreach (var kv in keyData)
-                allData[kv.Key] = kv.Value;
-
-            return (allData, keyData, standardData);
+            return MutationArgumentBinder.SplitProperties(table, baseData, ReadPrimaryKeyValues(context));
         }
 
         private static Dictionary<string, object?>? ResolvePrimaryKeyArgument(IBifrostFieldContext context, IDbTable table)
-        {
-            if (!context.HasArgument("_primaryKey"))
-                return null;
+            => MutationArgumentBinder.ResolvePrimaryKey(table, ReadPrimaryKeyValues(context));
 
-            var pkValues = context.GetArgument<List<object?>>("_primaryKey");
-            if (pkValues == null || pkValues.Count == 0)
-                return null;
-
-            var keyColumns = table.KeyColumns.ToList();
-
-            if (keyColumns.Count == 0)
-                throw new BifrostExecutionError($"Table '{table.DbName}' has no primary key columns.");
-
-            if (pkValues.Count != keyColumns.Count)
-                throw new BifrostExecutionError(
-                    $"_primaryKey for '{table.DbName}' expects {keyColumns.Count} value(s) " +
-                    $"({string.Join(", ", keyColumns.Select(c => c.GraphQlName))}) but received {pkValues.Count}.");
-
-            return keyColumns.Zip(pkValues, (col, val) => new { col.ColumnName, Value = val })
-                .ToDictionary(x => x.ColumnName, x => x.Value);
-        }
+        private static IReadOnlyList<object?>? ReadPrimaryKeyValues(IBifrostFieldContext context)
+            => context.HasArgument("_primaryKey")
+                ? context.GetArgument<List<object?>>("_primaryKey")
+                : null;
 
         private async Task<object?> DeleteObject(IBifrostFieldContext context,
             IMutationTransformers mutationTransformers, IDbTable table, IDbModel model,
@@ -196,7 +153,7 @@ namespace BifrostQL.Core.Resolvers
             // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
             // IS NULL) is ANDed onto the WHERE clause so it narrows — never
             // replaces — the primary-key predicate.
-            var additionalFilter = RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
+            var additionalFilter = MutationCommandExecutor.RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
 
             // Rekey to DB column names once so the PK split (via ColumnLookup) and
             // the emitted WHERE/SET use one consistent name space even when a
@@ -218,12 +175,12 @@ namespace BifrostQL.Core.Resolvers
                 var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
                 // Before-commit hooks and the soft-delete write commit atomically.
                 var result = 0;
-                await RunInTransactionAsync(conFactory, async (conn, transaction) =>
+                await MutationCommandExecutor.RunInTransactionAsync(conFactory, async (conn, transaction) =>
                 {
-                    await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, dbData, userContext);
-                    result = await ExecuteNonQuery(conn, transaction, sql, dbData, additionalFilter.Parameters);
+                    await MutationNotifier.RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, dbData, userContext);
+                    result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, dbData, additionalFilter.Parameters);
                 });
-                await NotifyMutationAsync(context.RequestServices, table, MutationType.Update, dbData, result, userContext);
+                await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, MutationType.Update, dbData, result, userContext);
                 return result;
             }
 
@@ -237,12 +194,12 @@ namespace BifrostQL.Core.Resolvers
             var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause}{additionalFilter.WhereSuffix};";
             // Before-commit hooks and the delete write commit atomically.
             var deleteResult = 0;
-            await RunInTransactionAsync(conFactory, async (conn, transaction) =>
+            await MutationCommandExecutor.RunInTransactionAsync(conFactory, async (conn, transaction) =>
             {
-                await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Delete, deleteData, userContext);
-                deleteResult = await ExecuteNonQuery(conn, transaction, deleteSql, deleteData, additionalFilter.Parameters);
+                await MutationNotifier.RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Delete, deleteData, userContext);
+                deleteResult = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, deleteSql, deleteData, additionalFilter.Parameters);
             });
-            await NotifyMutationAsync(context.RequestServices, table, MutationType.Delete, deleteData, deleteResult, userContext);
+            await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, MutationType.Delete, deleteData, deleteResult, userContext);
             return deleteResult;
         }
 
@@ -266,11 +223,11 @@ namespace BifrostQL.Core.Resolvers
             Dictionary<string, object?> updatedData = null!;
             int result = 0;
             StateTransitionInfo? stateTransition = null;
-            await RunInTransactionAsync(conFactory, async (conn, transaction) =>
+            await MutationCommandExecutor.RunInTransactionAsync(conFactory, async (conn, transaction) =>
             {
                 // Mutation transformers (e.g. the authorization policy engine) gate
                 // the update before any SQL is built; non-empty Errors abort it.
-                var currentRow = await LoadCurrentStateMachineRow(
+                var currentRow = await MutationCommandExecutor.LoadCurrentStateMachineRow(
                     conn,
                     transaction,
                     dialect,
@@ -290,7 +247,7 @@ namespace BifrostQL.Core.Resolvers
                 // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
                 // IS NULL) is ANDed onto the WHERE clause so it narrows — never
                 // replaces — the primary-key predicate.
-                var additionalFilter = RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
+                var additionalFilter = MutationCommandExecutor.RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
 
                 // Adopt the (possibly rewritten) data so transformer output — e.g.
                 // enum-name → DB-value mapping — reaches the SQL, rekeyed to real DB
@@ -306,12 +263,12 @@ namespace BifrostQL.Core.Resolvers
                 var setClause = string.Join(",", standardData.Select(kv => SetAssignment(dialect, table, kv.Key)));
                 var whereClause = string.Join(" AND ", propertyInfo.keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
                 var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
-                await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, updatedData, context.UserContext);
-                result = await ExecuteNonQuery(conn, transaction, sql, updatedData, additionalFilter.Parameters);
+                await MutationNotifier.RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, updatedData, context.UserContext);
+                result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, updatedData, additionalFilter.Parameters);
                 stateTransition = transformResult.StateTransition;
             });
-            await NotifyMutationAsync(context.RequestServices, table, MutationType.Update, updatedData, result, context.UserContext);
-            await NotifyStateTransitionAsync(context.RequestServices, stateTransition, context.UserContext);
+            await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, MutationType.Update, updatedData, result, context.UserContext);
+            await MutationNotifier.NotifyStateTransitionAsync(context.RequestServices, stateTransition, context.UserContext);
             return propertyInfo.keyData.Values.First();
         }
 
@@ -357,7 +314,7 @@ namespace BifrostQL.Core.Resolvers
             // On a pure insert the executor returns the generated PK; on an update
             // the root already has one, so fall back to the submitted key value.
             rootId ??= RootKeyValue(table, tree);
-            await NotifyMutationAsync(context.RequestServices, table, MutationType.Insert, tree, rootId, context.UserContext);
+            await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, MutationType.Insert, tree, rootId, context.UserContext);
             return rootId;
         }
 
@@ -400,188 +357,15 @@ namespace BifrostQL.Core.Resolvers
             // Before-commit hooks and the insert (with its identity SELECT) run in
             // one transaction so a hook veto or a failed write rolls back as a unit.
             object? result = null;
-            await RunInTransactionAsync(conFactory, async (conn, transaction) =>
+            await MutationCommandExecutor.RunInTransactionAsync(conFactory, async (conn, transaction) =>
             {
-                await RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Insert, data, context.UserContext);
-                result = HandleDecimals(await ExecuteScalar(conn, transaction, sql, data));
+                await MutationNotifier.RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Insert, data, context.UserContext);
+                result = HandleDecimals(await MutationCommandExecutor.ExecuteScalar(conn, transaction, sql, data));
             });
-            await NotifyMutationAsync(context.RequestServices, table, MutationType.Insert, data, result, context.UserContext);
+            await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, MutationType.Insert, data, result, context.UserContext);
             return result;
         }
 
-        // Runs a single-row mutation's reads (state-machine load, identity SELECT)
-        // and its one write inside a single connection + transaction, so the whole
-        // path — before-commit hooks included — commits atomically or rolls back as
-        // a unit. Mirrors DbTableBatchResolver's transaction handling. Observer
-        // notifications must fire from the caller AFTER this returns so they never
-        // describe rolled-back work.
-        private static async Task RunInTransactionAsync(
-            IDbConnFactory connFactory,
-            Func<DbConnection, DbTransaction, Task> work)
-        {
-            await using var conn = connFactory.GetConnection();
-            DbTransaction? transaction = null;
-            try
-            {
-                await conn.OpenAsync();
-                transaction = await conn.BeginTransactionAsync();
-                await work(conn, transaction);
-                await transaction.CommitAsync();
-            }
-            catch (BifrostExecutionError)
-            {
-                if (transaction != null)
-                    await transaction.RollbackAsync();
-                throw;
-            }
-            catch (Exception ex)
-            {
-                if (transaction != null)
-                    await transaction.RollbackAsync();
-                throw BifrostExecutionError.FromDatabaseException(ex);
-            }
-            finally
-            {
-                if (transaction != null)
-                    await transaction.DisposeAsync();
-            }
-        }
-
-        private static async ValueTask<object?> ExecuteScalar(DbConnection conn, DbTransaction transaction, string sql, Dictionary<string, object?> data)
-        {
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = sql;
-            cmd.Transaction = transaction;
-            AddParameters(cmd, data);
-            return await cmd.ExecuteScalarAsync();
-        }
-
-        private static async Task<IReadOnlyDictionary<string, object?>?> LoadCurrentStateMachineRow(
-            DbConnection conn,
-            DbTransaction transaction,
-            ISqlDialect dialect,
-            IDbTable table,
-            Dictionary<string, object?> keyData)
-        {
-            var definition = StateMachineConfigCollector.FromTable(table);
-            if (definition is null || keyData.Count == 0)
-                return null;
-
-            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var stateColumn = dialect.EscapeIdentifier(definition.StateColumn);
-            var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{kv.Key}"));
-            var sql = $"SELECT {stateColumn} FROM {tableRef} WHERE {whereClause};";
-
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = sql;
-            cmd.Transaction = transaction;
-            AddParameters(cmd, keyData);
-            var currentState = await cmd.ExecuteScalarAsync();
-            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                [definition.StateColumn] = currentState == DBNull.Value ? null : currentState,
-            };
-        }
-
-        private static async ValueTask<int> ExecuteNonQuery(DbConnection conn, DbTransaction transaction, string sql,
-            Dictionary<string, object?> data, IReadOnlyList<SqlParameterInfo>? extraParameters = null)
-        {
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = sql;
-            cmd.Transaction = transaction;
-            AddParameters(cmd, data);
-            AddExtraParameters(cmd, extraParameters);
-            return await cmd.ExecuteNonQueryAsync();
-        }
-
-        // Renders MutationTransformResult.AdditionalFilter into an AND-prefixed
-        // WHERE suffix and its bound parameters. Returns an empty suffix when no
-        // transformer contributed a filter.
-        private static (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) RenderAdditionalFilter(
-            TableFilter? filter, ISqlDialect dialect)
-        {
-            if (filter == null)
-                return ("", Array.Empty<SqlParameterInfo>());
-
-            var parameters = new SqlParameterCollection();
-            var rendered = filter.RenderForMutation(dialect, parameters);
-            return ($" AND ({rendered.Sql})", parameters.Parameters);
-        }
-
-        // Runs the before-commit veto phase immediately before the write. Mirrors
-        // the IsWorkflowTriggerSuppressed guard used by NotifyMutationAsync. If any
-        // hook returns errors (or throws), the aggregated errors surface as a
-        // BifrostExecutionError so the caller's write is aborted and no row is
-        // written/changed. Result is not known yet, so the context carries null.
-        private static async ValueTask RunBeforeCommitHooksAsync(
-            IServiceProvider? services,
-            IDbTable table,
-            MutationType mutationType,
-            IDictionary<string, object?> data,
-            IDictionary<string, object?> userContext)
-        {
-            if (services is null || IsWorkflowTriggerSuppressed(userContext))
-                return;
-
-            var hooks = services.GetService<BeforeCommitMutationHooks>();
-            if (hooks is null)
-                return;
-
-            var errors = await hooks.RunAsync(new MutationObserverContext
-            {
-                Table = table,
-                MutationType = mutationType,
-                Data = data,
-                Result = null,
-                UserContext = userContext,
-            });
-
-            if (errors.Count > 0)
-                throw new BifrostExecutionError(string.Join("; ", errors));
-        }
-
-        private static async ValueTask NotifyStateTransitionAsync(
-            IServiceProvider? services,
-            StateTransitionInfo? transition,
-            IDictionary<string, object?> userContext)
-        {
-            if (transition is null || services is null)
-                return;
-
-            var observers = services.GetService<StateTransitionObservers>();
-            if (observers is not null)
-                await observers.NotifyAsync(transition, userContext);
-        }
-
-        private static async ValueTask NotifyMutationAsync(
-            IServiceProvider? services,
-            IDbTable table,
-            MutationType mutationType,
-            IDictionary<string, object?> data,
-            object? result,
-            IDictionary<string, object?> userContext)
-        {
-            if (services is null || IsWorkflowTriggerSuppressed(userContext))
-                return;
-
-            var observers = services.GetService<MutationObservers>();
-            if (observers is not null)
-            {
-                await observers.NotifyAsync(new MutationObserverContext
-                {
-                    Table = table,
-                    MutationType = mutationType,
-                    Data = data,
-                    Result = result,
-                    UserContext = userContext,
-                });
-            }
-        }
-
-        private static bool IsWorkflowTriggerSuppressed(IDictionary<string, object?> userContext)
-            => userContext.TryGetValue(BifrostQL.Core.Workflows.WorkflowTriggerHost.SuppressTriggersKey, out var value)
-               && value is bool suppressed
-               && suppressed;
 
     }
 }

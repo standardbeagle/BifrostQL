@@ -84,7 +84,7 @@ The desktop app bundles a full BifrostQL server inside a native window:
 - **SSH and WordPress helpers** -- Optional SSH tunnels plus WordPress database credential discovery through `wp-cli`.
 - **GraphQL playground/editor** -- Built-in editor at `/graphiql` and the React table editor loaded from the app shell.
 - **SQLite quickstarts** -- Create local demo databases through `/api/database/create-quickstart` and stream progress with Server-Sent Events.
-- **Transport probe** -- Header toggle can probe HTTP and binary WebSocket health. Editor queries still use HTTP until the editor accepts a pluggable transport.
+- **Transport toggle** -- Header toggle switches the editor between HTTP and binary WebSocket transports. All editor GraphQL queries — schema, data grid, mutations, stats — route through the selected transport.
 - **Health check** -- `/api/health` reports server status and connection state.
 
 ## Navigator panes

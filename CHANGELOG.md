@@ -163,7 +163,7 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 ### Known gaps (tracked in worktrack workspace `bifrostql`)
 
 - Pivot end-to-end coverage across the four engines (`PivotSqlGenerator` is not yet wired into the GraphQL execution pipeline).
-- Composite-key foreign-key relationships still hard-skipped in all three relationship strategies.
+- Composite-key foreign keys are resolved, linked, and emitted by `ForeignKeyRelationshipStrategy` since 0.4.1, but the heuristic detection strategies (name-based, many-to-many, polymorphic) still skip composite keys.
 - E2E coverage for state-machine + workflow + AppMetadata subsystems is unit-level only.
 - `BifrostDispatcher` per-pair `_join_<table>` / `_single_<table>` wiring is inconsistent with the schema generator output (silently harmless today).
 - `BifrostQL.Host` has no integration smoke test.

@@ -3,7 +3,7 @@ title: React Hooks & Components
 description: Query, mutate, and stream a BifrostQL API from React with @bifrostql/react — typed hooks for queries, mutations, infinite scroll, subscriptions, diff/batch writes, and a headless table built on TanStack Query.
 ---
 
-`@bifrostql/react` is the official React client for BifrostQL APIs. It's built on [TanStack Query](https://tanstack.com/query), so you get caching, background refetching, and optimistic updates for free — you just describe the table, fields, filter, and sort.
+`@bifrostql/react` is an **experimental** React client for BifrostQL APIs. It is not the client used by the shipped editor — the desktop app's editor is built on `@standardbeagle/edit-db`, which has its own data layer. Use `@bifrostql/react` for standalone experiments; expect its API to change. It's built on [TanStack Query](https://tanstack.com/query), so you get caching, background refetching, and optimistic updates for free — you just describe the table, fields, filter, and sort.
 
 ## Install
 

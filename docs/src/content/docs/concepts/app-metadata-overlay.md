@@ -80,6 +80,10 @@ A Membership Manager application tracks `members`, `households`, `dues`, and `ev
 
 The result: a client can describe and render all four entities purely from the overlay JSON, with no hardcoded forms or grids.
 
+:::note[Status]
+The overlay JSON contract and the server-side pipeline (`AddBifrostAppMetadata`, `UseBifrostAppMetadata`) are implemented. The shipped edit-db editor does not yet consume the overlay for presentation — it introspects the `_dbSchema` GraphQL type instead. Rendering purely from the overlay is the intended end state for overlay-aware clients, not how the current editor works.
+:::
+
 ## Reference
 
 ### File format

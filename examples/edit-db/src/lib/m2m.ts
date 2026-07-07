@@ -11,14 +11,13 @@
 
 import type { Column, Join, ManyToManyJoin, Table } from '../types/schema';
 import { rowIdOf, decodeRouteParts } from './row-id';
-import { getPkTypes } from './query-builder';
+import { assertGraphQlName, getPkTypes } from './query-builder';
+import { coerceForGql } from './fk';
 
 /** A tab in the detail panel: an ordinary child collection or a m2m bridge. */
 export type DetailTab =
     | { kind: 'child'; key: string; join: Join }
     | { kind: 'm2m'; key: string; m2m: ManyToManyJoin };
-
-const NUMERIC_TYPES = new Set(['Int', 'Int!', 'Float', 'Float!']);
 
 /** GraphQL names of every junction table reachable from `table` via a m2m join. */
 export function junctionTableNames(table: Table): Set<string> {
@@ -50,11 +49,6 @@ export function detailTabs(table: Table): DetailTab[] {
 export function payloadColumns(junction: Table, m2m: ManyToManyJoin): Column[] {
     const fkNames = new Set([...m2m.junctionSourceColumnNames, ...m2m.junctionTargetColumnNames]);
     return junction.columns.filter((c) => !c.isPrimaryKey && !fkNames.has(c.name));
-}
-
-/** Coerce a route id string to the GraphQL type its FK column expects. */
-function coerceId(value: string, gqlType: string | undefined): unknown {
-    return gqlType && NUMERIC_TYPES.has(gqlType) ? Number(value) : value;
 }
 
 /**
@@ -112,7 +106,7 @@ export function m2mRowsQuery(
         const varName = `src${i}`;
         paramDecls.push(`$${varName}: ${gqlType}`);
         clauses.push(`{ ${col}: { _eq: $${varName} } }`);
-        variables[varName] = coerceId(parentParts[i], gqlType);
+        variables[varName] = coerceForGql(parentParts[i], gqlType);
     });
     const filterText = clauses.length === 1 ? clauses[0] : `{ and: [${clauses.join(', ')}] }`;
 
@@ -152,8 +146,11 @@ export interface M2mTargetPickerPlan {
  * limit, instead of searching only within a client-side window.
  */
 export function m2mTargetPickerPlan(target: Table, m2m: ManyToManyJoin, search?: string): M2mTargetPickerPlan {
+    assertGraphQlName(target.name, 'many-to-many target table name');
     const idColumn = getPkTypes(target)[0]?.name ?? m2m.targetColumnNames[0];
     const labelColumn = target.labelColumn || idColumn;
+    assertGraphQlName(idColumn, 'many-to-many target id column');
+    assertGraphQlName(labelColumn, 'many-to-many target label column');
     const fields = labelColumn !== idColumn ? `${idColumn} label: ${labelColumn}` : idColumn;
     // Fail fast on schema drift: a label column that isn't in the target's column
     // list means the relationship metadata and schema are out of sync.

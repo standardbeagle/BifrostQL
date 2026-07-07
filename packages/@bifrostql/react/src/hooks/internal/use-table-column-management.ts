@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DEFAULT_COLUMN_WIDTH,
   estimateColumnWidth,
@@ -51,6 +51,7 @@ export function useTableColumnManagement({
     () => columns.map((c) => c.field),
     [columns],
   );
+  const previousColumnFieldsRef = useRef(defaultColumnFields);
   const defaultColumnWidths = useMemo(() => {
     const widths: Record<string, number> = {};
     for (const col of columns) {
@@ -79,6 +80,61 @@ export function useTableColumnManagement({
   }, []);
   const [columnPresets, setColumnPresets] =
     useState<ColumnPreset[]>(initialColumnPresets);
+
+  useEffect(() => {
+    const fieldSet = new Set(defaultColumnFields);
+    const previousFieldSet = new Set(previousColumnFieldsRef.current);
+    const newFields = defaultColumnFields.filter(
+      (field) => !previousFieldSet.has(field),
+    );
+
+    setVisibleColumns((prev) => {
+      const next = [...prev.filter((field) => fieldSet.has(field))];
+      for (const field of newFields) {
+        if (!next.includes(field)) next.push(field);
+      }
+      return arraysEqual(prev, next) ? prev : next;
+    });
+
+    setColumnOrder((prev) => {
+      const next = [
+        ...prev.filter((field) => fieldSet.has(field)),
+        ...newFields.filter((field) => !prev.includes(field)),
+      ];
+      return arraysEqual(prev, next) ? prev : next;
+    });
+
+    setColumnWidths((prev) => {
+      let changed = false;
+      const next: Record<string, number> = {};
+      for (const field of defaultColumnFields) {
+        next[field] = prev[field] ?? defaultColumnWidths[field];
+        if (next[field] !== prev[field]) changed = true;
+      }
+      for (const field of Object.keys(prev)) {
+        if (!fieldSet.has(field)) {
+          changed = true;
+          break;
+        }
+      }
+      return changed ? next : prev;
+    });
+
+    setPinnedColumns((prev) => {
+      let changed = false;
+      const next: Record<string, PinPosition> = {};
+      for (const [field, position] of Object.entries(prev)) {
+        if (fieldSet.has(field)) {
+          next[field] = position;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+
+    previousColumnFieldsRef.current = defaultColumnFields;
+  }, [defaultColumnFields, defaultColumnWidths]);
 
   const toggleColumn = useCallback(
     (field: string) => {
@@ -222,12 +278,30 @@ export function useTableColumnManagement({
     (name: string) => {
       const preset = columnPresets.find((p) => p.name === name);
       if (!preset) return;
-      setVisibleColumns([...preset.visibleColumns]);
-      setColumnOrder([...preset.columnOrder]);
-      setColumnWidths({ ...preset.columnWidths });
-      setPinnedColumns({ ...preset.pinnedColumns });
+      const fieldSet = new Set(defaultColumnFields);
+      setVisibleColumns(
+        preset.visibleColumns.filter((field) => fieldSet.has(field)),
+      );
+      setColumnOrder([
+        ...preset.columnOrder.filter((field) => fieldSet.has(field)),
+        ...defaultColumnFields.filter(
+          (field) => !preset.columnOrder.includes(field),
+        ),
+      ]);
+      const widths: Record<string, number> = {};
+      for (const field of defaultColumnFields) {
+        widths[field] = preset.columnWidths[field] ?? defaultColumnWidths[field];
+      }
+      setColumnWidths(widths);
+      const pinned: Record<string, PinPosition> = {};
+      for (const [field, position] of Object.entries(preset.pinnedColumns)) {
+        if (fieldSet.has(field)) {
+          pinned[field] = position;
+        }
+      }
+      setPinnedColumns(pinned);
     },
-    [columnPresets],
+    [columnPresets, defaultColumnFields, defaultColumnWidths],
   );
 
   const deleteColumnPreset = useCallback(
@@ -275,4 +349,11 @@ export function useTableColumnManagement({
     visibleColumns,
     columnOrder,
   };
+}
+
+function arraysEqual(left: string[], right: string[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
 }

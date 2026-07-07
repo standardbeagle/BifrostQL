@@ -61,9 +61,16 @@ const columnFilterOperators: Record<string, string[]> = {
 
 const graphQlNamePattern = /^[_A-Za-z][_0-9A-Za-z]*$/;
 const graphQlTypePattern = /^[_A-Za-z][_0-9A-Za-z]*!?$/;
+const columnFilterOperatorSet = new Set(Object.values(columnFilterOperators).flat());
 
-function isGraphQlName(value: unknown): value is string {
+export function isGraphQlName(value: unknown): value is string {
     return typeof value === "string" && graphQlNamePattern.test(value);
+}
+
+export function assertGraphQlName(value: unknown, kind: string): asserts value is string {
+    if (!isGraphQlName(value)) {
+        throw new Error(`Invalid GraphQL ${kind}: ${String(value)}`);
+    }
 }
 
 function isGraphQlType(value: unknown): value is string {
@@ -185,11 +192,20 @@ export function serializeColumnFilters(columnFilters: ColumnFiltersState): strin
 export function deserializeColumnFilters(raw: string): ColumnFiltersState {
     try {
         if (!raw) return [];
-        const parsed = JSON.parse(raw) as [string, string, unknown][];
-        return parsed.map(([id, operator, value]) => ({ id, value: { operator, value } as ColumnFilterValue }));
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        return parsed
+            .filter(isSerializedColumnFilter)
+            .map(([id, operator, value]) => ({ id, value: { operator, value } as ColumnFilterValue }));
     } catch {
         return [];
     }
+}
+
+function isSerializedColumnFilter(value: unknown): value is [string, string, unknown] {
+    if (!Array.isArray(value) || value.length !== 3) return false;
+    const [id, operator] = value;
+    return isGraphQlName(id) && typeof operator === "string" && columnFilterOperatorSet.has(operator);
 }
 
 /**
@@ -248,6 +264,10 @@ export function buildSingleRowQuery(
     pkEq: Pick<PkEqFilterResult, 'filterText' | 'params'>,
     fields: readonly string[],
 ): string {
+    assertGraphQlName(table.name, 'single-row table name');
+    for (const field of fields) {
+        assertGraphQlName(field, 'single-row selection field');
+    }
     // GraphQL forbids an empty `()` variable-definition list — omit it entirely
     // when the filter carries no params.
     const paramDecls = pkEq.params.length > 0 ? `(${pkEq.params.join(', ')})` : '';
@@ -382,7 +402,12 @@ export function buildQuery(
             const parentPkType = getPkTypes(drill.parentTable)[0]?.gqlType ?? "Int";
             param = `, $id: ${parentPkType}`;
             const flatFilter = `filter: { ${fkCol}: { _eq: $id } }`;
-            return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${table.name}(sort: $sort limit: $limit offset: $offset ${flatFilter}) { total offset limit data {${allFields}}}}`;
+            const flatMultiJoinFields = buildMultiJoinFields(
+                schema,
+                tableSchema.multiJoins.filter((join) => !sameJoin(join, drill.childJoin)),
+            );
+            const flatFields = flatMultiJoinFields ? `${dataColumns} ${flatMultiJoinFields}` : dataColumns;
+            return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${table.name}(sort: $sort limit: $limit offset: $offset ${flatFilter}) { total offset limit data {${flatFields}}}}`;
         }
         if (drill) {
             // The header filter + column filters are global URL params keyed off the
@@ -456,6 +481,13 @@ export function canFlatFilterDrill(childJoin: Join): boolean {
     return !isComposite(childJoin)
         && childJoin.isPolymorphic !== true
         && (childJoin.destinationColumnNames?.length ?? 0) === 1;
+}
+
+function sameJoin(left: Join, right: Join): boolean {
+    return (left.fieldName ?? left.destinationTable) === (right.fieldName ?? right.destinationTable)
+        && left.destinationTable === right.destinationTable
+        && (left.destinationColumnNames ?? []).join('\0') === (right.destinationColumnNames ?? []).join('\0')
+        && (left.sourceColumnNames ?? []).join('\0') === (right.sourceColumnNames ?? []).join('\0');
 }
 
 /**

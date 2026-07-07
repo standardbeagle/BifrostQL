@@ -61,6 +61,14 @@ describe('useDeleteMutation', () => {
         vi.clearAllMocks();
     });
 
+    it('rejects unsafe table names before building mutation text', () => {
+        const { wrapper } = createHarness();
+        const unsafe = tbl('users) { injected', ['id'], [col('id', 'Int!', true)]);
+
+        expect(() => renderHook(() => useDeleteMutation(unsafe), { wrapper }))
+            .toThrow(/Invalid GraphQL delete mutation table name/);
+    });
+
     describe('single-column PK', () => {
         const users = tbl('users', ['id'], [col('id', 'Int!', true), col('name', 'String')]);
 

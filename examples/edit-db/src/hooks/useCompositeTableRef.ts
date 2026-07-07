@@ -4,6 +4,7 @@ import { Schema } from '../types/schema';
 import { useFetcher } from '../common/fetcher';
 import { rowIdOf, encodeRouteParts } from '../lib/row-id';
 import { coerceForGql, gqlTypeOf } from '../lib/fk';
+import { isGraphQlName } from '../lib/query-builder';
 
 const COMPOSITE_REF_LIMIT = 500;
 const COMPOSITE_REF_SEARCH_LIMIT = 50;
@@ -33,10 +34,6 @@ export interface CompositeTableRefOptions {
     /** The currently-selected destination-column values, so the selected parent row
      *  can be looked up and shown even when it falls outside the fetched window. */
     currentValues?: Record<string, unknown> | null;
-}
-
-function graphQlNameSafe(name: string): boolean {
-    return /^[_A-Za-z][_0-9A-Za-z]*$/.test(name);
 }
 
 /**
@@ -77,22 +74,30 @@ export function useCompositeTableRef(
         return labelType === 'String';
     }, [destTable, labelCol]);
 
+    const validQueryShape = useMemo(() => {
+        if (!destTable || destColumnNames.length === 0) return false;
+        if (!isGraphQlName(destTableName) || !isGraphQlName(labelCol)) return false;
+        const columnNames = new Set(destTable.columns.map((c) => c.name));
+        if (!columnNames.has(labelCol)) return false;
+        return destColumnNames.every((c) => isGraphQlName(c) && columnNames.has(c));
+    }, [destTable, destTableName, destColumnNames, labelCol]);
+
     const fields = useMemo(() => {
-        if (!destTable) return '';
+        if (!destTable || !validQueryShape) return '';
         const cols = new Set<string>(destColumnNames);
         cols.add(labelCol);
         return Array.from(cols).join(' ');
-    }, [destTable, destColumnNames, labelCol]);
+    }, [destTable, validQueryShape, destColumnNames, labelCol]);
 
     const hasSearch = !!term && serverSearch;
 
     const query = useMemo(() => {
         if (schema.loading || schema.error || !destTable || destColumnNames.length === 0) return null;
-        if (!graphQlNameSafe(labelCol)) return null;
+        if (!validQueryShape) return null;
         const paramDecls = hasSearch ? '($limit: Int, $search: String)' : '($limit: Int)';
         const filterText = hasSearch ? `filter: {${labelCol}: {_contains: $search}} ` : '';
         return `query Get_${destTableName}_CompositeRef${paramDecls} { values: ${destTableName}(${filterText}limit: $limit sort: [${labelCol}_asc]) { data { ${fields} } } }`;
-    }, [destTable, destTableName, fields, labelCol, hasSearch, schema.loading, schema.error, destColumnNames.length]);
+    }, [destTable, destTableName, fields, labelCol, hasSearch, schema.loading, schema.error, destColumnNames.length, validQueryShape]);
 
     // Only vary the request by term when the server actually filters.
     const effectiveTerm = serverSearch ? term : '';
@@ -135,14 +140,13 @@ export function useCompositeTableRef(
     const currentInWindow = currentRoute === '' || windowRows.some((r) => r.route === currentRoute);
 
     const lookupPlan = useMemo(() => {
-        if (!destTable || currentInWindow || currentRoute === '' || !currentValues) return null;
+        if (!destTable || !validQueryShape || currentInWindow || currentRoute === '' || !currentValues) return null;
         const byName = new Map(destTable.columns.map((c) => [c.name, c] as const));
         const clauses: string[] = [];
         const params: string[] = [];
         const variables: Record<string, unknown> = {};
         for (let i = 0; i < destColumnNames.length; i++) {
             const c = destColumnNames[i];
-            if (!graphQlNameSafe(c)) return null;
             const gqlType = gqlTypeOf(byName.get(c));
             const varName = `k${i}`;
             params.push(`$${varName}: ${gqlType}`);
@@ -152,7 +156,7 @@ export function useCompositeTableRef(
         const filterText = clauses.length === 1 ? clauses[0] : `{and: [${clauses.join(', ')}]}`;
         const query = `query Get_${destTableName}_CompositeRefValue(${params.join(', ')}) { values: ${destTableName}(filter: ${filterText} limit: 1) { data { ${fields} } } }`;
         return { query, variables };
-    }, [destTable, destTableName, fields, destColumnNames, currentInWindow, currentRoute, currentValues]);
+    }, [destTable, destTableName, fields, destColumnNames, currentInWindow, currentRoute, currentValues, validQueryShape]);
 
     const { data: lookupData } = useQuery({
         queryKey: ['compositeTableRefValue', destTableName, currentRoute],

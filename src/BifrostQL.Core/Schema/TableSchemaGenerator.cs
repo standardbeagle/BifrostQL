@@ -210,11 +210,12 @@ namespace BifrostQL.Core.Schema
                     continue;
 
                 var isNullable = column.IsNullable;
-                if (column.CompareMetadata("populate", "created-on") || column.CompareMetadata("populate", "created-by") ||
-                    column.CompareMetadata("populate", "updated-on") || column.CompareMetadata("populate", "updated-by") ||
-                    column.CompareMetadata("populate", "deleted-on") || column.CompareMetadata("populate", "deleted-by") ||
-                    column.CompareMetadata("populate", "server-injected")
-                    )
+                if (column.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.CreatedOn) ||
+                    column.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.CreatedBy) ||
+                    column.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.UpdatedOn) ||
+                    column.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.UpdatedBy) ||
+                    column.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.DeletedOn) ||
+                    column.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.DeletedBy))
                     isNullable = true;
                 if (column.IsIdentity)
                     isNullable = identityType switch

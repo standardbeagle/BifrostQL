@@ -63,6 +63,16 @@ describe('useTableMutation', () => {
         vi.clearAllMocks();
     });
 
+    it('rejects unsafe table names before building mutation text', () => {
+        const { wrapper } = createHarness();
+        const idCol = col('id', 'Int!', true);
+        const nameCol = col('name', 'String');
+        const unsafe = tbl('users) { injected', ['id'], [idCol, nameCol]);
+
+        expect(() => renderHook(() => useTableMutation(unsafe, editCols(nameCol), [idCol], '1'), { wrapper }))
+            .toThrow(/Invalid GraphQL table mutation table name/);
+    });
+
     describe('keyless update guard', () => {
         it('refuses to update when the editid does not resolve to a primary key', async () => {
             // A malformed/stale editid parses to no PK filter; an UPDATE with no WHERE
@@ -175,7 +185,7 @@ describe('useTableMutation', () => {
             expect(detail.qty).toBeNull();
         });
 
-        it('coerces a non-empty numeric field with + on both paths', async () => {
+        it('coerces an exact non-empty numeric field on both paths', async () => {
             const { query, wrapper } = createHarness();
             const { result } = renderHook(
                 () => useTableMutation(items, editCols(qtyCol), [idCol]),
@@ -185,6 +195,31 @@ describe('useTableMutation', () => {
             await result.current.insert({ qty: '7' });
 
             expect((query.mock.calls[0][1] as { detail: Record<string, unknown> }).detail.qty).toBe(7);
+        });
+
+        it('rejects malformed and decimal Int values without sending a mutation', async () => {
+            const { query, wrapper } = createHarness();
+            const { result } = renderHook(
+                () => useTableMutation(items, editCols(qtyCol), [idCol]),
+                { wrapper },
+            );
+
+            await expect(result.current.insert({ qty: '7abc' })).rejects.toThrow(/Invalid Int value for column 'qty'/);
+            await expect(result.current.insert({ qty: '7.5' })).rejects.toThrow(/Invalid Int value for column 'qty'/);
+            expect(query).not.toHaveBeenCalled();
+        });
+
+        it('accepts exact Float values including exponent notation', async () => {
+            const { query, wrapper } = createHarness();
+            const amountCol = col('amount', 'Float');
+            const { result } = renderHook(
+                () => useTableMutation(tbl('items', ['id'], [idCol, amountCol]), editCols(amountCol), [idCol]),
+                { wrapper },
+            );
+
+            await result.current.insert({ amount: '1.25e2' });
+
+            expect((query.mock.calls[0][1] as { detail: Record<string, unknown> }).detail.amount).toBe(125);
         });
     });
 

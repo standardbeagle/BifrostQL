@@ -12,7 +12,9 @@ import {
 import { useFetcher } from '@/common/fetcher';
 import { useSchema } from '@/hooks/useSchema';
 import { coerceForGql, gqlTypeOf } from '@/lib/fk';
+import { isGraphQlName } from '@/lib/query-builder';
 import type { ColumnFilterValue } from '@/hooks/useDataTable';
+import type { Column as SchemaColumn } from '@/types/schema';
 
 interface LookupRow {
     id: number | string;
@@ -38,12 +40,27 @@ interface FkFilterProps<TData, TValue> {
     joinFkColumn: string;
 }
 
+export function buildFkLookupQuery(
+    joinTable: string,
+    joinLabelColumn: string,
+    joinFkColumn: string,
+    columns: readonly Pick<SchemaColumn, 'name'>[] | undefined,
+): string | null {
+    if (!isGraphQlName(joinTable) || !isGraphQlName(joinLabelColumn) || !isGraphQlName(joinFkColumn)) {
+        return null;
+    }
+    if (columns && (!columns.some((c) => c.name === joinLabelColumn) || !columns.some((c) => c.name === joinFkColumn))) {
+        return null;
+    }
+    return `query Lookup${joinTable} { ${joinTable}(sort: [${joinLabelColumn}_asc], limit: 100) { data { id: ${joinFkColumn} label: ${joinLabelColumn} } } }`;
+}
+
 export function FkFilter<TData, TValue>({ column, joinTable, joinLabelColumn, joinFkColumn }: FkFilterProps<TData, TValue>) {
     const fetcher = useFetcher();
     const schema = useSchema();
     const joinSchema = schema.findTable(joinTable);
 
-    const query = `query Lookup${joinTable} { ${joinTable}(sort: [${joinLabelColumn}_asc], limit: 100) { data { id: ${joinFkColumn} label: ${joinLabelColumn} } } }`;
+    const query = buildFkLookupQuery(joinTable, joinLabelColumn, joinFkColumn, joinSchema?.columns);
 
     // Value coercion below follows the FK target column's declared GraphQL type,
     // not what the string looks like (a string key like "0123" must stay a string;
@@ -54,9 +71,9 @@ export function FkFilter<TData, TValue>({ column, joinTable, joinLabelColumn, jo
         // joinFkColumn is part of the projection (`id: ${joinFkColumn}`), so two
         // joins to the same table on different columns must not share a cache entry.
         queryKey: ['fkLookup', joinTable, joinLabelColumn, joinFkColumn],
-        queryFn: () => fetcher.query<LookupResponse>(query),
+        queryFn: () => fetcher.query<LookupResponse>(query!),
         staleTime: 5 * 60 * 1000,
-        enabled: !!joinSchema,
+        enabled: !!joinSchema && !!query,
     });
 
     const options = lookupData?.[joinTable]?.data ?? [];

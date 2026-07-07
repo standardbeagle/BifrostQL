@@ -30,6 +30,16 @@ describe('parseTableParams', () => {
     expect(result.sort).toEqual([{ field: 'name', direction: 'asc' }]);
   });
 
+  it('drops sort entries with invalid GraphQL field names', () => {
+    const result = parseTableParams({
+      sort: 'name,-name) { hacked } #,123invalid,-created_at',
+    });
+    expect(result.sort).toEqual([
+      { field: 'name', direction: 'asc' },
+      { field: 'created_at', direction: 'desc' },
+    ]);
+  });
+
   it('parses limit', () => {
     const result = parseTableParams({ limit: '25' });
     expect(result.pagination).toEqual({ limit: 25 });
@@ -60,6 +70,11 @@ describe('parseTableParams', () => {
     expect(result.pagination).toBeUndefined();
   });
 
+  it('ignores non-integer pagination values', () => {
+    const result = parseTableParams({ limit: '1.5', offset: '2.25' });
+    expect(result.pagination).toBeUndefined();
+  });
+
   it('parses equality filter shorthand', () => {
     const result = parseTableParams({ 'filter[status]': 'active' });
     expect(result.filter).toEqual({ status: 'active' });
@@ -76,6 +91,17 @@ describe('parseTableParams', () => {
       'filter[price][lt]': '100',
     });
     expect(result.filter).toEqual({ price: { _gte: 10, _lt: 100 } });
+  });
+
+  it('drops filters with invalid field names or operators', () => {
+    const result = parseTableParams({
+      'filter[status]': 'active',
+      'filter[name) { hacked } #]': 'bad',
+      'filter[123invalid][eq]': 'bad',
+      'filter[age][raw]': 'bad',
+    });
+
+    expect(result.filter).toEqual({ status: 'active' });
   });
 
   it('parses null filter value', () => {
@@ -98,6 +124,15 @@ describe('parseTableParams', () => {
     expect(result.filter).toEqual({ id: { _in: [1, 2, 3] } });
   });
 
+  it('does not coerce empty filter values to zero', () => {
+    expect(parseTableParams({ 'filter[id][eq]': '' }).filter).toEqual({
+      id: { _eq: '' },
+    });
+    expect(parseTableParams({ 'filter[id][in]': '1,,3' }).filter).toEqual({
+      id: { _in: [1, '', 3] },
+    });
+  });
+
   it('parses fields parameter', () => {
     const result = parseTableParams({ fields: 'id,name,email' });
     expect(result.fields).toEqual(['id', 'name', 'email']);
@@ -111,6 +146,13 @@ describe('parseTableParams', () => {
   it('ignores empty field names', () => {
     const result = parseTableParams({ fields: ',id,,name,' });
     expect(result.fields).toEqual(['id', 'name']);
+  });
+
+  it('drops invalid GraphQL field selections', () => {
+    const result = parseTableParams({
+      fields: 'id,name) { hacked } #,123invalid,email',
+    });
+    expect(result.fields).toEqual(['id', 'email']);
   });
 
   it('handles array-valued search params (takes first)', () => {

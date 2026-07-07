@@ -257,6 +257,19 @@ describe('readFromUrl', () => {
     expect(state.page).toBeUndefined();
   });
 
+  it('ignores partially numeric page values', () => {
+    Object.defineProperty(window, 'location', {
+      writable: true,
+      value: {
+        href: 'http://localhost/users?table_page=2abc',
+        search: '?table_page=2abc',
+      },
+    });
+
+    const state = readFromUrl('table');
+    expect(state.page).toBeUndefined();
+  });
+
   it('ignores negative page values', () => {
     Object.defineProperty(window, 'location', {
       writable: true,
@@ -281,6 +294,20 @@ describe('readFromUrl', () => {
 
     const state = readFromUrl('table');
     expect(state.pageSize).toBeUndefined();
+  });
+
+  it('ignores decimal and unsafe pageSize values', () => {
+    Object.defineProperty(window, 'location', {
+      writable: true,
+      value: {
+        href: 'http://localhost/users?table_size=1.5&table_page=9007199254740992',
+        search: '?table_size=1.5&table_page=9007199254740992',
+      },
+    });
+
+    const state = readFromUrl('table');
+    expect(state.pageSize).toBeUndefined();
+    expect(state.page).toBeUndefined();
   });
 });
 

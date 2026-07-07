@@ -6,6 +6,7 @@ import { parsePkRoute, type PkFilter } from "../lib/row-id";
 import { isJsonColumn } from "../lib/content-detect";
 import { invalidateAfterTableWrite } from "../lib/invalidate";
 import { useToast } from "./useToast";
+import { assertGraphQlName } from "../lib/query-builder";
 
 const numericTypes = ["Int", "Int!", "Float", "Float!"];
 // BigInt exceeds Number's 2^53 safe-integer range: coercing through +val /
@@ -14,6 +15,23 @@ const numericTypes = ["Int", "Int!", "Float", "Float!"];
 // must too — otherwise an edited BigInt PK targets the wrong row.
 const bigIntTypes = ["BigInt", "BigInt!"];
 const booleanTypes = ["Boolean", "Boolean!"];
+
+function coerceNumericValue(value: unknown, paramType: string, columnName: string): number {
+    const baseType = paramType.replace('!', '');
+    if (typeof value === 'number') {
+        if (Number.isFinite(value) && (baseType !== 'Int' || Number.isInteger(value))) return value;
+        throw new Error(`Invalid ${baseType} value for column '${columnName}'.`);
+    }
+
+    const text = String(value).trim();
+    const valid = baseType === 'Int'
+        ? /^[+-]?\d+$/.test(text)
+        : /^[+-]?(?:(?:\d+\.?\d*)|(?:\.\d+))(?:[eE][+-]?\d+)?$/.test(text);
+    if (!valid) throw new Error(`Invalid ${baseType} value for column '${columnName}'.`);
+    const parsed = Number(text);
+    if (!Number.isFinite(parsed)) throw new Error(`Invalid ${baseType} value for column '${columnName}'.`);
+    return parsed;
+}
 
 interface ColumnJoin {
     column: Column;
@@ -37,13 +55,13 @@ function coerceDetail(
         if (numericTypes.some(t => t === col.paramType)) {
             const val = coerced[col.name];
             // An empty field means "no value": on update clear it with null
-            // rather than coercing "" to 0 via +val (a silent, wrong data
-            // write); on insert omit the column entirely (undefined) so an
-            // explicit null doesn't bypass the column's DB default. null/
-            // undefined stay undefined so inserts omit the column entirely.
+            // rather than coercing "" to 0 (a silent, wrong data write); on
+            // insert omit the column entirely (undefined) so an explicit null
+            // doesn't bypass the column's DB default. null/undefined stay
+            // undefined so inserts omit the column entirely.
             coerced[col.name] = val == null ? undefined
                 : val === "" ? (isInsert ? undefined : null)
-                : +val;
+                : coerceNumericValue(val, col.paramType, col.name);
         }
         if (bigIntTypes.some(t => t === col.paramType)) {
             const val = coerced[col.name];
@@ -77,7 +95,7 @@ function coerceDetail(
         for (const col of idColumns) {
             const raw = pkFilter[col.name];
             if (numericTypes.some(t => t === col.paramType)) {
-                coerced[col.name] = raw == null ? null : Number(raw);
+                coerced[col.name] = raw == null ? null : coerceNumericValue(raw, col.paramType, col.name);
             } else {
                 // Strings — including BigInt PKs, which must stay strings so a
                 // key above 2^53 targets the exact row it was read from.
@@ -101,6 +119,7 @@ export function useTableMutation(
     idColumns: Column[],
     editId?: string
 ): UseTableMutationResult {
+    assertGraphQlName(table.name, 'table mutation table name');
     const fetcher = useFetcher();
     const queryClient = useQueryClient();
     const { toast } = useToast();
@@ -150,12 +169,22 @@ export function useTableMutation(
                 new Error(`Cannot update ${table.label ?? table.name}: the record has no resolvable primary key.`),
             );
         }
-        const coerced = coerceDetail(detail, editColumns, idColumns, pkFilter, false);
+        let coerced: Record<string, unknown>;
+        try {
+            coerced = coerceDetail(detail, editColumns, idColumns, pkFilter, false);
+        } catch (e) {
+            return Promise.reject(e);
+        }
         return updateMutation.mutateAsync(coerced);
     };
 
     const insert = (detail: Record<string, unknown>) => {
-        const coerced = coerceDetail(detail, editColumns, idColumns, null, true);
+        let coerced: Record<string, unknown>;
+        try {
+            coerced = coerceDetail(detail, editColumns, idColumns, null, true);
+        } catch (e) {
+            return Promise.reject(e);
+        }
         return insertMutation.mutateAsync(coerced);
     };
 

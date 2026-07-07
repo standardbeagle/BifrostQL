@@ -97,7 +97,7 @@ describe('buildGraphqlQuery', () => {
     expect(result).not.toContain('_between');
   });
 
-  it('builds a query with _and compound filter', () => {
+  it('serializes a public _and compound filter as the server and field', () => {
     const result = buildGraphqlQuery('users', {
       filter: {
         _and: [
@@ -107,19 +107,21 @@ describe('buildGraphqlQuery', () => {
       },
       fields: ['id', 'name'],
     });
-    expect(result).toContain('_and');
+    expect(result).toContain('and:');
+    expect(result).not.toContain('_and');
     expect(result).toContain('_eq');
     expect(result).toContain('_gte');
   });
 
-  it('builds a query with _or compound filter', () => {
+  it('serializes a public _or compound filter as the server or field', () => {
     const result = buildGraphqlQuery('users', {
       filter: {
         _or: [{ name: { _eq: 'Alice' } }, { name: { _eq: 'Bob' } }],
       },
       fields: ['id', 'name'],
     });
-    expect(result).toContain('_or');
+    expect(result).toContain('or:');
+    expect(result).not.toContain('_or');
     expect(result).toContain('"Alice"');
     expect(result).toContain('"Bob"');
   });
@@ -136,8 +138,10 @@ describe('buildGraphqlQuery', () => {
       },
       fields: ['id'],
     });
-    expect(result).toContain('_and');
-    expect(result).toContain('_or');
+    expect(result).toContain('and:');
+    expect(result).toContain('or:');
+    expect(result).not.toContain('_and');
+    expect(result).not.toContain('_or');
     expect(result).toContain('"active"');
     expect(result).toContain('"admin"');
     expect(result).toContain('"editor"');
@@ -180,5 +184,39 @@ describe('buildGraphqlQuery', () => {
         sort: [{ field: 'name) { injected', direction: 'asc' }],
       }),
     ).toThrow(/Invalid GraphQL sort field/);
+  });
+
+  it('rejects unsafe sort directions at runtime', () => {
+    expect(() =>
+      buildGraphqlQuery('users', {
+        sort: [
+          {
+            field: 'name',
+            // @ts-expect-error runtime validation protects JS callers too
+            direction: 'asc] } injected',
+          },
+        ],
+      }),
+    ).toThrow(/Invalid GraphQL sort direction/);
+  });
+
+  it('rejects invalid pagination values at runtime', () => {
+    expect(() =>
+      buildGraphqlQuery('users', {
+        pagination: { limit: 10.5 },
+      }),
+    ).toThrow(/Invalid GraphQL pagination limit/);
+
+    expect(() =>
+      buildGraphqlQuery('users', {
+        pagination: { offset: -1 },
+      }),
+    ).toThrow(/Invalid GraphQL pagination offset/);
+
+    expect(() =>
+      buildGraphqlQuery('users', {
+        pagination: { limit: Number.POSITIVE_INFINITY },
+      }),
+    ).toThrow(/Invalid GraphQL pagination limit/);
   });
 });

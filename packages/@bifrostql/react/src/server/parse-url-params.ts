@@ -1,4 +1,5 @@
 import type { QueryOptions, SortOption, TableFilter } from '../types';
+import { isFilterOperator, isGraphqlName } from '../utils/graphql-identifiers';
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -14,7 +15,7 @@ function parseSort(raw: string): SortOption[] {
 
     const descending = trimmed.startsWith('-');
     const field = descending ? trimmed.slice(1) : trimmed;
-    if (!field) return acc;
+    if (!field || !isGraphqlName(field)) return acc;
 
     acc.push({ field, direction: descending ? 'desc' : 'asc' });
     return acc;
@@ -34,17 +35,20 @@ function parseFilter(params: SearchParams): TableFilter | undefined {
     if (value === undefined) continue;
 
     if (dotIndex === -1) {
+      if (!isGraphqlName(inner)) continue;
       filter[inner] = value;
       hasFilter = true;
     } else {
       const field = inner.slice(0, dotIndex);
       const op = inner.slice(dotIndex + 2);
+      const operator = `_${op}`;
+      if (!isGraphqlName(field) || !isFilterOperator(operator)) continue;
       const parsed = parseFilterValue(value);
       const existing = filter[field];
       if (existing && typeof existing === 'object' && existing !== null) {
-        (existing as Record<string, unknown>)[`_${op}`] = parsed;
+        (existing as Record<string, unknown>)[operator] = parsed;
       } else {
-        filter[field] = { [`_${op}`]: parsed } as TableFilter[string];
+        filter[field] = { [operator]: parsed } as TableFilter[string];
       }
       hasFilter = true;
     }
@@ -59,9 +63,11 @@ function parseFilterValue(
   if (value === 'null') return null;
   if (value === 'true') return true;
   if (value === 'false') return false;
+  if (value === '') return '';
 
   if (value.includes(',')) {
     return value.split(',').map((v) => {
+      if (v === '') return v;
       const num = Number(v);
       return Number.isFinite(num) ? num : v;
     });
@@ -97,7 +103,7 @@ export function parseTableParams(params: SearchParams): QueryOptions {
   const limitRaw = firstValue(params.limit);
   if (limitRaw !== undefined) {
     const limit = Number(limitRaw);
-    if (Number.isFinite(limit) && limit > 0) {
+    if (Number.isInteger(limit) && limit > 0) {
       options.pagination = { ...options.pagination, limit };
     }
   }
@@ -105,7 +111,7 @@ export function parseTableParams(params: SearchParams): QueryOptions {
   const offsetRaw = firstValue(params.offset);
   if (offsetRaw !== undefined) {
     const offset = Number(offsetRaw);
-    if (Number.isFinite(offset) && offset >= 0) {
+    if (Number.isInteger(offset) && offset >= 0) {
       options.pagination = { ...options.pagination, offset };
     }
   }
@@ -118,7 +124,7 @@ export function parseTableParams(params: SearchParams): QueryOptions {
     const fields = fieldsRaw
       .split(',')
       .map((f) => f.trim())
-      .filter(Boolean);
+      .filter((field) => field.length > 0 && isGraphqlName(field));
     if (fields.length > 0) options.fields = fields;
   }
 

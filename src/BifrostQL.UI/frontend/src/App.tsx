@@ -20,6 +20,7 @@ import {
 import type { VaultServer } from './connection/types';
 import { AboutPanel } from './about/AboutPanel';
 import { saveSession, loadSession } from './connection/session';
+import { parsePort } from './connection/sanitize-connection';
 import {
   createTransport,
   loadTransportMode,
@@ -94,16 +95,12 @@ function parseConnectionStringForBridge(
   if (provider === 'sqlserver' && host && host.includes(',')) {
     // SQL Server encodes "host,port" in the Server field.
     const comma = host.indexOf(',');
-    const parsedPort = Number.parseInt(host.slice(comma + 1), 10);
-    if (Number.isFinite(parsedPort)) port = parsedPort;
+    port = parsePort(host.slice(comma + 1));
     host = host.slice(0, comma);
   }
   if (port === undefined) {
     const portStr = get('port');
-    if (portStr) {
-      const n = Number.parseInt(portStr, 10);
-      if (Number.isFinite(n)) port = n;
-    }
+    port = parsePort(portStr);
   }
 
   const database = get('database', 'initial catalog');

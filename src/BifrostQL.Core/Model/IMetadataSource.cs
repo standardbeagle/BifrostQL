@@ -203,6 +203,7 @@ namespace BifrostQL.Core.Model
             MetadataKeys.AppSchema.AutoDetect,
             MetadataKeys.AppSchema.App,
             MetadataKeys.AppSchema.Detected,
+            MetadataKeys.AppSchema.DetectionConfidence,
         };
 
         /// <summary>

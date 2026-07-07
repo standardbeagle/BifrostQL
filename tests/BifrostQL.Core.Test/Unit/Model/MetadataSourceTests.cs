@@ -389,7 +389,9 @@ public class MetadataSourceTests
         {
             ["auto-join"] = "true",
             ["default-limit"] = "100",
-            ["schema-prefix"] = "enabled"
+            ["schema-prefix"] = "enabled",
+            [MetadataKeys.AppSchema.Detected] = "wordpress",
+            [MetadataKeys.AppSchema.DetectionConfidence] = 0.95,
         };
 
         var warnings = MetadataValidator.ValidateDatabaseMetadata(metadata);

@@ -17,6 +17,7 @@ import {
   SshConfig,
   WpConfig,
 } from './types';
+import { parsePort } from './sanitize-connection';
 
 const POSTGRES_SSL_MODES: PostgresSslMode[] = ['Disable', 'Allow', 'Prefer', 'Require', 'VerifyCA', 'VerifyFull'];
 const MYSQL_SSL_MODES: MySqlSslMode[] = ['None', 'Preferred', 'Required'];
@@ -165,13 +166,11 @@ function parseConnectionString(provider: Provider, connectionString: string): Co
   if (provider === 'sqlserver' && host?.includes(',')) {
     const [server, portText] = host.split(',', 2);
     host = server;
-    const parsed = Number.parseInt(portText, 10);
-    if (Number.isFinite(parsed)) port = parsed;
+    port = parsePort(portText);
   }
   const portText = get('port');
   if (port === undefined && portText) {
-    const parsed = Number.parseInt(portText, 10);
-    if (Number.isFinite(parsed)) port = parsed;
+    port = parsePort(portText);
   }
 
   const name = provider === 'sqlite'

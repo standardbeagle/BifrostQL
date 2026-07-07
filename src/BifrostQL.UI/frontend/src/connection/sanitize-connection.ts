@@ -44,3 +44,30 @@ export function sanitizeConnectionInfo(connection: ConnectionInfo): ConnectionIn
     connectionString: redactConnectionStringSecrets(connection.connectionString ?? ''),
   };
 }
+
+export function parsePort(value: unknown): number | undefined {
+  if (typeof value !== 'string' && typeof value !== 'number') return undefined;
+  const text = String(value).trim();
+  if (!/^\d+$/.test(text)) return undefined;
+  const port = Number(text);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) return undefined;
+  return port;
+}
+
+export function parseConnectionInfo(value: unknown): ConnectionInfo | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return null;
+  }
+
+  const connection = value as Record<string, unknown>;
+  if (
+    typeof connection.id !== 'string' ||
+    typeof connection.name !== 'string' ||
+    typeof connection.connectionString !== 'string' ||
+    typeof connection.provider !== 'string'
+  ) {
+    return null;
+  }
+
+  return connection as unknown as ConnectionInfo;
+}

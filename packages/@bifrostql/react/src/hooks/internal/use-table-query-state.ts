@@ -114,6 +114,45 @@ export function useTableQueryState({
 
   const urlDebounceTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const filterDebounceTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const columnFields = useMemo(
+    () => columns.map((column) => column.field),
+    [columns],
+  );
+  const previousColumnFieldsRef = useRef(columnFields);
+
+  useEffect(() => {
+    const previousFields = previousColumnFieldsRef.current;
+    const currentFieldSet = new Set(columnFields);
+    const removedFieldSet = new Set(
+      previousFields.filter((field) => !currentFieldSet.has(field)),
+    );
+
+    if (removedFieldSet.size === 0) {
+      previousColumnFieldsRef.current = columnFields;
+      return;
+    }
+
+    setSort((prev) => {
+      const next = prev.filter((entry) => !removedFieldSet.has(entry.field));
+      return sortOptionsEqual(prev, next) ? prev : next;
+    });
+
+    setFilters((prev) => {
+      const next = pruneRemovedTableFilter(prev, removedFieldSet);
+      return shallowFilterEqual(prev, next) ? prev : next;
+    });
+
+    setDebouncedFilters((prev) => {
+      const next = pruneRemovedTableFilter(prev, removedFieldSet);
+      return shallowFilterEqual(prev, next) ? prev : next;
+    });
+
+    setCompoundFilterState((prev) =>
+      prev ? pruneRemovedCompoundFilter(prev, removedFieldSet) : prev,
+    );
+
+    previousColumnFieldsRef.current = columnFields;
+  }, [columnFields]);
 
   // Debounce filter changes before sending to server
   useEffect(() => {
@@ -410,4 +449,69 @@ export function useTableQueryState({
       previousPage,
     },
   };
+}
+
+function sortOptionsEqual(left: SortOption[], right: SortOption[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (entry, index) =>
+        entry.field === right[index].field &&
+        entry.direction === right[index].direction,
+    )
+  );
+}
+
+function shallowFilterEqual(left: TableFilter, right: TableFilter): boolean {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every((key) => Object.is(left[key], right[key]))
+  );
+}
+
+function pruneRemovedTableFilter(
+  filter: TableFilter,
+  removedFieldSet: ReadonlySet<string>,
+): TableFilter {
+  return Object.fromEntries(
+    Object.entries(filter).filter(([field]) => !removedFieldSet.has(field)),
+  );
+}
+
+function pruneRemovedCompoundFilter(
+  filter: CompoundFilter,
+  removedFieldSet: ReadonlySet<string>,
+): CompoundFilter | null {
+  const next: CompoundFilter = {};
+  const andFilters = filter._and
+    ?.map((child) => pruneRemovedAdvancedFilter(child, removedFieldSet))
+    .filter((child): child is TableFilter | CompoundFilter => child !== null);
+  const orFilters = filter._or
+    ?.map((child) => pruneRemovedAdvancedFilter(child, removedFieldSet))
+    .filter((child): child is TableFilter | CompoundFilter => child !== null);
+
+  if (andFilters?.length) next._and = andFilters;
+  if (orFilters?.length) next._or = orFilters;
+
+  return next._and || next._or ? next : null;
+}
+
+function pruneRemovedAdvancedFilter(
+  filter: TableFilter | CompoundFilter,
+  removedFieldSet: ReadonlySet<string>,
+): TableFilter | CompoundFilter | null {
+  if (isCompoundFilter(filter)) {
+    return pruneRemovedCompoundFilter(filter, removedFieldSet);
+  }
+
+  const next = pruneRemovedTableFilter(filter, removedFieldSet);
+  return Object.keys(next).length > 0 ? next : null;
+}
+
+function isCompoundFilter(
+  filter: TableFilter | CompoundFilter,
+): filter is CompoundFilter {
+  return '_and' in filter || '_or' in filter;
 }

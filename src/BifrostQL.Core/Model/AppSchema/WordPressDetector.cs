@@ -83,7 +83,7 @@ public sealed class WordPressDetector : IAppSchemaDetector
 
     public bool IsEnabled(IDictionary<string, object?> dbMetadata)
     {
-        if (dbMetadata.TryGetValue("auto-detect-app", out var val)
+        if (dbMetadata.TryGetValue(MetadataKeys.AppSchema.AutoDetect, out var val)
             && string.Equals(val?.ToString(), "disabled", StringComparison.OrdinalIgnoreCase))
             return false;
         return true;
@@ -161,7 +161,7 @@ public sealed class WordPressDetector : IAppSchemaDetector
                 {
                     var schema = tableSchemaLookup.GetValueOrDefault(fullName, "");
                     var key = string.IsNullOrEmpty(schema) ? fullName : $"{schema}.{fullName}";
-                    additionalMetadata[key] = new Dictionary<string, object?> { ["visibility"] = "hidden" };
+                    additionalMetadata[key] = new Dictionary<string, object?> { [MetadataKeys.Ui.Visibility] = MetadataKeys.Ui.Hidden };
                 }
             }
 
@@ -174,9 +174,9 @@ public sealed class WordPressDetector : IAppSchemaDetector
                     var schema = tableSchemaLookup.GetValueOrDefault(fullName, "");
                     var key = string.IsNullOrEmpty(schema) ? fullName : $"{schema}.{fullName}";
                     if (additionalMetadata.TryGetValue(key, out var existing))
-                        existing["label"] = label;
+                        existing[MetadataKeys.Ui.Label] = label;
                     else
-                        additionalMetadata[key] = new Dictionary<string, object?> { ["label"] = label };
+                        additionalMetadata[key] = new Dictionary<string, object?> { [MetadataKeys.Ui.Label] = label };
                 }
             }
 
@@ -225,8 +225,8 @@ public sealed class WordPressDetector : IAppSchemaDetector
                     : $"{schema}.{fullTableName}.{columnName}";
                 columnMetadata[columnKey] = new Dictionary<string, object?>
                 {
-                    ["type"] = "php_serialized",
-                    ["format"] = "php"
+                    [MetadataKeys.DataType.Type] = MetadataKeys.DataType.PhpSerialized,
+                    [MetadataKeys.DataType.Format] = "php",
                 };
             }
         }

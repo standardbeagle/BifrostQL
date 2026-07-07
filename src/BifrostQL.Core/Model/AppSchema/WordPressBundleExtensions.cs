@@ -132,9 +132,9 @@ public static class WordPressMetadataExtensions
     /// <returns>True if the column contains PHP serialized data.</returns>
     public static bool IsPhpSerialized(this ColumnDto column)
     {
-        if (column.Metadata.TryGetValue("type", out var typeValue))
+        if (column.Metadata.TryGetValue(MetadataKeys.DataType.Type, out var typeValue))
         {
-            return "php_serialized".Equals(typeValue?.ToString(), StringComparison.OrdinalIgnoreCase);
+            return MetadataKeys.DataType.PhpSerialized.Equals(typeValue?.ToString(), StringComparison.OrdinalIgnoreCase);
         }
         return false;
     }

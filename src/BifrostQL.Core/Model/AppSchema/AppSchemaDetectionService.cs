@@ -38,14 +38,14 @@ public sealed class AppSchemaDetectionService
         var schemas = existingSchemas ?? Array.Empty<string>();
 
         // If auto-detect is explicitly disabled, bail out
-        if (dbMetadata.TryGetValue("auto-detect-app", out var autoDetect) &&
+        if (dbMetadata.TryGetValue(MetadataKeys.AppSchema.AutoDetect, out var autoDetect) &&
             string.Equals(autoDetect?.ToString(), "disabled", StringComparison.OrdinalIgnoreCase))
         {
             return null;
         }
 
         // If a specific app schema is forced, run only that detector
-        if (dbMetadata.TryGetValue("app-schema", out var appSchema) &&
+        if (dbMetadata.TryGetValue(MetadataKeys.AppSchema.App, out var appSchema) &&
             appSchema?.ToString() is { Length: > 0 } forced)
         {
             var specific = _detectors.FirstOrDefault(
@@ -56,8 +56,8 @@ public sealed class AppSchemaDetectionService
             var forcedResult = specific.Detect(tables, schemas);
             if (forcedResult != null && forcedResult.Confidence >= MinimumConfidenceThreshold)
             {
-                dbMetadata["detected-app"] = forcedResult.AppName;
-                dbMetadata["detection-confidence"] = forcedResult.Confidence;
+                dbMetadata[MetadataKeys.AppSchema.Detected] = forcedResult.AppName;
+                dbMetadata[MetadataKeys.AppSchema.DetectionConfidence] = forcedResult.Confidence;
                 return forcedResult.SchemaResult;
             }
             return null;
@@ -81,8 +81,8 @@ public sealed class AppSchemaDetectionService
         var bestResult = results.OrderByDescending(r => r.Confidence).FirstOrDefault();
         if (bestResult != null)
         {
-            dbMetadata["detected-app"] = bestResult.AppName;
-            dbMetadata["detection-confidence"] = bestResult.Confidence;
+            dbMetadata[MetadataKeys.AppSchema.Detected] = bestResult.AppName;
+            dbMetadata[MetadataKeys.AppSchema.DetectionConfidence] = bestResult.Confidence;
             return bestResult.SchemaResult;
         }
 
@@ -102,7 +102,7 @@ public sealed class AppSchemaDetectionService
         var results = new List<DetectionResult>();
 
         // If auto-detect is explicitly disabled, return empty
-        if (dbMetadata.TryGetValue("auto-detect-app", out var autoDetect) &&
+        if (dbMetadata.TryGetValue(MetadataKeys.AppSchema.AutoDetect, out var autoDetect) &&
             string.Equals(autoDetect?.ToString(), "disabled", StringComparison.OrdinalIgnoreCase))
         {
             return results;

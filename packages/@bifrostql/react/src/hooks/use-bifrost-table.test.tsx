@@ -2386,6 +2386,98 @@ describe('useBifrostTable', () => {
       expect(result.current.columnManagement.columnWidths.name).toBe(150);
       expect(result.current.columnManagement.pinnedColumns).toEqual({});
     });
+
+    it('reconciles column state when columns change', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const nextColumns: ColumnConfig[] = [
+        { field: 'id', header: 'ID', width: 80 },
+        { field: 'name', header: 'Name', width: 150 },
+        { field: 'age', header: 'Age', width: 90 },
+      ];
+
+      const { result, rerender } = renderHook(
+        ({ columns }) => useBifrostTable({ query: 'users', columns }),
+        {
+          initialProps: { columns: defaultColumns },
+          wrapper: createWrapper(),
+        },
+      );
+
+      act(() => {
+        result.current.columnManagement.hideColumn('name');
+        result.current.columnManagement.reorderColumn(2, 0);
+        result.current.columnManagement.resizeColumn('email', 320);
+        result.current.columnManagement.pinColumn('email', 'right');
+      });
+
+      rerender({ columns: nextColumns });
+
+      expect(result.current.columnManagement.visibleColumns).toEqual([
+        'id',
+        'age',
+      ]);
+      expect(result.current.columnManagement.columnOrder).toEqual([
+        'id',
+        'name',
+        'age',
+      ]);
+      expect(result.current.columnManagement.columnWidths).toEqual({
+        id: 80,
+        name: 150,
+        age: 90,
+      });
+      expect(result.current.columnManagement.pinnedColumns).toEqual({});
+    });
+
+    it('prunes query state when columns change', async () => {
+      globalThis.fetch = createFetchMock({ data: { users: [] } });
+
+      const nextColumns: ColumnConfig[] = [
+        { field: 'id', header: 'ID', width: 80, sortable: true },
+        { field: 'name', header: 'Name', width: 150, sortable: true },
+        { field: 'age', header: 'Age', width: 90, sortable: true },
+      ];
+
+      const { result, rerender } = renderHook(
+        ({ columns }) => useBifrostTable({ query: 'users', columns }),
+        {
+          initialProps: { columns: defaultColumns },
+          wrapper: createWrapper(),
+        },
+      );
+
+      act(() => {
+        result.current.sorting.setSorting([
+          { field: 'email', direction: 'asc' },
+          { field: 'name', direction: 'desc' },
+        ]);
+        result.current.filters.setFilters({
+          email: { _contains: 'example.com' },
+          name: { _contains: 'Ada' },
+        });
+        result.current.filters.setCompoundFilter({
+          _or: [
+            { email: { _contains: 'test.com' } },
+            { name: { _contains: 'Grace' } },
+          ],
+        });
+      });
+
+      rerender({ columns: nextColumns });
+
+      await waitFor(() => {
+        expect(result.current.sorting.current).toEqual([
+          { field: 'name', direction: 'desc' },
+        ]);
+      });
+      expect(result.current.filters.current).toEqual({
+        name: { _contains: 'Ada' },
+      });
+      expect(result.current.filters.compoundFilter).toEqual({
+        _or: [{ name: { _contains: 'Grace' } }],
+      });
+    });
   });
 
   describe('export - CSV', () => {
@@ -4020,7 +4112,8 @@ describe('useBifrostTable', () => {
       await waitFor(() => {
         const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
         const lastBody = JSON.parse(calls[calls.length - 1][1].body);
-        expect(lastBody.query).toContain('_and');
+        expect(lastBody.query).toContain('and:');
+        expect(lastBody.query).not.toContain('_and');
       });
     });
   });

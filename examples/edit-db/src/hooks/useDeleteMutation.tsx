@@ -5,6 +5,7 @@ import { Table } from "../types/schema";
 import type { PkFilter } from "../lib/row-id";
 import { invalidateAfterTableWrite } from "../lib/invalidate";
 import { useToast } from "./useToast";
+import { assertGraphQlName } from "../lib/query-builder";
 
 export type DeleteInput = PkFilter | string | number;
 
@@ -39,6 +40,7 @@ function coerceValue(value: unknown, paramType: string | undefined): unknown {
 }
 
 export function useDeleteMutation(table: Table): UseDeleteMutationResult {
+    assertGraphQlName(table.name, 'delete mutation table name');
     const fetcher = useFetcher();
     const queryClient = useQueryClient();
     const { toast } = useToast();

@@ -58,6 +58,14 @@ function FkBadge({ count }: { count: number }) {
   );
 }
 
+function safeDecodePathSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 /**
  * Renders a compact sparkline visualization for table statistics.
  *
@@ -217,7 +225,7 @@ export function TableList() {
   const [page, setPage] = useState(0);
 
   const path = usePath();
-  const activeName = decodeURIComponent(path.split('/')[1] ?? '');
+  const activeName = safeDecodePathSegment(path.split('/')[1] ?? '');
 
   const maxRowCount = useMemo(() => {
     const counts = Object.values(stats)

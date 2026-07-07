@@ -4,6 +4,8 @@ import '@testing-library/jest-dom';
 import { TableList } from './tableList';
 import { abbreviateNumber, calculateBarWidth } from './hooks/useTableStats';
 
+const pathMock = vi.hoisted(() => ({ current: '/' }));
+
 // Mock the hooks
 vi.mock('./hooks/useSchema', () => ({
   useSchema: vi.fn(),
@@ -26,7 +28,7 @@ vi.mock('./hooks/useTableStats', () => ({
 }));
 
 vi.mock('./hooks/usePath', () => ({
-  usePath: () => '/',
+  usePath: () => pathMock.current,
   Link: ({ children, ...props }: { children: React.ReactNode; to: string; className?: string }) => (
     <a href={props.to} className={props.className}>{children}</a>
   ),
@@ -59,6 +61,7 @@ const mockUseTableStats = vi.mocked(useTableStats);
 describe('TableList', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    pathMock.current = '/';
   });
 
   it('renders loading state when schema is loading', () => {
@@ -247,7 +250,10 @@ function mockSchema(tables: unknown[]) {
 }
 
 describe('TableList — search, grouping, paging', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    pathMock.current = '/';
+  });
 
   it('filters tables by the search query', () => {
     mockSchema([makeTable('customers', 'Customers'), makeTable('orders', 'Orders')]);
@@ -311,6 +317,14 @@ describe('TableList — search, grouping, paging', () => {
     render(<TableList />);
     const link = screen.getByText('Customers').closest('a')!;
     expect(within(link).queryByText('Customers')).toBeInTheDocument();
+  });
+
+  it('tolerates malformed percent-encoded active paths', () => {
+    pathMock.current = '/%E0%A4%A';
+    mockSchema([makeTable('customers', 'Customers')]);
+
+    expect(() => render(<TableList />)).not.toThrow();
+    expect(screen.getByText('Customers')).toBeInTheDocument();
   });
 });
 

@@ -52,6 +52,34 @@ describe('fetchProfiles', () => {
     await expect(fetchProfiles()).resolves.toEqual(DEFAULT_PROFILES);
   });
 
+  it('drops malformed profile entries from the server payload', async () => {
+    g.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { id: 'default', label: 'Database (raw)', serverProfile: null },
+        { id: 'bad-label', serverProfile: 'bad' },
+        { label: 'Missing id', serverProfile: 'bad' },
+        { id: 'sales', label: 'Sales', serverProfile: 'sales' },
+        { id: 'raw-ish', label: 'Raw-ish', serverProfile: 42 },
+      ],
+    });
+
+    await expect(fetchProfiles()).resolves.toEqual([
+      { id: 'default', label: 'Database (raw)', serverProfile: null },
+      { id: 'sales', label: 'Sales', serverProfile: 'sales' },
+      { id: 'raw-ish', label: 'Raw-ish', serverProfile: null },
+    ]);
+  });
+
+  it('returns DEFAULT_PROFILES when no server entries are valid', async () => {
+    g.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => [{ id: 'missing-label' }, { label: 'Missing id' }],
+    });
+
+    await expect(fetchProfiles()).resolves.toEqual(DEFAULT_PROFILES);
+  });
+
   it('returns DEFAULT_PROFILES when fetch throws', async () => {
     g.fetch.mockRejectedValue(new Error('network down'));
     await expect(fetchProfiles()).resolves.toEqual(DEFAULT_PROFILES);

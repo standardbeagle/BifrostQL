@@ -15,11 +15,11 @@ function buildFilterObject(filter: AdvancedFilter): string {
     const parts: string[] = [];
     if (filter._and) {
       const inner = filter._and.map((f) => `{ ${buildFilterObject(f)} }`);
-      parts.push(`_and: [${inner.join(', ')}]`);
+      parts.push(`and: [${inner.join(', ')}]`);
     }
     if (filter._or) {
       const inner = filter._or.map((f) => `{ ${buildFilterObject(f)} }`);
-      parts.push(`_or: [${inner.join(', ')}]`);
+      parts.push(`or: [${inner.join(', ')}]`);
     }
     return parts.join(', ');
   }
@@ -64,15 +64,30 @@ function buildSortArgs(sort: SortOption[]): string {
   if (sort.length === 0) return '';
   const parts = sort.map((s) => {
     assertGraphqlName(s.field, 'sort field');
+    if (s.direction !== 'asc' && s.direction !== 'desc') {
+      throw new Error(`Invalid GraphQL sort direction: ${String(s.direction)}`);
+    }
     return `${s.field}_${s.direction}`;
   });
   return `sort: [${parts.join(', ')}]`;
 }
 
+function assertPaginationValue(value: number, kind: string): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`Invalid GraphQL pagination ${kind}: ${String(value)}`);
+  }
+}
+
 function buildPaginationArgs(limit?: number, offset?: number): string {
   const parts: string[] = [];
-  if (limit !== undefined) parts.push(`limit: ${limit}`);
-  if (offset !== undefined) parts.push(`offset: ${offset}`);
+  if (limit !== undefined) {
+    assertPaginationValue(limit, 'limit');
+    parts.push(`limit: ${limit}`);
+  }
+  if (offset !== undefined) {
+    assertPaginationValue(offset, 'offset');
+    parts.push(`offset: ${offset}`);
+  }
   return parts.join(', ');
 }
 

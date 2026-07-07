@@ -92,7 +92,7 @@ public sealed class DrupalDetector : IAppSchemaDetector
 
     public bool IsEnabled(IDictionary<string, object?> dbMetadata)
     {
-        if (dbMetadata.TryGetValue("auto-detect-app", out var val)
+        if (dbMetadata.TryGetValue(MetadataKeys.AppSchema.AutoDetect, out var val)
             && string.Equals(val?.ToString(), "disabled", StringComparison.OrdinalIgnoreCase))
             return false;
         return true;
@@ -137,7 +137,7 @@ public sealed class DrupalDetector : IAppSchemaDetector
                 {
                     var schema = tableSchemaLookup.GetValueOrDefault(dbName, "");
                     var key = string.IsNullOrEmpty(schema) ? dbName : $"{schema}.{dbName}";
-                    additionalMetadata[key] = new Dictionary<string, object?> { ["visibility"] = "hidden" };
+                    additionalMetadata[key] = new Dictionary<string, object?> { [MetadataKeys.Ui.Visibility] = MetadataKeys.Ui.Hidden };
                     break;
                 }
             }
@@ -151,9 +151,9 @@ public sealed class DrupalDetector : IAppSchemaDetector
                 var schema = tableSchemaLookup.GetValueOrDefault(baseName, "");
                 var key = string.IsNullOrEmpty(schema) ? baseName : $"{schema}.{baseName}";
                 if (additionalMetadata.TryGetValue(key, out var existing))
-                    existing["label"] = label;
+                    existing[MetadataKeys.Ui.Label] = label;
                 else
-                    additionalMetadata[key] = new Dictionary<string, object?> { ["label"] = label };
+                    additionalMetadata[key] = new Dictionary<string, object?> { [MetadataKeys.Ui.Label] = label };
             }
         }
 

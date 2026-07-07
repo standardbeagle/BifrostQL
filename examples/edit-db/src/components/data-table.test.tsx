@@ -262,6 +262,31 @@ describe('DataTable column-sizing persistence', () => {
         setItemSpy.mockRestore();
     });
 
+    it('sanitizes malformed persisted sizing on mount', () => {
+        localStorage.setItem(
+            STORAGE_KEY,
+            JSON.stringify({
+                student_id: 12,
+                course_id: 900,
+                grade: 120,
+                ignored: 'wide',
+                infinite: Infinity,
+                missing: null,
+            }),
+        );
+        const setItemSpy = vi.spyOn(Storage.prototype, 'setItem');
+
+        const { container } = renderWithTableName();
+        vi.advanceTimersByTime(400);
+
+        const columns = container.querySelectorAll('col');
+        expect(columns[0]).toHaveStyle({ width: '60px' });
+        expect(columns[1]).toHaveStyle({ width: '450px' });
+        expect(columns[2]).toHaveStyle({ width: '120px' });
+        expect(setItemSpy).not.toHaveBeenCalled();
+        setItemSpy.mockRestore();
+    });
+
     it('persists a resize after the debounce window', () => {
         const { container } = renderWithTableName();
 

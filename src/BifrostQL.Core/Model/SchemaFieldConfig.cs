@@ -170,7 +170,7 @@ namespace BifrostQL.Core.Model
         /// </summary>
         public static SchemaFieldConfig FromMetadata(IDictionary<string, object?> metadata)
         {
-            var modeStr = metadata.TryGetValue("schema-display", out var modeVal)
+            var modeStr = metadata.TryGetValue(MetadataKeys.Schema.Display, out var modeVal)
                 ? modeVal?.ToString()
                 : null;
 
@@ -178,18 +178,18 @@ namespace BifrostQL.Core.Model
             if (mode == SchemaDisplayMode.Flat)
                 return Disabled;
 
-            var defaultSchema = metadata.TryGetValue("schema-default", out var defaultVal)
+            var defaultSchema = metadata.TryGetValue(MetadataKeys.Schema.Default, out var defaultVal)
                 && !string.IsNullOrWhiteSpace(defaultVal?.ToString())
                     ? defaultVal!.ToString()!
                     : "dbo";
 
             var excluded = ParseStringList(
-                metadata.TryGetValue("schema-excluded", out var excVal)
+                metadata.TryGetValue(MetadataKeys.Schema.Excluded, out var excVal)
                     ? excVal?.ToString()
                     : null);
 
             var permissions = ParsePermissions(
-                metadata.TryGetValue("schema-permissions", out var permVal)
+                metadata.TryGetValue(MetadataKeys.Schema.Permissions, out var permVal)
                     ? permVal?.ToString()
                     : null);
 

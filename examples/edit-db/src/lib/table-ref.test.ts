@@ -80,6 +80,16 @@ describe('tableRefPlan', () => {
         expect(plan.query).not.toMatch(/label:\s*\n/);
         expect(plan.query).not.toContain('label: id');
     });
+
+    it('rejects unsafe or missing key columns before building GraphQL', () => {
+        expect(() => tableRefPlan(table('users'), 'pk) { injected')).toThrow(/Invalid GraphQL reference key column/);
+        expect(() => tableRefPlan(table('users'), 'missing')).toThrow(/has no key column 'missing'/);
+    });
+
+    it('rejects unsafe label columns before building GraphQL', () => {
+        expect(() => tableRefPlan(table('users', { labelColumn: 'name) { injected' }), 'pk'))
+            .toThrow(/Invalid GraphQL reference label column/);
+    });
 });
 
 describe('tableRefLookupPlan', () => {
@@ -90,6 +100,10 @@ describe('tableRefLookupPlan', () => {
         expect(plan.query).toContain('filter: {pk: {_eq: $key}}');
         expect(plan.query).toContain('limit: 1');
         expect(plan.query).toContain('label: name');
+    });
+
+    it('rejects a missing lookup key column instead of defaulting to Int', () => {
+        expect(() => tableRefLookupPlan(table('users'), 'missing')).toThrow(/has no key column 'missing'/);
     });
 });
 

@@ -78,18 +78,18 @@ namespace BifrostQL.Core.Resolvers
                                     isUnique = c.IsUnique,
                                     isIdentity = c.IsIdentity,
                                     isReadOnly = c.IsPrimaryKey || c.IsIdentity || c.IsComputed ||
-                                                 c.CompareMetadata("populate", "created-on") ||
-                                                 c.CompareMetadata("populate", "created-by") ||
-                                                 c.CompareMetadata("populate", "updated-on") ||
-                                                 c.CompareMetadata("populate", "updated-by") ||
-                                                 c.CompareMetadata("populate", "deleted-on") ||
-                                                 c.CompareMetadata("populate", "deleted-by"),
-                                    isCreatedOnColumn = c.CompareMetadata("populate", "created-on"),
-                                    isCreatedByColumn = c.CompareMetadata("populate", "created-by"),
-                                    isUpdatedOnColumn = c.CompareMetadata("populate", "updated-on"),
-                                    isUpdatedByColumn = c.CompareMetadata("populate", "updated-by"),
-                                    isDeletedOnColumn = c.CompareMetadata("populate", "deleted-on"),
-                                    isDeletedColumn = c.CompareMetadata("populate", "deleted-by"),
+                                                 c.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.CreatedOn) ||
+                                                 c.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.CreatedBy) ||
+                                                 c.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.UpdatedOn) ||
+                                                 c.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.UpdatedBy) ||
+                                                 c.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.DeletedOn) ||
+                                                 c.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.DeletedBy),
+                                    isCreatedOnColumn = c.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.CreatedOn),
+                                    isCreatedByColumn = c.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.CreatedBy),
+                                    isUpdatedOnColumn = c.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.UpdatedOn),
+                                    isUpdatedByColumn = c.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.UpdatedBy),
+                                    isDeletedOnColumn = c.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.DeletedOn),
+                                    isDeletedColumn = c.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.DeletedBy),
                                     maxLength = rules.MaxLength,
                                     minLength = rules.MinLength,
                                     min = rules.Min,

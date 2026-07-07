@@ -23,11 +23,10 @@ export async function fetchProfiles(): Promise<ApiProfile[]> {
     if (!resp.ok) return DEFAULT_PROFILES;
     const json = (await resp.json()) as ApiProfile[] | null | undefined;
     if (!Array.isArray(json) || json.length === 0) return DEFAULT_PROFILES;
-    return json.map((p) => ({
-      id: p.id,
-      label: p.label,
-      serverProfile: p.serverProfile ?? null,
-    }));
+    const profiles = json
+      .map(parseApiProfile)
+      .filter((profile): profile is ApiProfile => profile !== null);
+    return profiles.length > 0 ? profiles : DEFAULT_PROFILES;
   } catch {
     return DEFAULT_PROFILES;
   }
@@ -76,4 +75,22 @@ export function resolveActiveProfile(
   const savedId = loadActiveProfileId(storage);
   const match = savedId ? profiles.find((p) => p.id === savedId) : undefined;
   return match ?? profiles[0];
+}
+
+function parseApiProfile(value: unknown): ApiProfile | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return null;
+  }
+
+  const profile = value as Record<string, unknown>;
+  if (typeof profile.id !== 'string' || typeof profile.label !== 'string') {
+    return null;
+  }
+
+  return {
+    id: profile.id,
+    label: profile.label,
+    serverProfile:
+      typeof profile.serverProfile === 'string' ? profile.serverProfile : null,
+  };
 }

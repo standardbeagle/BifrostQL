@@ -68,4 +68,18 @@ describe('session', () => {
     g.sessionStorage.setItem(KEY, '{broken');
     expect(loadSession()).toBeNull();
   });
+
+  it('clears malformed stored session objects', () => {
+    g.sessionStorage.setItem(KEY, JSON.stringify({ id: 'bad', name: 'bad', connectionString: 'Password=secret' }));
+
+    expect(loadSession()).toBeNull();
+    expect(g.sessionStorage.getItem(KEY)).toBeNull();
+  });
+
+  it('clears array-shaped stored sessions', () => {
+    g.sessionStorage.setItem(KEY, JSON.stringify([infoWithSecret]));
+
+    expect(loadSession()).toBeNull();
+    expect(g.sessionStorage.getItem(KEY)).toBeNull();
+  });
 });

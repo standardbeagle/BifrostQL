@@ -1,5 +1,5 @@
 import { ConnectionInfo } from './types';
-import { sanitizeConnectionInfo } from './sanitize-connection';
+import { parseConnectionInfo, sanitizeConnectionInfo } from './sanitize-connection';
 
 const SESSION_KEY = 'bifrostql_active_session';
 
@@ -13,7 +13,13 @@ export function loadSession(): ConnectionInfo | null {
     const stored = sessionStorage.getItem(SESSION_KEY);
     if (!stored) return null;
 
-    const sanitized = sanitizeConnectionInfo(JSON.parse(stored) as ConnectionInfo);
+    const parsed = parseConnectionInfo(JSON.parse(stored));
+    if (!parsed) {
+      sessionStorage.removeItem(SESSION_KEY);
+      return null;
+    }
+
+    const sanitized = sanitizeConnectionInfo(parsed);
     const sanitizedJson = JSON.stringify(sanitized);
     if (sanitizedJson !== stored) {
       sessionStorage.setItem(SESSION_KEY, sanitizedJson);

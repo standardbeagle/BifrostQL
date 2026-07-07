@@ -35,10 +35,15 @@ function isIntColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
     return paramType.replace('!', '') === 'Int';
 }
 
-function parseNumeric(raw: string, isInt: boolean): number | null {
-    if (raw === '' || raw === '-') return null;
-    const n = isInt ? parseInt(raw, 10) : parseFloat(raw);
-    return Number.isNaN(n) ? null : n;
+export function parseNumeric(raw: string, isInt: boolean): number | null {
+    const text = raw.trim();
+    if (text === '' || text === '-' || text === '+') return null;
+    const valid = isInt
+        ? /^[+-]?\d+$/.test(text)
+        : /^[+-]?(?:(?:\d+\.?\d*)|(?:\.\d+))(?:[eE][+-]?\d+)?$/.test(text);
+    if (!valid) return null;
+    const n = Number(text);
+    return Number.isFinite(n) ? n : null;
 }
 
 export function NumberFilter<TData, TValue>({ column }: NumberFilterProps<TData, TValue>) {

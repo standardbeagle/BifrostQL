@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useFetcher } from "../common/fetcher";
 import { useSchema } from "./useSchema";
 import { useMemo } from "react";
+import { isGraphQlName } from "../lib/query-builder";
 
 /**
  * Interface representing statistics for a single table.
@@ -45,10 +46,11 @@ export interface UseTableStatsResult {
  * @param tableNames - Array of table GraphQL names
  * @returns GraphQL query string
  */
-function buildRowCountQuery(tableNames: string[]): string | null {
-  if (tableNames.length === 0) return null;
+export function buildRowCountQuery(tableNames: string[]): string | null {
+  const safeTableNames = tableNames.filter(isGraphQlName);
+  if (safeTableNames.length === 0) return null;
 
-  const queries = tableNames.map((name) => {
+  const queries = safeTableNames.map((name) => {
     return `${name}: ${name}(limit: 1) { total }`;
   });
 

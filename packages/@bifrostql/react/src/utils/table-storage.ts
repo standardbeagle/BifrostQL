@@ -1,9 +1,11 @@
-import type { SortOption, TableFilter } from '../types';
+import type { CompoundFilter, SortOption, TableFilter } from '../types';
 import type {
   ColumnPreset,
   FilterPreset,
+  PinPosition,
 } from '../hooks/use-bifrost-table.types';
 import { sanitizeFilter } from './url-state';
+import { isGraphqlName } from './graphql-identifiers';
 
 export function readSortFromLocalStorage(key: string): SortOption[] | null {
   if (typeof window === 'undefined') return null;
@@ -18,6 +20,7 @@ export function readSortFromLocalStorage(key: string): SortOption[] | null {
         s !== null &&
         'field' in s &&
         'direction' in s &&
+        isGraphqlName((s as SortOption).field) &&
         ((s as SortOption).direction === 'asc' ||
           (s as SortOption).direction === 'desc'),
     );
@@ -78,15 +81,20 @@ export function readPresetsFromLocalStorage(key: string): FilterPreset[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (p: unknown): p is FilterPreset =>
-        typeof p === 'object' &&
-        p !== null &&
-        'name' in p &&
-        'filters' in p &&
-        typeof (p as FilterPreset).name === 'string' &&
-        typeof (p as FilterPreset).filters === 'object',
-    );
+    return parsed
+      .map((p: unknown): FilterPreset | null => {
+        if (!isRecord(p) || typeof p.name !== 'string') return null;
+        if (!isRecord(p.filters)) return null;
+
+        const preset: FilterPreset = {
+          name: p.name,
+          filters: sanitizeFilter(p.filters as TableFilter),
+        };
+        const compoundFilter = sanitizeCompoundFilter(p.compoundFilter);
+        if (compoundFilter) preset.compoundFilter = compoundFilter;
+        return preset;
+      })
+      .filter((p): p is FilterPreset => p !== null);
   } catch {
     return [];
   }
@@ -115,14 +123,21 @@ export function readColumnPresetsFromLocalStorage(key: string): ColumnPreset[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (p: unknown): p is ColumnPreset =>
-        typeof p === 'object' &&
-        p !== null &&
-        'name' in p &&
-        'visibleColumns' in p &&
-        'columnOrder' in p,
-    );
+    return parsed
+      .map((p: unknown): ColumnPreset | null => {
+        if (!isRecord(p) || typeof p.name !== 'string') return null;
+        if (!Array.isArray(p.visibleColumns) || !Array.isArray(p.columnOrder))
+          return null;
+
+        return {
+          name: p.name,
+          visibleColumns: p.visibleColumns.filter(isString),
+          columnOrder: p.columnOrder.filter(isString),
+          columnWidths: sanitizeColumnWidths(p.columnWidths),
+          pinnedColumns: sanitizePinnedColumns(p.pinnedColumns),
+        };
+      })
+      .filter((p): p is ColumnPreset => p !== null);
   } catch {
     return [];
   }
@@ -145,4 +160,71 @@ export function writeColumnPresetsToLocalStorage(
   } catch {
     // localStorage may be unavailable
   }
+}
+
+function sanitizeCompoundFilter(value: unknown): CompoundFilter | undefined {
+  if (!isRecord(value)) return undefined;
+
+  const clean: CompoundFilter = {};
+  const andFilters = sanitizeAdvancedFilterList(value._and);
+  const orFilters = sanitizeAdvancedFilterList(value._or);
+
+  if (andFilters.length > 0) clean._and = andFilters;
+  if (orFilters.length > 0) clean._or = orFilters;
+
+  return clean._and || clean._or ? clean : undefined;
+}
+
+function sanitizeAdvancedFilterList(
+  value: unknown,
+): Array<TableFilter | CompoundFilter> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map(sanitizeAdvancedFilter)
+    .filter((filter): filter is TableFilter | CompoundFilter => filter !== null);
+}
+
+function sanitizeAdvancedFilter(
+  value: unknown,
+): TableFilter | CompoundFilter | null {
+  if (!isRecord(value)) return null;
+
+  if ('_and' in value || '_or' in value) {
+    return sanitizeCompoundFilter(value) ?? null;
+  }
+
+  const filter = sanitizeFilter(value as TableFilter);
+  return Object.keys(filter).length > 0 ? filter : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === 'string';
+}
+
+function sanitizeColumnWidths(value: unknown): Record<string, number> {
+  if (!isRecord(value)) return {};
+
+  const widths: Record<string, number> = {};
+  for (const [field, width] of Object.entries(value)) {
+    if (typeof width === 'number' && Number.isFinite(width)) {
+      widths[field] = width;
+    }
+  }
+  return widths;
+}
+
+function sanitizePinnedColumns(value: unknown): Record<string, PinPosition> {
+  if (!isRecord(value)) return {};
+
+  const pinned: Record<string, PinPosition> = {};
+  for (const [field, position] of Object.entries(value)) {
+    if (position === 'left' || position === 'right' || position === null) {
+      pinned[field] = position;
+    }
+  }
+  return pinned;
 }

@@ -66,6 +66,87 @@ describe("forms-storage", () => {
     expect((loaded[0] as SavedForm).id).toBe("ok");
   });
 
+  it("drops entries with malformed definitions", () => {
+    localStorage.setItem(
+      "bifrostql_saved_forms",
+      JSON.stringify([
+        { id: "ok", name: "Ok", updatedAt: "t", definition: def },
+        { id: "no-fields", name: "Bad", updatedAt: "t", definition: { table: "dbo.users", title: "Bad" } },
+        { id: "no-table", name: "Bad", updatedAt: "t", definition: { title: "Bad", columns: 1, fields: [] } },
+      ]),
+    );
+
+    expect(loadForms().map((f) => f.id)).toEqual(["ok"]);
+  });
+
+  it("sanitizes loaded definitions and fields", () => {
+    localStorage.setItem(
+      "bifrostql_saved_forms",
+      JSON.stringify([
+        {
+          id: "form",
+          name: "Form",
+          updatedAt: "t",
+          definition: {
+            table: "dbo.users",
+            title: "Users",
+            columns: 99,
+            fields: [
+              {
+                column: "id",
+                label: 42,
+                control: "script",
+                readOnly: "yes",
+                required: 1,
+                include: "yes",
+              },
+              {
+                column: "bio",
+                label: "Bio",
+                control: "textarea",
+                readOnly: true,
+                required: true,
+                include: false,
+              },
+              { label: "Missing column", control: "text" },
+            ],
+          },
+        },
+      ]),
+    );
+
+    expect(loadForms()).toEqual([
+      {
+        id: "form",
+        name: "Form",
+        updatedAt: "t",
+        definition: {
+          table: "dbo.users",
+          title: "Users",
+          columns: 4,
+          fields: [
+            {
+              column: "id",
+              label: "id",
+              control: "text",
+              readOnly: false,
+              required: false,
+              include: true,
+            },
+            {
+              column: "bio",
+              label: "Bio",
+              control: "textarea",
+              readOnly: true,
+              required: true,
+              include: false,
+            },
+          ],
+        },
+      },
+    ]);
+  });
+
   it("tolerates non-JSON garbage", () => {
     localStorage.setItem("bifrostql_saved_forms", "{not json");
     expect(loadForms()).toEqual([]);

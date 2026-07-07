@@ -423,6 +423,33 @@ describe('deserializeColumnFilters', () => {
         const result = deserializeColumnFilters(input);
         expect(result).toEqual([{ id: 'name', value: { operator: '_eq', value: 'test' } }]);
     });
+
+    it('keeps valid entries when other serialized filters are malformed', () => {
+        const input = JSON.stringify([
+            ['name', '_eq', 'test'],
+            { id: 'age', operator: '_gt', value: 18 },
+            ['age', '_gt', 18, 'extra'],
+            ['score', '_gte', 10],
+        ]);
+
+        expect(deserializeColumnFilters(input)).toEqual([
+            { id: 'name', value: { operator: '_eq', value: 'test' } },
+            { id: 'score', value: { operator: '_gte', value: 10 } },
+        ]);
+    });
+
+    it('drops invalid GraphQL field names and unknown operators', () => {
+        const input = JSON.stringify([
+            ['name', '_contains', 'a'],
+            ['name) { hacked } #', '_eq', 'bad'],
+            ['123invalid', '_eq', 'bad'],
+            ['age', '_raw', 'bad'],
+        ]);
+
+        expect(deserializeColumnFilters(input)).toEqual([
+            { id: 'name', value: { operator: '_contains', value: 'a' } },
+        ]);
+    });
 });
 
 // ── getPkType ──────────────────────────────────────────────────
@@ -1221,5 +1248,15 @@ describe('buildSingleRowQuery', () => {
         const query = buildSingleRowQuery(makeTable(), { filterText: '{id: {_eq: 1}}', params: [] }, ['name']);
         expect(query).not.toContain('()');
         expect(query.startsWith('query GetSingleRow_test {')).toBe(true);
+    });
+
+    it('rejects unsafe table and field names before building GraphQL', () => {
+        expect(() =>
+            buildSingleRowQuery({ name: 'test) { injected' }, { filterText: '{id: {_eq: 1}}', params: [] }, ['name']),
+        ).toThrow(/Invalid GraphQL single-row table name/);
+
+        expect(() =>
+            buildSingleRowQuery(makeTable(), { filterText: '{id: {_eq: 1}}', params: [] }, ['name) { injected']),
+        ).toThrow(/Invalid GraphQL single-row selection field/);
     });
 });

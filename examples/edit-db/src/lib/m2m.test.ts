@@ -213,6 +213,25 @@ describe('m2mRowsQuery', () => {
         expect(variables.src1).toBe(200);
     });
 
+    it('coerces Boolean junction source keys using the shared GraphQL coercion rules', () => {
+        const booleanJunction = table('feature_courses', {
+            columns: [
+                col('id', { isPrimaryKey: true }),
+                col('is_featured', { paramType: 'Boolean' }),
+                col('course_id', { paramType: 'Int' }),
+            ],
+        });
+        const booleanM2m: ManyToManyJoin = {
+            ...m2m,
+            sourceColumnNames: ['is_featured'],
+            junctionSourceColumnNames: ['is_featured'],
+        };
+
+        const { variables } = m2mRowsQuery(booleanJunction, target, booleanM2m, 'true');
+
+        expect(variables.src0).toBe(true);
+    });
+
     it('throws when a junction source column is missing from the junction schema', () => {
         // Schema drift: relationship metadata names a junction column the table
         // doesn't have. Defaulting its type would coerce a GUID key to NaN and
@@ -290,6 +309,17 @@ describe('m2mTargetPickerPlan', () => {
 
         expect(() => m2mTargetPickerPlan(target, m2m))
             .toThrow(/Target table 'courses' has no column 'title'/);
+    });
+
+    it('rejects unsafe target label columns before building GraphQL', () => {
+        const target = table('courses', {
+            labelColumn: 'title) { injected',
+            primaryKeys: ['id'],
+            columns: [col('id', { paramType: 'Int', isPrimaryKey: true })],
+        });
+
+        expect(() => m2mTargetPickerPlan(target, m2m))
+            .toThrow(/Invalid GraphQL many-to-many target label column/);
     });
 });
 

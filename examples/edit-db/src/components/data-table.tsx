@@ -60,10 +60,23 @@ function loadColumnSizing(tableName: string): ColumnSizingState {
     try {
         const raw = localStorage.getItem(COL_SIZING_STORAGE_PREFIX + tableName);
         if (!raw) return {};
-        return JSON.parse(raw) as ColumnSizingState;
+        return sanitizeColumnSizing(JSON.parse(raw));
     } catch {
         return {};
     }
+}
+
+function sanitizeColumnSizing(value: unknown): ColumnSizingState {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        return {};
+    }
+
+    const sizing: ColumnSizingState = {};
+    for (const [columnId, width] of Object.entries(value)) {
+        if (typeof width !== 'number' || !Number.isFinite(width)) continue;
+        sizing[columnId] = Math.min(Math.max(width, COL_MIN_WIDTH), COL_MAX_AUTO_WIDTH);
+    }
+    return sizing;
 }
 
 function saveColumnSizing(tableName: string, sizing: ColumnSizingState): void {

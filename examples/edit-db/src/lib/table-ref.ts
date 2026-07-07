@@ -6,7 +6,7 @@
  * decision can be unit-tested without a live server.
  */
 import type { Table } from '../types/schema';
-import { getPkTypes } from './query-builder';
+import { assertGraphQlName, getPkTypes } from './query-builder';
 import { coerceForGql } from './fk';
 
 // Cap the FK-option fetch. `limit: -1` previously pulled the entire parent
@@ -46,7 +46,13 @@ export interface TableRefPlan {
  * filters client-side over the fetched window.
  */
 export function tableRefPlan(table: Table, keyColumn: string, search?: string): TableRefPlan {
+    assertGraphQlName(table.name, 'reference table name');
+    assertGraphQlName(keyColumn, 'reference key column');
     const labelColumn = refLabelColumn(table);
+    assertGraphQlName(labelColumn, 'reference label column');
+    if (!table.columns.some((c) => c.name === keyColumn)) {
+        throw new Error(`Reference table '${table.name}' has no key column '${keyColumn}'.`);
+    }
     const labelType = table.columns.find((c) => c.name === labelColumn)?.paramType?.replace('!', '');
     const serverSearch = labelType === 'String';
     const hasSearch = !!search && search.trim() !== '' && serverSearch;
@@ -75,8 +81,15 @@ export interface TableRefLookupPlan {
  * display it instead of a misleading placeholder.
  */
 export function tableRefLookupPlan(table: Table, keyColumn: string): TableRefLookupPlan {
+    assertGraphQlName(table.name, 'reference table name');
+    assertGraphQlName(keyColumn, 'reference key column');
     const labelColumn = refLabelColumn(table);
-    const keyType = (table.columns.find((c) => c.name === keyColumn)?.paramType ?? 'Int').replace('!', '');
+    assertGraphQlName(labelColumn, 'reference label column');
+    const keyColumnDef = table.columns.find((c) => c.name === keyColumn);
+    if (!keyColumnDef) {
+        throw new Error(`Reference table '${table.name}' has no key column '${keyColumn}'.`);
+    }
+    const keyType = keyColumnDef.paramType.replace('!', '');
     const query = `query Get_${table.name}_RefValue($key: ${keyType}) {
             values: ${table.name}(filter: {${keyColumn}: {_eq: $key}} limit: 1) {
                 data {

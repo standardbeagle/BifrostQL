@@ -623,6 +623,7 @@ namespace BifrostQL.Core.Model
             public const string AutoDetect = "auto-detect-app";
             public const string App = "app-schema";
             public const string Detected = "detected-app";
+            public const string DetectionConfidence = "detection-confidence";
             public const string PrefixGroups = "prefix-groups";
         }
     }

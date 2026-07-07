@@ -154,14 +154,14 @@ export function readFromUrl(prefix: string): UrlTableState {
 
   const pageRaw = params.get(`${prefix}_page`);
   if (pageRaw) {
-    const parsed = parseInt(pageRaw, 10);
-    if (!isNaN(parsed) && parsed >= 0) state.page = parsed;
+    const parsed = parseIntegerParam(pageRaw);
+    if (parsed !== undefined && parsed >= 0) state.page = parsed;
   }
 
   const sizeRaw = params.get(`${prefix}_size`);
   if (sizeRaw) {
-    const parsed = parseInt(sizeRaw, 10);
-    if (!isNaN(parsed) && parsed > 0) state.pageSize = parsed;
+    const parsed = parseIntegerParam(sizeRaw);
+    if (parsed !== undefined && parsed > 0) state.pageSize = parsed;
   }
 
   const filterRaw = params.get(`${prefix}_filter`);
@@ -171,4 +171,10 @@ export function readFromUrl(prefix: string): UrlTableState {
   }
 
   return state;
+}
+
+function parseIntegerParam(raw: string): number | undefined {
+  if (!/^-?\d+$/.test(raw)) return undefined;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
 }

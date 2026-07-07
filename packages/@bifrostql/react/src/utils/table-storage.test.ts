@@ -43,6 +43,21 @@ describe('sort persistence', () => {
       { field: 'a', direction: 'asc' },
     ]);
   });
+
+  it('drops sort entries with invalid GraphQL field names', () => {
+    window.localStorage.setItem(
+      'unsafe',
+      JSON.stringify([
+        { field: 'name', direction: 'asc' },
+        { field: 'name) { hacked } #', direction: 'desc' },
+        { field: '123invalid', direction: 'asc' },
+      ]),
+    );
+
+    expect(readSortFromLocalStorage('unsafe')).toEqual([
+      { field: 'name', direction: 'asc' },
+    ]);
+  });
 });
 
 describe('filter persistence', () => {
@@ -72,6 +87,62 @@ describe('filter preset persistence', () => {
   it('returns empty array when nothing is stored', () => {
     expect(readPresetsFromLocalStorage('missing')).toEqual([]);
   });
+
+  it('sanitizes invalid field names in stored presets', () => {
+    window.localStorage.setItem(
+      'k_presets',
+      JSON.stringify([
+        {
+          name: 'Unsafe',
+          filters: {
+            name: { _eq: 'Alice' },
+            'name) { hacked } #': { _eq: 'Mallory' },
+            '123invalid': { _eq: 'bad' },
+          },
+          compoundFilter: {
+            _or: [
+              { role: { _eq: 'admin' } },
+              { 'role) { hacked } #': { _eq: 'admin' } },
+              {
+                _and: [
+                  { status: { _eq: 'active' } },
+                  { 'status) { hacked } #': { _eq: 'inactive' } },
+                ],
+              },
+            ],
+          },
+        },
+      ]),
+    );
+
+    expect(readPresetsFromLocalStorage('k')).toEqual([
+      {
+        name: 'Unsafe',
+        filters: { name: { _eq: 'Alice' } },
+        compoundFilter: {
+          _or: [
+            { role: { _eq: 'admin' } },
+            { _and: [{ status: { _eq: 'active' } }] },
+          ],
+        },
+      },
+    ]);
+  });
+
+  it('drops malformed stored presets and malformed compound filters', () => {
+    window.localStorage.setItem(
+      'k_presets',
+      JSON.stringify([
+        { name: 'bad-filters', filters: null },
+        { name: 'bad-name', filters: {}, compoundFilter: { _and: 'bad' } },
+        { filters: { name: { _eq: 'Alice' } } },
+      ]),
+    );
+
+    expect(readPresetsFromLocalStorage('k')).toEqual([
+      { name: 'bad-name', filters: {} },
+    ]);
+  });
 });
 
 describe('column preset persistence', () => {
@@ -93,5 +164,35 @@ describe('column preset persistence', () => {
       JSON.stringify([{ name: 'bad' }]),
     );
     expect(readColumnPresetsFromLocalStorage('k')).toEqual([]);
+  });
+
+  it('sanitizes malformed column preset members from localStorage', () => {
+    window.localStorage.setItem(
+      'k_columnPresets',
+      JSON.stringify([
+        {
+          name: 'c1',
+          visibleColumns: ['a', 1, null],
+          columnOrder: ['b', false, 'a'],
+          columnWidths: { a: 120, b: 'wide', c: null },
+          pinnedColumns: { a: 'left', b: 'middle', c: null },
+        },
+        {
+          name: 'bad-visible',
+          visibleColumns: 'a',
+          columnOrder: ['a'],
+        },
+      ]),
+    );
+
+    expect(readColumnPresetsFromLocalStorage('k')).toEqual([
+      {
+        name: 'c1',
+        visibleColumns: ['a'],
+        columnOrder: ['b', 'a'],
+        columnWidths: { a: 120 },
+        pinnedColumns: { a: 'left', c: null },
+      },
+    ]);
   });
 });

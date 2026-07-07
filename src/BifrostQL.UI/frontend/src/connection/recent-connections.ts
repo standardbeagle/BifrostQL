@@ -1,5 +1,5 @@
 import { ConnectionInfo } from './types';
-import { sanitizeConnectionInfo } from './sanitize-connection';
+import { parseConnectionInfo, sanitizeConnectionInfo } from './sanitize-connection';
 
 const RECENT_CONNECTIONS_KEY = 'bifrostql_recent_connections';
 export const MAX_RECENT_CONNECTIONS = 5;
@@ -19,8 +19,16 @@ export const loadRecentConnections = (): ConnectionInfo[] => {
   try {
     const stored = localStorage.getItem(RECENT_CONNECTIONS_KEY);
     if (stored) {
-      const connections = JSON.parse(stored) as ConnectionInfo[];
-      const sanitized = connections.map(sanitizeConnectionInfo).slice(0, MAX_RECENT_CONNECTIONS);
+      const parsed: unknown = JSON.parse(stored);
+      if (!Array.isArray(parsed)) {
+        localStorage.removeItem(RECENT_CONNECTIONS_KEY);
+        return [];
+      }
+      const sanitized = parsed
+        .map(parseConnectionInfo)
+        .filter((connection): connection is ConnectionInfo => connection !== null)
+        .map(sanitizeConnectionInfo)
+        .slice(0, MAX_RECENT_CONNECTIONS);
       const sanitizedJson = JSON.stringify(sanitized);
       if (sanitizedJson !== stored) {
         localStorage.setItem(RECENT_CONNECTIONS_KEY, sanitizedJson);

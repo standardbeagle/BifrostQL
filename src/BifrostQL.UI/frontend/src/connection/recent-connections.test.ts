@@ -83,6 +83,34 @@ describe('recent-connections', () => {
     expect(loadRecentConnections()).toEqual([]);
   });
 
+  it('drops malformed entries and rewrites sanitized storage', () => {
+    g.localStorage.setItem(
+      KEY,
+      JSON.stringify([
+        connWithSecret(),
+        42,
+        { id: 'missing-provider', name: 'bad', connectionString: 'Password=secret' },
+        { id: 'missing-connection-string', name: 'bad', provider: 'sqlite' },
+      ]),
+    );
+
+    expect(loadRecentConnections()).toEqual([
+      {
+        ...connWithSecret(),
+        connectionString: 'Server=db;User Id=sa;Password=<redacted>;Pwd=<redacted>;Database=prod',
+      },
+    ]);
+    expect(g.localStorage.getItem(KEY)).not.toContain('swordfish');
+    expect(g.localStorage.getItem(KEY)).not.toContain('Password=secret');
+  });
+
+  it('removes non-array stored data', () => {
+    g.localStorage.setItem(KEY, JSON.stringify({ connectionString: 'Password=secret' }));
+
+    expect(loadRecentConnections()).toEqual([]);
+    expect(g.localStorage.getItem(KEY)).toBeNull();
+  });
+
   it('is a no-op without a window (SSR guard)', () => {
     delete g.window;
     expect(() => saveRecentConnections([conn('x')] as any)).not.toThrow();

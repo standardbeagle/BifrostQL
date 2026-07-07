@@ -25,6 +25,29 @@ public sealed class BifrostProfile
     public const string UserContextKey = "_bifrostProfile";
 
     /// <summary>
+    /// Priority floor for the application band. Transformers whose <c>Priority</c> is
+    /// BELOW this value belong to the security band (0-99: tenant isolation, RLS,
+    /// audit) or the data-integrity band (100-199: soft-delete, enum coercion). Those
+    /// modules are ALWAYS active and cannot be disabled by profile selection —
+    /// <see cref="BifrostProfileRegistry.FilterBy(IFilterTransformers, BifrostProfile)"/>
+    /// and its mutation counterpart only add/remove application-band modules
+    /// (priority &gt;= this floor).
+    ///
+    /// This makes profile filtering fail-closed: a client-selectable profile (including
+    /// the empty "default" profile, whose name is fully client-controlled) cannot
+    /// silently strip tenant isolation or soft-delete filtering by omitting the module
+    /// name. See <see cref="IsProfileToggleable(int)"/>.
+    /// </summary>
+    public const int ApplicationPriorityFloor = 200;
+
+    /// <summary>
+    /// Whether a module at the given transformer priority may be enabled/disabled by
+    /// profile selection. Only application-band modules (priority &gt;= the floor) are
+    /// toggleable; security and data-integrity modules below the floor are always active.
+    /// </summary>
+    public static bool IsProfileToggleable(int priority) => priority >= ApplicationPriorityFloor;
+
+    /// <summary>
     /// Profile name (e.g., "default", "admin", "direct").
     /// </summary>
     public string Name { get; init; } = "default";
@@ -159,26 +182,37 @@ public sealed class BifrostProfileRegistry
     public bool HasProfiles => _profiles.Count > 0;
 
     /// <summary>
-    /// Creates filtered wrapper collections for a given profile.
+    /// Creates filtered wrapper collections for a given profile. Fail-closed: security
+    /// and data-integrity modules (priority below <see cref="BifrostProfile.ApplicationPriorityFloor"/>)
+    /// are always retained regardless of the profile's module list, so a client-selectable
+    /// profile can never strip tenant isolation or soft-delete filtering. Only
+    /// application-band modules are gated by <see cref="BifrostProfile.IsModuleActive"/>.
     /// </summary>
     public static IFilterTransformers FilterBy(IFilterTransformers source, BifrostProfile profile)
     {
         if (profile.Modules == null)
             return source;
 
-        var filtered = source.Where(t => profile.IsModuleActive(t)).ToList();
+        var filtered = source
+            .Where(t => !BifrostProfile.IsProfileToggleable(t.Priority) || profile.IsModuleActive(t))
+            .ToList();
         return new FilterTransformersWrap { Transformers = filtered };
     }
 
     /// <summary>
-    /// Creates filtered wrapper collections for a given profile.
+    /// Creates filtered wrapper collections for a given profile. Fail-closed: see the
+    /// filter-transformer overload — security and data-integrity mutation transformers
+    /// (priority below <see cref="BifrostProfile.ApplicationPriorityFloor"/>, e.g. the
+    /// tenant and soft-delete write guards) are always retained.
     /// </summary>
     public static IMutationTransformers FilterBy(IMutationTransformers source, BifrostProfile profile)
     {
         if (profile.Modules == null)
             return source;
 
-        var filtered = source.Where(t => profile.IsModuleActive(t)).ToList();
+        var filtered = source
+            .Where(t => !BifrostProfile.IsProfileToggleable(t.Priority) || profile.IsModuleActive(t))
+            .ToList();
         return new MutationTransformersWrap { Transformers = filtered };
     }
 

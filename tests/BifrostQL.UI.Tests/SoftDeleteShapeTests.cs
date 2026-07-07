@@ -20,10 +20,13 @@ using RootExecutionNode = GraphQL.Execution.RootExecutionNode;
 namespace BifrostQL.UI.Tests;
 
 /// <summary>
-/// Soft-delete data-shaping across profiles. The crm sample seeds 3 soft-deleted
-/// deal rows (deleted_at IS NOT NULL). The sales profile activates the soft-delete
-/// module, so deleted deals are hidden; the default profile does not, so all deals
-/// (including deleted) are returned. The delta must be exactly the 3 deleted rows.
+/// Soft-delete data-shaping across profiles under fail-closed profile filtering. The crm
+/// sample seeds 3 soft-deleted deal rows (deleted_at IS NOT NULL). Soft-delete is a
+/// data-integrity module (priority 100, below <see cref="BifrostProfile.ApplicationPriorityFloor"/>),
+/// so it applies under EVERY profile — including the client-controlled empty "default"
+/// profile. A profile can no longer strip the filter by omitting the module name; deleted
+/// rows are only reachable via the module's explicit escape hatch (the server-side
+/// include_deleted user-context override, or the _includeDeleted query argument).
 /// </summary>
 public sealed class SoftDeleteShapeTests
 {
@@ -33,7 +36,7 @@ public sealed class SoftDeleteShapeTests
     private const string Rule = "*.deals { soft-delete: deleted_at }";
 
     [Fact]
-    public async Task DealsTotal_SalesProfileHidesSoftDeleted_DefaultShowsAll()
+    public async Task DealsTotal_SoftDeleteAppliesUnderEveryProfile_FailClosed()
     {
         DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
         var connectionString = $"Data Source=softdelete_shape_{System.Guid.NewGuid():N};Mode=Memory;Cache=Shared";
@@ -49,6 +52,16 @@ public sealed class SoftDeleteShapeTests
             await QuickstartSchemas.ExecuteStatementsAsync(factory, stmts, default);
         }
 
+        // Ground truth straight from the database.
+        int allDeals, deletedDeals;
+        await using (var probe = new SqliteConnection(connectionString))
+        {
+            await probe.OpenAsync();
+            allDeals = System.Convert.ToInt32(await new SqliteCommand("SELECT COUNT(*) FROM deals", probe).ExecuteScalarAsync());
+            deletedDeals = System.Convert.ToInt32(await new SqliteCommand("SELECT COUNT(*) FROM deals WHERE deleted_at IS NOT NULL", probe).ExecuteScalarAsync());
+        }
+        deletedDeals.Should().Be(3, "the crm sample seeds exactly 3 soft-deleted deals");
+
         var model = await new DbModelLoader(factory, new MetadataLoader(new[] { Rule })).LoadAsync();
 
         // The full set of registered filter transformers (as the host would register).
@@ -61,27 +74,38 @@ public sealed class SoftDeleteShapeTests
             },
         };
 
-        // sales profile: soft-delete module active -> deleted deals hidden.
+        // sales profile: soft-delete listed in the module set -> deleted deals hidden.
         var salesProfile = new BifrostProfile { Name = "sales", Modules = new[] { "soft-delete", "polymorphic" } };
         var salesTotal = await QueryDealsTotalAsync(model, factory, allFilters, salesProfile);
 
-        // default profile: no modules active -> soft-delete filtered out -> all deals.
+        // default profile: empty module set. Fail-closed profile filtering keeps the
+        // soft-delete module active anyway, so deleted deals are hidden here too — a
+        // client-selectable profile must never widen visibility past the data rules.
         var defaultProfile = new BifrostProfile { Name = "default", Modules = System.Array.Empty<string>() };
         var defaultTotal = await QueryDealsTotalAsync(model, factory, allFilters, defaultProfile);
 
-        _out.WriteLine($"sales total = {salesTotal}, default total = {defaultTotal}");
+        // Server-side escape hatch: the host (not the client) can opt into deleted rows
+        // via the include_deleted user-context flag; all rows stay reachable that way.
+        var overrideTotal = await QueryDealsTotalAsync(
+            model, factory, allFilters, defaultProfile,
+            userContext: new Dictionary<string, object?> { [SoftDeleteFilterTransformer.IncludeDeletedKey] = true });
 
-        salesTotal.Should().Be(defaultTotal - 3,
-            "the sales profile activates soft-delete and must hide exactly the 3 seeded soft-deleted deals");
-        defaultTotal.Should().BeGreaterThan(salesTotal,
-            "the default/admin shape shows all deals including soft-deleted ones");
+        _out.WriteLine($"sales total = {salesTotal}, default total = {defaultTotal}, override total = {overrideTotal}, raw = {allDeals}");
+
+        salesTotal.Should().Be(allDeals - deletedDeals,
+            "the sales profile hides the seeded soft-deleted deals");
+        defaultTotal.Should().Be(allDeals - deletedDeals,
+            "fail-closed: the default profile must NOT expose soft-deleted deals just because its module list is empty");
+        overrideTotal.Should().Be(allDeals,
+            "the server-side include_deleted override is the sanctioned way to see deleted rows");
     }
 
     private async Task<int> QueryDealsTotalAsync(
         IDbModel model,
         IDbConnFactory factory,
         IFilterTransformers allFilters,
-        BifrostProfile profile)
+        BifrostProfile profile,
+        Dictionary<string, object?>? userContext = null)
     {
         var schema = DbSchema.FromModel(model, profile);
         var profileFilters = BifrostProfileRegistry.FilterBy(allFilters, profile);
@@ -104,7 +128,7 @@ public sealed class SoftDeleteShapeTests
             o.Query = "query { deals { total } }";
             o.Extensions = new Inputs(extensions);
             o.RequestServices = sp;
-            o.UserContext = new Dictionary<string, object?>();
+            o.UserContext = userContext ?? new Dictionary<string, object?>();
         });
 
         result.Errors.Should().BeNullOrEmpty();

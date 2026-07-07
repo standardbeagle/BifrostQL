@@ -65,63 +65,6 @@ public abstract class TableResolverBase : ResolverBase
 }
 
 /// <summary>
-/// Base class for mutation resolvers that provides common mutation functionality.
-/// </summary>
-public abstract class MutationResolverBase : TableResolverBase
-{
-    protected MutationResolverBase(IDbTable table) : base(table)
-    {
-    }
-
-    /// <summary>
-    /// Gets the primary key values from the context, either from the _primaryKey argument
-    /// or by extracting PK columns from the data.
-    /// </summary>
-    protected Dictionary<string, object?>? ResolvePrimaryKey(
-        IBifrostFieldContext context,
-        Dictionary<string, object?> data)
-    {
-        if (context.HasArgument("_primaryKey"))
-        {
-            var pkValues = context.GetArgument<List<object?>>("_primaryKey");
-            if (pkValues != null && pkValues.Count > 0)
-            {
-                var keyColumns = Table.KeyColumns.ToList();
-                if (keyColumns.Count == 0)
-                    throw new BifrostExecutionError($"Table '{Table.DbName}' has no primary key columns.");
-
-                if (pkValues.Count != keyColumns.Count)
-                    throw new BifrostExecutionError(
-                        $"_primaryKey for '{Table.DbName}' expects {keyColumns.Count} value(s) " +
-                        $"({string.Join(", ", keyColumns.Select(c => c.GraphQlName))}) but received {pkValues.Count}.");
-
-                return keyColumns.Zip(pkValues, (col, val) => new { col.ColumnName, Value = val })
-                    .ToDictionary(x => x.ColumnName, x => x.Value);
-            }
-        }
-
-        // Fall back to extracting PK columns from data
-        return data.Where(d => Table.ColumnLookup[d.Key].IsPrimaryKey)
-            .ToDictionary(kv => kv.Key, kv => kv.Value);
-    }
-
-    /// <summary>
-    /// Separates data into key columns and standard (non-key) columns.
-    /// </summary>
-    protected (Dictionary<string, object?> keyData, Dictionary<string, object?> standardData) SeparateKeyColumns(
-        Dictionary<string, object?> data)
-    {
-        var keyData = data.Where(d => Table.ColumnLookup.ContainsKey(d.Key) && Table.ColumnLookup[d.Key].IsPrimaryKey)
-            .ToDictionary(kv => kv.Key, kv => kv.Value);
-
-        var standardData = data.Where(d => !Table.ColumnLookup.ContainsKey(d.Key) || !Table.ColumnLookup[d.Key].IsPrimaryKey)
-            .ToDictionary(kv => kv.Key, kv => kv.Value);
-
-        return (keyData, standardData);
-    }
-}
-
-/// <summary>
 /// Base class for database execution resolvers that provides common connection and command functionality.
 /// </summary>
 public abstract class DatabaseResolverBase : ResolverBase

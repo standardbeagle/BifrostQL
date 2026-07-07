@@ -146,9 +146,9 @@ Priority ranges: 0-99 (security), 100-199 (data filtering), 200+ (app)
 
 ## Two Client Stacks (Architecture Decision)
 
-- Shipped 產品鏈：`src/BifrostQL.UI/frontend` → `@standardbeagle/edit-db`。此為 data layer of record，自有 fetcher (`edit-db/common/fetcher.ts`)、query-builder、mutation hooks。
+- Shipped 產品鏈：`src/BifrostQL.UI/frontend` → `@standardbeagle/edit-db`。此為 data layer of record，自有 fetcher (`examples/edit-db/src/common/fetcher.ts`)、query-builder、mutation hooks。
 - `@bifrostql/react` 與 `@bifrostql/app-shell` 為 experimental 平行棧，非 shipped 產品所用；`app-shell` 現無 importers。二包 README/package.json 已標 experimental status，勿誤認為 canonical client。
-- 三 fetch-based GraphQL clients 現並存：`packages/@bifrostql/react/src/utils/graphql-client.ts`、`packages/@standardbeagle/edit-db` 之 `common/fetcher.ts`、`src/BifrostQL.UI/frontend/src/lib/transport.ts` 之 `HttpTransport`。此為已知重複，非 bug，勿逕自合併。
+- 三 fetch-based GraphQL clients 現並存：`packages/@bifrostql/react/src/utils/graphql-client.ts`、`examples/edit-db/src/common/fetcher.ts`、`src/BifrostQL.UI/frontend/src/lib/transport.ts` 之 `HttpTransport`。此為已知重複，非 bug，勿逕自合併。
 - 長期方向：統一於 `QueryTransport` 型 client — `frontend/src/lib/transport.ts` 之 `QueryTransport` interface 為 canonical shape（含 HTTP + binary transport probing）。任何新 client 或 unification 工作宜以此 interface 為目標，非以 `graphql-client.ts` 或 `fetcher.ts` 為準。
 - 見「Transport」節：editor 尚未接上 `QueryTransport` 或等價 hook，故 unification 未完成，勿假設已完成。
 

@@ -100,9 +100,10 @@ BifrostQL.sln
 │   │   ├── Unit/                # Fast, isolated unit tests
 │   │   └── Integration/         # Database integration tests
 │   ├── BifrostQL.Server.Test/   # Server middleware tests
+│   ├── BifrostQL.Host.Test/     # Console host tests
 │   ├── BifrostQL.Integration.Test/  # Full integration tests
-│   ├── BifrostQL.UI.Tests/      # UI tests
-│   └── examples/                # Example applications
+│   ├── BifrostQL.UI.Tests/      # UI unit tests
+│   └── BifrostQL.UI.E2E/        # UI end-to-end tests
 ```
 
 ---
@@ -263,7 +264,7 @@ public sealed class MyDbResolver : DatabaseResolverBase
 ### C# Style
 
 - **Language version**: C# 12+ with nullable reference types enabled
-- **Target frameworks**: .NET 8.0, 9.0, 10.0 (Core); .NET 9.0 only for UI
+- **Target frameworks**: .NET 8.0, 9.0, 10.0 (Core); .NET 10.0 for the UI, Tool, and Host apps
 - **File-scoped namespaces**: Always use `namespace X.Y.Z;` (no braces)
 - **Implicit usings**: Enabled; don't duplicate common usings
 
@@ -549,7 +550,7 @@ dotnet run --project src/BifrostQL.Host
 ## Documentation Links
 
 - [README.md](README.md) — Project overview and quick start
-- [CLAUDE.md](CLAUDE.md) — Detailed architecture and development guide
+- [AGENTS.md](AGENTS.md) — Detailed architecture and development guide (CLAUDE.md is a pointer to it)
 - [GitHub Repository](https://github.com/standardbeagle/BifrostQL)
 - [NuGet Package](https://www.nuget.org/packages/BifrostQL.Server)
 - [Full Documentation](https://standardbeagle.github.io/BifrostQL/)

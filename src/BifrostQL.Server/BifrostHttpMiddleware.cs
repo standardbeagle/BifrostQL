@@ -147,12 +147,11 @@ namespace BifrostQL.Server
             // non-null, non-"default", and absent from the registry is an error. Auth/role
             // requirements on a named profile are enforced here.
             var profileRegistry = options.RequestServices!.GetService<BifrostProfileRegistry>();
-            var profileResult = ResolveProfile(profileRegistry, context);
-            if (profileResult.Error != null)
-                return new ExecutionResult { Errors = new ExecutionErrors { profileResult.Error } };
+            var profileResult = BifrostProfileResolver.Resolve(profileRegistry, context);
+            if (profileResult.HasError)
+                return new ExecutionResult { Errors = new ExecutionErrors { new ExecutionError(profileResult.ErrorMessage!) } };
             var profileName = profileResult.ProfileName;
-            var activeProfile = profileResult.Profile
-                ?? new BifrostProfile { Name = "default", Modules = System.Array.Empty<string>() };
+            var activeProfile = profileResult.ActiveProfile;
 
             // app.Map() strips the matched prefix from Path and moves it to PathBase,
             // so we need to check PathBase (where the endpoint path lives after routing)
@@ -237,67 +236,6 @@ namespace BifrostQL.Server
                 }
             );
             return await _documentExecutor.ExecuteAsync(options);
-        }
-
-        private static ProfileResolution ResolveProfile(BifrostProfileRegistry? registry, HttpContext? context)
-        {
-            var profileName = context != null ? ResolveProfileName(context) : null;
-
-            // No name, or the explicit "default" → empty default profile (raw schema).
-            if (profileName == null || string.Equals(profileName, "default", StringComparison.OrdinalIgnoreCase))
-                return new ProfileResolution { ProfileName = profileName };
-
-            // A named profile requires a registry that knows it.
-            var profile = registry?.Get(profileName);
-            if (profile == null)
-                return new ProfileResolution { Error = new ExecutionError($"Unknown profile '{profileName}'.") };
-
-            if (profile.RequireRole != null)
-            {
-                var user = context!.User;
-                if (user?.Identity?.IsAuthenticated != true)
-                    return new ProfileResolution { Error = new ExecutionError($"Profile '{profileName}' requires authentication.") };
-
-                if (!user.IsInRole(profile.RequireRole))
-                    return new ProfileResolution { Error = new ExecutionError($"Profile '{profileName}' requires role '{profile.RequireRole}'.") };
-            }
-
-            return new ProfileResolution { ProfileName = profileName, Profile = profile };
-        }
-
-        private static string? ResolveProfileName(HttpContext context)
-        {
-            // Priority: Header > Query parameter > Path segment
-            if (context.Request.Headers.TryGetValue("X-BifrostQL-Profile", out var headerValue)
-                && !string.IsNullOrWhiteSpace(headerValue))
-            {
-                return headerValue.ToString().Trim();
-            }
-
-            if (context.Request.Query.TryGetValue("profile", out var queryValue)
-                && !string.IsNullOrWhiteSpace(queryValue))
-            {
-                return queryValue.ToString().Trim();
-            }
-
-            // Check for path segment after the mapped endpoint path.
-            // After app.Map(), Path contains the remainder (e.g., "/direct" if mapped at "/graphql").
-            var path = context.Request.Path.Value;
-            if (!string.IsNullOrEmpty(path) && path.Length > 1)
-            {
-                var segment = path.TrimStart('/');
-                if (!string.IsNullOrEmpty(segment) && !segment.Contains('/'))
-                    return segment;
-            }
-
-            return null;
-        }
-
-        private readonly struct ProfileResolution
-        {
-            public string? ProfileName { get; init; }
-            public BifrostProfile? Profile { get; init; }
-            public ExecutionError? Error { get; init; }
         }
 
         private static async Task<Inputs> ResolveExtensionsAsync(PathCache<Inputs> cache, HttpContext? context)

@@ -6,6 +6,8 @@ using BifrostQL.Model;
 using GraphQL;
 using GraphQL.Transport;
 using GraphQL.Types;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Server
 {
@@ -104,14 +106,65 @@ namespace BifrostQL.Server
         public async Task<BifrostResult> ExecuteAsync(BifrostRequest request, string endpointPath)
         {
             var sharedExtensions = await _pathCache.GetValueAsync(endpointPath);
-            var model = (IDbModel)(sharedExtensions["model"]
-                ?? throw new InvalidDataException("model not configured for endpoint: " + endpointPath));
-            var schema = (ISchema)(sharedExtensions["dbSchema"]
-                ?? throw new InvalidDataException("dbSchema not configured for endpoint: " + endpointPath));
+
+            var services = request.RequestServices;
+            // The binary WebSocket transport reaches execution through this engine. It must
+            // enforce the same profile role gating and per-profile module filtering as the
+            // HTTP middleware, otherwise a client could use the binary path to bypass
+            // profile authorization and — via the fail-closed transformer filter below —
+            // tenant isolation and soft-delete. HttpContext is available here through the
+            // same IHttpContextAccessor the HTTP path uses (the WebSocket handler runs
+            // inside the request's async flow).
+            var httpContext = services?.GetService<IHttpContextAccessor>()?.HttpContext;
+            var profileRegistry = services?.GetService<BifrostProfileRegistry>();
+
+            var profileResolution = BifrostProfileResolver.Resolve(profileRegistry, httpContext);
+            if (profileResolution.HasError)
+            {
+                return new BifrostResult
+                {
+                    Data = null,
+                    Errors = new[] { new BifrostResultError { Message = profileResolution.ErrorMessage! } },
+                };
+            }
+
+            var profileName = profileResolution.ProfileName;
+            var activeProfile = profileResolution.ActiveProfile;
+
+            // Resolve the model+schema for the active profile so the binary path serves the
+            // same per-profile shape as HTTP. Fall back to the base model/schema only when
+            // no profile cache is configured (older bootstrap or a direct engine test).
+            IDbModel model;
+            ISchema schema;
+            if (sharedExtensions.TryGetValue("profileModelCache", out var cacheObj) && cacheObj is ProfileModelCache profileCache)
+            {
+                (model, schema) = profileCache.GetFor(profileName);
+            }
+            else
+            {
+                model = (IDbModel)(sharedExtensions["model"]
+                    ?? throw new InvalidDataException("model not configured for endpoint: " + endpointPath));
+                schema = (ISchema)(sharedExtensions["dbSchema"]
+                    ?? throw new InvalidDataException("dbSchema not configured for endpoint: " + endpointPath));
+            }
+
+            // Filter transformers/observers by the active profile (fail-closed: security and
+            // data-integrity modules always remain). Mirrors BifrostDocumentExecutor so the
+            // two transports cannot drift apart.
+            var transformerService = _transformerService;
+            var filterTransformers = services?.GetService<IFilterTransformers>();
+            if (filterTransformers != null)
+                transformerService = new QueryTransformerService(BifrostProfileRegistry.FilterBy(filterTransformers, activeProfile));
+
+            var observers = services?.GetService<IQueryObservers>() ?? _observers;
+            if (observers != null)
+                observers = BifrostProfileRegistry.FilterBy(observers, activeProfile);
 
             var userContext = request.UserContext;
             if (!userContext.ContainsKey("_correlationId"))
                 userContext["_correlationId"] = Guid.NewGuid().ToString("N");
+            // Surface the active profile to downstream resolvers, matching the HTTP path.
+            userContext[BifrostProfile.UserContextKey] = activeProfile;
 
             var options = new ExecutionOptions
             {
@@ -126,7 +179,8 @@ namespace BifrostQL.Server
                     sharedExtensions,
                     new Dictionary<string, object?>
                     {
-                        { "tableReaderFactory", new SqlExecutionManager(model, schema, _transformerService, _observers) }
+                        { "model", model },
+                        { "tableReaderFactory", new SqlExecutionManager(model, schema, transformerService, observers) }
                     }),
             };
 

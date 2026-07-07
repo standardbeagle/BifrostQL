@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using BifrostQL.Core.Model;
 
 namespace BifrostQL.Core.Auth;
@@ -11,13 +10,12 @@ namespace BifrostQL.Core.Auth;
 /// </summary>
 public static class PolicyConfigCollector
 {
-    // Table metadata is immutable once the model is built, and FromTable is called
-    // per node per request from the policy filter/mutation transformers (and the
-    // validator). Memoize the parsed, immutable TablePolicy per table instance so
-    // the string parsing runs once. A parse failure (bad policy-actions token)
-    // throws out of the factory and is not cached, so it re-throws next call —
-    // behavior identical to the unmemoized path.
-    private static readonly ConditionalWeakTable<IDbTable, TablePolicy> _cache = new();
+    // NOTE: do NOT memoize the parsed TablePolicy per table instance. Although the
+    // table metadata is immutable, the returned TablePolicy (and its row-scope
+    // filter) is consumed mutably downstream by the policy evaluator per caller, so
+    // sharing one cached instance across requests leaks row-scope state between
+    // callers — a security regression (out-of-scope rows become visible). Parse
+    // fresh on every call.
 
     /// <summary>
     /// Builds the policy for a single table. Returns <see cref="TablePolicy.None"/>
@@ -28,7 +26,7 @@ public static class PolicyConfigCollector
         if (table is null)
             throw new ArgumentNullException(nameof(table));
 
-        return _cache.GetValue(table, BuildPolicy);
+        return BuildPolicy(table);
     }
 
     private static TablePolicy BuildPolicy(IDbTable table)

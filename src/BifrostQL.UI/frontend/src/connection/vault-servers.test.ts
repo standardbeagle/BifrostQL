@@ -11,22 +11,28 @@ beforeEach(() => { g.fetch = vi.fn(); });
 afterEach(() => { vi.restoreAllMocks(); delete g.fetch; });
 
 describe('fetchVaultServers', () => {
-  it('returns the parsed server list on a successful response', async () => {
+  it('returns the parsed server list with no error on a successful response', async () => {
     const servers = [{ name: 'a', provider: 'postgres' }];
     g.fetch.mockResolvedValue({ ok: true, json: async () => servers });
 
-    await expect(fetchVaultServers()).resolves.toEqual(servers);
+    await expect(fetchVaultServers()).resolves.toEqual({ servers, error: null });
     expect(g.fetch).toHaveBeenCalledWith('/api/vault/servers');
   });
 
-  it('returns [] on a non-ok response', async () => {
-    g.fetch.mockResolvedValue({ ok: false, json: async () => ({}) });
-    await expect(fetchVaultServers()).resolves.toEqual([]);
+  it('surfaces an error (not a silent empty list) on a non-ok response', async () => {
+    g.fetch.mockResolvedValue({ ok: false, status: 503, json: async () => ({}) });
+
+    const result = await fetchVaultServers();
+    expect(result.servers).toEqual([]);
+    expect(result.error).toContain('503');
   });
 
-  it('returns [] when fetch rejects', async () => {
+  it('surfaces the failure detail when fetch rejects', async () => {
     g.fetch.mockRejectedValue(new Error('network down'));
-    await expect(fetchVaultServers()).resolves.toEqual([]);
+
+    const result = await fetchVaultServers();
+    expect(result.servers).toEqual([]);
+    expect(result.error).toContain('network down');
   });
 });
 

@@ -160,7 +160,10 @@ export default function App() {
 
   // Load vault servers on mount
   useEffect(() => {
-    fetchVaultServers().then(setVaultServers);
+    fetchVaultServers().then(({ servers, error }) => {
+      setVaultServers(servers);
+      if (error) setErrorMessage(error);
+    });
   }, []);
 
   // Restore backend connection if we have a saved session (survives page reloads).
@@ -337,7 +340,9 @@ export default function App() {
     displayName: string,
     fallbackProvider: Provider,
   ): Promise<ConnectionInfo> => {
-    setVaultServers(await fetchVaultServers());
+    const { servers, error: listError } = await fetchVaultServers();
+    setVaultServers(servers);
+    if (listError) setErrorMessage(listError);
 
     const connectResult = await connectVaultServer(vaultName);
     if (!connectResult.success) {

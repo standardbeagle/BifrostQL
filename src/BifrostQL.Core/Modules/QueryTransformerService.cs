@@ -60,9 +60,13 @@ public sealed class QueryTransformerService : IQueryTransformerService
 
         // Column-level read enforcement. IFilterTransformer only sees the table,
         // so transformers that enforce column-read-deny (the policy engine)
-        // implement IColumnReadGuard and are called here with the columns this
-        // query actually selects. Same reject mechanism as GetAdditionalFilter —
-        // a denied column aborts the query rather than being silently stripped.
+        // implement IColumnReadGuard and are called here with every column this
+        // query node references — not just the columns it selects for output.
+        // A caller denied read on a column could otherwise still filter on it
+        // (`salary: { _gt: 100000 }`) or sort by it (`_order: { salary: asc }`)
+        // and use the boolean result-set/ordering as an oracle to exfiltrate the
+        // value. Same reject mechanism as GetAdditionalFilter — a denied column
+        // aborts the query rather than being silently stripped.
         EnforceColumnReadGuards(query, context);
 
         // Get additional filters from transformers
@@ -117,17 +121,129 @@ public sealed class QueryTransformerService : IQueryTransformerService
 
     private void EnforceColumnReadGuards(GqlObjectQuery query, QueryTransformContext context)
     {
-        var requestedColumns = query.ScalarColumns
-            .SelectMany(c => ReadGuardColumnNames(query.DbTable, c))
-            .Where(name => !string.IsNullOrWhiteSpace(name))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-        if (requestedColumns.Length == 0)
+        var guards = _filterTransformers.OfType<IColumnReadGuard>().ToArray();
+        if (guards.Length == 0)
             return;
 
-        foreach (var guard in _filterTransformers.OfType<IColumnReadGuard>())
-            guard.AssertColumnsReadable(query.DbTable, requestedColumns, context);
+        // Columns are collected per-table (a filter can traverse a SingleLinks
+        // relationship into a different table entirely), so each table's set is
+        // asserted against that table's own policy rather than the query node's.
+        var columnsByTable = new Dictionary<IDbTable, HashSet<string>>();
+
+        void Add(IDbTable table, string? name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return;
+
+            if (!columnsByTable.TryGetValue(table, out var set))
+            {
+                set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                columnsByTable[table] = set;
+            }
+            set.Add(name);
+        }
+
+        void AddRange(IDbTable table, IEnumerable<string?> names)
+        {
+            foreach (var name in names)
+                Add(table, name);
+        }
+
+        // Selected/output columns (scalar + computed-column dependencies).
+        AddRange(query.DbTable, query.ScalarColumns.SelectMany(c => ReadGuardColumnNames(query.DbTable, c)));
+
+        // Filter (`filter` / WHERE) columns, including relationship traversals.
+        CollectFilterColumns(query.Filter, query.DbTable, Add);
+
+        // Sort (`_order`) columns. Tokens are "<GraphQlName>_asc" / "..._desc".
+        AddRange(query.DbTable, query.Sort.Select(s => ResolveColumnDbName(query.DbTable, StripSortSuffix(s))));
+
+        // Aggregate (`_agg`) value columns resolve against the final linked
+        // table in the aggregate's join chain, mirroring the destination-table
+        // resolution used for aggregate link filters above.
+        foreach (var aggregate in query.AggregateColumns)
+        {
+            if (aggregate.Links.Count == 0)
+                continue;
+
+            var (direction, link) = aggregate.Links[^1];
+            var targetTable = direction == LinkDirection.ManyToOne ? link.ParentTable : link.ChildTable;
+            Add(targetTable, ResolveColumnDbName(targetTable, aggregate.FinalColumnName));
+        }
+
+        foreach (var (table, columns) in columnsByTable)
+        {
+            if (columns.Count == 0)
+                continue;
+
+            var names = columns.ToArray();
+            foreach (var guard in guards)
+                guard.AssertColumnsReadable(table, names, context);
+        }
+    }
+
+    /// <summary>
+    /// Recursively walks a filter tree collecting the columns it references,
+    /// attributing each to the table it actually lives on. A leaf comparison
+    /// (<c>Next.Next == null</c>) names a column on <paramref name="table"/>;
+    /// a deeper chain (<c>Next.Next != null</c>) means <c>ColumnName</c> is a
+    /// <see cref="IDbTable.SingleLinks"/> relationship name into another table
+    /// (mirrors <see cref="TableFilter.RenderParts"/>'s own traversal), so the
+    /// remaining chain is attributed to that linked table instead.
+    /// </summary>
+    private static void CollectFilterColumns(TableFilter? filter, IDbTable table, Action<IDbTable, string?> add)
+    {
+        if (filter == null)
+            return;
+
+        if (filter.Next == null)
+        {
+            foreach (var branch in filter.And)
+                CollectFilterColumns(branch, table, add);
+            foreach (var branch in filter.Or)
+                CollectFilterColumns(branch, table, add);
+            return;
+        }
+
+        if (filter.Next.Next == null)
+        {
+            add(table, ResolveColumnDbName(table, filter.ColumnName));
+            return;
+        }
+
+        if (table.SingleLinks.TryGetValue(filter.ColumnName, out var link))
+            CollectFilterColumns(filter.Next, link.ParentTable, add);
+    }
+
+    /// <summary>
+    /// Resolves a filter/sort column reference to its DB name, tolerant of both
+    /// name spaces exactly like <see cref="TableFilter.RenderParts"/>: user
+    /// filters/sorts key by GraphQL name, but security transformers build
+    /// filters keyed by the raw DB column name.
+    /// </summary>
+    private static string? ResolveColumnDbName(IDbTable table, string? columnName)
+    {
+        if (string.IsNullOrWhiteSpace(columnName))
+            return null;
+
+        if (table.GraphQlLookup.TryGetValue(columnName, out var byGraphQl))
+            return byGraphQl.DbName;
+
+        if (table.ColumnLookup.TryGetValue(columnName, out var byDb))
+            return byDb.DbName;
+
+        return null;
+    }
+
+    /// <summary>
+    /// Strips the "_asc"/"_desc" suffix from a sort token, mirroring
+    /// <c>GqlObjectQuery.RenderSortColumns</c>'s own suffix parsing.
+    /// </summary>
+    private static string StripSortSuffix(string token)
+    {
+        if (token.EndsWith("_asc")) return token[..^4];
+        if (token.EndsWith("_desc")) return token[..^5];
+        return token;
     }
 
     private static IEnumerable<string> ReadGuardColumnNames(IDbTable table, GqlObjectColumn column)

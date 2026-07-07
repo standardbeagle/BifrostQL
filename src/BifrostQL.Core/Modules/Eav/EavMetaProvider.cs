@@ -2,6 +2,8 @@ using System.Text.Json;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Model.AppSchema;
 using BifrostQL.Core.Modules.ComputedColumns;
+using BifrostQL.Core.QueryModel;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Core.Modules.Eav;
 
@@ -61,13 +63,58 @@ public sealed class EavMetaProvider : IComputedColumnProvider
             return null;
 
         var dialect = context.ConnFactory.Dialect;
-        var metaTableRef = dialect.TableReference(null, config.MetaTableDbName);
+        var metaTableRef = dialect.TableReference(config.TableSchema, config.MetaTableDbName);
         var keyCol = dialect.EscapeIdentifier(config.KeyColumn);
         var valueCol = dialect.EscapeIdentifier(config.ValueColumn);
         var fkCol = dialect.EscapeIdentifier(config.ForeignKeyColumn);
         var paramName = $"{dialect.ParameterPrefix}pk";
 
-        var sql = $"SELECT {keyCol},{valueCol} FROM {metaTableRef} WHERE {fkCol}={paramName}";
+        // The meta table's own tenant/soft-delete/policy filter must apply here
+        // too — otherwise a caller who cannot read soft-deleted or cross-tenant
+        // rows on the meta table directly can still see them surfaced through
+        // _meta. Only the filter enforcement is added here; EAV config/schema
+        // qualification issues (e.g. missing TableSchema on the meta table
+        // lookup) are a separate, already-tracked concern.
+        var securityParams = new SqlParameterCollection();
+        var securityWhere = "";
+        var filterTransformers = context.Services?.GetService<IFilterTransformers>();
+        if (filterTransformers != null)
+        {
+            IDbTable? metaTable = null;
+            try
+            {
+                metaTable = context.Model.GetTableFromDbName(config.MetaTableDbName);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                // Meta table isn't modeled as a first-class table — nothing to
+                // filter by, fall through with no security filter.
+            }
+
+            if (metaTable != null)
+            {
+                var transformContext = new QueryTransformContext
+                {
+                    Model = context.Model,
+                    UserContext = context.UserContext,
+                    QueryType = QueryType.Standard,
+                    Path = metaTable.GraphQlName,
+                    IsNestedQuery = true,
+                };
+
+                var securityFilter = filterTransformers.GetCombinedFilter(metaTable, transformContext);
+                if (securityFilter != null)
+                {
+                    var rendered = securityFilter.ToSqlParameterized(context.Model, dialect, securityParams, alias: metaTable.DbName);
+                    securityWhere = rendered.Sql;
+                }
+            }
+        }
+
+        var whereClause = string.IsNullOrEmpty(securityWhere)
+            ? $"{fkCol}={paramName}"
+            : $"{fkCol}={paramName} AND ({securityWhere})";
+        var sql = $"SELECT {keyCol},{valueCol} FROM {metaTableRef} WHERE {whereClause}";
 
         await using var conn = context.ConnFactory.GetConnection();
         await conn.OpenAsync(cancellationToken);
@@ -78,6 +125,14 @@ public sealed class EavMetaProvider : IComputedColumnProvider
         parameter.ParameterName = paramName;
         parameter.Value = pkValue;
         command.Parameters.Add(parameter);
+
+        foreach (var securityParameter in securityParams.Parameters)
+        {
+            var p = command.CreateParameter();
+            p.ParameterName = securityParameter.Name;
+            p.Value = securityParameter.Value ?? DBNull.Value;
+            command.Parameters.Add(p);
+        }
 
         var attributes = new List<KeyValuePair<string, object?>>();
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))

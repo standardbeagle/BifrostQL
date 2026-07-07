@@ -94,6 +94,8 @@ bifrost config-generate --connection "..."
 
 ## Next steps
 
+- [Example Projects](/BifrostQL/getting-started/examples/) -- runnable samples in the repository
+- [Case Studies](/BifrostQL/case-studies/) -- end-to-end walkthroughs of complete deployments
 - [Schema Generation](/BifrostQL/concepts/schema-generation/) -- how BifrostQL maps database types to GraphQL
 - [Queries](/BifrostQL/guides/queries/) -- filtering, sorting, and pagination
 - [Joins](/BifrostQL/guides/joins/) -- automatic and explicit table joins

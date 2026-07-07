@@ -1,4 +1,5 @@
 using System.Data;
+using System.Security.Claims;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Utils;
 
@@ -10,6 +11,21 @@ namespace BifrostQL.Core.Resolvers
     /// </summary>
     public sealed class StoredProcedureResolver : DatabaseResolverBase
     {
+        /// <summary>
+        /// Model-level role required to execute any stored procedure. Unlike
+        /// <c>_rawQuery</c> (<c>raw-sql-role</c>) and <c>_table</c>
+        /// (<c>generic-table-role</c>), stored procedures had no authorization
+        /// gate at all — any exposed proc was callable with zero role check.
+        /// This is a local literal, not <c>MetadataKeys.StoredProcedures</c>,
+        /// because that class is owned by another workstream; promoting this key
+        /// into <c>MetadataKeys</c> (plus wiring it into the metadata
+        /// validation allow-list alongside <c>sp-include</c>/<c>sp-exclude</c>)
+        /// is a required follow-up. Filter transformers cannot rewrite an
+        /// arbitrary proc body, so this is an auth gate only — no row-level
+        /// tenant scoping is implied or attempted here.
+        /// </summary>
+        public const string RoleMetadataKey = "stored-procedure-role";
+
         private readonly DbStoredProcedure _proc;
 
         public StoredProcedureResolver(DbStoredProcedure proc)
@@ -21,6 +37,8 @@ namespace BifrostQL.Core.Resolvers
         {
             var bifrost = new BifrostContextAdapter(context);
             var conFactory = bifrost.ConnFactory;
+
+            ValidateAuthorization(context.UserContext, bifrost.Model);
 
             var input = context.HasArgument("input")
                 ? context.GetArgument<Dictionary<string, object?>>("input")
@@ -71,6 +89,37 @@ namespace BifrostQL.Core.Resolvers
             {
                 throw BifrostExecutionError.FromDatabaseException(ex);
             }
+        }
+
+        /// <summary>
+        /// Requires the caller to hold <see cref="RoleMetadataKey"/>'s configured
+        /// role when the model configures one. When no role is configured, this
+        /// mirrors pre-fix behavior (no gate) — see the follow-up note on
+        /// <see cref="RoleMetadataKey"/> about promoting this to a first-class,
+        /// always-enforced metadata key.
+        /// </summary>
+        private static void ValidateAuthorization(IDictionary<string, object?> userContext, IDbModel model)
+        {
+            var requiredRole = model.GetMetadataValue(RoleMetadataKey);
+            if (string.IsNullOrWhiteSpace(requiredRole))
+                return;
+
+            if (!userContext.TryGetValue("user", out var userObj))
+                throw new BifrostExecutionError("Authentication required to execute this stored procedure.");
+
+            if (userObj is not ClaimsPrincipal principal)
+                throw new BifrostExecutionError("Authentication required to execute this stored procedure.");
+
+            if (!principal.IsInRole(requiredRole) && !HasRoleClaim(principal, requiredRole))
+                throw new BifrostExecutionError(
+                    $"User does not have the required role '{requiredRole}' to execute this stored procedure.");
+        }
+
+        private static bool HasRoleClaim(ClaimsPrincipal principal, string role)
+        {
+            return principal.Claims.Any(c =>
+                (c.Type == ClaimTypes.Role || c.Type == "role" || c.Type == "roles")
+                && string.Equals(c.Value, role, StringComparison.OrdinalIgnoreCase));
         }
 
         private void AddInputParameters(System.Data.Common.DbCommand cmd, Dictionary<string, object?>? input)

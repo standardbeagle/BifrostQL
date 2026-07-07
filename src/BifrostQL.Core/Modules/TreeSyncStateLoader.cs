@@ -25,11 +25,31 @@ public sealed class TreeSyncStateLoader
 {
     private readonly ISqlDialect _dialect;
     private readonly int _maxDepth;
+    private readonly IFilterTransformers? _filterTransformers;
+    private readonly IDbModel? _model;
+    private readonly IDictionary<string, object?>? _userContext;
 
-    public TreeSyncStateLoader(ISqlDialect dialect, int maxDepth = 3)
+    /// <summary>
+    /// <paramref name="filterTransformers"/>, <paramref name="model"/> and
+    /// <paramref name="userContext"/> are optional so existing callers keep
+    /// compiling, but they are required for the loader to apply each table's
+    /// tenant/soft-delete/policy filter to its read. Without them the loader
+    /// falls back to the raw PK/FK-only read (pre-existing behavior) — callers
+    /// should be updated to pass all three so orphan/diff computation, and the
+    /// caller-existence probe surface, only ever see rows the caller may read.
+    /// </summary>
+    public TreeSyncStateLoader(
+        ISqlDialect dialect,
+        int maxDepth = 3,
+        IFilterTransformers? filterTransformers = null,
+        IDbModel? model = null,
+        IDictionary<string, object?>? userContext = null)
     {
         _dialect = dialect ?? throw new ArgumentNullException(nameof(dialect));
         _maxDepth = maxDepth;
+        _filterTransformers = filterTransformers;
+        _model = model;
+        _userContext = userContext;
     }
 
     /// <summary>
@@ -124,7 +144,17 @@ public sealed class TreeSyncStateLoader
         var columns = table.Columns.ToList();
         var columnSql = string.Join(", ", columns.Select(c => _dialect.EscapeIdentifier(c.ColumnName)));
         var tableRef = _dialect.TableReference(table.TableSchema, table.DbName);
-        var sql = $"SELECT {columnSql} FROM {tableRef} WHERE {whereClause}";
+
+        // Apply this table's own tenant/soft-delete/policy filter to the read so
+        // the diff never sees a row the caller couldn't otherwise read (and so a
+        // caller can't use tree-sync to probe existence of another tenant's PK).
+        var securityParams = new SqlParameterCollection();
+        var securityWhere = GetSecurityFilterSql(table, securityParams);
+        var combinedWhere = string.IsNullOrEmpty(securityWhere)
+            ? whereClause
+            : $"{whereClause} AND ({securityWhere})";
+
+        var sql = $"SELECT {columnSql} FROM {tableRef} WHERE {combinedWhere}";
 
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
@@ -133,6 +163,13 @@ public sealed class TreeSyncStateLoader
             var p = cmd.CreateParameter();
             p.ParameterName = name;
             p.Value = value ?? DBNull.Value;
+            cmd.Parameters.Add(p);
+        }
+        foreach (var securityParameter in securityParams.Parameters)
+        {
+            var p = cmd.CreateParameter();
+            p.ParameterName = securityParameter.Name;
+            p.Value = securityParameter.Value ?? DBNull.Value;
             cmd.Parameters.Add(p);
         }
 
@@ -156,6 +193,31 @@ public sealed class TreeSyncStateLoader
             throw BifrostExecutionError.FromDatabaseException(ex);
         }
         return results;
+    }
+
+    // Renders the combined tenant/soft-delete/policy filter for a table, or ""
+    // when no transformer applies (or none of filterTransformers/model/
+    // userContext were supplied — see the constructor remarks).
+    private string GetSecurityFilterSql(IDbTable table, SqlParameterCollection securityParams)
+    {
+        if (_filterTransformers == null || _model == null || _userContext == null)
+            return "";
+
+        var transformContext = new QueryTransformContext
+        {
+            Model = _model,
+            UserContext = _userContext,
+            QueryType = QueryType.Standard,
+            Path = table.GraphQlName,
+            IsNestedQuery = true,
+        };
+
+        var securityFilter = _filterTransformers.GetCombinedFilter(table, transformContext);
+        if (securityFilter == null)
+            return "";
+
+        var rendered = securityFilter.ToSqlParameterized(_model, _dialect, securityParams, alias: table.DbName);
+        return rendered.Sql;
     }
 
     private static ColumnDto? SingleKey(IDbTable table)

@@ -23,6 +23,7 @@ export default defineConfig({
 					label: 'Getting Started',
 					items: [
 						{ label: 'Installation & Setup', slug: 'getting-started' },
+						{ label: 'Example Projects', slug: 'getting-started/examples' },
 					],
 				},
 				{
@@ -56,6 +57,15 @@ export default defineConfig({
 						{ label: 'Binary Transport', slug: 'guides/binary-transport' },
 						{ label: 'React Native', slug: 'guides/react-native' },
 						{ label: 'WordPress', slug: 'guides/wordpress' },
+					],
+				},
+				{
+					label: 'Case Studies',
+					items: [
+						{ label: 'Overview', slug: 'case-studies' },
+						{ label: 'Web Admin for a WPF LOB App', slug: 'case-studies/wpf-lob-admin' },
+						{ label: 'Two-Tier Admin: API vs. Raw SQL', slug: 'case-studies/two-tier-admin' },
+						{ label: 'Multi-Tenant SaaS Back Office', slug: 'case-studies/multi-tenant-saas' },
 					],
 				},
 				{

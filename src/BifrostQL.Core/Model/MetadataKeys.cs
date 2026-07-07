@@ -378,7 +378,17 @@ namespace BifrostQL.Core.Model
             /// </summary>
             public const string HardDeleteRole = "soft-delete-hard-role";
 
-            /// <summary>Table-level delete behavior selector.</summary>
+            /// <summary>
+            /// Table-level delete behavior selector. <b>Currently inert:</b> no
+            /// reader consumes this key anywhere in the codebase. Soft-delete
+            /// behavior today is driven solely by the presence/absence of
+            /// <see cref="Column"/> (the mutation pipeline rewrites a delete to a
+            /// soft-delete update whenever <see cref="Column"/> is configured;
+            /// there is no other selectable behavior). Kept and allow-listed so
+            /// existing configs that harmlessly set it are not broken. Wiring it
+            /// to actually gate delete-vs-soft-delete selection is a documented
+            /// design follow-up, not implemented here.
+            /// </summary>
             public const string DeleteType = "delete-type";
         }
 
@@ -500,6 +510,13 @@ namespace BifrostQL.Core.Model
         {
             public const string Include = "sp-include";
             public const string Exclude = "sp-exclude";
+
+            /// <summary>
+            /// Model-level role required to execute stored procedures through the
+            /// stored-procedure resolver. Mirrors <see cref="RawSql.Role"/>: when
+            /// unset, execution is open to all callers (no gate).
+            /// </summary>
+            public const string Role = "stored-procedure-role";
         }
 
         /// <summary>

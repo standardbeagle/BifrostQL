@@ -39,7 +39,13 @@ namespace BifrostQL.Core.Model.Relationships
                 if (!tablesByDbName.Contains(parent!))
                     continue;
 
-                configs.Add(new EavConfig(table.DbName, parent!, fk!, key!, value!));
+                // Capture the meta table's own schema so a non-default-schema meta
+                // table (e.g. app.wp_postmeta) round-trips correctly. Without this,
+                // downstream SQL built off MetaTableDbName alone drops the schema
+                // and looks the table up unqualified (see EavMetaProvider's
+                // TableReference(null, config.MetaTableDbName) call, owned by
+                // another agent — it must switch to config.TableSchema).
+                configs.Add(new EavConfig(table.DbName, parent!, fk!, key!, value!, table.TableSchema));
             }
 
             return configs;

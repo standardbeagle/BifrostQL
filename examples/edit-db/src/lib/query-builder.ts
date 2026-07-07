@@ -8,6 +8,7 @@ import type { ColumnFiltersState } from '@tanstack/react-table';
 import { rowIdOf, buildPkEqFilter, parsePkRoute, decodePkPart, encodeRouteParts, type PkEqFilterResult } from './row-id';
 import { coerceForGql } from './fk';
 import { resolveChildJoin, childFieldName } from './polymorphic';
+import { isComposite } from './fk';
 
 export interface FilterResult {
     variables: Record<string, unknown>;
@@ -344,6 +345,20 @@ export function buildQuery(
         // FK column needed). Grid filter/column-filters/sort/paging are pushed
         // INTO the nested child field args so server paging drives the grid.
         const drill = resolveDrillDown(table, schema, tableFilter, filterColumn);
+        if (drill && canFlatFilterDrill(drill.childJoin)) {
+            // Simple single-column FK: query the child table directly with a flat
+            // FK filter — a "parent grid with a filter applied" rather than MODEL
+            // B's nested parent traversal. The grid's own table is the query root,
+            // so paging/sort drive it natively and the response keeps the standard
+            // `{ <table>: { data } }` shape (no unwrap). Global header/column
+            // filters are keyed off the MAIN grid and must not bleed into this
+            // child, so only the FK predicate is applied.
+            const fkCol = drill.childJoin.destinationColumnNames[0];
+            const parentPkType = getPkTypes(drill.parentTable)[0]?.gqlType ?? "Int";
+            param = `, $id: ${parentPkType}`;
+            const flatFilter = `filter: { ${fkCol}: { _eq: $id } }`;
+            return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${table.name}(sort: $sort limit: $limit offset: $offset ${flatFilter}) { total offset limit data {${allFields}}}}`;
+        }
         if (drill) {
             // The header filter + column filters are global URL params keyed off the
             // MAIN (first) grid's table. Drill child grids show a different table
@@ -391,6 +406,23 @@ export interface DrillDownTarget {
     parentTable: Table;
     /** The child collection field name on the parent type. */
     childField: string;
+    /** The parent multi-join that owns the child collection. Lets callers
+     *  decide whether the drill can use a flat FK filter (simple single-column
+     *  FK) or must keep the MODEL B parent traversal (composite/polymorphic). */
+    childJoin: Join;
+}
+
+/**
+ * A drill can render as a flat root-filtered child grid — `childTable(filter:
+ * { fk: { _eq: $id } })`, i.e. a "parent grid with a filter applied" — only for
+ * a simple single-column, non-polymorphic FK. Composite FKs have no single
+ * filter column and polymorphic links need the server-injected discriminator;
+ * both must keep MODEL B's parent traversal.
+ */
+export function canFlatFilterDrill(childJoin: Join): boolean {
+    return !isComposite(childJoin)
+        && childJoin.isPolymorphic !== true
+        && (childJoin.destinationColumnNames?.length ?? 0) === 1;
 }
 
 /**
@@ -443,5 +475,5 @@ export function resolveDrillDown(
     if (!parentTable) return null;
     const childJoin = resolveChildJoin(parentTable.multiJoins, table.graphQlName, filterColumn);
     if (!childJoin) return null;
-    return { parentTable, childField: childFieldName(childJoin) };
+    return { parentTable, childField: childFieldName(childJoin), childJoin };
 }

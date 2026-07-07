@@ -75,13 +75,23 @@ namespace BifrostQL.Core.Model
     /// </summary>
     public static class MetadataValidator
     {
-        private static readonly HashSet<string> KnownTableKeys = new(StringComparer.OrdinalIgnoreCase)
+        // Internal (not private): ModelConfigValidator cross-checks these against
+        // the exact-case keys actually present in a table's Metadata dictionary.
+        // That dictionary uses the framework-default (case-SENSITIVE) comparer —
+        // see DbTable.Metadata / DbModelLoader — while this allow-list check is
+        // OrdinalIgnoreCase, so a case-typo'd key (e.g. "Soft-Delete" instead of
+        // "soft-delete") previously produced no "unknown key" warning yet was
+        // never found by the case-sensitive transformer lookups that read
+        // Metadata directly, silently disabling the feature. ModelConfigValidator
+        // uses this set to fail fast on that mismatch instead.
+        internal static readonly HashSet<string> KnownTableKeys = new(StringComparer.OrdinalIgnoreCase)
         {
             MetadataKeys.Security.TenantFilter,
             MetadataKeys.Security.AutoFilter,
             MetadataKeys.SoftDelete.Column,
             MetadataKeys.SoftDelete.DeletedBy,
             MetadataKeys.SoftDelete.DeleteType,
+            MetadataKeys.SoftDelete.HardDeleteRole,
             MetadataKeys.Ui.Visibility,
             MetadataKeys.Relationships.ManyToMany,
             MetadataKeys.Ui.Label,
@@ -99,7 +109,9 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Validation.Plugin,
         };
 
-        private static readonly HashSet<string> KnownColumnKeys = new(StringComparer.OrdinalIgnoreCase)
+        // Internal for the same reason as KnownTableKeys above (case-casing
+        // cross-check against ColumnDto.Metadata, which is also case-sensitive).
+        internal static readonly HashSet<string> KnownColumnKeys = new(StringComparer.OrdinalIgnoreCase)
         {
             MetadataKeys.AutoPopulate.Marker,
             MetadataKeys.DataType.Type,
@@ -117,7 +129,9 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Validation.Plugin,
         };
 
-        private static readonly HashSet<string> KnownDatabaseKeys = new(StringComparer.OrdinalIgnoreCase)
+        // Internal for the same reason as KnownTableKeys above (case-casing
+        // cross-check against the model-level Metadata dictionary).
+        internal static readonly HashSet<string> KnownDatabaseKeys = new(StringComparer.OrdinalIgnoreCase)
         {
             MetadataKeys.Audit.Table,
             MetadataKeys.Audit.LegacyUserKey,
@@ -137,6 +151,7 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Schema.Permissions,
             MetadataKeys.StoredProcedures.Include,
             MetadataKeys.StoredProcedures.Exclude,
+            MetadataKeys.StoredProcedures.Role,
             MetadataKeys.AppSchema.PrefixGroups,
             MetadataKeys.Security.TenantContextKey,
             MetadataKeys.Security.AutoFilterBypassRole,

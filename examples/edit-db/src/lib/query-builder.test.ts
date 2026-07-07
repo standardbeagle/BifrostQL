@@ -15,6 +15,7 @@ import {
     buildSingleRowQuery,
     resolveDrillDown,
     unwrapDrillDownPage,
+    canFlatFilterDrill,
     type ColumnFilterValue,
 } from './query-builder';
 import { buildPkEqFilter } from './row-id';
@@ -433,6 +434,37 @@ describe('getPkType', () => {
     });
 });
 
+// ── canFlatFilterDrill ─────────────────────────────────────────
+
+describe('canFlatFilterDrill', () => {
+    const join = (overrides: Partial<Join> = {}): Join => ({
+        name: 'j',
+        sourceColumnNames: ['parent_id'],
+        destinationTable: 'child',
+        destinationColumnNames: ['parent_id'],
+        ...overrides,
+    });
+
+    it('allows a simple single-column FK', () => {
+        expect(canFlatFilterDrill(join())).toBe(true);
+    });
+
+    it('rejects a polymorphic link', () => {
+        expect(canFlatFilterDrill(join({ isPolymorphic: true }))).toBe(false);
+    });
+
+    it('rejects a composite FK', () => {
+        expect(canFlatFilterDrill(join({
+            sourceColumnNames: ['tenant_id', 'order_id'],
+            destinationColumnNames: ['tenant_id', 'order_id'],
+        }))).toBe(false);
+    });
+
+    it('rejects when the destination has no single filter column', () => {
+        expect(canFlatFilterDrill(join({ destinationColumnNames: [] }))).toBe(false);
+    });
+});
+
 // ── buildQuery ─────────────────────────────────────────────────
 
 describe('buildQuery', () => {
@@ -503,7 +535,7 @@ describe('buildQuery', () => {
         expect(q).toContain('{ course_id: { _eq: $id}}');
     });
 
-    it('drills a child collection by traversing the parent (MODEL B)', () => {
+    it('drills a simple single-column FK child with a flat root filter (not MODEL B)', () => {
         const childTable = makeTable({
             name: 'assignments',
             graphQlName: 'assignments',
@@ -523,12 +555,11 @@ describe('buildQuery', () => {
         const childSchema = makeSchema([parent, childTable]);
         const q = buildQuery(childTable, childSchema, '', [], '5', 'courses')!;
 
-        // Parent traversal: select the parent filtered by its PK, then the child paged field.
-        expect(q).toContain('courses(filter: { course_id: { _eq: $id}})');
+        // Flat: the child table is the query root, filtered by its FK column —
+        // a "parent grid with a filter applied", no nested parent traversal.
+        expect(q).toContain('assignments(sort: $sort limit: $limit offset: $offset filter: { course_id: { _eq: $id } })');
         expect(q).toContain('$id: Int');
-        expect(q).toMatch(/assignments\(limit: \$limit offset: \$offset sort: \$sort\) \{ total offset limit data \{/);
-        // The discriminator is no longer emitted client-side.
-        expect(q).not.toContain('entity_type');
+        expect(q).not.toContain('courses(filter:');
     });
 
     it('emits the discriminator-free parent-traversal query for a polymorphic child', () => {
@@ -543,6 +574,12 @@ describe('buildQuery', () => {
                 sourceColumnNames: ['company_id'],
                 destinationTable: 'notes',
                 destinationColumnNames: ['entity_id'],
+                // Polymorphic link — server carries the discriminator predicate, so
+                // this drill must keep MODEL B (a flat entity_id filter would leak
+                // notes belonging to other entity types).
+                isPolymorphic: true,
+                polymorphicTypeColumn: 'entity_type',
+                polymorphicTypeValue: 'company',
             }],
         });
         const notes = makeTable({
@@ -567,7 +604,35 @@ describe('buildQuery', () => {
         expect(q).not.toContain('entity_id: { _eq:');
     });
 
-    it('uses the parent multi-join fieldName for the nested child field', () => {
+    it('uses the parent multi-join fieldName for the nested child field (MODEL B)', () => {
+        const child = makeTable({
+            name: 'categories',
+            graphQlName: 'categories',
+            labelColumn: 'name',
+            primaryKeys: ['id'],
+            columns: [
+                makeColumn({ name: 'id', paramType: 'Int!', isPrimaryKey: true }),
+                makeColumn({ name: 'parent_id', paramType: 'Int' }),
+                makeColumn({ name: 'name', paramType: 'String' }),
+            ],
+            // Marked polymorphic so the drill stays on MODEL B — the nested-field
+            // fieldName aliasing under test only exists on the parent-traversal path.
+            multiJoins: [{
+                name: 'categories',
+                fieldName: 'categories_children',
+                sourceColumnNames: ['id'],
+                destinationTable: 'categories',
+                destinationColumnNames: ['parent_id'],
+                isPolymorphic: true,
+            }],
+        });
+        const schema = makeSchema([child]);
+        const q = buildQuery(child, schema, '', [], '3', 'categories', 'parent_id')!;
+        expect(q).toContain('categories(filter: { id: { _eq: $id}})');
+        expect(q).toContain('categories_children(limit: $limit offset: $offset sort: $sort)');
+    });
+
+    it('drills a simple self-referential FK with a flat root filter', () => {
         const child = makeTable({
             name: 'categories',
             graphQlName: 'categories',
@@ -588,8 +653,9 @@ describe('buildQuery', () => {
         });
         const schema = makeSchema([child]);
         const q = buildQuery(child, schema, '', [], '3', 'categories', 'parent_id')!;
-        expect(q).toContain('categories(filter: { id: { _eq: $id}})');
-        expect(q).toContain('categories_children(limit: $limit offset: $offset sort: $sort)');
+        // Flat filter on the table's own FK column — no nested categories_children.
+        expect(q).toContain('categories(sort: $sort limit: $limit offset: $offset filter: { parent_id: { _eq: $id } })');
+        expect(q).not.toContain('categories_children(');
     });
 
     it('does NOT push the main grid filters into the nested child field args', () => {
@@ -613,9 +679,10 @@ describe('buildQuery', () => {
         const q = buildQuery(child, schema, '', cf, '5', 'courses')!;
         // The header filter + column filters are global URL params scoped to the
         // MAIN grid's table. Drill child grids must ignore them — no $cf param decl
-        // and no filter arg on the nested child field.
+        // and the only predicate is the FK scope.
         expect(q).not.toContain('$cf_credits');
-        expect(q).toMatch(/assignments\(limit: \$limit offset: \$offset sort: \$sort\)/);
+        expect(q).not.toContain('_gt');
+        expect(q).toContain('assignments(sort: $sort limit: $limit offset: $offset filter: { course_id: { _eq: $id } })');
     });
 
     it('falls back to the standard query when no parent multi-join targets the child', () => {

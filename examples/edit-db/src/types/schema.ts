@@ -100,6 +100,15 @@ export interface Join {
   destinationTable: string;
   /** Column names in the target table */
   destinationColumnNames: string[];
+  /** True for a polymorphic child link — the relation carries a server-side
+   *  discriminator predicate (entity_type) rather than a plain FK. Such drills
+   *  must keep the MODEL B parent traversal so the server injects the
+   *  discriminator; a flat FK filter would leak sibling-type rows. */
+  isPolymorphic?: boolean;
+  /** Discriminator column backing a polymorphic link (when isPolymorphic). */
+  polymorphicTypeColumn?: string;
+  /** Discriminator value backing a polymorphic link (when isPolymorphic). */
+  polymorphicTypeValue?: string;
 }
 
 /**

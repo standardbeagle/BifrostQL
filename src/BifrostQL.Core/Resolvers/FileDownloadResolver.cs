@@ -1,7 +1,10 @@
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules;
+using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Storage;
 using GraphQL;
 using GraphQL.Resolvers;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Core.Resolvers
 {
@@ -47,11 +50,18 @@ namespace BifrostQL.Core.Resolvers
                 throw new BifrostExecutionError($"Column '{columnName}' is not configured for file storage");
             }
 
+            // Apply the same filter-transformer pipeline normal reads use
+            // (tenant isolation, soft-delete, row-scope policy) so a caller
+            // cannot download another tenant's or a soft-deleted row's file by
+            // guessing/supplying its primary key.
+            var additionalFilter = GetRowScopeFilter(context, table, column, model);
+
             // Get file metadata from database
-            var metadataJson = await GetFileMetadataFromDatabase(bifrost.ConnFactory, table, column, recordId);
+            var metadataJson = await GetFileMetadataFromDatabase(
+                bifrost.ConnFactory, table, column, recordId, additionalFilter);
             if (string.IsNullOrWhiteSpace(metadataJson))
             {
-                return null; // No file stored for this record
+                return null; // No file stored for this record, or filtered out (not our tenant / soft-deleted)
             }
 
             var fileMetadata = FileMetadata.FromJson(metadataJson);
@@ -63,9 +73,11 @@ namespace BifrostQL.Core.Resolvers
                     $"File metadata for '{table.DbName}.{column.ColumnName}' record '{recordId}' " +
                     "could not be parsed; the stored file reference is corrupt.");
 
-            // Generate presigned URL for access
+            // Generate presigned URL for access. The storage target always
+            // comes from the column's configuration, never from the
+            // row-persisted metadata (see FileStorageService).
             var accessUrl = await _storageService.GetFileUrlAsync(
-                fileMetadata, model, expirationMinutes, context.CancellationToken);
+                table, column, model, fileMetadata, expirationMinutes, context.CancellationToken);
 
             // Return file info
             return new FileDownloadResult
@@ -85,11 +97,41 @@ namespace BifrostQL.Core.Resolvers
             return ResolveAsync(new BifrostFieldContextAdapter(context));
         }
 
+        /// <summary>
+        /// Resolves the combined tenant/soft-delete/row-scope-policy filter for
+        /// this table via the same <see cref="IFilterTransformers"/> pipeline
+        /// <see cref="QueryTransformerService"/> uses for ordinary reads,
+        /// and enforces any column-level read-deny for the file column itself.
+        /// Returns null (no extra filtering) when the pipeline isn't registered,
+        /// matching how the rest of the read path degrades when the service is
+        /// absent (e.g. in lightweight test hosts).
+        /// </summary>
+        private static TableFilter? GetRowScopeFilter(
+            IBifrostFieldContext context, IDbTable table, ColumnDto column, IDbModel model)
+        {
+            var filterTransformers = context.RequestServices?.GetService<IFilterTransformers>();
+            if (filterTransformers == null)
+                return null;
+
+            var transformContext = new QueryTransformContext
+            {
+                Model = model,
+                UserContext = context.UserContext,
+                QueryType = QueryType.Single,
+            };
+
+            foreach (var guard in filterTransformers.OfType<IColumnReadGuard>())
+                guard.AssertColumnsReadable(table, new[] { column.DbName }, transformContext);
+
+            return filterTransformers.GetCombinedFilter(table, transformContext);
+        }
+
         private static async Task<string?> GetFileMetadataFromDatabase(
             IDbConnFactory conFactory,
             IDbTable table,
             ColumnDto column,
-            string recordId)
+            string recordId,
+            TableFilter? additionalFilter)
         {
             await using var conn = conFactory.GetConnection();
             try
@@ -105,22 +147,34 @@ namespace BifrostQL.Core.Resolvers
                 if (keyColumns.Count == 0)
                     throw new BifrostExecutionError($"Table '{table.DbName}' has no primary key");
 
-                var whereClause = string.Join(" AND ", keyColumns.Select(k =>
-                    $"{dialect.EscapeIdentifier(k.ColumnName)} = @pk_{k.ColumnName}"));
-
-                cmd.CommandText = $"SELECT {dialect.EscapeIdentifier(column.ColumnName)} FROM {tableRef} WHERE {whereClause}";
-
-                // Add PK parameter(s)
+                var keyData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
                 foreach (var keyCol in keyColumns)
+                    keyData[keyCol.ColumnName] = Convert.ChangeType(recordId, GetClrType(keyCol.DataType));
+
+                var whereClause = string.Join(" AND ", keyData.Keys.Select(k =>
+                    $"{dialect.EscapeIdentifier(k)} = @{k}"));
+
+                var parameters = new SqlParameterCollection();
+                var filterSuffix = "";
+                IReadOnlyList<SqlParameterInfo> filterParams = Array.Empty<SqlParameterInfo>();
+                if (additionalFilter != null)
                 {
-                    var pkParam = cmd.CreateParameter();
-                    pkParam.ParameterName = $"@pk_{keyCol.ColumnName}";
-                    pkParam.Value = Convert.ChangeType(recordId, GetClrType(keyCol.DataType));
-                    cmd.Parameters.Add(pkParam);
+                    var rendered = additionalFilter.RenderForMutation(dialect, parameters);
+                    filterSuffix = $" AND ({rendered.Sql})";
+                    filterParams = parameters.Parameters;
                 }
+
+                cmd.CommandText = $"SELECT {dialect.EscapeIdentifier(column.ColumnName)} FROM {tableRef} WHERE {whereClause}{filterSuffix}";
+
+                DbParameterBinder.AddParameters(cmd, keyData);
+                DbParameterBinder.AddExtraParameters(cmd, filterParams);
 
                 var result = await cmd.ExecuteScalarAsync();
                 return result?.ToString();
+            }
+            catch (BifrostExecutionError)
+            {
+                throw;
             }
             catch (Exception ex)
             {

@@ -27,6 +27,7 @@ import {
     buildPkEqVariables,
     resolveDrillDown,
     unwrapDrillDownPage,
+    canFlatFilterDrill,
 } from "../lib/query-builder";
 import { rowIdOf, encodeRouteParts } from "../lib/row-id";
 import { isComposite } from "../lib/fk";
@@ -570,7 +571,10 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
 
     let rows: RowData[];
     let totalRows: number;
-    if (drill) {
+    // Flat-filter drills (simple FK) query the child table at the root, so their
+    // response uses the standard `{ <table>: { data } }` shape — only MODEL B's
+    // nested parent traversal needs unwrapping.
+    if (drill && !canFlatFilterDrill(drill.childJoin)) {
         const page = unwrapDrillDownPage(data, drill.parentTable.name, drill.childField);
         rows = page.data as RowData[];
         totalRows = page.total;

@@ -72,10 +72,21 @@ namespace BifrostQL.Core.Storage
             int expirationMinutes = 15,
             bool forUpload = false)
         {
-            // For local storage, return the file path directly
-            // In production, this would typically be served through a file serving endpoint
-            var fullPath = GetFullFilePath(bucketConfig, fileKey);
-            return Task.FromResult($"file://{fullPath}");
+            // Local storage has no real signed-URL scheme. Returning the
+            // absolute server filesystem path here would leak the server's
+            // directory layout to any GraphQL client. Return an opaque
+            // reference relative to the configured bucket instead; a real
+            // deployment should serve local files through a dedicated
+            // download/upload route keyed by this reference rather than by
+            // exposing the disk path.
+            ArgumentException.ThrowIfNullOrWhiteSpace(bucketConfig.BucketName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(fileKey);
+
+            var relativeKey = bucketConfig.GetFullPath(fileKey);
+            if (Path.IsPathRooted(relativeKey))
+                throw new InvalidOperationException("File key must be relative to the storage bucket.");
+
+            return Task.FromResult($"local://{relativeKey.Replace(Path.DirectorySeparatorChar, '/')}");
         }
 
         public Task<IReadOnlyList<FileFolderEntry>> ListFolderAsync(

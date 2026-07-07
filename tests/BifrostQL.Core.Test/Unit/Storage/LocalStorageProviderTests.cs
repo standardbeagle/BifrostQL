@@ -231,8 +231,11 @@ public class LocalStorageProviderTests : IDisposable
 
         var url = await _provider.GetPresignedUrlAsync(config, "test.txt");
 
-        Assert.StartsWith("file://", url);
+        // Returns an opaque relative reference, not the absolute server disk path
+        // (which would leak the storage root's filesystem layout).
+        Assert.StartsWith("local://", url);
         Assert.Contains("test.txt", url);
+        Assert.DoesNotContain(_tempDir, url);
     }
 
     #endregion

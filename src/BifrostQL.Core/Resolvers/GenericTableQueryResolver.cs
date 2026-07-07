@@ -1,9 +1,11 @@
 using System.Data.Common;
 using System.Security.Claims;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
 using GraphQL;
 using GraphQL.Resolvers;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Core.Resolvers
 {
@@ -51,7 +53,31 @@ namespace BifrostQL.Core.Resolvers
             var bifrost = new BifrostContextAdapter(context);
             var connFactory = bifrost.ConnFactory;
 
-            return await ExecuteQueryAsync(connFactory, table, columnMetadata, limit, offset, filter);
+            // The generic-table role gates ACCESS to this feature; it is not an
+            // exemption from row security. Apply the same tenant/soft-delete/policy
+            // filter the table's own resolved query would get, so a tenant user
+            // using _table cannot read soft-deleted rows or other tenants' rows.
+            var securityFilter = ResolveSecurityFilter(context, table);
+
+            return await ExecuteQueryAsync(connFactory, _model, table, columnMetadata, limit, offset, filter, securityFilter);
+        }
+
+        private TableFilter? ResolveSecurityFilter(IBifrostFieldContext context, IDbTable table)
+        {
+            var filterTransformers = context.RequestServices?.GetService<IFilterTransformers>();
+            if (filterTransformers == null)
+                return null;
+
+            var transformContext = new QueryTransformContext
+            {
+                Model = _model,
+                UserContext = context.UserContext,
+                QueryType = QueryType.Standard,
+                Path = table.GraphQlName,
+                IsNestedQuery = false,
+            };
+
+            return filterTransformers.GetCombinedFilter(table, transformContext);
         }
 
         ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
@@ -168,18 +194,40 @@ namespace BifrostQL.Core.Resolvers
 
         private static async Task<GenericTableResult> ExecuteQueryAsync(
             IDbConnFactory connFactory,
+            IDbModel model,
             IDbTable table,
             IReadOnlyList<GenericColumnMetadata> columnMetadata,
             int limit,
             int offset,
-            Dictionary<string, object?>? filter)
+            Dictionary<string, object?>? filter,
+            TableFilter? securityFilter)
         {
             var dialect = connFactory.Dialect;
             var (whereSql, filterParams) = BuildWhereClause(table, dialect, filter);
 
-            var countSql = $"SELECT COUNT(*) FROM {table.DbTableRef}{whereSql}";
+            // AND the table's own tenant/soft-delete/policy filter onto the
+            // client-supplied WHERE. This must never be optional out from under a
+            // caller — the generic-table role only controls whether the feature is
+            // reachable at all.
+            var securityParams = new SqlParameterCollection();
+            string securitySql = "";
+            if (securityFilter != null)
+            {
+                var rendered = securityFilter.ToSqlParameterized(model, dialect, securityParams, alias: table.DbName);
+                securitySql = rendered.Sql;
+            }
+
+            var combinedWhereSql = (whereSql, securitySql) switch
+            {
+                ("", "") => "",
+                ("", _) => $" WHERE ({securitySql})",
+                (_, "") => whereSql,
+                _ => $"{whereSql} AND ({securitySql})",
+            };
+
+            var countSql = $"SELECT COUNT(*) FROM {table.DbTableRef}{combinedWhereSql}";
             var pagination = dialect.Pagination(null, offset, limit);
-            var dataSql = $"SELECT * FROM {table.DbTableRef}{whereSql}{pagination}";
+            var dataSql = $"SELECT * FROM {table.DbTableRef}{combinedWhereSql}{pagination}";
 
             await using var conn = connFactory.GetConnection();
             try
@@ -191,6 +239,7 @@ namespace BifrostQL.Core.Resolvers
                     await using var countCmd = conn.CreateCommand();
                     countCmd.CommandText = countSql;
                     AddFilterParameters(countCmd, filterParams);
+                    AddSecurityParameters(countCmd, securityParams);
                     var countResult = await countCmd.ExecuteScalarAsync();
                     totalCount = Convert.ToInt32(countResult);
                 }
@@ -200,6 +249,7 @@ namespace BifrostQL.Core.Resolvers
                     await using var dataCmd = conn.CreateCommand();
                     dataCmd.CommandText = dataSql;
                     AddFilterParameters(dataCmd, filterParams);
+                    AddSecurityParameters(dataCmd, securityParams);
 
                     await using var reader = await dataCmd.ExecuteReaderAsync();
                     while (await reader.ReadAsync())
@@ -229,6 +279,17 @@ namespace BifrostQL.Core.Resolvers
                 var p = cmd.CreateParameter();
                 p.ParameterName = name;
                 p.Value = value ?? DBNull.Value;
+                cmd.Parameters.Add(p);
+            }
+        }
+
+        private static void AddSecurityParameters(DbCommand cmd, SqlParameterCollection securityParams)
+        {
+            foreach (var parameter in securityParams.Parameters)
+            {
+                var p = cmd.CreateParameter();
+                p.ParameterName = parameter.Name;
+                p.Value = parameter.Value ?? DBNull.Value;
                 cmd.Parameters.Add(p);
             }
         }

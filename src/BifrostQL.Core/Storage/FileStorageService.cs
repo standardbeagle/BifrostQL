@@ -76,8 +76,19 @@ namespace BifrostQL.Core.Storage
         }
 
         /// <summary>
-        /// Uploads a file and returns the file metadata to store in the database
+        /// Uploads a file and returns the file metadata to store in the database.
         /// </summary>
+        /// <remarks>
+        /// Residual limitation: <paramref name="content"/> arrives as a fully
+        /// materialized <c>byte[]</c> because the GraphQL argument binder
+        /// deserializes the whole upload before this method is ever called, so a
+        /// large payload is already buffered in memory by the time any size check
+        /// here can run. This method rejects as early as possible (before any
+        /// storage I/O) to avoid compounding that with a second full copy on top
+        /// of an oversized buffer, but it cannot prevent the initial buffering.
+        /// Closing that gap fully would require switching the resolver's "file"
+        /// argument to a stream/Content-Length-gated upload path.
+        /// </remarks>
         public async Task<FileMetadata> UploadFileAsync(
             IDbTable table,
             ColumnDto column,
@@ -90,25 +101,30 @@ namespace BifrostQL.Core.Storage
         {
             var bucketConfig = GetBucketConfig(table, column, model)
                 ?? throw new InvalidOperationException($"No storage configuration found for {table.DbName}.{column.ColumnName}");
+            var columnConfig = GetFileColumnConfig(column);
 
-            // Validate file size
-            if (content.Length > bucketConfig.MaxFileSize)
+            // Enforce the more restrictive of the bucket-level and column-level
+            // max size, before any storage write (fix for size-cap-after-buffering
+            // and for per-column limits never being enforced).
+            var effectiveMaxSize = bucketConfig.MaxFileSize;
+            if (columnConfig?.MaxFileSize is { } columnMaxSize && columnMaxSize < effectiveMaxSize)
+                effectiveMaxSize = columnMaxSize;
+
+            if (content.Length > effectiveMaxSize)
             {
                 throw new InvalidOperationException(
-                    $"File size ({content.Length} bytes) exceeds maximum allowed ({bucketConfig.MaxFileSize} bytes)");
+                    $"File size ({content.Length} bytes) exceeds maximum allowed ({effectiveMaxSize} bytes)");
             }
 
-            // Validate MIME type
-            if (bucketConfig.AllowedMimeTypes?.Length > 0 && !string.IsNullOrEmpty(contentType))
-            {
-                if (!bucketConfig.AllowedMimeTypes.Any(m => 
-                    m.Equals(contentType, StringComparison.OrdinalIgnoreCase) ||
-                    (m.EndsWith("/*") && contentType.StartsWith(m[..^1], StringComparison.OrdinalIgnoreCase))))
-                {
-                    throw new InvalidOperationException(
-                        $"MIME type '{contentType}' is not allowed. Allowed types: {string.Join(", ", bucketConfig.AllowedMimeTypes)}");
-                }
-            }
+            // Validate MIME type against the bucket's allow-list. A configured
+            // allow-list with no client-supplied content type is rejected
+            // (fail-closed) rather than silently bypassed, since the client hint
+            // is otherwise spoofable and omission must not be a bypass.
+            ValidateMimeType(bucketConfig.AllowedMimeTypes, contentType, "storage bucket");
+
+            // Enforce the per-column accept list (fix: per-column config was
+            // parsed but never checked), same fail-closed semantics.
+            ValidateMimeType(columnConfig?.AcceptMimeTypes, contentType, "column");
 
             var provider = _providerFactory.GetProvider(bucketConfig);
             var fileKey = FileMetadata.GenerateFileKey(table.DbName, column.ColumnName, recordId, originalFileName);
@@ -116,7 +132,11 @@ namespace BifrostQL.Core.Storage
             // Upload to storage
             var accessUrl = await provider.UploadAsync(bucketConfig, fileKey, content, contentType, cancellationToken);
 
-            // Create and return metadata
+            // Create and return metadata. BucketName/ProviderType are recorded
+            // for informational/audit purposes only — they are never read back
+            // as the storage target (see DownloadFileAsync/DeleteFileAsync/
+            // GetFileUrlAsync, which always resolve the target bucket from the
+            // column's configuration, not from this row-persisted value).
             var metadata = new FileMetadata
             {
                 FileKey = fileKey,
@@ -133,70 +153,92 @@ namespace BifrostQL.Core.Storage
         }
 
         /// <summary>
-        /// Downloads a file by its metadata
+        /// Validates <paramref name="contentType"/> against an allow-list. When
+        /// <paramref name="allowedMimeTypes"/> is configured, a missing/empty
+        /// content type is rejected rather than skipped, since an absent client
+        /// hint must not bypass a configured allow-list.
         /// </summary>
-        public async Task<byte[]> DownloadFileAsync(
-            FileMetadata metadata,
-            IDbModel model,
-            CancellationToken cancellationToken = default)
+        private static void ValidateMimeType(string[]? allowedMimeTypes, string? contentType, string scope)
         {
-            if (string.IsNullOrWhiteSpace(metadata.ProviderType) || string.IsNullOrWhiteSpace(metadata.BucketName))
+            if (allowedMimeTypes is not { Length: > 0 })
+                return;
+
+            if (string.IsNullOrEmpty(contentType))
             {
-                throw new InvalidOperationException("File metadata is missing provider or bucket information");
+                throw new InvalidOperationException(
+                    $"Content type is required by the {scope} configuration but was not provided.");
             }
 
-            var bucketConfig = new StorageBucketConfig
+            if (!allowedMimeTypes.Any(m =>
+                m.Equals(contentType, StringComparison.OrdinalIgnoreCase) ||
+                (m.EndsWith("/*") && contentType.StartsWith(m[..^1], StringComparison.OrdinalIgnoreCase))))
             {
-                BucketName = metadata.BucketName,
-                ProviderType = metadata.ProviderType
-            };
+                throw new InvalidOperationException(
+                    $"MIME type '{contentType}' is not allowed by the {scope} configuration. Allowed types: {string.Join(", ", allowedMimeTypes)}");
+            }
+        }
+
+        /// <summary>
+        /// Downloads a file by its metadata. The storage target (bucket/provider)
+        /// is always resolved from the column's configuration via
+        /// <see cref="GetBucketConfig"/> — never from <paramref name="metadata"/>'s
+        /// row-persisted <c>BucketName</c>/<c>ProviderType</c>, which is an
+        /// ordinary writable column value an attacker could set to point at an
+        /// arbitrary bucket/provider. Only <see cref="FileMetadata.FileKey"/> (the
+        /// object key within the configured bucket) is taken from the row, and it
+        /// is still validated by the provider's normal key/traversal guards
+        /// against that configured bucket.
+        /// </summary>
+        public async Task<byte[]> DownloadFileAsync(
+            IDbTable table,
+            ColumnDto column,
+            IDbModel model,
+            FileMetadata metadata,
+            CancellationToken cancellationToken = default)
+        {
+            var bucketConfig = GetBucketConfig(table, column, model)
+                ?? throw new InvalidOperationException($"No storage configuration found for {table.DbName}.{column.ColumnName}");
 
             var provider = _providerFactory.GetProvider(bucketConfig);
             return await provider.DownloadAsync(bucketConfig, metadata.FileKey, cancellationToken);
         }
 
         /// <summary>
-        /// Deletes a file by its metadata
+        /// Deletes a file by its metadata. See <see cref="DownloadFileAsync"/> for
+        /// why the storage target always comes from the column's configuration,
+        /// never from row-persisted metadata.
         /// </summary>
         public async Task DeleteFileAsync(
-            FileMetadata metadata,
+            IDbTable table,
+            ColumnDto column,
             IDbModel model,
+            FileMetadata metadata,
             CancellationToken cancellationToken = default)
         {
-            if (string.IsNullOrWhiteSpace(metadata.ProviderType) || string.IsNullOrWhiteSpace(metadata.BucketName))
-            {
-                return; // Nothing to delete
-            }
-
-            var bucketConfig = new StorageBucketConfig
-            {
-                BucketName = metadata.BucketName,
-                ProviderType = metadata.ProviderType
-            };
+            var bucketConfig = GetBucketConfig(table, column, model);
+            if (bucketConfig == null)
+                return; // No storage configured for this column; nothing to delete.
 
             var provider = _providerFactory.GetProvider(bucketConfig);
             await provider.DeleteAsync(bucketConfig, metadata.FileKey, cancellationToken);
         }
 
         /// <summary>
-        /// Gets a presigned URL for temporary file access
+        /// Gets a presigned URL for temporary file access. See
+        /// <see cref="DownloadFileAsync"/> for why the storage target always
+        /// comes from the column's configuration, never from row-persisted
+        /// metadata.
         /// </summary>
         public async Task<string> GetFileUrlAsync(
-            FileMetadata metadata,
+            IDbTable table,
+            ColumnDto column,
             IDbModel model,
+            FileMetadata metadata,
             int expirationMinutes = 15,
             CancellationToken cancellationToken = default)
         {
-            if (string.IsNullOrWhiteSpace(metadata.ProviderType) || string.IsNullOrWhiteSpace(metadata.BucketName))
-            {
-                throw new InvalidOperationException("File metadata is missing provider or bucket information");
-            }
-
-            var bucketConfig = new StorageBucketConfig
-            {
-                BucketName = metadata.BucketName,
-                ProviderType = metadata.ProviderType
-            };
+            var bucketConfig = GetBucketConfig(table, column, model)
+                ?? throw new InvalidOperationException($"No storage configuration found for {table.DbName}.{column.ColumnName}");
 
             var provider = _providerFactory.GetProvider(bucketConfig);
             return await provider.GetPresignedUrlAsync(bucketConfig, metadata.FileKey, expirationMinutes, forUpload: false);

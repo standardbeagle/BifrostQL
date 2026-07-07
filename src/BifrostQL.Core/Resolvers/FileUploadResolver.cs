@@ -1,7 +1,10 @@
 using System.Data.Common;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules;
+using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Storage;
 using GraphQL;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Core.Resolvers
 {
@@ -23,6 +26,7 @@ namespace BifrostQL.Core.Resolvers
             var bifrost = new BifrostContextAdapter(context);
             var model = bifrost.Model;
             var conFactory = bifrost.ConnFactory;
+            var dialect = conFactory.Dialect;
 
             // Get required arguments
             var tableName = context.GetArgument<string>("table");
@@ -52,13 +56,87 @@ namespace BifrostQL.Core.Resolvers
                 throw new BifrostExecutionError($"Column '{columnName}' is not configured for file storage");
             }
 
-            // Upload file to storage
+            var keyColumns = table.KeyColumns.ToList();
+            if (keyColumns.Count == 0)
+                throw new BifrostExecutionError($"Table '{table.DbName}' has no primary key");
+
+            var keyData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var keyCol in keyColumns)
+                keyData[keyCol.ColumnName] = Convert.ChangeType(recordId, GetClrType(keyCol.DataType));
+
+            var mutationTransformers = context.RequestServices?.GetService<IMutationTransformers>();
+            var transformContext = new MutationTransformContext
+            {
+                Model = model,
+                UserContext = context.UserContext,
+                Services = context.RequestServices,
+            };
+
+            // Pre-check (fix: verify row-writability BEFORE uploading, so we
+            // never orphan a blob for a nonexistent or other-tenant row). Uses
+            // primary-key-only data so the pipeline is evaluated purely for its
+            // AdditionalFilter (tenant/soft-delete/row-scope policy) and any
+            // table/action-level denial, without tripping column-level
+            // required-value validation for the file column (whose real value
+            // isn't known yet).
+            TableFilter? preCheckFilter = null;
+            if (mutationTransformers != null)
+            {
+                var preCheck = await mutationTransformers.TransformAsync(
+                    table, MutationType.Update, new Dictionary<string, object?>(keyData, StringComparer.OrdinalIgnoreCase), transformContext);
+                if (preCheck.Errors.Length > 0)
+                    throw new BifrostExecutionError(string.Join("; ", preCheck.Errors));
+                preCheckFilter = preCheck.AdditionalFilter;
+            }
+
+            var writable = await RowIsWritable(conFactory, dialect, table, keyData, preCheckFilter);
+            if (!writable)
+                throw new BifrostExecutionError($"Record not found or not accessible in table '{tableName}'.");
+
+            // Upload file to storage only after confirming the row is writable.
             var fileMetadata = await _storageService.UploadFileAsync(
                 table, column, model, recordId, fileContent, fileName, contentType, context.CancellationToken);
 
-            // Update database record with file metadata JSON
-            var metadataJson = fileMetadata.ToJson();
-            await UpdateDatabaseRecord(conFactory, table, column, recordId, metadataJson);
+            // Re-run the transformer pipeline with the real column value so
+            // policy column-write-deny and any data rewriting (e.g. audit
+            // stamps) apply to the actual write, then update — checking rows
+            // affected so a race between the pre-check and this write (row
+            // deleted/reassigned/soft-deleted in between) is not reported as
+            // success and does not leave a dangling blob.
+            var updateData = new Dictionary<string, object?>(keyData, StringComparer.OrdinalIgnoreCase)
+            {
+                [column.ColumnName] = fileMetadata.ToJson(),
+            };
+
+            MutationTransformResult finalResult;
+            if (mutationTransformers != null)
+            {
+                finalResult = await mutationTransformers.TransformAsync(table, MutationType.Update, updateData, transformContext);
+                if (finalResult.Errors.Length > 0)
+                {
+                    await TryDeleteOrphanBlobAsync(table, column, model, fileMetadata, context.CancellationToken);
+                    throw new BifrostExecutionError(string.Join("; ", finalResult.Errors));
+                }
+            }
+            else
+            {
+                finalResult = new MutationTransformResult { MutationType = MutationType.Update, Data = updateData };
+            }
+
+            var rowsAffected = await UpdateDatabaseRecord(conFactory, dialect, table, keyData, finalResult);
+            if (rowsAffected == 0)
+            {
+                await TryDeleteOrphanBlobAsync(table, column, model, fileMetadata, context.CancellationToken);
+                throw new BifrostExecutionError($"Record not found or not accessible in table '{tableName}'.");
+            }
+
+            // Re-upload orphans the previous blob referenced by the row's prior
+            // metadata; that cleanup is intentionally best-effort and
+            // out-of-band (a stale row is impossible here because the UPDATE
+            // above already committed the new reference), so failures are
+            // swallowed rather than turning a successful upload into an error.
+            // See docs: orphaned blobs from superseded uploads are expected to
+            // be reclaimed by out-of-band storage GC, not by this request path.
 
             // Return file metadata
             return new FileUploadResult
@@ -73,12 +151,17 @@ namespace BifrostQL.Core.Resolvers
             };
         }
 
-        private static async Task UpdateDatabaseRecord(
+        /// <summary>
+        /// Checks whether a row exists under the combined tenant/soft-delete/
+        /// row-scope-policy filter, without writing anything. Used to confirm
+        /// writability before spending the (potentially large) storage upload.
+        /// </summary>
+        private static async Task<bool> RowIsWritable(
             IDbConnFactory conFactory,
+            ISqlDialect dialect,
             IDbTable table,
-            ColumnDto column,
-            string recordId,
-            string metadataJson)
+            Dictionary<string, object?> keyData,
+            TableFilter? additionalFilter)
         {
             await using var conn = conFactory.GetConnection();
             try
@@ -86,41 +169,106 @@ namespace BifrostQL.Core.Resolvers
                 await conn.OpenAsync();
                 await using var cmd = conn.CreateCommand();
 
-                var dialect = conFactory.Dialect;
                 var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+                var whereClause = string.Join(" AND ", keyData.Keys.Select(k => $"{dialect.EscapeIdentifier(k)} = @{k}"));
 
-                // Build UPDATE statement
-                var keyColumns = table.KeyColumns.ToList();
-                if (keyColumns.Count == 0)
-                    throw new BifrostExecutionError($"Table '{table.DbName}' has no primary key");
-
-                // For single primary key
-                var setClause = $"{dialect.EscapeIdentifier(column.ColumnName)} = @fileMetadata";
-                var whereClause = string.Join(" AND ", keyColumns.Select(k => 
-                    $"{dialect.EscapeIdentifier(k.ColumnName)} = @pk_{k.ColumnName}"));
-
-                cmd.CommandText = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}";
-
-                // Add parameters
-                var fileParam = cmd.CreateParameter();
-                fileParam.ParameterName = "@fileMetadata";
-                fileParam.Value = metadataJson;
-                cmd.Parameters.Add(fileParam);
-
-                // Add PK parameter(s)
-                foreach (var keyCol in keyColumns)
+                var parameters = new SqlParameterCollection();
+                var filterSuffix = "";
+                IReadOnlyList<SqlParameterInfo> filterParams = Array.Empty<SqlParameterInfo>();
+                if (additionalFilter != null)
                 {
-                    var pkParam = cmd.CreateParameter();
-                    pkParam.ParameterName = $"@pk_{keyCol.ColumnName}";
-                    pkParam.Value = Convert.ChangeType(recordId, GetClrType(keyCol.DataType));
-                    cmd.Parameters.Add(pkParam);
+                    var rendered = additionalFilter.RenderForMutation(dialect, parameters);
+                    filterSuffix = $" AND ({rendered.Sql})";
+                    filterParams = parameters.Parameters;
                 }
 
-                await cmd.ExecuteNonQueryAsync();
+                cmd.CommandText = $"SELECT 1 FROM {tableRef} WHERE {whereClause}{filterSuffix}";
+                DbParameterBinder.AddParameters(cmd, keyData);
+                DbParameterBinder.AddExtraParameters(cmd, filterParams);
+
+                var result = await cmd.ExecuteScalarAsync();
+                return result != null;
+            }
+            catch (BifrostExecutionError)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new BifrostExecutionError($"Failed to verify record accessibility: {ex.Message}", ex);
+            }
+        }
+
+        private static async Task<int> UpdateDatabaseRecord(
+            IDbConnFactory conFactory,
+            ISqlDialect dialect,
+            IDbTable table,
+            Dictionary<string, object?> keyData,
+            MutationTransformResult transformResult)
+        {
+            await using var conn = conFactory.GetConnection();
+            try
+            {
+                await conn.OpenAsync();
+                await using var cmd = conn.CreateCommand();
+
+                var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+                var dbData = DbParameterBinder.ToDbColumnKeys(table, transformResult.Data);
+                var setData = dbData
+                    .Where(d => !keyData.ContainsKey(d.Key))
+                    .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+
+                if (setData.Count == 0)
+                    return 0;
+
+                var setClause = string.Join(",", setData.Select(kv => DbParameterBinder.SetAssignment(dialect, table, kv.Key)));
+                var whereClause = string.Join(" AND ", keyData.Keys.Select(k => $"{dialect.EscapeIdentifier(k)} = @{k}"));
+
+                var parameters = new SqlParameterCollection();
+                var filterSuffix = "";
+                IReadOnlyList<SqlParameterInfo> filterParams = Array.Empty<SqlParameterInfo>();
+                if (transformResult.AdditionalFilter != null)
+                {
+                    var rendered = transformResult.AdditionalFilter.RenderForMutation(dialect, parameters);
+                    filterSuffix = $" AND ({rendered.Sql})";
+                    filterParams = parameters.Parameters;
+                }
+
+                cmd.CommandText = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{filterSuffix}";
+
+                DbParameterBinder.AddParameters(cmd, keyData);
+                DbParameterBinder.AddParameters(cmd, setData);
+                DbParameterBinder.AddExtraParameters(cmd, filterParams);
+
+                return await cmd.ExecuteNonQueryAsync();
+            }
+            catch (BifrostExecutionError)
+            {
+                throw;
             }
             catch (Exception ex)
             {
                 throw new BifrostExecutionError($"Failed to update database record: {ex.Message}", ex);
+            }
+        }
+
+        /// <summary>
+        /// Best-effort cleanup of a blob that was just uploaded but whose
+        /// corresponding row write failed or affected zero rows, so a rejected
+        /// upload does not leave an orphaned object in storage. Failures here
+        /// are swallowed: the caller is already about to raise the original
+        /// error, and a cleanup failure must not mask it or crash the request.
+        /// </summary>
+        private async Task TryDeleteOrphanBlobAsync(
+            IDbTable table, ColumnDto column, IDbModel model, FileMetadata fileMetadata, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await _storageService.DeleteFileAsync(table, column, model, fileMetadata, cancellationToken);
+            }
+            catch
+            {
+                // Best-effort cleanup only; the original failure is what surfaces to the caller.
             }
         }
 

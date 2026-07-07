@@ -77,25 +77,42 @@ public sealed class AuditMutationTransformer : IMutationTransformer, IModuleName
         var hasAuditKey = !string.IsNullOrWhiteSpace(auditKey);
         var auditValue = ResolveAuditUser(auditKey, context.UserContext, hasAuditKey);
 
+        // Audit user columns (created-by/updated-by/deleted-by) are server-owned and
+        // must never be settable by the client, or a caller could spoof audit data.
+        // When a user-audit-key is configured we overwrite the column with the
+        // resolved claim (server-controlled — it may be null when the claim is absent,
+        // which is still a value the client cannot influence). When NO user-audit-key
+        // is configured we have no trustworthy value, so instead of leaking a
+        // client-supplied value through we STRIP the key entirely, leaving the DB
+        // default / existing value to stand. Either way the client's value never
+        // reaches the row.
+        void StampUser(string columnName)
+        {
+            if (hasAuditKey)
+                data[columnName] = auditValue;
+            else
+                data.Remove(columnName);
+        }
+
         foreach (var column in table.Columns)
         {
             switch (mutationType)
             {
                 case MutationType.Insert:
                     if (column.CompareMetadata("populate", "created-on")) data[column.ColumnName] = dateTime;
-                    if (column.CompareMetadata("populate", "created-by") && hasAuditKey) data[column.ColumnName] = auditValue;
+                    if (column.CompareMetadata("populate", "created-by")) StampUser(column.ColumnName);
                     if (column.CompareMetadata("populate", "updated-on")) data[column.ColumnName] = dateTime;
-                    if (column.CompareMetadata("populate", "updated-by") && hasAuditKey) data[column.ColumnName] = auditValue;
+                    if (column.CompareMetadata("populate", "updated-by")) StampUser(column.ColumnName);
                     break;
                 case MutationType.Update:
                     if (column.CompareMetadata("populate", "updated-on")) data[column.ColumnName] = dateTime;
-                    if (column.CompareMetadata("populate", "updated-by") && hasAuditKey) data[column.ColumnName] = auditValue;
+                    if (column.CompareMetadata("populate", "updated-by")) StampUser(column.ColumnName);
                     break;
                 case MutationType.Delete:
                     if (column.CompareMetadata("populate", "updated-on")) data[column.ColumnName] = dateTime;
-                    if (column.CompareMetadata("populate", "updated-by") && hasAuditKey) data[column.ColumnName] = auditValue;
+                    if (column.CompareMetadata("populate", "updated-by")) StampUser(column.ColumnName);
                     if (column.CompareMetadata("populate", "deleted-on")) data[column.ColumnName] = dateTime;
-                    if (column.CompareMetadata("populate", "deleted-by") && hasAuditKey) data[column.ColumnName] = auditValue;
+                    if (column.CompareMetadata("populate", "deleted-by")) StampUser(column.ColumnName);
                     break;
             }
         }

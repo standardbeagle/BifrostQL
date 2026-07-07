@@ -35,6 +35,19 @@ public class BifrostProfileFailClosedTests
             => ValueTask.FromResult(new MutationTransformResult { MutationType = mutationType, Data = data });
     }
 
+    /// <summary>A named query observer (e.g. an audit hook) that a profile might try to disable.</summary>
+    private sealed class NamedAuditObserver : IQueryObserver, IModuleNamed
+    {
+        public string ModuleName => "audit";
+        public QueryPhase[] Phases => new[] { QueryPhase.AfterExecute };
+        public ValueTask OnQueryPhaseAsync(QueryPhase phase, QueryObserverContext context) => ValueTask.CompletedTask;
+    }
+
+    private static IQueryObservers ObserverSource() => new QueryObserversWrap
+    {
+        Observers = new IQueryObserver[] { new NamedAuditObserver() },
+    };
+
     private static IFilterTransformers FilterSource() => new FilterTransformersWrap
     {
         Transformers = new IFilterTransformer[]
@@ -113,6 +126,32 @@ public class BifrostProfileFailClosedTests
         filtered.Should().Contain(t => t is SoftDeleteMutationTransformer);
         filtered.Should().NotContain(t => t is AppMutationTransformer,
             "an application module absent from the profile's list is disabled");
+    }
+
+    [Fact]
+    public void DefaultProfile_StillRetainsNamedQueryObservers()
+    {
+        // Observers carry no Priority band, so they are fail-closed: a named audit
+        // observer must survive the empty "default" profile (whose name is fully
+        // client-controlled) rather than being silently stripped like the pre-fix
+        // IsModuleActive filtering did.
+        var defaultProfile = new BifrostProfile { Name = "default", Modules = Array.Empty<string>() };
+
+        var filtered = BifrostProfileRegistry.FilterBy(ObserverSource(), defaultProfile);
+
+        filtered.Should().Contain(o => o is NamedAuditObserver,
+            "audit/lifecycle observers cannot be disabled by profile selection");
+    }
+
+    [Fact]
+    public void NamedProfileOmittingObserver_StillRetainsIt()
+    {
+        // Even a named profile that lists other modules must not drop the observer.
+        var profile = new BifrostProfile { Name = "reporting", Modules = new[] { "something-else" } };
+
+        var filtered = BifrostProfileRegistry.FilterBy(ObserverSource(), profile);
+
+        filtered.Should().Contain(o => o is NamedAuditObserver);
     }
 
     [Theory]

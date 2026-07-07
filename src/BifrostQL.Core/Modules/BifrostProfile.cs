@@ -217,14 +217,17 @@ public sealed class BifrostProfileRegistry
     }
 
     /// <summary>
-    /// Creates filtered wrapper collections for a given profile.
+    /// Returns observers for a given profile. Fail-closed like the filter/mutation
+    /// overloads, but observers carry no <c>Priority</c>, so there is no band to place
+    /// them in — a profile cannot tell a security-relevant audit observer from a
+    /// disposable metrics hook. Treat every observer as non-toggleable and always retain
+    /// it, so a client-selectable profile (including the empty "default" profile) can
+    /// never silently strip an audit/lifecycle observer by omitting its module name. If
+    /// observers ever gain a priority band, mirror the filter/mutation gating here.
     /// </summary>
     public static IQueryObservers FilterBy(IQueryObservers source, BifrostProfile profile)
     {
-        if (profile.Modules == null)
-            return source;
-
-        var filtered = source.Where(o => profile.IsModuleActive(o)).ToList();
-        return new QueryObserversWrap { Observers = filtered };
+        _ = profile;
+        return source;
     }
 }

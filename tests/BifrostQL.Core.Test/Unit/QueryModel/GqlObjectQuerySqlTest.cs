@@ -864,6 +864,38 @@ public sealed class GqlObjectQuerySqlTest
     }
 
     [Fact]
+    public void AddSqlParameterized_AggregateWithNonKeyScalarSelected_InjectsCorrelationKeyIntoSelect()
+    {
+        // Regression for `data { name _agg(...) }`: a scalar is selected but the
+        // aggregate-correlation key (the parent PK for a OneToMany hop) is NOT. The
+        // base SELECT must still project that key so ReaderEnum can probe it —
+        // previously it was only injected when NO columns were selected, so this
+        // shape threw KeyNotFoundException at read time.
+        var dbModel = StandardTestFixtures.UsersWithOrders();
+        var usersTable = dbModel.GetTableFromDbName("Users");
+        var link = usersTable.MultiLinks["orders"];
+        var aggregateColumn = new GqlAggregateColumn(
+            new List<(LinkDirection, TableLinkDto)> { (LinkDirection.OneToMany, link) },
+            "Total",
+            "totalOrderAmount",
+            AggregateOperationType.Sum);
+        var query = GqlObjectQueryBuilder.Create()
+            .WithDbTable(usersTable)
+            .WithColumns("Name") // NON-key scalar only; PK not selected
+            .WithAggregateColumn(aggregateColumn)
+            .Build();
+        var sqls = new Dictionary<string, ParameterizedSql>();
+
+        // Act
+        query.AddSqlParameterized(dbModel, Dialect, sqls, new SqlParameterCollection());
+
+        // Assert — base SELECT keeps the requested scalar AND injects the key.
+        sqls.Should().ContainKey("Users");
+        sqls["Users"].Sql.Should().Contain("[Name]");
+        sqls["Users"].Sql.Should().Contain("[Id]");
+    }
+
+    [Fact]
     public void AddSqlParameterized_AggregateOnCompositePrimaryKeyTable_ThrowsClearError()
     {
         // Aggregate correlation is single-column on both the SQL side (one srcId,

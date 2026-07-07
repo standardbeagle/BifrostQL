@@ -209,25 +209,42 @@ namespace BifrostQL.Core.Resolvers
             // client-supplied WHERE. This must never be optional out from under a
             // caller — the generic-table role only controls whether the feature is
             // reachable at all.
+            //
+            // A relationship-shaped security filter (policy row-scope through a
+            // related table) contributes an INNER JOIN that belongs in the FROM
+            // clause, plus a WHERE predicate. Render the two parts separately so the
+            // join is spliced before WHERE — wrapping the whole rendering in
+            // `WHERE (...)` produced `WHERE ( INNER JOIN ... )`, invalid SQL. The
+            // relationship sub-join selects DISTINCT parent ids, so it narrows without
+            // multiplying rows (COUNT(*) stays accurate).
             var securityParams = new SqlParameterCollection();
-            string securitySql = "";
+            string securityJoins = "";
+            string securityWhere = "";
             if (securityFilter != null)
             {
-                var rendered = securityFilter.ToSqlParameterized(model, dialect, securityParams, alias: table.DbName);
-                securitySql = rendered.Sql;
+                var parts = securityFilter.RenderParts(model, dialect, securityParams, table.DbName);
+                securityJoins = parts.Joins ?? "";
+                securityWhere = parts.Where ?? "";
             }
 
-            var combinedWhereSql = (whereSql, securitySql) switch
+            var combinedWhereSql = (whereSql, securityWhere) switch
             {
                 ("", "") => "",
-                ("", _) => $" WHERE ({securitySql})",
+                ("", _) => $" WHERE ({securityWhere})",
                 (_, "") => whereSql,
-                _ => $"{whereSql} AND ({securitySql})",
+                _ => $"{whereSql} AND ({securityWhere})",
             };
 
-            var countSql = $"SELECT COUNT(*) FROM {table.DbTableRef}{combinedWhereSql}";
+            // Qualify SELECT with the base table name when a security join is present
+            // so the joined table's columns don't leak into `SELECT *`.
+            var fromClause = $"{table.DbTableRef}{securityJoins}";
+            var selectList = string.IsNullOrEmpty(securityJoins)
+                ? "*"
+                : $"{dialect.EscapeIdentifier(table.DbName)}.*";
+
+            var countSql = $"SELECT COUNT(*) FROM {fromClause}{combinedWhereSql}";
             var pagination = dialect.Pagination(null, offset, limit);
-            var dataSql = $"SELECT * FROM {table.DbTableRef}{combinedWhereSql}{pagination}";
+            var dataSql = $"SELECT {selectList} FROM {fromClause}{combinedWhereSql}{pagination}";
 
             await using var conn = connFactory.GetConnection();
             try

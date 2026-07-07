@@ -126,16 +126,30 @@ namespace BifrostQL.Core.QueryModel
                     "aggregate correlation uses a single key column and would produce incorrect results.");
 
             var fullColumns = FullColumnNames.ToList();
-            if (fullColumns.Count == 0 && AggregateColumns.Count > 0)
+            if (AggregateColumns.Count > 0)
             {
-                // Aggregate-only selection (e.g. `data { _agg { ... } }`) with no scalar
-                // columns. Without a base SELECT the primary result set is never emitted,
-                // and ReaderEnum then throws KeyNotFoundException looking up this node's
-                // rows and the parent key that aggregate correlation reads. Select the key
-                // column(s) so the row set and its keys exist; GraphQL still projects only
-                // the requested fields. (A pure count-only selection — IncludeResult with
-                // no columns and no aggregates — legitimately emits no data query.)
-                fullColumns = DbTable.KeyColumns.Select(c => new GqlObjectColumn(c.DbName)).ToList();
+                // Aggregate correlation matches each aggregate row back to its parent
+                // row by the column the aggregate joined on (ParentKeyColumnDbName —
+                // the parent PK for a OneToMany first hop, the child FK for a
+                // ManyToOne first hop). ReaderEnum probes the base result set by that
+                // column's value, so it MUST be in the SELECT even when the user
+                // selected only non-key scalars (`data { name _agg {...} }`) or
+                // nothing at all (`data { _agg {...} }`) — otherwise ReaderEnum threw
+                // KeyNotFoundException probing a column that was never projected.
+                // Also project the key column(s) so an aggregate-only selection still
+                // emits a base result set with its row identity. (A pure count-only
+                // selection — IncludeResult with no columns and no aggregates —
+                // legitimately emits no data query.)
+                // Skip link-less aggregates here: they are rejected later by
+                // GqlAggregateColumn.ToSqlParameterized with a clearer "must include
+                // at least one nested-FK link" message, and probing ParentKeyColumnDbName
+                // would pre-empt it.
+                var neededDbNames = DbTable.KeyColumns.Select(c => c.DbName)
+                    .Concat(AggregateColumns.Where(a => a.Links.Count > 0).Select(a => a.ParentKeyColumnDbName));
+                fullColumns = fullColumns
+                    .Concat(neededDbNames.Select(n => new GqlObjectColumn(n)))
+                    .DistinctBy(c => c.GraphQlDbName, SqlNameComparer.Instance)
+                    .ToList();
             }
             var tableRef = dialect.TableReference(SchemaName, TableName);
 
@@ -283,8 +297,18 @@ namespace BifrostQL.Core.QueryModel
                 return new ParameterizedSql(pagedSql, main.Parameters.Concat(relationParams).Concat(filter.Parameters).ToList());
             }
 
+            // Non-paged multi-row join (explicit `_join_`, and non-IncludeResult
+            // collections). A LIMIT here is GLOBAL across every parent's joined rows,
+            // so a DEFAULT limit would silently drop matched rows once the combined
+            // child count crossed it (dialect.Pagination defaults null -> LIMIT 100).
+            // Per-parent windowing is reserved for the IncludeResult paged path above
+            // (it needs __rn/__total columns the flat reader cannot consume). So:
+            // apply only an EXPLICITLY requested limit/offset — documented as global —
+            // and otherwise emit NO limit (the -1 sentinel) so every parent keeps all
+            // its matched rows instead of being silently truncated at 100.
+            var effectiveLimit = tableJoin.ConnectedTable.Limit ?? -1;
             var sortCols = RenderSortColumns(dialect, tableJoin.ConnectedTable.DbTable, tableJoin.ConnectedTable.Sort);
-            var pagination = dialect.Pagination(sortCols, tableJoin.ConnectedTable.Offset, tableJoin.ConnectedTable.Limit);
+            var pagination = dialect.Pagination(sortCols, tableJoin.ConnectedTable.Offset, effectiveLimit);
 
             return new ParameterizedSql(wrap, main.Parameters.Concat(relationParams).ToList())
                 .Append(filter)
@@ -333,6 +357,19 @@ namespace BifrostQL.Core.QueryModel
                     $"SELECT DISTINCT {joinIdNames} FROM ({inner.Sql}) {dialect.EscapeIdentifier("p")}",
                     inner.Parameters);
             }
+
+            // A join nested beneath a many-to-many collection is not correctly
+            // supported: the parent m2m restricted sub-query exposes SOURCE-key values
+            // as its JoinIds, but the stitch below matches them against this layer
+            // using the parent's ConnectedColumns, which name TARGET columns — and the
+            // junction Bridge is never consulted. That silently produced wrong/empty
+            // rows. Fail loudly instead of returning incorrect data; correlating the
+            // child through the junction is a deferred feature.
+            if (query.Parent.Join.Bridge is not null)
+                throw new BifrostExecutionError(
+                    $"Nesting a join ('{query.Join.Name}') beneath a many-to-many collection " +
+                    $"('{query.Parent.Join.Name}') is not supported: the child cannot be correlated " +
+                    "through the junction table. Query the many-to-many collection without a further nested join.");
 
             var ea = dialect.EscapeIdentifier("a");
             var eb = dialect.EscapeIdentifier("b");

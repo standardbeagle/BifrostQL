@@ -37,6 +37,7 @@ namespace BifrostQL.Core.Resolvers
                 throw new BifrostExecutionError($"Batch size {actions.Count} exceeds maximum allowed size of {maxBatchSize}.");
 
             var userContext = context.UserContext;
+            var ct = context.CancellationToken;
             var transformContext = new MutationTransformContext { Model = model, UserContext = userContext, Services = context.RequestServices };
 
             // Module mutation arguments (e.g. _hardDelete) are declared on the
@@ -51,26 +52,26 @@ namespace BifrostQL.Core.Resolvers
             DbTransaction? transaction = null;
             try
             {
-                await conn.OpenAsync();
-                transaction = await conn.BeginTransactionAsync();
+                await conn.OpenAsync(ct);
+                transaction = await conn.BeginTransactionAsync(ct);
                 foreach (var action in actions)
                 {
-                    var outcome = await ExecuteAction(action, _table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext, moduleArguments);
+                    var outcome = await ExecuteAction(action, _table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext, moduleArguments, ct);
                     if (outcome is not null)
                         outcomes.Add(outcome);
                 }
-                await transaction.CommitAsync();
+                await transaction.CommitAsync(ct);
             }
             catch (BifrostExecutionError)
             {
                 if (transaction != null)
-                    await transaction.RollbackAsync();
+                    await transaction.RollbackAsync(ct);
                 throw;
             }
             catch (Exception ex)
             {
                 if (transaction != null)
-                    await transaction.RollbackAsync();
+                    await transaction.RollbackAsync(ct);
                 throw BifrostExecutionError.FromDatabaseException(ex);
             }
             finally
@@ -146,23 +147,24 @@ namespace BifrostQL.Core.Resolvers
             DbTransaction transaction,
             IDictionary<string, object?> userContext,
             MutationTransformContext transformContext,
-            IReadOnlyDictionary<string, object?> moduleArguments)
+            IReadOnlyDictionary<string, object?> moduleArguments,
+            CancellationToken ct)
         {
             if (action.TryGetValue("insert", out var insertObj) && insertObj is Dictionary<string, object?> insertData)
             {
-                return await ExecuteInsert(insertData, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext);
+                return await ExecuteInsert(insertData, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext, ct);
             }
             if (action.TryGetValue("update", out var updateObj) && updateObj is Dictionary<string, object?> updateData)
             {
-                return await ExecuteUpdate(updateData, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext);
+                return await ExecuteUpdate(updateData, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext, ct);
             }
             if (action.TryGetValue("delete", out var deleteObj) && deleteObj is Dictionary<string, object?> deleteData)
             {
-                return await ExecuteDelete(deleteData, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext, moduleArguments);
+                return await ExecuteDelete(deleteData, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext, moduleArguments, ct);
             }
             if (action.TryGetValue("upsert", out var upsertObj) && upsertObj is Dictionary<string, object?> upsertData)
             {
-                return await ExecuteUpsert(upsertData, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext);
+                return await ExecuteUpsert(upsertData, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext, ct);
             }
             return null;
         }
@@ -176,7 +178,8 @@ namespace BifrostQL.Core.Resolvers
             DbConnection conn,
             DbTransaction transaction,
             IDictionary<string, object?> userContext,
-            MutationTransformContext transformContext)
+            MutationTransformContext transformContext,
+            CancellationToken ct)
         {
             if (data.Count == 0) return null;
 
@@ -200,7 +203,7 @@ namespace BifrostQL.Core.Resolvers
             cmd.CommandText = sql;
             cmd.Transaction = transaction;
             AddParameters(cmd, data);
-            var affected = await cmd.ExecuteNonQueryAsync();
+            var affected = await cmd.ExecuteNonQueryAsync(ct);
             return new BatchActionOutcome(affected, MutationType.Insert, data, transformResult.StateTransition);
         }
 
@@ -213,7 +216,8 @@ namespace BifrostQL.Core.Resolvers
             DbConnection conn,
             DbTransaction transaction,
             IDictionary<string, object?> userContext,
-            MutationTransformContext transformContext)
+            MutationTransformContext transformContext,
+            CancellationToken ct)
         {
             if (data.Count == 0) return null;
 
@@ -270,7 +274,7 @@ namespace BifrostQL.Core.Resolvers
             cmd.Transaction = transaction;
             AddParameters(cmd, updatedData);
             AddExtraParameters(cmd, additionalFilter.Parameters);
-            var affected = await cmd.ExecuteNonQueryAsync();
+            var affected = await cmd.ExecuteNonQueryAsync(ct);
             return new BatchActionOutcome(affected, MutationType.Update, updatedData, transformResult.StateTransition);
         }
 
@@ -284,7 +288,8 @@ namespace BifrostQL.Core.Resolvers
             DbTransaction transaction,
             IDictionary<string, object?> userContext,
             MutationTransformContext transformContext,
-            IReadOnlyDictionary<string, object?> moduleArguments)
+            IReadOnlyDictionary<string, object?> moduleArguments,
+            CancellationToken ct)
         {
             if (data.Count == 0) return null;
 
@@ -329,7 +334,7 @@ namespace BifrostQL.Core.Resolvers
                 cmd.Transaction = transaction;
                 AddParameters(cmd, dbData);
                 AddExtraParameters(cmd, additionalFilter.Parameters);
-                var softAffected = await cmd.ExecuteNonQueryAsync();
+                var softAffected = await cmd.ExecuteNonQueryAsync(ct);
                 return new BatchActionOutcome(softAffected, MutationType.Update, transformResult.Data, transformResult.StateTransition);
             }
 
@@ -345,7 +350,7 @@ namespace BifrostQL.Core.Resolvers
             deleteCmd.Transaction = transaction;
             AddParameters(deleteCmd, deleteData);
             AddExtraParameters(deleteCmd, additionalFilter.Parameters);
-            var deleteAffected = await deleteCmd.ExecuteNonQueryAsync();
+            var deleteAffected = await deleteCmd.ExecuteNonQueryAsync(ct);
             return new BatchActionOutcome(deleteAffected, MutationType.Delete, deleteData, transformResult.StateTransition);
         }
 
@@ -358,7 +363,8 @@ namespace BifrostQL.Core.Resolvers
             DbConnection conn,
             DbTransaction transaction,
             IDictionary<string, object?> userContext,
-            MutationTransformContext transformContext)
+            MutationTransformContext transformContext,
+            CancellationToken ct)
         {
             if (data.Count == 0) return null;
 
@@ -390,14 +396,14 @@ namespace BifrostQL.Core.Resolvers
                 cmd.CommandText = upsertSql;
                 cmd.Transaction = transaction;
                 AddParameters(cmd, upsertData);
-                var affected = await cmd.ExecuteNonQueryAsync();
+                var affected = await cmd.ExecuteNonQueryAsync(ct);
                 return new BatchActionOutcome(affected, MutationType.Update, upsertData, transformResult.StateTransition);
             }
 
             if (keyColumns.Count > 0)
-                return await ExecuteUpdate(data, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext);
+                return await ExecuteUpdate(data, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext, ct);
 
-            return await ExecuteInsert(data, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext);
+            return await ExecuteInsert(data, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext, ct);
         }
 
     }

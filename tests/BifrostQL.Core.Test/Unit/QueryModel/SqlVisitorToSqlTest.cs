@@ -125,6 +125,49 @@ namespace BifrostQL.Core.QueryModel
         }
 
         [Fact]
+        public async Task ExplicitJoinOnClause_MapsGraphQlColumnNamesToDbNames()
+        {
+            // The `on:` argument names columns by GraphQL field name. They must be
+            // mapped to real DB column names, or a renamed column emits an invalid
+            // identifier. Here `percentage_34` -> `percentage%` (work shops) and
+            // `id` -> `sid` (sessions).
+            var ctx = new SqlContext();
+            var visitor = new SqlVisitor();
+            var model = new DbModel { Tables = GetFakeTables() };
+            var ast = Parser.Parse("query { work__shops { data { id j:_join_sessions(on: { percentage_34: { _eq: id } }) { status } } } }");
+            await visitor.VisitAsync(ast, ctx);
+            var sqls = GetSqls(ctx, model);
+
+            var joinSql = sqls[0]["work__shops->j"];
+            joinSql.Should().Contain("[percentage%] AS [JoinId]");
+            joinSql.Should().Contain("[b].[sid]");
+            joinSql.Should().NotContain("[percentage_34]");
+            joinSql.Should().NotContain("[b].[id]");
+        }
+
+        [Fact]
+        public async Task BigIntLiteralFilter_ParsesAsInt64_WithoutOverflow()
+        {
+            // A bigint literal (> Int32.MaxValue) previously threw OverflowException
+            // in VisitIntValueAsync (Convert.ToInt32). It must now parse as Int64 and
+            // bind as a parameter; small literals still parse as Int32 so limit/offset
+            // `(int?)` casts keep working (covered by the nested-limit paging tests).
+            var ctx = new SqlContext();
+            var visitor = new SqlVisitor();
+            var model = new DbModel { Tables = GetFakeTables() };
+            var ast = Parser.Parse("query { work__shops(filter: { id: { _eq: 5000000000 } }) { data { id } } }");
+            await visitor.VisitAsync(ast, ctx);
+
+            var query = ctx.GetFinalQueries(model).Single();
+            var parameters = new SqlParameterCollection();
+            var sqls = new Dictionary<string, ParameterizedSql>();
+            query.AddSqlParameterized(model, SqlServerDialect.Instance, sqls, parameters);
+
+            parameters.Parameters.Should().ContainSingle();
+            parameters.Parameters[0].Value.Should().BeOfType<long>().Which.Should().Be(5000000000L);
+        }
+
+        [Fact]
         public async Task AliasCountQuerySuccess()
         {
             var ctx = new SqlContext();
@@ -194,7 +237,13 @@ namespace BifrostQL.Core.QueryModel
                 .Which.Should().Equal(new Dictionary<string, string> {
                     { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY"},
                     { "work__shops=>count", "SELECT COUNT(*) FROM [dbo].[work shops]"},
-                    { "work__shops->sess", "SELECT [a].[JoinId] [src_id], [b].[sid] AS [id],[b].[status] AS [status] FROM (SELECT DISTINCT [id] AS [JoinId] FROM [dbo].[work shops]) [a] INNER JOIN [dbo].[sessions] [b] ON [a].[JoinId] != [b].[workshopid] ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY" },
+                    // Explicit `_join_` with no explicit limit no longer applies a
+                    // GLOBAL default cap (previously FETCH NEXT 100): a global LIMIT
+                    // silently dropped matched rows once the combined child count
+                    // crossed it. With no limit requested every parent keeps all its
+                    // matched rows (no FETCH NEXT). An explicitly requested limit is
+                    // still honored (see ToConnectedSqlParameterized_JoinQueryType_*).
+                    { "work__shops->sess", "SELECT [a].[JoinId] [src_id], [b].[sid] AS [id],[b].[status] AS [status] FROM (SELECT DISTINCT [id] AS [JoinId] FROM [dbo].[work shops]) [a] INNER JOIN [dbo].[sessions] [b] ON [a].[JoinId] != [b].[workshopid] ORDER BY (SELECT NULL) OFFSET 0 ROWS" },
                 });
 
         }
@@ -223,7 +272,13 @@ namespace BifrostQL.Core.QueryModel
                 .Which.Should().Equal(new Dictionary<string, string> {
                     { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY"},
                     { "work__shops=>count", "SELECT COUNT(*) FROM [dbo].[work shops]"},
-                    { "work__shops->sess", "SELECT [a].[JoinId] [src_id], [b].[sid] AS [id],[b].[status] AS [status] FROM (SELECT DISTINCT [id] AS [JoinId] FROM [dbo].[work shops]) [a] INNER JOIN [dbo].[sessions] [b] ON [a].[JoinId] != [b].[workshopid] ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY" },
+                    // Explicit `_join_` with no explicit limit no longer applies a
+                    // GLOBAL default cap (previously FETCH NEXT 100): a global LIMIT
+                    // silently dropped matched rows once the combined child count
+                    // crossed it. With no limit requested every parent keeps all its
+                    // matched rows (no FETCH NEXT). An explicitly requested limit is
+                    // still honored (see ToConnectedSqlParameterized_JoinQueryType_*).
+                    { "work__shops->sess", "SELECT [a].[JoinId] [src_id], [b].[sid] AS [id],[b].[status] AS [status] FROM (SELECT DISTINCT [id] AS [JoinId] FROM [dbo].[work shops]) [a] INNER JOIN [dbo].[sessions] [b] ON [a].[JoinId] != [b].[workshopid] ORDER BY (SELECT NULL) OFFSET 0 ROWS" },
                 });
 
         }

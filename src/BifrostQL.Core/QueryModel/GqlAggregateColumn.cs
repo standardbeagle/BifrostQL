@@ -28,6 +28,31 @@ namespace BifrostQL.Core.QueryModel
         public string? SqlKey { get; set; }
 
         /// <summary>
+        /// DbName of the column on the queried (level) table whose value keys this
+        /// aggregate's result rows — i.e. the source-side join column of the first
+        /// link, the same column <see cref="ToSqlParameterized"/> emits as
+        /// <c>srcId</c>. ReaderEnum must probe the aggregate index with THIS
+        /// column's value, not the table primary key: for a <see
+        /// cref="LinkDirection.ManyToOne"/> first hop (single-link) the joined value
+        /// is the child FK, which differs from the PK, so probing by PK matched the
+        /// wrong rows (or none). For a <see cref="LinkDirection.OneToMany"/> first
+        /// hop it is the parent's referenced key column (usually the PK).
+        /// </summary>
+        public string ParentKeyColumnDbName
+        {
+            get
+            {
+                if (Links.Count == 0)
+                    throw new BifrostExecutionError(
+                        "Aggregate correlation requires at least one link.");
+                var (direction, link) = Links[0];
+                return direction == LinkDirection.ManyToOne
+                    ? link.ChildId.DbName
+                    : link.ParentId.DbName;
+            }
+        }
+
+        /// <summary>
         /// Transformer-derived WHERE filters (tenant isolation, soft-delete,
         /// authorization policy) for each linked destination table, aligned by
         /// index with <see cref="Links"/>. Populated by the query transformer

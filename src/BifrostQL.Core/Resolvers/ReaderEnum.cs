@@ -113,11 +113,20 @@ namespace BifrostQL.Core.Resolvers
                 var keyFound = tableData.index.TryGetValue("srcId", out int keyIndex);
                 if (!valueFound || !keyFound)
                     throw new BifrostExecutionError($"Unable to find aggregate column: {name} on table: {level.Alias}:{level.GraphQlName}");
-                var parentKeyIndex = table.index[level.DbTable.KeyColumns.First().DbName];
+                // Probe by the column the aggregate actually joined on (emitted as
+                // srcId), NOT the table PK. For a ManyToOne first hop the srcId is the
+                // child FK, so probing by PK matched the wrong rows / null. This key is
+                // guaranteed present in the base SELECT by AddSqlParameterized.
+                if (!table.index.TryGetValue(aggregate.ParentKeyColumnDbName, out int parentKeyIndex))
+                    throw new BifrostExecutionError(
+                        $"Aggregate correlation column '{aggregate.ParentKeyColumnDbName}' is not present in the base result set for {level.Alias}:{level.GraphQlName}.");
                 var parentKeyValue = table.data[row][parentKeyIndex];
                 var aggregateIndex = GetAggregateIndex(aggregate.SqlKey!, tableData, keyIndex);
                 var value = aggregateIndex.First(new[] { parentKeyValue })?[valueIndex];
-                return ValueTask.FromResult<object?>(value);
+                // Route through the single DbConvert choke point so an all-NULL
+                // SUM/MIN/etc (DBNull) becomes null and does not break GraphQL scalar
+                // serialization — the same conversion ReadPerParentTotal relies on.
+                return ValueTask.FromResult<object?>(DbConvert(value));
             }
             throw new BifrostExecutionError($"Unable to find queryField: {name} on table: {level.Alias}:{level.GraphQlName}");
         }

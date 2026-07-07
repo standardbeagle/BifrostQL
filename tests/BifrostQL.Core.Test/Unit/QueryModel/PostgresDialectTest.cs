@@ -351,6 +351,19 @@ public sealed class PostgresDialectTest
     }
 
     [Fact]
+    public void Pagination_NoLimitWithOffset_EmitsValidOffset()
+    {
+        // PostgreSQL accepts a bare OFFSET, but the shared sentinel also emits an
+        // effectively-unlimited LIMIT within bigint range — a harmless superset
+        // that keeps the cross-dialect output uniform and valid.
+        var result = _sut.Pagination(null, 25, -1);
+
+        result.Should().Contain("OFFSET 25");
+        result.IndexOf("LIMIT", StringComparison.Ordinal)
+            .Should().BeLessThan(result.IndexOf("OFFSET", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Pagination_FullExample_GeneratesCorrectSql()
     {
         // Arrange

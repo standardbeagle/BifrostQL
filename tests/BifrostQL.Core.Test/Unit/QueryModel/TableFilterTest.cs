@@ -40,6 +40,44 @@ namespace BifrostQL.Core.QueryModel
         }
 
         [Fact]
+        public void RelationshipFilter_MapsGraphQlColumnNameToDbName_InSubquery()
+        {
+            // A relationship (single-link) sub-filter references a column on the
+            // PARENT table by its GraphQL name. The relationship sub-query previously
+            // emitted that GraphQL name verbatim (invalid identifier for a renamed
+            // column) and looked its type up in the DB-name-keyed ColumnLookup
+            // (missing it). Map GraphQL -> DB name, exactly like the leaf path.
+            var model = DbModelTestFixture.Create()
+                .WithTable("Orders", t => t
+                    .WithColumn("id", "int", isPrimaryKey: true)
+                    .WithColumn("customer_id", "int"))
+                .WithTable("Customers", t => t
+                    .WithColumn("id", "int", isPrimaryKey: true)
+                    .WithColumn("email_address", "nvarchar", graphQlName: "emailAddress"))
+                .WithSingleLink("Orders", "customer_id", "Customers", "id", "customer")
+                .Build();
+
+            var filter = TableFilter.FromObject(new Dictionary<string, object?>
+            {
+                { "customer", new Dictionary<string, object?>
+                    {
+                        { "emailAddress", new Dictionary<string, object?> { { "_eq", "a@b.c" } } }
+                    }
+                }
+            }, "Orders");
+            var parameters = new SqlParameterCollection();
+
+            var sut = filter.ToSqlParameterized(model, Dialect, parameters, "Orders");
+
+            // The DB column name is emitted inside the relationship sub-query, never
+            // the GraphQL name.
+            sut.Sql.Should().Contain("[email_address]");
+            sut.Sql.Should().NotContain("[emailAddress]");
+            sut.Sql.Should().Contain("INNER JOIN");
+            sut.Parameters.Should().ContainSingle().Which.Value.Should().Be("a@b.c");
+        }
+
+        [Fact]
         public void FilterNoOperationThrows()
         {
             var run = () =>

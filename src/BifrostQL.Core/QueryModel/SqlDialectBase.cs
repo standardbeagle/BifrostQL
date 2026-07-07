@@ -84,16 +84,38 @@ public abstract class SqlDialectBase : ISqlDialect
             ? " ORDER BY " + string.Join(", ", sortColumns)
             : "";
 
-        var actualLimit = limit switch { null => 100, -1 => null, _ => limit };
-        if (actualLimit.HasValue)
-            result += $" LIMIT {actualLimit}";
-
         var actualOffset = offset ?? 0;
+        var actualLimit = limit switch { null => 100, -1 => null, _ => limit };
+
+        if (actualLimit.HasValue)
+        {
+            result += $" LIMIT {actualLimit}";
+        }
+        else if (actualOffset > 0)
+        {
+            // No-limit sentinel (-1) combined with an offset. MySQL and SQLite
+            // reject a bare `OFFSET n` that has no preceding LIMIT — a syntax
+            // error. Emit an effectively-unlimited LIMIT so the OFFSET is valid.
+            // long.MaxValue works as an "all remaining rows" count on MySQL,
+            // SQLite, and PostgreSQL alike: it stays within PostgreSQL's signed
+            // bigint LIMIT range (the MySQL 2^64-1 idiom would overflow that),
+            // and PostgreSQL — which also accepts a bare OFFSET — treats the
+            // large LIMIT as a harmless no-op superset.
+            result += $" LIMIT {NoLimitRowCount}";
+        }
+
         if (actualOffset > 0)
             result += $" OFFSET {actualOffset}";
 
         return result;
     }
+
+    /// <summary>
+    /// Row count used as an "unlimited" LIMIT when the no-limit sentinel (-1) is
+    /// paired with a non-zero offset (LIMIT/OFFSET dialects require a LIMIT before
+    /// OFFSET). Valid and effectively-infinite on MySQL, SQLite, and PostgreSQL.
+    /// </summary>
+    protected virtual string NoLimitRowCount => "9223372036854775807";
 
     /// <inheritdoc />
     /// <remarks>

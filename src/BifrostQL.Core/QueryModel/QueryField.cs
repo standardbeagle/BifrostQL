@@ -173,14 +173,30 @@ namespace BifrostQL.Core.QueryModel
             if (columns.Keys.Count != 1)
                 throw new ArgumentException("on joins only support one column per table");
             var relation = columns.Values.First() as IDictionary<string, object?> ?? throw new BifrostExecutionError($"While joining table {parent.GraphQlName}, unable to convert on value to a string");
+            var connected = ToSqlData(model);
+
+            var fromGraphQlName = columns.Keys.First();
+            var connectedGraphQlName = relation.Values?.First()?.ToString() ?? throw new BifrostExecutionError($"While joining table {parent.GraphQlName}, unable to resolve join column {relation?.Keys?.FirstOrDefault()}");
+
+            // The `on:` argument names columns by their GraphQL field names. Map them
+            // to real DB column names so an explicit `_join_` works on tables whose
+            // GraphQL names differ from DB names (a renamed column was previously
+            // emitted verbatim as a DB identifier, producing an invalid-column error).
+            // Fall back to the given name when it is not a mapped scalar (e.g. it is
+            // already a DB name in a directly-constructed query).
+            var fromDbColumn = parent.DbTable.GraphQlLookup.TryGetValue(fromGraphQlName, out var fromCol)
+                ? fromCol.DbName : fromGraphQlName;
+            var connectedDbColumn = connected.DbTable.GraphQlLookup.TryGetValue(connectedGraphQlName, out var connectedCol)
+                ? connectedCol.DbName : connectedGraphQlName;
+
             return new TableJoin
             {
                 Name = Name,
                 Alias = Alias,
                 FromTable = parent,
-                ConnectedTable = ToSqlData(model),
-                FromColumn = columns.Keys.First(),
-                ConnectedColumn = relation.Values?.First()?.ToString() ?? throw new BifrostExecutionError($"While joining table {parent.GraphQlName}, unable to resolve join column {relation?.Keys?.FirstOrDefault()}"),
+                ConnectedTable = connected,
+                FromColumn = fromDbColumn,
+                ConnectedColumn = connectedDbColumn,
                 Operator = relation.Keys.First(),
                 QueryType = GetQueryType(Name),
             };

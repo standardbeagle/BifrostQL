@@ -67,8 +67,17 @@ namespace BifrostQL.Core.QueryModel
 
         protected override ValueTask VisitIntValueAsync(GraphQLIntValue value, ISqlContext context)
         {
-            context.Set(Convert.ToInt32(value.Value.ToString()));
-            context.AddValue(Convert.ToInt32(value.Value.ToString()));
+            // Parse as Int32 when it fits, else fall back to Int64. A bigint literal
+            // such as `_eq: 5000000000` overflows Int32 and threw OverflowException;
+            // keeping small values as Int32 preserves the `(int?)` casts that read
+            // limit/offset arguments (an Int64 boxed value would fail those casts).
+            var text = value.Value.ToString();
+            // Box each branch as object independently: a `cond ? int : long` ternary
+            // has type long, which would box even small values as Int64 and break the
+            // `(int?)` casts that read limit/offset.
+            object parsed = int.TryParse(text, out var i) ? i : (object)long.Parse(text);
+            context.Set(parsed);
+            context.AddValue(parsed);
             return base.VisitIntValueAsync(value, context);
         }
         protected override ValueTask VisitFloatValueAsync(GraphQLFloatValue value, ISqlContext context)

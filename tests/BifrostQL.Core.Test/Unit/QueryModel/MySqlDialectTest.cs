@@ -293,6 +293,20 @@ public sealed class MySqlDialectTest
     }
 
     [Fact]
+    public void Pagination_NoLimitWithOffset_EmitsLimitBeforeOffset()
+    {
+        // MySQL rejects a bare `OFFSET n` with no preceding LIMIT (syntax error).
+        // The no-limit sentinel (-1) paired with an offset must still produce a
+        // LIMIT so the OFFSET is legal.
+        var result = _sut.Pagination(null, 25, -1);
+
+        result.Should().Contain("LIMIT");
+        result.Should().Contain("OFFSET 25");
+        result.IndexOf("LIMIT", StringComparison.Ordinal)
+            .Should().BeLessThan(result.IndexOf("OFFSET", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Pagination_FullExample_GeneratesCorrectSql()
     {
         // Arrange

@@ -380,6 +380,26 @@ namespace BifrostQL.Core.QueryModel
             return new FilterParts(joins, where, rendered.SelectMany(r => r.Parameters).ToList());
         }
 
+        /// <summary>
+        /// Resolves a filter column against a relationship's parent table, tolerant of
+        /// both name spaces exactly like the leaf <see cref="RenderParts"/> path: user
+        /// filters key by GraphQL name, security transformers by raw DB name. Returns
+        /// the resolved column so callers use its <c>DbName</c> in SQL (renamed columns
+        /// broke when the raw GraphQL name was emitted) and its <c>DataType</c> for
+        /// dialect casts (a DB-name-keyed lookup on a GraphQL name missed the type,
+        /// e.g. skipping Postgres <c>::date</c> casts).
+        /// </summary>
+        private static ColumnDto ResolveRelationshipColumn(TableLinkDto link, string columnName)
+        {
+            var parent = link.ParentTable;
+            if (parent.GraphQlLookup.TryGetValue(columnName, out var byGraphQl))
+                return byGraphQl;
+            if (parent.ColumnLookup.TryGetValue(columnName, out var byDb))
+                return byDb;
+            throw new BifrostExecutionError(
+                $"Relationship filter references unknown column '{columnName}' on table '{parent.DbName}'.");
+        }
+
         private static (string sql, List<SqlParameterInfo> parameters) BuildSqlParameterized(
             TableFilter filter,
             TableLinkDto link,
@@ -426,16 +446,19 @@ namespace BifrostQL.Core.QueryModel
                             return (sql, nextParams);
                         }
                     case FilterType.Join:
+                        // Map the GraphQL column name to its DB name (and pick up its
+                        // DataType) so renamed columns emit the real identifier and get
+                        // dialect casts — the DB-name-keyed ColumnLookup missed both.
+                        var parentColumn = ResolveRelationshipColumn(link, filter.ColumnName);
                         if (includeValue)
                         {
                             return (
-                                $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid}, {dialect.EscapeIdentifier(filter.ColumnName)} AS {evalue} FROM {parentTableRef}",
+                                $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid}, {dialect.EscapeIdentifier(parentColumn.DbName)} AS {evalue} FROM {parentTableRef}",
                                 new List<SqlParameterInfo>());
                         }
                         else
                         {
-                            var parentColumnType = link.ParentTable.ColumnLookup.TryGetValue(filter.ColumnName, out var pcol) ? pcol.DataType : null;
-                            var filterResult = GetSingleFilterParameterized(dialect, parameters, link.ParentTable.DbName, filter.ColumnName, filter.Next!.RelationName, filter.Next.Value, parentColumnType);
+                            var filterResult = GetSingleFilterParameterized(dialect, parameters, link.ParentTable.DbName, parentColumn.DbName, filter.Next!.RelationName, filter.Next.Value, parentColumn.DataType);
                             return (
                                 $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid} FROM {parentTableRef} WHERE {filterResult.Sql}",
                                 filterResult.Parameters.ToList());
@@ -478,9 +501,11 @@ namespace BifrostQL.Core.QueryModel
 
             if (filter.FilterType == FilterType.Join && filter.Next is { Next: null, FilterType: FilterType.Relation } rel)
             {
-                var parentColumnType = link.ParentTable.ColumnLookup.TryGetValue(filter.ColumnName, out var pcol) ? pcol.DataType : null;
+                // Map GraphQL name -> DB name and carry the DataType so renamed columns
+                // render correctly and receive dialect casts (see ResolveRelationshipColumn).
+                var parentColumn = ResolveRelationshipColumn(link, filter.ColumnName);
                 return GetSingleFilterParameterized(
-                    dialect, parameters, link.ParentTable.DbName, filter.ColumnName, rel.RelationName, rel.Value, parentColumnType);
+                    dialect, parameters, link.ParentTable.DbName, parentColumn.DbName, rel.RelationName, rel.Value, parentColumn.DataType);
             }
 
             throw new BifrostExecutionError(

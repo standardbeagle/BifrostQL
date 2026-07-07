@@ -281,8 +281,8 @@ namespace BifrostQL.Core.Model
             var prefixedTables = DeduplicateTableGraphQlNames(
                 tables.Select(t => t.WithSchemaPrefix(schemaPrefixOptions)).ToList());
 
-            var includePattern = dbMetadata.TryGetValue("sp-include", out var inc) ? inc?.ToString() : null;
-            var excludePattern = dbMetadata.TryGetValue("sp-exclude", out var exc) ? exc?.ToString() : null;
+            var includePattern = dbMetadata.TryGetValue(MetadataKeys.StoredProcedures.Include, out var inc) ? inc?.ToString() : null;
+            var excludePattern = dbMetadata.TryGetValue(MetadataKeys.StoredProcedures.Exclude, out var exc) ? exc?.ToString() : null;
 
             var filteredProcs = storedProcedures
                 .Where(p => DbStoredProcedure.MatchesFilter(p.DbName, includePattern, excludePattern))
@@ -291,14 +291,14 @@ namespace BifrostQL.Core.Model
             var model =
                 new DbModel()
                 {
-                    Tables = prefixedTables.Where(t => t.CompareMetadata("visibility", "hidden") == false).ToList(),
+                    Tables = prefixedTables.Where(t => t.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden) == false).ToList(),
                     StoredProcedures = filteredProcs,
                     Metadata = dbMetadata,
                 };
 
             // Detect or parse prefix groups for name-based linking
             List<PrefixGroup> prefixGroups;
-            if (dbMetadata.TryGetValue("prefix-groups", out var pgValue) &&
+            if (dbMetadata.TryGetValue(MetadataKeys.AppSchema.PrefixGroups, out var pgValue) &&
                 pgValue?.ToString() is { Length: > 0 } pgStr)
             {
                 prefixGroups = ParsePrefixGroups(pgStr, model.Tables);

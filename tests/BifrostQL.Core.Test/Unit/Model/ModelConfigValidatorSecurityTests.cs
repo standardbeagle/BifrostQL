@@ -235,4 +235,142 @@ public class ModelConfigValidatorSecurityTests
 
         act.Should().NotThrow();
     }
+
+    // ---- Policy deny-column references ----
+
+    [Fact]
+    public void Validate_PolicyReadDenyColumnDoesNotExist_Throws()
+    {
+        // A typo'd deny column protects NOTHING: the evaluator matches by name, so
+        // an absent column is never in the deny set (absent = ALLOW = fail open).
+        var model = DbModelTestFixture.Create()
+            .WithTable("employees", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("id")
+                .WithColumn("salary", "decimal")
+                .WithMetadata(MetadataKeys.Policy.ReadDeny, "sallary"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.employees")
+            .And.Contain("sallary")
+            .And.Contain(MetadataKeys.Policy.ReadDeny);
+    }
+
+    [Fact]
+    public void Validate_PolicyWriteDenyColumnDoesNotExist_Throws()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("employees", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("id")
+                .WithColumn("salary", "decimal")
+                .WithMetadata(MetadataKeys.Policy.WriteDeny, "salaryy"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("salaryy")
+            .And.Contain(MetadataKeys.Policy.WriteDeny);
+    }
+
+    [Fact]
+    public void Validate_PolicyRowScopeColumnDoesNotExist_Throws()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("id")
+                .WithColumn("tenant_id", "int")
+                .WithMetadata(MetadataKeys.Policy.RowScope, "tennant_id = {tenant_id}"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("tennant_id")
+            .And.Contain(MetadataKeys.Policy.RowScope);
+    }
+
+    [Fact]
+    public void Validate_ValidPolicyDenyColumns_DoesNotThrow()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("employees", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("id")
+                .WithColumn("salary", "decimal")
+                .WithColumn("tenant_id", "int")
+                .WithMetadata(MetadataKeys.Policy.ReadDeny, "salary")
+                .WithMetadata(MetadataKeys.Policy.WriteDeny, "salary")
+                .WithMetadata(MetadataKeys.Policy.RowScope, "tenant_id = {tenant_id}"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().NotThrow();
+    }
+
+    // ---- Audit populator values ----
+
+    [Fact]
+    public void Validate_UnknownAuditPopulatorValue_Throws()
+    {
+        // "created_on" (underscore) is a typo of "created-on"; the audit
+        // transformer silently never stamps such a column.
+        var model = DbModelTestFixture.Create()
+            .WithTable("orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("id")
+                .WithColumn("created_at", "datetime2", isNullable: true)
+                .WithColumnMetadata("created_at", MetadataKeys.AutoPopulate.Marker, "created_on"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.orders")
+            .And.Contain("created_on")
+            .And.Contain(MetadataKeys.AutoPopulate.Marker);
+    }
+
+    [Fact]
+    public void Validate_KnownAuditPopulatorValue_DoesNotThrow()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("id")
+                .WithColumn("created_at", "datetime2", isNullable: true)
+                .WithColumnMetadata("created_at", MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.CreatedOn))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().NotThrow();
+    }
+
+    // ---- Casing of newly allow-listed security keys ----
+
+    [Fact]
+    public void Validate_MiscasedPolicyActionsKey_Throws()
+    {
+        // "Policy-Actions" (wrong case) would silently fail open: the case-sensitive
+        // metadata dictionary never surfaces it to the policy engine.
+        var model = DbModelTestFixture.Create()
+            .WithTable("orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("id")
+                .WithMetadata("Policy-Actions", "read"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("Policy-Actions")
+            .And.Contain(MetadataKeys.Policy.Actions);
+    }
 }

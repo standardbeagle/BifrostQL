@@ -13,11 +13,13 @@ namespace BifrostQL.Core.Modules;
 /// into the foreign-key (and polymorphic id) columns of its children before they
 /// execute, so a nested insert links itself up automatically.
 ///
-/// The parent key is tracked per table GraphQL name, matching the engine's
-/// <see cref="TreeSyncOperation.ForeignKeyAssignments"/> contract. This is exact
-/// for a single root with one level of children (the common case); a tree with
-/// several sibling parents of the same table each owning their own descendants is
-/// not disambiguated — a known limitation shared with the engine's planning model.
+/// Each inserted row's PK is tracked BOTH per table GraphQL name (fallback) and
+/// per operation instance (<see cref="TreeSyncOperation.InstanceId"/>). A child's
+/// deferred FK resolves against its parent's specific instance
+/// (<see cref="TreeSyncOperation.ParentInstanceId"/>) when the engine tagged one,
+/// so a tree with several sibling parents of the same table — each owning their
+/// own descendants — links every child to its own parent rather than collapsing
+/// them onto the last-inserted row of that table.
 ///
 /// Every operation is routed through the mutation-transformer pipeline (when one
 /// is supplied) before its SQL is built, so soft-delete / authorization-policy /
@@ -70,10 +72,17 @@ public sealed class TreeSyncExecutor
 
         // Known PK per parent table GraphQL name. Pre-seeded with parents that
         // already exist (update/delete/PK-bearing ops) so a new child can link to
-        // an existing parent, then extended with each freshly inserted PK.
+        // an existing parent, then extended with each freshly inserted PK. This is
+        // the fallback path for ops with no ParentInstanceId.
         var idsByTable = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         foreach (var op in operations)
             SeedKnownId(op, idsByTable);
+
+        // Known PK per INSERTED parent instance. This is the authoritative resolver
+        // for a child's deferred FK: two sibling parents of the same table each own
+        // their own children, and a table-name-keyed lookup alone would collapse
+        // them (attaching the first parent's children to the second parent's PK).
+        var idsByInstance = new Dictionary<string, object?>(StringComparer.Ordinal);
 
         object? rootId = null;
 
@@ -87,7 +96,7 @@ public sealed class TreeSyncExecutor
             {
                 // Resolve FK links BEFORE transforming so audit / policy see the
                 // final data (including the parent PK just inserted this run).
-                ResolveForeignKeys(op, idsByTable);
+                ResolveForeignKeys(op, idsByTable, idsByInstance);
 
                 var mutationType = MapMutationType(op.OperationType);
                 var data = op.Data;
@@ -120,6 +129,7 @@ public sealed class TreeSyncExecutor
                     case MutationType.Insert:
                         var id = await ExecuteInsertAsync(conn, op.Table, data);
                         idsByTable[op.Table.GraphQlName] = id;
+                        idsByInstance[op.InstanceId] = id;
                         if (op.Depth == 0)
                             rootId = id;
                         break;
@@ -151,11 +161,24 @@ public sealed class TreeSyncExecutor
         _ => throw new ArgumentOutOfRangeException(nameof(type), type, "Unknown tree-sync operation type."),
     };
 
-    private static void ResolveForeignKeys(TreeSyncOperation op, Dictionary<string, object?> idsByTable)
+    private static void ResolveForeignKeys(
+        TreeSyncOperation op,
+        Dictionary<string, object?> idsByTable,
+        Dictionary<string, object?> idsByInstance)
     {
+        // Prefer the specific parent INSTANCE PK when the engine tagged one — that
+        // is the only unambiguous source when several same-table parents each own
+        // children. Fall back to the table-name lookup for ops without a tagged
+        // parent instance (root, existing-parent links, or manually built ops).
+        object? instancePk = null;
+        var haveInstancePk = op.ParentInstanceId != null
+            && idsByInstance.TryGetValue(op.ParentInstanceId, out instancePk);
+
         foreach (var (fkColumn, parentGraphQlName) in op.ForeignKeyAssignments)
         {
-            if (idsByTable.TryGetValue(parentGraphQlName, out var parentId))
+            if (haveInstancePk)
+                op.Data[fkColumn] = instancePk;
+            else if (idsByTable.TryGetValue(parentGraphQlName, out var parentId))
                 op.Data[fkColumn] = parentId;
         }
     }

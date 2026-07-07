@@ -44,9 +44,13 @@ public sealed class EavMetaProvider : IComputedColumnProvider
         if (context is null) throw new ArgumentNullException(nameof(context));
 
         // Metadata-driven: locate the EAV config whose parent table is the table
-        // currently being projected. No name-prefix detection.
+        // currently being projected. Match on schema too — a same-named parent in a
+        // different schema (app.settings vs dbo.settings) must not bind here. The
+        // parent shares the meta table's schema (see EavConfigCollector), which the
+        // config carries as TableSchema. No name-prefix detection.
         var config = context.Model.EavConfigs.FirstOrDefault(e =>
-            string.Equals(e.ParentTableDbName, context.Table.DbName, StringComparison.OrdinalIgnoreCase));
+            string.Equals(e.ParentTableDbName, context.Table.DbName, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(e.TableSchema, context.Table.TableSchema, StringComparison.OrdinalIgnoreCase));
         if (config is null)
             return null;
 
@@ -80,16 +84,12 @@ public sealed class EavMetaProvider : IComputedColumnProvider
         var filterTransformers = context.Services?.GetService<IFilterTransformers>();
         if (filterTransformers != null)
         {
-            IDbTable? metaTable = null;
-            try
-            {
-                metaTable = context.Model.GetTableFromDbName(config.MetaTableDbName);
-            }
-            catch (ArgumentOutOfRangeException)
-            {
-                // Meta table isn't modeled as a first-class table — nothing to
-                // filter by, fall through with no security filter.
-            }
+            // Resolve the meta table by BOTH schema and DbName. GetTableFromDbName is
+            // DbName-only (first-wins), so it can return a same-named meta table in a
+            // different schema and apply the wrong table's security filter.
+            var metaTable = context.Model.Tables.FirstOrDefault(t =>
+                string.Equals(t.DbName, config.MetaTableDbName, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(t.TableSchema, config.TableSchema, StringComparison.OrdinalIgnoreCase));
 
             if (metaTable != null)
             {

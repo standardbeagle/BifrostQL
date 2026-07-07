@@ -93,6 +93,7 @@ namespace BifrostQL.Core.Model
             MetadataKeys.SoftDelete.DeleteType,
             MetadataKeys.SoftDelete.HardDeleteRole,
             MetadataKeys.Ui.Visibility,
+            MetadataKeys.Ui.Hidden,
             MetadataKeys.Relationships.ManyToMany,
             MetadataKeys.Ui.Label,
             MetadataKeys.FileStorage.Folder,
@@ -107,6 +108,29 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Computed.Provider,
             MetadataKeys.Validation.Server,
             MetadataKeys.Validation.Plugin,
+            // Server-side authorization policy (security — miscased keys must be
+            // flagged, not silently fail-open).
+            MetadataKeys.Policy.Actions,
+            MetadataKeys.Policy.ReadDeny,
+            MetadataKeys.Policy.ReadDenyRoles,
+            MetadataKeys.Policy.WriteDeny,
+            MetadataKeys.Policy.RowScope,
+            MetadataKeys.Policy.RowScopeRoles,
+            // EAV configuration (table-level).
+            MetadataKeys.Eav.Parent,
+            MetadataKeys.Eav.ForeignKey,
+            MetadataKeys.Eav.Key,
+            MetadataKeys.Eav.Value,
+            // Storage bucket config blob.
+            MetadataKeys.Storage.Config,
+            // Enum configuration.
+            MetadataKeys.Enum.Values,
+            MetadataKeys.Enum.Labels,
+            MetadataKeys.Enum.Ref,
+            // Polymorphic child-table declarations.
+            MetadataKeys.Relationships.PolymorphicTypeCol,
+            MetadataKeys.Relationships.PolymorphicIdCol,
+            MetadataKeys.Relationships.PolymorphicMap,
         };
 
         // Internal for the same reason as KnownTableKeys above (case-casing
@@ -127,6 +151,27 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Validation.Required,
             MetadataKeys.Validation.Server,
             MetadataKeys.Validation.Plugin,
+            // File-column tags and inline storage config.
+            MetadataKeys.FileStorage.File,
+            MetadataKeys.FileStorage.Storage,
+            MetadataKeys.FileStorage.MaxSize,
+            MetadataKeys.FileStorage.ContentTypeColumn,
+            MetadataKeys.FileStorage.FileNameColumn,
+            MetadataKeys.FileStorage.Accept,
+            MetadataKeys.Storage.Config,
+            // Enum configuration (column-level).
+            MetadataKeys.Enum.Values,
+            MetadataKeys.Enum.Labels,
+            MetadataKeys.Enum.Ref,
+            // Display / presentation hints.
+            MetadataKeys.Ui.Label,
+            MetadataKeys.Ui.Hidden,
+            MetadataKeys.Ui.ReadOnly,
+            MetadataKeys.Ui.DisplayFormat,
+            MetadataKeys.DataType.Format,
+            MetadataKeys.DataType.Default,
+            MetadataKeys.DataType.Title,
+            MetadataKeys.DataType.PhpSerialized,
         };
 
         // Internal for the same reason as KnownTableKeys above (case-casing

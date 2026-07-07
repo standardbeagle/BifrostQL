@@ -46,9 +46,43 @@ public sealed class QueryTransformerService : IQueryTransformerService
         // module filter transformer honors arguments supplied on this very node —
         // nested join fields included, not just the root. The root field's args
         // are also captured here (idempotent with the field-context capture).
+        //
+        // The scope is table-keyed but the user context is shared across the whole
+        // request, so a sibling field over the SAME table would otherwise inherit
+        // this node's args (e.g. one field's _includeDeleted leaking onto the other).
+        // Save the prior value of each scoped key and restore it once this node and
+        // its subtree are done, so the scope lives exactly for this node's lifetime.
+        var savedScopes = new List<(string Key, bool Existed, object? Prior)>();
         foreach (var moduleArg in query.ModuleQueryArguments)
-            userContext[ModuleApiRegistry.ScopedKey(moduleArg.Key, query.DbTable)] = moduleArg.Value;
+        {
+            var scopedKey = ModuleApiRegistry.ScopedKey(moduleArg.Key, query.DbTable);
+            var existed = userContext.TryGetValue(scopedKey, out var prior);
+            savedScopes.Add((scopedKey, existed, prior));
+            userContext[scopedKey] = moduleArg.Value;
+        }
 
+        try
+        {
+            ApplyTransformersToNode(query, model, userContext, isNested);
+        }
+        finally
+        {
+            foreach (var (key, existed, prior) in savedScopes)
+            {
+                if (existed)
+                    userContext[key] = prior;
+                else
+                    userContext.Remove(key);
+            }
+        }
+    }
+
+    private void ApplyTransformersToNode(
+        GqlObjectQuery query,
+        IDbModel model,
+        IDictionary<string, object?> userContext,
+        bool isNested)
+    {
         var context = new QueryTransformContext
         {
             Model = model,

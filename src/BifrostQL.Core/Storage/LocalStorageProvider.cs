@@ -106,13 +106,18 @@ namespace BifrostQL.Core.Storage
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var info = new DirectoryInfo(directory);
+                var key = ToStorageKey(bucketConfig, directory);
                 entries.Add(new FileFolderEntry
                 {
                     Name = info.Name,
-                    Key = ToStorageKey(bucketConfig, directory),
+                    Key = key,
                     IsFolder = true,
                     LastModified = info.LastWriteTimeUtc,
-                    Url = $"file://{directory}",
+                    // Never expose the absolute server filesystem path (leaks the
+                    // server's directory layout to GraphQL clients). Return an
+                    // opaque reference relative to the bucket instead, matching
+                    // GetPresignedUrlAsync's local:// scheme.
+                    Url = $"local://{key}",
                 });
             }
 
@@ -120,14 +125,17 @@ namespace BifrostQL.Core.Storage
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var info = new FileInfo(file);
+                var key = ToStorageKey(bucketConfig, file);
                 entries.Add(new FileFolderEntry
                 {
                     Name = info.Name,
-                    Key = ToStorageKey(bucketConfig, file),
+                    Key = key,
                     IsFolder = false,
                     Size = info.Length,
                     LastModified = info.LastWriteTimeUtc,
-                    Url = $"file://{file}",
+                    // See the folder branch above: relative reference only, no
+                    // absolute server path.
+                    Url = $"local://{key}",
                 });
             }
 
@@ -140,6 +148,9 @@ namespace BifrostQL.Core.Storage
             ArgumentException.ThrowIfNullOrWhiteSpace(bucketConfig.BucketName);
 
             var basePath = Path.GetFullPath(bucketConfig.BucketName);
+            if (!string.IsNullOrWhiteSpace(folderKey))
+                RejectTraversal(folderKey);
+
             var prefixedKey = string.IsNullOrWhiteSpace(folderKey)
                 ? bucketConfig.PathPrefix ?? ""
                 : bucketConfig.GetFullPath(folderKey);
@@ -148,7 +159,11 @@ namespace BifrostQL.Core.Storage
                 throw new InvalidOperationException("Folder key must be relative to the storage bucket.");
 
             var fullPath = Path.GetFullPath(Path.Combine(basePath, prefixedKey));
-            EnsureUnderBase(basePath, fullPath);
+            // Guard against escaping the configured prefix, not just the bucket
+            // root: when prefixes separate tenants inside one bucket, a '..' that
+            // cancels the prefix would still land under basePath and read another
+            // tenant's files.
+            EnsureUnderBase(PrefixRoot(bucketConfig, basePath), fullPath);
             return fullPath;
         }
 
@@ -158,14 +173,41 @@ namespace BifrostQL.Core.Storage
             ArgumentException.ThrowIfNullOrWhiteSpace(fileKey);
 
             var basePath = Path.GetFullPath(bucketConfig.BucketName);
+            RejectTraversal(fileKey);
             var prefixedKey = bucketConfig.GetFullPath(fileKey);
 
             if (Path.IsPathRooted(prefixedKey))
                 throw new InvalidOperationException("File key must be relative to the storage bucket.");
 
             var fullPath = Path.GetFullPath(Path.Combine(basePath, prefixedKey));
-            EnsureUnderBase(basePath, fullPath);
+            EnsureUnderBase(PrefixRoot(bucketConfig, basePath), fullPath);
             return fullPath;
+        }
+
+        // Rejects any key containing a ".." path segment. A row-persisted FileKey or
+        // a folder-template value with ".." can otherwise cancel the configured
+        // PathPrefix and escape into a sibling tenant's prefix within the bucket.
+        private static void RejectTraversal(string key)
+        {
+            // Split only on real platform separators so a literal backslash inside a
+            // filename on POSIX is not misread as a traversal (matches the OS's own
+            // path semantics that EnsureUnderBase enforces on the resolved path).
+            foreach (var segment in key.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+            {
+                if (segment == "..")
+                    throw new InvalidOperationException(
+                        "Storage key must not contain '..' path segments.");
+            }
+        }
+
+        // The effective root a key must resolve under: the bucket base joined with
+        // the configured PathPrefix (or the bucket base when no prefix is set).
+        private static string PrefixRoot(StorageBucketConfig bucketConfig, string basePath)
+        {
+            var prefix = bucketConfig.PathPrefix?.Trim();
+            if (string.IsNullOrWhiteSpace(prefix))
+                return basePath;
+            return Path.GetFullPath(Path.Combine(basePath, prefix));
         }
 
         private static void EnsureUnderBase(string basePath, string fullPath)

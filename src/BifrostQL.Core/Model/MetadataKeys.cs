@@ -245,6 +245,40 @@ namespace BifrostQL.Core.Model
 
             /// <summary>Auto-populate with UUID/GUID.</summary>
             public const string Guid = "guid";
+
+            // --- Recognized values of the <see cref="Marker"/> ("populate") key,
+            // consumed by AuditMutationTransformer. A populate value outside this
+            // set (e.g. "created_on" with an underscore) silently never stamps, so
+            // ModelConfigValidator rejects unknown values using this set.
+
+            /// <summary>Stamp the server UTC timestamp on INSERT only.</summary>
+            public const string CreatedOn = "created-on";
+
+            /// <summary>Stamp the audit user on INSERT only.</summary>
+            public const string CreatedBy = "created-by";
+
+            /// <summary>Stamp the server UTC timestamp on INSERT and UPDATE.</summary>
+            public const string UpdatedOn = "updated-on";
+
+            /// <summary>Stamp the audit user on INSERT and UPDATE.</summary>
+            public const string UpdatedBy = "updated-by";
+
+            /// <summary>Stamp the server UTC timestamp on DELETE only.</summary>
+            public const string DeletedOn = "deleted-on";
+
+            /// <summary>Stamp the audit user on DELETE only.</summary>
+            public const string DeletedBy = "deleted-by";
+
+            /// <summary>
+            /// The complete set of recognized audit populator values for the
+            /// <see cref="Marker"/> key. Used by ModelConfigValidator to fail fast on
+            /// a typo'd populator value (which would otherwise silently never stamp).
+            /// </summary>
+            public static readonly IReadOnlySet<string> KnownPopulators =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    CreatedOn, CreatedBy, UpdatedOn, UpdatedBy, DeletedOn, DeletedBy,
+                };
         }
 
         /// <summary>

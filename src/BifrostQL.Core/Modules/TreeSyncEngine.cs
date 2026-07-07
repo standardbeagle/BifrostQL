@@ -1,3 +1,4 @@
+using System.Globalization;
 using BifrostQL.Core.Model;
 
 namespace BifrostQL.Core.Modules;
@@ -41,6 +42,24 @@ public sealed class TreeSyncOperation
     /// whose inserted PK should be assigned to this column.
     /// </summary>
     public Dictionary<string, string> ForeignKeyAssignments { get; init; } = new();
+
+    /// <summary>
+    /// Stable identity of THIS operation's inserted row. The executor records the
+    /// produced PK under this id so a child can resolve its deferred FK to its own
+    /// parent INSTANCE — not merely to the last-inserted row of the parent table.
+    /// </summary>
+    public string InstanceId { get; init; } = Guid.NewGuid().ToString("N");
+
+    /// <summary>
+    /// When this insert defers its FK to a NEW parent (see
+    /// <see cref="ForeignKeyAssignments"/>), the <see cref="InstanceId"/> of that
+    /// specific parent operation. Null when there is no deferred parent (root, or a
+    /// parent whose PK is already known and written directly into <see cref="Data"/>).
+    /// Lets the executor disambiguate two sibling parents of the same table, each
+    /// owning their own children, which a table-name-keyed lookup would collapse —
+    /// silently attaching the first parent's children to the second parent's PK.
+    /// </summary>
+    public string? ParentInstanceId { get; init; }
 
     /// <summary>
     /// The depth level in the tree (0 = root).
@@ -101,7 +120,7 @@ public sealed class TreeSyncEngine
         Dictionary<string, object?>? existing)
     {
         var operations = new List<TreeSyncOperation>();
-        DiffNode(table, submitted, existing, depth: 0, parentLink: null, parentKnownId: null, operations);
+        DiffNode(table, submitted, existing, depth: 0, parentLink: null, parentKnownId: null, parentInstanceId: null, operations);
         return OrderOperations(operations);
     }
 
@@ -112,6 +131,7 @@ public sealed class TreeSyncEngine
         int depth,
         TableLinkDto? parentLink,
         object? parentKnownId,
+        string? parentInstanceId,
         List<TreeSyncOperation> operations)
     {
         if (depth >= _options.MaxDepth)
@@ -119,6 +139,11 @@ public sealed class TreeSyncEngine
 
         var scalarData = ExtractScalarData(table, submitted);
         var hasPrimaryKey = HasPrimaryKeyValues(table, scalarData);
+
+        // Instance id of THIS node's insert (null when this node is an update or is
+        // skipped), handed to its children so their deferred FK resolves to this
+        // specific parent instance rather than the last-inserted row of the table.
+        string? thisInstanceId = null;
 
         if (existing != null && hasPrimaryKey)
         {
@@ -144,7 +169,7 @@ public sealed class TreeSyncEngine
         }
         else
         {
-            AddInsertOperation(table, scalarData, parentLink, parentKnownId, depth, operations);
+            thisInstanceId = AddInsertOperation(table, scalarData, parentLink, parentKnownId, parentInstanceId, depth, operations);
         }
 
         // The PK to hand down to children: a freshly inserted parent has none yet
@@ -152,19 +177,21 @@ public sealed class TreeSyncEngine
         var thisKnownId = GetSingleKeyValue(table, scalarData)
             ?? (existing != null ? GetSingleKeyValue(table, ExtractScalarData(table, existing)) : null);
 
-        DiffChildren(table, submitted, existing, depth, thisKnownId, operations);
+        DiffChildren(table, submitted, existing, depth, thisKnownId, thisInstanceId, operations);
     }
 
-    private static void AddInsertOperation(
+    private static string AddInsertOperation(
         IDbTable table,
         Dictionary<string, object?> scalarData,
         TableLinkDto? parentLink,
         object? parentKnownId,
+        string? parentInstanceId,
         int depth,
         List<TreeSyncOperation> operations)
     {
         var data = new Dictionary<string, object?>(scalarData);
         var fkAssignments = new Dictionary<string, string>();
+        string? deferredParentInstanceId = null;
         if (parentLink != null)
         {
             var parentGraphQlName = parentLink.ParentTable.GraphQlName;
@@ -176,11 +203,16 @@ public sealed class TreeSyncEngine
             if (fkColumn != null)
             {
                 // Existing parent: write its known PK directly. New parent: defer
-                // until the parent insert produces a PK (resolved by the executor).
+                // until the parent insert produces a PK (resolved by the executor),
+                // tagging the SPECIFIC parent instance so two sibling parents of the
+                // same table don't collide on a table-name-keyed lookup.
                 if (parentKnownId != null)
                     data[fkColumn] = parentKnownId;
                 else
+                {
                     fkAssignments[fkColumn] = parentGraphQlName;
+                    deferredParentInstanceId = parentInstanceId;
+                }
             }
 
             // Polymorphic link: stamp the discriminator constant (e.g.
@@ -190,14 +222,17 @@ public sealed class TreeSyncEngine
                 data[predicate.Column.ColumnName] = predicate.Value;
         }
 
-        operations.Add(new TreeSyncOperation
+        var op = new TreeSyncOperation
         {
             Table = table,
             OperationType = TreeSyncOperationType.Insert,
             Data = data,
             ForeignKeyAssignments = fkAssignments,
+            ParentInstanceId = deferredParentInstanceId,
             Depth = depth,
-        });
+        };
+        operations.Add(op);
+        return op.InstanceId;
     }
 
     // Returns the single-column primary-key value if present and non-null,
@@ -216,6 +251,7 @@ public sealed class TreeSyncEngine
         Dictionary<string, object?>? existing,
         int depth,
         object? knownId,
+        string? knownInstanceId,
         List<TreeSyncOperation> operations)
     {
         foreach (var multiLink in table.MultiLinks)
@@ -242,7 +278,7 @@ public sealed class TreeSyncEngine
                     existingByKey.Remove(childKey);
                 }
 
-                DiffNode(childTable, submittedChild, matchingExisting, depth + 1, link, knownId, operations);
+                DiffNode(childTable, submittedChild, matchingExisting, depth + 1, link, knownId, knownInstanceId, operations);
             }
 
             if (_options.DeleteOrphans)
@@ -340,10 +376,49 @@ public sealed class TreeSyncEngine
                 continue;
 
             existing.TryGetValue(kvp.Key, out var existingVal);
-            if (!Equals(kvp.Value, existingVal))
+            if (!ValuesEqual(kvp.Value, existingVal))
                 changed[kvp.Key] = kvp.Value;
         }
         return changed;
+    }
+
+    /// <summary>
+    /// Type-tolerant equality for change detection. Submitted values arrive
+    /// GraphQL-typed (int/string) while loaded DB values are provider-typed
+    /// (long/decimal/DateTime), so a plain <see cref="object.Equals(object?,object?)"/>
+    /// reports an unchanged row as changed and churns audit stamps on every sync.
+    /// Numeric CLR types are compared by decimal value; everything else falls back
+    /// to an invariant-culture string comparison.
+    /// </summary>
+    private static bool ValuesEqual(object? submitted, object? existing)
+    {
+        if (submitted == null && existing == null)
+            return true;
+        if (submitted == null || existing == null)
+            return false;
+        if (Equals(submitted, existing))
+            return true;
+
+        if (TryToDecimal(submitted, out var a) && TryToDecimal(existing, out var b))
+            return a == b;
+
+        return string.Equals(
+            Convert.ToString(submitted, CultureInfo.InvariantCulture),
+            Convert.ToString(existing, CultureInfo.InvariantCulture),
+            StringComparison.Ordinal);
+    }
+
+    private static bool TryToDecimal(object value, out decimal result)
+    {
+        switch (value)
+        {
+            case byte or sbyte or short or ushort or int or uint or long or ulong or decimal or float or double:
+                try { result = Convert.ToDecimal(value, CultureInfo.InvariantCulture); return true; }
+                catch { result = 0m; return false; }
+            default:
+                result = 0m;
+                return false;
+        }
     }
 
     private static string? FindForeignKeyColumn(IDbTable childTable, string parentGraphQlName)

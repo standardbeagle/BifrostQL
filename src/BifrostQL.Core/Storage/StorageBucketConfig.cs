@@ -62,7 +62,8 @@ namespace BifrostQL.Core.Storage
             {
                 var kv = part.Split(':', 2);
                 if (kv.Length != 2)
-                    continue;
+                    throw new InvalidOperationException(
+                        $"Malformed storage config segment '{part}'; expected 'key:value'.");
 
                 var key = kv[0].Trim().ToLowerInvariant();
                 var value = kv[1].Trim();
@@ -102,6 +103,13 @@ namespace BifrostQL.Core.Storage
                             .Select(m => m.Trim())
                             .ToArray();
                         break;
+                    default:
+                        // Fail fast on an unrecognized key. Silently ignoring it is a
+                        // fail-OPEN hazard: a misspelled 'mimetypess' leaves the MIME
+                        // allow-list empty (= all types allowed) and a misspelled
+                        // 'maxsizee' silently keeps the default limit.
+                        throw new InvalidOperationException(
+                            $"Unknown storage config key '{key}' in '{part}'.");
                 }
             }
 

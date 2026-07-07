@@ -15,9 +15,13 @@ namespace BifrostQL.Core.Model.Relationships
         /// <returns>List of EAV configurations.</returns>
         public List<EavConfig> Collect(IReadOnlyCollection<IDbTable> tables)
         {
-            var tablesByDbName = new HashSet<string>(
-                tables.Select(t => t.DbName), StringComparer.OrdinalIgnoreCase);
-            
+            // Match the parent WITHIN the meta table's own schema. A DbName-only set
+            // would bind app.settings' eav-parent to dbo.settings (or vice versa) —
+            // wrong table, wrong security filter (cross-schema data exposure).
+            var tablesBySchemaAndName = new HashSet<(string Schema, string DbName)>(
+                tables.Select(t => (t.TableSchema, t.DbName)),
+                new SchemaNameComparer());
+
             var configs = new List<EavConfig>();
 
             foreach (var table in tables)
@@ -33,10 +37,11 @@ namespace BifrostQL.Core.Model.Relationships
                     string.IsNullOrWhiteSpace(value))
                     continue;
 
-                // Metadata-driven only: eav-parent must name an existing table exactly.
-                // No name-prefix inference — EAV participation is an explicit, declared
-                // choice, never detected from a naming convention.
-                if (!tablesByDbName.Contains(parent!))
+                // Metadata-driven only: eav-parent must name an existing table exactly,
+                // in the meta table's own schema. No name-prefix inference — EAV
+                // participation is an explicit, declared choice, never detected from a
+                // naming convention.
+                if (!tablesBySchemaAndName.Contains((table.TableSchema, parent!)))
                     continue;
 
                 // Capture the meta table's own schema so a non-default-schema meta
@@ -49,6 +54,18 @@ namespace BifrostQL.Core.Model.Relationships
             }
 
             return configs;
+        }
+
+        private sealed class SchemaNameComparer : IEqualityComparer<(string Schema, string DbName)>
+        {
+            public bool Equals((string Schema, string DbName) x, (string Schema, string DbName) y) =>
+                string.Equals(x.Schema, y.Schema, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(x.DbName, y.DbName, StringComparison.OrdinalIgnoreCase);
+
+            public int GetHashCode((string Schema, string DbName) obj) =>
+                HashCode.Combine(
+                    obj.Schema?.ToLowerInvariant(),
+                    obj.DbName?.ToLowerInvariant());
         }
     }
 }

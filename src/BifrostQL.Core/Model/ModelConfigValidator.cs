@@ -51,6 +51,7 @@ namespace BifrostQL.Core.Model
                 ValidateSoftDeleteNullability(table, errors);
                 ValidateAutoFilter(table, errors);
                 ValidateStateMachine(table, errors);
+                ValidatePolicy(table, errors);
 
                 var tableRef = $"{table.TableSchema}.{table.DbName}";
                 ValidateMetadataKeyCasing(table.Metadata, MetadataValidator.KnownTableKeys, "table", tableRef, errors);
@@ -59,6 +60,7 @@ namespace BifrostQL.Core.Model
                 {
                     ValidateMetadataKeyCasing(
                         column.Metadata, MetadataValidator.KnownColumnKeys, "column", $"{tableRef}.{column.ColumnName}", errors);
+                    ValidateAutoPopulate(table, column, errors);
                 }
             }
 
@@ -277,6 +279,88 @@ namespace BifrostQL.Core.Model
                 if (!DbColumnExists(table, mapping.Column))
                     errors.Add(Problem(table, MetadataKeys.Security.AutoFilter, mapping.Column, "auto-filter column does not exist"));
             }
+        }
+
+        /// <summary>
+        /// Fail-fast validation for the authorization policy (<c>policy-*</c>). Every
+        /// column named in <c>policy-read-deny</c> / <c>policy-write-deny</c> /
+        /// <c>policy-row-scope</c> must exist on the table. The evaluator matches deny
+        /// lists by string, so a typo'd deny column silently protects NOTHING — an
+        /// absent column is never in the deny set, which reads as ALLOW (fail open).
+        /// Unrecognized <c>policy-actions</c> tokens are surfaced too (the collector
+        /// itself throws on them, for the same fail-open reason).
+        /// </summary>
+        private static void ValidatePolicy(IDbTable table, List<string> errors)
+        {
+            Auth.TablePolicy policy;
+            try
+            {
+                policy = Auth.PolicyConfigCollector.FromTable(table);
+            }
+            catch (Exception ex)
+            {
+                errors.Add(Problem(table, MetadataKeys.Policy.Actions,
+                    table.GetMetadataValue(MetadataKeys.Policy.Actions), ex.Message));
+                return;
+            }
+
+            if (!policy.HasPolicy)
+                return;
+
+            foreach (var column in policy.ReadDenyColumns)
+            {
+                if (!DbColumnExists(table, column))
+                    errors.Add(Problem(table, MetadataKeys.Policy.ReadDeny, column,
+                        "policy-read-deny names a column that does not exist; a non-existent deny column protects nothing (the evaluator matches by name, so absent = ALLOW = fail open)"));
+            }
+
+            foreach (var column in policy.WriteDenyColumns)
+            {
+                if (!DbColumnExists(table, column))
+                    errors.Add(Problem(table, MetadataKeys.Policy.WriteDeny, column,
+                        "policy-write-deny names a column that does not exist; a non-existent deny column protects nothing (absent = ALLOW = fail open)"));
+            }
+
+            var rowScopeColumn = TryExtractRowScopeColumn(policy.RowScopeExpression);
+            if (rowScopeColumn != null && !DbColumnExists(table, rowScopeColumn))
+                errors.Add(Problem(table, MetadataKeys.Policy.RowScope, rowScopeColumn,
+                    "policy-row-scope references a column that does not exist on the table"));
+        }
+
+        // Extracts the LHS column of a "column = {context-key}" row-scope expression
+        // (the only grammar RowScopeCompiler supports). Returns null for a malformed
+        // expression — the compiler itself fails closed on those at runtime, so the
+        // validator does not double-report the shape here, only the column existence.
+        private static string? TryExtractRowScopeColumn(string? expression)
+        {
+            if (string.IsNullOrWhiteSpace(expression))
+                return null;
+            var idx = expression.IndexOf('=');
+            if (idx <= 0)
+                return null;
+            var column = expression[..idx].Trim();
+            return column.Length == 0 ? null : column;
+        }
+
+        /// <summary>
+        /// Fail-fast validation for the audit <c>populate</c> column marker. A value
+        /// outside the recognized populator set (e.g. <c>created_on</c> with an
+        /// underscore instead of <c>created-on</c>) is silently ignored by
+        /// <c>AuditMutationTransformer</c> — the column then never gets stamped and
+        /// the audit trail has a permanent hole with no error. Reject it here.
+        /// </summary>
+        private static void ValidateAutoPopulate(IDbTable table, ColumnDto column, List<string> errors)
+        {
+            var populate = column.GetMetadataValue(MetadataKeys.AutoPopulate.Marker);
+            if (string.IsNullOrWhiteSpace(populate))
+                return;
+
+            if (!MetadataKeys.AutoPopulate.KnownPopulators.Contains(populate))
+                errors.Add(
+                    $"  {table.TableSchema}.{table.DbName}.{column.ColumnName} [{MetadataKeys.AutoPopulate.Marker}]: " +
+                    $"'{populate}' is not a recognized audit populator (expected one of " +
+                    $"{string.Join(", ", MetadataKeys.AutoPopulate.KnownPopulators.OrderBy(p => p))}); " +
+                    "the column would silently never be stamped.");
         }
 
         private static void ValidateStateMachine(IDbTable table, List<string> errors)

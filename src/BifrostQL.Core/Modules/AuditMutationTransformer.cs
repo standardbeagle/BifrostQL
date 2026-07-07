@@ -48,12 +48,8 @@ public sealed class AuditMutationTransformer : IMutationTransformer, IModuleName
     {
         foreach (var column in table.Columns)
         {
-            if (column.CompareMetadata("populate", "created-on") ||
-                column.CompareMetadata("populate", "created-by") ||
-                column.CompareMetadata("populate", "updated-on") ||
-                column.CompareMetadata("populate", "updated-by") ||
-                column.CompareMetadata("populate", "deleted-on") ||
-                column.CompareMetadata("populate", "deleted-by"))
+            var populate = column.GetMetadataValue(MetadataKeys.AutoPopulate.Marker);
+            if (!string.IsNullOrWhiteSpace(populate) && MetadataKeys.AutoPopulate.KnownPopulators.Contains(populate))
                 return true;
         }
         return false;
@@ -96,23 +92,24 @@ public sealed class AuditMutationTransformer : IMutationTransformer, IModuleName
 
         foreach (var column in table.Columns)
         {
+            var marker = MetadataKeys.AutoPopulate.Marker;
             switch (mutationType)
             {
                 case MutationType.Insert:
-                    if (column.CompareMetadata("populate", "created-on")) data[column.ColumnName] = dateTime;
-                    if (column.CompareMetadata("populate", "created-by")) StampUser(column.ColumnName);
-                    if (column.CompareMetadata("populate", "updated-on")) data[column.ColumnName] = dateTime;
-                    if (column.CompareMetadata("populate", "updated-by")) StampUser(column.ColumnName);
+                    if (column.CompareMetadata(marker, MetadataKeys.AutoPopulate.CreatedOn)) data[column.ColumnName] = dateTime;
+                    if (column.CompareMetadata(marker, MetadataKeys.AutoPopulate.CreatedBy)) StampUser(column.ColumnName);
+                    if (column.CompareMetadata(marker, MetadataKeys.AutoPopulate.UpdatedOn)) data[column.ColumnName] = dateTime;
+                    if (column.CompareMetadata(marker, MetadataKeys.AutoPopulate.UpdatedBy)) StampUser(column.ColumnName);
                     break;
                 case MutationType.Update:
-                    if (column.CompareMetadata("populate", "updated-on")) data[column.ColumnName] = dateTime;
-                    if (column.CompareMetadata("populate", "updated-by")) StampUser(column.ColumnName);
+                    if (column.CompareMetadata(marker, MetadataKeys.AutoPopulate.UpdatedOn)) data[column.ColumnName] = dateTime;
+                    if (column.CompareMetadata(marker, MetadataKeys.AutoPopulate.UpdatedBy)) StampUser(column.ColumnName);
                     break;
                 case MutationType.Delete:
-                    if (column.CompareMetadata("populate", "updated-on")) data[column.ColumnName] = dateTime;
-                    if (column.CompareMetadata("populate", "updated-by")) StampUser(column.ColumnName);
-                    if (column.CompareMetadata("populate", "deleted-on")) data[column.ColumnName] = dateTime;
-                    if (column.CompareMetadata("populate", "deleted-by")) StampUser(column.ColumnName);
+                    if (column.CompareMetadata(marker, MetadataKeys.AutoPopulate.UpdatedOn)) data[column.ColumnName] = dateTime;
+                    if (column.CompareMetadata(marker, MetadataKeys.AutoPopulate.UpdatedBy)) StampUser(column.ColumnName);
+                    if (column.CompareMetadata(marker, MetadataKeys.AutoPopulate.DeletedOn)) data[column.ColumnName] = dateTime;
+                    if (column.CompareMetadata(marker, MetadataKeys.AutoPopulate.DeletedBy)) StampUser(column.ColumnName);
                     break;
             }
         }

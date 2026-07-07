@@ -104,9 +104,17 @@ public sealed class TreeSyncStateLoader
 
             var children = await LoadChildrenAsync(childTable, fkColumn, parentPk, link.TypePredicate, conn);
 
-            // Grandchildren are loaded only for the links any of these children
-            // would themselves carry — approximated by the union across the rows.
-            var grandLinks = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            // Descend into every one of the child table's own collections (bounded
+            // by maxDepth). Freshly loaded child rows carry no nested collections
+            // yet, so the set of grand-links to fetch cannot be derived from the
+            // rows — it must be the child table's full MultiLinks set. The engine
+            // only DIFFS the grand-links present in the submitted subtree (an
+            // omitted collection is skipped, never orphan-deleted), but it needs the
+            // loaded grandchildren to (a) UPDATE an existing depth-2 row instead of
+            // re-INSERTing it into a PK violation, and (b) cascade-delete a deleted
+            // child's grandchildren. An empty grand-link set made the recursion a
+            // no-op past depth 1, causing both bugs.
+            var grandLinks = new HashSet<string>(childTable.MultiLinks.Keys, StringComparer.OrdinalIgnoreCase);
             foreach (var child in children)
                 await PopulateChildrenAsync(childTable, child, grandLinks, conn, depth + 1);
 

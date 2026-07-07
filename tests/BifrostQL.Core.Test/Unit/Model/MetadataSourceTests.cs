@@ -319,6 +319,42 @@ public class MetadataSourceTests
     }
 
     [Fact]
+    public void ValidateTableMetadata_PolicyEavStorageEnumKeys_NoWarnings()
+    {
+        // Representative keys from each family added to the allow-list: a stale
+        // allow-list previously flagged these valid keys as "unknown".
+        var metadata = new Dictionary<string, object?>
+        {
+            [MetadataKeys.Policy.Actions] = "read,update",
+            [MetadataKeys.Policy.ReadDeny] = "ssn,salary",
+            [MetadataKeys.Eav.Parent] = "wp_posts",
+            [MetadataKeys.Eav.ForeignKey] = "post_id",
+            [MetadataKeys.Storage.Config] = "bucket:b",
+            [MetadataKeys.Enum.Values] = "a,b,c",
+            [MetadataKeys.Relationships.PolymorphicMap] = "company=companies",
+        };
+
+        var warnings = MetadataValidator.ValidateTableMetadata("dbo.orders", metadata);
+        warnings.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ValidateColumnMetadata_FileEnumStorageKeys_NoWarnings()
+    {
+        var metadata = new Dictionary<string, object?>
+        {
+            [MetadataKeys.FileStorage.File] = "",
+            [MetadataKeys.Storage.Config] = "bucket:b",
+            [MetadataKeys.Enum.Ref] = "dbo.status",
+            [MetadataKeys.Ui.ReadOnly] = "true",
+            [MetadataKeys.DataType.Default] = "0",
+        };
+
+        var warnings = MetadataValidator.ValidateColumnMetadata("dbo.orders", "attachment", metadata);
+        warnings.Should().BeEmpty();
+    }
+
+    [Fact]
     public void ValidateColumnMetadata_KnownKeys_NoWarnings()
     {
         var metadata = new Dictionary<string, object?>

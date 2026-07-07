@@ -37,6 +37,48 @@ public class TreeSyncEngineTests
     }
 
     [Fact]
+    public void ComputeOperations_SubmittedIntEqualsLoadedLong_ProducesNoUpdate()
+    {
+        // Submitted values are GraphQL-typed (int) while loaded DB values are
+        // provider-typed (long). A plain object.Equals reports the unchanged row as
+        // changed and churns audit stamps on every sync. Normalization must treat
+        // int 1 and long 1L as equal, so no UPDATE is emitted.
+        var model = DbModelTestFixture.Create()
+            .WithTable("Users", t => t
+                .WithColumn("id", "int", isPrimaryKey: true)
+                .WithColumn("age", "int"))
+            .Build();
+        var engine = new TreeSyncEngine(model);
+        var table = model.GetTableFromDbName("Users");
+
+        var submitted = new Dictionary<string, object?> { ["id"] = 1, ["age"] = 1 };
+        var existing = new Dictionary<string, object?> { ["id"] = 1L, ["age"] = 1L };
+
+        var ops = engine.ComputeOperations(table, submitted, existing);
+
+        Assert.DoesNotContain(ops, o => o.OperationType == TreeSyncOperationType.Update);
+    }
+
+    [Fact]
+    public void ComputeOperations_SubmittedIntDiffersFromLoadedLong_ProducesUpdate()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("Users", t => t
+                .WithColumn("id", "int", isPrimaryKey: true)
+                .WithColumn("age", "int"))
+            .Build();
+        var engine = new TreeSyncEngine(model);
+        var table = model.GetTableFromDbName("Users");
+
+        var submitted = new Dictionary<string, object?> { ["id"] = 1, ["age"] = 2 };
+        var existing = new Dictionary<string, object?> { ["id"] = 1L, ["age"] = 1L };
+
+        var ops = engine.ComputeOperations(table, submitted, existing);
+
+        Assert.Contains(ops, o => o.OperationType == TreeSyncOperationType.Update);
+    }
+
+    [Fact]
     public void ComputeOperations_NewRootRecord_InfersInsert()
     {
         var model = StandardTestFixtures.SimpleUsers();

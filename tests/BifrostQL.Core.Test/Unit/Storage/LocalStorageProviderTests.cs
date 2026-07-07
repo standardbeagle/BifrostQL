@@ -1,4 +1,5 @@
 using BifrostQL.Core.Storage;
+using FluentAssertions;
 
 namespace BifrostQL.Core.Test.Storage;
 
@@ -140,6 +141,46 @@ public class LocalStorageProviderTests : IDisposable
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             _provider.ListFolderAsync(config, folderKey));
+    }
+
+    [Fact]
+    public async Task DownloadAsync_FileKeyEscapingPrefix_Throws()
+    {
+        // With a per-tenant prefix, a row-persisted FileKey of "../other/x" would,
+        // pre-fix, cancel the prefix and land in a sibling tenant's area while still
+        // under the bucket root. Reject it.
+        var config = new StorageBucketConfig { BucketName = _tempDir, PathPrefix = "tenant-a" };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _provider.DownloadAsync(config, "../other/x"));
+    }
+
+    [Fact]
+    public async Task ListFolderAsync_FolderValueEscapingWithDotDot_Throws()
+    {
+        var config = new StorageBucketConfig { BucketName = _tempDir, PathPrefix = "tenant-a" };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _provider.ListFolderAsync(config, ".."));
+    }
+
+    [Fact]
+    public async Task ListFolderAsync_UrlDoesNotLeakAbsoluteServerPath()
+    {
+        // The returned Url must not expose the server's absolute filesystem layout.
+        var config = new StorageBucketConfig { BucketName = _tempDir };
+        Directory.CreateDirectory(Path.Combine(_tempDir, "assets"));
+        await File.WriteAllTextAsync(Path.Combine(_tempDir, "assets", "hero.jpg"), "jpg");
+
+        var entries = await _provider.ListFolderAsync(config, "assets");
+
+        entries.Should().NotBeEmpty();
+        foreach (var entry in entries)
+        {
+            entry.Url.Should().NotBeNull();
+            entry.Url!.Should().NotContain(_tempDir);
+            entry.Url.Should().NotStartWith("file://");
+        }
     }
 
     #endregion

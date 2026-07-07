@@ -169,6 +169,32 @@ public class StorageBucketConfigTests
         Assert.Throws<InvalidOperationException>(act);
     }
 
+    [Fact]
+    public void FromMetadata_WithUnknownKey_Throws()
+    {
+        // A misspelled "mimetypess" must fail rather than silently leaving the MIME
+        // allow-list empty (which means ALL types allowed — a fail-open gate).
+        var act = () => StorageBucketConfig.FromMetadata("bucket:b;mimetypess:image/*");
+
+        Assert.Throws<InvalidOperationException>(act);
+    }
+
+    [Fact]
+    public void FromMetadata_WithMisspelledMaxSizeKey_Throws()
+    {
+        var act = () => StorageBucketConfig.FromMetadata("bucket:b;maxsizee:1024");
+
+        Assert.Throws<InvalidOperationException>(act);
+    }
+
+    [Fact]
+    public void FromMetadata_WithMalformedSegment_Throws()
+    {
+        var act = () => StorageBucketConfig.FromMetadata("bucket:b;garbage");
+
+        Assert.Throws<InvalidOperationException>(act);
+    }
+
     #endregion
 
     #region FromMetadata - Alternative Property Names

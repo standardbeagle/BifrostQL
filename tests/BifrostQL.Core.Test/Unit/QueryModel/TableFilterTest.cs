@@ -364,6 +364,95 @@ namespace BifrostQL.Core.QueryModel
                 .WithMessage("*unsupported shape*");
         }
 
+        [Fact]
+        public void RelationshipFilter_MultiplePredicates_AndsThemInOneSubquery()
+        {
+            // Regression (b4974d5): sibling keys on a relationship form an implicit AND
+            // whose wrapper has a null Next. The dispatch keyed on `Next.Next == null`
+            // misrouted that wrapper into the leaf path, where the relationship name was
+            // looked up as a column and threw "unknown column 'sessions'". Both nested
+            // predicates must now land, ANDed, inside the single relationship subquery.
+            var filter = TableFilter.FromObject(new Dictionary<string, object?>
+            {
+                { "sessions", new Dictionary<string, object?>
+                    {
+                        { "id", new Dictionary<string, object?> { { "_eq", 1 } } },
+                        { "workshopId", new Dictionary<string, object?> { { "_eq", 2 } } },
+                    }
+                }
+            }, "tableName");
+            var dbModel = Substitute.For<IDbModel>();
+            var tables = GetTableModel();
+            dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
+
+            var parameters = new SqlParameterCollection();
+            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
+
+            sut.Sql.Should().Contain("INNER JOIN");
+            // Both predicates are present against the (parent) Sessions table, ANDed.
+            sut.Sql.Should().Contain("[Sessions].[id] = @p0");
+            sut.Sql.Should().Contain("[Sessions].[workshopId] = @p1");
+            sut.Sql.Should().Contain(" AND ");
+            sut.Parameters.Should().HaveCount(2);
+            sut.Parameters[0].Value.Should().Be(1);
+            sut.Parameters[1].Value.Should().Be(2);
+            BifrostQL.Core.Test.TestSupport.SqlSyntax.AssertValid(
+                $"SELECT * FROM [table]{sut.Sql}", "multi-predicate relationship filter renders valid SQL");
+        }
+
+        [Fact]
+        public void RelationshipFilter_ExplicitAndBlock_AndsPredicatesInOneSubquery()
+        {
+            // The explicit `and` form must behave like the implicit-AND sibling form.
+            var filter = TableFilter.FromObject(new Dictionary<string, object?>
+            {
+                { "sessions", new Dictionary<string, object?>
+                    {
+                        { "and", new List<object?>
+                            {
+                                new Dictionary<string, object?> { { "id", new Dictionary<string, object?> { { "_eq", 1 } } } },
+                                new Dictionary<string, object?> { { "workshopId", new Dictionary<string, object?> { { "_eq", 2 } } } },
+                            }
+                        },
+                    }
+                }
+            }, "tableName");
+            var dbModel = Substitute.For<IDbModel>();
+            var tables = GetTableModel();
+            dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
+
+            var parameters = new SqlParameterCollection();
+            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
+
+            sut.Sql.Should().Contain("[Sessions].[id] = @p0");
+            sut.Sql.Should().Contain("[Sessions].[workshopId] = @p1");
+            sut.Parameters.Should().HaveCount(2);
+            BifrostQL.Core.Test.TestSupport.SqlSyntax.AssertValid(
+                $"SELECT * FROM [table]{sut.Sql}", "explicit-and relationship filter renders valid SQL");
+        }
+
+        [Fact]
+        public void RelationshipFilter_SinglePredicate_NotDegradedByMultiPredicateSupport()
+        {
+            // A single-predicate relationship must still render its subquery + join.
+            var filter = TableFilter.FromObject(new Dictionary<string, object?>
+            {
+                { "sessions", new Dictionary<string, object?> {
+                    { "id", new Dictionary<string, object?> { { "_eq", 42 } } } } }
+            }, "tableName");
+            var dbModel = Substitute.For<IDbModel>();
+            var tables = GetTableModel();
+            dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
+
+            var parameters = new SqlParameterCollection();
+            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
+
+            sut.Sql.Should().Contain("INNER JOIN");
+            sut.Sql.Should().Contain("[Sessions].[id] = @p0");
+            sut.Sql.Should().NotContain(" AND ");
+            sut.Parameters.Should().ContainSingle().Which.Value.Should().Be(42);
+        }
+
         private static Dictionary<string, DbTable> GetTableModel()
         {
             var table1Columns = new Dictionary<string, ColumnDto>

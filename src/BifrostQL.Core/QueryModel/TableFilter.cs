@@ -311,7 +311,15 @@ namespace BifrostQL.Core.QueryModel
             }
 
             var table = model.GetTableFromDbName(TableName ?? throw new BifrostExecutionError("TableFilter with undefined TableName"));
-            if (Next.Next == null)
+            // A leaf predicate is `column: { _op: value }` — `Next` is the terminal
+            // operator (Relation) node. A relationship sub-filter instead has a nested
+            // column (`Join`) or an implicit/explicit AND/OR wrapper as `Next`, and must
+            // route to the join branch below. Keying on `Next.Next == null` misrouted the
+            // AND-wrapper produced by sibling relationship predicates
+            // (`posts: { published: {_eq:true}, featured: {_eq:true} }`) — its `Next` is
+            // null — into the leaf path, where the relationship name ("posts") was looked
+            // up as a column and threw "unknown column". Key on the node type instead.
+            if (Next.FilterType == FilterType.Relation)
             {
                 // Resolve the column tolerant of both name spaces: user filters key
                 // by GraphQL name, but security transformers (tenant, soft-delete)
@@ -389,6 +397,25 @@ namespace BifrostQL.Core.QueryModel
                 // schema-qualified FROM without an alias still exposes the bare table
                 // name in every supported dialect.
                 var parentTableRef = dialect.TableReference(link.ParentTable.TableSchema, link.ParentTable.DbName);
+
+                // Multiple sibling predicates on one relationship form an implicit AND
+                // (`posts: { published: {_eq:true}, featured: {_eq:true} }`) or an explicit
+                // `and` block. Combine them into ONE subquery WHERE so every predicate
+                // constrains the relationship, instead of dropping into the leaf path
+                // (which resolved the relationship name as a column and threw
+                // "unknown column"). OR across relationship predicates is not expressible
+                // as a single narrowing join and still falls through to the shape error.
+                if (filter.Next == null && filter.And.Count > 0)
+                {
+                    if (includeValue)
+                        throw new BifrostExecutionError(
+                            $"Relationship filter on '{link.ChildTable.DbName}' via link '{link.Name}' " +
+                            "cannot combine multiple predicates in a value-returning context.");
+                    var pred = BuildRelationshipLeafPredicate(filter, link, dialect, parameters);
+                    var combined = $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid} FROM {parentTableRef} WHERE {pred.Sql}";
+                    return (combined, pred.Parameters.ToList());
+                }
+
                 switch (filter.FilterType)
                 {
                     case FilterType.Join
@@ -423,6 +450,42 @@ namespace BifrostQL.Core.QueryModel
             throw new BifrostExecutionError(
                 $"Relationship filter on '{link.ChildTable.DbName}' via link '{link.Name}' " +
                 $"has an unsupported shape (filter type '{filter.FilterType}') and cannot be rendered.");
+        }
+
+        /// <summary>
+        /// Renders one sibling predicate of a relationship's implicit/explicit AND as a
+        /// WHERE fragment evaluated against the relationship's (parent) table, so several
+        /// predicates can be combined into a single relationship subquery. Only plain
+        /// column comparisons and nested ANDs of them are supported; an OR block or a
+        /// further nested relationship on the same relationship throws a clear shape error
+        /// rather than silently dropping a constraint.
+        /// </summary>
+        private static ParameterizedSql BuildRelationshipLeafPredicate(
+            TableFilter filter, TableLinkDto link, ISqlDialect dialect, SqlParameterCollection parameters)
+        {
+            if (filter.Next == null && filter.And.Count > 0)
+            {
+                var predicates = new List<string>();
+                var combinedParams = new List<SqlParameterInfo>();
+                foreach (var child in filter.And)
+                {
+                    var childPred = BuildRelationshipLeafPredicate(child, link, dialect, parameters);
+                    predicates.Add($"({childPred.Sql})");
+                    combinedParams.AddRange(childPred.Parameters);
+                }
+                return new ParameterizedSql(string.Join(" AND ", predicates), combinedParams);
+            }
+
+            if (filter.FilterType == FilterType.Join && filter.Next is { Next: null, FilterType: FilterType.Relation } rel)
+            {
+                var parentColumnType = link.ParentTable.ColumnLookup.TryGetValue(filter.ColumnName, out var pcol) ? pcol.DataType : null;
+                return GetSingleFilterParameterized(
+                    dialect, parameters, link.ParentTable.DbName, filter.ColumnName, rel.RelationName, rel.Value, parentColumnType);
+            }
+
+            throw new BifrostExecutionError(
+                $"Relationship filter on '{link.ChildTable.DbName}' via link '{link.Name}' combines multiple predicates " +
+                $"but one has an unsupported shape (filter type '{filter.FilterType}'); only column comparisons and nested AND are supported.");
         }
 
     }

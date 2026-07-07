@@ -33,13 +33,13 @@
     "ts": "tsc -p tsconfig.json"
   },
   "devDependencies": {
-    "@typescript-eslint/eslint-plugin": "^7.18.0",
-    "@typescript-eslint/parser": "^7.18.0",
-    "@vitest/coverage-v8": "^4.1.8",
-    "eslint": "^8.57.1",
-    "prettier": "^3.8.3",
-    "typescript": "^5.9.3",
-    "vitest": "^4.1.8"
+    "@typescript-eslint/eslint-plugin": "^8.63.0",
+    "@typescript-eslint/parser": "^8.63.0",
+    "@vitest/coverage-v8": "^4.1.10",
+    "eslint": "^10.6.0",
+    "prettier": "^3.9.4",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
   },
   "files": [
     "dist"

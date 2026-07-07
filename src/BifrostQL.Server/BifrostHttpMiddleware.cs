@@ -245,11 +245,14 @@ namespace BifrostQL.Server
 
             // When using app.Map(), the matched path moves to PathBase and Path becomes the remainder.
             // Try PathBase first (where app.Map puts the endpoint path), then Path, then first registered.
-            var pathBase = context.Request.PathBase.Value;
+            // The PathCache is ordinal-keyed while app.Map matches case-insensitively, so a
+            // request to /GraphQL/sales arrives with that casing but the loader is registered
+            // under the lowercase key. Normalize the lookup key so mixed-case paths resolve.
+            var pathBase = NormalizePathKey(context.Request.PathBase.Value);
             if (!string.IsNullOrEmpty(pathBase) && cache.HasPath(pathBase))
                 return await cache.GetValueAsync(pathBase);
 
-            var path = context.Request.Path.Value;
+            var path = NormalizePathKey(context.Request.Path.Value);
             if (!string.IsNullOrEmpty(path) && cache.HasPath(path))
                 return await cache.GetValueAsync(path);
 
@@ -264,6 +267,14 @@ namespace BifrostQL.Server
             return await cache.GetFirstValueAsync()
                 ?? throw new InvalidOperationException("No BifrostQL schemas are configured. Set a connection string first.");
         }
+
+        /// <summary>
+        /// Normalizes a request path to the lowercase key form under which endpoint loaders
+        /// are registered. app.Map matches case-insensitively but PathCache keys ordinally,
+        /// so this bridges the two without editing Core/PathCache.
+        /// </summary>
+        private static string? NormalizePathKey(string? path)
+            => string.IsNullOrEmpty(path) ? path : path.ToLowerInvariant();
 
         public Inputs Combine(IReadOnlyDictionary<string, object?> input1, IReadOnlyDictionary<string, object?> input2)
         {

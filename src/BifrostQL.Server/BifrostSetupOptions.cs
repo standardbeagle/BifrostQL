@@ -269,7 +269,10 @@ namespace BifrostQL.Server
             // raw default profile, preserving existing behavior.
             var profileRegistry = _profileRegistry;
             var extensionsLoader = new PathCache<Inputs>();
-            extensionsLoader.AddLoader(path, () => ProfileCacheBootstrapper.BuildInputsAsync(
+            // Register under a case-normalized key. app.Map matches paths case-insensitively,
+            // so a request to /GraphQL reaches this middleware with that casing; the PathCache
+            // is ordinal-keyed, so the lookup side normalizes to the same lowercase form.
+            extensionsLoader.AddLoader(path.ToLowerInvariant(), () => ProfileCacheBootstrapper.BuildInputsAsync(
                 _connectionString ?? throw new InvalidOperationException("Connection string has not been configured."),
                 _provider,
                 configMetadataRules,

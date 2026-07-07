@@ -168,6 +168,44 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public void AggregateInFlightBytes_OverConfiguredTotal_IsRejected()
+        {
+            // Finding 8: many concurrent sessions must not sum past the aggregate cap even
+            // when each individual session is under the per-session limit. Per-session cap
+            // 1000, up to 8 sessions, but aggregate capped at 1500 bytes total.
+            var receiver = new ChunkReceiver(
+                maxReassemblyBytes: 1000,
+                maxPendingReassemblies: 8,
+                reassemblyTtl: TimeSpan.FromMinutes(5),
+                maxTotalReassemblyBytes: 1500);
+
+            // Two sessions each declaring 800 bytes: first is fine (800 <= 1500), the second
+            // would push the aggregate to 1600 > 1500 and must be rejected before allocation.
+            receiver.AddChunk(Chunk(1, new byte[] { 1 }, 0, 2, 0, 800)).Should().BeNull();
+            var act = () => receiver.AddChunk(Chunk(2, new byte[] { 1 }, 0, 2, 0, 800));
+
+            act.Should().Throw<InvalidOperationException>().WithMessage("*Aggregate*");
+        }
+
+        [Fact]
+        public void AggregateInFlightBytes_FreedOnCompletion_AllowsNewTransfers()
+        {
+            var receiver = new ChunkReceiver(
+                maxReassemblyBytes: 1000,
+                maxPendingReassemblies: 8,
+                reassemblyTtl: TimeSpan.FromMinutes(5),
+                maxTotalReassemblyBytes: 1500);
+
+            // Complete a 800-byte transfer (frees its aggregate reservation)...
+            receiver.AddChunk(Chunk(1, new byte[] { 1, 2, 3, 4 }, 0, 2, 0, 8)).Should().BeNull();
+            receiver.AddChunk(Chunk(1, new byte[] { 5, 6, 7, 8 }, 1, 2, 4, 8)).Should().NotBeNull();
+
+            // ...then two large sessions both fit because the first was released.
+            receiver.AddChunk(Chunk(2, new byte[] { 1 }, 0, 2, 0, 800)).Should().BeNull();
+            receiver.AddChunk(Chunk(3, new byte[] { 1 }, 0, 2, 0, 700)).Should().BeNull();
+        }
+
+        [Fact]
         public void StalePendingReassembly_IsEvicted_MakingRoomForNewTransfers()
         {
             var receiver = new ChunkReceiver(

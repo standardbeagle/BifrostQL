@@ -65,7 +65,13 @@ namespace BifrostQL.Server
             // A named profile requires a registry that knows it.
             var profile = registry?.Get(profileName);
             if (profile == null)
-                return new BifrostProfileResolution { ErrorMessage = $"Unknown profile '{profileName}'." };
+            {
+                // Never echo raw attacker-controlled input verbatim (reflected-text / log
+                // injection surface). Only surface the requested name when it matches a safe
+                // identifier charset; otherwise keep the error generic.
+                var display = IsSafeProfileName(profileName) ? $" '{profileName}'" : string.Empty;
+                return new BifrostProfileResolution { ErrorMessage = $"Unknown profile{display}." };
+            }
 
             if (profile.RequireRole != null)
             {
@@ -82,12 +88,19 @@ namespace BifrostQL.Server
 
         /// <summary>
         /// Extracts the requested profile name from the transport context. Priority:
-        /// X-BifrostQL-Profile header &gt; ?profile= query parameter &gt; single path segment
-        /// after the mapped endpoint. Returns null when none is present.
+        /// X-BifrostQL-Profile header &gt; ?profile= query parameter. Returns null when none
+        /// is present.
         /// </summary>
+        /// <remarks>
+        /// Decision: the former "any single trailing path segment is a profile name" fallback
+        /// has been removed. It turned every URL suffix (e.g. <c>/graphql/v1</c>) into a
+        /// security-relevant selector and echoed attacker text into errors, widening the audit
+        /// surface for no real benefit — the explicit header and query channels fully cover the
+        /// documented use. Profile selection is now an explicit opt-in via header or query only.
+        /// </remarks>
         public static string? ResolveProfileName(HttpContext context)
         {
-            // Priority: Header > Query parameter > Path segment
+            // Priority: Header > Query parameter
             if (context.Request.Headers.TryGetValue("X-BifrostQL-Profile", out var headerValue)
                 && !string.IsNullOrWhiteSpace(headerValue))
             {
@@ -100,17 +113,24 @@ namespace BifrostQL.Server
                 return queryValue.ToString().Trim();
             }
 
-            // Check for path segment after the mapped endpoint path.
-            // After app.Map(), Path contains the remainder (e.g., "/direct" if mapped at "/graphql").
-            var path = context.Request.Path.Value;
-            if (!string.IsNullOrEmpty(path) && path.Length > 1)
-            {
-                var segment = path.TrimStart('/');
-                if (!string.IsNullOrEmpty(segment) && !segment.Contains('/'))
-                    return segment;
-            }
-
             return null;
+        }
+
+        /// <summary>
+        /// Whether a requested profile name is a safe identifier (letters, digits, and a small
+        /// set of separators) that may be reflected back in an error message. Anything else is
+        /// kept out of responses/logs.
+        /// </summary>
+        private static bool IsSafeProfileName(string name)
+        {
+            if (name.Length is 0 or > 64)
+                return false;
+            foreach (var c in name)
+            {
+                if (!(char.IsLetterOrDigit(c) || c is '.' or '_' or '-'))
+                    return false;
+            }
+            return true;
         }
     }
 }

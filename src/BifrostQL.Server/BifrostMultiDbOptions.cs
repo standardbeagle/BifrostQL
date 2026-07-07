@@ -292,7 +292,9 @@ namespace BifrostQL.Server
                 var endpointMetadataRules = endpoint.Metadata as IReadOnlyList<string>
                     ?? endpoint.Metadata.ToArray();
                 var metadataSources = endpoint.MetadataSources;
-                extensionsLoader.AddLoader(endpoint.Path, () => ProfileCacheBootstrapper.BuildInputsAsync(
+                // Case-normalized key: app.Map routes case-insensitively while the PathCache
+                // is ordinal-keyed, so registration and lookup both normalize to lowercase.
+                extensionsLoader.AddLoader(endpoint.Path.ToLowerInvariant(), () => ProfileCacheBootstrapper.BuildInputsAsync(
                     connStr, providerName, endpointMetadataRules, metadataSources, registry));
             }
             return extensionsLoader;

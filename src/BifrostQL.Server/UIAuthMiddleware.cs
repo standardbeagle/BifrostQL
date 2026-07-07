@@ -15,6 +15,16 @@ namespace BifrostQL.Server
             {
                 if ((context.User?.Identity?.IsAuthenticated ?? false) == false)
                 {
+                    // API/Bearer clients must get a 401, not an interactive OIDC 302 redirect
+                    // to a login page they cannot follow. Only browser-style requests get the
+                    // OIDC challenge. This keeps `Authorization: Bearer` and JSON API callers
+                    // on a proper 401 while the interactive UI still redirects to login.
+                    if (IsApiClient(context.Request))
+                    {
+                        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                        return;
+                    }
+
                     await context.ChallengeAsync("oauth2", new AuthenticationProperties()
                     {
                         RedirectUri = "/"
@@ -27,6 +37,27 @@ namespace BifrostQL.Server
                 }
             });
             return app;
+        }
+
+        /// <summary>
+        /// Whether the request is a non-interactive API client (as opposed to a browser
+        /// navigation) that should receive a 401 rather than an OIDC login redirect. True when
+        /// the request carries an <c>Authorization: Bearer</c> header or does not accept HTML.
+        /// </summary>
+        private static bool IsApiClient(HttpRequest request)
+        {
+            var authorization = request.Headers.Authorization.ToString();
+            if (authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            // A browser top-level navigation sends `Accept: text/html`. XHR/fetch/GraphQL API
+            // callers typically send `application/json` (or `*/*`) and never text/html.
+            var accept = request.Headers.Accept.ToString();
+            if (!string.IsNullOrEmpty(accept)
+                && !accept.Contains("text/html", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            return false;
         }
 
         /// <summary>

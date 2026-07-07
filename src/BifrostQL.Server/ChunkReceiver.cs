@@ -41,17 +41,31 @@ namespace BifrostQL.Server
         /// </summary>
         public static readonly TimeSpan DefaultReassemblyTtl = TimeSpan.FromMinutes(2);
 
+        /// <summary>
+        /// Default cap on the TOTAL bytes across all concurrent reassembly sessions for one
+        /// connection (128 MB). Without an aggregate cap, N concurrent sessions each declaring
+        /// the per-session maximum could pin N × max bytes (e.g. 16 × 64 MB ≈ 1 GB) from only
+        /// kilobytes of traffic. This bounds the whole connection, not just each session.
+        /// </summary>
+        public const int DefaultMaxTotalReassemblyBytes = 128 * 1024 * 1024;
+
         private readonly Dictionary<uint, ReassemblyState> _pending = new();
         private readonly int _maxReassemblyBytes;
         private readonly int _maxPendingReassemblies;
         private readonly TimeSpan _reassemblyTtl;
+        private readonly long _maxTotalReassemblyBytes;
+        private long _currentReassemblyBytes;
 
         public ChunkReceiver()
             : this(DefaultMaxReassemblyBytes, DefaultMaxPendingReassemblies, DefaultReassemblyTtl)
         {
         }
 
-        public ChunkReceiver(int maxReassemblyBytes, int maxPendingReassemblies, TimeSpan reassemblyTtl)
+        public ChunkReceiver(
+            int maxReassemblyBytes,
+            int maxPendingReassemblies,
+            TimeSpan reassemblyTtl,
+            long maxTotalReassemblyBytes = 0)
         {
             if (maxReassemblyBytes <= 0)
                 throw new ArgumentOutOfRangeException(nameof(maxReassemblyBytes));
@@ -59,9 +73,16 @@ namespace BifrostQL.Server
                 throw new ArgumentOutOfRangeException(nameof(maxPendingReassemblies));
             if (reassemblyTtl <= TimeSpan.Zero)
                 throw new ArgumentOutOfRangeException(nameof(reassemblyTtl));
+            if (maxTotalReassemblyBytes < 0)
+                throw new ArgumentOutOfRangeException(nameof(maxTotalReassemblyBytes));
             _maxReassemblyBytes = maxReassemblyBytes;
             _maxPendingReassemblies = maxPendingReassemblies;
             _reassemblyTtl = reassemblyTtl;
+            // 0 means "derive from the per-session cap": the aggregate is at least one full
+            // session and never below the per-session cap.
+            _maxTotalReassemblyBytes = maxTotalReassemblyBytes > 0
+                ? maxTotalReassemblyBytes
+                : Math.Max(maxReassemblyBytes, DefaultMaxTotalReassemblyBytes);
         }
 
         /// <summary>
@@ -111,8 +132,18 @@ namespace BifrostQL.Server
                         $"Too many pending chunked transfers: limit is {_maxPendingReassemblies}");
                 }
 
+                // Aggregate cap: bound TOTAL in-flight reassembly memory for this connection,
+                // not just each individual session, so many concurrent sessions cannot sum to
+                // a much larger allocation than any single session's limit.
+                if (_currentReassemblyBytes + (long)chunk.TotalBytes > _maxTotalReassemblyBytes)
+                {
+                    throw new InvalidOperationException(
+                        $"Aggregate in-flight reassembly memory would exceed the {_maxTotalReassemblyBytes}-byte per-connection limit");
+                }
+
                 state = new ReassemblyState(chunk.ChunkTotal, chunk.TotalBytes);
                 _pending[chunk.RequestId] = state;
+                _currentReassemblyBytes += (long)chunk.TotalBytes;
             }
 
             state.AddChunk(chunk.ChunkSequence, chunk.ChunkOffset, chunk.Payload);
@@ -121,6 +152,7 @@ namespace BifrostQL.Server
                 return null;
 
             _pending.Remove(chunk.RequestId);
+            _currentReassemblyBytes -= state.DeclaredBytes;
             return state.GetAssembledPayload();
         }
 
@@ -147,7 +179,11 @@ namespace BifrostQL.Server
                 return;
 
             foreach (var requestId in stale)
+            {
+                if (_pending.TryGetValue(requestId, out var evicted))
+                    _currentReassemblyBytes -= evicted.DeclaredBytes;
                 _pending.Remove(requestId);
+            }
         }
 
         /// <summary>
@@ -177,7 +213,11 @@ namespace BifrostQL.Server
                 _buffer = new byte[(int)totalBytes];
                 _received = new bool[totalChunks];
                 _lastActivityTicks = Environment.TickCount64;
+                DeclaredBytes = (long)totalBytes;
             }
+
+            /// <summary>The declared payload size this session reserved (for the aggregate cap).</summary>
+            public long DeclaredBytes { get; }
 
             public bool IsComplete => _receivedCount == _received.Length;
 

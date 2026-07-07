@@ -1,7 +1,9 @@
 using System.Net.WebSockets;
 using System.Text.Json;
 using BifrostQL.Core.Resolvers;
+using GraphQL;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Server
@@ -42,6 +44,16 @@ namespace BifrostQL.Server
         private readonly TimeSpan _ackTimeout;
 
         /// <summary>
+        /// Origins permitted to open a cross-origin WebSocket handshake. Empty (or null)
+        /// means same-origin only. A WebSocket handshake bypasses CORS, so without this
+        /// guard any web page could open a socket on the victim's cookie (CSWSH) and run
+        /// authenticated queries. Matched case-insensitively against the request Origin
+        /// header; requests with no Origin header (non-browser clients) are allowed since
+        /// they are not a cross-site-request-forgery vector.
+        /// </summary>
+        private readonly IReadOnlyList<string> _allowedOrigins;
+
+        /// <summary>
         /// Maximum binary frame size (4 MB). Messages larger than this are rejected.
         /// </summary>
         private const int MaxFrameSize = 4 * 1024 * 1024;
@@ -75,7 +87,8 @@ namespace BifrostQL.Server
             ILogger<BifrostBinaryMiddleware> logger,
             int chunkThreshold,
             int ackWindow,
-            TimeSpan ackTimeout)
+            TimeSpan ackTimeout,
+            IReadOnlyList<string>? allowedOrigins = null)
         {
             _next = next;
             _engine = engine ?? throw new ArgumentNullException(nameof(engine));
@@ -84,6 +97,7 @@ namespace BifrostQL.Server
             _chunkThreshold = chunkThreshold;
             _ackWindow = ackWindow;
             _ackTimeout = ackTimeout;
+            _allowedOrigins = allowedOrigins ?? Array.Empty<string>();
         }
 
         public async Task InvokeAsync(HttpContext context)
@@ -94,8 +108,66 @@ namespace BifrostQL.Server
                 return;
             }
 
+            // Reject cross-origin handshakes BEFORE upgrading. WebSocket handshakes bypass
+            // CORS, and the binary transport authenticates via the ambient cookie, so an
+            // unchecked upgrade is a Cross-Site WebSocket Hijacking (CSWSH) vector: any page
+            // could open a socket on the victim's session. No upgrade is performed on reject.
+            if (!IsOriginAllowed(context))
+            {
+                _logger.LogWarning(
+                    "Rejected cross-origin WebSocket handshake from Origin '{Origin}'",
+                    context.Request.Headers.Origin.ToString());
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return;
+            }
+
             var webSocket = await context.WebSockets.AcceptWebSocketAsync();
             await HandleConnectionAsync(webSocket, context);
+        }
+
+        /// <summary>
+        /// Whether the request's Origin header is permitted to open the WebSocket. A request
+        /// with no Origin header is allowed (non-browser client; not a CSRF vector). When an
+        /// allowlist is configured the Origin must appear in it; otherwise only same-origin
+        /// (scheme + host + port equal to the request's own host) is permitted.
+        /// </summary>
+        private bool IsOriginAllowed(HttpContext context)
+        {
+            var origin = context.Request.Headers.Origin.ToString();
+            if (string.IsNullOrEmpty(origin))
+                return true; // Non-browser client: browsers always send Origin on WS handshakes.
+
+            if (_allowedOrigins.Count > 0)
+            {
+                foreach (var allowed in _allowedOrigins)
+                {
+                    if (string.Equals(allowed, origin, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+                return false;
+            }
+
+            return IsSameOrigin(origin, context.Request);
+        }
+
+        private static bool IsSameOrigin(string origin, HttpRequest request)
+        {
+            if (!Uri.TryCreate(origin, UriKind.Absolute, out var originUri))
+                return false;
+
+            var requestHost = request.Host;
+            if (!requestHost.HasValue)
+                return false;
+
+            var expectedPort = requestHost.Port
+                ?? (string.Equals(request.Scheme, "https", StringComparison.OrdinalIgnoreCase) ? 443 : 80);
+            var originPort = originUri.IsDefaultPort
+                ? (string.Equals(originUri.Scheme, "https", StringComparison.OrdinalIgnoreCase) ? 443 : 80)
+                : originUri.Port;
+
+            return string.Equals(originUri.Scheme, request.Scheme, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(originUri.Host, requestHost.Host, StringComparison.OrdinalIgnoreCase)
+                && originPort == expectedPort;
         }
 
         private async Task HandleConnectionAsync(WebSocket webSocket, HttpContext httpContext)
@@ -114,7 +186,21 @@ namespace BifrostQL.Server
             {
                 while (webSocket.State == WebSocketState.Open)
                 {
-                    var (messageBytes, messageType) = await ReadFullMessageAsync(webSocket, buffer, httpContext.RequestAborted);
+                    byte[] messageBytes;
+                    WebSocketMessageType messageType;
+                    try
+                    {
+                        (messageBytes, messageType) = await ReadFullMessageAsync(webSocket, buffer, httpContext.RequestAborted);
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        // A malformed reassembly or an oversized (>MaxFrameSize) multi-frame
+                        // message. A single garbage frame must not kill the connection with an
+                        // unhandled exception and no close handshake — send an error frame and
+                        // close the connection cleanly instead.
+                        await CloseWithErrorAsync(webSocket, ex, "Invalid or oversized frame");
+                        break;
+                    }
 
                     if (messageType == WebSocketMessageType.Close)
                         break;
@@ -128,7 +214,21 @@ namespace BifrostQL.Server
                         break;
                     }
 
-                    await ProcessMessageAsync(messageBytes, webSocket, httpContext, buffer, chunkReceiver, chunkSender, chunkBuffer);
+                    try
+                    {
+                        await ProcessMessageAsync(messageBytes, webSocket, httpContext, buffer, chunkReceiver, chunkSender, chunkBuffer);
+                    }
+                    catch (Exception ex) when (
+                        ex is not OperationCanceledException
+                        && !(ex is WebSocketException wse && wse.WebSocketErrorCode == WebSocketError.ConnectionClosedPrematurely))
+                    {
+                        // A malformed reassembled message, a garbage ack/control frame, or any
+                        // other processing fault for THIS message must not escape the loop and
+                        // tear the connection down without a close handshake. Report it as an
+                        // error frame and close cleanly.
+                        await CloseWithErrorAsync(webSocket, ex, "Message processing failed");
+                        break;
+                    }
                 }
             }
             catch (WebSocketException ex) when (ex.WebSocketErrorCode == WebSocketError.ConnectionClosedPrematurely)
@@ -158,6 +258,39 @@ namespace BifrostQL.Server
             }
         }
 
+        /// <summary>
+        /// Sends a generic Error frame (no internal detail) and closes the connection with a
+        /// protocol close frame. Used when a single frame cannot be processed (malformed,
+        /// oversized, or a garbage control frame) so the failure surfaces to the client as a
+        /// clean close rather than an unhandled exception with error-level log noise.
+        /// </summary>
+        private async Task CloseWithErrorAsync(WebSocket webSocket, Exception ex, string reason)
+        {
+            _logger.LogWarning(ex, "Closing binary connection: {Reason}", reason);
+
+            try
+            {
+                var errorResponse = new BifrostMessage
+                {
+                    Type = BifrostMessageType.Error,
+                    Errors = { "Malformed or unprocessable frame; closing connection." },
+                };
+                await SendResponseAsync(webSocket, errorResponse, CancellationToken.None);
+            }
+            catch (WebSocketException) { }
+            catch (OperationCanceledException) { }
+
+            try
+            {
+                await webSocket.CloseAsync(
+                    WebSocketCloseStatus.ProtocolError,
+                    "Malformed frame",
+                    CancellationToken.None);
+            }
+            catch (WebSocketException) { }
+            catch (OperationCanceledException) { }
+        }
+
         private async Task ProcessMessageAsync(
             byte[] messageBytes,
             WebSocket webSocket,
@@ -184,6 +317,28 @@ namespace BifrostQL.Server
                 return;
             }
 
+            // A chunked send drains the tail ACK window before completing; if the client
+            // pipelined its next request during that drain, the send returns it as a
+            // "leftover" frame. Process each in turn until none remain (serial semantics).
+            BifrostMessage? next = request;
+            while (next != null)
+                next = await DispatchAsync(next, webSocket, httpContext, receiveBuffer, chunkReceiver, chunkSender, chunkBuffer);
+        }
+
+        /// <summary>
+        /// Processes a single already-parsed request frame. Returns a leftover frame the
+        /// client pipelined (surfaced by the chunked-send tail drain) that must be processed
+        /// next, or null when nothing further is pending.
+        /// </summary>
+        private async Task<BifrostMessage?> DispatchAsync(
+            BifrostMessage request,
+            WebSocket webSocket,
+            HttpContext httpContext,
+            byte[] receiveBuffer,
+            ChunkReceiver chunkReceiver,
+            ChunkSender chunkSender,
+            ChunkBuffer chunkBuffer)
+        {
             // Handle incoming chunk messages from client (large request reassembly).
             // Client chunks carry fragments of a full serialized BifrostMessage;
             // the assembled bytes are deserialized to recover the original Query/Mutation.
@@ -207,18 +362,18 @@ namespace BifrostQL.Server
                         Errors = { "Invalid chunk" },
                     };
                     await SendResponseAsync(webSocket, errorResponse, httpContext.RequestAborted);
-                    return;
+                    return null;
                 }
 
                 if (assembledBytes == null)
-                    return; // More chunks expected
+                    return null; // More chunks expected
 
                 request = BifrostMessage.FromBytes(assembledBytes);
             }
 
             // ChunkAck messages are only meaningful during SendChunkedAsync; ignore at top level
             if (request.Type == BifrostMessageType.ChunkAck)
-                return;
+                return null;
 
             // ChunkNack at top level: retransmit the requested chunk from this
             // connection's buffer (never another connection's transfers).
@@ -242,7 +397,7 @@ namespace BifrostQL.Server
                     };
                     await SendResponseAsync(webSocket, errorResponse, httpContext.RequestAborted);
                 }
-                return;
+                return null;
             }
 
             // Resume: client wants chunks of an interrupted transfer on this connection
@@ -269,9 +424,10 @@ namespace BifrostQL.Server
 
                     try
                     {
-                        await chunkSender.SendChunksAsync(
+                        var leftover = await chunkSender.SendChunksAsync(
                             webSocket, remainingChunks, 0, receiveBuffer, httpContext.RequestAborted);
                         chunkBuffer.Complete(request.RequestId);
+                        return leftover;
                     }
                     catch (TimeoutException ex)
                     {
@@ -297,7 +453,7 @@ namespace BifrostQL.Server
                     };
                     await SendResponseAsync(webSocket, resumeAck, httpContext.RequestAborted);
                 }
-                return;
+                return null;
             }
 
             var response = await ExecuteRequestAsync(request, httpContext);
@@ -309,10 +465,11 @@ namespace BifrostQL.Server
                     response.RequestId, response.Payload.Length);
                 try
                 {
-                    await chunkSender.SendChunkedAsync(webSocket, response, receiveBuffer, httpContext.RequestAborted);
-                    // Transfer delivered in full: release the buffered chunks now instead
-                    // of letting the whole payload linger until TTL expiry.
+                    var leftover = await chunkSender.SendChunkedAsync(webSocket, response, receiveBuffer, httpContext.RequestAborted);
+                    // Transfer delivered in full (tail window drained): release the buffered
+                    // chunks now instead of letting the whole payload linger until TTL expiry.
                     chunkBuffer.Complete(response.RequestId);
+                    return leftover;
                 }
                 catch (TimeoutException ex)
                 {
@@ -327,6 +484,8 @@ namespace BifrostQL.Server
             {
                 await SendResponseAsync(webSocket, response, httpContext.RequestAborted);
             }
+
+            return null;
         }
 
         /// <summary>
@@ -456,7 +615,7 @@ namespace BifrostQL.Server
 
                 if (result.Data != null)
                 {
-                    response.Payload = JsonSerializer.SerializeToUtf8Bytes(result.Data);
+                    response.Payload = await SerializeResultPayloadAsync(result, httpContext);
                 }
             }
             catch (UnmappedOidcIssuerException)
@@ -474,6 +633,36 @@ namespace BifrostQL.Server
             }
 
             return response;
+        }
+
+        /// <summary>
+        /// Serializes the execution result's data into the binary Payload using the same
+        /// registered <see cref="IGraphQLSerializer"/> the HTTP path (GraphQLFrontend) uses.
+        /// <see cref="BifrostResult.Data"/> is a GraphQL.NET ExecutionNode graph that only the
+        /// registered serializer renders into the correct GraphQL wire shape
+        /// (<c>{"data":{...}}</c>); a bare System.Text.Json pass would emit the node internals.
+        /// Falls back to System.Text.Json only when no serializer is resolvable (e.g. a unit
+        /// test with no DI container), where the data is already a plain object graph.
+        /// </summary>
+        private static async Task<byte[]> SerializeResultPayloadAsync(BifrostResult result, HttpContext httpContext)
+        {
+            var serializer = httpContext.RequestServices?.GetService<IGraphQLSerializer>();
+            if (serializer == null)
+                return JsonSerializer.SerializeToUtf8Bytes(result.Data);
+
+            // Executed must be true or the GraphQL serializer omits the "data" field entirely.
+            var executionResult = new ExecutionResult { Data = result.Data, Executed = true };
+            if (result.Errors.Count > 0)
+            {
+                var errors = new ExecutionErrors();
+                foreach (var error in result.Errors)
+                    errors.Add(new ExecutionError(error.Message));
+                executionResult.Errors = errors;
+            }
+
+            using var ms = new MemoryStream();
+            await serializer.WriteAsync(ms, executionResult, httpContext.RequestAborted);
+            return ms.ToArray();
         }
 
         private static IReadOnlyDictionary<string, object?>? ParseVariables(string variablesJson)

@@ -188,6 +188,45 @@ public sealed class PerProfileSchemaResolutionTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MixedCasePathBase_ResolvesEndpoint_CaseInsensitively()
+    {
+        // Finding 9: app.Map matches case-insensitively, so a request to /GraphQL reaches
+        // this middleware with that casing while the loader is registered under the lowercase
+        // key. The lookup must normalize case, otherwise the request misses the cache and
+        // reports "No BifrostQL endpoint is configured".
+        const string introspection = "query { __type(name: \"companies\") { name } }";
+
+        var serializer = new GraphQLSerializer();
+        var middleware = new BifrostHttpMiddleware(
+            next: _ => Task.CompletedTask,
+            serializer: serializer,
+            documentExecutor: new DocumentExecuter(),
+            logger: NullLogger<BifrostHttpMiddleware>.Instance);
+
+        await using var provider = BuildRequestServices();
+        var context = new DefaultHttpContext { RequestServices = provider };
+        context.RequestServices.GetRequiredService<IHttpContextAccessor>().HttpContext = context;
+
+        context.Request.Method = HttpMethods.Post;
+        // Mixed-case PathBase — the loader is registered at "/graphql".
+        context.Request.PathBase = "/GraphQL";
+        context.Request.Path = PathString.Empty;
+        context.Request.ContentType = "application/json";
+        context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(
+            JsonSerializer.Serialize(new { query = introspection })));
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context);
+
+        context.Response.StatusCode.Should().Be(200);
+        context.Response.Body.Seek(0, SeekOrigin.Begin);
+        var json = await new StreamReader(context.Response.Body).ReadToEndAsync();
+        json.Should().NotContain("No BifrostQL endpoint",
+            "a mixed-case endpoint path must resolve the same registered schema");
+        json.Should().Contain("companies");
+    }
+
+    [Fact]
     public async Task NoProfile_DoesNotExposeNotesJoinOnCompanies()
     {
         var fields = await CompaniesFieldsAsync(profile: null);

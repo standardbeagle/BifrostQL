@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Claims;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
@@ -18,6 +19,15 @@ namespace BifrostQL.Server.Auth
     /// </summary>
     public static class LocalAuthEndpoint
     {
+        /// <summary>
+        /// Process-wide login throttle. Keyed by client IP + login so neither a single IP
+        /// spraying many accounts nor many IPs hammering one account is unbounded. In-memory
+        /// and best-effort (a load-balanced deployment throttles per node); pair with an
+        /// edge rate limiter for cross-node guarantees.
+        /// </summary>
+        private static readonly LoginThrottle Throttle = new();
+
+
         /// <summary>
         /// Registers the local auth login and logout endpoints on the application pipeline.
         /// Call after authentication middleware so the issued cookie is honored on
@@ -106,22 +116,100 @@ namespace BifrostQL.Server.Auth
                 return;
             }
 
+            var options = context.RequestServices.GetService<LocalAuthOptions>();
+            var throttleKey = BuildThrottleKey(context, request.Login);
+
+            // Fail closed against online guessing: once a caller (IP + login) exceeds the
+            // configured failure budget, stop verifying and respond 429 until the window
+            // elapses. Verification is never even attempted while locked out.
+            if (options != null && Throttle.IsLockedOut(throttleKey, options))
+            {
+                context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                return;
+            }
+
             var result = await store
                 .VerifyCredentialsAsync(request.Login, request.Password, context.RequestAborted)
                 .ConfigureAwait(false);
 
             if (!result.Succeeded || result.Identity == null)
             {
+                if (options != null)
+                    Throttle.RecordFailure(throttleKey, options);
+
                 // Same response for missing user and wrong password: do not leak which.
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 return;
             }
+
+            Throttle.Clear(throttleKey);
 
             var principal = BuildPrincipal(result.Identity);
             await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal)
                 .ConfigureAwait(false);
 
             context.Response.StatusCode = StatusCodes.Status204NoContent;
+        }
+
+        private static string BuildThrottleKey(HttpContext context, string login)
+        {
+            var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            return ip + "|" + login.Trim().ToLowerInvariant();
+        }
+
+        /// <summary>
+        /// In-memory sliding-window failure counter with lockout. Not a substitute for an
+        /// edge rate limiter, but denies a naive online brute-force from a single node.
+        /// </summary>
+        private sealed class LoginThrottle
+        {
+            private sealed class Entry
+            {
+                public int Failures;
+                public DateTimeOffset WindowStart;
+            }
+
+            private readonly ConcurrentDictionary<string, Entry> _entries = new();
+
+            public bool IsLockedOut(string key, LocalAuthOptions options)
+            {
+                if (options.MaxFailedLoginAttempts <= 0)
+                    return false;
+                if (!_entries.TryGetValue(key, out var entry))
+                    return false;
+
+                lock (entry)
+                {
+                    if (DateTimeOffset.UtcNow - entry.WindowStart >= options.LockoutWindow)
+                    {
+                        // Window elapsed: the caller is no longer locked out.
+                        entry.Failures = 0;
+                        entry.WindowStart = DateTimeOffset.UtcNow;
+                        return false;
+                    }
+
+                    return entry.Failures >= options.MaxFailedLoginAttempts;
+                }
+            }
+
+            public void RecordFailure(string key, LocalAuthOptions options)
+            {
+                if (options.MaxFailedLoginAttempts <= 0)
+                    return;
+
+                var entry = _entries.GetOrAdd(key, _ => new Entry { WindowStart = DateTimeOffset.UtcNow });
+                lock (entry)
+                {
+                    if (DateTimeOffset.UtcNow - entry.WindowStart >= options.LockoutWindow)
+                    {
+                        entry.Failures = 0;
+                        entry.WindowStart = DateTimeOffset.UtcNow;
+                    }
+                    entry.Failures++;
+                }
+            }
+
+            public void Clear(string key) => _entries.TryRemove(key, out _);
         }
 
         private static async Task HandleLogoutAsync(HttpContext context)

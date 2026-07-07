@@ -73,6 +73,19 @@ namespace BifrostQL.Server.Auth
 
         /// <summary>Read-session path for the local auth endpoint. Defaults to <c>/auth/session</c>.</summary>
         public string SessionPath { get; set; } = "/auth/session";
+
+        /// <summary>
+        /// Maximum failed login attempts, per client IP + login, allowed within
+        /// <see cref="LockoutWindow"/> before the endpoint responds 429 and stops verifying.
+        /// Blunts online password guessing. Set to 0 to disable throttling. Defaults to 10.
+        /// </summary>
+        public int MaxFailedLoginAttempts { get; set; } = 10;
+
+        /// <summary>
+        /// Sliding window over which <see cref="MaxFailedLoginAttempts"/> is counted, and the
+        /// duration a caller is locked out once the limit is exceeded. Defaults to 5 minutes.
+        /// </summary>
+        public TimeSpan LockoutWindow { get; set; } = TimeSpan.FromMinutes(5);
     }
 
     /// <summary>
@@ -118,6 +131,16 @@ namespace BifrostQL.Server.Auth
         private readonly IPasswordHasher<string> _passwordHasher;
 
         /// <summary>
+        /// A precomputed hash used only to spend the same PBKDF2 work on a user-miss as a
+        /// real verification does. Without it, a missing user returns before any
+        /// <see cref="IPasswordHasher{TUser}.VerifyHashedPassword"/> call, so the ~100 ms
+        /// hashing cost becomes a timing oracle that distinguishes "no such user" from
+        /// "wrong password". Verifying the submitted password against this throwaway hash
+        /// keeps the miss and wrong-password paths on the same code/timing path.
+        /// </summary>
+        private readonly string _dummyHash;
+
+        /// <summary>
         /// Creates a store over the shared connection factory.
         /// </summary>
         /// <param name="connFactory">
@@ -137,7 +160,20 @@ namespace BifrostQL.Server.Auth
             _connFactory = connFactory ?? throw new ArgumentNullException(nameof(connFactory));
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _passwordHasher = passwordHasher ?? new PasswordHasher<string>();
+            // Compute the throwaway hash once so a user-miss can verify against it in
+            // constant-ish time relative to a real verification (see _dummyHash).
+            _dummyHash = _passwordHasher.HashPassword(DummyUser, DummyPassword);
         }
+
+        private const string DummyUser = " bifrost-timing-guard";
+        private const string DummyPassword = " bifrost-timing-guard-password";
+
+        /// <summary>
+        /// Spends a verification against the throwaway hash so a user-miss follows the same
+        /// hashing code path (and cost) as a real password check. The result is discarded.
+        /// </summary>
+        private void SpendDummyVerification(string login, string password)
+            => _passwordHasher.VerifyHashedPassword(login, _dummyHash, password);
 
         /// <summary>
         /// Verifies <paramref name="login"/> / <paramref name="password"/> against the
@@ -176,12 +212,20 @@ namespace BifrostQL.Server.Auth
 
             await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
             if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                // No such user: still spend the hashing cost so the response time does not
+                // reveal that the account is absent (timing-oracle defense).
+                SpendDummyVerification(login, password);
                 return LocalLoginResult.Failure();
+            }
 
             var id = GetString(reader, 0);
             var storedHash = GetString(reader, 1);
             if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(storedHash))
+            {
+                SpendDummyVerification(login, password);
                 return LocalLoginResult.Failure();
+            }
 
             var verification = _passwordHasher.VerifyHashedPassword(login, storedHash, password);
             if (verification == PasswordVerificationResult.Failed)

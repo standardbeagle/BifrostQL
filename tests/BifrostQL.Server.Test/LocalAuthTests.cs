@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Data.Sqlite;
+using NSubstitute;
 using Xunit;
 
 namespace BifrostQL.Server.Test
@@ -152,6 +153,25 @@ namespace BifrostQL.Server.Test
             // Assert
             result.Succeeded.Should().BeFalse();
             result.Identity.Should().BeNull();
+        }
+
+        [Fact]
+        public async Task VerifyCredentials_MissingUser_StillInvokesPasswordHasher_NoTimingOracle()
+        {
+            // A missing user must still spend a password-hash verification so the response
+            // time does not distinguish "no such user" from "wrong password". The dummy-hash
+            // verification is the constant-time guard: assert VerifyHashedPassword IS called
+            // on the miss path (it previously returned before any hashing work).
+            var hasher = Substitute.For<IPasswordHasher<string>>();
+            hasher.VerifyHashedPassword(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+                .Returns(PasswordVerificationResult.Failed);
+            var store = new LocalUserStore(new SqliteDbConnFactory(_connectionString), _options, hasher);
+
+            var result = await store.VerifyCredentialsAsync("nobody@club.test", "any password");
+
+            result.Succeeded.Should().BeFalse();
+            hasher.Received().VerifyHashedPassword(
+                "nobody@club.test", Arg.Any<string>(), "any password");
         }
 
         [Theory]

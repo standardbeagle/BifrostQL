@@ -38,7 +38,10 @@ namespace BifrostQL.Server.Test
             await sender.SendChunkedAsync(socket, response, AckBuffer(), CancellationToken.None);
 
             socket.SentFrames.Should().HaveCount(1);
-            socket.ReceiveCount.Should().Be(0, "a single chunk never fills the ack window");
+            // The sender now drains the full outstanding window before returning (so a late
+            // NACK on the final chunk can still be served before the buffer is released), so
+            // the single chunk's ACK is awaited: exactly one receive, no more.
+            socket.ReceiveCount.Should().Be(1, "the final chunk's ack is drained before completion");
             socket.SentMessages()[0].Type.Should().Be(BifrostMessageType.Chunk);
         }
 
@@ -131,6 +134,48 @@ namespace BifrostQL.Server.Test
 
             var seq0Count = socket.SentMessages().Count(m => m.ChunkSequence == 0);
             seq0Count.Should().Be(2, "chunk 0 is sent once initially and once on NACK retransmission");
+        }
+
+        [Fact]
+        public async Task SendChunksAsync_NackOnFinalChunk_IsHonoredDuringTailDrain()
+        {
+            // Finding 4: the tail (last ackWindow-1 chunks) must still be retransmittable when
+            // the client NACKs it. With a window wider than the chunk count, all chunks are
+            // sent without a mid-transfer wait; the sender then DRAINS the outstanding acks,
+            // and a NACK on the final sequence during that drain is served from the buffer —
+            // instead of the old behavior where the buffer was released before the drain.
+            var buffer = new ChunkBuffer();
+            var sender = new ChunkSender(chunkThreshold: 100, ackWindow: 64, chunkBuffer: buffer);
+            var socket = new FakeWebSocket();
+            var response = Result(21, 500); // 5 chunks: sequences 0..4
+            var finalSeq = 4u;
+            // The client's first frame during the tail drain NACKs the final chunk.
+            socket.EnqueueNack(requestId: 21, sequence: finalSeq);
+
+            var leftover = await sender.SendChunkedAsync(socket, response, AckBuffer(), CancellationToken.None);
+
+            leftover.Should().BeNull("a NACK is handled internally, not returned as a leftover");
+            var finalSeqSends = socket.SentMessages().Count(m => m.ChunkSequence == finalSeq && m.Type == BifrostMessageType.Chunk);
+            finalSeqSends.Should().Be(2, "the final chunk is sent once initially and retransmitted on the tail NACK");
+        }
+
+        [Fact]
+        public async Task SendChunksAsync_PipelinedFrameDuringTailDrain_IsReturnedAsLeftover()
+        {
+            // A non-ack frame the client pipelines after the transfer (e.g. its next Query)
+            // stops the tail drain and is returned so the caller processes it as the next
+            // request — preserving serial semantics instead of consuming/dropping it.
+            var sender = new ChunkSender(chunkThreshold: 100, ackWindow: 64);
+            var socket = new FakeWebSocket();
+            var response = Result(31, 500);
+            var pipelined = new BifrostMessage { RequestId = 32, Type = BifrostMessageType.Query, Query = "{ x }" };
+            socket.EnqueueMessage(pipelined);
+
+            var leftover = await sender.SendChunkedAsync(socket, response, AckBuffer(), CancellationToken.None);
+
+            leftover.Should().NotBeNull();
+            leftover!.RequestId.Should().Be(32);
+            leftover.Type.Should().Be(BifrostMessageType.Query);
         }
 
         [Fact]

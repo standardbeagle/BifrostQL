@@ -72,7 +72,7 @@ namespace BifrostQL.Server.Test
 
         public async Task DisposeAsync() => await _keepAlive.DisposeAsync();
 
-        private ServiceProvider BuildProvider()
+        private ServiceProvider BuildProvider(string loaderPath = EndpointPath)
         {
             var filterTransformers = new FilterTransformersWrap
             {
@@ -81,7 +81,7 @@ namespace BifrostQL.Server.Test
 
             var pathCache = new PathCache<Inputs>();
             var (model, schema) = _profileCache.GetFor(null);
-            pathCache.AddLoader(EndpointPath, () => Task.FromResult(new Inputs(new Dictionary<string, object?>
+            pathCache.AddLoader(loaderPath, () => Task.FromResult(new Inputs(new Dictionary<string, object?>
             {
                 { "connFactory", _connFactory },
                 { "model", model },
@@ -184,6 +184,33 @@ namespace BifrostQL.Server.Test
 
             Messages(result).Should().NotContain(m => m.Contains("requires") || m.Contains("Unknown profile"),
                 "the default profile requires no role");
+        }
+
+        [Fact]
+        public async Task BinaryMountPath_NotAGraphQlEndpoint_ResolvesSchemaFromRegisteredGraphQlEndpoint()
+        {
+            // Finding 5: the binary transport is mounted at its own path (e.g. /bifrost-ws)
+            // which is NOT a registered GraphQL endpoint in the PathCache. Keying the schema
+            // lookup by that path would throw ArgumentOutOfRangeException, surfacing as an
+            // opaque "Query execution failed". The engine must fall back to the single
+            // registered GraphQL endpoint and execute normally.
+            await using var provider = BuildProvider(loaderPath: "/graphql");
+            var engine = provider.GetRequiredService<IBifrostEngine>();
+
+            var context = new DefaultHttpContext { RequestServices = provider };
+            provider.GetRequiredService<IHttpContextAccessor>().HttpContext = context;
+
+            var result = await engine.ExecuteAsync(new BifrostRequest
+            {
+                Query = "{ __typename }",
+                UserContext = new Dictionary<string, object?>(),
+                RequestServices = provider,
+                CancellationToken = default,
+            }, "/bifrost-ws"); // binary mount path, not a registered GraphQL path
+
+            Messages(result).Should().NotContain(m => m.Contains("Query execution failed"),
+                "the binary mount path must resolve the registered GraphQL schema, not throw");
+            result.Data.Should().NotBeNull("the query executes against the resolved schema");
         }
     }
 }

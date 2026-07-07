@@ -66,6 +66,8 @@ namespace BifrostQL.Server
             var executionResult = new ExecutionResult
             {
                 Data = result.Data,
+                // Executed must be true or the serializer omits the "data" field.
+                Executed = true,
             };
 
             if (result.Errors.Count > 0)
@@ -105,7 +107,20 @@ namespace BifrostQL.Server
 
         public async Task<BifrostResult> ExecuteAsync(BifrostRequest request, string endpointPath)
         {
-            var sharedExtensions = await _pathCache.GetValueAsync(endpointPath);
+            // The binary transport is mounted at its own path (e.g. /bifrost-ws) which is NOT
+            // a registered GraphQL endpoint in the PathCache — only the GraphQL paths (e.g.
+            // /graphql) are. Keying the schema lookup by the WebSocket mount path would throw
+            // ArgumentOutOfRangeException, surfacing to the client as an opaque "Query
+            // execution failed". When the path is not a registered endpoint, resolve the
+            // schema from the (single) registered GraphQL endpoint instead.
+            // Loaders are registered under a lowercase key (app.Map is case-insensitive but
+            // PathCache is ordinal), so normalize before lookup.
+            var schemaKey = endpointPath?.ToLowerInvariant() ?? string.Empty;
+            var sharedExtensions = _pathCache.HasPath(schemaKey)
+                ? await _pathCache.GetValueAsync(schemaKey)
+                : await _pathCache.GetFirstValueAsync()
+                    ?? throw new InvalidOperationException(
+                        "No BifrostQL GraphQL endpoint is registered to resolve the schema for the binary transport.");
 
             var services = request.RequestServices;
             // The binary WebSocket transport reaches execution through this engine. It must

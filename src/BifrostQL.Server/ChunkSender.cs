@@ -130,21 +130,33 @@ namespace BifrostQL.Server
         /// <param name="response">The response to send (will be chunked if above threshold).</param>
         /// <param name="receiveBuffer">Shared buffer for reading ACK messages.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
-        public async Task SendChunkedAsync(
+        public async Task<BifrostMessage?> SendChunkedAsync(
             WebSocket webSocket,
             BifrostMessage response,
             byte[] receiveBuffer,
             CancellationToken cancellationToken)
         {
             var chunks = SplitIntoChunks(response);
-            await SendChunksAsync(webSocket, chunks, 0, receiveBuffer, cancellationToken);
+            return await SendChunksAsync(webSocket, chunks, 0, receiveBuffer, cancellationToken);
         }
 
         /// <summary>
         /// Sends chunks starting from a given index, storing each in the chunk buffer
         /// if one is configured. Used both for initial sends and resume retransmissions.
+        ///
+        /// After the last chunk is sent, the outstanding ACK window is drained before
+        /// returning so a late NACK on one of the final ackWindow-1 chunks can still be
+        /// served from the buffer (the caller releases the buffer the instant this returns).
+        /// Draining stops early — returning the frame as a "leftover" — if the client sends a
+        /// non-ACK/non-NACK frame (e.g. a pipelined Resume or the next Query): that signals
+        /// the client is done acknowledging this transfer, so the caller processes that frame
+        /// as the next request rather than losing it.
         /// </summary>
-        internal async Task SendChunksAsync(
+        /// <returns>
+        /// A non-ACK/non-NACK frame received while draining the tail, which the caller must
+        /// process as the next message; or null if the window drained cleanly.
+        /// </returns>
+        internal async Task<BifrostMessage?> SendChunksAsync(
             WebSocket webSocket,
             IReadOnlyList<BifrostMessage> chunks,
             int startIndex,
@@ -154,7 +166,8 @@ namespace BifrostQL.Server
             var unacked = 0;
             // Per-sequence NACK retransmit counts for this transfer. A perpetually-NACKing
             // client is bounded by _maxRetransmitsPerSequence; exceeding it aborts the send.
-            Dictionary<uint, int>? retransmitCounts = null;
+            var retransmitCounts = new Dictionary<uint, int>();
+            var requestId = chunks.Count > startIndex ? chunks[startIndex].RequestId : 0u;
 
             for (var i = startIndex; i < chunks.Count; i++)
             {
@@ -170,35 +183,103 @@ namespace BifrostQL.Server
 
                 unacked++;
 
-                // Drain available ACKs without blocking when under the window limit
-                while (unacked > 0 && webSocket.State == WebSocketState.Open)
+                // Window full: must wait for at least one ACK or NACK before sending more.
+                // A pipelined non-ack frame mid-transfer cannot be serviced (serial transport)
+                // and is rejected with an Error.
+                while (unacked >= _ackWindow && webSocket.State == WebSocketState.Open)
                 {
-                    if (unacked >= _ackWindow)
-                    {
-                        // Window full: must wait for at least one ACK or NACK
-                        var result = await WaitForAckAsync(webSocket, receiveBuffer, cancellationToken);
-                        if (result.acksReceived > 0)
-                            unacked -= result.acksReceived;
-                        if (result.nackSequence.HasValue)
-                        {
-                            var seq = result.nackSequence.Value;
-                            retransmitCounts ??= new Dictionary<uint, int>();
-                            var count = retransmitCounts.TryGetValue(seq, out var prior) ? prior + 1 : 1;
-                            retransmitCounts[seq] = count;
-                            if (count > _maxRetransmitsPerSequence)
-                            {
-                                throw new ChunkRetransmitLimitExceededException(
-                                    chunk.RequestId, seq, _maxRetransmitsPerSequence);
-                            }
-                            await RetransmitChunkAsync(webSocket, chunk.RequestId, seq, cancellationToken);
-                        }
-                    }
-                    else
-                    {
-                        break;
-                    }
+                    var (delta, leftover) = await ProcessAckAsync(
+                        webSocket, chunk.RequestId, receiveBuffer, retransmitCounts,
+                        rejectNonAck: true, cancellationToken);
+                    unacked += delta;
+                    if (leftover != null)
+                        await RejectMidTransferFrameAsync(webSocket, leftover, cancellationToken);
                 }
             }
+
+            // Drain the outstanding window before returning so late NACKs on the tail are
+            // still serviceable. Stop early if the client sends a non-ack frame (it has moved
+            // on to the next request/control), returning that frame for the caller to process.
+            while (unacked > 0 && webSocket.State == WebSocketState.Open)
+            {
+                var (delta, leftover) = await ProcessAckAsync(
+                    webSocket, requestId, receiveBuffer, retransmitCounts,
+                    rejectNonAck: false, cancellationToken);
+                unacked += delta;
+                if (leftover != null)
+                    return leftover;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Waits for one control frame and returns the net change to apply to the unacked
+        /// counter plus any non-ack/non-NACK frame the client sent. -1 for an ACK, +1 for a
+        /// NACK (a retransmit is now in flight whose ACK the client still owes — counting it
+        /// keeps the in-flight window bounded even when a client acks both the original and
+        /// the retransmit), 0 otherwise. Enforces the per-sequence retransmit cap. Noise
+        /// (non-binary/empty) frames yield (0, null). A binary frame that is neither an ACK
+        /// nor a NACK is returned as the leftover; when <paramref name="rejectNonAck"/> is set
+        /// the caller rejects it (mid-transfer), otherwise the caller treats it as the next
+        /// request (tail drain).
+        /// </summary>
+        private async Task<(int delta, BifrostMessage? leftover)> ProcessAckAsync(
+            WebSocket webSocket,
+            uint requestId,
+            byte[] receiveBuffer,
+            Dictionary<uint, int> retransmitCounts,
+            bool rejectNonAck,
+            CancellationToken cancellationToken)
+        {
+            var result = await WaitForAckAsync(webSocket, receiveBuffer, cancellationToken);
+            if (result.acksReceived > 0)
+                return (-result.acksReceived, null);
+
+            if (result.nackSequence.HasValue)
+            {
+                var seq = result.nackSequence.Value;
+                var count = retransmitCounts.TryGetValue(seq, out var prior) ? prior + 1 : 1;
+                retransmitCounts[seq] = count;
+                if (count > _maxRetransmitsPerSequence)
+                    throw new ChunkRetransmitLimitExceededException(requestId, seq, _maxRetransmitsPerSequence);
+
+                await RetransmitChunkAsync(webSocket, requestId, seq, cancellationToken);
+                // The retransmitted frame is now in flight and will itself be acked.
+                return (+1, null);
+            }
+
+            return (0, result.otherFrame);
+        }
+
+        /// <summary>
+        /// Rejects a non-ack frame pipelined mid-transfer. The binary transport is strictly
+        /// serial, so a Query/Mutation/Resume that arrives while a chunked response is still
+        /// being sent cannot be serviced; reply with an explicit Error naming the frame so the
+        /// client resends after the current transfer completes.
+        /// </summary>
+        private async Task RejectMidTransferFrameAsync(
+            WebSocket webSocket, BifrostMessage frame, CancellationToken cancellationToken)
+        {
+            _logger?.LogWarning(
+                "Rejecting unexpected {MessageType} frame received while a chunked response for request {RequestId} is in transit",
+                frame.Type, frame.RequestId);
+            var reject = new BifrostMessage
+            {
+                RequestId = frame.RequestId,
+                Type = BifrostMessageType.Error,
+                Errors =
+                {
+                    "A chunked response is in transit; the binary transport processes one request at a time. " +
+                    "Resend this request after the current transfer completes.",
+                },
+            };
+            var rejectBytes = reject.ToBytes();
+            await webSocket.SendAsync(
+                new ArraySegment<byte>(rejectBytes),
+                WebSocketMessageType.Binary,
+                endOfMessage: true,
+                cancellationToken);
         }
 
         /// <summary>
@@ -210,7 +291,7 @@ namespace BifrostQL.Server
         /// The client sent nothing within the ack timeout. Callers should abort the
         /// transfer rather than block the connection indefinitely.
         /// </exception>
-        private async Task<(int acksReceived, uint? nackSequence)> WaitForAckAsync(
+        private async Task<(int acksReceived, uint? nackSequence, BifrostMessage? otherFrame)> WaitForAckAsync(
             WebSocket webSocket,
             byte[] receiveBuffer,
             CancellationToken cancellationToken)
@@ -235,42 +316,22 @@ namespace BifrostQL.Server
                 throw new WebSocketException(WebSocketError.ConnectionClosedPrematurely);
 
             if (result.MessageType != WebSocketMessageType.Binary || result.Count == 0)
-                return (0, null);
+                return (0, null, null);
 
             var ackData = new byte[result.Count];
             Buffer.BlockCopy(receiveBuffer, 0, ackData, 0, result.Count);
             var ackMsg = BifrostMessage.FromBytes(ackData);
 
             if (ackMsg.Type == BifrostMessageType.ChunkAck)
-                return (1, null);
+                return (1, null, null);
 
             if (ackMsg.Type == BifrostMessageType.ChunkNack)
-                return (0, ackMsg.ChunkSequence);
+                return (0, ackMsg.ChunkSequence, null);
 
-            // Anything else (e.g. a pipelined Query/Mutation sent mid-transfer) cannot be
-            // serviced while a chunked send is in flight. The binary transport is strictly
-            // serial, so reply with an explicit Error naming the frame instead of silently
-            // dropping it — the client must resend after the current transfer completes.
-            _logger?.LogWarning(
-                "Rejecting unexpected {MessageType} frame received while a chunked response for request {RequestId} is in transit",
-                ackMsg.Type, ackMsg.RequestId);
-            var reject = new BifrostMessage
-            {
-                RequestId = ackMsg.RequestId,
-                Type = BifrostMessageType.Error,
-                Errors =
-                {
-                    "A chunked response is in transit; the binary transport processes one request at a time. " +
-                    "Resend this request after the current transfer completes.",
-                },
-            };
-            var rejectBytes = reject.ToBytes();
-            await webSocket.SendAsync(
-                new ArraySegment<byte>(rejectBytes),
-                WebSocketMessageType.Binary,
-                endOfMessage: true,
-                cancellationToken);
-            return (0, null);
+            // A binary frame that is neither an ACK nor a NACK (e.g. a pipelined
+            // Query/Mutation/Resume). The caller decides whether to reject it (mid-transfer)
+            // or process it as the next request (tail drain).
+            return (0, null, ackMsg);
         }
 
         /// <summary>

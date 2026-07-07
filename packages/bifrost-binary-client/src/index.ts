@@ -1322,7 +1322,16 @@ export class BifrostBinaryClient implements StreamingClientInternals {
         // Once the final chunk of the response has passed through, the
         // tombstone has served its purpose and can be removed.
         this.sendChunkAck(chunk.requestId, chunk.chunkInfo.sequence);
-        if (chunk.chunkInfo.sequence + 1 >= chunk.chunkInfo.total) {
+        // Only a chunk that declares a real total (> 0) can be the final one.
+        // A malformed/streaming frame reporting total === 0 would otherwise
+        // satisfy `sequence + 1 >= total` on the very first late chunk, delete
+        // the tombstone prematurely, and send every subsequent chunk down the
+        // unknown-requestId path — re-spraying onError and dropping the ack,
+        // which re-introduces the server send-window stall this tombstone fixes.
+        if (
+          chunk.chunkInfo.total > 0 &&
+          chunk.chunkInfo.sequence + 1 >= chunk.chunkInfo.total
+        ) {
           this.abortedRequests.delete(chunk.requestId);
         }
         return;

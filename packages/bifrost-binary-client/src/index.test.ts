@@ -912,6 +912,88 @@ describe("BifrostBinaryClient", () => {
       c.close();
     });
 
+    it("keeps the abort tombstone when a stray chunk declares total === 0", async () => {
+      // `isChunkedFrame` normally gates the dispatch path on total > 0, so a
+      // total === 0 frame never reaches handleChunkedFrame through onmessage.
+      // handleChunkedFrame must still not trust such a frame as the FINAL chunk:
+      // `sequence + 1 >= total` is satisfied by (0 + 1 >= 0), so without the
+      // `total > 0` guard the very first late chunk would delete the tombstone
+      // and every following chunk would fall through to the un-acked
+      // unknown-requestId path — re-stalling the server's send window.
+      const onError = vi.fn();
+      const c = new BifrostBinaryClient({
+        url: TEST_URL,
+        WebSocket: tracker.ctor,
+        onError,
+      });
+      const p = c.connect();
+      tracker.last.simulateOpen();
+      await p;
+
+      const ws = tracker.last;
+      const controller = new AbortController();
+      const promise = c.query("{ big }", undefined, controller.signal);
+      const sentId = decodeMessage(ws.sentFrames[0]!).requestId;
+
+      const inner = emptyMessage({
+        requestId: sentId,
+        type: BifrostMessageType.Result,
+        payload: new TextEncoder().encode(
+          JSON.stringify({ rows: ["a", "b", "c", "d"], n: 4 })
+        ),
+      });
+      const frames = buildChunkFrames(sentId, inner, 8);
+      expect(frames.length).toBeGreaterThanOrEqual(3);
+
+      // First chunk arrives, then the caller aborts mid-transfer, tombstoning id.
+      ws.receive(frames[0]!);
+      const assertion = expect(promise).rejects.toMatchObject({
+        name: "AbortError",
+      });
+      controller.abort();
+      await assertion;
+
+      const sentBefore = ws.sentFrames.length;
+      const clientInternals = c as unknown as {
+        handleChunkedFrame(chunk: BifrostMessage): void;
+        abortedRequests: Set<number>;
+      };
+      const strayZeroTotal = emptyMessage({
+        requestId: sentId,
+        type: BifrostMessageType.Chunk,
+        payload: new Uint8Array([1, 2, 3]),
+        chunkInfo: {
+          sequence: 0,
+          total: 0,
+          offset: 0,
+          totalBytes: 0,
+          checksum: crc32(new Uint8Array([1, 2, 3])),
+        },
+      });
+
+      // A total === 0 frame is acked (so the server window keeps moving) but must
+      // NOT be treated as final: the tombstone has to survive so the genuine
+      // late chunks that follow stay on the silent ack-and-drop path.
+      clientInternals.handleChunkedFrame(strayZeroTotal);
+      expect(clientInternals.abortedRequests.has(sentId)).toBe(true);
+      expect(onError).not.toHaveBeenCalled();
+      const acked = ws.sentFrames
+        .slice(sentBefore)
+        .map((f) => decodeMessage(f))
+        .filter((m) => m.type === BifrostMessageType.ChunkAck);
+      expect(acked).toHaveLength(1);
+
+      // The remaining real chunks are still silently ack-and-dropped, and the
+      // genuine final chunk (with a real total) finally clears the tombstone.
+      for (let i = 1; i < frames.length; i++) {
+        ws.receive(frames[i]!);
+      }
+      expect(onError).not.toHaveBeenCalled();
+      expect(clientInternals.abortedRequests.has(sentId)).toBe(false);
+
+      c.close();
+    });
+
     it("drops the reassembler and tombstones the id when a chunked request times out", async () => {
       vi.useFakeTimers();
       const onError = vi.fn();

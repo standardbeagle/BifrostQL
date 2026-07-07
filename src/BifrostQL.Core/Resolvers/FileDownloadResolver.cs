@@ -56,9 +56,12 @@ namespace BifrostQL.Core.Resolvers
 
             var fileMetadata = FileMetadata.FromJson(metadataJson);
             if (fileMetadata == null)
-            {
-                return null;
-            }
+                // The column holds a non-empty value that is not parseable file metadata.
+                // Returning null here would masquerade a corrupt pointer as "no file",
+                // diverging from the delete path which fails fast. Surface the corruption.
+                throw new BifrostExecutionError(
+                    $"File metadata for '{table.DbName}.{column.ColumnName}' record '{recordId}' " +
+                    "could not be parsed; the stored file reference is corrupt.");
 
             // Generate presigned URL for access
             var accessUrl = await _storageService.GetFileUrlAsync(

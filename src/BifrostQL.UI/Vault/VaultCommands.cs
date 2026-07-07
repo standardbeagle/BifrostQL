@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Utils;
+using BifrostQL.Server;
 
 namespace BifrostQL.UI.Vault;
 
@@ -264,36 +265,5 @@ public static class VaultCommands
         _ => 0,
     };
 
-    /// <summary>
-    /// Read password from console with masked input.
-    /// Falls back to ReadLine when stdin is redirected (piped).
-    /// </summary>
-    private static string ReadPassword(string prompt)
-    {
-        Console.Write(prompt);
-
-        if (Console.IsInputRedirected)
-            return Console.ReadLine() ?? "";
-
-        var password = new System.Text.StringBuilder();
-        while (true)
-        {
-            var key = Console.ReadKey(intercept: true);
-            if (key.Key == ConsoleKey.Enter)
-            {
-                Console.WriteLine();
-                return password.ToString();
-            }
-            if (key.Key == ConsoleKey.Backspace && password.Length > 0)
-            {
-                password.Length--;
-                Console.Write("\b \b");
-            }
-            else if (!char.IsControl(key.KeyChar))
-            {
-                password.Append(key.KeyChar);
-                Console.Write('*');
-            }
-        }
-    }
+    private static string ReadPassword(string prompt) => ConsolePrompt.ReadPassword(prompt);
 }

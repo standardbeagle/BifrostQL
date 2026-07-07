@@ -78,7 +78,7 @@ public sealed class ServeCommand : ICommand
 
             if (!string.IsNullOrWhiteSpace(config.User))
             {
-                var password = ReadPasswordSecurely($"Password for {config.User}@{server}: ");
+                var password = ConsolePrompt.ReadPassword($"Password for {config.User}@{server}: ");
                 var connStr = $"Server={server};Database={database};User Id={config.User};Password={password};TrustServerCertificate=True";
                 return new ResolvedConnection(connStr, await LoadConfigFile(config.ConfigPath));
             }
@@ -178,32 +178,6 @@ public sealed class ServeCommand : ICommand
         output.WriteInfo("  bifrost serve --connection-string ...  Explicit connection string");
         output.WriteInfo("");
         output.WriteInfo("  Or create a bifrostql.json with 'bifrost init'");
-    }
-
-    private static string ReadPasswordSecurely(string prompt)
-    {
-        Console.Write(prompt);
-        var password = new System.Text.StringBuilder();
-        while (true)
-        {
-            var key = Console.ReadKey(intercept: true);
-            if (key.Key == ConsoleKey.Enter)
-            {
-                Console.WriteLine();
-                break;
-            }
-            if (key.Key == ConsoleKey.Backspace && password.Length > 0)
-            {
-                password.Length--;
-                Console.Write("\b \b");
-            }
-            else if (!char.IsControl(key.KeyChar))
-            {
-                password.Append(key.KeyChar);
-                Console.Write('*');
-            }
-        }
-        return password.ToString();
     }
 
     private readonly record struct ResolvedConnection(string ConnectionString, BifrostConfigSection? ConfigSection);

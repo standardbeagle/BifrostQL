@@ -12,8 +12,10 @@ namespace BifrostQL.Core.Test.Modules;
 /// BifrostHttpMiddleware now uses Modules = null (all modules active), so an
 /// unconfigured endpoint keeps every registered IModuleNamed transformer
 /// (tenant-filter, soft-delete, policy) on READS — symmetric with the write
-/// side. A named profile that explicitly opts out (Modules = []) must still
-/// strip.
+/// side. Profile gating is band-limited: only application-band modules
+/// (priority >= <see cref="BifrostProfile.ApplicationPriorityFloor"/>) are
+/// toggleable — a profile, even one that explicitly opts out of everything
+/// (Modules = []), can never strip a security-band transformer.
 /// </summary>
 public sealed class DefaultProfileTransformerTests
 {
@@ -55,20 +57,36 @@ public sealed class DefaultProfileTransformerTests
         filtered.OfType<NamedTenantFilter>().Should().ContainSingle();
     }
 
-    [Fact]
-    public void ExplicitEmptyModulesProfile_StillStripsNamedTransformers()
+    /// <summary>An application-band transformer — the only band profiles may toggle.</summary>
+    private sealed class NamedAppFilter : IFilterTransformer, IModuleNamed
     {
-        // Arrange: a curated profile that explicitly opts out of all modules.
+        public string ModuleName => "app-filter";
+        public int Priority => BifrostProfile.ApplicationPriorityFloor;
+        public bool AppliesTo(IDbTable table, QueryTransformContext context) => true;
+        public TableFilter? GetAdditionalFilter(IDbTable table, QueryTransformContext context) => null;
+    }
+
+    [Fact]
+    public void ExplicitEmptyModulesProfile_StripsOnlyApplicationBandTransformers()
+    {
+        // Arrange: a curated profile that explicitly opts out of all modules,
+        // over a source containing a security-band module (priority 0), an
+        // application-band module (priority 200), and an unnamed transformer.
         var optOut = new BifrostProfile { Name = "direct", Modules = System.Array.Empty<string>() };
+        var source = new FilterTransformersWrap
+        {
+            Transformers = new IFilterTransformer[] { new NamedTenantFilter(), new NamedAppFilter(), new UnnamedTransformer() }
+        };
 
         // Act
-        var filtered = BifrostProfileRegistry.FilterBy(Source(), optOut);
+        var filtered = BifrostProfileRegistry.FilterBy(source, optOut);
 
-        // Assert: the named security transformer is stripped; only the unnamed
-        // (always-active) transformer remains. This is the intended curated
-        // behavior and must NOT change.
-        filtered.Count.Should().Be(1);
-        filtered.OfType<NamedTenantFilter>().Should().BeEmpty();
+        // Assert: fail-closed — the security-band tenant filter survives even
+        // an explicit opt-out (a client-selectable profile must never strip
+        // tenant isolation); only the application-band module is stripped.
+        filtered.Count.Should().Be(2);
+        filtered.OfType<NamedTenantFilter>().Should().ContainSingle();
+        filtered.OfType<NamedAppFilter>().Should().BeEmpty();
         filtered.OfType<UnnamedTransformer>().Should().ContainSingle();
     }
 

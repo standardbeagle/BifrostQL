@@ -215,9 +215,11 @@ namespace BifrostQL.Core.Storage
             FileMetadata metadata,
             CancellationToken cancellationToken = default)
         {
-            var bucketConfig = GetBucketConfig(table, column, model);
-            if (bucketConfig == null)
-                return; // No storage configured for this column; nothing to delete.
+            // Fail closed rather than silently skipping: a missing storage
+            // configuration with a live file pointer would otherwise let the
+            // caller clear the DB record while orphaning the underlying object.
+            var bucketConfig = GetBucketConfig(table, column, model)
+                ?? throw new InvalidOperationException($"No storage configuration found for {table.DbName}.{column.ColumnName}");
 
             var provider = _providerFactory.GetProvider(bucketConfig);
             await provider.DeleteAsync(bucketConfig, metadata.FileKey, cancellationToken);

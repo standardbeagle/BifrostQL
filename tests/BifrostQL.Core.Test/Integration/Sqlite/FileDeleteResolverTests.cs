@@ -34,11 +34,15 @@ public sealed class FileDeleteResolverTests : IDisposable
             File.Delete(_dbPath);
     }
 
-    private static IDbModel BuildModel() => DbModelTestFixture.Create()
+    // The storage target is resolved from the column's configured bucket
+    // (never from row-persisted BucketName/ProviderType), so the column must
+    // carry a storage config naming the provider under test.
+    private static IDbModel BuildModel(string provider = "local") => DbModelTestFixture.Create()
         .WithTable("widget", t => t
             .WithPrimaryKey("id")
             .WithColumn("photo", "text", isNullable: true)
-            .WithColumnMetadata("photo", MetadataKeys.FileStorage.File, "true"))
+            .WithColumnMetadata("photo", MetadataKeys.FileStorage.File, "true")
+            .WithColumnMetadata("photo", MetadataKeys.Storage.Config, $"provider:{provider};bucket:bucket"))
         .Build();
 
     private async Task SeedAsync(string photoValue)
@@ -91,7 +95,7 @@ public sealed class FileDeleteResolverTests : IDisposable
         factory.RegisterProvider(new FailingStorageProvider("failing"));
         var resolver = new FileDeleteResolver(new FileStorageService(factory));
 
-        var act = async () => await resolver.ResolveAsync(Context(BuildModel()));
+        var act = async () => await resolver.ResolveAsync(Context(BuildModel("failing")));
 
         await act.Should().ThrowAsync<Exception>();
         // Storage delete threw before the UPDATE ran, so the pointer is intact.
@@ -115,7 +119,7 @@ public sealed class FileDeleteResolverTests : IDisposable
         factory.RegisterProvider(recorder);
         var resolver = new FileDeleteResolver(new FileStorageService(factory));
 
-        var result = await resolver.ResolveAsync(Context(BuildModel()));
+        var result = await resolver.ResolveAsync(Context(BuildModel("recording")));
 
         result.Should().Be(true);
         recorder.DeletedKeys.Should().ContainSingle().Which.Should().Be("widget/photo/1_file.bin");

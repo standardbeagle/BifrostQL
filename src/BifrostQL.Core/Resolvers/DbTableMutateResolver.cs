@@ -51,48 +51,24 @@ namespace BifrostQL.Core.Resolvers
                 if (!propertyInfo.data.Any())
                     return 0;
 
-                var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-                // Build in DB-column-name space: keyData is already DB-named, and
-                // standardData (GraphQL field names) is mapped so sanitized columns
-                // resolve correctly. The bound upsertData is rekeyed to match below.
-                var keyColumns = propertyInfo.keyData.Keys.ToList();
-                var updateColumns = propertyInfo.standardData.Keys.Select(k => DbParameterBinder.ToDbColumnName(table, k)).ToList();
-                var allColumns = keyColumns.Concat(updateColumns).ToList();
-                var upsertSql = dialect.UpsertSql(tableRef, keyColumns, allColumns, updateColumns);
-
-                if (upsertSql != null)
-                {
-                    // An upsert that resolves to a single statement is gated as an
-                    // update: it targets an existing or new row keyed by primary key.
-                    // Run the transformer pipeline so rewriting transformers (e.g.
-                    // enum-name → DB-value mapping) actually reach the SQL; non-empty
-                    // Errors abort it. The key/non-key split (and therefore the
-                    // already-built upsertSql) is unaffected because transformers
-                    // rewrite values, not the primary-key membership. When no
-                    // transformer applies, Transform returns the same data reference,
-                    // so adopting transformResult.Data is an exact no-op.
-                    var upsertTransformContext = new MutationTransformContext { Model = model, UserContext = context.UserContext, Services = context.RequestServices };
-                    var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Update, propertyInfo.data, upsertTransformContext);
-                    if (transformResult.Errors.Length > 0)
-                        throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
-
-                    var upsertData = DbParameterBinder.ToDbColumnKeys(table, transformResult.Data);
-                    var returning = dialect.ReturningIdentityClauseFor(table.KeyColumns.Select(k => k.ColumnName).ToList());
-                    var identitySql = returning != null
-                        ? upsertSql.TrimEnd(';') + returning + ";"
-                        : upsertSql + $"SELECT {dialect.LastInsertedIdentity} ID;";
-                    // Before-commit hooks and the upsert (with its identity SELECT)
-                    // commit atomically or roll back together.
-                    object? upsertResult = null;
-                    await MutationCommandExecutor.RunInTransactionAsync(conFactory, async (conn, transaction) =>
-                    {
-                        await MutationNotifier.RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, upsertData, context.UserContext);
-                        upsertResult = await MutationCommandExecutor.ExecuteScalar(conn, transaction, identitySql, upsertData, context.CancellationToken);
-                    }, context.CancellationToken);
-                    return HandleDecimals(upsertResult);
-                }
-
-                if (propertyInfo.keyData.Any())
+                // A true upsert is routed through the real Insert-or-Update decision
+                // rather than a native single-statement UpsertSql. A single statement
+                // (ON CONFLICT / MERGE) cannot express a transformer's AdditionalFilter
+                // — tenant/policy row-scope, soft-delete IS NULL — as a guard on its
+                // INSERT branch, so a caller could take over a row in another tenant or
+                // resurrect a soft-deleted one. It also runs the pipeline as Update with
+                // no CurrentRow, which skips created-* stamps, state-machine
+                // current-state validation and insert-required checks. Probing existence
+                // by primary key and dispatching to InsertObject / UpdateObject makes
+                // every one of those enforcements apply exactly as for a plain
+                // insert/update, and rebuilds the column list from post-transform data.
+                //
+                // The probe is a read outside the write transaction; the database's
+                // primary-key / unique constraint is the real arbiter (a lost insert
+                // race fails the INSERT, a lost update race affects 0 rows), so a
+                // concurrent writer cannot cause silent data corruption here.
+                if (propertyInfo.keyData.Any()
+                    && await RowExistsAsync(conFactory, dialect, table, propertyInfo.keyData, context.CancellationToken))
                     return await UpdateObject(context, table, mutationTransformers, model, conFactory, dialect, "upsert");
 
                 return await InsertObject(context, table, mutationTransformers, model, conFactory, dialect, "upsert");
@@ -122,6 +98,30 @@ namespace BifrostQL.Core.Resolvers
                 ? context.GetArgument<List<object?>>("_primaryKey")
                 : null;
 
+        // Probes whether a row keyed by the given primary-key values already exists,
+        // so the upsert path can dispatch to the safe Insert or Update executor. The
+        // probe uses its own connection; the database's PK/unique constraint remains
+        // the authority under a concurrent writer (see the upsert call site).
+        private static async Task<bool> RowExistsAsync(
+            IDbConnFactory connFactory, ISqlDialect dialect, IDbTable table,
+            Dictionary<string, object?> keyData, CancellationToken cancellationToken)
+        {
+            if (keyData.Count == 0)
+                return false;
+
+            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+            var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
+            var sql = $"SELECT 1 FROM {tableRef} WHERE {whereClause};";
+
+            await using var conn = connFactory.GetConnection();
+            await conn.OpenAsync(cancellationToken);
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            AddParameters(cmd, keyData);
+            var result = await cmd.ExecuteScalarAsync(cancellationToken);
+            return result != null && result != DBNull.Value;
+        }
+
         private async Task<object?> DeleteObject(IBifrostFieldContext context,
             IMutationTransformers mutationTransformers, IDbTable table, IDbModel model,
             IDbConnFactory conFactory, ISqlDialect dialect)
@@ -136,6 +136,15 @@ namespace BifrostQL.Core.Resolvers
                 foreach (var kv in pkKeyData)
                     data[kv.Key] = kv.Value;
             }
+
+            // Snapshot the columns the client actually supplied (in DB-name space),
+            // captured BEFORE the pipeline runs. These are the intended WHERE-predicate
+            // columns (primary key + any extra predicate). Columns a transformer stamps
+            // afterwards (audit updated_at/deleted_at, soft-delete deleted_at/deleted_by)
+            // are NOT in this set and must never contaminate the delete predicate.
+            var clientColumns = new HashSet<string>(
+                data.Keys.Select(k => DbParameterBinder.ToDbColumnName(table, k)),
+                StringComparer.OrdinalIgnoreCase);
 
             var userContext = context.UserContext;
             var transformContext = new MutationTransformContext
@@ -162,13 +171,25 @@ namespace BifrostQL.Core.Resolvers
 
             if (transformResult.MutationType == MutationType.Update)
             {
-                // Soft-delete: transformed to UPDATE
+                // Soft-delete: transformed to UPDATE. The SET list must carry ONLY the
+                // columns a transformer stamped (soft-delete deleted_at/deleted_by,
+                // audit updated_at/updated_by) — never a client-supplied column, or a
+                // delete predicate like status:"archived" would be written into the row
+                // unconditionally. The WHERE carries the client-supplied predicate
+                // columns (primary key plus any extra predicate the client sent), so a
+                // client predicate narrows which rows are soft-deleted.
                 var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
 
-                var keyData = dbData.Where(d => table.ColumnLookup.ContainsKey(d.Key) && table.ColumnLookup[d.Key].IsPrimaryKey)
-                    .ToDictionary(kv => kv.Key, kv => kv.Value);
-                var setData = dbData.Where(d => !table.ColumnLookup.ContainsKey(d.Key) || !table.ColumnLookup[d.Key].IsPrimaryKey)
-                    .ToDictionary(kv => kv.Key, kv => kv.Value);
+                var keyData = dbData
+                    .Where(kv => clientColumns.Contains(kv.Key) || DbParameterBinder.IsPrimaryKeyColumn(table, kv.Key))
+                    .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+                var setData = dbData
+                    .Where(kv => !keyData.ContainsKey(kv.Key))
+                    .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+
+                if (keyData.Count == 0)
+                    throw new BifrostExecutionError(
+                        "A soft delete requires a primary key or at least one predicate column to scope the affected rows.");
 
                 var setClause = string.Join(",", setData.Select(kv => SetAssignment(dialect, table, kv.Key)));
                 var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
@@ -184,11 +205,21 @@ namespace BifrostQL.Core.Resolvers
                 return result;
             }
 
-            // Standard DELETE — adopt the (possibly rewritten) data so transformer
-            // output (e.g. enum-name → DB-value mapping on a predicate column)
-            // reaches the WHERE clause and parameters, mirroring the soft-delete
-            // branch above.
-            var deleteData = dbData;
+            // Standard hard DELETE — the WHERE is built from the client-supplied
+            // predicate columns (primary key plus any extra predicate), NOT from
+            // transformer-stamped columns. Including a stamped column (e.g. audit
+            // updated_at=@now) would AND a never-matching term into the WHERE and
+            // silently delete zero rows. Values still come from the (possibly
+            // rewritten) transformed data so enum-name → DB-value mapping on a
+            // predicate column reaches the WHERE.
+            var deleteData = dbData
+                .Where(kv => clientColumns.Contains(kv.Key) || DbParameterBinder.IsPrimaryKeyColumn(table, kv.Key))
+                .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+
+            if (deleteData.Count == 0)
+                throw new BifrostExecutionError(
+                    "A delete requires a primary key or at least one predicate column to scope the affected rows.");
+
             var deleteTableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var deleteWhereClause = string.Join(" AND ", deleteData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
             var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause}{additionalFilter.WhereSuffix};";

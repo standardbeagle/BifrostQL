@@ -9,6 +9,7 @@ import { rowIdOf, buildPkEqFilter, parsePkRoute, decodePkPart, encodeRouteParts,
 import { coerceForGql } from './fk';
 import { resolveChildJoin, childFieldName } from './polymorphic';
 import { isComposite } from './fk';
+import { isBinaryDbType, isLongTextDbType } from './content-detect';
 
 export interface FilterResult {
     variables: Record<string, unknown>;
@@ -42,10 +43,18 @@ interface RowData {
     [key: string]: unknown;
 }
 
+// BigInt/Decimal share the numeric operator set (no _contains). They intentionally
+// mirror Int/Float exactly — including omitting _in, whose array-valued path is not
+// wired through buildColumnFilters or the number-filter UI. Without an entry here a
+// BigInt/Decimal column falls through to the String set below, offering _contains and
+// sending its value under a String variable declaration → server validation error /
+// empty grid.
 const columnFilterOperators: Record<string, string[]> = {
     String:   ["_eq", "_neq", "_contains", "_starts_with", "_ends_with", "_null"],
     Int:      ["_eq", "_neq", "_gt", "_gte", "_lt", "_lte", "_between", "_null"],
     Float:    ["_eq", "_neq", "_gt", "_gte", "_lt", "_lte", "_between", "_null"],
+    BigInt:   ["_eq", "_neq", "_gt", "_gte", "_lt", "_lte", "_between", "_null"],
+    Decimal:  ["_eq", "_neq", "_gt", "_gte", "_lt", "_lte", "_between", "_null"],
     Boolean:  ["_eq", "_null"],
     DateTime: ["_eq", "_neq", "_gt", "_gte", "_lt", "_lte", "_between", "_null"],
 };
@@ -87,19 +96,23 @@ export function toLocaleDate(d: string): string {
     if (!d) return "";
     const dd = new Date(d);
     if (dd.toString() === "Invalid Date") return "";
-    if (dd < new Date('1973-01-01')) return "";
+    // Only blank out exact placeholder/sentinel instants, not legitimate historical
+    // dates. A broad "before 1973" cutoff hid real dates (e.g. a 1900 birthdate or a
+    // 1969 record). The two markers that actually mean "unset": the Unix epoch
+    // (timestamp 0, i.e. 1970-01-01T00:00:00Z) and .NET/SQL DateTime.MinValue
+    // (year 0001-01-01).
+    if (dd.getTime() === 0) return "";
+    if (dd.getUTCFullYear() <= 1) return "";
     return dd.toLocaleString();
 }
 
-export function getRowPkValue(row: RowData, table: Table): string {
-    const keys = table.primaryKeys ?? [];
-    // This value is consumed as a route segment and decoded with
-    // decodeURIComponent (see parsePkRoute), so the single-key case must
-    // route-encode too — a raw value containing "%", "/", or "::" would
-    // otherwise produce a broken link that never round-trips.
-    if (keys.length === 0) return encodeRouteParts([row?.id]);
-    if (keys.length === 1) return encodeRouteParts([row?.[keys[0]]]);
-    return rowIdOf(row as Record<string, unknown>, table, 0);
+export function getRowPkValue(row: RowData, table: Table, index = 0): string {
+    // Delegate to the shared rowIdOf so the placeholder for a PK-less table is the
+    // same `row-${index}` both sides use (finding: getRowPkValue previously emitted an
+    // empty/`row.id` segment while rowIdOf emitted `row-${index}`, so links built by
+    // the two never round-tripped). rowIdOf also route-encodes single/composite keys,
+    // matching the segment decoding in parsePkRoute.
+    return rowIdOf(row as Record<string, unknown>, table, index);
 }
 
 export function getGraphQlType(paramType: string): string {
@@ -108,6 +121,12 @@ export function getGraphQlType(paramType: string): string {
         case "Int": return "Int";
         case "Float": return "Float";
         case "Boolean": return "Boolean";
+        // BigInt/Decimal keep their own scalar so the variable declaration matches
+        // the column type. Values still travel as strings on the wire (coerceForGql's
+        // default branch stringifies), which is BigInt-safe past 2^53 and preserves
+        // Decimal precision.
+        case "BigInt": return "BigInt";
+        case "Decimal": return "Decimal";
         case "DateTime": return "String";
         default: return "String";
     }
@@ -302,6 +321,12 @@ export function buildQuery(
     const emittedJoinSources = new Set<string>();
     const dataColumns = table.columns
         .filter((x: Column) => (x as ColumnWithJoin)?.joinTable === undefined)
+        // Exclude blob/varbinary and long-text/xml columns from the grid SELECT: the
+        // grid only shows a size/preview badge for them, and pulling the full payload
+        // for every row on the page is the dominant transfer cost. The viewer fetches
+        // the real value on demand (mirrors the multi-join preview cap above). PK
+        // columns are always kept — they carry row identity and drive links.
+        .filter((x: Column) => x.isPrimaryKey || !(isBinaryDbType(x.dbType) || isLongTextDbType(x.dbType)))
         .map((x: Column): ColumnWithJoin => {
             const joinTable = tableSchema.singleJoins.find((j: Join) => j.sourceColumnNames?.[0] === x.name);
             if (!joinTable) return x;
@@ -382,6 +407,14 @@ export function buildQuery(
             const parentFilter = `{and: [${clauses.join(', ')}]}`;
             return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${drill.parentTable.name}(filter: ${parentFilter}) { data { ${childField} } } }`;
         }
+        // A drill was explicitly requested (id + tableFilter/filterColumn) but the
+        // parent→child relationship could not be resolved — e.g. no parent multi-join
+        // targets this child, or a polymorphic/ambiguous join declined to guess.
+        // Falling through here previously emitted the UNFILTERED full-table query, so a
+        // "children of parent X" panel showed every row and a select-all + delete hit
+        // unrelated rows. Refuse to emit an unscoped query: return null so the caller
+        // shows an empty "relationship unavailable" grid instead of leaking the table.
+        return null;
     }
 
     if (id && !tableFilter && !filterColumn) {

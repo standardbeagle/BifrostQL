@@ -149,6 +149,14 @@ export class StreamingQueue implements AsyncIterableIterator<StreamChunk> {
     if (this.closed || this.errorValue !== null) {
       return;
     }
+    // Drop a chunk whose sequence was already consumed (a retransmit or
+    // duplicate after a resume). drainContiguous only ever pulls sequences at
+    // or above nextSequence, so a stale one parked in pendingChunks would sit
+    // there forever — keeping pendingChunks.size > 0 so the auto-complete check
+    // never fires and the consumer hangs until the idle timeout.
+    if (chunk.sequence < this.nextSequence) {
+      return;
+    }
     if (this.totalChunks === -1) {
       this.totalChunks = chunk.totalChunks;
     }

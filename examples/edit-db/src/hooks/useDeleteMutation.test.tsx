@@ -126,18 +126,25 @@ describe('useDeleteMutation', () => {
             });
         });
 
-        it('rejects legacy scalar input for composite PKs by populating only the first column', async () => {
-            // Transitional behavior: a scalar input cannot describe a composite PK.
-            // The hook keeps the same shape but fills only the first PK column so the mutation
-            // will fail server-side with a clear error rather than silently dropping data.
+        it('refuses a scalar key for a composite PK instead of sending a partial delete', async () => {
+            // A scalar can only describe one column, so populating just the first PK
+            // column (the old behavior) risks matching — and deleting — the wrong rows.
+            // Refuse client-side and never issue the mutation.
             const { query, wrapper } = createHarness();
             const { result } = renderHook(() => useDeleteMutation(enrollment), { wrapper });
 
-            await result.current.deleteRow('1');
+            await expect(result.current.deleteRow('1')).rejects.toThrow(/composite primary key/);
+            expect(query).not.toHaveBeenCalled();
+        });
 
-            expect(query.mock.calls[0][1]).toEqual({
-                detail: { student_id: 1 },
-            });
+        it('refuses a delete when a required composite key value is missing', async () => {
+            const { query, wrapper } = createHarness();
+            const { result } = renderHook(() => useDeleteMutation(enrollment), { wrapper });
+
+            await expect(
+                result.current.deleteRow({ student_id: 1, course_id: null }),
+            ).rejects.toThrow(/missing value for primary-key column 'course_id'/);
+            expect(query).not.toHaveBeenCalled();
         });
 
         it('batch-deletes with composite filters on every action', async () => {
@@ -155,6 +162,17 @@ describe('useDeleteMutation', () => {
                     { delete: { student_id: 2, course_id: 'cs-202' } },
                 ],
             });
+        });
+    });
+
+    describe('no primary key', () => {
+        it('refuses to delete from a table with no primary key (no {id: null} guess)', async () => {
+            const { query, wrapper } = createHarness();
+            const pkless = tbl('events', [], [col('name', 'String'), col('at', 'String')]);
+            const { result } = renderHook(() => useDeleteMutation(pkless), { wrapper });
+
+            await expect(result.current.deleteRow({ name: 'x' })).rejects.toThrow(/no primary key/);
+            expect(query).not.toHaveBeenCalled();
         });
     });
 

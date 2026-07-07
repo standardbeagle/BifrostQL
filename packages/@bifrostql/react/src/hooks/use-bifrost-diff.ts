@@ -32,6 +32,13 @@ export interface DiffMutationInput {
   updated: Record<string, unknown>;
 }
 
+/**
+ * Bucket for a last-known state stored without an explicit row id via
+ * `setLastKnown(state)`. Acts as a fallback for single-row callers; keyed
+ * entries (`setLastKnown(state, id)`) take precedence for their row.
+ */
+const DEFAULT_LAST_KNOWN_KEY = '__default__';
+
 /** Result of a diff preview, showing what would change and any conflicts. */
 export interface DiffMutationResult {
   /** The computed diff between original and updated. */
@@ -80,7 +87,22 @@ export function useBifrostDiff(options: UseBifrostDiffOptions) {
 
   const { table, idField, strategy = 'deep' } = options;
   const queryClient = useQueryClient();
-  const lastKnownRef = useRef<Record<string, unknown> | null>(null);
+  // Last-known server state keyed by row id, so conflict detection compares the
+  // row being saved against *that same row's* last-known state — not a single
+  // hook-wide snapshot, which caused cross-row false conflicts when the same
+  // hook instance saved multiple rows. Entries stored without an explicit id
+  // land under DEFAULT_LAST_KNOWN_KEY and act as a fallback for callers that
+  // track a single row.
+  const lastKnownRef = useRef<Map<string, Record<string, unknown>>>(new Map());
+
+  const resolveLastKnown = useCallback(
+    (id: string | number): Record<string, unknown> | null => {
+      const byId = lastKnownRef.current.get(String(id));
+      if (byId) return byId;
+      return lastKnownRef.current.get(DEFAULT_LAST_KNOWN_KEY) ?? null;
+    },
+    [],
+  );
 
   const mutation = useMutation<unknown, Error, DiffMutationInput>({
     mutationFn: (input) => {
@@ -91,12 +113,9 @@ export function useBifrostDiff(options: UseBifrostDiffOptions) {
         return Promise.resolve(null);
       }
 
-      if (lastKnownRef.current) {
-        const conflicts = detectConflicts(
-          original,
-          lastKnownRef.current,
-          updated,
-        );
+      const lastKnown = resolveLastKnown(id);
+      if (lastKnown) {
+        const conflicts = detectConflicts(original, lastKnown, updated);
         if (conflicts.length > 0) {
           return Promise.reject(
             new Error(`Conflict detected on fields: ${conflicts.join(', ')}`),
@@ -134,17 +153,22 @@ export function useBifrostDiff(options: UseBifrostDiffOptions) {
   const preview = useCallback(
     (input: DiffMutationInput): DiffMutationResult => {
       const result = diff(input.original, input.updated, strategy);
-      const conflicts = lastKnownRef.current
-        ? detectConflicts(input.original, lastKnownRef.current, input.updated)
+      const lastKnown = resolveLastKnown(input.id);
+      const conflicts = lastKnown
+        ? detectConflicts(input.original, lastKnown, input.updated)
         : [];
       return { diff: result, conflicts };
     },
-    [strategy],
+    [strategy, resolveLastKnown],
   );
 
-  const setLastKnown = useCallback((state: Record<string, unknown>) => {
-    lastKnownRef.current = state;
-  }, []);
+  const setLastKnown = useCallback(
+    (state: Record<string, unknown>, id?: string | number) => {
+      const key = id != null ? String(id) : DEFAULT_LAST_KNOWN_KEY;
+      lastKnownRef.current.set(key, state);
+    },
+    [],
+  );
 
   return {
     ...mutation,

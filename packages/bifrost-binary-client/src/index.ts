@@ -78,8 +78,22 @@ interface IWebSocket {
   close(code?: number, reason?: string): void;
 }
 
+/**
+ * Optional per-connection options passed to the WebSocket constructor. Only
+ * `headers` is used today; it maps to the `ws`/undici Node WebSocket options
+ * bag (`new WebSocket(url, undefined, { headers })`). Browser WebSocket ignores
+ * the extra constructor argument, so passing this is a no-op there.
+ */
+interface IWebSocketOptions {
+  headers?: Record<string, string>;
+}
+
 interface IWebSocketConstructor {
-  new (url: string): IWebSocket;
+  new (
+    url: string,
+    protocols?: string | string[],
+    options?: IWebSocketOptions
+  ): IWebSocket;
   readonly OPEN: number;
 }
 
@@ -272,6 +286,14 @@ function uint64FieldToNumber(value: bigint | string): number {
 export interface BifrostClientOptions {
   /** WebSocket endpoint URL (e.g., "ws://localhost:5000/bifrost-ws"). */
   url: string;
+  /**
+   * Extra headers to send with the WebSocket upgrade request (e.g. an
+   * `Authorization` bearer token). Forwarded to the WebSocket constructor's
+   * options bag. Honored by Node WebSocket implementations (`ws`, undici's
+   * global `WebSocket`); the browser WebSocket API cannot set custom handshake
+   * headers, so these are ignored there.
+   */
+  headers?: Record<string, string>;
   /** Timeout in milliseconds for individual requests. Defaults to 30000. */
   requestTimeoutMs?: number;
   /**
@@ -429,6 +451,7 @@ export class BifrostBinaryClient implements StreamingClientInternals {
   >();
   private readonly wsConstructor: IWebSocketConstructor;
   private readonly url: string;
+  private readonly headers?: Record<string, string>;
   private readonly requestTimeoutMs: number;
   private readonly onOpen?: () => void;
   private readonly onClose?: (code: number, reason: string) => void;
@@ -470,6 +493,10 @@ export class BifrostBinaryClient implements StreamingClientInternals {
 
   constructor(options: BifrostClientOptions) {
     this.url = options.url;
+    this.headers =
+      options.headers && Object.keys(options.headers).length > 0
+        ? options.headers
+        : undefined;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
     this.onOpen = options.onOpen;
     this.onClose = options.onClose;
@@ -565,7 +592,9 @@ export class BifrostBinaryClient implements StreamingClientInternals {
         return;
       }
 
-      const ws = new this.wsConstructor(this.url);
+      const ws = this.headers
+        ? new this.wsConstructor(this.url, undefined, { headers: this.headers })
+        : new this.wsConstructor(this.url);
       ws.binaryType = "arraybuffer";
       let settled = false;
 
@@ -661,12 +690,15 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     // chunks can never match again — clear them to prevent unbounded growth.
     this.abortedRequests.clear();
 
+    // Any abnormal close reconnects when autoReconnect is on — including a drop
+    // on an otherwise idle connection (no pending/streaming requests). Gating on
+    // in-flight work meant an idle socket that dropped stayed dead until the
+    // next request, defeating autoReconnect's promise of a warm connection.
     const shouldReconnect =
       !this.closed &&
       this.autoReconnect &&
       this.reconnectController !== null &&
-      code !== 1000 &&
-      (this.pending.size > 0 || this.streamingRequests.size > 0 || this.reconnecting);
+      code !== 1000;
 
     if (shouldReconnect && this.reconnectController) {
       // The socket is gone, so streaming idle timers would fire against a dead
@@ -1150,8 +1182,23 @@ export class BifrostBinaryClient implements StreamingClientInternals {
         lastSequence: 0,
       };
 
-      const bytes = encodeMessage(msg);
-      this.ws.send(bytes);
+      try {
+        const bytes = encodeMessage(msg);
+        this.ws.send(bytes);
+      } catch (err) {
+        // A synchronous throw from encode/send (e.g. the socket dropped between
+        // the readyState check and send()) must fully unwind this request:
+        // clear the timeout, drop the pending entry, detach the abort listener
+        // (via wrappedReject), and reject. Leaving them installed would leak the
+        // timer + listener and hang the pending map on a request that never
+        // reached the wire.
+        const entry = this.pending.get(requestId);
+        if (entry) {
+          clearTimeout(entry.timer);
+          this.pending.delete(requestId);
+        }
+        wrappedReject(err instanceof Error ? err : new Error(String(err)));
+      }
     });
   }
 
@@ -1295,19 +1342,23 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       const accepted = ingestStreamingChunk(streamingQueue, chunk);
       if (accepted) {
         this.sendChunkAck(chunk.requestId, chunk.chunkInfo.sequence);
-        // Track the highest contiguous sequence the queue has actually
-        // accepted, so a mid-stream disconnect knows what to RESUME from. The
-        // server's GetChunksAfter retransmits everything strictly after the
-        // value we send, so any gap below the contiguous high-water mark
-        // would be silently lost if we reported the absolute max instead.
-        this.streamingResumeFrom.set(
-          chunk.requestId,
-          streamingQueue.lastContiguousSequence
-        );
-        // Reset the idle timeout: the stream is making progress. Skip if the
-        // final chunk just auto-completed the queue (which already removed it
-        // and cleared its timer) so we don't arm a timer no chunk will clear.
+        // Only track resume state and re-arm the idle timer while the stream is
+        // still registered. If the final chunk just auto-completed the queue (or
+        // an overflow errored it), its cleanup already ran removeStreamingQueue —
+        // which deleted the streamingResumeFrom entry and cleared the timer.
+        // Setting them again here would resurrect a leaked resume entry that,
+        // after uint32 request-id reuse, triggers a bogus Resume for an unrelated
+        // request; and arm a timer no chunk will ever clear.
         if (this.streamingQueues.has(chunk.requestId)) {
+          // Track the highest contiguous sequence the queue has actually
+          // accepted, so a mid-stream disconnect knows what to RESUME from. The
+          // server's GetChunksAfter retransmits everything strictly after the
+          // value we send, so any gap below the contiguous high-water mark
+          // would be silently lost if we reported the absolute max instead.
+          this.streamingResumeFrom.set(
+            chunk.requestId,
+            streamingQueue.lastContiguousSequence
+          );
           this.armStreamingTimeout(chunk.requestId);
         }
       }

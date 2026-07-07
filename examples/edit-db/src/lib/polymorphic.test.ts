@@ -27,12 +27,22 @@ describe('resolveChildJoin', () => {
         expect(resolveChildJoin(joins, 'notes', 'b_id')?.fieldName).toBe('notes_by_b');
     });
 
-    it('falls back to the first match when the column does not disambiguate', () => {
+    it('returns undefined when the idColumn matches no candidate (no silent wrong pick)', () => {
+        // Regression: used to fall back to matches[0], silently scoping the query to
+        // the wrong FK and returning another relationship's children.
         const joins = [
             join({ fieldName: 'notes_by_a', destinationColumnNames: ['a_id'] }),
             join({ fieldName: 'notes_by_b', destinationColumnNames: ['b_id'] }),
         ];
-        expect(resolveChildJoin(joins, 'notes', 'unknown')?.fieldName).toBe('notes_by_a');
+        expect(resolveChildJoin(joins, 'notes', 'unknown')).toBeUndefined();
+    });
+
+    it('returns undefined when several joins match and no idColumn disambiguates', () => {
+        const joins = [
+            join({ fieldName: 'notes_by_a', destinationColumnNames: ['a_id'] }),
+            join({ fieldName: 'notes_by_b', destinationColumnNames: ['b_id'] }),
+        ];
+        expect(resolveChildJoin(joins, 'notes')).toBeUndefined();
     });
 
     it('returns undefined when no multi-join matches', () => {

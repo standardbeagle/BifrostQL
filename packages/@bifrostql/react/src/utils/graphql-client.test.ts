@@ -418,6 +418,33 @@ describe('executeGraphQL', () => {
       expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     });
 
+    it('does not treat a "forbidden" (403 authorization) GraphQL error as an auth failure', async () => {
+      // A 403-style permission denial is NOT an authentication failure: the
+      // token is valid but lacks permission. It must not trigger token refresh
+      // or session expiry.
+      globalThis.fetch = createFetchMock({
+        data: null,
+        errors: [{ message: 'Forbidden: insufficient permissions' }],
+      });
+      const refreshToken = vi.fn();
+      const onSessionExpired = vi.fn();
+
+      await expect(
+        executeGraphQL(
+          'http://localhost/graphql',
+          {},
+          '{ users { id } }',
+          undefined,
+          undefined,
+          () => 'token',
+          { refreshToken, onSessionExpired },
+        ),
+      ).rejects.toThrow('Forbidden: insufficient permissions');
+      expect(refreshToken).not.toHaveBeenCalled();
+      expect(onSessionExpired).not.toHaveBeenCalled();
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    });
+
     it('does not retry on a non-401 HTTP error', async () => {
       globalThis.fetch = createFetchMock({}, false, 500);
       const refreshToken = vi.fn();

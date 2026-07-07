@@ -14,7 +14,8 @@
  * Unknown type tokens are passed through verbatim as message/enum references
  * (e.g. `UserRow`, `Status`). Because each message/enum is emitted to its own
  * file, `emitSchema` prepends the cross-file `import` statements those
- * references need — enums are value imports, messages are `import type`.
+ * references need — enums are value imports (real runtime `enum`s), messages
+ * are `import type`.
  */
 
 import type { ProtoEnum, ProtoMessage, ProtoSchema } from "./proto-parser.js";
@@ -70,10 +71,18 @@ export function emitMessage(msg: ProtoMessage): string {
   return lines.join("\n") + "\n";
 }
 
-/** Emits a TypeScript const enum mirror of a proto enum. */
+/**
+ * Emits a TypeScript enum mirror of a proto enum.
+ *
+ * Emits a plain `enum` (not `const enum`): a real runtime value, so the value
+ * imports/re-exports that reference it (`import { Status }`,
+ * `export { Status }`) work under `isolatedModules`/`verbatimModuleSyntax`. A
+ * `const enum` is erased at compile time and cannot be value-imported across
+ * files that are transpiled in isolation, which breaks those consumers.
+ */
 export function emitEnum(en: ProtoEnum): string {
   const lines: string[] = [];
-  lines.push(`export const enum ${en.name} {`);
+  lines.push(`export enum ${en.name} {`);
   for (const value of en.values) {
     const name = isValidJsIdent(value.name) ? value.name : JSON.stringify(value.name);
     lines.push(`  ${name} = ${value.number},`);
@@ -89,7 +98,7 @@ export interface EmittedFile {
 
 /**
  * Builds the cross-file `import` block a message file needs for the
- * message/enum types it references. Enums are emitted as `const enum`s (value
+ * message/enum types it references. Enums are emitted as runtime `enum`s (value
  * imports); messages are interfaces (`import type`). Self-references and scalar
  * types are skipped.
  */

@@ -63,6 +63,27 @@ describe('useTableMutation', () => {
         vi.clearAllMocks();
     });
 
+    describe('keyless update guard', () => {
+        it('refuses to update when the editid does not resolve to a primary key', async () => {
+            // A malformed/stale editid parses to no PK filter; an UPDATE with no WHERE
+            // columns would rewrite every row. Refuse client-side and never call fetch.
+            const { query, wrapper } = createHarness();
+            const idCol = col('id', 'Int!', true);
+            const nameCol = col('name', 'String');
+            const users = tbl('users', ['id'], [idCol, nameCol]);
+            const { result } = renderHook(
+                // editId '' would be treated as insert; use a composite-arity mismatch
+                // route against a single-PK table so parsePkRoute yields a value, but
+                // pass a table with NO primary keys so idColumns is empty.
+                () => useTableMutation(tbl('users', [], [idCol, nameCol]), editCols(nameCol), [], 'stale'),
+                { wrapper },
+            );
+
+            await expect(result.current.update({ name: 'Ada' })).rejects.toThrow(/no resolvable primary key/);
+            expect(query).not.toHaveBeenCalled();
+        });
+    });
+
     describe('BigInt precision (values pass as strings, never through Number)', () => {
         // Above Number.MAX_SAFE_INTEGER (2^53-1 = 9007199254740991): Number()
         // rounds both to ...992, so a lossy write would target the wrong row.

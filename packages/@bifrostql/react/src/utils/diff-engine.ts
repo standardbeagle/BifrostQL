@@ -14,7 +14,14 @@ export interface DiffResult {
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    !(value instanceof Date) &&
+    !(value instanceof Map) &&
+    !(value instanceof Set)
+  );
 }
 
 function arraysEqual(
@@ -29,21 +36,67 @@ function arraysEqual(
   return true;
 }
 
+function mapsEqual(
+  a: Map<unknown, unknown>,
+  b: Map<unknown, unknown>,
+  strategy: DiffStrategy,
+): boolean {
+  if (a.size !== b.size) return false;
+  for (const [key, value] of a) {
+    if (!b.has(key)) return false;
+    if (!valuesEqual(value, b.get(key), strategy)) return false;
+  }
+  return true;
+}
+
+function setsEqual(a: Set<unknown>, b: Set<unknown>): boolean {
+  if (a.size !== b.size) return false;
+  for (const value of a) {
+    if (!b.has(value)) return false;
+  }
+  return true;
+}
+
 function valuesEqual(a: unknown, b: unknown, strategy: DiffStrategy): boolean {
   if (a === b) return true;
   if (a === null || b === null) return a === b;
   if (typeof a !== typeof b) return false;
 
-  if (Array.isArray(a) && Array.isArray(b)) {
+  // NaN-safe number comparison: `NaN === NaN` is false, but two NaNs must count
+  // as equal so a field holding NaN isn't reported as perpetually changed.
+  if (typeof a === 'number') {
+    return Number.isNaN(a) && Number.isNaN(b as number);
+  }
+
+  // Dates compare by timestamp. Without this they fall through to the plain
+  // object branch, which sees no own enumerable keys and wrongly reports every
+  // two distinct Dates as equal.
+  if (a instanceof Date && b instanceof Date) {
+    return a.getTime() === b.getTime();
+  }
+  if (a instanceof Date || b instanceof Date) return false;
+
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
     return arraysEqual(a, b, strategy);
   }
+
+  if (a instanceof Map && b instanceof Map) return mapsEqual(a, b, strategy);
+  if (a instanceof Map || b instanceof Map) return false;
+
+  if (a instanceof Set && b instanceof Set) return setsEqual(a, b);
+  if (a instanceof Set || b instanceof Set) return false;
 
   if (isPlainObject(a) && isPlainObject(b)) {
     if (strategy === 'shallow') return false;
     const keysA = Object.keys(a);
     const keysB = Object.keys(b);
     if (keysA.length !== keysB.length) return false;
-    return keysA.every((key) => valuesEqual(a[key], b[key], strategy));
+    return keysA.every(
+      (key) =>
+        Object.prototype.hasOwnProperty.call(b, key) &&
+        valuesEqual(a[key], b[key], strategy),
+    );
   }
 
   return false;
@@ -52,8 +105,9 @@ function valuesEqual(a: unknown, b: unknown, strategy: DiffStrategy): boolean {
 /**
  * Compute the fields that changed between two objects.
  *
- * Only fields present in `updated` are compared. New fields not in `original`
- * are included in the result.
+ * The union of keys is compared. A field present only in `updated` is reported
+ * with its new value; a field present only in `original` (removed) is reported
+ * as `null` so the caller can clear it server-side.
  *
  * @param original - The original (baseline) object.
  * @param updated - The modified object.
@@ -76,9 +130,19 @@ export function diff(
 ): DiffResult {
   const changed: Record<string, unknown> = {};
 
-  for (const key of Object.keys(updated)) {
-    if (!(key in original)) {
+  const keys = new Set([...Object.keys(original), ...Object.keys(updated)]);
+  for (const key of keys) {
+    const inOriginal = Object.prototype.hasOwnProperty.call(original, key);
+    const inUpdated = Object.prototype.hasOwnProperty.call(updated, key);
+
+    if (inUpdated && !inOriginal) {
+      // Added field.
       changed[key] = updated[key];
+      continue;
+    }
+    if (inOriginal && !inUpdated) {
+      // Removed field — report as null so it can be cleared server-side.
+      changed[key] = null;
       continue;
     }
     if (!valuesEqual(original[key], updated[key], strategy)) {

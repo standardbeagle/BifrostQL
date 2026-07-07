@@ -147,12 +147,21 @@ function DataEditDetail({ table, schema, editid, onClose }: { table: string, sch
 
     const mutation = useTableMutation(dataTable, editColumns, idColumns, editid);
 
+    const parsedPk = useMemo(
+        () => (isInsert ? null : parsePkRoute(editid, dataTable)),
+        [isInsert, editid, dataTable],
+    );
+
     const pkEq = useMemo(() => {
-        if (isInsert) return EMPTY_PK_EQ_FILTER;
-        const parsed = parsePkRoute(editid, dataTable);
-        if (!parsed) return EMPTY_PK_EQ_FILTER;
-        return buildPkEqFilter(parsed, dataTable) ?? EMPTY_PK_EQ_FILTER;
-    }, [isInsert, editid, dataTable]);
+        if (isInsert || !parsedPk) return EMPTY_PK_EQ_FILTER;
+        return buildPkEqFilter(parsedPk, dataTable) ?? EMPTY_PK_EQ_FILTER;
+    }, [isInsert, parsedPk, dataTable]);
+
+    // A malformed or stale editid (bad composite arity, a PK-less table, an empty
+    // segment) yields no filter. Rather than render a blank editable form backed by a
+    // disabled query — which on save fires a keyless UPDATE against the whole table —
+    // treat it as an unresolvable record and show an error state below.
+    const pkResolveFailed = !isInsert && pkEq.filterText === "";
 
     const queryStr = useMemo(() => {
         const paramDecls = pkEq.params.length > 0 ? pkEq.params.join(", ") : "";
@@ -249,6 +258,25 @@ function DataEditDetail({ table, schema, editid, onClose }: { table: string, sch
         );
     }
     if (error) return <div>Error: {(error as Error).message}</div>;
+
+    // Refuse to render an editable form for a record we can't key. Saving one would
+    // build an UPDATE with no WHERE columns (a full-table write).
+    if (pkResolveFailed) {
+        return (
+            <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+                <DialogContent showCloseButton={false} className="sm:max-w-md">
+                    <DialogTitle className="text-sm font-semibold">Cannot edit record</DialogTitle>
+                    <DialogDescription className="text-sm text-muted-foreground">
+                        This record can't be opened for editing: its key ({editid || 'empty'}) is
+                        missing or malformed for the {label} table. Return to the grid and try again.
+                    </DialogDescription>
+                    <div className="flex justify-end">
+                        <Button type="button" size="sm" onClick={onClose}>Close</Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
+        );
+    }
 
     const labelIdValue = (value?.[labelColumn] as string | number | undefined) ?? editid;
 
@@ -736,6 +764,10 @@ function ParentField({ column, join, form, schema, isRequired }: ParentFieldProp
     const destColumn = join.destinationColumnNames[0];
     const [search, setSearch] = useState('');
     const [debounced, setDebounced] = useState('');
+    // Defer the option-list fetch until the dropdown opens (fetch-on-open) so a form
+    // with many FK fields doesn't fire a 1000-row query per field on dialog mount —
+    // mirrors the FkCellPopover's `enabled: open` preview.
+    const [open, setOpen] = useState(false);
 
     // Debounce so each keystroke doesn't fire a query; when the parent's label
     // column is String-typed the search runs server-side, so parents beyond the
@@ -746,7 +778,7 @@ function ParentField({ column, join, form, schema, isRequired }: ParentFieldProp
         return () => clearTimeout(t);
     }, [search]);
 
-    const parentData = useTableRef(schema, join.destinationTable, destColumn, debounced);
+    const parentData = useTableRef(schema, join.destinationTable, destColumn, debounced, open);
 
     // Subscribe to the current FK value at hook level (form.Field's children is
     // a render prop, so hooks can't live inside it).
@@ -795,7 +827,7 @@ function ParentField({ column, join, form, schema, isRequired }: ParentFieldProp
                     <Select
                         value={selectControlValue(field.state.value, !isRequired)}
                         onValueChange={(val) => field.handleChange(val === NONE_VALUE ? null : val)}
-                        onOpenChange={(open) => { if (!open) { setSearch(''); setDebounced(''); } }}
+                        onOpenChange={(isOpen) => { setOpen(isOpen); if (!isOpen) { setSearch(''); setDebounced(''); } }}
                     >
                         <SelectTrigger id={name} className="w-full h-8 text-sm" {...ariaProps}>
                             <SelectValue placeholder={`Select ${column.label}`} />
@@ -865,23 +897,51 @@ interface CompositeParentFieldProps {
 function CompositeParentField({ column, join, form, schema, isRequired }: CompositeParentFieldProps) {
     const sourceCols = join.sourceColumnNames ?? [];
     const destCols = join.destinationColumnNames ?? [];
-    const parents = useCompositeTableRef(schema, join.destinationTable, destCols);
+
+    const [search, setSearch] = useState('');
+    const [debounced, setDebounced] = useState('');
+    const [open, setOpen] = useState(false);
+
+    useEffect(() => {
+        const t = setTimeout(() => setDebounced(search), 300);
+        return () => clearTimeout(t);
+    }, [search]);
+
+    // The current selection keyed by DESTINATION column name (the hook resolves and
+    // sorts by destination columns). Form values are stored by SOURCE column, paired
+    // positionally with destination columns.
+    const currentValues: Record<string, unknown> = useStore(
+        form.store,
+        (s: { values: Record<string, unknown> }) => {
+            const out: Record<string, unknown> = {};
+            for (let i = 0; i < sourceCols.length; i++) out[destCols[i]] = s.values?.[sourceCols[i]];
+            return out;
+        },
+    );
+
+    const parents = useCompositeTableRef(schema, join.destinationTable, destCols, {
+        search: debounced,
+        enabled: open,
+        currentValues,
+    });
 
     // Build the currently selected route from the form state of every source column.
-    // useStore subscribes to the form's underlying store slice so the Select stays in
-    // sync if other code paths mutate any source column directly. (`form.useStore` isn't
-    // a real API — the hook lives on the package export and takes the store directly.)
-    const currentRoute: string = useStore(form.store, (s: { values: Record<string, unknown> }) => {
+    // Shared encoder with the row producer (useCompositeTableRef -> rowIdOf), so the
+    // selected route always matches a parent row's route.
+    const currentRoute: string = useMemo(() => {
         const vals: unknown[] = [];
-        for (const c of sourceCols) {
-            const v = s.values?.[c];
+        for (let i = 0; i < sourceCols.length; i++) {
+            const v = currentValues[destCols[i]];
             if (v === undefined || v === null || v === '') return '';
             vals.push(v);
         }
-        // Shared encoder with the row producer (useCompositeTableRef -> rowIdOf),
-        // so the selected route always matches a parent row's route.
         return encodeRouteParts(vals);
-    });
+    }, [currentValues, sourceCols, destCols]);
+
+    const term = debounced.trim();
+    const filteredRows = parents.serverSearch || !term
+        ? parents.data
+        : parents.data.filter((r) => r.label.toLowerCase().includes(term.toLowerCase()));
 
     const onChange = (route: string) => {
         const match = parents.data.find((r) => r.route === route);
@@ -913,18 +973,43 @@ function CompositeParentField({ column, join, form, schema, isRequired }: Compos
                             composite FK ({sourceCols.length} cols)
                         </span>
                     </Label>
-                    <Select value={currentRoute} onValueChange={onChange}>
+                    <Select
+                        value={currentRoute}
+                        onValueChange={onChange}
+                        onOpenChange={(isOpen) => { setOpen(isOpen); if (!isOpen) { setSearch(''); setDebounced(''); } }}
+                    >
                         <SelectTrigger id={column.name} className="w-full h-8 text-sm" {...ariaProps}>
                             <SelectValue placeholder={`Select ${column.label}`} />
                         </SelectTrigger>
                         <SelectContent>
-                            {parents.data.map((row) => (
+                            <div className="px-1 pb-1 sticky top-0 bg-popover z-10">
+                                <Input
+                                    value={search}
+                                    onChange={(e) => setSearch(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete') {
+                                            e.stopPropagation();
+                                        }
+                                    }}
+                                    placeholder="Search…"
+                                    className="h-7 text-xs"
+                                />
+                            </div>
+                            {filteredRows.map((row) => (
                                 <SelectItem key={row.route} value={row.route}>
                                     {row.label}
                                 </SelectItem>
                             ))}
+                            {filteredRows.length === 0 && (
+                                <div className="px-2 py-1.5 text-xs text-muted-foreground">No matches.</div>
+                            )}
                         </SelectContent>
                     </Select>
+                    {parents.error != null && (
+                        <p className="text-xs text-destructive" role="alert">
+                            Failed to load {column.label} options: {String((parents.error as Error)?.message ?? parents.error)}
+                        </p>
+                    )}
                     <FieldErrors errors={field.state.meta.errors} id={errorId} />
                 </div>
                 );

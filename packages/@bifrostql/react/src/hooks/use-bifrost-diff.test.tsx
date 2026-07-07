@@ -260,6 +260,34 @@ describe('useBifrostDiff', () => {
     expect(result.current.error?.message).toContain('name');
   });
 
+  it('scopes conflict detection to the row being saved (no cross-row false conflicts)', () => {
+    const { result } = renderHook(
+      () => useBifrostDiff({ table: 'users', idField: 'id' }),
+      { wrapper: createWrapper() },
+    );
+
+    // The server changed row 1's name; record it as row 1's last-known state.
+    act(() => {
+      result.current.setLastKnown({ id: 1, name: 'ServerName' }, 1);
+    });
+
+    // Saving a *different* row (id 2) must not be compared against row 1.
+    const previewRow2 = result.current.preview({
+      id: 2,
+      original: { id: 2, name: 'John' },
+      updated: { id: 2, name: 'Jane' },
+    });
+    expect(previewRow2.conflicts).toEqual([]);
+
+    // Row 1 still detects its own conflict.
+    const previewRow1 = result.current.preview({
+      id: 1,
+      original: { id: 1, name: 'Base' },
+      updated: { id: 1, name: 'Local' },
+    });
+    expect(previewRow1.conflicts).toContain('name');
+  });
+
   it('calls onSuccess callback after mutation', async () => {
     const mockData = { users: 1 };
     globalThis.fetch = createFetchMock({ data: mockData });

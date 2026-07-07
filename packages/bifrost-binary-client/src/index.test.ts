@@ -195,6 +195,52 @@ describe("BifrostBinaryClient", () => {
         }
       }
     });
+
+    it("forwards configured headers to the WebSocket constructor options", () => {
+      const calls: Array<{ url: string; options?: unknown }> = [];
+      class RecordingWs extends FakeWebSocket {
+        constructor(url: string, _protocols?: unknown, options?: unknown) {
+          super(url);
+          calls.push({ url, options });
+        }
+      }
+      const ctor = RecordingWs as unknown as {
+        new (url: string): FakeWebSocket;
+        readonly OPEN: number;
+      };
+
+      const c = new BifrostBinaryClient({
+        url: TEST_URL,
+        WebSocket: ctor,
+        headers: { Authorization: "Bearer abc", "X-Api-Key": "k" },
+      });
+      void c.connect();
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.options).toEqual({
+        headers: { Authorization: "Bearer abc", "X-Api-Key": "k" },
+      });
+    });
+
+    it("omits the options argument when no headers are configured", () => {
+      const calls: Array<{ options?: unknown }> = [];
+      class RecordingWs extends FakeWebSocket {
+        constructor(url: string, _protocols?: unknown, options?: unknown) {
+          super(url);
+          calls.push({ options });
+        }
+      }
+      const ctor = RecordingWs as unknown as {
+        new (url: string): FakeWebSocket;
+        readonly OPEN: number;
+      };
+
+      const c = new BifrostBinaryClient({ url: TEST_URL, WebSocket: ctor });
+      void c.connect();
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.options).toBeUndefined();
+    });
   });
 
   describe("connect()", () => {
@@ -561,6 +607,85 @@ describe("BifrostBinaryClient", () => {
       // The mutation must NOT be replayed on the fresh socket — re-sending could
       // apply a non-idempotent mutation twice.
       expect(secondWs.sentFrames).toHaveLength(0);
+      c.close();
+    });
+  });
+
+  describe("reconnect on idle abnormal close", () => {
+    it("reconnects after an abnormal close even with no pending/streaming requests", async () => {
+      vi.useFakeTimers();
+      const c = new BifrostBinaryClient({
+        url: TEST_URL,
+        WebSocket: tracker.ctor,
+        autoReconnect: true,
+        backoff: { nextDelayMs: () => 10, reset: () => {} },
+      });
+      const cp = c.connect();
+      tracker.last.simulateOpen();
+      await cp;
+
+      const firstWs = tracker.last;
+      expect(c.pendingCount).toBe(0); // nothing in flight — the connection is idle
+
+      // Abnormal drop on an idle socket must still schedule a reconnect.
+      firstWs.simulateClose(1006, "abnormal");
+      await vi.advanceTimersByTimeAsync(10); // fire the backoff timer → fresh socket
+      const secondWs = tracker.last;
+      expect(secondWs).not.toBe(firstWs);
+      secondWs.simulateOpen();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(c.connected).toBe(true);
+      c.close();
+    });
+  });
+
+  describe("synchronous send failure", () => {
+    it("cleans up pending state when ws.send throws synchronously", async () => {
+      vi.useFakeTimers();
+      const instances: FakeWebSocket[] = [];
+      class ThrowingWs extends FakeWebSocket {
+        constructor(url: string) {
+          super(url);
+          instances.push(this);
+        }
+        override send(data: Uint8Array | ArrayBuffer): void {
+          if (this.readyState !== FakeWebSocketReadyState.OPEN) {
+            super.send(data);
+            return;
+          }
+          throw new Error("socket exploded");
+        }
+      }
+      const ctor = ThrowingWs as unknown as {
+        new (url: string): FakeWebSocket;
+        readonly OPEN: number;
+      };
+
+      const c = new BifrostBinaryClient({
+        url: TEST_URL,
+        WebSocket: ctor,
+        autoReconnect: false,
+        requestTimeoutMs: 5_000,
+      });
+      const cp = c.connect();
+      instances[0]!.simulateOpen();
+      await cp;
+
+      const controller = new AbortController();
+      await expect(
+        c.query("{ x }", undefined, controller.signal)
+      ).rejects.toThrowError("socket exploded");
+
+      // The pending entry + timer were removed (no leak, no hang).
+      expect(c.pendingCount).toBe(0);
+
+      // The abort listener was detached and the timer cleared: neither a late
+      // abort nor advancing past the timeout produces further state changes.
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(c.pendingCount).toBe(0);
+
       c.close();
     });
   });

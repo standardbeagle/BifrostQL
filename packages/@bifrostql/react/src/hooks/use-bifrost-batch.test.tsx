@@ -313,6 +313,35 @@ describe('useBifrostBatch', () => {
     expect(result.current.data!.results[1].index).toBe(0);
   });
 
+  it('preserves caller order for a same-table delete-then-insert replace', async () => {
+    globalThis.fetch = createFetchMock({ data: { result: 1 } });
+
+    // Replace pattern: delete a row, then re-insert it under the same unique
+    // key. Reordering to insert-then-delete would clobber the new row, so the
+    // caller's delete-before-insert order must be honored.
+    const operations: BatchOperation[] = [
+      { type: 'delete', table: 'users', id: 1 },
+      { type: 'insert', table: 'users', data: { id: 1, name: 'Replaced' } },
+    ];
+
+    const { result } = renderHook(() => useBifrostBatch(), {
+      wrapper: createWrapper(),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync(operations);
+    });
+
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+    const bodies = calls.map((call: unknown[]) =>
+      JSON.parse((call[1] as RequestInit).body as string),
+    );
+
+    // Delete first, then insert — as the caller ordered them.
+    expect(bodies[0].query).toContain('Delete');
+    expect(bodies[1].query).toContain('Insert');
+  });
+
   it('invalidates specified queries on success', async () => {
     globalThis.fetch = createFetchMock({ data: { users: 1 } });
 

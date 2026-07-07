@@ -123,14 +123,24 @@ export async function loadProtoText(opts: CliOptions): Promise<string> {
   // resolution rather than failing when the peer isn't built yet.
   const binaryClientModule = "@bifrostql/binary-client";
   const mod = (await import(/* @vite-ignore */ binaryClientModule)) as {
-    BifrostBinaryClient: new (options: { url: string }) => {
+    BifrostBinaryClient: new (options: {
+      url: string;
+      headers?: Record<string, string>;
+    }) => {
       connect(): Promise<void>;
       query(text: string): Promise<{ data?: Record<string, unknown>; errors?: unknown }>;
       close(): void;
     };
   };
 
-  const client = new mod.BifrostBinaryClient({ url: opts.endpoint });
+  // Forward any --header key=value pairs so authenticated endpoints (bearer
+  // tokens, API keys) are reachable. Empty object → omit so the client uses its
+  // no-headers path.
+  const hasHeaders = Object.keys(opts.headers).length > 0;
+  const client = new mod.BifrostBinaryClient({
+    url: opts.endpoint,
+    ...(hasHeaders ? { headers: opts.headers } : {}),
+  });
   await client.connect();
   try {
     // The server doesn't expose `_proto` yet; this query is wired so the CLI

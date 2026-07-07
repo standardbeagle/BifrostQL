@@ -28,11 +28,14 @@ export function resolveChildJoin(
     const matches = parentMultiJoins.filter((j) => j.destinationTable === childTable);
     if (matches.length === 0) return undefined;
     if (matches.length === 1) return matches[0];
-    if (idColumn) {
-        const byColumn = matches.find((j) => j.destinationColumnNames?.[0] === idColumn);
-        if (byColumn) return byColumn;
-    }
-    return matches[0];
+    // Several multi-joins target the same child. Only `idColumn` can pick the right
+    // one; return the exact match (or undefined when it names no candidate). Never
+    // fall back to matches[0] — silently choosing the wrong relationship built a query
+    // scoped to the wrong FK, which returns the wrong parent's children. Ambiguity
+    // (no idColumn, or an idColumn that matches nothing) resolves to undefined so the
+    // caller surfaces "relationship unavailable" rather than wrong data.
+    if (!idColumn) return undefined;
+    return matches.find((j) => j.destinationColumnNames?.[0] === idColumn);
 }
 
 /** The child collection field name on the parent type for a given join. */

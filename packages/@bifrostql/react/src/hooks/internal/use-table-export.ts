@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import {
   rowsToCsv,
   rowsToJson,
@@ -45,10 +45,21 @@ export function useTableExport({
     return { fields: orderedVisible, headers };
   }, [columnOrder, visibleColumns, columns]);
 
+  // The table uses server-side pagination, so this hook only ever holds the
+  // current page's rows — it has no fetcher to pull other pages. `allPages`
+  // therefore cannot be honored; every export uses the loaded rows. Warn once
+  // so the flag doesn't silently no-op, and export what we have.
+  const warnedAllPagesRef = useRef(false);
   const getExportRows = useCallback(
     (allPages?: boolean): Record<string, unknown>[] => {
-      if (allPages) {
-        return data;
+      if (allPages && !warnedAllPagesRef.current) {
+        warnedAllPagesRef.current = true;
+        console.warn(
+          '[bifrost] Export: `allPages` is not supported because the table ' +
+            'loads one page at a time via server-side pagination. Only the ' +
+            'currently loaded rows were exported. Raise the page size or fetch ' +
+            'the full result set separately to export everything.',
+        );
       }
       return data;
     },

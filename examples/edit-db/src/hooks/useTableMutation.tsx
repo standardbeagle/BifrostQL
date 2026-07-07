@@ -142,6 +142,14 @@ export function useTableMutation(
     }, [isInsert, editId, table]);
 
     const update = (detail: Record<string, unknown>) => {
+        // An UPDATE with no primary-key columns has no WHERE clause — it would rewrite
+        // every row. A null pkFilter (malformed/stale editid) or a table with no PK
+        // columns must be refused client-side rather than sent.
+        if (!pkFilter || idColumns.length === 0) {
+            return Promise.reject(
+                new Error(`Cannot update ${table.label ?? table.name}: the record has no resolvable primary key.`),
+            );
+        }
         const coerced = coerceDetail(detail, editColumns, idColumns, pkFilter, false);
         return updateMutation.mutateAsync(coerced);
     };

@@ -134,6 +134,56 @@ describe('diff', () => {
       expect(result.hasChanges).toBe(false);
       expect(result.changed).toEqual({});
     });
+
+    it('reports removed fields as null', () => {
+      const result = diff({ name: 'John', age: 30 }, { name: 'John' });
+      expect(result.hasChanges).toBe(true);
+      expect(result.changed).toEqual({ age: null });
+    });
+
+    it('treats two equal Dates as unchanged', () => {
+      const result = diff(
+        { at: new Date('2020-01-01T00:00:00Z') },
+        { at: new Date('2020-01-01T00:00:00Z') },
+      );
+      expect(result.hasChanges).toBe(false);
+      expect(result.changed).toEqual({});
+    });
+
+    it('detects a changed Date by timestamp', () => {
+      const updated = { at: new Date('2021-06-15T12:00:00Z') };
+      const result = diff({ at: new Date('2020-01-01T00:00:00Z') }, updated);
+      expect(result.hasChanges).toBe(true);
+      expect(result.changed).toEqual(updated);
+    });
+
+    it('treats two NaN values as unchanged', () => {
+      const result = diff({ n: Number.NaN }, { n: Number.NaN });
+      expect(result.hasChanges).toBe(false);
+      expect(result.changed).toEqual({});
+    });
+
+    it('treats equal Maps as unchanged and unequal Maps as changed', () => {
+      const equal = diff(
+        { m: new Map([['a', 1]]) },
+        { m: new Map([['a', 1]]) },
+      );
+      expect(equal.hasChanges).toBe(false);
+
+      const changed = diff(
+        { m: new Map([['a', 1]]) },
+        { m: new Map([['a', 2]]) },
+      );
+      expect(changed.hasChanges).toBe(true);
+    });
+
+    it('treats equal Sets as unchanged and unequal Sets as changed', () => {
+      const equal = diff({ s: new Set([1, 2]) }, { s: new Set([2, 1]) });
+      expect(equal.hasChanges).toBe(false);
+
+      const changed = diff({ s: new Set([1, 2]) }, { s: new Set([1, 3]) });
+      expect(changed.hasChanges).toBe(true);
+    });
   });
 });
 

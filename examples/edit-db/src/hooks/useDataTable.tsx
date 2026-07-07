@@ -25,6 +25,7 @@ import {
     deserializeColumnFilters,
     buildQuery,
     buildPkEqVariables,
+    getPkTypes,
     resolveDrillDown,
     unwrapDrillDownPage,
     canFlatFilterDrill,
@@ -293,7 +294,7 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
                 enableSorting: false,
                 enableHiding: true,
                 cell: ({ row }) => {
-                    const parentPk = getRowPkValue(row.original, table);
+                    const parentPk = getRowPkValue(row.original, table, row.index);
                     const children = getMultiJoinRows(row.original, j);
                     // True count from the paged `total`; `children` is capped at the
                     // preview limit so the badge stays right without over-fetching.
@@ -507,6 +508,21 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         [columnFilters, cfParam],
     );
 
+    // The default sort must land on a SORTABLE column. The old fallback used the
+    // literal first column, so a table whose leading column is a blob/varbinary,
+    // long-text, or xml field errored the very first query (those types can't be
+    // ORDER BY'd). Prefer the first PK column, else the first non-heavy column, else
+    // the first column as a last resort.
+    const defaultSortColumn = useMemo(() => {
+        if (!table) return 'id';
+        const pk = getPkTypes(table)[0]?.name;
+        if (pk && table.columns.some((c) => c.name === pk)) return pk;
+        const sortable = table.columns.find(
+            (c) => !isBinaryDbType(c.dbType) && !isLongTextDbType(c.dbType) && !isJsonColumn(c),
+        );
+        return sortable?.name ?? table.columns.at(0)?.name ?? 'id';
+    }, [table]);
+
     const appliedSort = useMemo(() => {
         if (sorting.length > 0 && table) {
             const col = sorting[0];
@@ -516,8 +532,8 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
                 return [`${col.id}_${col.desc ? 'desc' : 'asc'}`];
             }
         }
-        return table ? [`${table.columns.at(0)?.name ?? 'id'}_asc`] : [];
-    }, [sorting, table]);
+        return table ? [`${defaultSortColumn}_asc`] : [];
+    }, [sorting, table, defaultSortColumn]);
 
     const query = useMemo(
         () => buildQuery(table!, schema, filterString, effectiveColumnFilters, id, filterTable, filterColumn),

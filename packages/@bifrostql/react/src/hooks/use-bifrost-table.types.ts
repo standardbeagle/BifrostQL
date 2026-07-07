@@ -257,6 +257,19 @@ export interface ColumnManagementState {
   resetColumns: () => void;
 }
 
+/**
+ * Export actions derived from the visible, ordered columns and the currently
+ * loaded rows.
+ *
+ * NOTE on `allPages`: the table fetches one page at a time via server-side
+ * pagination, so this hook only ever holds the current page's rows. It cannot
+ * fetch other pages, so `allPages` cannot be honored here — every export
+ * operates on the loaded rows regardless of the flag. Requesting `allPages`
+ * emits a one-time dev warning. To export the full result set, either raise the
+ * page size so all rows are loaded, or fetch the complete set separately (e.g.
+ * `useBifrostInfinite` / a dedicated query) and export that. The flag is
+ * retained for forward compatibility with a future fetch-capable export path.
+ */
 export interface ExportState {
   exportCsv: (allPages?: boolean) => void;
   exportExcel: (allPages?: boolean) => void;

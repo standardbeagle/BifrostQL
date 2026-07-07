@@ -49,20 +49,39 @@ export function useDeleteMutation(table: Table): UseDeleteMutationResult {
         return map;
     }, [table]);
 
-    const pkColumns = useMemo(() => {
-        const keys = table.primaryKeys ?? [];
-        return keys.length > 0 ? keys : ['id'];
-    }, [table]);
+    // No fallback to ['id']: a table with no declared primary key cannot be safely
+    // targeted for a single-row delete. Guessing 'id' produced a `{id: null}` delete
+    // when the column didn't exist or the value was missing.
+    const pkColumns = useMemo(() => table.primaryKeys ?? [], [table]);
 
     const buildPayload = (input: DeleteInput): PkFilter => {
+        if (pkColumns.length === 0) {
+            throw new Error(`Cannot delete from '${table.name}': the table has no primary key.`);
+        }
         const payload: PkFilter = {};
         if (isPkFilter(input)) {
             for (const col of pkColumns) {
-                payload[col] = coerceValue(input[col], columnParamType.get(col));
+                const raw = input[col];
+                // Refuse a missing key value rather than coercing it to null and firing
+                // a `{col: null}` delete (mirrors the m2m attach guard). null never
+                // identifies a row and would either match nothing or, worse, a row whose
+                // key is genuinely null.
+                if (raw === undefined || raw === null) {
+                    throw new Error(`Cannot delete row: missing value for primary-key column '${col}'.`);
+                }
+                payload[col] = coerceValue(raw, columnParamType.get(col));
             }
             return payload;
         }
-        // Legacy scalar form — assumes a single-column PK on the first PK.
+        // Legacy scalar form — only valid for a single-column PK.
+        if (pkColumns.length !== 1) {
+            throw new Error(
+                `Cannot delete from '${table.name}': composite primary key requires an object key, not a scalar.`,
+            );
+        }
+        if (input === undefined || input === null) {
+            throw new Error(`Cannot delete row: missing value for primary-key column '${pkColumns[0]}'.`);
+        }
         const firstPk = pkColumns[0];
         payload[firstPk] = coerceValue(input, columnParamType.get(firstPk));
         return payload;
@@ -100,11 +119,22 @@ export function useDeleteMutation(table: Table): UseDeleteMutationResult {
     });
 
     const deleteRow = (detail: DeleteInput) => {
-        return deleteMutation.mutateAsync(buildPayload(detail));
+        let payload: PkFilter;
+        try {
+            payload = buildPayload(detail);
+        } catch (e) {
+            return Promise.reject(e);
+        }
+        return deleteMutation.mutateAsync(payload);
     };
 
     const deleteRows = (details: DeleteInput[]) => {
-        const actions = details.map((d) => ({ delete: buildPayload(d) }));
+        let actions: { delete: PkFilter }[];
+        try {
+            actions = details.map((d) => ({ delete: buildPayload(d) }));
+        } catch (e) {
+            return Promise.reject(e);
+        }
         return batchMutation.mutateAsync(actions);
     };
 

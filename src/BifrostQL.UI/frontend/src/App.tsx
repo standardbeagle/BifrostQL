@@ -205,7 +205,14 @@ export default function App() {
     });
   }, []);
 
-  // Periodic health check — detects backend restarts and auto-recovers
+  // Periodic health check — detects backend restarts and auto-recovers.
+  // Tracked in a ref (rather than an effect dependency) so a 10s blip
+  // doesn't tear down/recreate the interval on every currentView change,
+  // and recovery never remounts the editor (setEditorKey) — the GraphQL
+  // client itself retries in place once the backend is reachable again.
+  // Remounting here used to force a full re-introspect + refetch on any
+  // transient hiccup; the profile-resolution effect above already handles
+  // the one case (profile actually changed) where a remount is warranted.
   const [_backendDown, setBackendDown] = useState(false);
   useEffect(() => {
     let failCount = 0;
@@ -214,10 +221,10 @@ export default function App() {
         .then((r) => {
           if (!r.ok) throw new Error(`Server returned ${r.status}`);
           if (failCount > 0) {
-            // Backend came back — reload schema if in editor view
+            // Backend came back — clear the error banner. The editor is left
+            // mounted; it re-fetches naturally as queries are retried.
             setBackendDown(false);
             setErrorMessage(null);
-            if (currentView === 'editor') setEditorKey((k) => k + 1);
           }
           failCount = 0;
         })
@@ -233,7 +240,7 @@ export default function App() {
     check();
     const id = setInterval(check, 5000);
     return () => clearInterval(id);
-  }, [currentView]);
+  }, []);
 
   // Refresh the profile list whenever the active connection changes. The
   // server schema is connection-scoped, so each connection may expose a

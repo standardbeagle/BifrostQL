@@ -39,8 +39,15 @@ export interface BifrostAuthHandlers {
   onSessionExpired?: (error: Error) => void;
 }
 
-/** GraphQL error messages matching this pattern are treated as auth failures. */
-const AUTH_ERROR_PATTERN = /\b(unauthorized|unauthenticated|forbidden)\b/i;
+/**
+ * GraphQL error messages matching this pattern are treated as *authentication*
+ * failures (HTTP 401 semantics) that trigger a token refresh + session-expiry
+ * flow. "forbidden" (HTTP 403 / authorization) is deliberately excluded: a 403
+ * means the credential is valid but lacks permission, so refreshing the token
+ * and expiring the session is wrong — it would loop or log the user out over a
+ * mere permission denial.
+ */
+const AUTH_ERROR_PATTERN = /\b(unauthorized|unauthenticated)\b/i;
 
 /**
  * Compute an exponential backoff delay for retry attempts, capped at 30 seconds.

@@ -34,7 +34,7 @@ function findTable(schema: Schema, tableName: string): Table | undefined {
  * list is narrowed server-side, so parents beyond the fetch window stay
  * findable; otherwise one window is fetched and the caller filters it.
  */
-export function useTableRef(schema: Schema, tableName: string, columnName: string, search = ''): TableRef {
+export function useTableRef(schema: Schema, tableName: string, columnName: string, search = '', enabled = true): TableRef {
     const fetcher = useFetcher();
 
     const table = useMemo(() => findTable(schema, tableName), [schema, tableName]);
@@ -57,7 +57,11 @@ export function useTableRef(schema: Schema, tableName: string, columnName: strin
                 : { limit: TABLE_REF_LIMIT },
             { signal },
         ),
-        enabled: !!plan,
+        // `enabled` lets a caller defer the (up to TABLE_REF_LIMIT-row) option fetch
+        // until the dropdown is actually opened — every edit dialog would otherwise
+        // fire one such query per FK field on mount. The cheap current-value lookup
+        // (useTableRefValue) stays live so the closed Select still shows its label.
+        enabled: !!plan && enabled,
     });
 
     return {

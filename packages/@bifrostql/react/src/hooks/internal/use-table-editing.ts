@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type {
   ColumnConfig,
   EditingState,
@@ -47,9 +47,6 @@ export function useTableEditing<T = Record<string, unknown>>({
   const [dirtyRows, setDirtyRows] = useState<Map<string, RowEditState>>(
     () => new Map(),
   );
-  const optimisticRollbackRef = useRef<Map<string, Record<string, unknown>>>(
-    new Map(),
-  );
 
   const editableColumnSet = useMemo(() => {
     const set = new Set<string>();
@@ -70,13 +67,20 @@ export function useTableEditing<T = Record<string, unknown>>({
     [editableColumnSet],
   );
 
+  // Build a key→row index once per data/rowKey change so cell lookups are O(1)
+  // instead of O(n) `data.find` per cell (getCellValue calls this for every
+  // rendered cell).
+  const rowsByKey = useMemo(() => {
+    const map = new Map<string, Record<string, unknown>>();
+    for (const row of data as Record<string, unknown>[]) {
+      map.set(String(row[rowKey]), row);
+    }
+    return map;
+  }, [data, rowKey]);
+
   const getRowByKey = useCallback(
-    (key: string): Record<string, unknown> | undefined => {
-      return data.find(
-        (row) => String((row as Record<string, unknown>)[rowKey]) === key,
-      ) as Record<string, unknown> | undefined;
-    },
-    [data, rowKey],
+    (key: string): Record<string, unknown> | undefined => rowsByKey.get(key),
+    [rowsByKey],
   );
 
   const startEditing = useCallback(
@@ -294,8 +298,6 @@ export function useTableEditing<T = Record<string, unknown>>({
         return next;
       });
 
-      optimisticRollbackRef.current.set(rk, editState.original);
-
       try {
         await onRowUpdate(editState.original, editState.changes);
         setDirtyRows((prev) => {
@@ -303,7 +305,6 @@ export function useTableEditing<T = Record<string, unknown>>({
           next.delete(rk);
           return next;
         });
-        optimisticRollbackRef.current.delete(rk);
         refetch();
         return true;
       } catch {
@@ -314,7 +315,6 @@ export function useTableEditing<T = Record<string, unknown>>({
           next.set(rk, { ...state, saving: false });
           return next;
         });
-        optimisticRollbackRef.current.delete(rk);
         return false;
       }
     },

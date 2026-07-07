@@ -106,6 +106,18 @@ describe('getFilterOperators', () => {
         expect(getFilterOperators('Unknown')).toEqual(getFilterOperators('String'));
         expect(getFilterOperators('')).toEqual(getFilterOperators('String'));
     });
+
+    it('returns numeric operators (no _contains) for BigInt and Decimal', () => {
+        // Regression: these used to fall through to the String set, which offered
+        // _contains and coerced values under a String var declaration.
+        for (const t of ['BigInt', 'BigInt!', 'Decimal', 'Decimal!']) {
+            const ops = getFilterOperators(t);
+            expect(ops).toContain('_gt');
+            expect(ops).toContain('_between');
+            expect(ops).not.toContain('_contains');
+            expect(ops).toEqual(getFilterOperators('Int'));
+        }
+    });
 });
 
 // ── getFilterObj ───────────────────────────────────────────────
@@ -161,9 +173,16 @@ describe('toLocaleDate', () => {
         expect(toLocaleDate('not-a-date')).toBe('');
     });
 
-    it('returns empty for dates before 1973', () => {
+    it('returns empty only for exact sentinel/placeholder instants', () => {
+        // Unix epoch (timestamp 0) and year-0001 min-value are "unset" markers.
         expect(toLocaleDate('1970-01-01')).toBe('');
-        expect(toLocaleDate('1900-01-01')).toBe('');
+        expect(toLocaleDate('0001-01-01')).toBe('');
+    });
+
+    it('formats legitimate historical dates (no 1973 cutoff)', () => {
+        // Previously blanked by the broad "before 1973" cutoff; these are real dates.
+        expect(toLocaleDate('1900-06-15')).toBeTruthy();
+        expect(toLocaleDate('1969-07-20')).toBeTruthy();
     });
 
     it('formats valid modern dates', () => {
@@ -195,9 +214,11 @@ describe('getRowPkValue', () => {
         expect(getRowPkValue({ id: 'abc-123', name: 'test' }, table)).toBe('abc-123');
     });
 
-    it('falls back to row.id if no primary key defined', () => {
+    it('uses the shared row-${index} placeholder when no primary key is defined', () => {
+        // Consistent with rowIdOf so links built by either side round-trip (finding 13).
         const noPkTable = makeTable({ primaryKeys: [] });
-        expect(getRowPkValue({ id: 99 }, noPkTable)).toBe('99');
+        expect(getRowPkValue({ id: 99 }, noPkTable)).toBe('row-0');
+        expect(getRowPkValue({ id: 99 }, noPkTable, 4)).toBe('row-4');
     });
 
     it('returns empty string when pk column is missing from row', () => {
@@ -226,6 +247,12 @@ describe('getGraphQlType', () => {
     it('maps DateTime to String', () => expect(getGraphQlType('DateTime')).toBe('String'));
     it('maps String to String', () => expect(getGraphQlType('String')).toBe('String'));
     it('maps unknown types to String', () => expect(getGraphQlType('Foo')).toBe('String'));
+    it('maps BigInt and Decimal to their own scalar (not String)', () => {
+        expect(getGraphQlType('BigInt')).toBe('BigInt');
+        expect(getGraphQlType('BigInt!')).toBe('BigInt');
+        expect(getGraphQlType('Decimal')).toBe('Decimal');
+        expect(getGraphQlType('Decimal!')).toBe('Decimal');
+    });
     it('strips ! from all types', () => {
         expect(getGraphQlType('Float!')).toBe('Float');
         expect(getGraphQlType('Boolean!')).toBe('Boolean');
@@ -685,8 +712,13 @@ describe('buildQuery', () => {
         expect(q).toContain('assignments(sort: $sort limit: $limit offset: $offset filter: { course_id: { _eq: $id } })');
     });
 
-    it('falls back to the standard query when no parent multi-join targets the child', () => {
-        // Parent has no multi-join to the child — MODEL B cannot apply.
+    it('returns null (does NOT emit an unfiltered query) when a drill cannot resolve', () => {
+        // Parent has no multi-join to the child — MODEL B cannot apply. A drill was
+        // explicitly requested (id + tableFilter), so falling through to the standard
+        // UNFILTERED full-table query would show every row of the child in a
+        // "children of parent X" panel and let select-all + delete hit unrelated rows.
+        // Refuse: return null so the caller renders an empty "relationship unavailable"
+        // grid instead of leaking the whole table.
         const child = makeTable({
             name: 'orders',
             graphQlName: 'orders',
@@ -695,10 +727,7 @@ describe('buildQuery', () => {
         });
         const parent = makeTable({ name: 'customers', graphQlName: 'customers', primaryKeys: ['customer_id'], columns: [makeColumn({ name: 'customer_id', paramType: 'Int!', isPrimaryKey: true })] });
         const schema = makeSchema([parent, child]);
-        const q = buildQuery(child, schema, '', [], '7', 'customers', 'customer_id')!;
-        // Standard top-level query (no parent traversal).
-        expect(q).toContain('orders(sort: $sort');
-        expect(q).not.toContain('customers(filter:');
+        expect(buildQuery(child, schema, '', [], '7', 'customers', 'customer_id')).toBeNull();
     });
 
     it('includes multi-join child fields', () => {
@@ -743,6 +772,45 @@ describe('buildQuery', () => {
         const emptyTable = makeTable({ columns: [] });
         const q = buildQuery(emptyTable, makeSchema([emptyTable]), '', []);
         expect(q).toBeTruthy();
+    });
+
+    it('excludes blob/varbinary and long-text/xml columns from the grid SELECT', () => {
+        // The grid only shows a size/preview badge for heavy columns; selecting the
+        // full payload for every row is the dominant transfer cost.
+        const heavy = makeTable({
+            name: 'docs',
+            graphQlName: 'docs',
+            primaryKeys: ['doc_id'],
+            columns: [
+                makeColumn({ name: 'doc_id', paramType: 'Int!', dbType: 'int', isPrimaryKey: true }),
+                makeColumn({ name: 'title', paramType: 'String', dbType: 'nvarchar' }),
+                makeColumn({ name: 'body', paramType: 'String', dbType: 'text' }),
+                makeColumn({ name: 'notes', paramType: 'String', dbType: 'nvarchar(max)' }),
+                makeColumn({ name: 'spec', paramType: 'String', dbType: 'xml' }),
+                makeColumn({ name: 'blob', paramType: 'String', dbType: 'varbinary' }),
+            ],
+        });
+        const q = buildQuery(heavy, makeSchema([heavy]), '', [])!;
+        expect(q).toContain('doc_id');
+        expect(q).toContain('title');
+        expect(q).not.toMatch(/\bbody\b/);
+        expect(q).not.toMatch(/\bnotes\b/);
+        expect(q).not.toMatch(/\bspec\b/);
+        expect(q).not.toMatch(/\bblob\b/);
+    });
+
+    it('keeps a heavy column in the SELECT when it is a primary key (needed for identity)', () => {
+        const t = makeTable({
+            name: 'kv',
+            graphQlName: 'kv',
+            primaryKeys: ['k'],
+            columns: [
+                makeColumn({ name: 'k', paramType: 'String!', dbType: 'varbinary', isPrimaryKey: true }),
+                makeColumn({ name: 'v', paramType: 'String', dbType: 'nvarchar' }),
+            ],
+        });
+        const q = buildQuery(t, makeSchema([t]), '', [])!;
+        expect(q).toMatch(/\bk\b/);
     });
 });
 

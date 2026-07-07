@@ -62,18 +62,30 @@ interface IndexedOperation {
   operation: BatchOperation;
 }
 
+/**
+ * Resolves the row identity used by `update` / `delete` mutations.
+ *
+ * Prefers the composite `key` when supplied. Otherwise falls back to `{ id }`,
+ * which assumes a single primary key literally named `id` — tables with a
+ * composite or renamed primary key MUST pass `op.key` instead of `op.id`.
+ */
+function identityFor(op: BatchOperation): Record<string, unknown> {
+  if (op.key && Object.keys(op.key).length > 0) {
+    return { ...op.key };
+  }
+  return op.id != null ? { id: op.id } : {};
+}
+
 function buildVariables(op: BatchOperation): Record<string, unknown> {
   switch (op.type) {
     case 'insert':
       return { detail: op.data };
     case 'update':
-      return {
-        detail: { ...op.data, ...(op.id != null ? { id: op.id } : {}) },
-      };
+      return { detail: { ...op.data, ...identityFor(op) } };
     case 'upsert':
       return { detail: { ...op.key, ...op.data } };
     case 'delete':
-      return { detail: { id: op.id } };
+      return { detail: identityFor(op) };
   }
 }
 
@@ -84,9 +96,43 @@ const TYPE_ORDER: Record<MutationType, number> = {
   delete: 3,
 };
 
+/**
+ * True when the caller placed a `delete` before an `insert`/`upsert` on the
+ * same table — the "replace" pattern (drop a row, then re-create it under the
+ * same unique key). Reordering that into insert-then-delete would clobber the
+ * freshly inserted row, so the caller's ordering must be preserved verbatim.
+ */
+function hasReplaceIntent(indexed: IndexedOperation[]): boolean {
+  for (let i = 0; i < indexed.length; i++) {
+    const a = indexed[i]!.operation;
+    if (a.type !== 'delete') continue;
+    for (let j = i + 1; j < indexed.length; j++) {
+      const b = indexed[j]!.operation;
+      if (
+        (b.type === 'insert' || b.type === 'upsert') &&
+        b.table === a.table
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Orders operations by dependency phase (insert → upsert → update → delete) for
+ * referential integrity — but only when doing so is safe. When the caller
+ * expressed a same-table delete-then-insert/upsert "replace" sequence, the sort
+ * is skipped and the caller's order is honored so the replace isn't inverted.
+ * `Array.prototype.sort` is stable, so operations of equal phase keep their
+ * relative order.
+ */
 function sortByDependencyOrder(
   indexed: IndexedOperation[],
 ): IndexedOperation[] {
+  if (hasReplaceIntent(indexed)) {
+    return [...indexed];
+  }
   return [...indexed].sort(
     (a, b) => TYPE_ORDER[a.operation.type] - TYPE_ORDER[b.operation.type],
   );
@@ -97,7 +143,9 @@ function sortByDependencyOrder(
  *
  * Operations are automatically sorted by dependency order: inserts first,
  * then upserts, updates, and finally deletes. This ensures referential
- * integrity when operations depend on each other.
+ * integrity when operations depend on each other. The one exception is a
+ * same-table delete-then-insert/upsert "replace" sequence, where the caller's
+ * order is preserved so the replace isn't inverted into insert-then-delete.
  *
  * Must be used within a {@link BifrostProvider}.
  *

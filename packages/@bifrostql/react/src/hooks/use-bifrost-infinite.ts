@@ -101,14 +101,26 @@ export function useBifrostInfinite<TData = unknown, TPageParam = unknown>(
   } = options;
 
   const queryClient = useQueryClient();
-  const queryKey: QueryKey = ['bifrost', 'infinite', query];
+  // The cache key must include the endpoint and the query's variables identity
+  // (seeded here by `initialPageParam`) alongside the query text. Keying on the
+  // query string alone meant two providers pointed at different endpoints — or
+  // two components paging the same query from different starting params —
+  // collided in the cache and served each other's pages. React Query hashes the
+  // key structurally, so the raw `initialPageParam` value participates directly.
+  const queryKey: QueryKey = [
+    'bifrost',
+    'infinite',
+    config.endpoint,
+    query,
+    initialPageParam,
+  ];
 
   const invalidate = useCallback(
     () =>
       queryClient.invalidateQueries({
-        queryKey: ['bifrost', 'infinite', query],
+        queryKey: ['bifrost', 'infinite', config.endpoint, query, initialPageParam],
       }),
-    [queryClient, query],
+    [queryClient, config.endpoint, query, initialPageParam],
   );
 
   const result = useInfiniteQuery<

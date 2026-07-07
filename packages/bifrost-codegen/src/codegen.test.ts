@@ -194,12 +194,15 @@ describe("ts-emitter", () => {
     expect(text).toContain("valid_snake: string;");
   });
 
-  it("emits a const enum mirror", () => {
+  it("emits a plain (non-const) enum mirror", () => {
     const schema = parseProto(TWO_MESSAGE_SCHEMA);
     const text = emitEnum(schema.enums[0]!);
+    // Plain `enum`, not `const enum`: value imports/re-exports of it must work
+    // under isolatedModules (a const enum is erased and breaks those consumers).
+    expect(text).not.toContain("const enum");
     expect(text).toBe(
       [
-        "export const enum Status {",
+        "export enum Status {",
         "  PENDING = 0,",
         "  SHIPPED = 1,",
         "  DELIVERED = 2,",

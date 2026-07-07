@@ -186,6 +186,38 @@ describe("StreamingQueue", () => {
     await expect(queue.next()).rejects.toThrowError(/exceeded MAX_QUEUE_SIZE/);
   });
 
+  it("drops an already-consumed sequence so a stale retransmit can't wedge auto-complete", async () => {
+    let cleanups = 0;
+    const queue = new StreamingQueue(1, () => {
+      cleanups++;
+    });
+    const make = (seq: number): StreamChunk => ({
+      requestId: 1,
+      sequence: seq,
+      totalChunks: 2,
+      bytes: new Uint8Array([seq]),
+      isLast: seq === 1,
+    });
+
+    // Deliver seq 0, then a duplicate/stale seq 0 (as after a resume), then the
+    // final seq 1. Before the fix, the stale seq-0 parked in pendingChunks and
+    // blocked the `pendingChunks.size === 0` auto-complete check forever.
+    queue.push(make(0));
+    queue.push(make(0)); // stale — already consumed
+    queue.push(make(1));
+
+    // The stale chunk was dropped, not buffered.
+    expect(queue.bufferedCount).toBe(2); // seq 0 and seq 1 sit in `ready`
+    // The final chunk auto-completed the queue → cleanup ran exactly once.
+    expect(cleanups).toBe(1);
+
+    const collected: number[] = [];
+    for await (const chunk of queue) {
+      collected.push(chunk.sequence);
+    }
+    expect(collected).toEqual([0, 1]);
+  });
+
   it("push() is a no-op once the queue is closed or errored", () => {
     const queue = new StreamingQueue(1, () => {});
     queue.error(new Error("done"));

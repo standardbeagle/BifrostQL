@@ -12,8 +12,13 @@ namespace BifrostQL.Server
     /// BifrostMessage envelopes from binary frames, executes them via IBifrostEngine,
     /// and sends protobuf-encoded responses back as binary frames.
     ///
-    /// Supports connection multiplexing via request_id: multiple in-flight requests
-    /// share a single WebSocket connection, with responses matched by request_id.
+    /// Processing is strictly serial per connection: <see cref="HandleConnectionAsync"/>
+    /// fully processes one message (including sending any chunked response) before reading
+    /// the next frame. The request_id on each message identifies which request a response
+    /// or control frame (ChunkAck/ChunkNack/Resume) belongs to; it does NOT enable
+    /// concurrent in-flight requests. A Query/Mutation frame that arrives while a chunked
+    /// response is still being sent cannot be serviced and is rejected with an Error rather
+    /// than silently dropped.
     ///
     /// Large responses exceeding the chunk threshold are automatically split into
     /// Chunk messages with CRC32 integrity checksums and backpressure via ChunkAck.
@@ -272,6 +277,10 @@ namespace BifrostQL.Server
                     {
                         await AbortOnAckTimeoutAsync(webSocket, request.RequestId, ex);
                     }
+                    catch (ChunkRetransmitLimitExceededException ex)
+                    {
+                        await AbortOnRetransmitLimitAsync(webSocket, request.RequestId, ex, httpContext.RequestAborted);
+                    }
                 }
                 else
                 {
@@ -309,6 +318,10 @@ namespace BifrostQL.Server
                 {
                     await AbortOnAckTimeoutAsync(webSocket, response.RequestId, ex);
                 }
+                catch (ChunkRetransmitLimitExceededException ex)
+                {
+                    await AbortOnRetransmitLimitAsync(webSocket, response.RequestId, ex, httpContext.RequestAborted);
+                }
             }
             else
             {
@@ -335,6 +348,53 @@ namespace BifrostQL.Server
             catch (WebSocketException)
             {
                 // Socket already aborted by the cancelled receive; nothing more to do.
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        /// <summary>
+        /// Handles a per-sequence retransmit-limit breach: a client that perpetually NACKs
+        /// the same chunk. The transfer is aborted; the client is told why via an Error
+        /// frame before the connection is closed, so it surfaces a real failure instead of
+        /// hanging.
+        /// </summary>
+        private async Task AbortOnRetransmitLimitAsync(
+            WebSocket webSocket,
+            uint requestId,
+            ChunkRetransmitLimitExceededException ex,
+            CancellationToken cancellationToken)
+        {
+            _logger.LogWarning(
+                ex, "Chunk retransmission limit exceeded for request {RequestId}; aborting transfer", requestId);
+
+            try
+            {
+                var errorResponse = new BifrostMessage
+                {
+                    RequestId = requestId,
+                    Type = BifrostMessageType.Error,
+                    Errors = { "Chunk retransmission limit exceeded; transfer aborted." },
+                };
+                await SendResponseAsync(webSocket, errorResponse, cancellationToken);
+            }
+            catch (WebSocketException)
+            {
+            }
+            catch (OperationCanceledException)
+            {
+            }
+
+            try
+            {
+                await webSocket.CloseAsync(
+                    WebSocketCloseStatus.PolicyViolation,
+                    "Chunk retransmission limit exceeded",
+                    CancellationToken.None);
+            }
+            catch (WebSocketException)
+            {
             }
             catch (OperationCanceledException)
             {

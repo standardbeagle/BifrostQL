@@ -32,10 +32,20 @@ namespace BifrostQL.Server
         /// </summary>
         public static readonly TimeSpan DefaultAckTimeout = TimeSpan.FromSeconds(30);
 
+        /// <summary>
+        /// Default cap on how many times a single chunk sequence may be retransmitted in
+        /// response to NACKs during one transfer. A client that perpetually NACKs the same
+        /// sequence never lets the ack window drain, so without a cap the sender would
+        /// retransmit forever (each round merely resetting the ack timeout). Once the cap is
+        /// exceeded the transfer is aborted with an error.
+        /// </summary>
+        public const int DefaultMaxRetransmitsPerSequence = 5;
+
         private readonly int _chunkThreshold;
         private readonly int _ackWindow;
         private readonly ChunkBuffer? _chunkBuffer;
         private readonly TimeSpan _ackTimeout;
+        private readonly int _maxRetransmitsPerSequence;
         private readonly ILogger? _logger;
 
         public ChunkSender(int chunkThreshold = DefaultChunkThreshold, int ackWindow = DefaultAckWindow)
@@ -48,16 +58,19 @@ namespace BifrostQL.Server
             int ackWindow,
             ChunkBuffer? chunkBuffer,
             TimeSpan? ackTimeout = null,
-            ILogger? logger = null)
+            ILogger? logger = null,
+            int maxRetransmitsPerSequence = DefaultMaxRetransmitsPerSequence)
         {
             if (chunkThreshold <= 0) throw new ArgumentOutOfRangeException(nameof(chunkThreshold));
             if (ackWindow <= 0) throw new ArgumentOutOfRangeException(nameof(ackWindow));
             if (ackTimeout.HasValue && ackTimeout.Value <= TimeSpan.Zero)
                 throw new ArgumentOutOfRangeException(nameof(ackTimeout));
+            if (maxRetransmitsPerSequence <= 0) throw new ArgumentOutOfRangeException(nameof(maxRetransmitsPerSequence));
             _chunkThreshold = chunkThreshold;
             _ackWindow = ackWindow;
             _chunkBuffer = chunkBuffer;
             _ackTimeout = ackTimeout ?? DefaultAckTimeout;
+            _maxRetransmitsPerSequence = maxRetransmitsPerSequence;
             _logger = logger;
         }
 
@@ -139,6 +152,9 @@ namespace BifrostQL.Server
             CancellationToken cancellationToken)
         {
             var unacked = 0;
+            // Per-sequence NACK retransmit counts for this transfer. A perpetually-NACKing
+            // client is bounded by _maxRetransmitsPerSequence; exceeding it aborts the send.
+            Dictionary<uint, int>? retransmitCounts = null;
 
             for (var i = startIndex; i < chunks.Count; i++)
             {
@@ -165,7 +181,16 @@ namespace BifrostQL.Server
                             unacked -= result.acksReceived;
                         if (result.nackSequence.HasValue)
                         {
-                            await RetransmitChunkAsync(webSocket, chunk.RequestId, result.nackSequence.Value, cancellationToken);
+                            var seq = result.nackSequence.Value;
+                            retransmitCounts ??= new Dictionary<uint, int>();
+                            var count = retransmitCounts.TryGetValue(seq, out var prior) ? prior + 1 : 1;
+                            retransmitCounts[seq] = count;
+                            if (count > _maxRetransmitsPerSequence)
+                            {
+                                throw new ChunkRetransmitLimitExceededException(
+                                    chunk.RequestId, seq, _maxRetransmitsPerSequence);
+                            }
+                            await RetransmitChunkAsync(webSocket, chunk.RequestId, seq, cancellationToken);
                         }
                     }
                     else
@@ -222,11 +247,29 @@ namespace BifrostQL.Server
             if (ackMsg.Type == BifrostMessageType.ChunkNack)
                 return (0, ackMsg.ChunkSequence);
 
-            // Anything else (e.g. a pipelined Query sent mid-transfer) cannot be serviced
-            // while a chunked send is in flight; it is dropped, so make that visible.
+            // Anything else (e.g. a pipelined Query/Mutation sent mid-transfer) cannot be
+            // serviced while a chunked send is in flight. The binary transport is strictly
+            // serial, so reply with an explicit Error naming the frame instead of silently
+            // dropping it — the client must resend after the current transfer completes.
             _logger?.LogWarning(
-                "Discarding unexpected {MessageType} frame received while awaiting chunk acknowledgement for request {RequestId}",
+                "Rejecting unexpected {MessageType} frame received while a chunked response for request {RequestId} is in transit",
                 ackMsg.Type, ackMsg.RequestId);
+            var reject = new BifrostMessage
+            {
+                RequestId = ackMsg.RequestId,
+                Type = BifrostMessageType.Error,
+                Errors =
+                {
+                    "A chunked response is in transit; the binary transport processes one request at a time. " +
+                    "Resend this request after the current transfer completes.",
+                },
+            };
+            var rejectBytes = reject.ToBytes();
+            await webSocket.SendAsync(
+                new ArraySegment<byte>(rejectBytes),
+                WebSocketMessageType.Binary,
+                endOfMessage: true,
+                cancellationToken);
             return (0, null);
         }
 
@@ -258,6 +301,26 @@ namespace BifrostQL.Server
         public static uint ComputeCrc32(byte[] data)
         {
             return Crc32.HashToUInt32(data);
+        }
+    }
+
+    /// <summary>
+    /// Thrown when a single chunk sequence is retransmitted more times than the configured
+    /// per-sequence cap during one transfer (a client that perpetually NACKs the same
+    /// chunk). The middleware aborts the transfer and reports an error to the client.
+    /// </summary>
+    public sealed class ChunkRetransmitLimitExceededException : Exception
+    {
+        public uint RequestId { get; }
+        public uint Sequence { get; }
+        public int Limit { get; }
+
+        public ChunkRetransmitLimitExceededException(uint requestId, uint sequence, int limit)
+            : base($"Chunk {sequence} for request {requestId} exceeded the retransmission limit of {limit}; transfer aborted.")
+        {
+            RequestId = requestId;
+            Sequence = sequence;
+            Limit = limit;
         }
     }
 }

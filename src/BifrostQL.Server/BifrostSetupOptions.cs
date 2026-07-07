@@ -372,8 +372,15 @@ namespace BifrostQL.Server
 
             //JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 
+            // Bound query depth/complexity guard against unauthenticated DoS: nested
+            // joins/aggregates fan out to correlated subqueries, so an unbounded query can
+            // amplify a single request into a very large SQL workload. Defaults are applied
+            // even when unconfigured; a host can tune or lift them via config.
+            var (maxDepth, maxComplexity) = GraphQlComplexityLimits.Read(_bifrostConfig);
+
             services.AddGraphQL(b => b
                     .AddSystemTextJson()
+                    .AddComplexityAnalyzer(c => GraphQlComplexityLimits.Apply(c, maxDepth, maxComplexity))
                     .AddBifrostErrorLogging(options =>
                     {
                         // Get logging configuration from BifrostQL section if it exists

@@ -84,6 +84,7 @@ namespace BifrostQL.Server
         private readonly List<Type> _mutationTransformerTypes = new();
         private readonly List<Type> _queryObserverTypes = new();
         private IConfigurationSection? _loggingConfig;
+        private IConfigurationSection? _queryLimitsConfig;
         private readonly BifrostProfileRegistry _profileRegistry = new();
 
         /// <summary>
@@ -132,6 +133,17 @@ namespace BifrostQL.Server
         public BifrostMultiDbOptions BindLogging(IConfigurationSection? section)
         {
             _loggingConfig = section;
+            return this;
+        }
+
+        /// <summary>
+        /// Configures GraphQL query depth/complexity limits shared across all endpoints.
+        /// Reads <c>MaxQueryDepth</c> and <c>MaxQueryComplexity</c> from the section. When
+        /// not bound, the secure defaults from <see cref="GraphQlComplexityLimits"/> apply.
+        /// </summary>
+        public BifrostMultiDbOptions BindQueryLimits(IConfigurationSection? section)
+        {
+            _queryLimitsConfig = section;
             return this;
         }
 
@@ -379,8 +391,13 @@ namespace BifrostQL.Server
         {
             var isAuthEnabled = IsUsingAuth;
 
+            // Same bounded depth/complexity guard as the single-database path; applied to
+            // every endpoint's shared executor (which the binary transport also uses).
+            var (maxDepth, maxComplexity) = GraphQlComplexityLimits.Read(_queryLimitsConfig);
+
             services.AddGraphQL(b => b
                     .AddSystemTextJson()
+                    .AddComplexityAnalyzer(c => GraphQlComplexityLimits.Apply(c, maxDepth, maxComplexity))
                     .AddBifrostErrorLogging(options =>
                     {
                         options.EnableConsole = _loggingConfig?.GetValue("EnableConsole", true) ?? true;

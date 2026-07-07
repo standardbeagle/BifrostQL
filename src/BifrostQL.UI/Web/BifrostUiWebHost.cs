@@ -21,7 +21,7 @@ namespace BifrostQL.UI.Web
         /// This tool ships DB credentials, an SSH config, and a secrets vault with
         /// authentication disabled, so external exposure must be an explicit opt-in.
         /// When <c>true</c> the host binds <c>0.0.0.0</c> and the developer
-        /// exception page and any-origin CORS are suppressed.
+        /// exception page is suppressed. CORS is same-origin only on both binds.
         /// </param>
         public static WebApplication Build(string? connectionString, int port, ConnectionState state, SshTunnelManager sshTunnel, bool expose = false)
         {
@@ -73,25 +73,25 @@ namespace BifrostQL.UI.Web
 
             var app = builder.Build();
 
-            // The developer exception page leaks stack traces and config; only
-            // enable it when bound to loopback. Any-origin CORS is likewise only
-            // acceptable when the LAN cannot reach the host. When exposed, restrict
-            // CORS to same-origin (the SPA is served from this host anyway).
-            if (expose)
-            {
-                app.UseCors(x => x
-                    .AllowAnyMethod()
-                    .AllowAnyHeader()
-                    .SetIsOriginAllowed(_ => false));
-            }
-            else
+            // CORS is same-origin ONLY, on both loopback and exposed bindings. The
+            // SPA is served from this very host, so it never needs cross-origin
+            // reads. This host ships DB credentials, an SSH config, and a secrets
+            // vault with authentication disabled; any-origin CORS would let any web
+            // page the user visits `fetch('http://localhost:<port>/api/vault/...')`
+            // cross-origin and read the response. SetIsOriginAllowed(_ => false)
+            // means no cross-origin Origin is ever approved.
+            //
+            // The developer exception page leaks stack traces and config, so it is
+            // only enabled when bound to loopback (never on the LAN-reachable bind).
+            if (!expose)
             {
                 app.UseDeveloperExceptionPage();
-                app.UseCors(x => x
-                    .AllowAnyMethod()
-                    .AllowAnyHeader()
-                    .AllowAnyOrigin());
             }
+
+            app.UseCors(x => x
+                .AllowAnyMethod()
+                .AllowAnyHeader()
+                .SetIsOriginAllowed(_ => false));
 
             app.MapMetadataEndpoints(state);
             app.MapConnectionEndpoints(state);

@@ -56,7 +56,13 @@ public sealed class VaultServerProviderTests
     [InlineData(null, "Encrypt=Mandatory")]
     [InlineData("false", "Encrypt=False")]
     [InlineData("disable", "Encrypt=False")]
-    [InlineData("optional", "Encrypt=False")]
+    [InlineData("off", "Encrypt=False")]
+    [InlineData("none", "Encrypt=False")]
+    // Opportunistic modes must ATTEMPT encryption (Encrypt=Mandatory), not silently
+    // disable TLS — the user asked for encryption-if-available, and the frontend
+    // treats these as ssl=true. TrustServerCertificate=True is emitted alongside.
+    [InlineData("optional", "Encrypt=Mandatory")]
+    [InlineData("prefer", "Encrypt=Mandatory")]
     [InlineData("require", "Encrypt=Mandatory")]
     [InlineData("strict", "Encrypt=Strict")]
     public void SqlServer_MapsSslModeToEncrypt(string? sslMode, string expected)

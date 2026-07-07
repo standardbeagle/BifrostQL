@@ -44,39 +44,60 @@ public sealed class SshTunnelManager : IAsyncDisposable
             // Tear down any existing tunnel
             await StopInternalAsync();
 
-            var localPort = FindFreePort();
-            var psi = new ProcessStartInfo("ssh")
+            // FindFreePort picks a port by binding 0, then releases it before ssh -L
+            // claims it — a TOCTOU window in which another process can grab the port.
+            // ssh (ExitOnForwardFailure=yes) then exits with a bind/"Address already in
+            // use" error. Since a fresh FindFreePort call almost always hands back a
+            // different port, retry once on a detected port conflict before giving up.
+            const int maxAttempts = 2;
+            for (var attempt = 1; ; attempt++)
             {
-                RedirectStandardError = true,
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            AddSshTunnelArguments(psi.ArgumentList, config, localPort);
+                var localPort = FindFreePort();
+                var psi = new ProcessStartInfo("ssh")
+                {
+                    RedirectStandardError = true,
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+                AddSshTunnelArguments(psi.ArgumentList, config, localPort);
 
-            _process = Process.Start(psi)
-                ?? throw new InvalidOperationException("Failed to start ssh process");
+                _process = Process.Start(psi)
+                    ?? throw new InvalidOperationException("Failed to start ssh process");
 
-            // Wait for tunnel to become ready by probing the local port
-            var ready = await WaitForTunnelAsync(localPort, ct);
-            if (!ready)
-            {
+                // Wait for tunnel to become ready by probing the local port
+                var ready = await WaitForTunnelAsync(localPort, ct);
+                if (ready)
+                {
+                    LocalPort = localPort;
+                    SshHost = config.SshHost;
+                    LastError = null;
+                    return localPort;
+                }
+
                 var stderr = "";
                 if (_process.HasExited)
                 {
                     stderr = await _process.StandardError.ReadToEndAsync(ct);
                 }
                 await StopInternalAsync();
-                LastError = string.IsNullOrWhiteSpace(stderr)
-                    ? "SSH tunnel failed to start within timeout"
-                    : stderr.Trim();
+
+                if (IsLocalPortConflict(stderr) && attempt < maxAttempts)
+                {
+                    // Local port was snatched between FindFreePort and ssh -L; try a
+                    // fresh port. Only local-forward bind failures are retried — a
+                    // genuine auth/host failure would just fail again more slowly.
+                    continue;
+                }
+
+                LastError = IsLocalPortConflict(stderr)
+                    ? $"Local port {localPort} was taken before the SSH tunnel could bind it " +
+                      $"(retried {attempt} time(s)). Retry the connection. Detail: {stderr.Trim()}"
+                    : string.IsNullOrWhiteSpace(stderr)
+                        ? "SSH tunnel failed to start within timeout"
+                        : stderr.Trim();
                 throw new InvalidOperationException($"SSH tunnel failed: {LastError}");
             }
-
-            LocalPort = localPort;
-            SshHost = config.SshHost;
-            LastError = null;
-            return localPort;
         }
         finally
         {
@@ -253,6 +274,20 @@ public sealed class SshTunnelManager : IAsyncDisposable
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
         return port;
+    }
+
+    /// <summary>
+    /// Detects an ssh local-forward bind failure (the chosen local port was taken
+    /// between <see cref="FindFreePort"/> and <c>ssh -L</c>). With
+    /// ExitOnForwardFailure=yes, ssh emits messages like
+    /// "bind [127.0.0.1]:PORT: Address already in use" / "cannot listen to port".
+    /// </summary>
+    private static bool IsLocalPortConflict(string? stderr)
+    {
+        if (string.IsNullOrWhiteSpace(stderr)) return false;
+        return stderr.Contains("Address already in use", StringComparison.OrdinalIgnoreCase)
+            || stderr.Contains("cannot listen to port", StringComparison.OrdinalIgnoreCase)
+            || stderr.Contains("bind: ", StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<bool> WaitForTunnelAsync(int localPort, CancellationToken ct)

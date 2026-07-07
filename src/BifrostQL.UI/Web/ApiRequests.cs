@@ -5,10 +5,10 @@ namespace BifrostQL.UI.Web
 
     public record ConnectionTestRequest(string ConnectionString, string? Provider = null);
     public record ListDatabasesRequest(string ConnectionString, string? Provider = null, bool PeerAuth = false, string? PsqlUser = null);
-    public record SshConnectRequest(string SshHost, int SshPort, string SshUsername,
-        string? IdentityFile, string RemoteHost, int RemotePort);
-    public record WpDiscoverRequest(string SshHost, int SshPort, string SshUsername,
-        string? IdentityFile, string? WpPath, string? WpRoot);
+    // SshConnectRequest / WpDiscoverRequest were removed with the POST /api/ssh/connect
+    // and POST /api/ssh/wp-discover HTTP routes: tunnel start + WordPress credential
+    // discovery are host-internal (driven by /api/vault/connect), never on the HTTP
+    // surface. See SshEndpoints.
     public record VaultConnectRequest(string Name);
     public record QuickstartRequest(string Schema, string? DataSize = "sample");
 }

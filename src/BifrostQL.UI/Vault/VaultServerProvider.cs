@@ -239,16 +239,25 @@ public static class VaultServerProvider
     /// SqlClient 6.x defaults to `Mandatory`, which causes connect failures from
     /// OpenSSL-3 hosts (e.g. WSL2) to older Windows SQL Servers because OpenSSL 3
     /// rejects the SQL Server's default TLS cipher suite. Setting `--ssl-mode false`
-    /// (or `disable`/`optional`/`off`) on the vault entry produces `Encrypt=False`
-    /// to bypass the TLS handshake.
+    /// (or `disable`/`off`/`none`) on the vault entry produces `Encrypt=False` to
+    /// bypass the TLS handshake.
+    ///
+    /// SqlClient's `Encrypt` is effectively tri-state (False / True(Mandatory) /
+    /// Strict) with no true opportunistic mode, so `optional`/`prefer` — where the
+    /// user asked for encryption-if-available — map to `Mandatory` (encryption IS
+    /// attempted) rather than silently disabling TLS. TrustServerCertificate=True is
+    /// always emitted alongside, so a self-signed cert does not defeat the attempt.
+    /// This matches the frontend, which treats prefer/optional-ish values as ssl=true.
+    /// Only an explicit opt-out (`disable`/`false`/`off`/`none`) maps to `Encrypt=False`.
     /// </summary>
     private static string MapSqlServerEncrypt(string? sslMode)
     {
         if (string.IsNullOrWhiteSpace(sslMode)) return "Mandatory";
         return sslMode.Trim().ToLowerInvariant() switch
         {
-            "false" or "disable" or "disabled" or "off" or "none" or "optional" => "False",
-            "true" or "require" or "required" or "mandatory" or "on" => "Mandatory",
+            "false" or "disable" or "disabled" or "off" or "none" => "False",
+            "true" or "require" or "required" or "mandatory" or "on"
+                or "optional" or "prefer" or "preferred" => "Mandatory",
             "strict" => "Strict",
             _ => sslMode, // pass through unknown values verbatim
         };

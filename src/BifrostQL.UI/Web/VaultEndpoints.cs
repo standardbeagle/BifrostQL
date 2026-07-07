@@ -155,16 +155,20 @@ namespace BifrostQL.UI.Web
                 }
                 catch (Exception ex)
                 {
-                    // SECURITY: every string derived from the exception is routed through
-                    // SecretScrubber before it leaves this process. DB drivers occasionally
-                    // embed the full connection string (including Password=...) inside
-                    // exception messages and Data dictionaries, so we must not forward
-                    // ex.Message / ex.StackTrace / ex.ToString() verbatim to the browser
-                    // or the log stream. See BifrostQL.Core.Utils.SecretScrubber for the
-                    // patterns covered.
+                    // SECURITY: this is a desktop UI — stack traces and inner-exception
+                    // dumps have no business crossing the HTTP boundary to the renderer,
+                    // and shipping them there rests the entire secret-safety guarantee on
+                    // SecretScrubber's regex coverage (DB drivers embed the full connection
+                    // string, Password= and all, inside exception messages / Data dicts /
+                    // stack frames). So the HTTP response carries ONLY a scrubbed,
+                    // user-actionable message and a correlation id; the full detail
+                    // (still scrubbed, belt-and-suspenders) is logged server-side and
+                    // referenced by that id.
                     var logger = app.Services.GetRequiredService<ILogger<Program>>();
 
+                    var correlationId = Guid.NewGuid().ToString("N")[..8];
                     var scrubbedMessage = SecretScrubber.Scrub(ex.Message) ?? "";
+
                     var scrubbedDetailsBuilder = new StringBuilder();
                     scrubbedDetailsBuilder.Append(scrubbedMessage);
                     scrubbedDetailsBuilder.Append("\n\nStack trace:\n");
@@ -176,22 +180,22 @@ namespace BifrostQL.UI.Web
                         scrubbedDetailsBuilder.Append('\n');
                         scrubbedDetailsBuilder.Append(SecretScrubber.Scrub(ex.InnerException.StackTrace) ?? "");
                     }
-                    var scrubbedDetails = scrubbedDetailsBuilder.ToString();
 
                     // Do NOT pass `ex` directly to the logger — the default logging
                     // formatters call ex.ToString() which would bypass the scrubber.
-                    // Instead log the exception type + scrubbed message as positional args.
+                    // Instead log the exception type + scrubbed detail as positional args.
                     logger.LogError(
-                        "Vault connect failed for '{ServerName}' ({ExceptionType}): {ScrubbedMessage}",
+                        "Vault connect failed for '{ServerName}' [{CorrelationId}] ({ExceptionType}): {ScrubbedDetails}",
                         request.Name,
+                        correlationId,
                         ex.GetType().FullName,
-                        scrubbedMessage);
+                        scrubbedDetailsBuilder.ToString());
 
                     return Results.BadRequest(new
                     {
                         success = false,
                         error = scrubbedMessage,
-                        details = scrubbedDetails
+                        correlationId
                     });
                 }
             });

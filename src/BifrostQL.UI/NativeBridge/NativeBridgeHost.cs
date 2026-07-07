@@ -36,6 +36,16 @@ namespace BifrostQL.UI.NativeBridge
         private readonly EventHandler<string> _handler;
         private readonly BridgeDispatcher _dispatcher;
 
+        // Serializes message handling. Photino raises WebMessageReceived on its pump
+        // thread and we must not block it, but handlers mutate shared ConnectionState
+        // (e.g. vault-connect swaps _state.ConnectionString while exec-sql reads it),
+        // so unordered fire-and-forget dispatch could interleave those. We instead
+        // chain each incoming message onto a single running task: messages are handled
+        // one at a time, in arrival order, off the pump thread. Access to _pump is
+        // guarded by _pumpLock; the pump thread only ever does a cheap chaining append.
+        private readonly object _pumpLock = new();
+        private Task _pump = Task.CompletedTask;
+
         private int _disposed;
 
         /// <summary>
@@ -67,10 +77,25 @@ namespace BifrostQL.UI.NativeBridge
         /// </summary>
         public Task SendAsync(string kind, object? payload) => _dispatcher.SendAsync(kind, payload);
 
-        // Photino raises this on its message-pump thread. Dispatch is fire-and-forget:
-        // all failures are caught inside the dispatcher and flowed back as an error
-        // envelope, so nothing escapes into Photino's pump.
-        private void OnWebMessageReceived(object? sender, string message) => _ = _dispatcher.DispatchAsync(message);
+        // Photino raises this on its message-pump thread. We never block the pump:
+        // the message is appended to the serial _pump chain so it runs off-thread,
+        // after any earlier message has finished. This gives arrival-order handling
+        // and natural backpressure without a queue of unbounded concurrent tasks.
+        // All handler failures are caught inside the dispatcher and flowed back as an
+        // error envelope, so nothing escapes into Photino's pump — including a slow or
+        // faulted predecessor, which must not stall the whole chain (ContinueWith runs
+        // regardless of the previous task's outcome).
+        private void OnWebMessageReceived(object? sender, string message)
+        {
+            lock (_pumpLock)
+            {
+                _pump = _pump.ContinueWith(
+                    _ => _dispatcher.DispatchAsync(message),
+                    CancellationToken.None,
+                    TaskContinuationOptions.None,
+                    TaskScheduler.Default).Unwrap();
+            }
+        }
 
         public void Dispose()
         {

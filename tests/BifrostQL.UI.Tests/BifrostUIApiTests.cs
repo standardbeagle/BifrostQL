@@ -149,6 +149,41 @@ public class BifrostUIApiTests
     // there is no /api/connection/set to test any more.
 
     [Fact]
+    public async Task Cors_ForeignOrigin_IsNotAllowed()
+    {
+        // A malicious page the user visits must not be able to read loopback API
+        // responses cross-origin. The CORS policy is same-origin only
+        // (SetIsOriginAllowed(_ => false)), so the middleware must NOT emit an
+        // Access-Control-Allow-Origin header for a foreign Origin — without it the
+        // browser blocks the reading page from seeing the response body.
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/health");
+        request.Headers.Add("Origin", "https://evil.example");
+
+        using var response = await Client.SendAsync(request);
+
+        Assert.False(
+            response.Headers.Contains("Access-Control-Allow-Origin"),
+            "Loopback API must not grant CORS access to a foreign origin");
+    }
+
+    [Fact]
+    public async Task Cors_ForeignOriginPreflight_IsNotAllowed()
+    {
+        // A CORS preflight for a state-changing request from a foreign origin must
+        // also be refused — no Access-Control-Allow-Origin means the real request
+        // is never sent by the browser.
+        using var request = new HttpRequestMessage(HttpMethod.Options, "/api/vault/servers");
+        request.Headers.Add("Origin", "https://evil.example");
+        request.Headers.Add("Access-Control-Request-Method", "POST");
+
+        using var response = await Client.SendAsync(request);
+
+        Assert.False(
+            response.Headers.Contains("Access-Control-Allow-Origin"),
+            "Loopback API must not approve a cross-origin preflight from a foreign origin");
+    }
+
+    [Fact]
     public async Task GraphQL_EndpointIsAccessible()
     {
         var payload = new { query = "{ __schema { types { name } } }" };

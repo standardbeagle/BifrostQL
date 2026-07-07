@@ -493,6 +493,19 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         setColumnFilters((prev) => reconcileColumnFiltersFromUrl(prev, cfParam));
     }, [cfParam]);
 
+    // Filters that actually DRIVE the query are derived from the URL `cf` param
+    // (the source of truth) during render, not from the reconciled state above.
+    // The effect only settles state on the NEXT commit, so a table switch (which
+    // drops `cf`) would otherwise leave the first post-switch render building the
+    // query with the previous table's filters. When the two tables share a column
+    // name (id, name, created_at, ...) that stale filter leaked into the new
+    // table's query and fired one redundant, wrong fetch before the effect
+    // cleared it. Deriving here makes the switch take effect on the same commit.
+    const effectiveColumnFilters = useMemo(
+        () => reconcileColumnFiltersFromUrl(columnFilters, cfParam),
+        [columnFilters, cfParam],
+    );
+
     const appliedSort = useMemo(() => {
         if (sorting.length > 0 && table) {
             const col = sorting[0];
@@ -506,13 +519,13 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     }, [sorting, table]);
 
     const query = useMemo(
-        () => buildQuery(table!, schema, filterString, columnFilters, id, filterTable, filterColumn),
-        [table, schema, filterString, columnFilters, id, filterTable, filterColumn]
+        () => buildQuery(table!, schema, filterString, effectiveColumnFilters, id, filterTable, filterColumn),
+        [table, schema, filterString, effectiveColumnFilters, id, filterTable, filterColumn]
     );
 
     const cfVariables = useMemo(
-        () => table ? buildColumnFilters(columnFilters, table).variables : {},
-        [columnFilters, table]
+        () => table ? buildColumnFilters(effectiveColumnFilters, table).variables : {},
+        [effectiveColumnFilters, table]
     );
 
     const offset = pageIndex * pageSize;

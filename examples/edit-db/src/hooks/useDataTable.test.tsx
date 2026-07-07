@@ -31,6 +31,18 @@ describe('reconcileColumnFiltersFromUrl', () => {
         expect(next).not.toBe(prev);
         expect(next).toEqual(cf('name', '_contains', 'new'));
     });
+
+    it('drops stale filters on a table switch even when the column name is shared', () => {
+        // useDataTable derives the filters that DRIVE the query from this helper
+        // (against the URL cf, the source of truth) during render, not from the
+        // lagging reconciled state. On a table switch the URL drops cf, so even a
+        // filter on a column name that also exists on the new table (id, name,
+        // created_at, ...) must resolve to empty immediately — otherwise it would
+        // leak into the new table's query and fire one redundant, wrong fetch
+        // before the post-commit effect settled the state.
+        const stale = cf('name', '_contains', 'left-over');
+        expect(reconcileColumnFiltersFromUrl(stale, '')).toEqual([]);
+    });
 });
 
 describe('clampPageIndex', () => {

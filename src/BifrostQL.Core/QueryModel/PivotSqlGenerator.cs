@@ -57,11 +57,13 @@ public static class PivotSqlGenerator
         if (filter != null)
             parameters.AddRange(filter.Parameters);
 
+        // Each CASE needs its own bound parameter for the pivot value. They must not
+        // collide with the filter's @pN placeholders, so start numbering AFTER the
+        // filter's params — a fresh @p0 collection would emit a second @p0 with a
+        // different value, producing wrong SQL (or a duplicate-parameter error).
         var caseColumns = new List<string>();
-        var paramCollection = new SqlParameterCollection();
+        var nextParamIndex = parameters.Count;
 
-        // Offset parameter naming if filter already has params
-        // We use a separate collection and merge, since each CASE needs its own param
         foreach (var value in pivotValues)
         {
             var alias = value == null ? config.NullLabel : value.ToString()!;
@@ -73,14 +75,13 @@ public static class PivotSqlGenerator
             }
             else
             {
-                var paramName = paramCollection.AddParameter(value);
+                var paramName = $"@p{nextParamIndex++}";
+                parameters.Add(new SqlParameterInfo(paramName, value));
                 caseWhen = $"{aggFunc}(CASE WHEN {pivotCol} = {paramName} THEN {valueCol} END)";
             }
 
             caseColumns.Add($"{caseWhen} AS {dialect.EscapeIdentifier(alias)}");
         }
-
-        parameters.AddRange(paramCollection.Parameters);
 
         var caseColumnsSql = string.Join(", ", caseColumns);
         var sql = $"SELECT {groupByCols}, {caseColumnsSql} FROM {tableRef}";

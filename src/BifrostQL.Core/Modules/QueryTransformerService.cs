@@ -205,6 +205,17 @@ public sealed class QueryTransformerService : IQueryTransformerService
             Add(targetTable, ResolveColumnDbName(targetTable, aggregate.FinalColumnName));
         }
 
+        // GROUP BY aggregate (`<table>Aggregate`) group-key and value columns live
+        // directly on the queried table. They must clear the same read guard as
+        // scalar/filter/sort/_agg columns, or a policy-denied column could be
+        // grouped by or aggregated (SUM/AVG/MIN/MAX) through the aggregate surface —
+        // using the group partition or the aggregate value as an exfiltration oracle.
+        if (query.GroupedAggregate is { } grouped)
+        {
+            AddRange(query.DbTable, grouped.GroupColumns.Select(g => g.Column.DbName));
+            AddRange(query.DbTable, grouped.ValueColumns.Select(v => v.Column.DbName));
+        }
+
         foreach (var (table, columns) in columnsByTable)
         {
             if (columns.Count == 0)

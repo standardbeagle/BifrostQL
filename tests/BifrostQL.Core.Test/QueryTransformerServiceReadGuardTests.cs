@@ -127,6 +127,81 @@ public class QueryTransformerServiceReadGuardTests
     }
 
     [Fact]
+    public void ApplyTransformers_GroupByDeniedColumn_Throws()
+    {
+        // The `<table>Aggregate` surface groups by a column the caller is denied
+        // read on. The group partition itself leaks the denied value's distinct
+        // set / boundaries, so the guard must reject it just like a filter/sort.
+        var model = EmployeesModel();
+        var table = model.GetTableFromDbName("Employees");
+        var salary = table.Columns.Single(c => c.DbName == "salary");
+
+        var query = GqlObjectQueryBuilder.Create()
+            .WithDbTable(table)
+            .Build();
+        query.GroupedAggregate = new GroupedAggregate
+        {
+            GroupColumns = new[] { new AggregateGroupColumn(salary, salary.GraphQlName) },
+            IncludeCount = true,
+            ValueColumns = Array.Empty<AggregateValueColumn>(),
+        };
+
+        var act = () => Service().ApplyTransformers(query, model, UserContext());
+
+        act.Should().Throw<BifrostExecutionError>();
+    }
+
+    [Fact]
+    public void ApplyTransformers_AggregateValueOnDeniedColumn_Throws()
+    {
+        // The aggregate value (SUM(salary)) is over a denied column even though the
+        // caller only groups by an allowed one — the aggregate exposes the value.
+        var model = EmployeesModel();
+        var table = model.GetTableFromDbName("Employees");
+        var salary = table.Columns.Single(c => c.DbName == "salary");
+        var departmentId = table.Columns.Single(c => c.DbName == "DepartmentId");
+
+        var query = GqlObjectQueryBuilder.Create()
+            .WithDbTable(table)
+            .Build();
+        query.GroupedAggregate = new GroupedAggregate
+        {
+            GroupColumns = new[] { new AggregateGroupColumn(departmentId, departmentId.GraphQlName) },
+            IncludeCount = true,
+            ValueColumns = new[]
+            {
+                new AggregateValueColumn(AggregateOperationType.Sum, salary, "_sum", "_sum_salary"),
+            },
+        };
+
+        var act = () => Service().ApplyTransformers(query, model, UserContext());
+
+        act.Should().Throw<BifrostExecutionError>();
+    }
+
+    [Fact]
+    public void ApplyTransformers_AggregateOnAllowedColumnsOnly_DoesNotThrow()
+    {
+        var model = EmployeesModel();
+        var table = model.GetTableFromDbName("Employees");
+        var departmentId = table.Columns.Single(c => c.DbName == "DepartmentId");
+
+        var query = GqlObjectQueryBuilder.Create()
+            .WithDbTable(table)
+            .Build();
+        query.GroupedAggregate = new GroupedAggregate
+        {
+            GroupColumns = new[] { new AggregateGroupColumn(departmentId, departmentId.GraphQlName) },
+            IncludeCount = true,
+            ValueColumns = Array.Empty<AggregateValueColumn>(),
+        };
+
+        var act = () => Service().ApplyTransformers(query, model, UserContext());
+
+        act.Should().NotThrow();
+    }
+
+    [Fact]
     public void ApplyTransformers_OnlySelectsAllowedColumns_DoesNotThrow()
     {
         var model = EmployeesModel();

@@ -157,6 +157,36 @@ public sealed class GroupedAggregateEndToEndTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GroupedAggregate_SelectingNonGroupedColumn_Errors()
+    {
+        // `amount` is a visible column but not in groupBy, so it has no defined
+        // per-group value — the read must fail rather than return a silent null.
+        var schema = DbSchema.FromModel(_model);
+        var factory = new SqliteDbConnFactory(ConnString);
+        var transformerService = new QueryTransformerService(new FilterTransformersWrap
+        {
+            Transformers = new IFilterTransformer[] { new TenantFilterTransformer() },
+        });
+        var executor = new DocumentExecuter();
+        var execution = await executor.ExecuteAsync(options =>
+        {
+            options.Schema = schema;
+            options.Query = "{ ordersAggregate(groupBy: [region]) { region amount } }";
+            options.UserContext = new Dictionary<string, object?> { ["tenant_id"] = 1 };
+            options.Extensions = new Inputs(new Dictionary<string, object?>
+            {
+                ["connFactory"] = factory,
+                ["model"] = _model,
+                ["tableReaderFactory"] = new SqlExecutionManager(_model, schema, transformerService),
+            });
+        });
+
+        execution.Errors.Should().NotBeNullOrEmpty();
+        execution.Errors!.Any(e => (e.InnerException?.Message ?? e.Message).Contains("not in groupBy"))
+            .Should().BeTrue();
+    }
+
+    [Fact]
     public async Task GroupedAggregate_EmptyResult_ReturnsNoGroups()
     {
         using var doc = await RunAsTenantAsync(

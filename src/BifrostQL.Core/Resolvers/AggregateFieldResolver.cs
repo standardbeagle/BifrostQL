@@ -37,7 +37,14 @@ namespace BifrostQL.Core.Resolvers
                 return row.Count;
             if (row.Ops.TryGetValue(name, out var opFields))
                 return opFields;
-            return row.GroupValues.GetValueOrDefault(name);
+            // A group-key field is present in GroupValues iff it was in groupBy (its
+            // value may legitimately be null). Selecting a visible column NOT in
+            // groupBy has no defined per-group value, so reject it rather than return
+            // a silent null the caller would read as data.
+            if (row.GroupValues.TryGetValue(name, out var groupValue))
+                return groupValue;
+            throw new BifrostExecutionError(
+                $"Aggregate field '{name}' is not in groupBy; only grouped columns, _count, and selected _sum/_avg/_min/_max may be read on a group row.");
         }
     }
 }

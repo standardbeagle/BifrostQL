@@ -188,7 +188,16 @@ namespace BifrostQL.Core.Resolvers
 
                 int? count = null;
                 if (grouped.IncludeCount && ReadCell(index, row, GroupedAggregate.CountAlias) is { } countValue)
-                    count = Convert.ToInt32(countValue);
+                {
+                    // _count is a GraphQL Int (Int32). A group exceeding Int range is
+                    // implausible but must surface as a clean execution error, not a
+                    // raw OverflowException, to match this layer's error contract.
+                    var countLong = Convert.ToInt64(countValue);
+                    if (countLong > int.MaxValue)
+                        throw new BifrostExecutionError(
+                            $"Aggregate group count {countLong} exceeds the Int range of the _count field.");
+                    count = (int)countLong;
+                }
 
                 var ops = new Dictionary<string, AggregateFields>(StringComparer.Ordinal);
                 foreach (var opGroup in valuesByOp)

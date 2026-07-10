@@ -15,8 +15,18 @@ namespace BifrostQL.Core.Forms
         private readonly string _basePath;
         private readonly FormsMetadataConfiguration? _metadataConfiguration;
         private readonly Dictionary<string, LookupTableConfig> _lookupConfigs = new(StringComparer.OrdinalIgnoreCase);
-        private IReadOnlyDictionary<string, IReadOnlyList<(string value, string displayText)>>? _foreignKeyOptions;
-        private string? _currentTableName;
+
+        /// <summary>
+        /// Per-render state threaded through the form-building helpers instead of
+        /// being stashed on the (shared, non-reentrant) builder instance: the table
+        /// whose column metadata applies and the pre-fetched foreign-key options.
+        /// Passing it explicitly keeps GenerateForm re-entrant and thread-safe.
+        /// </summary>
+        private sealed class FormRenderContext
+        {
+            public string? CurrentTableName { get; init; }
+            public IReadOnlyDictionary<string, IReadOnlyList<(string value, string displayText)>>? ForeignKeyOptions { get; init; }
+        }
 
         public BifrostFormBuilder(IDbModel dbModel, string basePath = "/bifrost",
             FormsMetadataConfiguration? metadataConfiguration = null)
@@ -69,8 +79,11 @@ namespace BifrostQL.Core.Forms
             IReadOnlyList<ValidationError>? errors = null,
             IReadOnlyDictionary<string, IReadOnlyList<(string value, string displayText)>>? foreignKeyOptions = null)
         {
-            _foreignKeyOptions = foreignKeyOptions;
-            _currentTableName = table.DbName;
+            var renderContext = new FormRenderContext
+            {
+                CurrentTableName = table.DbName,
+                ForeignKeyOptions = foreignKeyOptions,
+            };
             var errorLookup = BuildErrorLookup(errors);
             var sb = new StringBuilder();
             var action = GetFormAction(table.DbName, mode, values);
@@ -84,13 +97,11 @@ namespace BifrostQL.Core.Forms
             if (mode == FormMode.Delete)
                 AppendDeleteForm(sb, table, values, errorLookup);
             else
-                AppendEditForm(sb, table, mode, values, errorLookup);
+                AppendEditForm(sb, table, mode, values, errorLookup, renderContext);
 
             AppendFormActions(sb, table.DbName, mode);
             sb.Append("</form>");
 
-            _foreignKeyOptions = null;
-            _currentTableName = null;
             return sb.ToString();
         }
 
@@ -102,13 +113,16 @@ namespace BifrostQL.Core.Forms
         {
             var sb = new StringBuilder();
             var hasErrors = fieldErrors != null && fieldErrors.Count > 0;
-            AppendFormGroup(sb, column, mode, value, hasErrors ? fieldErrors!.ToList() : null);
+            // Standalone control rendering carries no table/FK-option context, matching
+            // the previous behavior where the instance fields were null on this path.
+            AppendFormGroup(sb, column, mode, value, hasErrors ? fieldErrors!.ToList() : null, new FormRenderContext());
             return sb.ToString();
         }
 
         private void AppendEditForm(StringBuilder sb, IDbTable table, FormMode mode,
             IReadOnlyDictionary<string, string?>? values,
-            Dictionary<string, List<ValidationError>> errorLookup)
+            Dictionary<string, List<ValidationError>> errorLookup,
+            FormRenderContext renderContext)
         {
             foreach (var column in table.Columns)
             {
@@ -125,7 +139,7 @@ namespace BifrostQL.Core.Forms
                     continue;
                 }
 
-                AppendFormGroup(sb, column, mode, value, fieldErrors, table);
+                AppendFormGroup(sb, column, mode, value, fieldErrors, renderContext, table);
             }
         }
 
@@ -155,104 +169,139 @@ namespace BifrostQL.Core.Forms
             sb.Append("<p>Are you sure you want to delete this record?</p>");
         }
 
+        /// <summary>
+        /// The kind of HTML control a column resolves to, in priority order. Resolved
+        /// once, then dispatched to the matching per-kind renderer — replacing the old
+        /// guard-and-return chain so the shared form-group scaffolding (wrapper div,
+        /// error markup, closing div) lives in one place.
+        /// </summary>
+        private enum ControlKind { ForeignKey, Enum, File, Boolean, TextArea, Input }
+
+        private static ControlKind ResolveControlKind(ColumnDto column, ColumnMetadata? metadata, IDbTable? table)
+        {
+            if (table != null && ForeignKeyHandler.IsForeignKey(column, table))
+                return ControlKind.ForeignKey;
+            if (metadata?.EnumValues != null && metadata.EnumValues.Length > 0)
+                return ControlKind.Enum;
+            if (FileUploadHandler.IsFileColumn(column, metadata))
+                return ControlKind.File;
+            if (TypeMapper.IsBooleanType(column.EffectiveDataType))
+                return ControlKind.Boolean;
+            if (TypeMapper.IsTextArea(column.EffectiveDataType))
+                return ControlKind.TextArea;
+            return ControlKind.Input;
+        }
+
         private void AppendFormGroup(StringBuilder sb, ColumnDto column, FormMode mode,
-            string? value, List<ValidationError>? fieldErrors, IDbTable? table = null)
+            string? value, List<ValidationError>? fieldErrors, FormRenderContext renderContext, IDbTable? table = null)
         {
             var hasError = fieldErrors != null && fieldErrors.Count > 0;
             var errorClass = hasError ? " error" : "";
             var columnId = column.ColumnName.ToLowerInvariant().Replace(' ', '-');
-            var metadata = MergeWithSchemaRules(column, GetColumnMetadata(column.ColumnName));
+            var metadata = MergeWithSchemaRules(column, GetColumnMetadata(renderContext, column.ColumnName));
 
             sb.Append($"<div class=\"form-group{errorClass}\">");
 
-            // Check for foreign key column
-            if (table != null && ForeignKeyHandler.IsForeignKey(column, table))
+            switch (ResolveControlKind(column, metadata, table))
             {
-                sb.Append($"<label for=\"{Encode(columnId)}\">{Encode(FormatLabel(column.ColumnName))}</label>");
-
-                var options = GetForeignKeyOptions(column.ColumnName);
-                var uiMode = ResolveLookupUiMode(column, table, options.Count);
-                sb.Append(ForeignKeyHandler.GenerateSelect(column, options, value, uiMode));
-
-                AppendErrors(sb, columnId, fieldErrors, hasError);
-                sb.Append("</div>");
-                return;
-            }
-
-            // Check for enum metadata
-            if (metadata?.EnumValues != null && metadata.EnumValues.Length > 0)
-            {
-                if (EnumHandler.ShouldUseRadio(metadata.EnumValues.Length))
-                    sb.Append(EnumHandler.GenerateRadioGroup(column, FormatLabel(column.ColumnName), metadata.EnumValues, metadata.EnumDisplayNames, value));
-                else
-                {
-                    sb.Append($"<label for=\"{Encode(columnId)}\">{Encode(FormatLabel(column.ColumnName))}</label>");
-                    sb.Append(EnumHandler.GenerateEnumSelect(column, metadata.EnumValues, metadata.EnumDisplayNames, value));
-                }
-
-                AppendErrors(sb, columnId, fieldErrors, hasError);
-                sb.Append("</div>");
-                return;
-            }
-
-            // Check for file column (binary type or file metadata)
-            if (FileUploadHandler.IsFileColumn(column, metadata))
-            {
-                sb.Append($"<label for=\"{Encode(columnId)}\">{Encode(FormatLabel(column.ColumnName))}</label>");
-                sb.Append(FileUploadHandler.GenerateFileInput(column, metadata, hasCurrentValue: value != null));
-
-                AppendErrors(sb, columnId, fieldErrors, hasError);
-                sb.Append("</div>");
-                return;
-            }
-
-            var inputType = metadata?.InputType ?? TypeMapper.GetInputType(column.EffectiveDataType);
-
-            if (TypeMapper.IsBooleanType(column.EffectiveDataType))
-            {
-                // Checkbox: label wraps the input
-                sb.Append($"<label>");
-                sb.Append($"<input type=\"checkbox\" id=\"{Encode(columnId)}\" name=\"{Encode(column.ColumnName)}\" value=\"true\"");
-                if (IsTruthyValue(value))
-                    sb.Append(" checked");
-                if (hasError)
-                    sb.Append($" aria-invalid=\"true\" aria-describedby=\"{Encode(columnId)}-error\"");
-                sb.Append('>');
-                sb.Append($" {Encode(FormatLabel(column.ColumnName))}");
-                sb.Append("</label>");
-            }
-            else
-            {
-                sb.Append($"<label for=\"{Encode(columnId)}\">{Encode(FormatLabel(column.ColumnName))}</label>");
-
-                if (TypeMapper.IsTextArea(column.EffectiveDataType))
-                {
-                    sb.Append($"<textarea id=\"{Encode(columnId)}\" name=\"{Encode(column.ColumnName)}\" rows=\"5\"");
-                    AppendConstraintAttributes(sb, column, metadata);
-                    AppendMetadataAttributes(sb, metadata);
-                    if (hasError)
-                        sb.Append($" aria-invalid=\"true\" aria-describedby=\"{Encode(columnId)}-error\"");
-                    sb.Append('>');
-                    sb.Append(Encode(value ?? ""));
-                    sb.Append("</textarea>");
-                }
-                else
-                {
-                    sb.Append($"<input type=\"{inputType}\" id=\"{Encode(columnId)}\" name=\"{Encode(column.ColumnName)}\"");
-                    if (metadata?.Step == null)
-                        TypeMapper.AppendTypeAttributes(sb, column.EffectiveDataType);
-                    AppendConstraintAttributes(sb, column, metadata);
-                    AppendMetadataAttributes(sb, metadata);
-                    if (value != null)
-                        sb.Append($" value=\"{Encode(value)}\"");
-                    if (hasError)
-                        sb.Append($" aria-invalid=\"true\" aria-describedby=\"{Encode(columnId)}-error\"");
-                    sb.Append('>');
-                }
+                case ControlKind.ForeignKey:
+                    AppendForeignKeyControl(sb, column, table!, columnId, value, renderContext);
+                    break;
+                case ControlKind.Enum:
+                    AppendEnumControl(sb, column, columnId, metadata!, value);
+                    break;
+                case ControlKind.File:
+                    AppendFileControl(sb, column, columnId, metadata, value);
+                    break;
+                case ControlKind.Boolean:
+                    AppendBooleanControl(sb, column, columnId, value, hasError);
+                    break;
+                case ControlKind.TextArea:
+                    AppendTextAreaControl(sb, column, columnId, metadata, value, hasError);
+                    break;
+                default:
+                    AppendInputControl(sb, column, columnId, metadata, value, hasError);
+                    break;
             }
 
             AppendErrors(sb, columnId, fieldErrors, hasError);
             sb.Append("</div>");
+        }
+
+        private void AppendForeignKeyControl(StringBuilder sb, ColumnDto column, IDbTable table,
+            string columnId, string? value, FormRenderContext renderContext)
+        {
+            sb.Append($"<label for=\"{Encode(columnId)}\">{Encode(FormatLabel(column.ColumnName))}</label>");
+
+            var options = GetForeignKeyOptions(renderContext, column.ColumnName);
+            var uiMode = ResolveLookupUiMode(column, table, options.Count);
+            sb.Append(ForeignKeyHandler.GenerateSelect(column, options, value, uiMode));
+        }
+
+        private static void AppendEnumControl(StringBuilder sb, ColumnDto column, string columnId,
+            ColumnMetadata metadata, string? value)
+        {
+            if (EnumHandler.ShouldUseRadio(metadata.EnumValues!.Length))
+                sb.Append(EnumHandler.GenerateRadioGroup(column, FormatLabel(column.ColumnName), metadata.EnumValues, metadata.EnumDisplayNames, value));
+            else
+            {
+                sb.Append($"<label for=\"{Encode(columnId)}\">{Encode(FormatLabel(column.ColumnName))}</label>");
+                sb.Append(EnumHandler.GenerateEnumSelect(column, metadata.EnumValues, metadata.EnumDisplayNames, value));
+            }
+        }
+
+        private static void AppendFileControl(StringBuilder sb, ColumnDto column, string columnId,
+            ColumnMetadata? metadata, string? value)
+        {
+            sb.Append($"<label for=\"{Encode(columnId)}\">{Encode(FormatLabel(column.ColumnName))}</label>");
+            sb.Append(FileUploadHandler.GenerateFileInput(column, metadata, hasCurrentValue: value != null));
+        }
+
+        private static void AppendBooleanControl(StringBuilder sb, ColumnDto column, string columnId,
+            string? value, bool hasError)
+        {
+            // Checkbox: label wraps the input
+            sb.Append($"<label>");
+            sb.Append($"<input type=\"checkbox\" id=\"{Encode(columnId)}\" name=\"{Encode(column.ColumnName)}\" value=\"true\"");
+            if (IsTruthyValue(value))
+                sb.Append(" checked");
+            if (hasError)
+                sb.Append($" aria-invalid=\"true\" aria-describedby=\"{Encode(columnId)}-error\"");
+            sb.Append('>');
+            sb.Append($" {Encode(FormatLabel(column.ColumnName))}");
+            sb.Append("</label>");
+        }
+
+        private static void AppendTextAreaControl(StringBuilder sb, ColumnDto column, string columnId,
+            ColumnMetadata? metadata, string? value, bool hasError)
+        {
+            sb.Append($"<label for=\"{Encode(columnId)}\">{Encode(FormatLabel(column.ColumnName))}</label>");
+            sb.Append($"<textarea id=\"{Encode(columnId)}\" name=\"{Encode(column.ColumnName)}\" rows=\"5\"");
+            AppendConstraintAttributes(sb, column, metadata);
+            AppendMetadataAttributes(sb, metadata);
+            if (hasError)
+                sb.Append($" aria-invalid=\"true\" aria-describedby=\"{Encode(columnId)}-error\"");
+            sb.Append('>');
+            sb.Append(Encode(value ?? ""));
+            sb.Append("</textarea>");
+        }
+
+        private static void AppendInputControl(StringBuilder sb, ColumnDto column, string columnId,
+            ColumnMetadata? metadata, string? value, bool hasError)
+        {
+            sb.Append($"<label for=\"{Encode(columnId)}\">{Encode(FormatLabel(column.ColumnName))}</label>");
+
+            var inputType = metadata?.InputType ?? TypeMapper.GetInputType(column.EffectiveDataType);
+            sb.Append($"<input type=\"{inputType}\" id=\"{Encode(columnId)}\" name=\"{Encode(column.ColumnName)}\"");
+            if (metadata?.Step == null)
+                TypeMapper.AppendTypeAttributes(sb, column.EffectiveDataType);
+            AppendConstraintAttributes(sb, column, metadata);
+            AppendMetadataAttributes(sb, metadata);
+            if (value != null)
+                sb.Append($" value=\"{Encode(value)}\"");
+            if (hasError)
+                sb.Append($" aria-invalid=\"true\" aria-describedby=\"{Encode(columnId)}-error\"");
+            sb.Append('>');
         }
 
         /// <summary>
@@ -260,10 +309,11 @@ namespace BifrostQL.Core.Forms
         /// when no options have been provided. Options are supplied via the
         /// <c>foreignKeyOptions</c> parameter on GenerateForm.
         /// </summary>
-        private IReadOnlyList<(string value, string displayText)> GetForeignKeyOptions(string columnName)
+        private static IReadOnlyList<(string value, string displayText)> GetForeignKeyOptions(
+            FormRenderContext renderContext, string columnName)
         {
-            if (_foreignKeyOptions != null &&
-                _foreignKeyOptions.TryGetValue(columnName, out var options))
+            if (renderContext.ForeignKeyOptions != null &&
+                renderContext.ForeignKeyOptions.TryGetValue(columnName, out var options))
                 return options;
             return Array.Empty<(string, string)>();
         }
@@ -407,11 +457,11 @@ namespace BifrostQL.Core.Forms
             }
         }
 
-        private ColumnMetadata? GetColumnMetadata(string columnName)
+        private ColumnMetadata? GetColumnMetadata(FormRenderContext renderContext, string columnName)
         {
-            if (_metadataConfiguration == null || _currentTableName == null)
+            if (_metadataConfiguration == null || renderContext.CurrentTableName == null)
                 return null;
-            return _metadataConfiguration.GetMetadata(_currentTableName, columnName);
+            return _metadataConfiguration.GetMetadata(renderContext.CurrentTableName, columnName);
         }
 
         private static bool HasBinaryColumn(IDbTable table, FormMode mode)

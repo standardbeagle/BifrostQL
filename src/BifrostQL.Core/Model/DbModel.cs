@@ -308,68 +308,101 @@ namespace BifrostQL.Core.Model
                 prefixGroups = DetectPrefixGroups(model.Tables);
             }
 
-            // Run application schema detection (WordPress, Drupal, etc.)
-            var existingSchemas = model.Tables.Select(t => t.TableSchema).Distinct(StringComparer.OrdinalIgnoreCase).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var appResult = AppSchema.AppSchemaDetectionService.Default.Detect(
-                model.Tables.ToList(), dbMetadata, existingSchemas);
-
-            var allForeignKeys = foreignKeys;
-            if (appResult != null)
-            {
-                // Merge detected prefix groups with manually-configured ones
-                var detectedPrefixNames = new HashSet<string>(
-                    appResult.PrefixGroups.Select(pg => pg.Prefix), StringComparer.OrdinalIgnoreCase);
-                foreach (var pg in prefixGroups)
-                {
-                    if (!detectedPrefixNames.Contains(pg.Prefix))
-                        detectedPrefixNames.Add(pg.Prefix); // track for dedup
-                    // manual groups always win — they were parsed/detected first
-                }
-                var mergedGroups = new List<PrefixGroup>(prefixGroups);
-                foreach (var pg in appResult.PrefixGroups)
-                {
-                    if (!mergedGroups.Any(g => string.Equals(g.Prefix, pg.Prefix, StringComparison.OrdinalIgnoreCase)))
-                        mergedGroups.Add(pg);
-                }
-                prefixGroups = mergedGroups;
-
-                // Apply additional metadata from detector
-                if (appResult.AdditionalMetadata.Count > 0)
-                    ApplyAdditionalMetadata(prefixedTables, appResult.AdditionalMetadata);
-
-                // Convert synthetic foreign keys to DbForeignKey objects
-                if (appResult.ExplicitForeignKeys.Count > 0)
-                {
-                    var tableLookup = model.Tables.ToDictionary(t => t.DbName, t => t, StringComparer.OrdinalIgnoreCase);
-                    var syntheticFks = new List<DbForeignKey>();
-                    foreach (var sfk in appResult.ExplicitForeignKeys)
-                    {
-                        // Resolve table names — synthetic FKs use base names, try exact match first
-                        if (!tableLookup.TryGetValue(sfk.ChildTable, out var childTable) ||
-                            !tableLookup.TryGetValue(sfk.ParentTable, out var parentTable))
-                            continue;
-
-                        syntheticFks.Add(new DbForeignKey
-                        {
-                            ConstraintName = $"SFK_{sfk.ChildTable}_{sfk.ChildColumn}_{sfk.ParentTable}_{sfk.ParentColumn}",
-                            ChildTableSchema = childTable.TableSchema,
-                            ChildTableName = childTable.DbName,
-                            ChildColumnNames = new[] { sfk.ChildColumn },
-                            ParentTableSchema = parentTable.TableSchema,
-                            ParentTableName = parentTable.DbName,
-                            ParentColumnNames = new[] { sfk.ParentColumn },
-                        });
-                    }
-
-                    if (syntheticFks.Count > 0)
-                        allForeignKeys = foreignKeys.Concat(syntheticFks).ToList();
-                }
-            }
+            // Run application schema detection (WordPress, Drupal, etc.), folding any
+            // detected prefix groups and synthetic foreign keys into the link inputs.
+            IReadOnlyCollection<DbForeignKey> allForeignKeys;
+            (prefixGroups, allForeignKeys) = ApplyAppSchemaDetection(
+                model, prefixedTables, dbMetadata, prefixGroups, foreignKeys);
 
             model.EavConfigs = CollectEavConfigs(model.Tables);
 
             model.LinkTables(allForeignKeys, prefixGroups);
             return model;
+        }
+
+        /// <summary>
+        /// Runs application-schema detection (WordPress, Drupal, …) against the model
+        /// and, when a schema is detected, folds its results into the relationship
+        /// link inputs: merges its prefix groups, applies its additional metadata, and
+        /// appends its synthetic foreign keys. Returns the (possibly augmented) prefix
+        /// groups and foreign keys unchanged when nothing is detected.
+        /// </summary>
+        private static (List<PrefixGroup> prefixGroups, IReadOnlyCollection<DbForeignKey> foreignKeys) ApplyAppSchemaDetection(
+            DbModel model,
+            List<DbTable> prefixedTables,
+            IDictionary<string, object?> dbMetadata,
+            List<PrefixGroup> prefixGroups,
+            IReadOnlyCollection<DbForeignKey> foreignKeys)
+        {
+            var existingSchemas = model.Tables.Select(t => t.TableSchema).Distinct(StringComparer.OrdinalIgnoreCase).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var appResult = AppSchema.AppSchemaDetectionService.Default.Detect(
+                model.Tables.ToList(), dbMetadata, existingSchemas);
+
+            if (appResult == null)
+                return (prefixGroups, foreignKeys);
+
+            var mergedGroups = MergePrefixGroups(prefixGroups, appResult);
+
+            // Apply additional metadata from detector
+            if (appResult.AdditionalMetadata.Count > 0)
+                ApplyAdditionalMetadata(prefixedTables, appResult.AdditionalMetadata);
+
+            var syntheticFks = BuildSyntheticForeignKeys(appResult, model);
+            var allForeignKeys = syntheticFks.Count > 0
+                ? (IReadOnlyCollection<DbForeignKey>)foreignKeys.Concat(syntheticFks).ToList()
+                : foreignKeys;
+
+            return (mergedGroups, allForeignKeys);
+        }
+
+        /// <summary>
+        /// Merges detector-supplied prefix groups with the manually-configured/detected
+        /// ones. Manual groups always win — they were parsed/detected first — so a
+        /// detected group is appended only when its prefix is not already present.
+        /// </summary>
+        private static List<PrefixGroup> MergePrefixGroups(List<PrefixGroup> manual, AppSchema.AppSchemaResult appResult)
+        {
+            var merged = new List<PrefixGroup>(manual);
+            foreach (var pg in appResult.PrefixGroups)
+            {
+                if (!merged.Any(g => string.Equals(g.Prefix, pg.Prefix, StringComparison.OrdinalIgnoreCase)))
+                    merged.Add(pg);
+            }
+            return merged;
+        }
+
+        /// <summary>
+        /// Converts a detector's synthetic foreign keys into <see cref="DbForeignKey"/>
+        /// objects. Synthetic FKs reference tables by base name, so each end is resolved
+        /// against the model's tables (case-insensitive) and the FK is dropped when
+        /// either end is missing.
+        /// </summary>
+        private static List<DbForeignKey> BuildSyntheticForeignKeys(AppSchema.AppSchemaResult appResult, DbModel model)
+        {
+            var syntheticFks = new List<DbForeignKey>();
+            if (appResult.ExplicitForeignKeys.Count == 0)
+                return syntheticFks;
+
+            var tableLookup = model.Tables.ToDictionary(t => t.DbName, t => t, StringComparer.OrdinalIgnoreCase);
+            foreach (var sfk in appResult.ExplicitForeignKeys)
+            {
+                // Resolve table names — synthetic FKs use base names, try exact match first
+                if (!tableLookup.TryGetValue(sfk.ChildTable, out var childTable) ||
+                    !tableLookup.TryGetValue(sfk.ParentTable, out var parentTable))
+                    continue;
+
+                syntheticFks.Add(new DbForeignKey
+                {
+                    ConstraintName = $"SFK_{sfk.ChildTable}_{sfk.ChildColumn}_{sfk.ParentTable}_{sfk.ParentColumn}",
+                    ChildTableSchema = childTable.TableSchema,
+                    ChildTableName = childTable.DbName,
+                    ChildColumnNames = new[] { sfk.ChildColumn },
+                    ParentTableSchema = parentTable.TableSchema,
+                    ParentTableName = parentTable.DbName,
+                    ParentColumnNames = new[] { sfk.ParentColumn },
+                });
+            }
+            return syntheticFks;
         }
 
         /// <summary>

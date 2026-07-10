@@ -56,6 +56,61 @@ namespace BifrostQL.Core.Schema
         private bool IsEnumColumnLink(TableLinkDto link) =>
             _enumColumns != null && _enumColumns.IsEnumLink(_table.DbName, link);
 
+        /// <summary>
+        /// Which GraphQL emission surface a field type is being resolved for. Each
+        /// selects a different base-type helper and enum-nullability convention.
+        /// </summary>
+        private enum FieldTypeKind
+        {
+            /// <summary>Output object type — enum honours <paramref>nullable</paramref>.</summary>
+            Type,
+            /// <summary>Mutation input type — enum honours <paramref>nullable</paramref>.</summary>
+            Insert,
+            /// <summary>Nested-sync input — every field optional; enum emitted bare.</summary>
+            Sync,
+            /// <summary>Filter input — enum maps to its FilterType…Input wrapper.</summary>
+            Filter,
+        }
+
+        /// <summary>
+        /// Resolves the GraphQL type name for a column on the given emission surface,
+        /// folding the enum-column lookup and the per-surface base-type helper into one
+        /// place. Enum columns resolve to their enum type name (with the surface's
+        /// nullability convention); non-enum columns fall back to the matching
+        /// <see cref="SchemaGenerator"/> helper. Each call site passes the exact
+        /// nullability it previously computed, so the emitted type is unchanged.
+        /// </summary>
+        private string ResolveFieldType(ColumnDto column, bool nullable, FieldTypeKind kind)
+        {
+            if (_enumColumns != null && _enumColumns.TryGetEnumType(_table.DbName, column.ColumnName, out var enumName))
+            {
+                return kind switch
+                {
+                    FieldTypeKind.Filter => $"FilterType{enumName}Input",
+                    FieldTypeKind.Sync => enumName,
+                    _ => nullable ? enumName : enumName + "!",
+                };
+            }
+
+            return kind switch
+            {
+                FieldTypeKind.Type => SchemaGenerator.GetGraphQlTypeName(column.EffectiveDataType, nullable, _typeMapper),
+                FieldTypeKind.Insert or FieldTypeKind.Sync => SchemaGenerator.GetGraphQlInsertTypeName(column.EffectiveDataType, nullable, _typeMapper),
+                FieldTypeKind.Filter => SchemaGenerator.GetFilterInputTypeName(column.EffectiveDataType, _typeMapper),
+                _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
+            };
+        }
+
+        /// <summary>
+        /// True when the column carries an AutoPopulate marker whose value is one of
+        /// the recognized audit populators (created/updated/deleted on/by). Such
+        /// columns are stamped server-side, so their mutation-input field is emitted
+        /// nullable regardless of the underlying column's NOT NULL constraint.
+        /// </summary>
+        private static bool IsAutoPopulated(ColumnDto column)
+            => column.GetMetadataValue(MetadataKeys.AutoPopulate.Marker) is { } value
+               && MetadataKeys.AutoPopulate.KnownPopulators.Contains(value);
+
         public string GetTableFieldDefinition()
         {
             var moduleArgs = Modules.ModuleApiRegistry.QueryArgumentsSdl(_table);
@@ -90,9 +145,7 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine($"type {_table.GraphQlName} {{");
             foreach (var column in VisibleColumns)
             {
-                string fieldType = _enumColumns != null && _enumColumns.TryGetEnumType(_table.DbName, column.ColumnName, out var en)
-                    ? (column.IsNullable ? en : en + "!")
-                    : SchemaGenerator.GetGraphQlTypeName(column.EffectiveDataType, column.IsNullable, _typeMapper);
+                var fieldType = ResolveFieldType(column, column.IsNullable, FieldTypeKind.Type);
                 builder.AppendLine($"\t{column.GraphQlName} : {fieldType}");
             }
 
@@ -210,12 +263,7 @@ namespace BifrostQL.Core.Schema
                     continue;
 
                 var isNullable = column.IsNullable;
-                if (column.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.CreatedOn) ||
-                    column.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.CreatedBy) ||
-                    column.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.UpdatedOn) ||
-                    column.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.UpdatedBy) ||
-                    column.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.DeletedOn) ||
-                    column.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.DeletedBy))
+                if (IsAutoPopulated(column))
                     isNullable = true;
                 if (column.IsIdentity)
                     isNullable = identityType switch
@@ -229,9 +277,7 @@ namespace BifrostQL.Core.Schema
                 //All columns except primary keys are nullable for delete
                 if (isDelete) isNullable = column.IsPrimaryKey == false;
 
-                string insertType = _enumColumns != null && _enumColumns.TryGetEnumType(_table.DbName, column.ColumnName, out var ie)
-                    ? (isNullable ? ie : ie + "!")
-                    : SchemaGenerator.GetGraphQlInsertTypeName(column.EffectiveDataType, isNullable, _typeMapper);
+                var insertType = ResolveFieldType(column, isNullable, FieldTypeKind.Insert);
                 result.AppendLine($"\t{column.GraphQlName} : {insertType}");
             }
             result.AppendLine("}");
@@ -264,9 +310,7 @@ namespace BifrostQL.Core.Schema
                 // Primary keys are included (optional): a row with a key is
                 // reconciled against the existing row (update / orphan-detect);
                 // a row without one is inserted.
-                string syncType = _enumColumns != null && _enumColumns.TryGetEnumType(_table.DbName, column.ColumnName, out var se)
-                    ? se
-                    : SchemaGenerator.GetGraphQlInsertTypeName(column.EffectiveDataType, true, _typeMapper);
+                var syncType = ResolveFieldType(column, true, FieldTypeKind.Sync);
                 result.AppendLine($"\t{column.GraphQlName} : {syncType}");
             }
             // Child collections — dedupe self-FK fields that share a GraphQlName.
@@ -352,9 +396,7 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine($"input {_table.TableFilterTypeName} {{");
             foreach (var column in VisibleColumns)
             {
-                string filterType = _enumColumns != null && _enumColumns.TryGetEnumType(_table.DbName, column.ColumnName, out var fe)
-                    ? $"FilterType{fe}Input"
-                    : SchemaGenerator.GetFilterInputTypeName(column.EffectiveDataType, _typeMapper);
+                var filterType = ResolveFieldType(column, false, FieldTypeKind.Filter);
                 builder.AppendLine($"\t{column.GraphQlName} : {filterType}");
             }
             foreach (var link in _table.SingleLinks)

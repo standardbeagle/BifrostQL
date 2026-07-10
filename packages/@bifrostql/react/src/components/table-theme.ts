@@ -241,6 +241,118 @@ function buildThemeFromTokens(tokens: Required<ThemeTokens>): TableTheme {
 
 const baseTheme: TableTheme = buildThemeFromTokens(defaultTokens);
 
+/**
+ * Per-variant override factories layered on top of a base (light or dark)
+ * theme. Each takes the `base` it is spread onto so a variant's light and dark
+ * twins share one definition of the repeated override shape instead of
+ * spelling it out twice. Fields whose literal colors diverge between the twins
+ * are passed in (see `classicOverrides` / `minimalOverrides`); fields that
+ * genuinely differ in structure between the twins (e.g. modern's `container`
+ * and `headerRow`) stay inline in each twin below.
+ */
+function modernOverrides(base: TableTheme): Partial<TableTheme> {
+  return {
+    paginationButton: {
+      ...base.paginationButton,
+      borderRadius: '6px',
+    },
+    actionButton: {
+      ...base.actionButton,
+      borderRadius: '6px',
+    },
+  };
+}
+
+function classicOverrides(
+  base: TableTheme,
+  colors: { headerCellBorder: string; bodyCellBorder: string },
+): Partial<TableTheme> {
+  return {
+    table: {
+      ...base.table,
+      borderCollapse: 'collapse',
+    },
+    headerCell: {
+      ...base.headerCell,
+      borderRight: `1px solid ${colors.headerCellBorder}`,
+    },
+    bodyCell: {
+      ...base.bodyCell,
+      borderRight: `1px solid ${colors.bodyCellBorder}`,
+    },
+  };
+}
+
+function minimalOverrides(
+  base: TableTheme,
+  colors: { muted: string; paginationBorderTop: string },
+): Partial<TableTheme> {
+  return {
+    headerCell: {
+      ...base.headerCell,
+      fontWeight: 500,
+      color: colors.muted,
+      fontSize: '12px',
+      textTransform: 'uppercase',
+      letterSpacing: '0.05em',
+    },
+    pagination: {
+      ...base.pagination,
+      borderTop: `1px solid ${colors.paginationBorderTop}`,
+    },
+    paginationButton: {
+      ...base.paginationButton,
+      border: 'none',
+      background: 'transparent',
+      color: colors.muted,
+    },
+    paginationButtonDisabled: {
+      ...base.paginationButtonDisabled,
+      border: 'none',
+      background: 'transparent',
+    },
+  };
+}
+
+function denseOverrides(base: TableTheme): Partial<TableTheme> {
+  return {
+    table: {
+      ...base.table,
+      fontSize: '12px',
+    },
+    headerCell: {
+      ...base.headerCell,
+      padding: '6px 8px',
+      fontSize: '12px',
+    },
+    bodyCell: {
+      ...base.bodyCell,
+      padding: '4px 8px',
+      fontSize: '12px',
+    },
+    pagination: {
+      ...base.pagination,
+      padding: '6px 8px',
+      fontSize: '12px',
+    },
+    paginationButton: {
+      ...base.paginationButton,
+      padding: '3px 8px',
+      fontSize: '11px',
+    },
+    paginationButtonDisabled: {
+      ...base.paginationButtonDisabled,
+      padding: '3px 8px',
+      fontSize: '11px',
+    },
+    actionButton: {
+      ...base.actionButton,
+      padding: '2px 6px',
+      fontSize: '11px',
+    },
+  };
+}
+
 const modernTheme: TableTheme = {
   ...baseTheme,
   container: {
@@ -257,14 +369,7 @@ const modernTheme: TableTheme = {
   bodyRowHover: {
     backgroundColor: '#eff6ff',
   },
-  paginationButton: {
-    ...baseTheme.paginationButton,
-    borderRadius: '6px',
-  },
-  actionButton: {
-    ...baseTheme.actionButton,
-    borderRadius: '6px',
-  },
+  ...modernOverrides(baseTheme),
 };
 
 const classicTheme: TableTheme = {
@@ -273,39 +378,23 @@ const classicTheme: TableTheme = {
     ...baseTheme.container,
     border: '1px solid #d1d5db',
   },
-  table: {
-    ...baseTheme.table,
-    borderCollapse: 'collapse',
-  },
   headerRow: {
     backgroundColor: '#f3f4f6',
     borderBottom: '2px solid #9ca3af',
   },
-  headerCell: {
-    ...baseTheme.headerCell,
-    borderRight: '1px solid #d1d5db',
-  },
   bodyRow: {
     borderBottom: '1px solid #d1d5db',
   },
-  bodyCell: {
-    ...baseTheme.bodyCell,
-    borderRight: '1px solid #e5e7eb',
-  },
+  ...classicOverrides(baseTheme, {
+    headerCellBorder: '#d1d5db',
+    bodyCellBorder: '#e5e7eb',
+  }),
 };
 
 const minimalTheme: TableTheme = {
   ...baseTheme,
   headerRow: {
     borderBottom: '1px solid #e5e7eb',
-  },
-  headerCell: {
-    ...baseTheme.headerCell,
-    fontWeight: 500,
-    color: '#6b7280',
-    fontSize: '12px',
-    textTransform: 'uppercase',
-    letterSpacing: '0.05em',
   },
   bodyRow: {
     borderBottom: '1px solid #f3f4f6',
@@ -316,21 +405,10 @@ const minimalTheme: TableTheme = {
   bodyRowStriped: {
     backgroundColor: '#fafafa',
   },
-  pagination: {
-    ...baseTheme.pagination,
-    borderTop: '1px solid #f3f4f6',
-  },
-  paginationButton: {
-    ...baseTheme.paginationButton,
-    border: 'none',
-    background: 'transparent',
-    color: '#6b7280',
-  },
-  paginationButtonDisabled: {
-    ...baseTheme.paginationButtonDisabled,
-    border: 'none',
-    background: 'transparent',
-  },
+  ...minimalOverrides(baseTheme, {
+    muted: '#6b7280',
+    paginationBorderTop: '#f3f4f6',
+  }),
 };
 
 const denseTheme: TableTheme = {
@@ -339,40 +417,7 @@ const denseTheme: TableTheme = {
     ...baseTheme.container,
     border: '1px solid #e5e7eb',
   },
-  table: {
-    ...baseTheme.table,
-    fontSize: '12px',
-  },
-  headerCell: {
-    ...baseTheme.headerCell,
-    padding: '6px 8px',
-    fontSize: '12px',
-  },
-  bodyCell: {
-    ...baseTheme.bodyCell,
-    padding: '4px 8px',
-    fontSize: '12px',
-  },
-  pagination: {
-    ...baseTheme.pagination,
-    padding: '6px 8px',
-    fontSize: '12px',
-  },
-  paginationButton: {
-    ...baseTheme.paginationButton,
-    padding: '3px 8px',
-    fontSize: '11px',
-  },
-  paginationButtonDisabled: {
-    ...baseTheme.paginationButtonDisabled,
-    padding: '3px 8px',
-    fontSize: '11px',
-  },
-  actionButton: {
-    ...baseTheme.actionButton,
-    padding: '2px 6px',
-    fontSize: '11px',
-  },
+  ...denseOverrides(baseTheme),
 };
 
 const darkTokens: Required<ThemeTokens> = {
@@ -423,14 +468,7 @@ const modernDarkTheme: TableTheme = {
   bodyRowHover: {
     backgroundColor: '#1e3a5f',
   },
-  paginationButton: {
-    ...baseDarkTheme.paginationButton,
-    borderRadius: '6px',
-  },
-  actionButton: {
-    ...baseDarkTheme.actionButton,
-    borderRadius: '6px',
-  },
+  ...modernOverrides(baseDarkTheme),
 };
 
 const classicDarkTheme: TableTheme = {
@@ -444,17 +482,13 @@ const classicDarkTheme: TableTheme = {
     backgroundColor: '#1f2937',
     borderBottom: '2px solid #6b7280',
   },
-  headerCell: {
-    ...baseDarkTheme.headerCell,
-    borderRight: '1px solid #4b5563',
-  },
   bodyRow: {
     borderBottom: '1px solid #4b5563',
   },
-  bodyCell: {
-    ...baseDarkTheme.bodyCell,
-    borderRight: '1px solid #374151',
-  },
+  ...classicOverrides(baseDarkTheme, {
+    headerCellBorder: '#4b5563',
+    bodyCellBorder: '#374151',
+  }),
 };
 
 const minimalDarkTheme: TableTheme = {
@@ -466,14 +500,6 @@ const minimalDarkTheme: TableTheme = {
   headerRow: {
     borderBottom: '1px solid #374151',
   },
-  headerCell: {
-    ...baseDarkTheme.headerCell,
-    fontWeight: 500,
-    color: '#9ca3af',
-    fontSize: '12px',
-    textTransform: 'uppercase',
-    letterSpacing: '0.05em',
-  },
   bodyRow: {
     borderBottom: '1px solid #1f2937',
   },
@@ -483,21 +509,10 @@ const minimalDarkTheme: TableTheme = {
   bodyRowStriped: {
     backgroundColor: '#1a1a2e',
   },
-  pagination: {
-    ...baseDarkTheme.pagination,
-    borderTop: '1px solid #1f2937',
-  },
-  paginationButton: {
-    ...baseDarkTheme.paginationButton,
-    border: 'none',
-    background: 'transparent',
-    color: '#9ca3af',
-  },
-  paginationButtonDisabled: {
-    ...baseDarkTheme.paginationButtonDisabled,
-    border: 'none',
-    background: 'transparent',
-  },
+  ...minimalOverrides(baseDarkTheme, {
+    muted: '#9ca3af',
+    paginationBorderTop: '#1f2937',
+  }),
 };
 
 const denseDarkTheme: TableTheme = {
@@ -507,40 +522,7 @@ const denseDarkTheme: TableTheme = {
     border: '1px solid #374151',
     backgroundColor: '#111827',
   },
-  table: {
-    ...baseDarkTheme.table,
-    fontSize: '12px',
-  },
-  headerCell: {
-    ...baseDarkTheme.headerCell,
-    padding: '6px 8px',
-    fontSize: '12px',
-  },
-  bodyCell: {
-    ...baseDarkTheme.bodyCell,
-    padding: '4px 8px',
-    fontSize: '12px',
-  },
-  pagination: {
-    ...baseDarkTheme.pagination,
-    padding: '6px 8px',
-    fontSize: '12px',
-  },
-  paginationButton: {
-    ...baseDarkTheme.paginationButton,
-    padding: '3px 8px',
-    fontSize: '11px',
-  },
-  paginationButtonDisabled: {
-    ...baseDarkTheme.paginationButtonDisabled,
-    padding: '3px 8px',
-    fontSize: '11px',
-  },
-  actionButton: {
-    ...baseDarkTheme.actionButton,
-    padding: '2px 6px',
-    fontSize: '11px',
-  },
+  ...denseOverrides(baseDarkTheme),
 };
 
 const themes: Record<AnyThemeName, TableTheme> = {

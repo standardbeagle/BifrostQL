@@ -85,24 +85,45 @@ public sealed class WorkflowRunner : IWorkflowRunner
         var trace = new List<WorkflowStepTrace>();
         var context = new WorkflowExecutionContext(inputs, userContext, trace);
 
-        foreach (var step in workflow.Steps)
+        var outcome = await ExecuteStepsAsync(workflow.Steps, context);
+        if (!outcome.Succeeded)
+        {
+            var failure = outcome.FailedResult!;
+            return Failed(
+                failure.ErrorCode ?? "step_failed",
+                failure.Trace.Error ?? StepError,
+                trace,
+                outcome.FailedStep!.Name);
+        }
+
+        return new WorkflowRunResult(true, new Dictionary<string, object?>(context.NamedOutputs), trace);
+    }
+
+    /// <summary>
+    /// Runs a sequence of steps in order: executes each, appends its trace, and stashes
+    /// any named output. Stops at the first failed step. The two callers differ only in
+    /// how they react to a failure — <see cref="RunAsync(WorkflowDefinition, IDictionary{string, object?}, IDictionary{string, object?})"/>
+    /// returns a failed <see cref="WorkflowRunResult"/>; <see cref="RunInlineStepsAsync"/>
+    /// throws — so that decision stays with the caller via the returned outcome.
+    /// </summary>
+    private async Task<StepSequenceOutcome> ExecuteStepsAsync(
+        IEnumerable<WorkflowStep> steps,
+        WorkflowExecutionContext context)
+    {
+        object? last = null;
+        foreach (var step in steps)
         {
             var result = await RunStepAsync(step, context);
-            trace.Add(result.Trace);
+            context.Trace.Add(result.Trace);
             if (!result.Succeeded)
-            {
-                return Failed(
-                    result.ErrorCode ?? "step_failed",
-                    result.Trace.Error ?? StepError,
-                    trace,
-                    step.Name);
-            }
+                return new StepSequenceOutcome(false, step, result, last);
 
+            last = result.Output;
             if (!string.IsNullOrWhiteSpace(step.Output))
                 context.NamedOutputs[step.Output] = result.Output;
         }
 
-        return new WorkflowRunResult(true, new Dictionary<string, object?>(context.NamedOutputs), trace);
+        return new StepSequenceOutcome(true, null, null, last);
     }
 
     private async Task<StepRunResult> RunStepAsync(
@@ -111,15 +132,15 @@ public sealed class WorkflowRunner : IWorkflowRunner
     {
         try
         {
-            var output = step.Type.ToLowerInvariant() switch
+            var output = ParseStepKind(step.Type) switch
             {
-                "query" => await RunQueryAsync(step, context),
-                "mutation" => await RunMutationAsync(step, context),
-                "transition" => await RunTransitionAsync(step, context),
-                "policy-check" => RunPolicyCheck(step),
-                "audit" => await RunAuditAsync(step, context),
-                "branch" => await RunBranchAsync(step, context),
-                "parallel" => await RunParallelAsync(step, context),
+                WorkflowStepKind.Query => await RunQueryAsync(step, context),
+                WorkflowStepKind.Mutation => await RunMutationAsync(step, context),
+                WorkflowStepKind.Transition => await RunTransitionAsync(step, context),
+                WorkflowStepKind.PolicyCheck => RunPolicyCheck(step),
+                WorkflowStepKind.Audit => await RunAuditAsync(step, context),
+                WorkflowStepKind.Branch => await RunBranchAsync(step, context),
+                WorkflowStepKind.Parallel => await RunParallelAsync(step, context),
                 _ => throw new WorkflowStepException("step_failed", StepError),
             };
 
@@ -156,6 +177,33 @@ public sealed class WorkflowRunner : IWorkflowRunner
         }
         return BifrostExecutionError.IsUniqueViolation(ex);
     }
+
+    // The step-kind vocabulary. The accepted Type string values are wire/config
+    // contract, so ParseStepKind keeps them verbatim while lifting dispatch off the
+    // raw string literal. An unrecognized Type fails the step exactly as before.
+    private enum WorkflowStepKind
+    {
+        Query,
+        Mutation,
+        Transition,
+        PolicyCheck,
+        Audit,
+        Branch,
+        Parallel,
+    }
+
+    private static WorkflowStepKind ParseStepKind(string type)
+        => type.ToLowerInvariant() switch
+        {
+            "query" => WorkflowStepKind.Query,
+            "mutation" => WorkflowStepKind.Mutation,
+            "transition" => WorkflowStepKind.Transition,
+            "policy-check" => WorkflowStepKind.PolicyCheck,
+            "audit" => WorkflowStepKind.Audit,
+            "branch" => WorkflowStepKind.Branch,
+            "parallel" => WorkflowStepKind.Parallel,
+            _ => throw new WorkflowStepException("step_failed", StepError),
+        };
 
     private async Task<object?> RunQueryAsync(WorkflowStep step, WorkflowExecutionContext context)
     {
@@ -289,20 +337,14 @@ public sealed class WorkflowRunner : IWorkflowRunner
 
     private async Task<object?> RunInlineStepsAsync(JsonElement steps, WorkflowExecutionContext context)
     {
-        object? last = null;
-        foreach (var inlineStep in DeserializeSteps(steps))
+        var outcome = await ExecuteStepsAsync(DeserializeSteps(steps), context);
+        if (!outcome.Succeeded)
         {
-            var result = await RunStepAsync(inlineStep, context);
-            context.Trace.Add(result.Trace);
-            if (!result.Succeeded)
-                throw new WorkflowStepException(result.ErrorCode ?? "step_failed", result.Trace.Error ?? StepError);
-
-            last = result.Output;
-            if (!string.IsNullOrWhiteSpace(inlineStep.Output))
-                context.NamedOutputs[inlineStep.Output] = result.Output;
+            var failure = outcome.FailedResult!;
+            throw new WorkflowStepException(failure.ErrorCode ?? "step_failed", failure.Trace.Error ?? StepError);
         }
 
-        return last;
+        return outcome.LastOutput;
     }
 
     private static IReadOnlyList<WorkflowStep> DeserializeSteps(JsonElement steps)
@@ -490,12 +532,18 @@ public sealed class WorkflowRunner : IWorkflowRunner
         public static StepRunResult Success(WorkflowStepTrace trace, object? output)
             => new(true, trace, output);
 
-        public static StepRunResult Failure(WorkflowStepTrace trace)
-            => new(false, trace, null);
-
         public static StepRunResult Failure(WorkflowStepTrace trace, string errorCode)
             => new(false, trace, null, errorCode);
     }
+
+    // Result of running a step sequence: whether every step succeeded, the failing step
+    // and its result when one failed, and the last step's output. Lets RunAsync and
+    // RunInlineStepsAsync share the loop while keeping their own failure reaction.
+    private sealed record StepSequenceOutcome(
+        bool Succeeded,
+        WorkflowStep? FailedStep,
+        StepRunResult? FailedResult,
+        object? LastOutput);
 
     private sealed class WorkflowStepException : Exception
     {

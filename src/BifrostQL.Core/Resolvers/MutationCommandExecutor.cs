@@ -64,6 +64,53 @@ namespace BifrostQL.Core.Resolvers
             }
         }
 
+        /// <summary>
+        /// Renders the AND-joined <c>"col"=@col</c> equality predicate shared by every
+        /// UPDATE/DELETE WHERE clause (and the state-machine load). Each column name is
+        /// escaped as an identifier and sanitized for its parameter placeholder, matching
+        /// the placeholders <see cref="AddParameters"/> binds.
+        /// </summary>
+        public static string BuildKeyPredicate(ISqlDialect dialect, IEnumerable<string> columns)
+            => string.Join(" AND ", columns.Select(c => $"{dialect.EscapeIdentifier(c)}=@{SqlParameterNames.Sanitize(c)}"));
+
+        /// <summary>
+        /// Builds the <c>INSERT INTO tableRef(cols) VALUES(placeholders)</c> prefix
+        /// shared by the single-row and batch inserts (callers append their own
+        /// terminator: a RETURNING/identity clause, or a bare <c>;</c>). Columns and
+        /// value placeholders are drawn from one snapshot of the column set so they
+        /// stay positionally paired.
+        /// </summary>
+        public static string BuildInsertInto(ISqlDialect dialect, IDbTable table, string tableRef, IEnumerable<string> columns)
+        {
+            var cols = columns.ToList();
+            var columnList = string.Join(",", cols.Select(dialect.EscapeIdentifier));
+            var valueList = string.Join(",", cols.Select(c => ValuePlaceholder(dialect, table, c)));
+            return $"INSERT INTO {tableRef}({columnList}) VALUES({valueList})";
+        }
+
+        /// <summary>
+        /// Builds the full <c>UPDATE tableRef SET … WHERE …suffix;</c> statement shared
+        /// by the single-row update, batch update, and the soft-delete DELETE→UPDATE
+        /// rewrite. <paramref name="whereSuffix"/> carries a transformer's ANDed
+        /// AdditionalFilter (empty when none).
+        /// </summary>
+        public static string BuildUpdateSql(ISqlDialect dialect, IDbTable table, string tableRef,
+            IEnumerable<string> setColumns, IEnumerable<string> keyColumns, string whereSuffix)
+        {
+            var setClause = string.Join(",", setColumns.Select(c => SetAssignment(dialect, table, c)));
+            var whereClause = BuildKeyPredicate(dialect, keyColumns);
+            return $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{whereSuffix};";
+        }
+
+        /// <summary>
+        /// Builds the full <c>DELETE FROM tableRef WHERE …suffix;</c> statement shared by
+        /// the single-row and batch hard-delete paths. <paramref name="whereSuffix"/>
+        /// carries a transformer's ANDed AdditionalFilter (empty when none).
+        /// </summary>
+        public static string BuildDeleteSql(ISqlDialect dialect, string tableRef,
+            IEnumerable<string> whereColumns, string whereSuffix)
+            => $"DELETE FROM {tableRef} WHERE {BuildKeyPredicate(dialect, whereColumns)}{whereSuffix};";
+
         public static async ValueTask<object?> ExecuteScalar(DbConnection conn, DbTransaction transaction, string sql, Dictionary<string, object?> data, CancellationToken cancellationToken = default)
         {
             await using var cmd = conn.CreateCommand();
@@ -103,7 +150,7 @@ namespace BifrostQL.Core.Resolvers
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var stateColumn = dialect.EscapeIdentifier(definition.StateColumn);
-            var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
+            var whereClause = BuildKeyPredicate(dialect, keyData.Keys);
             var sql = $"SELECT {stateColumn} FROM {tableRef} WHERE {whereClause};";
 
             await using var cmd = conn.CreateCommand();

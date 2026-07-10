@@ -2,7 +2,6 @@ import { memo, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
     ColumnDef,
     ColumnFiltersState,
-    ColumnSizingState,
     Row,
     RowSelectionState,
     SortingState,
@@ -18,8 +17,6 @@ import {
     TableHead,
     TableHeader,
     TableRow,
-    TABLE_HEADER_HEIGHT,
-    TABLE_ROW_HEIGHT,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -50,46 +47,14 @@ import {
 } from 'lucide-react';
 import { RowActions } from './row-actions';
 import { rowIdOf, pkFilterFor, type PkFilter } from '@/lib/row-id';
-
-const COL_MIN_WIDTH = 60;
-const COL_MAX_AUTO_WIDTH = 450;
-const COL_DEFAULT_WIDTH = 150;
-const COL_SIZING_STORAGE_PREFIX = 'bifrost-col-sizes:';
-
-function loadColumnSizing(tableName: string): ColumnSizingState {
-    try {
-        const raw = localStorage.getItem(COL_SIZING_STORAGE_PREFIX + tableName);
-        if (!raw) return {};
-        return sanitizeColumnSizing(JSON.parse(raw));
-    } catch {
-        return {};
-    }
-}
-
-function sanitizeColumnSizing(value: unknown): ColumnSizingState {
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-        return {};
-    }
-
-    const sizing: ColumnSizingState = {};
-    for (const [columnId, width] of Object.entries(value)) {
-        if (typeof width !== 'number' || !Number.isFinite(width)) continue;
-        sizing[columnId] = Math.min(Math.max(width, COL_MIN_WIDTH), COL_MAX_AUTO_WIDTH);
-    }
-    return sizing;
-}
-
-function saveColumnSizing(tableName: string, sizing: ColumnSizingState): void {
-    try {
-        if (Object.keys(sizing).length === 0) {
-            localStorage.removeItem(COL_SIZING_STORAGE_PREFIX + tableName);
-        } else {
-            localStorage.setItem(COL_SIZING_STORAGE_PREFIX + tableName, JSON.stringify(sizing));
-        }
-    } catch {
-        // storage full or unavailable
-    }
-}
+import {
+    useColumnSizingPersistence,
+    COL_MIN_WIDTH,
+    COL_MAX_AUTO_WIDTH,
+    COL_DEFAULT_WIDTH,
+} from '@/hooks/useColumnSizingPersistence';
+import { useRowHoverActions } from '@/hooks/useRowHoverActions';
+import { useFitMode, FIT_SENTINEL } from '@/hooks/useFitMode';
 
 /**
  * Props for the DataTable component.
@@ -154,7 +119,6 @@ interface DataTableProps<TData> {
 }
 
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100];
-const FIT_SENTINEL = -1;
 
 /**
  * DataTable component - A comprehensive data table with sorting, filtering,
@@ -208,101 +172,21 @@ export function DataTable<TData>({
     stackingEnabled,
     onToggleStacking,
 }: DataTableProps<TData>) {
-    const [hoveredRow, setHoveredRow] = useState<{ rowId: string; el: HTMLElement } | null>(null);
-    const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-    const hoverRow = useCallback((rowId: string, el: HTMLElement) => {
-        if (dismissTimer.current) { clearTimeout(dismissTimer.current); dismissTimer.current = null; }
-        setHoveredRow({ rowId, el });
-    }, []);
-
-    const scheduleDismiss = useCallback(() => {
-        if (dismissTimer.current) clearTimeout(dismissTimer.current);
-        dismissTimer.current = setTimeout(() => setHoveredRow(null), 150);
-    }, []);
-
-    const cancelDismiss = useCallback(() => {
-        if (dismissTimer.current) { clearTimeout(dismissTimer.current); dismissTimer.current = null; }
-    }, []);
-
-    // Touch: open the row actions on a long-press (hold) instead of hover, which
-    // doesn't exist on touch. A finger move (scroll) cancels the press; a fired
-    // press suppresses the click that follows the lift so it doesn't also select.
-    const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const pressMoved = useRef(false);
-    const suppressClick = useRef(false);
-    const LONG_PRESS_MS = 500;
-
-    const cancelPress = useCallback(() => {
-        if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; }
-    }, []);
-
-    const startPress = useCallback((rowId: string, el: HTMLElement, e: React.PointerEvent) => {
-        if (e.pointerType !== 'touch') return;
-        pressMoved.current = false;
-        cancelPress();
-        pressTimer.current = setTimeout(() => {
-            if (pressMoved.current) return;
-            suppressClick.current = true;
-            hoverRow(rowId, el);
-        }, LONG_PRESS_MS);
-    }, [cancelPress, hoverRow]);
-
-    const onPressMove = useCallback(() => {
-        pressMoved.current = true;
-        cancelPress();
-    }, [cancelPress]);
+    const {
+        hoveredRow,
+        hoverRow,
+        scheduleDismiss,
+        cancelDismiss,
+        suppressClick,
+        startPress,
+        onPressMove,
+        cancelPress,
+    } = useRowHoverActions();
     const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
     const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-    const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(() =>
-        tableName ? loadColumnSizing(tableName) : {},
-    );
-    const [fitMode, setFitMode] = useState(true);
+    const { columnSizing, setColumnSizing } = useColumnSizingPersistence(tableName);
     const scrollRef = useRef<HTMLDivElement>(null);
-
-    // Persist column sizing to localStorage, debounced so a live ('onChange')
-    // resize drag doesn't write on every mousemove. `skipPersistRef` suppresses
-    // the first run after mount/table-switch, which would only write back the
-    // sizing just loaded from storage. `pendingSizingRef` carries the latest
-    // unsaved state so a table switch or unmount flushes it instead of dropping
-    // a resize made less than the debounce window ago.
-    const pendingSizingRef = useRef<{ tableName: string; sizing: ColumnSizingState } | null>(null);
-    const skipPersistRef = useRef(true);
-
-    useEffect(() => {
-        // A pending write for a previous table can no longer be superseded — flush it.
-        const stale = pendingSizingRef.current;
-        if (stale && stale.tableName !== tableName) {
-            pendingSizingRef.current = null;
-            saveColumnSizing(stale.tableName, stale.sizing);
-        }
-        if (!tableName) return;
-        if (skipPersistRef.current) {
-            skipPersistRef.current = false;
-            return;
-        }
-        pendingSizingRef.current = { tableName, sizing: columnSizing };
-        const t = setTimeout(() => {
-            pendingSizingRef.current = null;
-            saveColumnSizing(tableName, columnSizing);
-        }, 300);
-        return () => clearTimeout(t);
-    }, [tableName, columnSizing]);
-
-    // Flush any still-pending sizing write on unmount rather than dropping it.
-    useEffect(() => () => {
-        const pending = pendingSizingRef.current;
-        if (pending) saveColumnSizing(pending.tableName, pending.sizing);
-    }, []);
-
-    // Reset persisted sizing when table changes
-    const tableNameRef = useRef(tableName);
-    if (tableName && tableName !== tableNameRef.current) {
-        tableNameRef.current = tableName;
-        skipPersistRef.current = true;
-        const restored = loadColumnSizing(tableName);
-        setColumnSizing(restored);
-    }
+    const { fitMode, setFitMode, computeFitSize } = useFitMode(scrollRef, onPageSizeChange);
 
     const handleAutoSizeColumn = useCallback((columnId: string) => {
         const container = scrollRef.current;
@@ -317,46 +201,11 @@ export function DataTable<TData>({
         });
         const clamped = Math.min(maxWidth, COL_MAX_AUTO_WIDTH);
         setColumnSizing((prev) => ({ ...prev, [columnId]: clamped }));
-    }, []);
+    }, [setColumnSizing]);
 
     const handleResetColumnWidths = useCallback(() => {
         setColumnSizing({});
-    }, []);
-
-    const lastFitSize = useRef(0);
-
-    const computeFitSize = useCallback(() => {
-        const el = scrollRef.current;
-        if (!el) return 10;
-        return Math.max(5, Math.floor((el.clientHeight - TABLE_HEADER_HEIGHT) / TABLE_ROW_HEIGHT));
-    }, []);
-
-    // Apply fit on mount and when the container resizes. The resize path is
-    // debounced so dragging a splitter/window doesn't fire a burst of queries
-    // (each distinct page size is a new query key) — only the settled size runs.
-    useEffect(() => {
-        if (!fitMode) return;
-        const el = scrollRef.current;
-        if (!el) return;
-        const apply = () => {
-            const size = computeFitSize();
-            if (size === lastFitSize.current) return;
-            lastFitSize.current = size;
-            onPageSizeChange(size);
-        };
-        const raf = requestAnimationFrame(apply);
-        let debounce: ReturnType<typeof setTimeout> | null = null;
-        const ro = new ResizeObserver(() => {
-            if (debounce) clearTimeout(debounce);
-            debounce = setTimeout(() => requestAnimationFrame(apply), 200);
-        });
-        ro.observe(el);
-        return () => {
-            cancelAnimationFrame(raf);
-            if (debounce) clearTimeout(debounce);
-            ro.disconnect();
-        };
-    }, [fitMode, computeFitSize, onPageSizeChange]);
+    }, [setColumnSizing]);
 
     // Clear selection when data/page changes
     useEffect(() => {

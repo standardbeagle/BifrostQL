@@ -300,46 +300,34 @@ function buildMultiJoinFields(schema: Schema, multiJoins: Join[]): string {
         .join(' ');
 }
 
-export function buildQuery(
-    table: Table,
-    schema: Schema,
-    filterString: string,
-    columnFilters: ColumnFiltersState,
-    id?: string,
-    tableFilter?: string,
-    filterColumn?: string,
-): string | null {
-    if (!table || !schema?.data) return null;
-    const tableSchema = schema.findTable(table.graphQlName);
-    if (!tableSchema) return null;
-    const pkType = getPkType(tableSchema);
-    const pkTypes = getPkTypes(tableSchema);
-    const primaryKey = pkTypes[0]?.name ?? "id";
-    let { param, filterText } = getFilterObj(filterString);
+/**
+ * The standard paged grid query: `<table>(sort limit offset <filterClause>) {
+ * total offset limit data { <fields> } }`. `param` is the extra variable
+ * declarations (leading with `, ` when non-empty); `filterClause` is either an
+ * empty string, a `filter: {...}` clause, or a flat FK `filter: {...}` — the
+ * caller decides. Shared by the list, by-id, and flat-FK drill query builders.
+ */
+function queryEnvelope(
+    table: Pick<Table, 'name' | 'graphQlName'>,
+    param: string,
+    filterClause: string,
+    fields: string,
+): string {
+    return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${table.name}(sort: $sort limit: $limit offset: $offset ${filterClause}) { total offset limit data {${fields}}}}`;
+}
 
-    const { params: cfParams, filterTexts: cfFilterTexts } = buildColumnFilters(columnFilters, table);
-    if (cfParams.length > 0) {
-        param += cfParams.map((p) => `, ${p}`).join("");
-    }
-
-    const allFilterTexts: string[] = [];
-    if (filterText) allFilterTexts.push(filterText);
-    allFilterTexts.push(...cfFilterTexts);
-
-    if (allFilterTexts.length > 1) {
-        filterText = `{and: [${allFilterTexts.join(", ")}]}`;
-    } else if (allFilterTexts.length === 1) {
-        filterText = allFilterTexts[0];
-    } else {
-        filterText = "";
-    }
-
+/**
+ * Build the SELECT field list (scalar columns + single-join FK blocks) for a
+ * table's grid, excluding heavy blob/long-text payloads. FK columns emit a
+ * nested block anchored on the FIRST source column of a composite FK.
+ */
+function buildDataColumns(table: Table, schema: Schema, tableSchema: Table): string {
     // For composite FKs, anchor the nested sub-query on the FIRST source column so
     // we only emit one FK block. The other member columns render as plain scalars
     // (their values still come back on the parent row — useful for rebuilding a
     // composite-eq filter on the destination later).
     const emittedJoinSources = new Set<string>();
-    const dataColumns = table.columns
+    return table.columns
         .filter((x: Column) => (x as ColumnWithJoin)?.joinTable === undefined)
         // Exclude blob/varbinary and long-text/xml columns from the grid SELECT: the
         // grid only shows a size/preview badge for them, and pulling the full payload
@@ -377,86 +365,160 @@ export function buildQuery(
             return x.name;
         })
         .join(' ');
+}
 
-    const multiJoinFields = buildMultiJoinFields(schema, tableSchema.multiJoins);
-    const allFields = multiJoinFields ? `${dataColumns} ${multiJoinFields}` : dataColumns;
+/**
+ * MODEL B parent→child drill-down. Traverses the PARENT and selects the child
+ * collection (paged) field; the server scopes child rows to this parent
+ * (including any polymorphic discriminator), so the client only matches on the
+ * parent PK. Simple single-column FKs instead query the child directly with a
+ * flat FK filter. Returns null when no parent multi-join targets this child —
+ * refusing to emit an unscoped query that would leak the whole table.
+ */
+function buildDrillQuery(
+    table: Table,
+    schema: Schema,
+    tableSchema: Table,
+    dataColumns: string,
+    allFields: string,
+    tableFilter?: string,
+    filterColumn?: string,
+): string | null {
+    const drill = resolveDrillDown(table, schema, tableFilter, filterColumn);
+    if (drill && canFlatFilterDrill(drill.childJoin)) {
+        // Simple single-column FK: query the child table directly with a flat
+        // FK filter — a "parent grid with a filter applied" rather than MODEL
+        // B's nested parent traversal. The grid's own table is the query root,
+        // so paging/sort drive it natively and the response keeps the standard
+        // `{ <table>: { data } }` shape (no unwrap). Global header/column
+        // filters are keyed off the MAIN grid and must not bleed into this
+        // child, so only the FK predicate is applied.
+        const fkCol = drill.childJoin.destinationColumnNames[0];
+        const parentPkType = getPkTypes(drill.parentTable)[0]?.gqlType ?? "Int";
+        const param = `, $id: ${parentPkType}`;
+        const flatFilter = `filter: { ${fkCol}: { _eq: $id } }`;
+        const flatMultiJoinFields = buildMultiJoinFields(
+            schema,
+            tableSchema.multiJoins.filter((join) => !sameJoin(join, drill.childJoin)),
+        );
+        const flatFields = flatMultiJoinFields ? `${dataColumns} ${flatMultiJoinFields}` : dataColumns;
+        return queryEnvelope(table, param, flatFilter, flatFields);
+    }
+    if (drill) {
+        // The header filter + column filters are global URL params keyed off the
+        // MAIN (first) grid's table. Drill child grids show a different table
+        // scoped to one parent row, so those filters must NOT bleed into the
+        // child. Drop the grid filter args here (and the $filter/$cf param decls
+        // they require — declaring unused GraphQL variables is an error).
+        const childField = `${drill.childField}(limit: $limit offset: $offset sort: $sort) { total offset limit data {${allFields}} }`;
 
-    if (id && (filterColumn || tableFilter)) {
-        // MODEL B parent→child drill-down: traverse the PARENT and select the
-        // child collection (paged) field. The server scopes the child rows to
-        // this parent — including any polymorphic discriminator — so the client
-        // only matches on the parent PK and never sends a discriminator. This
-        // also handles multi-column FK relationships (parent PK match, no child
-        // FK column needed). Grid filter/column-filters/sort/paging are pushed
-        // INTO the nested child field args so server paging drives the grid.
-        const drill = resolveDrillDown(table, schema, tableFilter, filterColumn);
-        if (drill && canFlatFilterDrill(drill.childJoin)) {
-            // Simple single-column FK: query the child table directly with a flat
-            // FK filter — a "parent grid with a filter applied" rather than MODEL
-            // B's nested parent traversal. The grid's own table is the query root,
-            // so paging/sort drive it natively and the response keeps the standard
-            // `{ <table>: { data } }` shape (no unwrap). Global header/column
-            // filters are keyed off the MAIN grid and must not bleed into this
-            // child, so only the FK predicate is applied.
-            const fkCol = drill.childJoin.destinationColumnNames[0];
-            const parentPkType = getPkTypes(drill.parentTable)[0]?.gqlType ?? "Int";
+        const parentPkTypes = getPkTypes(drill.parentTable);
+        let param: string;
+        let parentFilter: string;
+        if (parentPkTypes.length <= 1) {
+            const parentPk = parentPkTypes[0]?.name ?? "id";
+            const parentPkType = parentPkTypes[0]?.gqlType ?? "Int";
             param = `, $id: ${parentPkType}`;
-            const flatFilter = `filter: { ${fkCol}: { _eq: $id } }`;
-            const flatMultiJoinFields = buildMultiJoinFields(
-                schema,
-                tableSchema.multiJoins.filter((join) => !sameJoin(join, drill.childJoin)),
-            );
-            const flatFields = flatMultiJoinFields ? `${dataColumns} ${flatMultiJoinFields}` : dataColumns;
-            return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${table.name}(sort: $sort limit: $limit offset: $offset ${flatFilter}) { total offset limit data {${flatFields}}}}`;
-        }
-        if (drill) {
-            // The header filter + column filters are global URL params keyed off the
-            // MAIN (first) grid's table. Drill child grids show a different table
-            // scoped to one parent row, so those filters must NOT bleed into the
-            // child. Drop the grid filter args here (and the $filter/$cf param decls
-            // they require — declaring unused GraphQL variables is an error).
-            const childField = `${drill.childField}(limit: $limit offset: $offset sort: $sort) { total offset limit data {${allFields}} }`;
-
-            const parentPkTypes = getPkTypes(drill.parentTable);
-            if (parentPkTypes.length <= 1) {
-                const parentPk = parentPkTypes[0]?.name ?? "id";
-                const parentPkType = parentPkTypes[0]?.gqlType ?? "Int";
-                param = `, $id: ${parentPkType}`;
-                const parentFilter = `{ ${parentPk}: { _eq: $id}}`;
-                return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${drill.parentTable.name}(filter: ${parentFilter}) { data { ${childField} } } }`;
-            }
+            parentFilter = `{ ${parentPk}: { _eq: $id}}`;
+        } else {
             // Composite parent PK — one $pk_${name} variable per parent PK column.
             const pkParamDecls = parentPkTypes.map((t) => `$pk_${t.name}: ${t.gqlType}`).join(', ');
             param = `, ${pkParamDecls}`;
             const clauses = parentPkTypes.map((t) => `{${t.name}: {_eq: $pk_${t.name}}}`);
-            const parentFilter = `{and: [${clauses.join(', ')}]}`;
-            return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${drill.parentTable.name}(filter: ${parentFilter}) { data { ${childField} } } }`;
+            parentFilter = `{and: [${clauses.join(', ')}]}`;
         }
-        // A drill was explicitly requested (id + tableFilter/filterColumn) but the
-        // parent→child relationship could not be resolved — e.g. no parent multi-join
-        // targets this child, or a polymorphic/ambiguous join declined to guess.
-        // Falling through here previously emitted the UNFILTERED full-table query, so a
-        // "children of parent X" panel showed every row and a select-all + delete hit
-        // unrelated rows. Refuse to emit an unscoped query: return null so the caller
-        // shows an empty "relationship unavailable" grid instead of leaking the table.
-        return null;
+        return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${drill.parentTable.name}(filter: ${parentFilter}) { data { ${childField} } } }`;
+    }
+    // A drill was explicitly requested (id + tableFilter/filterColumn) but the
+    // parent→child relationship could not be resolved — e.g. no parent multi-join
+    // targets this child, or a polymorphic/ambiguous join declined to guess.
+    // Falling through here previously emitted the UNFILTERED full-table query, so a
+    // "children of parent X" panel showed every row and a select-all + delete hit
+    // unrelated rows. Refuse to emit an unscoped query: return null so the caller
+    // shows an empty "relationship unavailable" grid instead of leaking the table.
+    return null;
+}
+
+/**
+ * Single-record lookup keyed by the table's own primary key (composite-aware).
+ */
+function buildByIdQuery(table: Table, tableSchema: Table, allFields: string): string {
+    const pkTypes = getPkTypes(tableSchema);
+    let param: string;
+    let filterText: string;
+    if (pkTypes.length <= 1) {
+        // Single PK (or no PK) — byte-identical with the legacy shape
+        const pkType = getPkType(tableSchema);
+        const primaryKey = pkTypes[0]?.name ?? "id";
+        param = `, $id: ${pkType}`;
+        filterText = `{ ${primaryKey}: { _eq: $id}}`;
+    } else {
+        // Composite PK — one $pk_${name} variable per column, wrapped in and
+        param = `, ${pkTypes.map((t) => `$pk_${t.name}: ${t.gqlType}`).join(', ')}`;
+        const clauses = pkTypes.map((t) => `{${t.name}: {_eq: $pk_${t.name}}}`);
+        filterText = `{and: [${clauses.join(', ')}]}`;
+    }
+    return queryEnvelope(table, param, `filter: ${filterText}`, allFields);
+}
+
+/**
+ * Standard paged list query combining the header filter (`filterString`) and the
+ * per-column filters into a single (optionally `and`-wrapped) predicate.
+ */
+function buildListQuery(
+    table: Table,
+    filterString: string,
+    columnFilters: ColumnFiltersState,
+    allFields: string,
+): string {
+    let { param, filterText } = getFilterObj(filterString);
+
+    const { params: cfParams, filterTexts: cfFilterTexts } = buildColumnFilters(columnFilters, table);
+    if (cfParams.length > 0) {
+        param += cfParams.map((p) => `, ${p}`).join("");
+    }
+
+    const allFilterTexts: string[] = [];
+    if (filterText) allFilterTexts.push(filterText);
+    allFilterTexts.push(...cfFilterTexts);
+
+    if (allFilterTexts.length > 1) {
+        filterText = `{and: [${allFilterTexts.join(", ")}]}`;
+    } else if (allFilterTexts.length === 1) {
+        filterText = allFilterTexts[0];
+    } else {
+        filterText = "";
+    }
+
+    return queryEnvelope(table, param, filterText ? `filter: ${filterText}` : '', allFields);
+}
+
+export function buildQuery(
+    table: Table,
+    schema: Schema,
+    filterString: string,
+    columnFilters: ColumnFiltersState,
+    id?: string,
+    tableFilter?: string,
+    filterColumn?: string,
+): string | null {
+    if (!table || !schema?.data) return null;
+    const tableSchema = schema.findTable(table.graphQlName);
+    if (!tableSchema) return null;
+
+    const dataColumns = buildDataColumns(table, schema, tableSchema);
+    const multiJoinFields = buildMultiJoinFields(schema, tableSchema.multiJoins);
+    const allFields = multiJoinFields ? `${dataColumns} ${multiJoinFields}` : dataColumns;
+
+    if (id && (filterColumn || tableFilter)) {
+        return buildDrillQuery(table, schema, tableSchema, dataColumns, allFields, tableFilter, filterColumn);
     }
 
     if (id && !tableFilter && !filterColumn) {
-        if (pkTypes.length <= 1) {
-            // Single PK (or no PK) — byte-identical with the legacy shape
-            param = `, $id: ${pkType}`;
-            filterText = `{ ${primaryKey}: { _eq: $id}}`;
-        } else {
-            // Composite PK — one $pk_${name} variable per column, wrapped in and
-            param = `, ${pkTypes.map((t) => `$pk_${t.name}: ${t.gqlType}`).join(', ')}`;
-            const clauses = pkTypes.map((t) => `{${t.name}: {_eq: $pk_${t.name}}}`);
-            filterText = `{and: [${clauses.join(', ')}]}`;
-        }
+        return buildByIdQuery(table, tableSchema, allFields);
     }
 
-    if (filterText) filterText = `filter: ${filterText}`;
-    return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${table.name}(sort: $sort limit: $limit offset: $offset ${filterText}) { total offset limit data {${allFields}}}}`;
+    return buildListQuery(table, filterString, columnFilters, allFields);
 }
 
 export interface DrillDownTarget {

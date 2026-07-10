@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ReactElement, useEffect, useMemo, useState } from "react";
+import { ReactElement, ReactNode, useEffect, useMemo, useState } from "react";
 import { useForm, useStore, AnyFieldApi, ReactFormExtendedApi } from "@tanstack/react-form";
 import { useSchema } from "./hooks/useSchema";
 import { useParams, useNavigate } from "./hooks/usePath";
@@ -138,14 +138,15 @@ function useTable(schema: Schema, tableName: string) {
     }, [schema, tableName]);
 }
 
-function DataEditDetail({ table, schema, editid, onClose }: { table: string, schema: Schema, editid: string, onClose: () => void }) {
+/**
+ * Loads the record being edited (by its composite-aware PK route) and derives
+ * everything the form needs to bind: the raw stored `value`, the form's
+ * `defaultValues` (with type-correct NULL handling for dates, nullable booleans,
+ * JSON, and FK/enum columns), and `pkResolveFailed` for a malformed/stale editid.
+ */
+function useEditRecord(dataTable: Table, editColumns: ColumnJoin[], editid: string) {
     const fetcher = useFetcher();
     const isInsert = editid === undefined || editid === '';
-    const [dataTable, editColumns, idColumns] = useTable(schema, table);
-    const labelColumn = dataTable.labelColumn;
-    const label = dataTable.label;
-
-    const mutation = useTableMutation(dataTable, editColumns, idColumns, editid);
 
     const parsedPk = useMemo(
         () => (isInsert ? null : parsePkRoute(editid, dataTable)),
@@ -213,6 +214,19 @@ function DataEditDetail({ table, schema, editid, onClose }: { table: string, sch
         }
         return values;
     }, [value, editColumns]);
+
+    return { isLoading, error, value, defaultValues, pkResolveFailed };
+}
+
+function DataEditDetail({ table, schema, editid, onClose }: { table: string, schema: Schema, editid: string, onClose: () => void }) {
+    const isInsert = editid === undefined || editid === '';
+    const [dataTable, editColumns, idColumns] = useTable(schema, table);
+    const labelColumn = dataTable.labelColumn;
+    const label = dataTable.label;
+
+    const mutation = useTableMutation(dataTable, editColumns, idColumns, editid);
+
+    const { isLoading, error, value, defaultValues, pkResolveFailed } = useEditRecord(dataTable, editColumns, editid);
 
     const form = useForm({
         defaultValues,
@@ -751,6 +765,118 @@ function ContentField({ column, form }: { column: Column; form: AnyReactFormApi 
     );
 }
 
+/**
+ * Debounced search state shared by the FK dropdowns. The option-list fetch is
+ * deferred until the dropdown opens (fetch-on-open) so a form with many FK
+ * fields doesn't fire a query per field on dialog mount; the debounce keeps each
+ * keystroke from firing a query. Closing the dropdown resets the search so the
+ * next open starts clean.
+ */
+function useFkSearch() {
+    const [search, setSearch] = useState('');
+    const [debounced, setDebounced] = useState('');
+    const [open, setOpen] = useState(false);
+
+    useEffect(() => {
+        const t = setTimeout(() => setDebounced(search), 300);
+        return () => clearTimeout(t);
+    }, [search]);
+
+    const onOpenChange = (isOpen: boolean) => {
+        setOpen(isOpen);
+        if (!isOpen) { setSearch(''); setDebounced(''); }
+    };
+
+    return { search, setSearch, debounced, open, onOpenChange };
+}
+
+interface FkSelectShellProps {
+    field: AnyFieldApi;
+    column: Column;
+    isRequired: boolean;
+    errorId: string;
+    /** Controlled Select value — the FK key (ParentField) or composite route (CompositeParentField). */
+    value: string;
+    onValueChange: (val: string) => void;
+    search: string;
+    setSearch: (search: string) => void;
+    onOpenChange: (open: boolean) => void;
+    /** Truthy when the option-list fetch failed — surfaced so an empty dropdown isn't mistaken for "no rows". */
+    loadError: unknown;
+    /** When set, renders the composite-FK badge and spans both grid columns. */
+    composite?: { cols: number };
+    /** The `<SelectItem>` option list (differs per FK kind). */
+    children: ReactNode;
+}
+
+/**
+ * Shared dropdown scaffold for single and composite FK fields: label (+ optional
+ * composite badge), a searchable `<Select>`, the load-error message, and field
+ * errors. The item list is supplied as `children`.
+ */
+function FkSelectShell({
+    field,
+    column,
+    isRequired,
+    errorId,
+    value,
+    onValueChange,
+    search,
+    setSearch,
+    onOpenChange,
+    loadError,
+    composite,
+    children,
+}: FkSelectShellProps) {
+    const { ariaProps } = fieldA11y(field, errorId);
+    return (
+        <div className={composite ? "grid gap-1 sm:col-span-2" : "grid gap-1"}>
+            <Label htmlFor={column.name} className="text-xs text-muted-foreground">
+                {column.label}
+                {isRequired && <span className="text-destructive ml-0.5">*</span>}
+                {composite && (
+                    <span className="ml-2 px-1 rounded bg-primary/10 text-[10px] font-medium text-primary">
+                        composite FK ({composite.cols} cols)
+                    </span>
+                )}
+            </Label>
+            <Select value={value} onValueChange={onValueChange} onOpenChange={onOpenChange}>
+                <SelectTrigger id={column.name} className="w-full h-8 text-sm" {...ariaProps}>
+                    <SelectValue placeholder={`Select ${column.label}`} />
+                </SelectTrigger>
+                <SelectContent>
+                    {/* Search box for FK lists that can hold many parent rows.
+                        Stop propagation only for typing keys so Radix's typeahead
+                        doesn't hijack them — Escape (close) and Arrow/Enter (move
+                        into the list) still pass through. */}
+                    <div className="px-1 pb-1 sticky top-0 bg-popover z-10">
+                        <Input
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete') {
+                                    e.stopPropagation();
+                                }
+                            }}
+                            placeholder="Search…"
+                            className="h-7 text-xs"
+                        />
+                    </div>
+                    {children}
+                </SelectContent>
+            </Select>
+            {/* Fail fast and visibly: a failed option fetch otherwise reads
+                as an inexplicably empty dropdown. */}
+            {loadError != null && (
+                <p className="text-xs text-destructive" role="alert">
+                    Failed to load {column.label} options: {String((loadError as Error)?.message ?? loadError)}
+                </p>
+            )}
+            <FieldErrors errors={field.state.meta.errors} id={errorId} />
+        </div>
+    );
+}
+
 interface ParentFieldProps {
     column: Column;
     join: Join;
@@ -762,21 +888,7 @@ interface ParentFieldProps {
 function ParentField({ column, join, form, schema, isRequired }: ParentFieldProps) {
     const name = column.name;
     const destColumn = join.destinationColumnNames[0];
-    const [search, setSearch] = useState('');
-    const [debounced, setDebounced] = useState('');
-    // Defer the option-list fetch until the dropdown opens (fetch-on-open) so a form
-    // with many FK fields doesn't fire a 1000-row query per field on dialog mount —
-    // mirrors the FkCellPopover's `enabled: open` preview.
-    const [open, setOpen] = useState(false);
-
-    // Debounce so each keystroke doesn't fire a query; when the parent's label
-    // column is String-typed the search runs server-side, so parents beyond the
-    // fetched window stay findable (otherwise the fetched window is filtered
-    // client-side below).
-    useEffect(() => {
-        const t = setTimeout(() => setDebounced(search), 300);
-        return () => clearTimeout(t);
-    }, [search]);
+    const { search, setSearch, debounced, open, onOpenChange } = useFkSearch();
 
     const parentData = useTableRef(schema, join.destinationTable, destColumn, debounced, open);
 
@@ -816,67 +928,35 @@ function ParentField({ column, join, form, schema, isRequired }: ParentFieldProp
         <form.Field
             name={name}
             validators={fieldValidators(column, isRequired)}
-            children={(field: AnyFieldApi) => {
-                const { ariaProps } = fieldA11y(field, errorId);
-                return (
-                <div className="grid gap-1">
-                    <Label htmlFor={name} className="text-xs text-muted-foreground">
-                        {column.label}
-                        {isRequired && <span className="text-destructive ml-0.5">*</span>}
-                    </Label>
-                    <Select
-                        value={selectControlValue(field.state.value, !isRequired)}
-                        onValueChange={(val) => field.handleChange(val === NONE_VALUE ? null : val)}
-                        onOpenChange={(isOpen) => { setOpen(isOpen); if (!isOpen) { setSearch(''); setDebounced(''); } }}
-                    >
-                        <SelectTrigger id={name} className="w-full h-8 text-sm" {...ariaProps}>
-                            <SelectValue placeholder={`Select ${column.label}`} />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {/* Search box for FK lists that can hold many parent rows.
-                                Stop propagation only for typing keys so Radix's
-                                typeahead doesn't hijack them — Escape (close) and
-                                Arrow/Enter (move into the list) still pass through. */}
-                            <div className="px-1 pb-1 sticky top-0 bg-popover z-10">
-                                <Input
-                                    value={search}
-                                    onChange={(e) => setSearch(e.target.value)}
-                                    onKeyDown={(e) => {
-                                        if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete') {
-                                            e.stopPropagation();
-                                        }
-                                    }}
-                                    placeholder="Search…"
-                                    className="h-7 text-xs"
-                                />
-                            </div>
-                            {!isRequired && (
-                                <SelectItem value={NONE_VALUE} className="text-muted-foreground">(none)</SelectItem>
-                            )}
-                            {selectedRow && !filteredRows.some((r: TableRefValue) => String(r.key) === String(selectedRow.key)) && (
-                                <SelectItem value={String(selectedRow.key)}>{selectedRow.label}</SelectItem>
-                            )}
-                            {filteredRows.map((row: TableRefValue) => (
-                                <SelectItem key={row.key} value={String(row.key)}>
-                                    {row.label}
-                                </SelectItem>
-                            ))}
-                            {filteredRows.length === 0 && (
-                                <div className="px-2 py-1.5 text-xs text-muted-foreground">No matches.</div>
-                            )}
-                        </SelectContent>
-                    </Select>
-                    {/* Fail fast and visibly: a failed option fetch otherwise reads
-                        as an inexplicably empty dropdown. */}
-                    {parentData.error != null && (
-                        <p className="text-xs text-destructive" role="alert">
-                            Failed to load {column.label} options: {String((parentData.error as Error)?.message ?? parentData.error)}
-                        </p>
+            children={(field: AnyFieldApi) => (
+                <FkSelectShell
+                    field={field}
+                    column={column}
+                    isRequired={isRequired}
+                    errorId={errorId}
+                    value={selectControlValue(field.state.value, !isRequired)}
+                    onValueChange={(val) => field.handleChange(val === NONE_VALUE ? null : val)}
+                    search={search}
+                    setSearch={setSearch}
+                    onOpenChange={onOpenChange}
+                    loadError={parentData.error}
+                >
+                    {!isRequired && (
+                        <SelectItem value={NONE_VALUE} className="text-muted-foreground">(none)</SelectItem>
                     )}
-                    <FieldErrors errors={field.state.meta.errors} id={errorId} />
-                </div>
-                );
-            }}
+                    {selectedRow && !filteredRows.some((r: TableRefValue) => String(r.key) === String(selectedRow.key)) && (
+                        <SelectItem value={String(selectedRow.key)}>{selectedRow.label}</SelectItem>
+                    )}
+                    {filteredRows.map((row: TableRefValue) => (
+                        <SelectItem key={row.key} value={String(row.key)}>
+                            {row.label}
+                        </SelectItem>
+                    ))}
+                    {filteredRows.length === 0 && (
+                        <div className="px-2 py-1.5 text-xs text-muted-foreground">No matches.</div>
+                    )}
+                </FkSelectShell>
+            )}
         />
     );
 }
@@ -898,14 +978,7 @@ function CompositeParentField({ column, join, form, schema, isRequired }: Compos
     const sourceCols = join.sourceColumnNames ?? [];
     const destCols = join.destinationColumnNames ?? [];
 
-    const [search, setSearch] = useState('');
-    const [debounced, setDebounced] = useState('');
-    const [open, setOpen] = useState(false);
-
-    useEffect(() => {
-        const t = setTimeout(() => setDebounced(search), 300);
-        return () => clearTimeout(t);
-    }, [search]);
+    const { search, setSearch, debounced, open, onOpenChange } = useFkSearch();
 
     // The current selection keyed by DESTINATION column name (the hook resolves and
     // sorts by destination columns). Form values are stored by SOURCE column, paired
@@ -962,58 +1035,30 @@ function CompositeParentField({ column, join, form, schema, isRequired }: Compos
         <form.Field
             name={column.name}
             validators={fieldValidators(column, isRequired)}
-            children={(field: AnyFieldApi) => {
-                const { ariaProps } = fieldA11y(field, errorId);
-                return (
-                <div className="grid gap-1 sm:col-span-2">
-                    <Label htmlFor={column.name} className="text-xs text-muted-foreground">
-                        {column.label}
-                        {isRequired && <span className="text-destructive ml-0.5">*</span>}
-                        <span className="ml-2 px-1 rounded bg-primary/10 text-[10px] font-medium text-primary">
-                            composite FK ({sourceCols.length} cols)
-                        </span>
-                    </Label>
-                    <Select
-                        value={currentRoute}
-                        onValueChange={onChange}
-                        onOpenChange={(isOpen) => { setOpen(isOpen); if (!isOpen) { setSearch(''); setDebounced(''); } }}
-                    >
-                        <SelectTrigger id={column.name} className="w-full h-8 text-sm" {...ariaProps}>
-                            <SelectValue placeholder={`Select ${column.label}`} />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <div className="px-1 pb-1 sticky top-0 bg-popover z-10">
-                                <Input
-                                    value={search}
-                                    onChange={(e) => setSearch(e.target.value)}
-                                    onKeyDown={(e) => {
-                                        if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete') {
-                                            e.stopPropagation();
-                                        }
-                                    }}
-                                    placeholder="Search…"
-                                    className="h-7 text-xs"
-                                />
-                            </div>
-                            {filteredRows.map((row) => (
-                                <SelectItem key={row.route} value={row.route}>
-                                    {row.label}
-                                </SelectItem>
-                            ))}
-                            {filteredRows.length === 0 && (
-                                <div className="px-2 py-1.5 text-xs text-muted-foreground">No matches.</div>
-                            )}
-                        </SelectContent>
-                    </Select>
-                    {parents.error != null && (
-                        <p className="text-xs text-destructive" role="alert">
-                            Failed to load {column.label} options: {String((parents.error as Error)?.message ?? parents.error)}
-                        </p>
+            children={(field: AnyFieldApi) => (
+                <FkSelectShell
+                    field={field}
+                    column={column}
+                    isRequired={isRequired}
+                    errorId={errorId}
+                    value={currentRoute}
+                    onValueChange={onChange}
+                    search={search}
+                    setSearch={setSearch}
+                    onOpenChange={onOpenChange}
+                    loadError={parents.error}
+                    composite={{ cols: sourceCols.length }}
+                >
+                    {filteredRows.map((row) => (
+                        <SelectItem key={row.route} value={row.route}>
+                            {row.label}
+                        </SelectItem>
+                    ))}
+                    {filteredRows.length === 0 && (
+                        <div className="px-2 py-1.5 text-xs text-muted-foreground">No matches.</div>
                     )}
-                    <FieldErrors errors={field.state.meta.errors} id={errorId} />
-                </div>
-                );
-            }}
+                </FkSelectShell>
+            )}
         />
     );
 }

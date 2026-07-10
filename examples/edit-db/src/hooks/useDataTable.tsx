@@ -103,6 +103,192 @@ export function getMultiJoinTotal(row: RowData, join: Join): number {
     return page?.total ?? page?.data?.length ?? 0;
 }
 
+/**
+ * Build the `meta` bag every column def carries: the sort field, param type,
+ * filter operators, and the source column, plus any FK/dbType `extra` the
+ * specific column kind needs. Centralizing this keeps the per-kind builders
+ * from drifting on the common keys.
+ */
+function columnMeta(c: Column, operators: string[], extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return { sortField: c.name, paramType: c.paramType, filterOperators: operators, column: c, ...extra };
+}
+
+/**
+ * Column def for a single-join anchor column — the FK cell renders a popover +
+ * link to the joined record and (optionally) a "open in side column" button.
+ */
+function buildJoinColumn(
+    c: Column,
+    anchorJoin: Join,
+    table: Table,
+    schema: Schema,
+    operators: string[],
+    onOpenColumn?: (panel: ColumnPanel) => void,
+): ColumnDef<RowData, unknown> {
+    const columnName = anchorJoin.destinationTable;
+    const joinSchema = schema.findTable(anchorJoin.destinationTable);
+    const joinLabelColumn = joinSchema?.labelColumn ?? 'id';
+    const composite = isComposite(anchorJoin);
+    // Self-referential FK: column points back at the same table
+    // (e.g. categories.parent_id -> categories.id). Label it clearly
+    // so users know the FK means "parent" rather than an unrelated
+    // join.
+    const isSelfReference = anchorJoin.destinationTable === table.name;
+    const headerTitle = isSelfReference ? `Parent ${c.label}` : c.label;
+    return {
+        id: c.name,
+        accessorKey: c.name,
+        header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={headerTitle} />,
+        enableSorting: true,
+        meta: columnMeta(c, operators, {
+            joinTable: anchorJoin.destinationTable,
+            joinLabelColumn,
+            joinFkColumn: anchorJoin.destinationColumnNames[0],
+            isSelfReference,
+            isCompositeFk: composite,
+        }),
+        cell: ({ row }) => {
+            const joined = row.original[columnName] as RowData | undefined;
+            // No joined row means the FK column itself is null/unset.
+            if (!joined) return <EmptyValue kind="null" />;
+            const joinedPk = getJoinedRowPkValue(joined, joinSchema);
+            return (
+                <span className="group/fk inline-flex items-center gap-0.5">
+                    <FkCellPopover
+                        tableName={anchorJoin.destinationTable}
+                        recordId={joinedPk}
+                        filterColumn={anchorJoin.destinationColumnNames[0]}
+                        join={anchorJoin}
+                        sourceRow={row.original as Record<string, unknown>}
+                    >
+                        <Link to={"/" + joinSchema?.name + "/" + joinedPk} className="text-primary hover:text-primary/80 hover:underline">
+                            {joined?.label as string}
+                        </Link>
+                    </FkCellPopover>
+                    {onOpenColumn && (
+                        <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            className="opacity-0 group-hover/fk:opacity-100 size-5 shrink-0"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenColumn({
+                                    tableName: anchorJoin.destinationTable,
+                                    filterId: joinedPk,
+                                });
+                            }}
+                            aria-label="Open in side column"
+                            title="Open in side column"
+                        >
+                            <PanelRight className="size-3" />
+                        </Button>
+                    )}
+                </span>
+            );
+        },
+    };
+}
+
+/**
+ * Column def for a non-anchor column: a composite-FK member (scalar value with
+ * FK header context), a legacy `ColumnWithJoin` link, a DateTime, a long-text/
+ * binary/JSON content viewer, or a plain scalar.
+ */
+function buildScalarColumn(
+    c: Column,
+    memberJoin: Join | undefined,
+    table: Table,
+    schema: Schema,
+    operators: string[],
+    onExpandContent?: (rowIndex: number, columnName: string) => void,
+): ColumnDef<RowData, unknown> {
+    if (memberJoin) {
+        // Secondary composite-FK column — value renders as a scalar but the
+        // header should advertise the FK relation so users can hover for context.
+        const joinSchema = schema.findTable(memberJoin.destinationTable);
+        const joinLabelColumn = joinSchema?.labelColumn ?? 'id';
+        const isSelfReference = memberJoin.destinationTable === table.name;
+        return {
+            id: c.name,
+            accessorFn: (row) => (c.name ? String(row?.[c.name] ?? "") : ""),
+            cell: ({ row }) => formatColumnValue(row.original[c.name], c),
+            header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
+            enableSorting: true,
+            meta: columnMeta(c, operators, {
+                dbType: c.dbType,
+                joinTable: memberJoin.destinationTable,
+                joinLabelColumn,
+                joinFkColumn: memberJoin.destinationColumnNames[(memberJoin.sourceColumnNames ?? []).indexOf(c.name)] ?? memberJoin.destinationColumnNames[0],
+                isSelfReference,
+                isCompositeFk: true,
+                isCompositeFkMember: true,
+            }),
+        };
+    }
+
+    if ((c as ColumnWithJoin)?.joinTable) {
+        return {
+            id: c.name,
+            accessorKey: c.name,
+            header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
+            enableSorting: true,
+            meta: columnMeta(c, operators),
+            cell: ({ row }) => {
+                const joined = row.original[c.name] as RowData | undefined;
+                if (!joined) return null;
+                return (
+                    <Link to={"/" + c.name + "/" + getJoinedRowPkValue(joined, undefined)} className="text-primary hover:text-primary/80 hover:underline">
+                        {c.name}
+                    </Link>
+                );
+            },
+        };
+    }
+
+    if (c?.paramType === "DateTime") {
+        return {
+            id: c.name,
+            accessorFn: (row) => toLocaleDate(row?.[c.name] as string),
+            cell: ({ row }) => {
+                const raw = row.original[c.name];
+                if (raw === null || raw === undefined || raw === "") return <EmptyValue kind={raw === "" ? "empty" : "null"} />;
+                return toLocaleDate(raw as string);
+            },
+            header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
+            enableSorting: true,
+            meta: columnMeta(c, operators, { dbType: c.dbType }),
+        };
+    }
+
+    const useContentViewer = isLongTextDbType(c.dbType) || isBinaryDbType(c.dbType) || isJsonColumn(c);
+
+    if (useContentViewer) {
+        return {
+            id: c.name,
+            accessorFn: (row) => (c.name ? String(row?.[c.name] ?? "") : ""),
+            header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
+            enableSorting: true,
+            meta: columnMeta(c, operators, { dbType: c.dbType }),
+            cell: ({ row }) => (
+                <ContentViewer
+                    value={row.original[c.name]}
+                    dbType={c.dbType}
+                    onExpand={onExpandContent ? () => onExpandContent(row.index, c.name) : undefined}
+                />
+            ),
+        };
+    }
+
+    return {
+        id: c.name,
+        accessorFn: (row) => (c.name ? String(row?.[c.name] ?? "") : ""),
+        cell: ({ row }) => formatColumnValue(row.original[c.name], c),
+        header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
+        enableSorting: true,
+        meta: columnMeta(c, operators, { dbType: c.dbType }),
+    };
+}
+
 const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: ColumnPanel) => void): ColumnDef<RowData, unknown>[] => {
     if (!table || !schema) return [];
 
@@ -118,163 +304,10 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
             const operators = getFilterOperators(c.paramType);
 
             if (anchorJoin) {
-                const columnName = anchorJoin.destinationTable;
-                const joinSchema = schema.findTable(anchorJoin.destinationTable);
-                const joinLabelColumn = joinSchema?.labelColumn ?? 'id';
-                const composite = isComposite(anchorJoin);
-                // Self-referential FK: column points back at the same table
-                // (e.g. categories.parent_id -> categories.id). Label it clearly
-                // so users know the FK means "parent" rather than an unrelated
-                // join.
-                const isSelfReference = anchorJoin.destinationTable === table.name;
-                const headerTitle = isSelfReference ? `Parent ${c.label}` : c.label;
-                return {
-                    id: c.name,
-                    accessorKey: c.name,
-                    header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={headerTitle} />,
-                    enableSorting: true,
-                    meta: {
-                        sortField: c.name,
-                        paramType: c.paramType,
-                        filterOperators: operators,
-                        joinTable: anchorJoin.destinationTable,
-                        joinLabelColumn,
-                        joinFkColumn: anchorJoin.destinationColumnNames[0],
-                        column: c,
-                        isSelfReference,
-                        isCompositeFk: composite,
-                    },
-                    cell: ({ row }) => {
-                        const joined = row.original[columnName] as RowData | undefined;
-                        // No joined row means the FK column itself is null/unset.
-                        if (!joined) return <EmptyValue kind="null" />;
-                        const joinedPk = getJoinedRowPkValue(joined, joinSchema);
-                        return (
-                            <span className="group/fk inline-flex items-center gap-0.5">
-                                <FkCellPopover
-                                    tableName={anchorJoin.destinationTable}
-                                    recordId={joinedPk}
-                                    filterColumn={anchorJoin.destinationColumnNames[0]}
-                                    join={anchorJoin}
-                                    sourceRow={row.original as Record<string, unknown>}
-                                >
-                                    <Link to={"/" + joinSchema?.name + "/" + joinedPk} className="text-primary hover:text-primary/80 hover:underline">
-                                        {joined?.label as string}
-                                    </Link>
-                                </FkCellPopover>
-                                {onOpenColumn && (
-                                    <Button
-                                        variant="ghost"
-                                        size="icon-sm"
-                                        className="opacity-0 group-hover/fk:opacity-100 size-5 shrink-0"
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            onOpenColumn({
-                                                tableName: anchorJoin.destinationTable,
-                                                filterId: joinedPk,
-                                            });
-                                        }}
-                                        aria-label="Open in side column"
-                                        title="Open in side column"
-                                    >
-                                        <PanelRight className="size-3" />
-                                    </Button>
-                                )}
-                            </span>
-                        );
-                    },
-                };
+                return buildJoinColumn(c, anchorJoin, table, schema, operators, onOpenColumn);
             }
 
-            if (memberJoin) {
-                // Secondary composite-FK column — value renders as a scalar but the
-                // header should advertise the FK relation so users can hover for context.
-                const joinSchema = schema.findTable(memberJoin.destinationTable);
-                const joinLabelColumn = joinSchema?.labelColumn ?? 'id';
-                const isSelfReference = memberJoin.destinationTable === table.name;
-                return {
-                    id: c.name,
-                    accessorFn: (row) => (c.name ? String(row?.[c.name] ?? "") : ""),
-                    cell: ({ row }) => formatColumnValue(row.original[c.name], c),
-                    header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
-                    enableSorting: true,
-                    meta: {
-                        sortField: c.name,
-                        paramType: c.paramType,
-                        dbType: c.dbType,
-                        filterOperators: operators,
-                        joinTable: memberJoin.destinationTable,
-                        joinLabelColumn,
-                        joinFkColumn: memberJoin.destinationColumnNames[(memberJoin.sourceColumnNames ?? []).indexOf(c.name)] ?? memberJoin.destinationColumnNames[0],
-                        column: c,
-                        isSelfReference,
-                        isCompositeFk: true,
-                        isCompositeFkMember: true,
-                    },
-                };
-            }
-
-            if ((c as ColumnWithJoin)?.joinTable) {
-                return {
-                    id: c.name,
-                    accessorKey: c.name,
-                    header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
-                    enableSorting: true,
-                    meta: { sortField: c.name, paramType: c.paramType, filterOperators: operators, column: c },
-                    cell: ({ row }) => {
-                        const joined = row.original[c.name] as RowData | undefined;
-                        if (!joined) return null;
-                        return (
-                            <Link to={"/" + c.name + "/" + getJoinedRowPkValue(joined, undefined)} className="text-primary hover:text-primary/80 hover:underline">
-                                {c.name}
-                            </Link>
-                        );
-                    },
-                };
-            }
-
-            if (c?.paramType === "DateTime") {
-                return {
-                    id: c.name,
-                    accessorFn: (row) => toLocaleDate(row?.[c.name] as string),
-                    cell: ({ row }) => {
-                        const raw = row.original[c.name];
-                        if (raw === null || raw === undefined || raw === "") return <EmptyValue kind={raw === "" ? "empty" : "null"} />;
-                        return toLocaleDate(raw as string);
-                    },
-                    header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
-                    enableSorting: true,
-                    meta: { sortField: c.name, paramType: c.paramType, dbType: c.dbType, filterOperators: operators, column: c },
-                };
-            }
-
-            const useContentViewer = isLongTextDbType(c.dbType) || isBinaryDbType(c.dbType) || isJsonColumn(c);
-
-            if (useContentViewer) {
-                return {
-                    id: c.name,
-                    accessorFn: (row) => (c.name ? String(row?.[c.name] ?? "") : ""),
-                    header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
-                    enableSorting: true,
-                    meta: { sortField: c.name, paramType: c.paramType, dbType: c.dbType, filterOperators: operators, column: c },
-                    cell: ({ row }) => (
-                        <ContentViewer
-                            value={row.original[c.name]}
-                            dbType={c.dbType}
-                            onExpand={onExpandContent ? () => onExpandContent(row.index, c.name) : undefined}
-                        />
-                    ),
-                };
-            }
-
-            return {
-                id: c.name,
-                accessorFn: (row) => (c.name ? String(row?.[c.name] ?? "") : ""),
-                cell: ({ row }) => formatColumnValue(row.original[c.name], c),
-                header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
-                enableSorting: true,
-                meta: { sortField: c.name, paramType: c.paramType, dbType: c.dbType, filterOperators: operators, column: c },
-            };
+            return buildScalarColumn(c, memberJoin, table, schema, operators, onExpandContent);
         });
 
     const multiJoinColumns: ColumnDef<RowData, unknown>[] = table.multiJoins

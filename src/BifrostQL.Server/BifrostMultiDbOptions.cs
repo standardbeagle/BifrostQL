@@ -256,22 +256,26 @@ namespace BifrostQL.Server
             services.AddSingleton(BuildPathCache());
             services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
 
-            RegisterWorkflowServices(services);
+            BifrostServiceRegistrar.RegisterWorkflowServices(services);
 
             // Register unconditionally so a runtime ReplaceAll on this same instance
             // is visible even if it starts empty.
             services.AddSingleton(_profileRegistry);
 
-            RegisterTransformerServices(services);
+            BifrostServiceRegistrar.RegisterTransformerServices(
+                services,
+                _filterTransformers, _filterTransformerLoader, _filterTransformerTypes,
+                _mutationTransformers, _mutationTransformerLoader, _mutationTransformerTypes,
+                _queryObservers, _queryObserverLoader, _queryObserverTypes);
 
-            services.AddSingleton<IQueryTransformerService, QueryTransformerService>();
-            services.AddSingleton<IComputedColumnProvider, LocalFileFolderComputedColumnProvider>();
-            services.AddSingleton<IComputedColumnProvider, S3FileFolderComputedColumnProvider>();
-            services.AddSingleton<IComputedColumnProvider>(_ => new StateMachineTransitionsProvider());
-            services.AddSingleton<IComputedColumnProvider, EavMetaProvider>();
-            services.AddSingleton<IComputedColumnProviders>(sp => new ComputedColumnProviders(sp.GetServices<IComputedColumnProvider>()));
+            BifrostServiceRegistrar.RegisterComputedColumnServices(services);
 
-            RegisterGraphQlAndAuth(services);
+            // Same bounded depth/complexity guard as the single-database path; applied to
+            // every endpoint's shared executor (which the binary transport also uses).
+            var (maxDepth, maxComplexity) = GraphQlComplexityLimits.Read(_queryLimitsConfig);
+
+            BifrostServiceRegistrar.RegisterGraphQlAndAuth(
+                services, IsUsingAuth, _jwtConfig, maxDepth, maxComplexity, _loggingConfig);
         }
 
         /// <summary>
@@ -298,157 +302,6 @@ namespace BifrostQL.Server
                     connStr, providerName, endpointMetadataRules, metadataSources, registry));
             }
             return extensionsLoader;
-        }
-
-        /// <summary>
-        /// Registers the workflow executor, trigger host, scheduler, and the mutation/state
-        /// observers that fan work into them. The workflow executor runs sidecar workflow
-        /// endpoints through the same GraphQL pipeline as a direct request, so policy and
-        /// tenant-filter still apply. See the Workflow Mutations guide.
-        /// </summary>
-        private static void RegisterWorkflowServices(IServiceCollection services)
-        {
-            services.AddSingleton<IBifrostWorkflowExecutor>(sp => new BifrostWorkflowExecutor(
-                sp.GetRequiredService<IDocumentExecuter>(),
-                sp.GetRequiredService<PathCache<Inputs>>(),
-                sp));
-            services.AddSingleton<IReadOnlyDictionary<string, WorkflowDefinition>>(
-                new Dictionary<string, WorkflowDefinition>(StringComparer.OrdinalIgnoreCase));
-            services.AddSingleton<IWorkflowDataExecutor>(sp => sp.GetRequiredService<IBifrostWorkflowExecutor>());
-            services.AddSingleton<IWorkflowRunner>(sp => new WorkflowRunner(
-                sp.GetRequiredService<IReadOnlyDictionary<string, WorkflowDefinition>>(),
-                sp.GetRequiredService<IWorkflowDataExecutor>()));
-            services.AddSingleton<WorkflowTriggerHost>();
-            services.AddSingleton<WorkflowScheduler>();
-            services.AddSingleton<MutationObservers>(sp => new MutationObservers(
-                new IMutationObserver[] { sp.GetRequiredService<WorkflowTriggerHost>() }));
-            // Before-commit veto hooks: built from every registered
-            // IBeforeCommitMutationHook so a host/test can register one. There are
-            // no built-in hooks, so the collection is empty unless the host adds one.
-            services.AddSingleton<BeforeCommitMutationHooks>(sp => new BeforeCommitMutationHooks(
-                sp.GetServices<IBeforeCommitMutationHook>().ToArray()));
-            services.AddSingleton<StateTransitionObservers>(sp => new StateTransitionObservers(
-                new IStateTransitionObserver[]
-                {
-                    new StateTransitionAuditObserver(sp.GetRequiredService<IBifrostWorkflowExecutor>()),
-                    sp.GetRequiredService<WorkflowTriggerHost>(),
-                }));
-        }
-
-        /// <summary>
-        /// Registers the filter/mutation transformer and query observer collections, composed
-        /// with the always-on built-in transformers (see
-        /// <see cref="BifrostServiceCollectionExtensions.WithBuiltInFilterTransformers"/> and
-        /// <see cref="BifrostServiceCollectionExtensions.WithBuiltInMutationTransformers"/>).
-        /// </summary>
-        private void RegisterTransformerServices(IServiceCollection services)
-        {
-            foreach (var t in _filterTransformerTypes) services.TryAddSingleton(t);
-            services.AddSingleton<IFilterTransformers>(sp => new FilterTransformersWrap
-            {
-                Transformers = BifrostServiceCollectionExtensions.WithBuiltInFilterTransformers(
-                    BifrostServiceCollectionExtensions.ResolveTransformers(
-                        _filterTransformerLoader != null ? _filterTransformerLoader(sp) : _filterTransformers,
-                        _filterTransformerTypes, sp))
-            });
-
-            foreach (var t in _mutationTransformerTypes) services.TryAddSingleton(t);
-            services.AddSingleton<IMutationTransformers>(sp => new MutationTransformersWrap
-            {
-                Transformers = BifrostServiceCollectionExtensions.WithBuiltInMutationTransformers(
-                    BifrostServiceCollectionExtensions.ResolveTransformers(
-                        _mutationTransformerLoader != null ? _mutationTransformerLoader(sp) : _mutationTransformers,
-                        _mutationTransformerTypes, sp), sp)
-            });
-
-            foreach (var t in _queryObserverTypes) services.TryAddSingleton(t);
-            services.AddSingleton<IQueryObservers>(sp =>
-            {
-                var userObservers = BifrostServiceCollectionExtensions.ResolveTransformers(
-                    _queryObserverLoader != null ? _queryObserverLoader(sp) : _queryObservers,
-                    _queryObserverTypes, sp);
-                var loggingConfig = sp.GetRequiredService<BifrostLoggingConfiguration>();
-                var allObservers = new List<IQueryObserver>(userObservers);
-                if (loggingConfig.EnableQueryLogging)
-                {
-                    allObservers.Insert(0, new QueryLoggingObserver(
-                        sp.GetRequiredService<ILogger<QueryLoggingObserver>>(), loggingConfig));
-                }
-                return new QueryObserversWrap
-                {
-                    Observers = allObservers,
-                    OnError = (ex, observer, phase) =>
-                        sp.GetRequiredService<ILogger<QueryObserversWrap>>()
-                          .LogError(ex, "Observer {Observer} failed at {Phase}", observer.GetType().Name, phase),
-                };
-            });
-        }
-
-        /// <summary>
-        /// Registers the GraphQL pipeline (error logging) plus, when any endpoint requires
-        /// auth and JWT settings are bound, the cookie + OIDC authentication handlers shared
-        /// across all authenticated endpoints.
-        /// </summary>
-        private void RegisterGraphQlAndAuth(IServiceCollection services)
-        {
-            var isAuthEnabled = IsUsingAuth;
-
-            // Same bounded depth/complexity guard as the single-database path; applied to
-            // every endpoint's shared executor (which the binary transport also uses).
-            var (maxDepth, maxComplexity) = GraphQlComplexityLimits.Read(_queryLimitsConfig);
-
-            services.AddGraphQL(b => b
-                    .AddSystemTextJson()
-                    .AddComplexityAnalyzer(c => GraphQlComplexityLimits.Apply(c, maxDepth, maxComplexity))
-                    .AddBifrostErrorLogging(options =>
-                    {
-                        options.EnableConsole = _loggingConfig?.GetValue("EnableConsole", true) ?? true;
-                        options.EnableFile = _loggingConfig?.GetValue("EnableFile", true) ?? true;
-                        options.MinimumLevel = _loggingConfig?.GetValue("MinimumLevel", LogLevel.Information) ?? LogLevel.Information;
-                        options.LogFilePath = _loggingConfig?.GetValue<string>("FilePath");
-                        options.EnableQueryLogging = _loggingConfig?.GetValue("EnableQueryLogging", true) ?? true;
-                        options.SlowQueryThresholdMs = _loggingConfig?.GetValue("SlowQueryThresholdMs", 1000) ?? 1000;
-                        options.LogSql = _loggingConfig?.GetValue("LogSql", false) ?? false;
-                    })
-            );
-
-            if (isAuthEnabled && _jwtConfig is not null)
-            {
-                var scopes = new HashSet<string>() { "openid" };
-                foreach (var scope in (_jwtConfig["Scopes"] ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                {
-                    scopes.Add(scope);
-                }
-                services
-                    .AddAuthentication(options =>
-                    {
-                        options.DefaultAuthenticateScheme = CookieAuthenticationDefaults.AuthenticationScheme;
-                        options.DefaultSignInScheme = CookieAuthenticationDefaults.AuthenticationScheme;
-                        options.DefaultChallengeScheme = CookieAuthenticationDefaults.AuthenticationScheme;
-                    })
-                    .AddCookie()
-                    .AddOpenIdConnect("oauth2", options =>
-                    {
-                        options.Authority = _jwtConfig["Authority"];
-                        options.ClientId = _jwtConfig["ClientId"];
-                        options.ClientSecret = _jwtConfig["ClientSecret"];
-                        options.ResponseType = OpenIdConnectResponseType.Code;
-                        options.Scope.Clear();
-                        foreach (var scope in scopes)
-                        {
-                            options.Scope.Add(scope);
-                        }
-                        if (!string.IsNullOrWhiteSpace(_jwtConfig["Callback"]))
-                            options.CallbackPath = new PathString(_jwtConfig["Callback"]);
-                        if (!string.IsNullOrWhiteSpace(_jwtConfig["ClaimsIssuer"]))
-                            options.ClaimsIssuer = _jwtConfig["ClaimsIssuer"];
-                        options.GetClaimsFromUserInfoEndpoint = true;
-                        options.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
-                        {
-                            NameClaimType = ClaimTypes.NameIdentifier,
-                        };
-                    });
-            }
         }
     }
 }

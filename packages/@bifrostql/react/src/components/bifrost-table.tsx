@@ -5,6 +5,7 @@ import type {
   ColumnConfig,
   PaginationConfig,
   ChildQueryConfig,
+  ExpansionState,
   UseBifrostTableOptions,
 } from '../hooks/use-bifrost-table';
 import type { UseBifrostOptions } from '../hooks/use-bifrost';
@@ -556,6 +557,258 @@ export interface RowAction<T = Record<string, unknown>> {
   onClick: (row: T) => void;
 }
 
+interface TableRowsProps<T> {
+  data: T[];
+  visibleColumns: ColumnConfig[];
+  rowKey: string;
+  striped: boolean;
+  hoverable: boolean;
+  editable: boolean;
+  expandable: boolean;
+  childQuery: ChildQueryConfig | undefined;
+  expansion: ExpansionState;
+  onRowClick: ((row: T) => void) | undefined;
+  rowActions: RowAction<T>[] | undefined;
+  renderRow:
+    | ((row: T, rowIndex: number, defaultRow: ReactNode) => ReactNode)
+    | undefined;
+  renderCell:
+    | ((value: unknown, row: T, column: ColumnConfig) => ReactNode)
+    | undefined;
+  renderExpandedRow: ((row: T) => ReactNode) | undefined;
+  hoveredRowIndex: number | null;
+  setHoveredRowIndex: (index: number | null) => void;
+  editingCell: { rowIndex: number; field: string } | null;
+  editValue: string;
+  setEditValue: (value: string) => void;
+  onEditStart: (rowIndex: number, field: string, currentValue: unknown) => void;
+  onEditCancel: () => void;
+}
+
+/**
+ * Renders the data rows (and their expanded child rows) of a BifrostTable.
+ * Extracted from BifrostTable so the main component body stays composition
+ * only; consumes the shared theme via context like the other sub-components.
+ */
+function TableRows<T>({
+  data,
+  visibleColumns,
+  rowKey,
+  striped,
+  hoverable,
+  editable,
+  expandable,
+  childQuery,
+  expansion,
+  onRowClick,
+  rowActions,
+  renderRow,
+  renderCell,
+  renderExpandedRow,
+  hoveredRowIndex,
+  setHoveredRowIndex,
+  editingCell,
+  editValue,
+  setEditValue,
+  onEditStart,
+  onEditCancel,
+}: TableRowsProps<T>) {
+  const theme = useTableTheme();
+
+  return (
+    <>
+      {data.map((row, rowIndex) => {
+        const rowRecord = row as Record<string, unknown>;
+        const key = String(rowRecord[rowKey] ?? rowIndex);
+        const isHovered = hoverable && hoveredRowIndex === rowIndex;
+        const isStriped = striped && rowIndex % 2 === 1;
+        const isExpanded = expandable && expansion.expandedRows.has(key);
+
+        const rowStyle: CSSProperties = {
+          ...theme.bodyRow,
+          ...(isStriped ? theme.bodyRowStriped : {}),
+          ...(isHovered ? theme.bodyRowHover : {}),
+          ...(onRowClick ? { cursor: 'pointer' } : {}),
+        };
+
+        const handleExpandToggle = () => {
+          expansion.toggleExpand(key);
+          if (!expansion.expandedRows.has(key) && childQuery) {
+            expansion.fetchChildData(key, rowRecord);
+          }
+        };
+
+        const handleRowKeyDown = expandable
+          ? (e: React.KeyboardEvent) => {
+              if (e.key === 'ArrowRight' && !isExpanded) {
+                e.preventDefault();
+                handleExpandToggle();
+              } else if (e.key === 'ArrowLeft' && isExpanded) {
+                e.preventDefault();
+                handleExpandToggle();
+              }
+            }
+          : undefined;
+
+        const rows: ReactNode[] = [];
+
+        const defaultRowElement = (
+          <tr
+            key={key}
+            style={rowStyle}
+            role="row"
+            tabIndex={expandable ? 0 : undefined}
+            onClick={onRowClick ? () => onRowClick(row) : undefined}
+            onKeyDown={handleRowKeyDown}
+            onMouseEnter={
+              hoverable ? () => setHoveredRowIndex(rowIndex) : undefined
+            }
+            onMouseLeave={
+              hoverable ? () => setHoveredRowIndex(null) : undefined
+            }
+            data-testid={`table-row-${key}`}
+          >
+            {visibleColumns.map((col) => {
+              if (col.field === '__expand') {
+                return (
+                  <td
+                    key="__expand"
+                    style={theme.bodyCell}
+                    role="cell"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleExpandToggle();
+                    }}
+                  >
+                    <button
+                      type="button"
+                      style={theme.expandToggle}
+                      aria-expanded={isExpanded}
+                      aria-label={isExpanded ? 'Collapse row' : 'Expand row'}
+                      data-testid={`expand-toggle-${key}`}
+                    >
+                      {isExpanded ? '▼' : '▶'}
+                    </button>
+                  </td>
+                );
+              }
+
+              if (col.field === '__actions' && rowActions) {
+                return (
+                  <td
+                    key="__actions"
+                    style={theme.bodyCell}
+                    role="cell"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {rowActions.map((action) => (
+                      <button
+                        key={action.label}
+                        type="button"
+                        style={theme.actionButton}
+                        onClick={() => action.onClick(row)}
+                        data-testid={`action-${action.label.toLowerCase()}`}
+                      >
+                        {action.label}
+                      </button>
+                    ))}
+                  </td>
+                );
+              }
+
+              const value = rowRecord[col.field];
+              const isEditing =
+                editable &&
+                editingCell?.rowIndex === rowIndex &&
+                editingCell?.field === col.field;
+
+              return (
+                <td
+                  key={col.field}
+                  style={theme.bodyCell}
+                  role="cell"
+                  onDoubleClick={
+                    editable
+                      ? () => onEditStart(rowIndex, col.field, value)
+                      : undefined
+                  }
+                >
+                  {isEditing ? (
+                    <input
+                      type="text"
+                      value={editValue}
+                      onChange={(e) => setEditValue(e.target.value)}
+                      onBlur={onEditCancel}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') onEditCancel();
+                      }}
+                      autoFocus
+                      data-testid="edit-input"
+                      style={{
+                        width: '100%',
+                        padding: '2px 4px',
+                        border: '1px solid #3b82f6',
+                        borderRadius: '2px',
+                        outline: 'none',
+                        fontSize: 'inherit',
+                      }}
+                    />
+                  ) : renderCell ? (
+                    renderCell(value, row, col)
+                  ) : (
+                    formatCellValue(value)
+                  )}
+                </td>
+              );
+            })}
+          </tr>
+        );
+
+        rows.push(
+          renderRow
+            ? renderRow(row, rowIndex, defaultRowElement)
+            : defaultRowElement,
+        );
+
+        if (isExpanded) {
+          const childData = expansion.getChildData(key);
+          rows.push(
+            <tr
+              key={`${key}-expanded`}
+              style={theme.expandedRow}
+              role="row"
+              data-testid={`expanded-row-${key}`}
+            >
+              <td
+                colSpan={visibleColumns.length}
+                role="cell"
+                style={theme.expandedRowContent}
+              >
+                {childData.loading ? (
+                  <div
+                    style={theme.childLoadingIndicator}
+                    data-testid={`child-loading-${key}`}
+                  >
+                    Loading...
+                  </div>
+                ) : childData.error ? (
+                  <div role="alert" data-testid={`child-error-${key}`}>
+                    Error: {childData.error.message}
+                  </div>
+                ) : renderExpandedRow ? (
+                  renderExpandedRow(row)
+                ) : null}
+              </td>
+            </tr>,
+          );
+        }
+
+        return rows;
+      })}
+    </>
+  );
+}
+
 export interface BifrostTableProps<
   T = Record<string, unknown>,
 > extends UseBifrostOptions {
@@ -778,54 +1031,20 @@ export function BifrostTable<T = Record<string, unknown>>(
           </div>
         ) : null}
         <table style={theme.table} role="table">
-          <thead>
-            {renderHeader ? (
-              renderHeader(visibleColumns, table.sorting.current)
-            ) : (
-              <tr style={theme.headerRow} role="row">
-                {visibleColumns.map((col) => {
-                  const sortDir = getSortDirection(
-                    table.sorting.current,
-                    col.field,
-                  );
-                  const isSortable =
-                    col.sortable &&
-                    col.field !== '__actions' &&
-                    col.field !== '__expand';
-                  return (
-                    <th
-                      key={col.field}
-                      style={{
-                        ...theme.headerCell,
-                        ...(col.width ? { width: col.width } : {}),
-                        ...(isSortable ? { cursor: 'pointer' } : {}),
-                      }}
-                      role="columnheader"
-                      aria-sort={
-                        sortDir === 'asc'
-                          ? 'ascending'
-                          : sortDir === 'desc'
-                            ? 'descending'
-                            : 'none'
-                      }
-                      onClick={
-                        isSortable
-                          ? () => table.sorting.toggleSort(col.field)
-                          : undefined
-                      }
-                    >
-                      {col.header}
-                      {isSortable && (
-                        <span style={theme.sortIndicator}>
-                          <SortArrow direction={sortDir} />
-                        </span>
-                      )}
-                    </th>
-                  );
-                })}
-              </tr>
-            )}
-          </thead>
+          {renderHeader ? (
+            <TableHeader
+              columns={visibleColumns}
+              sortState={table.sorting.current}
+            >
+              <>{renderHeader(visibleColumns, table.sorting.current)}</>
+            </TableHeader>
+          ) : (
+            <TableHeader
+              columns={visibleColumns}
+              sortState={table.sorting.current}
+              onSort={table.sorting.toggleSort}
+            />
+          )}
           <tbody>
             {table.data.length === 0 && !table.loading ? (
               <tr role="row">
@@ -838,233 +1057,40 @@ export function BifrostTable<T = Record<string, unknown>>(
                 </td>
               </tr>
             ) : (
-              table.data.map((row, rowIndex) => {
-                const rowRecord = row as Record<string, unknown>;
-                const key = String(rowRecord[rowKey] ?? rowIndex);
-                const isHovered = hoverable && hoveredRowIndex === rowIndex;
-                const isStriped = striped && rowIndex % 2 === 1;
-                const isExpanded =
-                  expandable && table.expansion.expandedRows.has(key);
-
-                const rowStyle: CSSProperties = {
-                  ...theme.bodyRow,
-                  ...(isStriped ? theme.bodyRowStriped : {}),
-                  ...(isHovered ? theme.bodyRowHover : {}),
-                  ...(onRowClick ? { cursor: 'pointer' } : {}),
-                };
-
-                const handleExpandToggle = () => {
-                  table.expansion.toggleExpand(key);
-                  if (!table.expansion.expandedRows.has(key) && childQuery) {
-                    table.expansion.fetchChildData(key, rowRecord);
-                  }
-                };
-
-                const handleRowKeyDown = expandable
-                  ? (e: React.KeyboardEvent) => {
-                      if (e.key === 'ArrowRight' && !isExpanded) {
-                        e.preventDefault();
-                        handleExpandToggle();
-                      } else if (e.key === 'ArrowLeft' && isExpanded) {
-                        e.preventDefault();
-                        handleExpandToggle();
-                      }
-                    }
-                  : undefined;
-
-                const rows: ReactNode[] = [];
-
-                const defaultRowElement = (
-                  <tr
-                    key={key}
-                    style={rowStyle}
-                    role="row"
-                    tabIndex={expandable ? 0 : undefined}
-                    onClick={onRowClick ? () => onRowClick(row) : undefined}
-                    onKeyDown={handleRowKeyDown}
-                    onMouseEnter={
-                      hoverable ? () => setHoveredRowIndex(rowIndex) : undefined
-                    }
-                    onMouseLeave={
-                      hoverable ? () => setHoveredRowIndex(null) : undefined
-                    }
-                    data-testid={`table-row-${key}`}
-                  >
-                    {visibleColumns.map((col) => {
-                      if (col.field === '__expand') {
-                        return (
-                          <td
-                            key="__expand"
-                            style={theme.bodyCell}
-                            role="cell"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleExpandToggle();
-                            }}
-                          >
-                            <button
-                              type="button"
-                              style={theme.expandToggle}
-                              aria-expanded={isExpanded}
-                              aria-label={
-                                isExpanded ? 'Collapse row' : 'Expand row'
-                              }
-                              data-testid={`expand-toggle-${key}`}
-                            >
-                              {isExpanded ? '\u25BC' : '\u25B6'}
-                            </button>
-                          </td>
-                        );
-                      }
-
-                      if (col.field === '__actions' && rowActions) {
-                        return (
-                          <td
-                            key="__actions"
-                            style={theme.bodyCell}
-                            role="cell"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {rowActions.map((action) => (
-                              <button
-                                key={action.label}
-                                type="button"
-                                style={theme.actionButton}
-                                onClick={() => action.onClick(row)}
-                                data-testid={`action-${action.label.toLowerCase()}`}
-                              >
-                                {action.label}
-                              </button>
-                            ))}
-                          </td>
-                        );
-                      }
-
-                      const value = rowRecord[col.field];
-                      const isEditing =
-                        editable &&
-                        editingCell?.rowIndex === rowIndex &&
-                        editingCell?.field === col.field;
-
-                      return (
-                        <td
-                          key={col.field}
-                          style={theme.bodyCell}
-                          role="cell"
-                          onDoubleClick={
-                            editable
-                              ? () =>
-                                  handleEditStart(rowIndex, col.field, value)
-                              : undefined
-                          }
-                        >
-                          {isEditing ? (
-                            <input
-                              type="text"
-                              value={editValue}
-                              onChange={(e) => setEditValue(e.target.value)}
-                              onBlur={handleEditCancel}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Escape') handleEditCancel();
-                              }}
-                              autoFocus
-                              data-testid="edit-input"
-                              style={{
-                                width: '100%',
-                                padding: '2px 4px',
-                                border: '1px solid #3b82f6',
-                                borderRadius: '2px',
-                                outline: 'none',
-                                fontSize: 'inherit',
-                              }}
-                            />
-                          ) : renderCell ? (
-                            renderCell(value, row, col)
-                          ) : (
-                            formatCellValue(value)
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                );
-
-                rows.push(
-                  renderRow
-                    ? renderRow(row, rowIndex, defaultRowElement)
-                    : defaultRowElement,
-                );
-
-                if (isExpanded) {
-                  const childData = table.expansion.getChildData(key);
-                  rows.push(
-                    <tr
-                      key={`${key}-expanded`}
-                      style={theme.expandedRow}
-                      role="row"
-                      data-testid={`expanded-row-${key}`}
-                    >
-                      <td
-                        colSpan={visibleColumns.length}
-                        role="cell"
-                        style={theme.expandedRowContent}
-                      >
-                        {childData.loading ? (
-                          <div
-                            style={theme.childLoadingIndicator}
-                            data-testid={`child-loading-${key}`}
-                          >
-                            Loading...
-                          </div>
-                        ) : childData.error ? (
-                          <div role="alert" data-testid={`child-error-${key}`}>
-                            Error: {childData.error.message}
-                          </div>
-                        ) : renderExpandedRow ? (
-                          renderExpandedRow(row)
-                        ) : null}
-                      </td>
-                    </tr>,
-                  );
-                }
-
-                return rows;
-              })
+              <TableRows<T>
+                data={table.data}
+                visibleColumns={visibleColumns}
+                rowKey={rowKey}
+                striped={striped}
+                hoverable={hoverable}
+                editable={editable}
+                expandable={expandable}
+                childQuery={childQuery}
+                expansion={table.expansion}
+                onRowClick={onRowClick}
+                rowActions={rowActions}
+                renderRow={renderRow}
+                renderCell={renderCell}
+                renderExpandedRow={renderExpandedRow}
+                hoveredRowIndex={hoveredRowIndex}
+                setHoveredRowIndex={setHoveredRowIndex}
+                editingCell={editingCell}
+                editValue={editValue}
+                setEditValue={setEditValue}
+                onEditStart={handleEditStart}
+                onEditCancel={handleEditCancel}
+              />
             )}
           </tbody>
         </table>
         {showPagination && (
-          <div style={theme.pagination} data-testid="pagination">
-            <button
-              type="button"
-              style={
-                table.pagination.page === 0
-                  ? theme.paginationButtonDisabled
-                  : theme.paginationButton
-              }
-              disabled={table.pagination.page === 0}
-              onClick={table.pagination.previousPage}
-              data-testid="pagination-prev"
-            >
-              Previous
-            </button>
-            <span style={theme.paginationInfo} data-testid="pagination-info">
-              Page {table.pagination.page + 1}
-            </span>
-            <button
-              type="button"
-              style={
-                table.data.length < table.pagination.pageSize
-                  ? theme.paginationButtonDisabled
-                  : theme.paginationButton
-              }
-              disabled={table.data.length < table.pagination.pageSize}
-              onClick={table.pagination.nextPage}
-              data-testid="pagination-next"
-            >
-              Next
-            </button>
-          </div>
+          <Pagination
+            page={table.pagination.page}
+            pageSize={table.pagination.pageSize}
+            dataLength={table.data.length}
+            onPrevious={table.pagination.previousPage}
+            onNext={table.pagination.nextPage}
+          />
         )}
         {renderFooter && (
           <div data-testid="table-footer">

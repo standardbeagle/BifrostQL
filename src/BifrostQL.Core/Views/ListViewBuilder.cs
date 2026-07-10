@@ -6,6 +6,16 @@ using BifrostQL.Core.Model;
 namespace BifrostQL.Core.Views
 {
     /// <summary>
+    /// The sort/search state that travels together through the list-view rendering
+    /// methods (header links, pagination links, and the search form). Bundled into a
+    /// single value so the trio of parameters no longer clumps through every method.
+    /// </summary>
+    public sealed record ListViewState(
+        string? Sort = null,
+        string? Dir = null,
+        string? Search = null);
+
+    /// <summary>
     /// Generates list view HTML for a table, including sortable column headers,
     /// pagination navigation, and a search/filter form. Works without JavaScript.
     /// </summary>
@@ -53,6 +63,7 @@ namespace BifrostQL.Core.Views
             string? currentSearch = null)
         {
             var columns = SelectDisplayColumns(table);
+            var state = new ListViewState(currentSort, currentDir, currentSearch);
             var sb = new StringBuilder();
 
             sb.Append("<div class=\"bifrost-list\">");
@@ -62,7 +73,7 @@ namespace BifrostQL.Core.Views
             sb.Append($"<a href=\"{Encode(_basePath)}/new/{Encode(table.DbName)}\" class=\"btn-primary\">New {Encode(FormatTableTitle(table.DbName))}</a>");
             sb.Append("</div>");
 
-            AppendSearchForm(sb, table.DbName, currentSearch, currentSort, currentDir);
+            AppendSearchForm(sb, table.DbName, state);
 
             if (records.Count == 0)
             {
@@ -71,12 +82,12 @@ namespace BifrostQL.Core.Views
             else
             {
                 sb.Append("<table>");
-                AppendTableHeader(sb, columns, currentSort, currentDir, currentSearch, pagination);
+                AppendTableHeader(sb, columns, state, pagination);
                 AppendTableBody(sb, records, columns, table);
                 sb.Append("</table>");
             }
 
-            AppendPagination(sb, pagination, currentSort, currentDir, currentSearch);
+            AppendPagination(sb, pagination, state);
 
             sb.Append("</div>");
             return sb.ToString();
@@ -90,7 +101,7 @@ namespace BifrostQL.Core.Views
             string? currentSearch = null, PaginationInfo? pagination = null)
         {
             var sb = new StringBuilder();
-            AppendTableHeader(sb, columns, currentSort, currentDir, currentSearch, pagination);
+            AppendTableHeader(sb, columns, new ListViewState(currentSort, currentDir, currentSearch), pagination);
             return sb.ToString();
         }
 
@@ -113,7 +124,7 @@ namespace BifrostQL.Core.Views
             string? currentSearch = null)
         {
             var sb = new StringBuilder();
-            AppendPagination(sb, pagination, currentSort, currentDir, currentSearch);
+            AppendPagination(sb, pagination, new ListViewState(currentSort, currentDir, currentSearch));
             return sb.ToString();
         }
 
@@ -124,34 +135,32 @@ namespace BifrostQL.Core.Views
             string? currentSort = null, string? currentDir = null)
         {
             var sb = new StringBuilder();
-            AppendSearchForm(sb, tableName, currentSearch, currentSort, currentDir);
+            AppendSearchForm(sb, tableName, new ListViewState(currentSort, currentDir, currentSearch));
             return sb.ToString();
         }
 
-        private void AppendSearchForm(StringBuilder sb, string tableName, string? currentSearch,
-            string? currentSort, string? currentDir)
+        private void AppendSearchForm(StringBuilder sb, string tableName, ListViewState state)
         {
             sb.Append("<form method=\"GET\" class=\"bifrost-search\">");
 
             // Preserve sort params as hidden fields
-            if (currentSort != null)
-                sb.Append($"<input type=\"hidden\" name=\"sort\" value=\"{Encode(currentSort)}\">");
-            if (currentDir != null)
-                sb.Append($"<input type=\"hidden\" name=\"dir\" value=\"{Encode(currentDir)}\">");
+            if (state.Sort != null)
+                sb.Append($"<input type=\"hidden\" name=\"sort\" value=\"{Encode(state.Sort)}\">");
+            if (state.Dir != null)
+                sb.Append($"<input type=\"hidden\" name=\"dir\" value=\"{Encode(state.Dir)}\">");
 
             sb.Append("<label for=\"search\">Search</label>");
-            sb.Append($"<input type=\"search\" id=\"search\" name=\"search\" value=\"{Encode(currentSearch ?? "")}\" placeholder=\"Search {Encode(tableName)}...\">");
+            sb.Append($"<input type=\"search\" id=\"search\" name=\"search\" value=\"{Encode(state.Search ?? "")}\" placeholder=\"Search {Encode(tableName)}...\">");
             sb.Append("<button type=\"submit\" class=\"btn-secondary\">Search</button>");
 
-            if (!string.IsNullOrEmpty(currentSearch))
+            if (!string.IsNullOrEmpty(state.Search))
                 sb.Append($"<a href=\"?\" class=\"btn-secondary\">Clear</a>");
 
             sb.Append("</form>");
         }
 
         private void AppendTableHeader(StringBuilder sb, IReadOnlyList<ColumnDto> columns,
-            string? currentSort, string? currentDir, string? currentSearch,
-            PaginationInfo? pagination)
+            ListViewState state, PaginationInfo? pagination)
         {
             sb.Append("<thead><tr>");
 
@@ -159,8 +168,8 @@ namespace BifrostQL.Core.Views
             {
                 // Determine sort direction for this column's link
                 var nextDir = "asc";
-                if (string.Equals(currentSort, column.ColumnName, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(currentDir, "asc", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(state.Sort, column.ColumnName, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(state.Dir, "asc", StringComparison.OrdinalIgnoreCase))
                 {
                     nextDir = "desc";
                 }
@@ -168,15 +177,15 @@ namespace BifrostQL.Core.Views
                 var sortUrl = BuildQueryString(
                     ("sort", column.ColumnName),
                     ("dir", nextDir),
-                    ("search", currentSearch),
+                    ("search", state.Search),
                     ("size", pagination?.PageSize.ToString()));
 
                 sb.Append($"<th><a href=\"?{sortUrl}\">{Encode(FormatLabel(column.ColumnName))}</a>");
 
                 // Sort indicator
-                if (string.Equals(currentSort, column.ColumnName, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(state.Sort, column.ColumnName, StringComparison.OrdinalIgnoreCase))
                 {
-                    var indicator = string.Equals(currentDir, "desc", StringComparison.OrdinalIgnoreCase)
+                    var indicator = string.Equals(state.Dir, "desc", StringComparison.OrdinalIgnoreCase)
                         ? " &#9660;" : " &#9650;";
                     sb.Append(indicator);
                 }
@@ -226,15 +235,14 @@ namespace BifrostQL.Core.Views
             sb.Append("</tr>");
         }
 
-        private void AppendPagination(StringBuilder sb, PaginationInfo pagination,
-            string? currentSort, string? currentDir, string? currentSearch)
+        private void AppendPagination(StringBuilder sb, PaginationInfo pagination, ListViewState state)
         {
             sb.Append("<nav class=\"pagination\">");
 
             if (pagination.HasPrevious)
             {
-                sb.Append($"<a href=\"?{BuildPageQuery(1, pagination.PageSize, currentSort, currentDir, currentSearch)}\" class=\"btn-secondary\">First</a>");
-                sb.Append($"<a href=\"?{BuildPageQuery(pagination.CurrentPage - 1, pagination.PageSize, currentSort, currentDir, currentSearch)}\" class=\"btn-secondary\">Previous</a>");
+                sb.Append($"<a href=\"?{BuildPageQuery(1, pagination.PageSize, state)}\" class=\"btn-secondary\">First</a>");
+                sb.Append($"<a href=\"?{BuildPageQuery(pagination.CurrentPage - 1, pagination.PageSize, state)}\" class=\"btn-secondary\">Previous</a>");
             }
             else
             {
@@ -246,8 +254,8 @@ namespace BifrostQL.Core.Views
 
             if (pagination.HasNext)
             {
-                sb.Append($"<a href=\"?{BuildPageQuery(pagination.CurrentPage + 1, pagination.PageSize, currentSort, currentDir, currentSearch)}\" class=\"btn-secondary\">Next</a>");
-                sb.Append($"<a href=\"?{BuildPageQuery(pagination.TotalPages, pagination.PageSize, currentSort, currentDir, currentSearch)}\" class=\"btn-secondary\">Last</a>");
+                sb.Append($"<a href=\"?{BuildPageQuery(pagination.CurrentPage + 1, pagination.PageSize, state)}\" class=\"btn-secondary\">Next</a>");
+                sb.Append($"<a href=\"?{BuildPageQuery(pagination.TotalPages, pagination.PageSize, state)}\" class=\"btn-secondary\">Last</a>");
             }
             else
             {
@@ -312,14 +320,14 @@ namespace BifrostQL.Core.Views
             return columns;
         }
 
-        private static string BuildPageQuery(int page, int pageSize, string? sort, string? dir, string? search)
+        private static string BuildPageQuery(int page, int pageSize, ListViewState state)
         {
             return BuildQueryString(
                 ("page", page.ToString()),
                 ("size", pageSize.ToString()),
-                ("sort", sort),
-                ("dir", dir),
-                ("search", search));
+                ("sort", state.Sort),
+                ("dir", state.Dir),
+                ("search", state.Search));
         }
 
         private static string BuildQueryString(params (string key, string? value)[] parameters)

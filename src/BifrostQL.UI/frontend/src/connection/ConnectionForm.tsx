@@ -6,176 +6,32 @@ import {
   PostgresAuthMethod,
   ConnectionFormProps,
   ConnectionFormErrors,
+  ConnectionFormData,
   ConnectionRequest,
   ConnectionState,
   SqlServerFormData,
   PostgresFormData,
-  MySqlFormData,
-  SqliteFormData,
-  PostgresSslMode,
-  MySqlSslMode,
   SshConfig,
   WpConfig,
 } from './types';
-import { parsePort } from './sanitize-connection';
-
-const POSTGRES_SSL_MODES: PostgresSslMode[] = ['Disable', 'Allow', 'Prefer', 'Require', 'VerifyCA', 'VerifyFull'];
-const MYSQL_SSL_MODES: MySqlSslMode[] = ['None', 'Preferred', 'Required'];
+import { parseAdoConnectionString } from './sanitize-connection';
+import { PROVIDER_ADAPTERS } from './provider-adapters';
 
 const DEFAULT_SSH: SshConfig = { enabled: false, sshHost: '', sshPort: 22, sshUsername: '', identityFile: '' };
 const DEFAULT_WP: WpConfig = { enabled: false, wpPath: 'wp', wpRoot: '' };
 
-function getDefaultDbPort(provider: Provider): number {
-  switch (provider) {
-    case 'sqlserver': return 1433;
-    case 'postgres': return 5432;
-    case 'mysql': return 3306;
-    default: return 0;
-  }
-}
-
-function createDefaultFormData(provider: Provider) {
-  switch (provider) {
-    case 'sqlserver':
-      return { server: 'localhost', database: '', authMethod: AuthMethod.SqlServer, username: '', trustServerCertificate: true } satisfies SqlServerFormData;
-    case 'postgres':
-      return { host: 'localhost', port: 5432, database: '', authMethod: PostgresAuthMethod.Password, username: '', sslMode: 'Prefer' as PostgresSslMode } satisfies PostgresFormData;
-    case 'mysql':
-      return { host: 'localhost', port: 3306, database: '', username: '', sslMode: 'Preferred' as MySqlSslMode } satisfies MySqlFormData;
-    case 'sqlite':
-      return { filePath: '', createNew: false } satisfies SqliteFormData;
-  }
-}
-
-function buildConnectionString(provider: Provider, data: Record<string, any>): string {
-  switch (provider) {
-    case 'sqlserver': {
-      const d = data as SqlServerFormData;
-      const parts = [`Server=${d.server}`, `Database=${d.database}`];
-      if (d.authMethod === AuthMethod.SqlServer) {
-        parts.push(`User Id=${d.username}`);
-      } else {
-        parts.push('Integrated Security=true');
-      }
-      if (d.trustServerCertificate) {
-        parts.push('TrustServerCertificate=True');
-      }
-      return parts.join(';');
-    }
-    case 'postgres': {
-      const d = data as PostgresFormData;
-      const parts = [`Host=${d.host}`, `Port=${d.port}`, `Database=${d.database}`];
-      if (d.authMethod === PostgresAuthMethod.Password) {
-        parts.push(`Username=${d.username}`);
-      }
-      parts.push(`SSL Mode=${d.sslMode}`);
-      return parts.join(';');
-    }
-    case 'mysql': {
-      const d = data as MySqlFormData;
-      const parts = [`Server=${d.host}`, `Port=${d.port}`, `Database=${d.database}`, `Uid=${d.username}`];
-      parts.push(`SslMode=${d.sslMode}`);
-      return parts.join(';');
-    }
-    case 'sqlite': {
-      const d = data as SqliteFormData;
-      return `Data Source=${d.filePath}`;
-    }
-  }
-}
-
-function buildConnectionName(provider: Provider, data: Record<string, any>): string {
-  switch (provider) {
-    case 'sqlserver': {
-      const d = data as SqlServerFormData;
-      return `${d.server}/${d.database}`;
-    }
-    case 'postgres':
-    case 'mysql': {
-      const d = data as PostgresFormData | MySqlFormData;
-      return `${d.host}:${d.port}/${d.database}`;
-    }
-    case 'sqlite': {
-      const d = data as SqliteFormData;
-      return d.filePath.split(/[/\\]/).pop() || d.filePath;
-    }
-  }
-}
-
-function validateFormData(provider: Provider, data: Record<string, any>): ConnectionFormErrors {
-  const errors: ConnectionFormErrors = {};
-
-  switch (provider) {
-    case 'sqlserver': {
-      const d = data as SqlServerFormData;
-      if (!d.server.trim()) errors.server = 'Server address is required';
-      if (!d.database.trim()) errors.database = 'Database name is required';
-      if (d.authMethod === AuthMethod.SqlServer) {
-        if (!d.username.trim()) errors.username = 'Username is required';
-      }
-      break;
-    }
-    case 'postgres': {
-      const d = data as PostgresFormData;
-      if (!d.host.trim()) errors.host = 'Host is required';
-      if (!d.database.trim()) errors.database = 'Database name is required';
-      if (d.authMethod === PostgresAuthMethod.Password) {
-        if (!d.username.trim()) errors.username = 'Username is required';
-      }
-      if (!d.port || d.port < 1 || d.port > 65535) errors.port = 'Valid port required (1-65535)';
-      break;
-    }
-    case 'mysql': {
-      const d = data as MySqlFormData;
-      if (!d.host.trim()) errors.host = 'Host is required';
-      const wantsWpDiscovery = Boolean(data.__wpDiscoveryEnabled);
-      if (!wantsWpDiscovery && !d.database.trim()) errors.database = 'Database name is required';
-      if (!wantsWpDiscovery && !d.username.trim()) errors.username = 'Username is required';
-      if (!d.port || d.port < 1 || d.port > 65535) errors.port = 'Valid port required (1-65535)';
-      break;
-    }
-    case 'sqlite': {
-      const d = data as SqliteFormData;
-      if (!d.filePath.trim()) errors.filePath = 'File path is required';
-      break;
-    }
-  }
-
-  return errors;
-}
-
+/**
+ * Build a ConnectionRequest from a raw ADO.NET connection string. Only the
+ * SQLite path reaches this today (raw-string mode); the non-secret fields are
+ * parsed by the shared {@link parseAdoConnectionString} so this and the App-side
+ * bridge parse stay in lockstep.
+ */
 function parseConnectionString(provider: Provider, connectionString: string): ConnectionRequest {
-  const entries = connectionString
-    .split(';')
-    .map((segment) => {
-      const eq = segment.indexOf('=');
-      return eq < 0 ? null : [segment.slice(0, eq).trim().toLowerCase(), segment.slice(eq + 1).trim()] as const;
-    })
-    .filter((entry): entry is readonly [string, string] => !!entry);
-  const parts = new Map(entries);
-  const get = (...keys: string[]) => {
-    for (const key of keys) {
-      const value = parts.get(key);
-      if (value) return value;
-    }
-    return undefined;
-  };
-
-  let host = get('server', 'host', 'data source');
-  let port: number | undefined;
-  if (provider === 'sqlserver' && host?.includes(',')) {
-    const [server, portText] = host.split(',', 2);
-    host = server;
-    port = parsePort(portText);
-  }
-  const portText = get('port');
-  if (port === undefined && portText) {
-    port = parsePort(portText);
-  }
+  const { host, port, database, username, ssl } = parseAdoConnectionString(connectionString, provider);
 
   const name = provider === 'sqlite'
-    ? get('data source') ?? `${provider} connection`
-    : `${host ?? 'server'}${port ? `:${port}` : ''}/${get('database', 'initial catalog') ?? ''}`;
+    ? host ?? `${provider} connection`
+    : `${host ?? 'server'}${port ? `:${port}` : ''}/${database ?? ''}`;
 
   return {
     name,
@@ -183,79 +39,10 @@ function parseConnectionString(provider: Provider, connectionString: string): Co
     connectionString: provider === 'sqlite' ? connectionString : undefined,
     host,
     port,
-    database: get('database', 'initial catalog'),
-    username: get('user id', 'username', 'uid', 'user'),
-    ssl: /require|verify|true|prefer/i.test(get('sslmode', 'ssl mode') ?? ''),
+    database,
+    username,
+    ssl: ssl ?? false,
   };
-}
-
-function buildConnectionRequest(
-  provider: Provider,
-  data: Record<string, any>,
-  name: string,
-  sshConfig: SshConfig,
-  wpConfig: WpConfig,
-): ConnectionRequest {
-  const ssh = sshConfig.enabled && provider !== 'sqlite' ? sshConfig : undefined;
-  const tags = wpConfig.enabled && provider === 'mysql' ? ['wordpress'] : undefined;
-
-  switch (provider) {
-    case 'sqlserver': {
-      const d = data as SqlServerFormData;
-      return {
-        name,
-        provider,
-        host: d.server,
-        port: getDefaultDbPort(provider),
-        database: d.database,
-        username: d.authMethod === AuthMethod.SqlServer ? d.username : undefined,
-        ssl: d.trustServerCertificate,
-        ssh,
-        tags,
-        requiresCredential: d.authMethod === AuthMethod.SqlServer,
-      };
-    }
-    case 'postgres': {
-      const d = data as PostgresFormData;
-      return {
-        name,
-        provider,
-        host: d.host,
-        port: d.port,
-        database: d.database,
-        username: d.authMethod === PostgresAuthMethod.Password ? d.username : undefined,
-        ssl: d.sslMode !== 'Disable',
-        ssh,
-        tags,
-        requiresCredential: d.authMethod === PostgresAuthMethod.Password,
-      };
-    }
-    case 'mysql': {
-      const d = data as MySqlFormData;
-      return {
-        name,
-        provider,
-        host: d.host,
-        port: d.port,
-        database: d.database,
-        username: wpConfig.enabled ? undefined : d.username,
-        ssl: d.sslMode !== 'None',
-        ssh,
-        tags,
-        requiresCredential: !wpConfig.enabled,
-      };
-    }
-    case 'sqlite': {
-      const d = data as SqliteFormData;
-      return {
-        name,
-        provider,
-        connectionString: buildConnectionString(provider, d),
-        database: d.filePath,
-        requiresCredential: false,
-      };
-    }
-  }
 }
 
 export const ConnectionForm: React.FC<ConnectionFormProps> = ({
@@ -265,7 +52,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
   onBack,
 }) => {
   const providerInfo = PROVIDERS.find((p) => p.id === provider)!;
-  const [formData, setFormData] = useState<Record<string, any>>(() => createDefaultFormData(provider));
+  const adapter = PROVIDER_ADAPTERS[provider];
+  const [formData, setFormData] = useState<ConnectionFormData>(() => adapter.createDefaultFormData());
   const [errors, setErrors] = useState<ConnectionFormErrors>({});
   const [touched, setTouched] = useState<Set<string>>(new Set());
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
@@ -281,7 +69,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
   const isDisabled = connectionState === 'connecting' || connectionState === 'testing';
 
   const updateField = useCallback((field: string, value: unknown) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
+    setFormData((prev) => ({ ...prev, [field]: value } as ConnectionFormData));
     setTestResult(null);
     if (touched.has(field)) {
       setErrors((prev) => {
@@ -294,16 +82,13 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
 
   const handleBlur = useCallback((field: string) => {
     setTouched((prev) => new Set(prev).add(field));
-    const fieldErrors = validateFormData(provider, formData);
+    const fieldErrors = adapter.validateFormData(formData, { wpDiscoveryEnabled: false });
     setErrors((prev) => ({ ...prev, [field]: fieldErrors[field] }));
-  }, [provider, formData]);
+  }, [adapter, formData]);
 
   const handleTestConnection = useCallback(async () => {
     if (!useRawString) {
-      const fieldErrors = validateFormData(provider, {
-        ...formData,
-        __wpDiscoveryEnabled: wpConfig.enabled,
-      });
+      const fieldErrors = adapter.validateFormData(formData, { wpDiscoveryEnabled: wpConfig.enabled });
       if (Object.values(fieldErrors).some(Boolean)) {
         setErrors(fieldErrors);
         setTouched(new Set(Object.keys(fieldErrors)));
@@ -315,10 +100,10 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
     setConnectionState('testing');
     setTestResult(null);
     try {
-      const connName = useRawString ? `${providerInfo.name} connection` : buildConnectionName(provider, formData);
+      const connName = useRawString ? `${providerInfo.name} connection` : adapter.buildConnectionName(formData);
       const request = useRawString && provider === 'sqlite'
         ? { ...parseConnectionString(provider, rawConnectionString), name: connName }
-        : buildConnectionRequest(provider, formData, connName, sshConfig, wpConfig);
+        : adapter.buildConnectionRequest(formData, connName, sshConfig, wpConfig);
       const success = await onTestConnection(request);
       setTestResult({
         success,
@@ -334,14 +119,11 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
     } finally {
       setConnectionState('idle');
     }
-  }, [provider, formData, useRawString, onTestConnection, providerInfo, rawConnectionString, sshConfig, wpConfig]);
+  }, [adapter, provider, formData, useRawString, onTestConnection, providerInfo, rawConnectionString, sshConfig, wpConfig]);
 
   const handleConnect = useCallback(async () => {
     if (!useRawString) {
-      const fieldErrors = validateFormData(provider, {
-        ...formData,
-        __wpDiscoveryEnabled: wpConfig.enabled,
-      });
+      const fieldErrors = adapter.validateFormData(formData, { wpDiscoveryEnabled: wpConfig.enabled });
       if (Object.values(fieldErrors).some(Boolean)) {
         setErrors(fieldErrors);
         setTouched(new Set(Object.keys(fieldErrors)));
@@ -359,12 +141,12 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
       }
     }
 
-    const connName = useRawString ? `${providerInfo.name} connection` : buildConnectionName(provider, formData);
+    const connName = useRawString ? `${providerInfo.name} connection` : adapter.buildConnectionName(formData);
     const request = useRawString && provider === 'sqlite'
       ? { ...parseConnectionString(provider, rawConnectionString), name: connName }
-      : buildConnectionRequest(provider, formData, connName, sshConfig, wpConfig);
+      : adapter.buildConnectionRequest(formData, connName, sshConfig, wpConfig);
     onConnect(request);
-  }, [provider, formData, useRawString, rawConnectionString, providerInfo, onConnect, sshConfig, wpConfig]);
+  }, [adapter, provider, formData, useRawString, rawConnectionString, providerInfo, onConnect, sshConfig, wpConfig]);
 
   const updateSshField = useCallback((field: string, value: unknown) => {
     setSshConfig((prev) => ({ ...prev, [field]: value }));
@@ -386,8 +168,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
     setLoadingDatabases(true);
     setAvailableDatabases(null);
     try {
-      const partialData = { ...formData, database: 'master' };
-      const connString = buildConnectionString(provider, partialData);
+      const partialData = { ...formData, database: 'master' } as ConnectionFormData;
+      const connString = adapter.buildConnectionString(partialData);
       const isPeerAuth = provider === 'postgres'
         && (formData as PostgresFormData).authMethod === PostgresAuthMethod.Peer;
       const response = await fetch('/api/databases', {
@@ -404,7 +186,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
         const result = await response.json();
         if (result.databases?.length > 0) {
           setAvailableDatabases(result.databases);
-          if (!formData.database && result.databases.length > 0) {
+          if (!(formData as { database?: string }).database && result.databases.length > 0) {
             updateField('database', result.databases[0]);
           }
         }
@@ -414,13 +196,13 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
     } finally {
       setLoadingDatabases(false);
     }
-  }, [provider, formData, updateField]);
+  }, [adapter, provider, formData, updateField]);
 
   const hasErrors = Object.values(errors).some(Boolean);
 
   const renderDatabaseField = () => {
     if (provider === 'sqlite') return null;
-    const dbValue = (formData as Record<string, any>).database || '';
+    const dbValue = (formData as { database?: string }).database || '';
 
     return (
       <div className="conn-form__group">
@@ -524,144 +306,6 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
     </div>
   );
 
-  const renderProviderFields = () => {
-    const data = formData as Record<string, any>;
-
-    switch (provider) {
-      case 'sqlserver': {
-        const d = data as unknown as SqlServerFormData;
-        return (
-          <>
-            {renderField('server', 'Server Address', 'text', d.server, true, 'localhost')}
-            {renderDatabaseField()}
-
-            <fieldset className="conn-form__fieldset">
-              <legend className="conn-form__label">Authentication Method</legend>
-              <div className="conn-form__radio-group">
-                <label className="conn-form__radio-label">
-                  <input
-                    type="radio"
-                    name="authMethod"
-                    value={AuthMethod.SqlServer}
-                    checked={d.authMethod === AuthMethod.SqlServer}
-                    onChange={(e) => updateField('authMethod', e.target.value)}
-                    disabled={isDisabled}
-                  />
-                  SQL Server Authentication
-                </label>
-                <label className="conn-form__radio-label">
-                  <input
-                    type="radio"
-                    name="authMethod"
-                    value={AuthMethod.Windows}
-                    checked={d.authMethod === AuthMethod.Windows}
-                    onChange={(e) => updateField('authMethod', e.target.value)}
-                    disabled={isDisabled}
-                  />
-                  Windows Authentication
-                </label>
-              </div>
-            </fieldset>
-
-            {d.authMethod === AuthMethod.SqlServer && (
-              <>
-                {renderField('username', 'Username', 'text', d.username, true, 'sa')}
-              </>
-            )}
-
-            <label className="conn-form__checkbox">
-              <input
-                type="checkbox"
-                checked={d.trustServerCertificate}
-                onChange={(e) => updateField('trustServerCertificate', e.target.checked)}
-                disabled={isDisabled}
-              />
-              <span>Trust Server Certificate</span>
-            </label>
-          </>
-        );
-      }
-
-      case 'postgres': {
-        const d = data as unknown as PostgresFormData;
-        return (
-          <>
-            {renderField('host', 'Host', 'text', d.host, true, 'localhost')}
-            {renderField('port', 'Port', 'number', d.port, true, '5432')}
-
-            <fieldset className="conn-form__fieldset">
-              <legend className="conn-form__label">Authentication Method</legend>
-              <div className="conn-form__radio-group">
-                <label className="conn-form__radio-label">
-                  <input
-                    type="radio"
-                    name="pgAuthMethod"
-                    value={PostgresAuthMethod.Password}
-                    checked={d.authMethod === PostgresAuthMethod.Password}
-                    onChange={(e) => updateField('authMethod', e.target.value)}
-                    disabled={isDisabled}
-                  />
-                  Password Authentication
-                </label>
-                <label className="conn-form__radio-label">
-                  <input
-                    type="radio"
-                    name="pgAuthMethod"
-                    value={PostgresAuthMethod.Peer}
-                    checked={d.authMethod === PostgresAuthMethod.Peer}
-                    onChange={(e) => updateField('authMethod', e.target.value)}
-                    disabled={isDisabled}
-                  />
-                  Peer / Ident (passwordless)
-                </label>
-              </div>
-            </fieldset>
-
-            {d.authMethod === PostgresAuthMethod.Password && (
-              <>
-                {renderField('username', 'Username', 'text', d.username, true, 'postgres')}
-              </>
-            )}
-
-            {renderDatabaseField()}
-            {renderSelect('sslMode', 'SSL Mode', d.sslMode, POSTGRES_SSL_MODES)}
-          </>
-        );
-      }
-
-      case 'mysql': {
-        const d = data as unknown as MySqlFormData;
-        return (
-          <>
-            {renderField('host', 'Host', 'text', d.host, true, 'localhost')}
-            {renderField('port', 'Port', 'number', d.port, true, '3306')}
-            {renderDatabaseField()}
-            {renderField('username', 'Username', 'text', d.username, true, 'root')}
-            {renderSelect('sslMode', 'SSL Mode', d.sslMode, MYSQL_SSL_MODES)}
-          </>
-        );
-      }
-
-      case 'sqlite': {
-        const d = data as unknown as SqliteFormData;
-        return (
-          <>
-            {renderField('filePath', 'Database File Path', 'text', d.filePath, true, '/path/to/database.db')}
-            <label className="conn-form__checkbox">
-              <input
-                type="checkbox"
-                checked={d.createNew}
-                onChange={(e) => updateField('createNew', e.target.checked)}
-                disabled={isDisabled}
-              />
-              <span>Create new database at this path</span>
-            </label>
-          </>
-        );
-      }
-    }
-  };
-
   return (
     <div className="conn-form" role="form" aria-label={`${providerInfo.name} connection form`}>
       <button type="button" className="conn-form__back" onClick={onBack}>
@@ -682,7 +326,14 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
         </div>
       )}
 
-      {!useRawString && renderProviderFields()}
+      {!useRawString && adapter.renderFields({
+        data: formData,
+        isDisabled,
+        updateField,
+        renderField,
+        renderSelect,
+        renderDatabaseField,
+      })}
 
       {provider !== 'sqlite' && (
         <fieldset className="conn-form__ssh-section">

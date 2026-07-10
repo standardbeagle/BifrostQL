@@ -101,56 +101,63 @@ namespace BifrostQL.Core.QueryModel
             });
         }
 
-        public void AddSqlParameterized(IDbModel dbModel, ISqlDialect dialect, IDictionary<string, ParameterizedSql> sqls, SqlParameterCollection parameters, QueryLink? queryLink = null)
+        /// <summary>
+        /// Fails fast when an aggregate selection cannot be correlated back to its
+        /// parent rows. A keyless table (view / no PK) has nothing to correlate on;
+        /// a composite PK would silently group by only the first key column and hand
+        /// every row a value aggregated across all rows sharing that column — wrong
+        /// data, not an error. Both cases are deferred features, so throw a clear
+        /// error instead of the opaque KeyNotFoundException / "Sequence contains no
+        /// elements" (or silently-wrong data) the execution path would produce.
+        /// </summary>
+        private void ValidateAggregateKeying()
         {
-            // Aggregate correlation matches each aggregate row back to its parent row
-            // by the parent's primary key (ReaderEnum reads KeyColumns.First()), and an
-            // aggregate-only selection needs the key columns for its base SELECT. A
-            // keyless table (view / table without a PK) can satisfy neither — fail fast
-            // with a clear error instead of the opaque KeyNotFoundException /
-            // "Sequence contains no elements" the execution path would otherwise throw.
-            if (AggregateColumns.Count > 0 && !DbTable.KeyColumns.Any())
+            if (AggregateColumns.Count == 0)
+                return;
+
+            if (!DbTable.KeyColumns.Any())
                 throw new BifrostExecutionError(
                     $"Aggregate queries require a primary key on table '{GraphQlName}'; " +
                     $"table '{TableName}' has no primary key, so aggregate results cannot be correlated to its rows.");
 
-            // The same correlation is single-column on both sides (one srcId in the
-            // aggregate SQL, KeyColumns.First() in the reader), so a composite primary
-            // key would silently group by only the first key column and hand every
-            // row a value aggregated across all rows sharing that first column — wrong
-            // data, not an error. Fail fast instead; composite-aware correlation is a
-            // deferred feature.
-            if (AggregateColumns.Count > 0 && DbTable.KeyColumns.Skip(1).Any())
+            if (DbTable.KeyColumns.Skip(1).Any())
                 throw new BifrostExecutionError(
                     $"Aggregate queries on composite-primary-key table '{GraphQlName}' are not supported; " +
                     "aggregate correlation uses a single key column and would produce incorrect results.");
+        }
 
-            var fullColumns = FullColumnNames.ToList();
-            if (AggregateColumns.Count > 0)
-            {
-                // Aggregate correlation matches each aggregate row back to its parent
-                // row by the column the aggregate joined on (ParentKeyColumnDbName —
-                // the parent PK for a OneToMany first hop, the child FK for a
-                // ManyToOne first hop). ReaderEnum probes the base result set by that
-                // column's value, so it MUST be in the SELECT even when the user
-                // selected only non-key scalars (`data { name _agg {...} }`) or
-                // nothing at all (`data { _agg {...} }`) — otherwise ReaderEnum threw
-                // KeyNotFoundException probing a column that was never projected.
-                // Also project the key column(s) so an aggregate-only selection still
-                // emits a base result set with its row identity. (A pure count-only
-                // selection — IncludeResult with no columns and no aggregates —
-                // legitimately emits no data query.)
-                // Skip link-less aggregates here: they are rejected later by
-                // GqlAggregateColumn.ToSqlParameterized with a clearer "must include
-                // at least one nested-FK link" message, and probing ParentKeyColumnDbName
-                // would pre-empt it.
-                var neededDbNames = DbTable.KeyColumns.Select(c => c.DbName)
-                    .Concat(AggregateColumns.Where(a => a.Links.Count > 0).Select(a => a.ParentKeyColumnDbName));
-                fullColumns = fullColumns
-                    .Concat(neededDbNames.Select(n => new GqlObjectColumn(n)))
-                    .DistinctBy(c => c.GraphQlDbName, SqlNameComparer.Instance)
-                    .ToList();
-            }
+        /// <summary>
+        /// Ensures the base SELECT projects every column ReaderEnum needs to correlate
+        /// aggregate rows. Aggregate correlation matches each aggregate row back to its
+        /// parent row by the column the aggregate joined on (ParentKeyColumnDbName —
+        /// the parent PK for a OneToMany first hop, the child FK for a ManyToOne first
+        /// hop). That column MUST be in the SELECT even when the user selected only
+        /// non-key scalars (`data { name _agg {...} }`) or nothing at all
+        /// (`data { _agg {...} }`) — otherwise ReaderEnum threw KeyNotFoundException
+        /// probing a column that was never projected. Also project the key column(s)
+        /// so an aggregate-only selection still emits a base result set with its row
+        /// identity. Link-less aggregates are skipped here: they are rejected later by
+        /// GqlAggregateColumn.ToSqlParameterized with a clearer message, and probing
+        /// ParentKeyColumnDbName would pre-empt it.
+        /// </summary>
+        private List<GqlObjectColumn> AppendAggregateKeyColumns(List<GqlObjectColumn> fullColumns)
+        {
+            if (AggregateColumns.Count == 0)
+                return fullColumns;
+
+            var neededDbNames = DbTable.KeyColumns.Select(c => c.DbName)
+                .Concat(AggregateColumns.Where(a => a.Links.Count > 0).Select(a => a.ParentKeyColumnDbName));
+            return fullColumns
+                .Concat(neededDbNames.Select(n => new GqlObjectColumn(n)))
+                .DistinctBy(c => c.GraphQlDbName, SqlNameComparer.Instance)
+                .ToList();
+        }
+
+        public void AddSqlParameterized(IDbModel dbModel, ISqlDialect dialect, IDictionary<string, ParameterizedSql> sqls, SqlParameterCollection parameters, QueryLink? queryLink = null)
+        {
+            ValidateAggregateKeying();
+
+            var fullColumns = AppendAggregateKeyColumns(FullColumnNames.ToList());
             var tableRef = dialect.TableReference(SchemaName, TableName);
 
             var filter = GetFilterSqlParameterized(dbModel, dialect, parameters);
@@ -184,31 +191,31 @@ namespace BifrostQL.Core.QueryModel
                 sqls[col.SqlKey] = aggregateSql;
             }
 
+            var ctx = new SqlBuildContext(dbModel, dialect, parameters);
             foreach (var join in Joins)
             {
                 var joinQueryLink = new QueryLink(join, this, queryLink);
-                AddJoinSqlParameterized(dbModel, dialect, sqls, parameters, joinQueryLink);
+                AddJoinSqlParameterized(ctx, sqls, joinQueryLink);
             }
         }
 
-        private static void AddJoinSqlParameterized(IDbModel model, ISqlDialect dialect, IDictionary<string, ParameterizedSql> sqls, SqlParameterCollection parameters, QueryLink queryLink)
+        private static void AddJoinSqlParameterized(SqlBuildContext ctx, IDictionary<string, ParameterizedSql> sqls, QueryLink queryLink)
         {
-            var main = GetRestrictedSqlParameterized(model, dialect, parameters, queryLink);
-            var sql = ToConnectedSqlParameterized(model, dialect, parameters, main, queryLink.Join);
+            var main = GetRestrictedSqlParameterized(ctx.Model, ctx.Dialect, ctx.Parameters, queryLink);
+            var sql = ToConnectedSqlParameterized(ctx.Model, ctx.Dialect, ctx.Parameters, main, queryLink.Join);
             sqls[queryLink.Join.JoinName] = sql;
 
             foreach (var join in queryLink.Join.ConnectedTable.Joins)
             {
                 var joinQueryLink = new QueryLink(join, queryLink.Join.ConnectedTable, queryLink);
-                AddJoinSqlParameterized(model, dialect, sqls, parameters, joinQueryLink);
+                AddJoinSqlParameterized(ctx, sqls, joinQueryLink);
             }
         }
 
         public static ParameterizedSql ToConnectedSqlParameterized(IDbModel dbModel, ISqlDialect dialect, SqlParameterCollection parameters, ParameterizedSql main, TableJoin tableJoin)
         {
+            var ctx = new SqlBuildContext(dbModel, dialect, parameters);
             var connectedDbTable = dbModel.GetTableFromDbName(tableJoin.ConnectedTable.TableName);
-            var ea = dialect.EscapeIdentifier("a");
-            var eb = dialect.EscapeIdentifier("b");
             var joinColumnSql = string.Join(",",
                 tableJoin.ConnectedTable.FullColumnNames.Select(c => c.ToSelectSql(dbModel, connectedDbTable, dialect, "b", useAsKeyword: true)));
 
@@ -233,20 +240,13 @@ namespace BifrostQL.Core.QueryModel
             IReadOnlyList<SqlParameterInfo> relationParams;
             if (tableJoin.Bridge is { } bridge)
             {
-                // Many-to-many: bridge source -> junction -> target. src_id stays
-                // the source key (a.JoinId), so the collection is keyed and
-                // window-paged per source parent just like a multi-link.
-                var ej = dialect.EscapeIdentifier("j");
-                var srcOnClause = string.Join(" AND ", Enumerable.Range(0, tableJoin.FromColumns.Count)
-                    .Select(i => $"{ea}.{dialect.EscapeIdentifier(JoinKeyNames.JoinIdAt(i, tableJoin.FromColumns.Count))} = {ej}.{dialect.EscapeIdentifier(bridge.JunctionSourceColumn)}"));
-                var tgtOnClause = $"{ej}.{dialect.EscapeIdentifier(bridge.JunctionTargetColumn)} = {eb}.{dialect.EscapeIdentifier(tableJoin.ConnectedColumn)}";
-                fromClause = $"FROM ({main.Sql}) {ea}"
-                    + $" INNER JOIN {dialect.TableReference(bridge.JunctionSchema, bridge.JunctionTable)} {ej} ON {srcOnClause}"
-                    + $" INNER JOIN {connectedTableRef} {eb} ON {tgtOnClause}";
+                fromClause = BuildBridgeFromClause(ctx, tableJoin, bridge, main, connectedTableRef);
                 relationParams = Array.Empty<SqlParameterInfo>();
             }
             else
             {
+                var ea = dialect.EscapeIdentifier("a");
+                var eb = dialect.EscapeIdentifier("b");
                 var (relationSql, rp) = tableJoin.EmitOnClause(dialect, parameters, "a", "b");
                 relationParams = rp;
                 fromClause = $"FROM ({main.Sql}) {ea}"
@@ -263,49 +263,86 @@ namespace BifrostQL.Core.QueryModel
             // resolves null.
             var filter = tableJoin.ConnectedTable.GetFilterSqlParameterized(dbModel, dialect, parameters, "b");
 
+            // Dispatch on join mode: a single-row link, a per-parent paged
+            // collection, or a flat (non-paged) multi-row collection.
             if (tableJoin.QueryType == QueryType.Single)
-                return new ParameterizedSql(wrap, main.Parameters.Concat(relationParams).ToList())
-                    .Append(filter);
+                return BuildSingleJoinSql(wrap, main, relationParams, filter);
 
-            // Per-parent paged collection: compute a window partitioned by the
-            // parent join-id columns so each parent gets its own row-number and
-            // total, then filter on the row number. This keeps parent A's limit
-            // from consuming parent B's rows — a flat global LIMIT cannot do
-            // that. The non-paged path (single-link or m2m array) keeps the
-            // historical global pagination.
             if (tableJoin.ConnectedTable.IncludeResult)
-            {
-                // Partition by the parent key columns as exposed by the inner
-                // `a` sub-query (JoinId / JoinId_<i>). Order by the child sort
-                // columns against the `b` alias — both are valid at the join
-                // level where the window is computed.
-                var srcCount = tableJoin.FromColumns.Count;
-                var partitionCols = Enumerable.Range(0, srcCount)
-                    .Select(i => $"{ea}.{dialect.EscapeIdentifier(JoinKeyNames.JoinIdAt(i, srcCount))}");
-                var windowOrder = RenderSortColumns(dialect, tableJoin.ConnectedTable.DbTable, tableJoin.ConnectedTable.Sort, "b");
+                return BuildPagedCollectionSql(ctx, tableJoin, projection, fromClause, filter, main, relationParams);
 
-                var pagedSql = dialect.ConnectedPaging(
-                    projection,
-                    fromClause + filter.Sql,
-                    partitionCols,
-                    windowOrder,
-                    PagedKeys.RowNumber,
-                    PagedKeys.Total,
-                    tableJoin.ConnectedTable.Offset,
-                    tableJoin.ConnectedTable.Limit);
+            return BuildFlatCollectionSql(ctx, tableJoin, wrap, filter, main, relationParams);
+        }
 
-                return new ParameterizedSql(pagedSql, main.Parameters.Concat(relationParams).Concat(filter.Parameters).ToList());
-            }
+        /// <summary>
+        /// Many-to-many FROM: bridge source -> junction -> target. src_id stays the
+        /// source key (a.JoinId), so the collection is keyed and window-paged per
+        /// source parent just like a multi-link.
+        /// </summary>
+        private static string BuildBridgeFromClause(SqlBuildContext ctx, TableJoin tableJoin, JunctionBridge bridge, ParameterizedSql main, string connectedTableRef)
+        {
+            var dialect = ctx.Dialect;
+            var ea = dialect.EscapeIdentifier("a");
+            var eb = dialect.EscapeIdentifier("b");
+            var ej = dialect.EscapeIdentifier("j");
+            var srcOnClause = string.Join(" AND ", Enumerable.Range(0, tableJoin.FromColumns.Count)
+                .Select(i => $"{ea}.{dialect.EscapeIdentifier(JoinKeyNames.JoinIdAt(i, tableJoin.FromColumns.Count))} = {ej}.{dialect.EscapeIdentifier(bridge.JunctionSourceColumn)}"));
+            var tgtOnClause = $"{ej}.{dialect.EscapeIdentifier(bridge.JunctionTargetColumn)} = {eb}.{dialect.EscapeIdentifier(tableJoin.ConnectedColumn)}";
+            return $"FROM ({main.Sql}) {ea}"
+                + $" INNER JOIN {dialect.TableReference(bridge.JunctionSchema, bridge.JunctionTable)} {ej} ON {srcOnClause}"
+                + $" INNER JOIN {connectedTableRef} {eb} ON {tgtOnClause}";
+        }
 
-            // Non-paged multi-row join (explicit `_join_`, and non-IncludeResult
-            // collections). A LIMIT here is GLOBAL across every parent's joined rows,
-            // so a DEFAULT limit would silently drop matched rows once the combined
-            // child count crossed it (dialect.Pagination defaults null -> LIMIT 100).
-            // Per-parent windowing is reserved for the IncludeResult paged path above
-            // (it needs __rn/__total columns the flat reader cannot consume). So:
-            // apply only an EXPLICITLY requested limit/offset — documented as global —
-            // and otherwise emit NO limit (the -1 sentinel) so every parent keeps all
-            // its matched rows instead of being silently truncated at 100.
+        /// <summary>Single-row link (forward FK / _single): no pagination, filter only.</summary>
+        private static ParameterizedSql BuildSingleJoinSql(string wrap, ParameterizedSql main, IReadOnlyList<SqlParameterInfo> relationParams, ParameterizedSql filter)
+            => new ParameterizedSql(wrap, main.Parameters.Concat(relationParams).ToList())
+                .Append(filter);
+
+        /// <summary>
+        /// Per-parent paged collection: compute a window partitioned by the parent
+        /// join-id columns so each parent gets its own row-number and total, then
+        /// filter on the row number. This keeps parent A's limit from consuming
+        /// parent B's rows — a flat global LIMIT cannot do that. Partition by the
+        /// parent key columns as exposed by the inner `a` sub-query (JoinId /
+        /// JoinId_&lt;i&gt;); order by the child sort columns against the `b` alias —
+        /// both valid at the join level where the window is computed.
+        /// </summary>
+        private static ParameterizedSql BuildPagedCollectionSql(SqlBuildContext ctx, TableJoin tableJoin, string projection, string fromClause, ParameterizedSql filter, ParameterizedSql main, IReadOnlyList<SqlParameterInfo> relationParams)
+        {
+            var dialect = ctx.Dialect;
+            var ea = dialect.EscapeIdentifier("a");
+            var srcCount = tableJoin.FromColumns.Count;
+            var partitionCols = Enumerable.Range(0, srcCount)
+                .Select(i => $"{ea}.{dialect.EscapeIdentifier(JoinKeyNames.JoinIdAt(i, srcCount))}");
+            var windowOrder = RenderSortColumns(dialect, tableJoin.ConnectedTable.DbTable, tableJoin.ConnectedTable.Sort, "b");
+
+            var pagedSql = dialect.ConnectedPaging(
+                projection,
+                fromClause + filter.Sql,
+                partitionCols,
+                windowOrder,
+                PagedKeys.RowNumber,
+                PagedKeys.Total,
+                tableJoin.ConnectedTable.Offset,
+                tableJoin.ConnectedTable.Limit);
+
+            return new ParameterizedSql(pagedSql, main.Parameters.Concat(relationParams).Concat(filter.Parameters).ToList());
+        }
+
+        /// <summary>
+        /// Non-paged multi-row join (explicit `_join_`, and non-IncludeResult
+        /// collections). A LIMIT here is GLOBAL across every parent's joined rows,
+        /// so a DEFAULT limit would silently drop matched rows once the combined
+        /// child count crossed it (dialect.Pagination defaults null -> LIMIT 100).
+        /// Per-parent windowing is reserved for the IncludeResult paged path (it
+        /// needs __rn/__total columns the flat reader cannot consume). So apply only
+        /// an EXPLICITLY requested limit/offset — documented as global — and
+        /// otherwise emit NO limit (the -1 sentinel) so every parent keeps all its
+        /// matched rows instead of being silently truncated at 100.
+        /// </summary>
+        private static ParameterizedSql BuildFlatCollectionSql(SqlBuildContext ctx, TableJoin tableJoin, string wrap, ParameterizedSql filter, ParameterizedSql main, IReadOnlyList<SqlParameterInfo> relationParams)
+        {
+            var dialect = ctx.Dialect;
             var effectiveLimit = tableJoin.ConnectedTable.Limit ?? -1;
             var sortCols = RenderSortColumns(dialect, tableJoin.ConnectedTable.DbTable, tableJoin.ConnectedTable.Sort);
             var pagination = dialect.Pagination(sortCols, tableJoin.ConnectedTable.Offset, effectiveLimit);
@@ -391,6 +428,41 @@ namespace BifrostQL.Core.QueryModel
         }
 
         /// <summary>
+        /// Builds a <see cref="TableJoin"/> from this node to a resolved
+        /// <paramref name="connectedTable"/> link. Centralizes the shared shape of
+        /// the single-link, multi-link, and many-to-many branches in
+        /// <see cref="ConnectLinks"/>; each caller supplies its own source/destination
+        /// column pair(s), <see cref="QueryType"/>, and (for many-to-many) the
+        /// junction <paramref name="bridge"/>. Passing <c>null</c> column lists lets
+        /// the single-column branches fall back to <see cref="TableJoin"/>'s singleton
+        /// default over the scalar <paramref name="fromColumn"/>/<paramref name="connectedColumn"/>.
+        /// </summary>
+        private TableJoin BuildTableJoin(
+            GqlObjectQuery connectedTable,
+            string name,
+            string connectedColumn,
+            IReadOnlyList<string>? connectedColumns,
+            string fromColumn,
+            IReadOnlyList<string>? fromColumns,
+            QueryType queryType,
+            JunctionBridge? bridge = null)
+        {
+            return new TableJoin
+            {
+                Alias = connectedTable.Alias,
+                Name = name,
+                ConnectedTable = connectedTable,
+                ConnectedColumn = connectedColumn,
+                ConnectedColumns = connectedColumns!,
+                FromTable = this,
+                FromColumn = fromColumn,
+                FromColumns = fromColumns!,
+                QueryType = queryType,
+                Bridge = bridge,
+            };
+        }
+
+        /// <summary>
         /// Converts links to joins and connects them to the parent table
         /// </summary>
         /// <param name="dbModel"></param>
@@ -410,19 +482,13 @@ namespace BifrostQL.Core.QueryModel
                 {
                     link.TableName = singleLink.ParentTable.DbName;
                     link.SchemaName = singleLink.ParentTable.TableSchema;
-                    var join = new TableJoin
-                    {
-                        Alias = link.Alias,
-                        Name = fieldName,
-                        ConnectedTable = link,
-                        ConnectedColumn = singleLink.ParentId.ColumnName,
-                        ConnectedColumns = singleLink.ParentIds.Select(c => c.ColumnName).ToArray(),
-                        FromTable = this,
-                        FromColumn = singleLink.ChildId.ColumnName,
-                        FromColumns = singleLink.ChildIds.Select(c => c.ColumnName).ToArray(),
-                        QueryType = QueryType.Single,
-                    };
-                    Joins.Add(join);
+                    Joins.Add(BuildTableJoin(
+                        link, fieldName,
+                        connectedColumn: singleLink.ParentId.ColumnName,
+                        connectedColumns: singleLink.ParentIds.Select(c => c.ColumnName).ToArray(),
+                        fromColumn: singleLink.ChildId.ColumnName,
+                        fromColumns: singleLink.ChildIds.Select(c => c.ColumnName).ToArray(),
+                        queryType: QueryType.Single));
                     continue;
                 }
                 if (thisDto.MultiLinks.TryGetValue(fieldName, out var multiLink)
@@ -430,18 +496,13 @@ namespace BifrostQL.Core.QueryModel
                 {
                     link.TableName = multiLink.ChildTable.DbName;
                     link.SchemaName = multiLink.ChildTable.TableSchema;
-                    var join = new TableJoin
-                    {
-                        Alias = link.Alias,
-                        Name = fieldName,
-                        ConnectedTable = link,
-                        ConnectedColumn = multiLink.ChildId.ColumnName,
-                        ConnectedColumns = multiLink.ChildIds.Select(c => c.ColumnName).ToArray(),
-                        FromTable = this,
-                        FromColumn = multiLink.ParentId.ColumnName,
-                        FromColumns = multiLink.ParentIds.Select(c => c.ColumnName).ToArray(),
-                        QueryType = QueryType.Join,
-                    };
+                    var join = BuildTableJoin(
+                        link, fieldName,
+                        connectedColumn: multiLink.ChildId.ColumnName,
+                        connectedColumns: multiLink.ChildIds.Select(c => c.ColumnName).ToArray(),
+                        fromColumn: multiLink.ParentId.ColumnName,
+                        fromColumns: multiLink.ParentIds.Select(c => c.ColumnName).ToArray(),
+                        queryType: QueryType.Join);
                     // Polymorphic link: constrain the child node to its discriminator
                     // value (e.g. notes.entity_type = 'company'). Applying it to the
                     // child node's Filter means the existing filter machinery emits it
@@ -474,24 +535,20 @@ namespace BifrostQL.Core.QueryModel
                     // and lose the source partition.
                     link.TableName = m2mLink.TargetTable.DbName;
                     link.SchemaName = m2mLink.TargetTable.TableSchema;
-                    var join = new TableJoin
-                    {
-                        Alias = link.Alias,
-                        Name = link.GraphQlName,
-                        ConnectedTable = link,
-                        ConnectedColumn = m2mLink.TargetColumn.ColumnName,
-                        FromTable = this,
-                        FromColumn = m2mLink.SourceColumn.ColumnName,
-                        QueryType = QueryType.Join,
-                        Bridge = new JunctionBridge
+                    Joins.Add(BuildTableJoin(
+                        link, link.GraphQlName,
+                        connectedColumn: m2mLink.TargetColumn.ColumnName,
+                        connectedColumns: null,
+                        fromColumn: m2mLink.SourceColumn.ColumnName,
+                        fromColumns: null,
+                        queryType: QueryType.Join,
+                        bridge: new JunctionBridge
                         {
                             JunctionTable = m2mLink.JunctionTable.DbName,
                             JunctionSchema = m2mLink.JunctionTable.TableSchema,
                             JunctionSourceColumn = m2mLink.JunctionSourceColumn.ColumnName,
                             JunctionTargetColumn = m2mLink.JunctionTargetColumn.ColumnName,
-                        },
-                    };
-                    Joins.Add(join);
+                        }));
                     continue;
                 }
                 throw new BifrostExecutionError($"Unable to find join {link.GraphQlName} on table {TableName}");

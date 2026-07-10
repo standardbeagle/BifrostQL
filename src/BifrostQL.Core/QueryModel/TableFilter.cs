@@ -116,6 +116,28 @@ namespace BifrostQL.Core.QueryModel
             };
         }
 
+        /// <summary>
+        /// Identifies the column a single filter predicate targets, bundling the
+        /// three loose values (<paramref name="Table"/> alias/name,
+        /// <paramref name="Field"/> DB column, <paramref name="ColumnType"/> for
+        /// dialect casts) that were previously threaded as separate arguments.
+        /// </summary>
+        internal readonly record struct FilterColumnRef(string? Table, string Field, string? ColumnType);
+
+        /// <summary>Coarse operator families used to dispatch a single predicate.</summary>
+        private enum OperatorKind { WildcardLike, RawLike, InList, Between, Comparison }
+
+        private static OperatorKind Classify(string op) => op switch
+        {
+            FilterOperators.Contains or FilterOperators.NContains
+                or FilterOperators.StartsWith or FilterOperators.NStartsWith
+                or FilterOperators.EndsWith or FilterOperators.NEndsWith => OperatorKind.WildcardLike,
+            FilterOperators.Like or FilterOperators.NLike => OperatorKind.RawLike,
+            FilterOperators.In or FilterOperators.NIn => OperatorKind.InList,
+            FilterOperators.Between or FilterOperators.NBetween => OperatorKind.Between,
+            _ => OperatorKind.Comparison,
+        };
+
         public static ParameterizedSql GetSingleFilterParameterized(
             ISqlDialect dialect,
             SqlParameterCollection parameters,
@@ -124,21 +146,29 @@ namespace BifrostQL.Core.QueryModel
             string op,
             object? value,
             string? columnType = null)
+            => GetSingleFilterParameterized(dialect, parameters, new FilterColumnRef(table, field, columnType), op, value);
+
+        internal static ParameterizedSql GetSingleFilterParameterized(
+            ISqlDialect dialect,
+            SqlParameterCollection parameters,
+            FilterColumnRef column,
+            string op,
+            object? value)
         {
-            var columnRef = table == null
-                ? dialect.EscapeIdentifier(field)
-                : $"{dialect.EscapeIdentifier(table)}.{dialect.EscapeIdentifier(field)}";
+            var columnRef = column.Table == null
+                ? dialect.EscapeIdentifier(column.Field)
+                : $"{dialect.EscapeIdentifier(column.Table)}.{dialect.EscapeIdentifier(column.Field)}";
 
             // Handle NULL comparisons (no parameters needed)
-            if (op == "_eq" && value == null)
+            if (op == FilterOperators.Eq && value == null)
                 return new ParameterizedSql($"{columnRef} IS NULL", Array.Empty<SqlParameterInfo>());
-            if (op == "_neq" && value == null)
+            if (op == FilterOperators.Neq && value == null)
                 return new ParameterizedSql($"{columnRef} IS NOT NULL", Array.Empty<SqlParameterInfo>());
 
             // The schema-advertised `_null: Boolean` operator: `_null: true` tests
             // for NULL, `_null: false` for NOT NULL. It never binds a parameter and
             // must not fall through to a `column = @param` comparison.
-            if (op == "_null")
+            if (op == FilterOperators.Null)
             {
                 var wantsNull = value is not bool b || b;
                 return new ParameterizedSql(
@@ -154,68 +184,83 @@ namespace BifrostQL.Core.QueryModel
                 return new ParameterizedSql($"{columnRef} {dialect.GetOperator(op)} {refSql}", Array.Empty<SqlParameterInfo>());
             }
 
+            return Classify(op) switch
+            {
+                OperatorKind.WildcardLike => BuildWildcardLike(dialect, parameters, columnRef, op, value),
+                OperatorKind.RawLike => BuildRawLike(dialect, parameters, columnRef, op, value),
+                OperatorKind.InList => BuildInList(dialect, parameters, columnRef, column.ColumnType, op, value),
+                OperatorKind.Between => BuildBetween(dialect, parameters, columnRef, column.ColumnType, op, value),
+                _ => BuildComparison(dialect, parameters, columnRef, column.ColumnType, op, value),
+            };
+        }
+
+        // LIKE patterns. These operators wrap the user's VALUE in wildcards, so the
+        // value itself must match literally: escape LIKE metacharacters in the bound
+        // value and declare the escape character, otherwise `_contains: "100%"`
+        // matches everything starting with "100" and a bare "%" matches the whole
+        // table.
+        private static ParameterizedSql BuildWildcardLike(ISqlDialect dialect, SqlParameterCollection parameters, string columnRef, string op, object? value)
+        {
             var sqlOp = dialect.GetOperator(op);
+            var patternType = op is FilterOperators.Contains or FilterOperators.NContains ? LikePatternType.Contains
+                : op is FilterOperators.StartsWith or FilterOperators.NStartsWith ? LikePatternType.StartsWith
+                : LikePatternType.EndsWith;
+            var escapedValue = value is string s ? dialect.EscapeLikeValue(s) : value;
+            var paramName = parameters.AddParameter(escapedValue);
+            return new ParameterizedSql(
+                $"{columnRef} {sqlOp} {dialect.LikePattern(paramName, patternType)}{dialect.LikeEscapeClause}",
+                parameters.Parameters.TakeLast(1).ToList());
+        }
 
-            // LIKE patterns. These operators wrap the user's VALUE in wildcards, so
-            // the value itself must match literally: escape LIKE metacharacters in
-            // the bound value and declare the escape character, otherwise
-            // `_contains: "100%"` matches everything starting with "100" and a bare
-            // "%" matches the whole table. (_like/_nlike below intentionally pass
-            // the raw pattern through — the caller owns the wildcards there.)
-            if (op is "_contains" or "_ncontains" or "_starts_with" or "_nstarts_with" or "_ends_with" or "_nends_with")
-            {
-                var patternType = op is "_contains" or "_ncontains" ? LikePatternType.Contains
-                    : op is "_starts_with" or "_nstarts_with" ? LikePatternType.StartsWith
-                    : LikePatternType.EndsWith;
-                var escapedValue = value is string s ? dialect.EscapeLikeValue(s) : value;
-                var paramName = parameters.AddParameter(escapedValue);
-                return new ParameterizedSql(
-                    $"{columnRef} {sqlOp} {dialect.LikePattern(paramName, patternType)}{dialect.LikeEscapeClause}",
-                    parameters.Parameters.TakeLast(1).ToList());
-            }
-            if (op is "_like" or "_nlike")
-            {
-                var paramName = parameters.AddParameter(value);
-                return new ParameterizedSql($"{columnRef} {sqlOp} {paramName}",
-                    parameters.Parameters.TakeLast(1).ToList());
-            }
+        // _like/_nlike intentionally pass the raw pattern through — the caller owns
+        // the wildcards there.
+        private static ParameterizedSql BuildRawLike(ISqlDialect dialect, SqlParameterCollection parameters, string columnRef, string op, object? value)
+        {
+            var sqlOp = dialect.GetOperator(op);
+            var paramName = parameters.AddParameter(value);
+            return new ParameterizedSql($"{columnRef} {sqlOp} {paramName}",
+                parameters.Parameters.TakeLast(1).ToList());
+        }
 
-            // IN clause. Each parameter is cast to the column type (Postgres: a text-bound
-            // value won't compare against e.g. a date column — see CastParameterReference).
-            if (op is "_in" or "_nin")
-            {
-                var values = (value as IEnumerable<object?>) ?? Array.Empty<object?>();
-                // An empty list makes "col IN ()" / "col NOT IN ()" — a syntax
-                // error every dialect rejects, turning a client-supplied empty
-                // array into a 500. Emit the equivalent constant predicate
-                // instead: nothing is IN an empty set (always false); everything
-                // is NOT IN it (always true).
-                if (!values.Any())
-                    return new ParameterizedSql(op == "_in" ? "1 = 0" : "1 = 1", Array.Empty<SqlParameterInfo>());
-                parameters.AddParameters(values);
-                var added = parameters.Parameters.TakeLast(values.Count()).ToList();
-                var paramRefs = string.Join(",", added.Select(p => dialect.CastParameterReference(p.Name, columnType)));
-                return new ParameterizedSql($"{columnRef} {sqlOp} ({paramRefs})", added);
-            }
+        // IN clause. Each parameter is cast to the column type (Postgres: a text-bound
+        // value won't compare against e.g. a date column — see CastParameterReference).
+        private static ParameterizedSql BuildInList(ISqlDialect dialect, SqlParameterCollection parameters, string columnRef, string? columnType, string op, object? value)
+        {
+            var sqlOp = dialect.GetOperator(op);
+            var values = (value as IEnumerable<object?>) ?? Array.Empty<object?>();
+            // An empty list makes "col IN ()" / "col NOT IN ()" — a syntax error every
+            // dialect rejects, turning a client-supplied empty array into a 500. Emit
+            // the equivalent constant predicate instead: nothing is IN an empty set
+            // (always false); everything is NOT IN it (always true).
+            if (!values.Any())
+                return new ParameterizedSql(op == FilterOperators.In ? "1 = 0" : "1 = 1", Array.Empty<SqlParameterInfo>());
+            parameters.AddParameters(values);
+            var added = parameters.Parameters.TakeLast(values.Count()).ToList();
+            var paramRefs = string.Join(",", added.Select(p => dialect.CastParameterReference(p.Name, columnType)));
+            return new ParameterizedSql($"{columnRef} {sqlOp} ({paramRefs})", added);
+        }
 
-            // BETWEEN clause
-            if (op is "_between" or "_nbetween")
-            {
-                var values = ((value as IEnumerable<object?>) ?? Array.Empty<object?>()).ToArray();
-                if (values.Length < 2)
-                    // Fewer than two bounds cannot form a BETWEEN. Falling through to the
-                    // default comparison would emit `col BETWEEN @p` with the whole array
-                    // bound to one parameter — malformed SQL surfacing as an opaque 500.
-                    throw new BifrostExecutionError(
-                        $"Operator '{op}' requires exactly two values (lower and upper bound); got {values.Length}.");
+        private static ParameterizedSql BuildBetween(ISqlDialect dialect, SqlParameterCollection parameters, string columnRef, string? columnType, string op, object? value)
+        {
+            var sqlOp = dialect.GetOperator(op);
+            var values = ((value as IEnumerable<object?>) ?? Array.Empty<object?>()).ToArray();
+            if (values.Length < 2)
+                // Fewer than two bounds cannot form a BETWEEN. Falling through to the
+                // default comparison would emit `col BETWEEN @p` with the whole array
+                // bound to one parameter — malformed SQL surfacing as an opaque 500.
+                throw new BifrostExecutionError(
+                    $"Operator '{op}' requires exactly two values (lower and upper bound); got {values.Length}.");
 
-                var p1 = dialect.CastParameterReference(parameters.AddParameter(values[0]), columnType);
-                var p2 = dialect.CastParameterReference(parameters.AddParameter(values[1]), columnType);
-                return new ParameterizedSql($"{columnRef} {sqlOp} {p1} AND {p2}",
-                    parameters.Parameters.TakeLast(2).ToList());
-            }
+            var p1 = dialect.CastParameterReference(parameters.AddParameter(values[0]), columnType);
+            var p2 = dialect.CastParameterReference(parameters.AddParameter(values[1]), columnType);
+            return new ParameterizedSql($"{columnRef} {sqlOp} {p1} AND {p2}",
+                parameters.Parameters.TakeLast(2).ToList());
+        }
 
-            // Simple comparison (default)
+        // Simple comparison (default)
+        private static ParameterizedSql BuildComparison(ISqlDialect dialect, SqlParameterCollection parameters, string columnRef, string? columnType, string op, object? value)
+        {
+            var sqlOp = dialect.GetOperator(op);
             var param = dialect.CastParameterReference(parameters.AddParameter(value), columnType);
             return new ParameterizedSql($"{columnRef} {sqlOp} {param}",
                 parameters.Parameters.TakeLast(1).ToList());
@@ -299,18 +344,20 @@ namespace BifrostQL.Core.QueryModel
         private sealed class JoinAliasAllocator { private int _n; public string Next() => $"j{_n++}"; }
 
         internal FilterParts RenderParts(IDbModel model, ISqlDialect dialect, SqlParameterCollection parameters, string? alias)
-            => RenderParts(model, dialect, parameters, alias, new JoinAliasAllocator());
+            => RenderParts(new SqlBuildContext(model, dialect, parameters), alias, new JoinAliasAllocator());
 
-        private FilterParts RenderParts(IDbModel model, ISqlDialect dialect, SqlParameterCollection parameters, string? alias, JoinAliasAllocator aliases)
+        private FilterParts RenderParts(SqlBuildContext ctx, string? alias, JoinAliasAllocator aliases)
         {
+            var dialect = ctx.Dialect;
+            var parameters = ctx.Parameters;
             if (Next == null)
             {
-                if (And.Count > 0) return CombineParts(And, "AND", model, dialect, parameters, alias, aliases);
-                if (Or.Count > 0) return CombineParts(Or, "OR", model, dialect, parameters, alias, aliases);
+                if (And.Count > 0) return CombineParts(And, "AND", ctx, alias, aliases);
+                if (Or.Count > 0) return CombineParts(Or, "OR", ctx, alias, aliases);
                 throw new BifrostExecutionError("Filter object missing all required fields.");
             }
 
-            var table = model.GetTableFromDbName(TableName ?? throw new BifrostExecutionError("TableFilter with undefined TableName"));
+            var table = ctx.Model.GetTableFromDbName(TableName ?? throw new BifrostExecutionError("TableFilter with undefined TableName"));
             // A leaf predicate is `column: { _op: value }` — `Next` is the terminal
             // operator (Relation) node. A relationship sub-filter instead has a nested
             // column (`Join`) or an implicit/explicit AND/OR wrapper as `Next`, and must
@@ -355,9 +402,9 @@ namespace BifrostQL.Core.QueryModel
             return new FilterParts(fullJoin, "", joinParams.ToList());
         }
 
-        private FilterParts CombineParts(List<TableFilter> children, string op, IDbModel model, ISqlDialect dialect, SqlParameterCollection parameters, string? alias, JoinAliasAllocator aliases)
+        private FilterParts CombineParts(List<TableFilter> children, string op, SqlBuildContext ctx, string? alias, JoinAliasAllocator aliases)
         {
-            var rendered = children.Select(f => f.RenderParts(model, dialect, parameters, alias, aliases)).ToList();
+            var rendered = children.Select(f => f.RenderParts(ctx, alias, aliases)).ToList();
 
             // A relationship sub-filter contributes an INNER JOIN, which narrows
             // (AND semantics). ORing it with other branches can't be expressed by
@@ -400,6 +447,25 @@ namespace BifrostQL.Core.QueryModel
                 $"Relationship filter references unknown column '{columnName}' on table '{parent.DbName}'.");
         }
 
+        /// <summary>
+        /// Builds the shared <c>SELECT DISTINCT {ParentId} AS joinid [, {value}] FROM
+        /// {parentTableRef} {tail}</c> skeleton every relationship sub-query starts
+        /// from. Schema-qualifies the FROM so non-default-schema parents resolve to
+        /// the right table; column references stay table-name-qualified because a
+        /// schema-qualified FROM without an alias still exposes the bare table name in
+        /// every supported dialect. <paramref name="valueProjection"/> (already
+        /// including its leading comma) adds the optional value column for
+        /// value-returning contexts; <paramref name="tail"/> is the trailing
+        /// <c>INNER JOIN …</c> / <c>WHERE …</c> fragment (empty for none).
+        /// </summary>
+        private static string RelationshipSubquery(TableLinkDto link, ISqlDialect dialect, string tail, string valueProjection = "")
+        {
+            var ejoinid = dialect.EscapeIdentifier("joinid");
+            var parentTableRef = dialect.TableReference(link.ParentTable.TableSchema, link.ParentTable.DbName);
+            var tailPart = string.IsNullOrEmpty(tail) ? "" : " " + tail;
+            return $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid}{valueProjection} FROM {parentTableRef}{tailPart}";
+        }
+
         private static (string sql, List<SqlParameterInfo> parameters) BuildSqlParameterized(
             TableFilter filter,
             TableLinkDto link,
@@ -412,11 +478,6 @@ namespace BifrostQL.Core.QueryModel
                 var ej = dialect.EscapeIdentifier("j");
                 var ejoinid = dialect.EscapeIdentifier("joinid");
                 var evalue = dialect.EscapeIdentifier("value");
-                // Schema-qualify the FROM so non-default-schema parents resolve to the
-                // right table. Column references stay table-name-qualified: a
-                // schema-qualified FROM without an alias still exposes the bare table
-                // name in every supported dialect.
-                var parentTableRef = dialect.TableReference(link.ParentTable.TableSchema, link.ParentTable.DbName);
 
                 // Multiple sibling predicates on one relationship form an implicit AND
                 // (`posts: { published: {_eq:true}, featured: {_eq:true} }`) or an explicit
@@ -432,7 +493,7 @@ namespace BifrostQL.Core.QueryModel
                             $"Relationship filter on '{link.ChildTable.DbName}' via link '{link.Name}' " +
                             "cannot combine multiple predicates in a value-returning context.");
                     var pred = BuildRelationshipLeafPredicate(filter, link, dialect, parameters);
-                    var combined = $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid} FROM {parentTableRef} WHERE {pred.Sql}";
+                    var combined = RelationshipSubquery(link, dialect, $"WHERE {pred.Sql}");
                     return (combined, pred.Parameters.ToList());
                 }
 
@@ -442,7 +503,8 @@ namespace BifrostQL.Core.QueryModel
                         when link.ParentTable.SingleLinks.TryGetValue(filter.ColumnName, out var nextLink):
                         {
                             var (nextSql, nextParams) = BuildSqlParameterized(filter.Next!, nextLink, dialect, parameters);
-                            var sql = $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid}{(includeValue ? $", {evalue}" : "")} FROM {parentTableRef} INNER JOIN ({nextSql}) {ej} ON {ej}.{ejoinid} = {dialect.EscapeIdentifier(link.ParentTable.DbName)}.{dialect.EscapeIdentifier(nextLink.ChildId.ColumnName)}";
+                            var innerJoin = $"INNER JOIN ({nextSql}) {ej} ON {ej}.{ejoinid} = {dialect.EscapeIdentifier(link.ParentTable.DbName)}.{dialect.EscapeIdentifier(nextLink.ChildId.ColumnName)}";
+                            var sql = RelationshipSubquery(link, dialect, innerJoin, valueProjection: includeValue ? $", {evalue}" : "");
                             return (sql, nextParams);
                         }
                     case FilterType.Join:
@@ -453,14 +515,14 @@ namespace BifrostQL.Core.QueryModel
                         if (includeValue)
                         {
                             return (
-                                $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid}, {dialect.EscapeIdentifier(parentColumn.DbName)} AS {evalue} FROM {parentTableRef}",
+                                RelationshipSubquery(link, dialect, tail: "", valueProjection: $", {dialect.EscapeIdentifier(parentColumn.DbName)} AS {evalue}"),
                                 new List<SqlParameterInfo>());
                         }
                         else
                         {
                             var filterResult = GetSingleFilterParameterized(dialect, parameters, link.ParentTable.DbName, parentColumn.DbName, filter.Next!.RelationName, filter.Next.Value, parentColumn.DataType);
                             return (
-                                $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid} FROM {parentTableRef} WHERE {filterResult.Sql}",
+                                RelationshipSubquery(link, dialect, $"WHERE {filterResult.Sql}"),
                                 filterResult.Parameters.ToList());
                         }
                 }

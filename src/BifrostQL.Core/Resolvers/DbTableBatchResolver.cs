@@ -54,9 +54,15 @@ namespace BifrostQL.Core.Resolvers
             {
                 await conn.OpenAsync(ct);
                 transaction = await conn.BeginTransactionAsync(ct);
+                // All per-action executors share the same table/dialect/model,
+                // connection + transaction, and captured contexts; bundle them once
+                // so the executors take only their per-action data.
+                var execContext = new BatchExecutionContext(
+                    _table, mutationTransformers, model, dialect, conn, transaction,
+                    userContext, transformContext, moduleArguments, ct);
                 foreach (var action in actions)
                 {
-                    var outcome = await ExecuteAction(action, _table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext, moduleArguments, ct);
+                    var outcome = await ExecuteAction(execContext, action);
                     if (outcome is not null)
                         outcomes.Add(outcome);
                 }
@@ -137,55 +143,49 @@ namespace BifrostQL.Core.Resolvers
             => Utils.MetadataNumber.PositiveInt(
                 table.GetMetadataValue(MetadataKeys.Batch.MaxSize), DefaultMaxBatchSize, MetadataKeys.Batch.MaxSize);
 
-        private static async Task<BatchActionOutcome?> ExecuteAction(
-            Dictionary<string, object?> action,
-            IDbTable table,
-            IMutationTransformers mutationTransformers,
-            IDbModel model,
-            ISqlDialect dialect,
-            DbConnection conn,
-            DbTransaction transaction,
-            IDictionary<string, object?> userContext,
-            MutationTransformContext transformContext,
-            IReadOnlyDictionary<string, object?> moduleArguments,
-            CancellationToken ct)
+        /// <summary>
+        /// The invariant-per-batch collaborators every per-action executor needs:
+        /// the target table/dialect/model, the shared connection + transaction all
+        /// actions commit through, the captured user/transform contexts, the batch-wide
+        /// module arguments, and the cancellation token. Bundled so the executors take
+        /// only their per-action data dictionary.
+        /// </summary>
+        private sealed record BatchExecutionContext(
+            IDbTable Table,
+            IMutationTransformers MutationTransformers,
+            IDbModel Model,
+            ISqlDialect Dialect,
+            DbConnection Conn,
+            DbTransaction Transaction,
+            IDictionary<string, object?> UserContext,
+            MutationTransformContext TransformContext,
+            IReadOnlyDictionary<string, object?> ModuleArguments,
+            CancellationToken Ct);
+
+        private static async Task<BatchActionOutcome?> ExecuteAction(BatchExecutionContext ctx, Dictionary<string, object?> action)
         {
-            if (action.TryGetValue("insert", out var insertObj) && insertObj is Dictionary<string, object?> insertData)
+            if (!MutationActionSelector.TryFromAction(action, out var which, out var data))
+                return null;
+
+            return which switch
             {
-                return await ExecuteInsert(insertData, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext, ct);
-            }
-            if (action.TryGetValue("update", out var updateObj) && updateObj is Dictionary<string, object?> updateData)
-            {
-                return await ExecuteUpdate(updateData, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext, ct);
-            }
-            if (action.TryGetValue("delete", out var deleteObj) && deleteObj is Dictionary<string, object?> deleteData)
-            {
-                return await ExecuteDelete(deleteData, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext, moduleArguments, ct);
-            }
-            if (action.TryGetValue("upsert", out var upsertObj) && upsertObj is Dictionary<string, object?> upsertData)
-            {
-                return await ExecuteUpsert(upsertData, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext, ct);
-            }
-            return null;
+                MutationAction.Insert => await ExecuteInsert(ctx, data),
+                MutationAction.Update => await ExecuteUpdate(ctx, data),
+                MutationAction.Delete => await ExecuteDelete(ctx, data),
+                MutationAction.Upsert => await ExecuteUpsert(ctx, data),
+                _ => null,
+            };
         }
 
-        private static async Task<BatchActionOutcome?> ExecuteInsert(
-            Dictionary<string, object?> data,
-            IDbTable table,
-            IMutationTransformers mutationTransformers,
-            IDbModel model,
-            ISqlDialect dialect,
-            DbConnection conn,
-            DbTransaction transaction,
-            IDictionary<string, object?> userContext,
-            MutationTransformContext transformContext,
-            CancellationToken ct)
+        private static async Task<BatchActionOutcome?> ExecuteInsert(BatchExecutionContext ctx, Dictionary<string, object?> data)
         {
             if (data.Count == 0) return null;
+            var table = ctx.Table;
+            var dialect = ctx.Dialect;
 
             // Mutation transformers (e.g. the authorization policy engine) gate
             // the insert before any SQL is built; non-empty Errors abort it.
-            var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Insert, data, transformContext);
+            var transformResult = await ctx.MutationTransformers.TransformAsync(table, MutationType.Insert, data, ctx.TransformContext);
             if (transformResult.Errors.Length > 0)
                 throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
@@ -196,30 +196,20 @@ namespace BifrostQL.Core.Resolvers
             data = ToDbColumnKeys(table, transformResult.Data);
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var columns = string.Join(",", data.Keys.Select(k => dialect.EscapeIdentifier(k)));
-            var values = string.Join(",", data.Keys.Select(k => ValuePlaceholder(dialect, table, k)));
-            var sql = $"INSERT INTO {tableRef}({columns}) VALUES({values});";
-            await using var cmd = conn.CreateCommand();
+            var sql = $"{MutationCommandExecutor.BuildInsertInto(dialect, table, tableRef, data.Keys)};";
+            await using var cmd = ctx.Conn.CreateCommand();
             cmd.CommandText = sql;
-            cmd.Transaction = transaction;
+            cmd.Transaction = ctx.Transaction;
             AddParameters(cmd, data);
-            var affected = await cmd.ExecuteNonQueryAsync(ct);
+            var affected = await cmd.ExecuteNonQueryAsync(ctx.Ct);
             return new BatchActionOutcome(affected, MutationType.Insert, data, transformResult.StateTransition);
         }
 
-        private static async Task<BatchActionOutcome?> ExecuteUpdate(
-            Dictionary<string, object?> data,
-            IDbTable table,
-            IMutationTransformers mutationTransformers,
-            IDbModel model,
-            ISqlDialect dialect,
-            DbConnection conn,
-            DbTransaction transaction,
-            IDictionary<string, object?> userContext,
-            MutationTransformContext transformContext,
-            CancellationToken ct)
+        private static async Task<BatchActionOutcome?> ExecuteUpdate(BatchExecutionContext ctx, Dictionary<string, object?> data)
         {
             if (data.Count == 0) return null;
+            var table = ctx.Table;
+            var dialect = ctx.Dialect;
 
             var caseData = new Dictionary<string, object?>(data, StringComparer.OrdinalIgnoreCase);
             // keyData is DB-name space (drives WHERE + current-row load); tolerant of
@@ -233,20 +223,20 @@ namespace BifrostQL.Core.Resolvers
 
             if (!keyData.Any() || !standardData.Any()) return null;
 
-            var currentRow = await MutationCommandExecutor.LoadCurrentStateMachineRow(conn, transaction, dialect, table, keyData);
+            var currentRow = await MutationCommandExecutor.LoadCurrentStateMachineRow(ctx.Conn, ctx.Transaction, dialect, table, keyData);
             var updateTransformContext = currentRow is null
-                ? transformContext
+                ? ctx.TransformContext
                 : new MutationTransformContext
                 {
-                    Model = transformContext.Model,
-                    UserContext = transformContext.UserContext,
+                    Model = ctx.TransformContext.Model,
+                    UserContext = ctx.TransformContext.UserContext,
                     CurrentRow = currentRow,
-                    Services = transformContext.Services,
+                    Services = ctx.TransformContext.Services,
                 };
 
             // Mutation transformers (e.g. the authorization policy engine) gate
             // the update before any SQL is built; non-empty Errors abort it.
-            var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Update, caseData, updateTransformContext);
+            var transformResult = await ctx.MutationTransformers.TransformAsync(table, MutationType.Update, caseData, updateTransformContext);
             if (transformResult.Errors.Length > 0)
                 throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
@@ -266,47 +256,36 @@ namespace BifrostQL.Core.Resolvers
                 .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var setClause = string.Join(",", standardData.Select(kv => SetAssignment(dialect, table, kv.Key)));
-            var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
-            var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
-            await using var cmd = conn.CreateCommand();
+            var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, standardData.Keys, keyData.Keys, additionalFilter.WhereSuffix);
+            await using var cmd = ctx.Conn.CreateCommand();
             cmd.CommandText = sql;
-            cmd.Transaction = transaction;
+            cmd.Transaction = ctx.Transaction;
             AddParameters(cmd, updatedData);
             AddExtraParameters(cmd, additionalFilter.Parameters);
-            var affected = await cmd.ExecuteNonQueryAsync(ct);
+            var affected = await cmd.ExecuteNonQueryAsync(ctx.Ct);
             return new BatchActionOutcome(affected, MutationType.Update, updatedData, transformResult.StateTransition);
         }
 
-        private static async Task<BatchActionOutcome?> ExecuteDelete(
-            Dictionary<string, object?> data,
-            IDbTable table,
-            IMutationTransformers mutationTransformers,
-            IDbModel model,
-            ISqlDialect dialect,
-            DbConnection conn,
-            DbTransaction transaction,
-            IDictionary<string, object?> userContext,
-            MutationTransformContext transformContext,
-            IReadOnlyDictionary<string, object?> moduleArguments,
-            CancellationToken ct)
+        private static async Task<BatchActionOutcome?> ExecuteDelete(BatchExecutionContext ctx, Dictionary<string, object?> data)
         {
             if (data.Count == 0) return null;
+            var table = ctx.Table;
+            var dialect = ctx.Dialect;
 
             // Thread the captured module arguments (e.g. _hardDelete) so the
             // soft-delete transformer can read HardDeleteKey and skip the
             // DELETE→UPDATE rewrite, mirroring the single-row resolver.
-            var deleteTransformContext = moduleArguments.Count == 0
-                ? transformContext
+            var deleteTransformContext = ctx.ModuleArguments.Count == 0
+                ? ctx.TransformContext
                 : new MutationTransformContext
                 {
-                    Model = transformContext.Model,
-                    UserContext = transformContext.UserContext,
-                    Services = transformContext.Services,
-                    ModuleArguments = moduleArguments,
+                    Model = ctx.TransformContext.Model,
+                    UserContext = ctx.TransformContext.UserContext,
+                    Services = ctx.TransformContext.Services,
+                    ModuleArguments = ctx.ModuleArguments,
                 };
 
-            var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Delete, data, deleteTransformContext);
+            var transformResult = await ctx.MutationTransformers.TransformAsync(table, MutationType.Delete, data, deleteTransformContext);
             if (transformResult.Errors.Length > 0)
                 throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
@@ -318,23 +297,23 @@ namespace BifrostQL.Core.Resolvers
             // Rekey to DB column names so the PK split (via ColumnLookup) and the
             // emitted WHERE/SET share one name space even for sanitized columns.
             var dbData = ToDbColumnKeys(table, transformResult.Data);
+            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
 
             if (transformResult.MutationType == MutationType.Update)
             {
-                var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-                var keyData = dbData.Where(d => table.ColumnLookup.ContainsKey(d.Key) && table.ColumnLookup[d.Key].IsPrimaryKey)
-                    .ToDictionary(kv => kv.Key, kv => kv.Value);
-                var setData = dbData.Where(d => !table.ColumnLookup.ContainsKey(d.Key) || !table.ColumnLookup[d.Key].IsPrimaryKey)
-                    .ToDictionary(kv => kv.Key, kv => kv.Value);
-                var setClause = string.Join(",", setData.Select(kv => SetAssignment(dialect, table, kv.Key)));
-                var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
-                var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
-                await using var cmd = conn.CreateCommand();
+                // Soft-delete rewrite: primary-key columns scope the WHERE, everything
+                // else (the transformer-stamped deleted_at/deleted_by) is written in SET.
+                var keyData = dbData.Where(d => IsPrimaryKeyColumn(table, d.Key))
+                    .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+                var setData = dbData.Where(d => !keyData.ContainsKey(d.Key))
+                    .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+                var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, setData.Keys, keyData.Keys, additionalFilter.WhereSuffix);
+                await using var cmd = ctx.Conn.CreateCommand();
                 cmd.CommandText = sql;
-                cmd.Transaction = transaction;
+                cmd.Transaction = ctx.Transaction;
                 AddParameters(cmd, dbData);
                 AddExtraParameters(cmd, additionalFilter.Parameters);
-                var softAffected = await cmd.ExecuteNonQueryAsync(ct);
+                var softAffected = await cmd.ExecuteNonQueryAsync(ctx.Ct);
                 return new BatchActionOutcome(softAffected, MutationType.Update, transformResult.Data, transformResult.StateTransition);
             }
 
@@ -342,31 +321,21 @@ namespace BifrostQL.Core.Resolvers
             // enum-name → DB-value mapping on a predicate column) reaches the
             // WHERE clause and parameters, mirroring the soft-delete branch above.
             var deleteData = dbData;
-            var deleteTableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var deleteWhereClause = string.Join(" AND ", deleteData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
-            var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause}{additionalFilter.WhereSuffix};";
-            await using var deleteCmd = conn.CreateCommand();
+            var deleteSql = MutationCommandExecutor.BuildDeleteSql(dialect, tableRef, deleteData.Keys, additionalFilter.WhereSuffix);
+            await using var deleteCmd = ctx.Conn.CreateCommand();
             deleteCmd.CommandText = deleteSql;
-            deleteCmd.Transaction = transaction;
+            deleteCmd.Transaction = ctx.Transaction;
             AddParameters(deleteCmd, deleteData);
             AddExtraParameters(deleteCmd, additionalFilter.Parameters);
-            var deleteAffected = await deleteCmd.ExecuteNonQueryAsync(ct);
+            var deleteAffected = await deleteCmd.ExecuteNonQueryAsync(ctx.Ct);
             return new BatchActionOutcome(deleteAffected, MutationType.Delete, deleteData, transformResult.StateTransition);
         }
 
-        private static async Task<BatchActionOutcome?> ExecuteUpsert(
-            Dictionary<string, object?> data,
-            IDbTable table,
-            IMutationTransformers mutationTransformers,
-            IDbModel model,
-            ISqlDialect dialect,
-            DbConnection conn,
-            DbTransaction transaction,
-            IDictionary<string, object?> userContext,
-            MutationTransformContext transformContext,
-            CancellationToken ct)
+        private static async Task<BatchActionOutcome?> ExecuteUpsert(BatchExecutionContext ctx, Dictionary<string, object?> data)
         {
             if (data.Count == 0) return null;
+            var table = ctx.Table;
+            var dialect = ctx.Dialect;
 
             var caseData = new Dictionary<string, object?>(data, StringComparer.OrdinalIgnoreCase);
             // Build the statement in DB-column-name space so sanitized GraphQL
@@ -382,7 +351,7 @@ namespace BifrostQL.Core.Resolvers
             {
                 // An upsert that resolves to a single statement is gated as an
                 // update: it targets an existing or new row keyed by primary key.
-                var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Update, caseData, transformContext);
+                var transformResult = await ctx.MutationTransformers.TransformAsync(table, MutationType.Update, caseData, ctx.TransformContext);
                 if (transformResult.Errors.Length > 0)
                     throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
 
@@ -392,18 +361,18 @@ namespace BifrostQL.Core.Resolvers
                 // rewrite values, not primary-key membership. When no transformer
                 // applies, Transform returns the same data reference (no-op).
                 var upsertData = ToDbColumnKeys(table, transformResult.Data);
-                await using var cmd = conn.CreateCommand();
+                await using var cmd = ctx.Conn.CreateCommand();
                 cmd.CommandText = upsertSql;
-                cmd.Transaction = transaction;
+                cmd.Transaction = ctx.Transaction;
                 AddParameters(cmd, upsertData);
-                var affected = await cmd.ExecuteNonQueryAsync(ct);
+                var affected = await cmd.ExecuteNonQueryAsync(ctx.Ct);
                 return new BatchActionOutcome(affected, MutationType.Update, upsertData, transformResult.StateTransition);
             }
 
             if (keyColumns.Count > 0)
-                return await ExecuteUpdate(data, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext, ct);
+                return await ExecuteUpdate(ctx, data);
 
-            return await ExecuteInsert(data, table, mutationTransformers, model, dialect, conn, transaction, userContext, transformContext, ct);
+            return await ExecuteInsert(ctx, data);
         }
 
     }

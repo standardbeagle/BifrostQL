@@ -28,52 +28,52 @@ namespace BifrostQL.Core.Resolvers
             var table = _table;
             var mutationTransformers = context.RequestServices!.GetRequiredService<IMutationTransformers>();
 
-            if (context.HasArgument("sync"))
+            switch (MutationActionSelector.FromContext(context))
             {
-                return await SyncObject(context, table, mutationTransformers, model, conFactory, dialect);
+                case MutationAction.Sync:
+                    return await SyncObject(context, table, mutationTransformers, model, conFactory, dialect);
+                case MutationAction.Insert:
+                    return await InsertObject(context, table, mutationTransformers, model, conFactory, dialect);
+                case MutationAction.Update:
+                    return await UpdateObject(context, table, mutationTransformers, model, conFactory, dialect);
+                case MutationAction.Delete:
+                    return await DeleteObject(context, mutationTransformers, table, model, conFactory, dialect);
+                case MutationAction.Upsert:
+                    return await UpsertObject(context, table, mutationTransformers, model, conFactory, dialect);
+                default:
+                    return null;
             }
-            if (context.HasArgument("insert"))
-            {
-                return await InsertObject(context, table, mutationTransformers, model, conFactory, dialect);
-            }
-            if (context.HasArgument("update"))
-            {
-                return await UpdateObject(context, table, mutationTransformers, model, conFactory, dialect);
-            }
-            if (context.HasArgument("delete"))
-            {
-                return await DeleteObject(context, mutationTransformers, table, model, conFactory, dialect);
-            }
+        }
 
-            if (context.HasArgument("upsert"))
-            {
-                var propertyInfo = GetPropertyInfo(context, _table, "upsert");
-                if (!propertyInfo.data.Any())
-                    return 0;
+        private async Task<object?> UpsertObject(IBifrostFieldContext context, IDbTable table,
+            IMutationTransformers mutationTransformers, IDbModel model,
+            IDbConnFactory conFactory, ISqlDialect dialect)
+        {
+            var propertyInfo = GetPropertyInfo(context, _table, "upsert");
+            if (!propertyInfo.data.Any())
+                return 0;
 
-                // A true upsert is routed through the real Insert-or-Update decision
-                // rather than a native single-statement UpsertSql. A single statement
-                // (ON CONFLICT / MERGE) cannot express a transformer's AdditionalFilter
-                // — tenant/policy row-scope, soft-delete IS NULL — as a guard on its
-                // INSERT branch, so a caller could take over a row in another tenant or
-                // resurrect a soft-deleted one. It also runs the pipeline as Update with
-                // no CurrentRow, which skips created-* stamps, state-machine
-                // current-state validation and insert-required checks. Probing existence
-                // by primary key and dispatching to InsertObject / UpdateObject makes
-                // every one of those enforcements apply exactly as for a plain
-                // insert/update, and rebuilds the column list from post-transform data.
-                //
-                // The probe is a read outside the write transaction; the database's
-                // primary-key / unique constraint is the real arbiter (a lost insert
-                // race fails the INSERT, a lost update race affects 0 rows), so a
-                // concurrent writer cannot cause silent data corruption here.
-                if (propertyInfo.keyData.Any()
-                    && await RowExistsAsync(conFactory, dialect, table, propertyInfo.keyData, context.CancellationToken))
-                    return await UpdateObject(context, table, mutationTransformers, model, conFactory, dialect, "upsert");
+            // A true upsert is routed through the real Insert-or-Update decision
+            // rather than a native single-statement UpsertSql. A single statement
+            // (ON CONFLICT / MERGE) cannot express a transformer's AdditionalFilter
+            // — tenant/policy row-scope, soft-delete IS NULL — as a guard on its
+            // INSERT branch, so a caller could take over a row in another tenant or
+            // resurrect a soft-deleted one. It also runs the pipeline as Update with
+            // no CurrentRow, which skips created-* stamps, state-machine
+            // current-state validation and insert-required checks. Probing existence
+            // by primary key and dispatching to InsertObject / UpdateObject makes
+            // every one of those enforcements apply exactly as for a plain
+            // insert/update, and rebuilds the column list from post-transform data.
+            //
+            // The probe is a read outside the write transaction; the database's
+            // primary-key / unique constraint is the real arbiter (a lost insert
+            // race fails the INSERT, a lost update race affects 0 rows), so a
+            // concurrent writer cannot cause silent data corruption here.
+            if (propertyInfo.keyData.Any()
+                && await RowExistsAsync(conFactory, dialect, table, propertyInfo.keyData, context.CancellationToken))
+                return await UpdateObject(context, table, mutationTransformers, model, conFactory, dialect, "upsert");
 
-                return await InsertObject(context, table, mutationTransformers, model, conFactory, dialect, "upsert");
-            }
-            return null;
+            return await InsertObject(context, table, mutationTransformers, model, conFactory, dialect, "upsert");
         }
 
         ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
@@ -110,7 +110,7 @@ namespace BifrostQL.Core.Resolvers
                 return false;
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
+            var whereClause = MutationCommandExecutor.BuildKeyPredicate(dialect, keyData.Keys);
             var sql = $"SELECT 1 FROM {tableRef} WHERE {whereClause};";
 
             await using var conn = connFactory.GetConnection();
@@ -169,69 +169,86 @@ namespace BifrostQL.Core.Resolvers
             // GraphQL field name differs from its column.
             var dbData = DbParameterBinder.ToDbColumnKeys(table, transformResult.Data);
 
-            if (transformResult.MutationType == MutationType.Update)
-            {
-                // Soft-delete: transformed to UPDATE. The SET list must carry ONLY the
-                // columns a transformer stamped (soft-delete deleted_at/deleted_by,
-                // audit updated_at/updated_by) — never a client-supplied column, or a
-                // delete predicate like status:"archived" would be written into the row
-                // unconditionally. The WHERE carries the client-supplied predicate
-                // columns (primary key plus any extra predicate the client sent), so a
-                // client predicate narrows which rows are soft-deleted.
-                var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+            // A transformer may rewrite a delete into a soft-delete UPDATE (deleted_at
+            // stamped); otherwise it stays a hard DELETE. Both scope their rows by the
+            // same client-supplied predicate columns (see SelectPredicateColumns).
+            return transformResult.MutationType == MutationType.Update
+                ? await ExecuteSoftDeleteAsync(context, table, dialect, conFactory, userContext, dbData, clientColumns, additionalFilter)
+                : await ExecuteHardDeleteAsync(context, table, dialect, conFactory, userContext, dbData, clientColumns, additionalFilter);
+        }
 
-                var keyData = dbData
-                    .Where(kv => clientColumns.Contains(kv.Key) || DbParameterBinder.IsPrimaryKeyColumn(table, kv.Key))
-                    .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
-                var setData = dbData
-                    .Where(kv => !keyData.ContainsKey(kv.Key))
-                    .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
-
-                if (keyData.Count == 0)
-                    throw new BifrostExecutionError(
-                        "A soft delete requires a primary key or at least one predicate column to scope the affected rows.");
-
-                var setClause = string.Join(",", setData.Select(kv => SetAssignment(dialect, table, kv.Key)));
-                var whereClause = string.Join(" AND ", keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
-                var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
-                // Before-commit hooks and the soft-delete write commit atomically.
-                var result = 0;
-                await MutationCommandExecutor.RunInTransactionAsync(conFactory, async (conn, transaction) =>
-                {
-                    await MutationNotifier.RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, dbData, userContext);
-                    result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, dbData, additionalFilter.Parameters, context.CancellationToken);
-                }, context.CancellationToken);
-                await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, MutationType.Update, dbData, result, userContext);
-                return result;
-            }
-
-            // Standard hard DELETE — the WHERE is built from the client-supplied
-            // predicate columns (primary key plus any extra predicate), NOT from
-            // transformer-stamped columns. Including a stamped column (e.g. audit
-            // updated_at=@now) would AND a never-matching term into the WHERE and
-            // silently delete zero rows. Values still come from the (possibly
-            // rewritten) transformed data so enum-name → DB-value mapping on a
-            // predicate column reaches the WHERE.
-            var deleteData = dbData
+        /// <summary>
+        /// The columns that scope a delete's WHERE clause: the client-supplied
+        /// predicate columns (primary key plus any extra predicate the client sent),
+        /// NOT transformer-stamped columns (audit/soft-delete). Including a stamped
+        /// column would AND a never-matching term into the WHERE and silently affect
+        /// zero rows. Values come from the (possibly rewritten) transformed data so an
+        /// enum-name → DB-value mapping on a predicate column still reaches the WHERE.
+        /// </summary>
+        private static Dictionary<string, object?> SelectPredicateColumns(
+            Dictionary<string, object?> dbData, HashSet<string> clientColumns, IDbTable table)
+            => dbData
                 .Where(kv => clientColumns.Contains(kv.Key) || DbParameterBinder.IsPrimaryKeyColumn(table, kv.Key))
                 .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+
+        // Soft-delete: the delete was transformed to UPDATE. The SET list carries ONLY
+        // the columns a transformer stamped (soft-delete deleted_at/deleted_by, audit
+        // updated_at/updated_by) — never a client-supplied column, or a delete predicate
+        // like status:"archived" would be written into the row unconditionally. The WHERE
+        // carries the client-supplied predicate columns, so a client predicate narrows
+        // which rows are soft-deleted. Before-commit hooks and the write commit atomically.
+        private async Task<object?> ExecuteSoftDeleteAsync(
+            IBifrostFieldContext context, IDbTable table, ISqlDialect dialect, IDbConnFactory conFactory,
+            IDictionary<string, object?> userContext, Dictionary<string, object?> dbData,
+            HashSet<string> clientColumns,
+            (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter)
+        {
+            var keyData = SelectPredicateColumns(dbData, clientColumns, table);
+            var setData = dbData
+                .Where(kv => !keyData.ContainsKey(kv.Key))
+                .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+
+            if (keyData.Count == 0)
+                throw new BifrostExecutionError(
+                    "A soft delete requires a primary key or at least one predicate column to scope the affected rows.");
+
+            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+            var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, setData.Keys, keyData.Keys, additionalFilter.WhereSuffix);
+            var result = 0;
+            await MutationCommandExecutor.RunInTransactionAsync(conFactory, async (conn, transaction) =>
+            {
+                await MutationNotifier.RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, dbData, userContext);
+                result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, dbData, additionalFilter.Parameters, context.CancellationToken);
+            }, context.CancellationToken);
+            await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, MutationType.Update, dbData, result, userContext);
+            return result;
+        }
+
+        // Standard hard DELETE. WHERE is built from the client-supplied predicate
+        // columns only (see SelectPredicateColumns). Before-commit hooks and the write
+        // commit atomically.
+        private async Task<object?> ExecuteHardDeleteAsync(
+            IBifrostFieldContext context, IDbTable table, ISqlDialect dialect, IDbConnFactory conFactory,
+            IDictionary<string, object?> userContext, Dictionary<string, object?> dbData,
+            HashSet<string> clientColumns,
+            (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter)
+        {
+            var deleteData = SelectPredicateColumns(dbData, clientColumns, table);
 
             if (deleteData.Count == 0)
                 throw new BifrostExecutionError(
                     "A delete requires a primary key or at least one predicate column to scope the affected rows.");
 
-            var deleteTableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var deleteWhereClause = string.Join(" AND ", deleteData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
-            var deleteSql = $"DELETE FROM {deleteTableRef} WHERE {deleteWhereClause}{additionalFilter.WhereSuffix};";
-            // Before-commit hooks and the delete write commit atomically.
-            var deleteResult = 0;
+            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+            var sql = MutationCommandExecutor.BuildDeleteSql(dialect, tableRef, deleteData.Keys, additionalFilter.WhereSuffix);
+            var result = 0;
             await MutationCommandExecutor.RunInTransactionAsync(conFactory, async (conn, transaction) =>
             {
                 await MutationNotifier.RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Delete, deleteData, userContext);
-                deleteResult = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, deleteSql, deleteData, additionalFilter.Parameters, context.CancellationToken);
+                result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, deleteData, additionalFilter.Parameters, context.CancellationToken);
             }, context.CancellationToken);
-            await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, MutationType.Delete, deleteData, deleteResult, userContext);
-            return deleteResult;
+            await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, MutationType.Delete, deleteData, result, userContext);
+            return result;
         }
 
         private async Task<object?> UpdateObject(IBifrostFieldContext context, IDbTable table,
@@ -292,9 +309,7 @@ namespace BifrostQL.Core.Resolvers
                     .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
 
                 var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-                var setClause = string.Join(",", standardData.Select(kv => SetAssignment(dialect, table, kv.Key)));
-                var whereClause = string.Join(" AND ", propertyInfo.keyData.Select(kv => $"{dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
-                var sql = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
+                var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, standardData.Keys, propertyInfo.keyData.Keys, additionalFilter.WhereSuffix);
                 await MutationNotifier.RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, updatedData, context.UserContext);
                 result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, updatedData, additionalFilter.Parameters, context.CancellationToken);
                 stateTransition = transformResult.StateTransition;
@@ -387,12 +402,11 @@ namespace BifrostQL.Core.Resolvers
             data = DbParameterBinder.ToDbColumnKeys(table, transformResult.Data);
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var columns = string.Join(",", data.Keys.Select(k => dialect.EscapeIdentifier(k)));
-            var values = string.Join(",", data.Keys.Select(k => ValuePlaceholder(dialect, table, k)));
+            var insertInto = MutationCommandExecutor.BuildInsertInto(dialect, table, tableRef, data.Keys);
             var returning = dialect.ReturningIdentityClauseFor(table.KeyColumns.Select(k => k.ColumnName).ToList());
             var sql = returning != null
-                ? $"INSERT INTO {tableRef}({columns}) VALUES({values}){returning};"
-                : $"INSERT INTO {tableRef}({columns}) VALUES({values});SELECT {dialect.LastInsertedIdentity} ID;";
+                ? $"{insertInto}{returning};"
+                : $"{insertInto};SELECT {dialect.LastInsertedIdentity} ID;";
 
             // Before-commit hooks and the insert (with its identity SELECT) run in
             // one transaction so a hook veto or a failed write rolls back as a unit.

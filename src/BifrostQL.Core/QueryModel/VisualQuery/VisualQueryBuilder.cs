@@ -187,12 +187,12 @@ namespace BifrostQL.Core.QueryModel.VisualQuery
 
             switch (op)
             {
-                case VisualFilterOperator.Null:
+                case FilterOperators.Null:
                     // value == true  -> IS NULL ; otherwise IS NOT NULL
                     var wantNull = crit.Value is bool b ? b : true;
                     return wantNull ? $"{colRef} IS NULL" : $"{colRef} IS NOT NULL";
 
-                case VisualFilterOperator.In:
+                case FilterOperators.In:
                 {
                     var values = AsEnumerable(crit.Value, op);
                     var names = values.Select(ctx.AddParameter).ToList();
@@ -201,7 +201,7 @@ namespace BifrostQL.Core.QueryModel.VisualQuery
                     return $"{colRef} IN ({string.Join(", ", names)})";
                 }
 
-                case VisualFilterOperator.Between:
+                case FilterOperators.Between:
                 {
                     var values = AsEnumerable(crit.Value, op);
                     if (values.Count != 2)
@@ -211,18 +211,18 @@ namespace BifrostQL.Core.QueryModel.VisualQuery
                     return $"{colRef} BETWEEN {lo} AND {hi}";
                 }
 
-                case VisualFilterOperator.Contains:
+                case FilterOperators.Contains:
                 {
                     var name = ctx.AddParameter(crit.Value);
                     return $"{colRef} LIKE {ctx.Dialect.LikePattern(name, LikePatternType.Contains)}";
                 }
 
-                case VisualFilterOperator.Eq:
-                case VisualFilterOperator.Neq:
-                case VisualFilterOperator.Lt:
-                case VisualFilterOperator.Lte:
-                case VisualFilterOperator.Gt:
-                case VisualFilterOperator.Gte:
+                case FilterOperators.Eq:
+                case FilterOperators.Neq:
+                case FilterOperators.Lt:
+                case FilterOperators.Lte:
+                case FilterOperators.Gt:
+                case FilterOperators.Gte:
                 {
                     var name = ctx.AddParameter(crit.Value);
                     return $"{colRef} {ctx.Dialect.GetOperator(op)} {name}";

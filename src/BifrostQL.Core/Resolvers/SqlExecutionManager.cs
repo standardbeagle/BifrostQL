@@ -65,18 +65,7 @@ namespace BifrostQL.Core.Resolvers
             var userContext = context.UserContext;
 
             // Notify Parsed phase
-            if (_observers is { Count: > 0 })
-            {
-                var pathStr = string.Join(".", context.Path);
-                await _observers.NotifyAsync(QueryPhase.Parsed, new QueryObserverContext
-                {
-                    Table = dbTable,
-                    Model = _dbModel,
-                    UserContext = userContext,
-                    QueryType = table.QueryType,
-                    Path = pathStr.Length > 0 ? pathStr : graphqlName,
-                });
-            }
+            await NotifyAsync(QueryPhase.Parsed, dbTable, context, graphqlName, userContext, table.QueryType);
 
             // Apply filter transformers (tenant isolation, soft-delete, etc.)
             // Capture module arguments (e.g. _includeDeleted, _onlyDeleted) into the
@@ -97,19 +86,8 @@ namespace BifrostQL.Core.Resolvers
             ApplyEnumFilterRewrite(table);
 
             // Notify Transformed phase
-            if (_observers is { Count: > 0 })
-            {
-                var pathStr = string.Join(".", context.Path);
-                await _observers.NotifyAsync(QueryPhase.Transformed, new QueryObserverContext
-                {
-                    Table = dbTable,
-                    Model = _dbModel,
-                    UserContext = userContext,
-                    QueryType = table.QueryType,
-                    Path = pathStr.Length > 0 ? pathStr : graphqlName,
-                    Filter = table.Filter,
-                });
-            }
+            await NotifyAsync(QueryPhase.Transformed, dbTable, context, graphqlName, userContext, table.QueryType,
+                filter: table.Filter);
 
             var bifrost = new BifrostContextAdapter(context);
             var conFactory = bifrost.ConnFactory;
@@ -122,20 +100,9 @@ namespace BifrostQL.Core.Resolvers
             // Notify AfterExecute phase with timing data
             if (_observers is { Count: > 0 })
             {
-                var pathStr = string.Join(".", context.Path);
                 var totalRows = data.Values.Sum(v => v.data.Count);
-                await _observers.NotifyAsync(QueryPhase.AfterExecute, new QueryObserverContext
-                {
-                    Table = dbTable,
-                    Model = _dbModel,
-                    UserContext = userContext,
-                    QueryType = table.QueryType,
-                    Path = pathStr.Length > 0 ? pathStr : graphqlName,
-                    Filter = table.Filter,
-                    Sql = sql,
-                    RowCount = totalRows,
-                    Duration = sw.Elapsed,
-                });
+                await NotifyAsync(QueryPhase.AfterExecute, dbTable, context, graphqlName, userContext, table.QueryType,
+                    filter: table.Filter, sql: sql, rowCount: totalRows, duration: sw.Elapsed);
             }
 
             var enumColumns = _dbModel.EnumColumns;
@@ -163,6 +130,44 @@ namespace BifrostQL.Core.Resolvers
                 };
             }
             return new ReaderEnum(table, data, enumColumns, logger);
+        }
+
+        /// <summary>
+        /// Fires one query-observer phase notification. Centralizes the
+        /// <c>_observers is { Count: &gt; 0 }</c> guard, the path-string computation
+        /// (falling back to the field name when the path is empty), and the shared
+        /// <see cref="QueryObserverContext"/> shape, so the per-phase call sites carry
+        /// only the fields that phase contributes (filter/sql/rowCount/duration are
+        /// null for the phases that don't provide them — matching the record's defaults).
+        /// </summary>
+        private async ValueTask NotifyAsync(
+            QueryPhase phase,
+            IDbTable dbTable,
+            IBifrostFieldContext context,
+            string graphqlName,
+            IDictionary<string, object?> userContext,
+            QueryType queryType,
+            TableFilter? filter = null,
+            string? sql = null,
+            int? rowCount = null,
+            TimeSpan? duration = null)
+        {
+            if (_observers is not { Count: > 0 })
+                return;
+
+            var pathStr = string.Join(".", context.Path);
+            await _observers.NotifyAsync(phase, new QueryObserverContext
+            {
+                Table = dbTable,
+                Model = _dbModel,
+                UserContext = userContext,
+                QueryType = queryType,
+                Path = pathStr.Length > 0 ? pathStr : graphqlName,
+                Filter = filter,
+                Sql = sql,
+                RowCount = rowCount,
+                Duration = duration,
+            });
         }
 
         /// <summary>
@@ -302,35 +307,20 @@ namespace BifrostQL.Core.Resolvers
                 // array (rows stay untouched during compute), then all rows are
                 // expanded in one pass.
                 var rowCount = tableData.data.Count;
-                var values = new object?[rowCount];
-                var workerCount = Math.Min(MaxComputeConcurrency, rowCount);
-                if (workerCount > 0)
+                var values = await ComputeColumnValuesAsync(rowCount, async rowIndex =>
                 {
-                    var nextRow = -1;
-                    var workers = new Task[workerCount];
-                    for (var w = 0; w < workerCount; w++)
+                    var rowMap = ToRowMap(tableData.data[rowIndex], tableData.index, skipColumn: column.GraphQlDbName);
+                    return await provider.ComputeAsync(new ComputedColumnContext
                     {
-                        workers[w] = Task.Run(async () =>
-                        {
-                            int rowIndex;
-                            while ((rowIndex = Interlocked.Increment(ref nextRow)) < rowCount)
-                            {
-                                var rowMap = ToRowMap(tableData.data[rowIndex], tableData.index, skipColumn: column.GraphQlDbName);
-                                values[rowIndex] = await provider.ComputeAsync(new ComputedColumnContext
-                                {
-                                    Model = _dbModel,
-                                    Table = query.DbTable,
-                                    Column = column.ComputedColumn,
-                                    Row = rowMap,
-                                    UserContext = context.UserContext,
-                                    Services = context.RequestServices,
-                                    ConnFactory = connFactory,
-                                }, context.CancellationToken);
-                            }
-                        }, context.CancellationToken);
-                    }
-                    await Task.WhenAll(workers);
-                }
+                        Model = _dbModel,
+                        Table = query.DbTable,
+                        Column = column.ComputedColumn,
+                        Row = rowMap,
+                        UserContext = context.UserContext,
+                        Services = context.RequestServices,
+                        ConnFactory = connFactory,
+                    }, context.CancellationToken);
+                }, context.CancellationToken);
 
                 for (var rowIndex = 0; rowIndex < rowCount; rowIndex++)
                 {
@@ -341,6 +331,38 @@ namespace BifrostQL.Core.Resolvers
                     tableData.data[rowIndex] = expanded;
                 }
             }
+        }
+
+        /// <summary>
+        /// Computes one value per row with bounded parallelism: a fixed pool of at
+        /// most <see cref="MaxComputeConcurrency"/> workers pulls row indexes off a
+        /// shared counter and invokes <paramref name="computeFn"/>, capping concurrent
+        /// provider/DB calls while keeping every worker busy. Results land in a side
+        /// array indexed by row so the caller's rows stay untouched during compute.
+        /// </summary>
+        private static async Task<object?[]> ComputeColumnValuesAsync(
+            int rowCount,
+            Func<int, Task<object?>> computeFn,
+            CancellationToken cancellationToken)
+        {
+            var values = new object?[rowCount];
+            var workerCount = Math.Min(MaxComputeConcurrency, rowCount);
+            if (workerCount > 0)
+            {
+                var nextRow = -1;
+                var workers = new Task[workerCount];
+                for (var w = 0; w < workerCount; w++)
+                {
+                    workers[w] = Task.Run(async () =>
+                    {
+                        int rowIndex;
+                        while ((rowIndex = Interlocked.Increment(ref nextRow)) < rowCount)
+                            values[rowIndex] = await computeFn(rowIndex);
+                    }, cancellationToken);
+                }
+                await Task.WhenAll(workers);
+            }
+            return values;
         }
 
         /// <summary>

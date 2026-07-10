@@ -14,6 +14,14 @@ namespace BifrostQL.Core.Resolvers
     public interface ISqlExecutionManager
     {
         public ValueTask<object?> ResolveAsync(IBifrostFieldContext context, IDbTable table);
+
+        /// <summary>
+        /// Executes a pre-built GROUP BY aggregate query (see
+        /// <see cref="QueryModel.GqlObjectQuery.GroupedAggregate"/>), applying the same
+        /// filter transformers (tenant isolation, soft-delete) as row queries, and
+        /// returns one <see cref="AggregateResultRow"/> per group.
+        /// </summary>
+        public ValueTask<IReadOnlyList<AggregateResultRow>> ResolveAggregateAsync(IBifrostFieldContext context, IDbTable table, GqlObjectQuery query);
     }
 
     public sealed class SqlExecutionManager : ISqlExecutionManager
@@ -131,6 +139,78 @@ namespace BifrostQL.Core.Resolvers
             }
             return new ReaderEnum(table, data, enumColumns, logger);
         }
+
+        public async ValueTask<IReadOnlyList<AggregateResultRow>> ResolveAggregateAsync(IBifrostFieldContext context, IDbTable dbTable, GqlObjectQuery query)
+        {
+            var grouped = query.GroupedAggregate
+                ?? throw new BifrostExecutionError("ResolveAggregateAsync requires a grouped-aggregate query.");
+
+            // Apply the same fail-closed filter transformers row queries get, into a
+            // per-call context overlay (sibling root fields resolve in parallel; the
+            // shared UserContext is not thread-safe). Tenant/soft-delete scope thus
+            // constrains the grouped rows before aggregation.
+            var scopedContext = new Dictionary<string, object?>(context.UserContext);
+            Modules.ModuleApiRegistry.CaptureQueryArguments(context, dbTable, scopedContext);
+            _transformerService.ApplyTransformers(query, _dbModel, scopedContext);
+            ApplyEnumFilterRewrite(query);
+
+            var bifrost = new BifrostContextAdapter(context);
+            var (data, _) = await LoadDataParameterizedAsync(query, bifrost.ConnFactory, context.CancellationToken);
+
+            if (!data.TryGetValue(query.KeyName, out var tableData))
+                return Array.Empty<AggregateResultRow>();
+
+            return BuildAggregateRows(grouped, tableData.index, tableData.data);
+        }
+
+        /// <summary>
+        /// Shapes the flat grouped result set into <see cref="AggregateResultRow"/>s.
+        /// Group-key values are read by column GraphQL name; <c>_count</c> by its
+        /// alias; each op group's values by their per-column aliases. Aggregate values
+        /// are coerced to double so the <c>Float</c>-typed value fields serialize
+        /// regardless of the provider's numeric CLR type (decimal/long/…).
+        /// </summary>
+        private static IReadOnlyList<AggregateResultRow> BuildAggregateRows(
+            GroupedAggregate grouped,
+            IDictionary<string, int> index,
+            IList<object?[]> rows)
+        {
+            var valuesByOp = grouped.ValueColumns
+                .GroupBy(v => v.OpGroup)
+                .ToList();
+
+            var result = new List<AggregateResultRow>(rows.Count);
+            foreach (var row in rows)
+            {
+                var groupValues = new Dictionary<string, object?>(StringComparer.Ordinal);
+                foreach (var group in grouped.GroupColumns)
+                    groupValues[group.GraphQlName] = ReadCell(index, row, group.GraphQlName);
+
+                int? count = null;
+                if (grouped.IncludeCount && ReadCell(index, row, GroupedAggregate.CountAlias) is { } countValue)
+                    count = Convert.ToInt32(countValue);
+
+                var ops = new Dictionary<string, AggregateFields>(StringComparer.Ordinal);
+                foreach (var opGroup in valuesByOp)
+                {
+                    var opValues = new Dictionary<string, object?>(StringComparer.Ordinal);
+                    foreach (var value in opGroup)
+                        opValues[value.Column.GraphQlName] = ToDouble(ReadCell(index, row, value.SqlAlias));
+                    ops[opGroup.Key] = new AggregateFields { Values = opValues };
+                }
+
+                result.Add(new AggregateResultRow { GroupValues = groupValues, Count = count, Ops = ops });
+            }
+            return result;
+        }
+
+        private static object? ReadCell(IDictionary<string, int> index, object?[] row, string alias)
+            => index.TryGetValue(alias, out var ordinal) && ordinal < row.Length
+                ? ReaderEnum.DbConvert(row[ordinal])
+                : null;
+
+        private static object? ToDouble(object? value)
+            => value == null ? null : Convert.ToDouble(value);
 
         /// <summary>
         /// Fires one query-observer phase notification. Centralizes the

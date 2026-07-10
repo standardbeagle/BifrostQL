@@ -28,6 +28,7 @@ namespace BifrostQL.Core.Schema
             foreach (var generator in tableGenerators)
             {
                 builder.AppendLine(generator.GetTableFieldDefinition());
+                builder.AppendLine(generator.GetAggregateFieldDefinition());
             }
             foreach (var generator in readOnlySpGenerators)
             {
@@ -57,6 +58,7 @@ namespace BifrostQL.Core.Schema
                 }
                 builder.AppendLine(generator.GetTableTypeDefinition(model, includeDynamicJoins));
                 builder.AppendLine(generator.GetPagedTableTypeDefinition());
+                builder.AppendLine(generator.GetAggregateTypeDefinitions());
             }
 
             if (model.EnumColumns != null)

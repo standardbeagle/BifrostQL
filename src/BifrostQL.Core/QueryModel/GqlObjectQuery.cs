@@ -28,6 +28,13 @@ namespace BifrostQL.Core.QueryModel
         public List<GqlObjectColumn> ScalarColumns { get; init; } = new();
         public List<GqlAggregateColumn> AggregateColumns { get; init; } = new();
 
+        /// <summary>
+        /// When set, this node is a dedicated base-table GROUP BY aggregate query
+        /// (<c>&lt;table&gt;Aggregate</c> root field). <see cref="AddSqlParameterized"/>
+        /// emits a single grouped statement instead of the row SELECT/count/join set.
+        /// </summary>
+        public GroupedAggregate? GroupedAggregate { get; set; }
+
         public List<GqlObjectQuery> Links { get; set; } = new();
         public List<string> Sort { get; set; } = new();
         public TableFilter? Filter { get; set; }
@@ -155,6 +162,18 @@ namespace BifrostQL.Core.QueryModel
 
         public void AddSqlParameterized(IDbModel dbModel, ISqlDialect dialect, IDictionary<string, ParameterizedSql> sqls, SqlParameterCollection parameters, QueryLink? queryLink = null)
         {
+            // A grouped base-table aggregate emits ONE statement (no row SELECT,
+            // count, nested _agg, or joins). Its WHERE is this node's Filter, which
+            // the transformer service has already augmented with tenant/soft-delete
+            // scope, so grouping runs over the caller-visible rows only.
+            if (GroupedAggregate is { } grouped)
+            {
+                var aggFilter = GetFilterSqlParameterized(dbModel, dialect, parameters);
+                var aggTableRef = dialect.TableReference(SchemaName, TableName);
+                sqls[KeyName] = grouped.ToSqlParameterized(dialect, aggTableRef, aggFilter);
+                return;
+            }
+
             ValidateAggregateKeying();
 
             var fullColumns = AppendAggregateKeyColumns(FullColumnNames.ToList());

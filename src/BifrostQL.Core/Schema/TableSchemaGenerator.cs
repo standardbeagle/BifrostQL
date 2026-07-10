@@ -118,6 +118,57 @@ namespace BifrostQL.Core.Schema
                 $"{_table.GraphQlName}(limit: Int, offset: Int, sort: [{_table.TableColumnSortEnumName}!] filter: {_table.TableFilterTypeName} _primaryKey: [String]{moduleArgs}): {_table.GraphQlName}_paged";
         }
 
+        /// <summary>
+        /// Root query field for this table's GROUP BY aggregate:
+        /// <c>&lt;table&gt;Aggregate(filter, groupBy): [&lt;table&gt;_aggregate!]!</c>.
+        /// groupBy reuses the schema-derived column enum, so callers can never pass an
+        /// arbitrary column string. Returned separately from
+        /// <see cref="GetTableFieldDefinition"/> so the row query shape is unchanged.
+        /// </summary>
+        public string GetAggregateFieldDefinition() =>
+            $"{AggregateSurface.AggregateFieldName(_table)}(filter: {_table.TableFilterTypeName}, groupBy: [{_table.ColumnEnumTypeName}!]): [{AggregateSurface.AggregateRowTypeName(_table)}!]!";
+
+        /// <summary>
+        /// Output types for the aggregate surface: one group-row type (every visible
+        /// column as a nullable group key, plus <c>_count</c> and the value op groups)
+        /// and, when the table has ≥1 numeric column, the shared aggregate-values type
+        /// the op groups reference. A table with no numeric column omits the value op
+        /// groups entirely rather than emit an empty (invalid) object type.
+        /// </summary>
+        public string GetAggregateTypeDefinitions()
+        {
+            var builder = new StringBuilder();
+            var numericColumns = AggregateSurface.NumericColumns(_table, _typeMapper).ToList();
+            var hasNumeric = numericColumns.Count > 0;
+
+            builder.AppendLine($"type {AggregateSurface.AggregateRowTypeName(_table)} {{");
+            foreach (var column in AggregateSurface.GroupableColumns(_table))
+            {
+                // Group keys project the raw column value, so use the underlying
+                // scalar type (not the enum type an enum-FK column would map to) to
+                // avoid coercing a stored key value against an enum.
+                var keyType = SchemaGenerator.GetGraphQlTypeName(column.EffectiveDataType, true, _typeMapper);
+                builder.AppendLine($"\t{column.GraphQlName} : {keyType}");
+            }
+            builder.AppendLine($"\t{AggregateSurface.CountField} : Int!");
+            if (hasNumeric)
+            {
+                foreach (var (opGroup, _) in AggregateSurface.ValueOps)
+                    builder.AppendLine($"\t{opGroup} : {AggregateSurface.AggregateFieldsTypeName(_table)}");
+            }
+            builder.AppendLine("}");
+
+            if (hasNumeric)
+            {
+                builder.AppendLine($"type {AggregateSurface.AggregateFieldsTypeName(_table)} {{");
+                foreach (var column in numericColumns)
+                    builder.AppendLine($"\t{column.GraphQlName} : Float");
+                builder.AppendLine("}");
+            }
+
+            return builder.ToString();
+        }
+
         public string GetDynamicJoinDefinition(IDbModel model, bool single)
         {
             var builder = new StringBuilder();

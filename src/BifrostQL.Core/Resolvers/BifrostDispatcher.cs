@@ -122,6 +122,8 @@ namespace BifrostQL.Core.Resolvers
                 var tableType = builder.Types.For(table.GraphQlName);
                 tableType.FieldFor("_agg").Resolver = this;
 
+                WireAggregateResolvers(builder, table);
+
                 foreach (var column in table.Columns)
                     tableType.FieldFor(column.GraphQlName).Resolver = this;
 
@@ -199,6 +201,39 @@ namespace BifrostQL.Core.Resolvers
                 foreach (var outputParam in proc.OutputParameters)
                     resultType.FieldFor(outputParam.GraphQlName).Resolver = this;
             }
+        }
+
+        /// <summary>
+        /// Wires the GROUP BY aggregate surface for one table: the root
+        /// <c>&lt;table&gt;Aggregate</c> field to a dedicated
+        /// <see cref="AggregateTableResolver"/>, and every field on the aggregate
+        /// output types to the shared <see cref="AggregateFieldResolver"/>. These
+        /// bypass the join dispatcher because their sources are plain aggregate-row
+        /// objects, not the row/lookup readers <see cref="DbJoinFieldResolver"/> reads.
+        /// The value op groups and the aggregate-values type exist only when the table
+        /// has a numeric column — mirroring <see cref="TableSchemaGenerator"/>.
+        /// </summary>
+        private void WireAggregateResolvers(SchemaBuilder builder, IDbTable table)
+        {
+            const string queryType = "database";
+            builder.Types.For(queryType).FieldFor(AggregateSurface.AggregateFieldName(table)).Resolver =
+                new AggregateTableResolver(table);
+
+            var rowType = builder.Types.For(AggregateSurface.AggregateRowTypeName(table));
+            foreach (var column in AggregateSurface.GroupableColumns(table))
+                rowType.FieldFor(column.GraphQlName).Resolver = AggregateFieldResolver.Instance;
+            rowType.FieldFor(AggregateSurface.CountField).Resolver = AggregateFieldResolver.Instance;
+
+            var numericColumns = AggregateSurface.NumericColumns(table, _model.TypeMapper).ToList();
+            if (numericColumns.Count == 0)
+                return;
+
+            foreach (var (opGroup, _) in AggregateSurface.ValueOps)
+                rowType.FieldFor(opGroup).Resolver = AggregateFieldResolver.Instance;
+
+            var fieldsType = builder.Types.For(AggregateSurface.AggregateFieldsTypeName(table));
+            foreach (var column in numericColumns)
+                fieldsType.FieldFor(column.GraphQlName).Resolver = AggregateFieldResolver.Instance;
         }
 
         private static Dictionary<(string typeName, string fieldName), IBifrostResolver> BuildResolverMap(IDbModel model)

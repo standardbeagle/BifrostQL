@@ -119,6 +119,12 @@ namespace BifrostQL.Server
             if (!configured.Any(t => t is AuditMutationTransformer))
                 combined.Add(new AuditMutationTransformer());
 
+            // Optimistic concurrency: rejects a stale UPDATE whose version token no
+            // longer matches. Keys off the concurrency-token metadata, so it is a
+            // no-op for tables without it and always safe to auto-register.
+            if (!configured.Any(t => t is ConcurrencyMutationTransformer))
+                combined.Add(new ConcurrencyMutationTransformer());
+
             combined.AddRange(configured);
             return combined;
         }

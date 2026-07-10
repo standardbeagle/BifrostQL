@@ -48,6 +48,7 @@ namespace BifrostQL.Core.Model
                 ValidateColumnReference(table, MetadataKeys.Security.TenantFilter, errors);
                 ValidateColumnReference(table, MetadataKeys.SoftDelete.Column, errors);
                 ValidateColumnReference(table, MetadataKeys.SoftDelete.DeletedBy, errors);
+                ValidateColumnReference(table, MetadataKeys.Concurrency.Token, errors);
                 ValidateSoftDeleteNullability(table, errors);
                 ValidateAutoFilter(table, errors);
                 ValidateStateMachine(table, errors);

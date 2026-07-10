@@ -20,6 +20,18 @@ namespace BifrostQL.Server.Test
             Assert.Contains(result, t => t is EnumValueMutationTransformer);
             Assert.Contains(result, t => t is ExtendedServerValidationTransformer);
             Assert.Contains(result, t => t is SoftDeleteMutationTransformer);
+            Assert.Contains(result, t => t is ConcurrencyMutationTransformer);
+        }
+
+        [Fact]
+        public void CallerSuppliedConcurrency_TakesPrecedence_NoDuplicate()
+        {
+            var mine = new ConcurrencyMutationTransformer();
+
+            var result = BifrostServiceCollectionExtensions.WithBuiltInMutationTransformers(
+                new IMutationTransformer[] { mine });
+
+            Assert.Same(mine, Assert.Single(result, t => t is ConcurrencyMutationTransformer));
         }
 
         [Fact]

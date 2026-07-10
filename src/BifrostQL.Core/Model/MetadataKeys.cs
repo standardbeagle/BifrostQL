@@ -427,6 +427,20 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
+        /// Metadata keys for optimistic-concurrency (lost-update prevention).
+        /// </summary>
+        public static class Concurrency
+        {
+            /// <summary>
+            /// Table-level version-token column. An update must carry the token value it
+            /// read; the mutation pipeline ANDs <c>token = @clientVersion</c> into the
+            /// UPDATE WHERE and bumps the token in SET, raising a CONFLICT when the
+            /// guarded update affects zero rows (a concurrent write moved the token).
+            /// </summary>
+            public const string Token = "concurrency-token";
+        }
+
+        /// <summary>
         /// Metadata keys for explicit relationship declarations.
         /// </summary>
         public static class Relationships

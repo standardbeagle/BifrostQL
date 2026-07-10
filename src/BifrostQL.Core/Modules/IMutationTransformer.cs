@@ -40,6 +40,16 @@ public sealed class MutationTransformResult
     public TableFilter? AdditionalFilter { get; init; }
 
     public StateTransitionInfo? StateTransition { get; init; }
+
+    /// <summary>
+    /// When true, the write affecting zero rows is a concurrency CONFLICT, not a
+    /// silent no-op. The optimistic-concurrency transformer sets this after ANDing a
+    /// version-token predicate into the UPDATE WHERE: a zero-row result then means the
+    /// stored token no longer matches (a lost update), so the executor raises a
+    /// CONFLICT error. Left false for tenant/policy/soft-delete out-of-scope updates,
+    /// which legitimately affect zero rows and must stay silent.
+    /// </summary>
+    public bool ConflictOnNoRows { get; init; }
 }
 
 /// <summary>
@@ -126,6 +136,7 @@ public sealed class MutationTransformersWrap : IMutationTransformers
         var allErrors = new List<string>();
         TableFilter? combinedFilter = null;
         StateTransitionInfo? stateTransition = null;
+        var conflictOnNoRows = false;
 
         foreach (var transformer in Transformers.OrderBy(t => t.Priority))
         {
@@ -150,6 +161,7 @@ public sealed class MutationTransformersWrap : IMutationTransformers
             }
 
             stateTransition ??= result.StateTransition;
+            conflictOnNoRows |= result.ConflictOnNoRows;
         }
 
         return new MutationTransformResult
@@ -159,6 +171,7 @@ public sealed class MutationTransformersWrap : IMutationTransformers
             Errors = allErrors.ToArray(),
             AdditionalFilter = combinedFilter,
             StateTransition = stateTransition,
+            ConflictOnNoRows = conflictOnNoRows,
         };
     }
 

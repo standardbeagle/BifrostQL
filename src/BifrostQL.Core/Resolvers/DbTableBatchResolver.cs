@@ -263,6 +263,15 @@ namespace BifrostQL.Core.Resolvers
             AddParameters(cmd, updatedData);
             AddExtraParameters(cmd, additionalFilter.Parameters);
             var affected = await cmd.ExecuteNonQueryAsync(ctx.Ct);
+
+            // A zero-row update under a concurrency-token guard is a lost update, not a
+            // silent no-op — see DbTableMutateResolver.UpdateObject. Throwing rolls back
+            // the whole batch transaction, so a stale row aborts the batch.
+            if (transformResult.ConflictOnNoRows && affected == 0)
+                throw new BifrostExecutionError(
+                    $"Update of '{table.TableSchema}.{table.DbName}' was rejected: the concurrency token no longer matches — the row was modified or removed since it was read. Reload and retry.")
+                { ErrorCode = "CONFLICT" };
+
             return new BatchActionOutcome(affected, MutationType.Update, updatedData, transformResult.StateTransition);
         }
 
@@ -354,6 +363,17 @@ namespace BifrostQL.Core.Resolvers
                 var transformResult = await ctx.MutationTransformers.TransformAsync(table, MutationType.Update, caseData, ctx.TransformContext);
                 if (transformResult.Errors.Length > 0)
                     throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
+
+                // The single-statement upsert (ON CONFLICT / MERGE) neither renders the
+                // transformer's AdditionalFilter nor can express a "fail if the token
+                // moved" WHERE — it always writes. Silently dropping a concurrency-token
+                // guard here would defeat lost-update protection, so refuse the path
+                // rather than bypass the guard. Plain update/upsert (multi-statement)
+                // enforces it correctly.
+                if (transformResult.ConflictOnNoRows)
+                    throw new BifrostExecutionError(
+                        $"Optimistic-concurrency table '{table.TableSchema}.{table.DbName}' cannot be written through the single-statement batch upsert path (the token guard cannot be enforced there). Use a plain update.")
+                    { ErrorCode = "CONFLICT" };
 
                 // Adopt the (possibly rewritten) data so transformer output — e.g.
                 // enum-name → DB-value mapping — reaches the SQL. The key/non-key

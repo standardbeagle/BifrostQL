@@ -92,6 +92,9 @@ namespace BifrostQL.Core.Model
             MetadataKeys.SoftDelete.DeletedBy,
             MetadataKeys.SoftDelete.DeleteType,
             MetadataKeys.SoftDelete.HardDeleteRole,
+            // Optimistic-concurrency version token (integrity — a miscased key must be
+            // flagged, not silently disable lost-update protection).
+            MetadataKeys.Concurrency.Token,
             MetadataKeys.Ui.Visibility,
             MetadataKeys.Ui.Hidden,
             MetadataKeys.Relationships.ManyToMany,

@@ -312,6 +312,18 @@ namespace BifrostQL.Core.Resolvers
                 var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, standardData.Keys, propertyInfo.keyData.Keys, additionalFilter.WhereSuffix);
                 await MutationNotifier.RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, updatedData, context.UserContext);
                 result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, updatedData, additionalFilter.Parameters, context.CancellationToken);
+
+                // A zero-row update under a concurrency-token guard is a lost update:
+                // the token predicate matched no row, so the stored version moved since
+                // the client read it. Raise a CONFLICT (rolls back this transaction)
+                // rather than returning a silent no-op the way an out-of-scope
+                // tenant/policy update does. Gated by the transformer's flag so those
+                // legitimately-zero-row cases stay silent.
+                if (transformResult.ConflictOnNoRows && result == 0)
+                    throw new BifrostExecutionError(
+                        $"Update of '{table.TableSchema}.{table.DbName}' was rejected: the concurrency token no longer matches — the row was modified or removed since it was read. Reload and retry.")
+                    { ErrorCode = "CONFLICT" };
+
                 stateTransition = transformResult.StateTransition;
             }, context.CancellationToken);
             await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, MutationType.Update, updatedData, result, context.UserContext);

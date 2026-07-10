@@ -61,6 +61,13 @@ namespace BifrostQL.Core.QueryModel
             foreach (var value in ValueColumns)
                 projections.Add($"{RenderOperation(value.Operation)}({dialect.EscapeIdentifier(value.Column.DbName)}) AS {dialect.EscapeIdentifier(value.SqlAlias)}");
 
+            // A selection with no group keys, no _count, and no value columns (e.g.
+            // only `__typename`) would emit `SELECT  FROM ...` — invalid SQL surfacing
+            // as a raw DB error. Fail fast with a clear message instead.
+            if (projections.Count == 0)
+                throw new BifrostExecutionError(
+                    "Aggregate query selects no aggregate data; request at least one of a groupBy column, _count, or a _sum/_avg/_min/_max value.");
+
             var sql = $"SELECT {string.Join(", ", projections)} FROM {tableRef}{filter.Sql}";
 
             if (GroupColumns.Count > 0)

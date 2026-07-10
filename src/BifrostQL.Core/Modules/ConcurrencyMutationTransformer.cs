@@ -88,7 +88,21 @@ public sealed class ConcurrencyMutationTransformer : MetadataMutationTransformer
     {
         if (NumericTypes.Contains(graphQlType))
         {
-            bumped = Convert.ToInt64(clientVersion) + 1;
+            try
+            {
+                // A Decimal token keeps decimal range and precision; integer tokens use
+                // checked long arithmetic so an at-max token surfaces as a clean error,
+                // not a silent wrap to a negative value or an unhandled OverflowException.
+                bumped = graphQlType == "Decimal"
+                    ? checked(Convert.ToDecimal(clientVersion) + 1m)
+                    : (object)checked(Convert.ToInt64(clientVersion) + 1);
+            }
+            catch (OverflowException)
+            {
+                bumped = null;
+                reason = "carried a version value outside the representable range and cannot be advanced";
+                return false;
+            }
             reason = "";
             return true;
         }

@@ -107,6 +107,28 @@ public sealed class ConcurrencyMutationTransformerTests
     }
 
     [Fact]
+    public async Task Update_TokenValueAtMax_IsRejectedCleanly_NotThrown()
+    {
+        // A Decimal token at decimal.MaxValue cannot be advanced; the transformer must
+        // return a clean error result, not throw an unhandled OverflowException.
+        var model = DbModelTestFixture.Create()
+            .WithTable("Orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Name", "nvarchar")
+                .WithColumn("version", "decimal")
+                .WithMetadata(MetadataKeys.Concurrency.Token, "version"))
+            .Build();
+        var table = model.GetTableFromDbName("Orders");
+        var data = new Dictionary<string, object?> { ["Id"] = 1, ["Name"] = "x", ["version"] = decimal.MaxValue };
+
+        var result = await new ConcurrencyMutationTransformer()
+            .TransformAsync(table, MutationType.Update, data, Context(model));
+
+        result.Errors.Should().ContainSingle().Which.Should().Contain("representable range");
+    }
+
+    [Fact]
     public async Task Update_UnsupportedTokenType_IsRejected()
     {
         var model = DbModelTestFixture.Create()

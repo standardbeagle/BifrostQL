@@ -111,6 +111,35 @@ public sealed class SavedObjectStoreTests : IDisposable
         (await store.GetAsync(SavedObjectType.Query, "q1"))!.Name.Should().Be("v2");
     }
 
+    [Fact]
+    public async Task DbStore_ConcurrentCreates_ExactlyOneWins_OthersConflict()
+    {
+        var store = DbStore();
+
+        // Fire several creates for the same (type, id) at once. The pre-insert
+        // existence check is check-then-act, so losers hit the primary key — they must
+        // surface as a version conflict (409), never a raw provider exception (500).
+        var attempts = Enumerable.Range(0, 8).Select(i =>
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await store.PutAsync(Obj(SavedObjectType.Query, "race", $"attempt-{i}", 0));
+                    return (Succeeded: true, Conflicted: false);
+                }
+                catch (SavedObjectVersionConflictException)
+                {
+                    return (Succeeded: false, Conflicted: true);
+                }
+            })).ToArray();
+
+        var results = await Task.WhenAll(attempts);
+
+        results.Count(r => r.Succeeded).Should().Be(1, "exactly one create can win the race");
+        results.Count(r => r.Conflicted).Should().Be(results.Length - 1, "every loser gets a clean version conflict");
+        (await store.GetAsync(SavedObjectType.Query, "race"))!.Version.Should().Be(1);
+    }
+
     [Theory]
     [MemberData(nameof(Backends))]
     public async Task CreateOverExisting_WithVersionZero_IsRejected(string backend)

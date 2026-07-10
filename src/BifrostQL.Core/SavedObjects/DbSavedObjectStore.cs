@@ -129,7 +129,23 @@ public sealed class DbSavedObjectStore : ISavedObjectStore
             ["definition"] = obj.Definition.GetRawText(),
             ["version"] = 1,
         };
-        await RawSqlExecutor.ExecuteAsync(_connFactory, sql, parameters, _timeoutSeconds, maxRows: 0, cancellationToken);
+        try
+        {
+            await RawSqlExecutor.ExecuteAsync(_connFactory, sql, parameters, _timeoutSeconds, maxRows: 0, cancellationToken);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            // The pre-insert existence check is check-then-act: a concurrent create for
+            // the same (type, id) races past it and the loser's INSERT violates the
+            // primary key. Rather than sniff dialect-specific constraint codes, re-read:
+            // if the row now exists the failure WAS that race — surface it as the same
+            // version conflict the update path raises (409), not an unhandled 500. If it
+            // does not exist, the failure was something real, so rethrow unchanged.
+            var current = await GetAsync(obj.Type, obj.Id, cancellationToken);
+            if (current != null)
+                throw new SavedObjectVersionConflictException(obj.Type, obj.Id, obj.Version, current.Version);
+            throw;
+        }
         return obj with { Version = 1 };
     }
 

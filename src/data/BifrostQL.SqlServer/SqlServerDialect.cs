@@ -22,6 +22,24 @@ public sealed class SqlServerDialect : SqlDialectBase
     }
 
     /// <inheritdoc />
+    /// <remarks>SQL Server has no unbounded TEXT alias worth using; NVARCHAR(MAX) is the modern form.</remarks>
+    public override string RenderColumnType(SqlColumnKind kind) => kind switch
+    {
+        SqlColumnKind.Text => "NVARCHAR(MAX)",
+        SqlColumnKind.Int => "INT",
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
+    };
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// SQL Server lacks <c>CREATE TABLE IF NOT EXISTS</c>, so guard with an OBJECT_ID
+    /// existence check. The table reference is already bracket-escaped, so it embeds
+    /// safely inside the N'...' name literal (brackets, unlike quotes, need no escaping).
+    /// </remarks>
+    public override string CreateTableIfNotExistsSql(string tableReference, IReadOnlyList<SqlColumnDefinition> columns)
+        => $"IF OBJECT_ID(N'{tableReference}', N'U') IS NULL CREATE TABLE {tableReference} ({RenderTableColumns(columns)})";
+
+    /// <inheritdoc />
     /// <remarks>
     /// SQL Server requires ORDER BY for OFFSET/FETCH. When no sort columns are provided,
     /// ORDER BY (SELECT NULL) is used as a no-op ordering to satisfy the syntax requirement.

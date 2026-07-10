@@ -16,6 +16,11 @@ export type {
 } from './metadata';
 
 export type {
+  SavedObjectType,
+  SavedObject,
+} from './saved-object';
+
+export type {
   TableFilter,
   FieldFilter,
   CompoundFilter,

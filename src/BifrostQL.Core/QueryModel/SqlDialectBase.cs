@@ -172,6 +172,30 @@ public abstract class SqlDialectBase : ISqlDialect
     };
 
     /// <inheritdoc />
+    /// <summary>
+    /// Maps a portable <see cref="SqlColumnKind"/> to this dialect's concrete storage
+    /// type. Overridden where the ANSI-ish default (TEXT/INTEGER) is wrong (SQL Server).
+    /// </summary>
+    public virtual string RenderColumnType(SqlColumnKind kind) => kind switch
+    {
+        SqlColumnKind.Text => "TEXT",
+        SqlColumnKind.Int => "INTEGER",
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
+    };
+
+    /// <summary>Renders the escaped column list + PRIMARY KEY clause shared by every CREATE TABLE variant.</summary>
+    protected string RenderTableColumns(IReadOnlyList<SqlColumnDefinition> columns)
+    {
+        var cols = string.Join(", ", columns.Select(c =>
+            $"{EscapeIdentifier(c.Name)} {RenderColumnType(c.Kind)} {(c.Nullable ? "NULL" : "NOT NULL")}"));
+        var keys = columns.Where(c => c.PrimaryKey).Select(c => EscapeIdentifier(c.Name)).ToList();
+        return keys.Count > 0 ? $"{cols}, PRIMARY KEY ({string.Join(", ", keys)})" : cols;
+    }
+
+    /// <inheritdoc />
+    public virtual string CreateTableIfNotExistsSql(string tableReference, IReadOnlyList<SqlColumnDefinition> columns)
+        => $"CREATE TABLE IF NOT EXISTS {tableReference} ({RenderTableColumns(columns)})";
+
     public virtual string? UpsertSql(string tableRef, IReadOnlyList<string> keyColumns, IReadOnlyList<string> allColumns, IReadOnlyList<string> updateColumns)
         => null;
 

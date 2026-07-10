@@ -224,6 +224,19 @@ public interface ISqlDialect
         => null;
 
     /// <summary>
+    /// DDL that creates an internal Bifrost table only if it does not already exist,
+    /// mapping each <see cref="SqlColumnDefinition"/>'s portable <see cref="SqlColumnKind"/>
+    /// to the dialect's concrete storage type. Interpreted dialects emit
+    /// <c>CREATE TABLE IF NOT EXISTS</c>; SQL Server (which lacks that form) guards with
+    /// an existence check. Concrete dialects supply the real implementation via
+    /// <see cref="SqlDialectBase"/>; this default guards against a hand-rolled dialect.
+    /// </summary>
+    /// <param name="tableReference">The escaped, optionally schema-qualified table reference.</param>
+    /// <param name="columns">Column definitions, in order; primary-key columns flagged.</param>
+    string CreateTableIfNotExistsSql(string tableReference, IReadOnlyList<SqlColumnDefinition> columns)
+        => throw new NotSupportedException("This dialect does not support internal table provisioning.");
+
+    /// <summary>
     /// Builds a native pivot (cross-tab) query for dialects that ship a `PIVOT`
     /// operator, or returns null when the dialect has none — in which case
     /// <see cref="PivotSqlGenerator.GeneratePivot"/> falls back to the portable

@@ -13,6 +13,7 @@ import { loadSession } from './connection/session';
 import { SqlConsole } from './SqlConsole';
 import { QueryBuilderPane } from './designer/QueryBuilderPane';
 import { FormBuilderPane } from './forms/FormBuilderPane';
+import { runFormsMigrationOnce } from './forms/forms-migration-boot';
 import { isSqlBridgeAvailable } from './lib/sql-bridge';
 import {
   fetchProfiles,
@@ -54,6 +55,18 @@ export default function App() {
     setEditorKey((k) => k + 1);
     setCurrentView('editor');
   }, []);
+
+  // First-run migration: once the app reaches the editor (i.e. is connected to a
+  // server that can serve /_saved-objects), lift any legacy localStorage forms into
+  // the saved-object store. Fire-and-forget and idempotent; runs at most once per
+  // session and is a no-op after it has succeeded once.
+  const migrationRan = useRef(false);
+  useEffect(() => {
+    if (currentView === 'editor' && !migrationRan.current) {
+      migrationRan.current = true;
+      void runFormsMigrationOnce();
+    }
+  }, [currentView]);
 
   const flows = useConnectionFlows({ restored, enterEditor });
   const {

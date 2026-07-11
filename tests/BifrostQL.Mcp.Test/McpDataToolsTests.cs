@@ -290,6 +290,62 @@ namespace BifrostQL.Mcp.Test
             text.Should().Contain("Invalid cursor").And.Contain("nextCursor");
         }
 
+        /// <summary>
+        /// Every field a cursor carries is caller-controlled, so each one is
+        /// tampered in turn with values a server-issued cursor can never
+        /// contain. All of them must collapse to the shared invalid-cursor
+        /// prompt as a transport-level tool error (IsError, zero rows) —
+        /// never an unhandled exception (which would surface as a protocol
+        /// fault) and never a fresh-argument-style message (which would
+        /// reveal that the tampered value reached deeper validation).
+        /// </summary>
+        [Theory]
+        // FilterJson: garbage that fails JSON parsing entirely.
+        [InlineData("FilterJson", "\"{{{not json\"")]
+        // FilterJson: valid JSON, wrong shape (array instead of filter object).
+        [InlineData("FilterJson", "\"[1,2,3]\"")]
+        // FilterJson: valid filter shape but a column the table does not have.
+        [InlineData("FilterJson", "\"{\\\"no_such_column\\\":{\\\"_eq\\\":1}}\"")]
+        // FilterJson: wrong JSON type for the property itself.
+        [InlineData("FilterJson", "42")]
+        // Fields: empty array (fresh path rejects this; resume must too).
+        [InlineData("Fields", "[]")]
+        // Fields: null entry — would NRE in column resolution if unchecked.
+        [InlineData("Fields", "[\"name\", null]")]
+        // Fields: column the table does not have.
+        [InlineData("Fields", "[\"no_such_column\"]")]
+        // Sort: unknown column and malformed token (no _asc/_desc suffix).
+        [InlineData("Sort", "[\"no_such_column_asc\"]")]
+        [InlineData("Sort", "[\"id\"]")]
+        [InlineData("Sort", "[null]")]
+        // Table: unknown table, and a casing variant the server never issues.
+        [InlineData("Table", "\"order_itemz\"")]
+        [InlineData("Table", "\"ORDER_ITEMS\"")]
+        // Detail / Version: nulled-out or unsupported snapshot metadata.
+        [InlineData("Detail", "null")]
+        [InlineData("Version", "2")]
+        public async Task Query_TamperedCursorField_RejectedAsInvalidCursorPrompt(
+            string property, string rawJsonValue)
+        {
+            var first = await CallOk("bifrost_query", new() { ["table"] = "order_items" });
+            var cursor = first.GetProperty("nextCursor").GetString()!;
+
+            var result = await _client.CallToolAsync("bifrost_query", new Dictionary<string, object?>
+            {
+                ["page"] = new Dictionary<string, object?>
+                {
+                    ["cursor"] = TamperCursor(cursor, property, JsonNode.Parse(rawJsonValue)),
+                },
+            });
+
+            // Transport-level tool error, not a protocol fault: the call
+            // completes, IsError is set, no structured rows escape.
+            result.IsError.Should().BeTrue("a tampered cursor must be rejected as a tool error");
+            result.StructuredContent.Should().BeNull("no rows may be returned for a tampered cursor");
+            result.Content.OfType<TextContentBlock>().Single().Text
+                .Should().Contain("Invalid cursor").And.Contain("nextCursor");
+        }
+
         // ---- bifrost_query: security seam --------------------------------------
 
         [Fact]

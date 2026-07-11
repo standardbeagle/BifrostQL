@@ -188,18 +188,16 @@ namespace BifrostQL.Mcp
             var page = GetArgument(args, "page");
             var cursorText = page is { } p ? GetString(p, "cursor") : null;
 
-            string tableName;
-            int offset, limit;
-            string detail;
-            IReadOnlyList<string>? fields;
-            IReadOnlyList<string> sortTokens;
-            JsonElement? filterElement;
+            var model = await executor.GetModelAsync(endpoint);
+            ValidatedQuery validated;
 
             if (cursorText is not null)
             {
                 // A cursor is a complete continuation: it snapshots the whole
                 // query, so the other arguments are ignored — except a table
-                // mismatch, which is a caller error worth failing fast on.
+                // mismatch, which is a caller error worth failing fast on with a
+                // specific message (it concerns the FRESH 'table' argument, not
+                // the cursor's own content).
                 var cursor = QueryCursor.Decode(cursorText);
                 var requestedTable = GetStringArgument(args, "table");
                 if (requestedTable is not null
@@ -207,48 +205,149 @@ namespace BifrostQL.Mcp
                     throw new ToolPromptException(
                         $"page.cursor continues a query on table '{cursor.Table}' but table '{requestedTable}' was requested. " +
                         "Drop the cursor to start a new query, or drop the table argument to continue.");
+
                 // The cursor is caller-controlled bytes (unsigned base64 JSON), so
-                // resumed values pass the same range/enum validation as fresh
-                // arguments: limit in [1, MaxPageLimit], offset >= 0, detail in
-                // {summary, full}. Server-issued cursors always satisfy these, so
-                // any violation means a crafted or corrupted token — rejected with
-                // the same prompt as an undecodable cursor (no silent clamping,
-                // which would mask tampering; e.g. limit=-1 would otherwise hit
-                // the dialect's no-limit sentinel and dump the whole table).
-                if (cursor.Limit is < 1 or > MaxPageLimit
-                    || cursor.Offset < 0
-                    || cursor.Detail is not ("summary" or "full"))
+                // EVERY decoded field — table, offset, limit, detail, fields,
+                // sort, filter — goes back through the same validation choke
+                // point as freshly supplied arguments (ValidateQuery below).
+                // Server-issued cursors always pass, so ANY failure here — a
+                // malformed filter snapshot, an out-of-range limit, an unknown
+                // sort column, a null field entry — means a crafted or corrupted
+                // token, and all of them collapse to the one invalid-cursor
+                // prompt (no silent clamping, which would mask tampering; e.g.
+                // limit=-1 would otherwise hit the dialect's no-limit sentinel
+                // and dump the whole table). The broad catch is deliberate: no
+                // exception other than ToolPromptException may escape cursor
+                // handling, because the transport layer treats anything else as
+                // a protocol fault instead of an agent-actionable tool error.
+                try
+                {
+                    var filterElement = cursor.FilterJson is null ? (JsonElement?)null : ParseSchema(cursor.FilterJson);
+                    validated = ValidateQuery(
+                        model, cursor.Table, cursor.Offset, cursor.Limit, cursor.Detail,
+                        cursor.Fields, cursor.Sort, filterElement);
+                    // Server-issued cursors carry the table's exact DbName; a
+                    // casing variant only arises from tampering.
+                    if (!string.Equals(validated.Table.DbName, cursor.Table, StringComparison.Ordinal))
+                        throw new ToolPromptException(QueryCursor.InvalidCursorMessage);
+                }
+                catch (Exception e) when (e is not OperationCanceledException)
+                {
                     throw new ToolPromptException(QueryCursor.InvalidCursorMessage);
-                tableName = cursor.Table;
-                offset = cursor.Offset;
-                limit = cursor.Limit;
-                detail = cursor.Detail;
-                fields = cursor.Fields;
-                sortTokens = cursor.Sort;
-                filterElement = cursor.FilterJson is null ? null : ParseSchema(cursor.FilterJson);
+                }
             }
             else
             {
-                tableName = GetStringArgument(args, "table")
+                var tableName = GetStringArgument(args, "table")
                     ?? throw new ToolPromptException(
                         "Missing required argument 'table'. Call bifrost_schema_overview to list the available tables.");
-                offset = 0;
-                limit = GetPageLimit(page);
-                detail = GetStringArgument(args, "detail") ?? "summary";
-                if (detail is not ("summary" or "full"))
-                    throw new ToolPromptException($"Invalid detail '{detail}'. Allowed values: summary, full.");
-                fields = GetStringArray(args, "fields");
-                if (fields is { Count: 0 })
-                    throw new ToolPromptException("fields must be a non-empty array of column names, or be omitted.");
-                sortTokens = GetStringArray(args, "sort") ?? Array.Empty<string>();
-                filterElement = GetArgument(args, "filter");
+                validated = ValidateQuery(
+                    model, tableName,
+                    offset: 0,
+                    limit: GetPageLimit(page),
+                    detail: GetStringArgument(args, "detail") ?? "summary",
+                    fields: GetStringArray(args, "fields"),
+                    sortTokens: GetStringArray(args, "sort"),
+                    filterElement: GetArgument(args, "filter"));
             }
 
-            var model = await executor.GetModelAsync(endpoint);
-            var table = ResolveTable(model, tableName);
+            var result = await executor.ExecuteAsync(new QueryIntent
+            {
+                Query = validated.Query,
+                UserContext = new Dictionary<string, object?>(userContextProvider()),
+                Endpoint = endpoint,
+            }, cancellationToken);
 
-            var columns = fields is not null
-                ? fields.Select(f => QueryToolCompiler.ResolveColumn(table, f)).DistinctBy(c => c.ColumnName).ToList()
+            var totalCount = result.TotalCount ?? result.Rows.Count;
+            var payload = new JsonObject
+            {
+                ["table"] = validated.Table.DbName,
+                ["detail"] = validated.Fields is not null ? "fields" : validated.Detail,
+                ["rows"] = ToJsonRows(result.Rows),
+                ["totalCount"] = totalCount,
+                ["returnedCount"] = result.Rows.Count,
+                ["offset"] = validated.Offset,
+            };
+
+            if (validated.Offset + result.Rows.Count < totalCount)
+            {
+                payload["nextCursor"] = new QueryCursor
+                {
+                    Table = validated.Table.DbName,
+                    Offset = validated.Offset + result.Rows.Count,
+                    Limit = validated.Limit,
+                    Sort = validated.SortTokens,
+                    Detail = validated.Detail,
+                    Fields = validated.Fields,
+                    FilterJson = validated.FilterElement is { ValueKind: not (JsonValueKind.Null or JsonValueKind.Undefined) } f
+                        ? f.GetRawText()
+                        : null,
+                }.Encode();
+                payload["message"] =
+                    $"{totalCount} rows match; showing {result.Rows.Count} starting at offset {validated.Offset} — " +
+                    "narrow with a filter, e.g. {\"status\":{\"_eq\":\"open\"}}, or pass page.cursor = nextCursor to continue.";
+            }
+
+            return payload;
+        }
+
+        /// <summary>
+        /// The fully validated form of a <c>bifrost_query</c> request: the
+        /// resolved table, the compiled query (limit, offset, sort, filter all
+        /// applied), and the normalized argument values needed to render the
+        /// response payload and the next continuation cursor.
+        /// </summary>
+        private sealed record ValidatedQuery(
+            IDbTable Table,
+            GqlObjectQuery Query,
+            int Offset,
+            int Limit,
+            string Detail,
+            IReadOnlyList<string>? Fields,
+            IReadOnlyList<string> SortTokens,
+            JsonElement? FilterElement);
+
+        /// <summary>
+        /// Single validation choke point for <c>bifrost_query</c>. Both the
+        /// fresh-argument path and the cursor-resume path build their query
+        /// exclusively through this method, so a value decoded from a
+        /// caller-controlled cursor cannot reach execution with any less
+        /// validation than a freshly supplied argument: limit/offset ranges,
+        /// the detail enum, non-empty well-formed field and sort lists,
+        /// schema resolution of the table, every projected column, and every
+        /// sort column, and full filter compilation. Nullable parameter types
+        /// are deliberate — cursor JSON can materialize null where fresh
+        /// argument parsing never would — and every such hole is rejected here
+        /// rather than left to throw NullReference/ArgumentNull downstream.
+        /// </summary>
+        private static ValidatedQuery ValidateQuery(
+            IDbModel model,
+            string tableName,
+            int offset,
+            int limit,
+            string? detail,
+            IReadOnlyList<string?>? fields,
+            IReadOnlyList<string?>? sortTokens,
+            JsonElement? filterElement)
+        {
+            if (limit < 1 || limit > MaxPageLimit)
+                throw new ToolPromptException($"page.limit must be an integer between 1 and {MaxPageLimit}.");
+            if (offset < 0)
+                throw new ToolPromptException("offset must be zero or greater.");
+            if (detail is not ("summary" or "full"))
+                throw new ToolPromptException($"Invalid detail '{detail}'. Allowed values: summary, full.");
+            if (fields is { Count: 0 })
+                throw new ToolPromptException("fields must be a non-empty array of column names, or be omitted.");
+            if (fields is not null && fields.Any(string.IsNullOrWhiteSpace))
+                throw new ToolPromptException("fields must contain only column names.");
+            var sort = sortTokens?.Where(t => t is not null).Cast<string>().ToList() ?? new List<string>();
+            if (sortTokens is not null && sort.Count != sortTokens.Count)
+                throw new ToolPromptException("sort must contain only '<column>_asc' / '<column>_desc' tokens.");
+
+            var table = ResolveTable(model, tableName);
+            var fieldNames = fields?.Cast<string>().ToList();
+            var columns = fieldNames is not null
+                ? fieldNames.Select(f => QueryToolCompiler.ResolveColumn(table, f)).DistinctBy(c => c.ColumnName).ToList()
                 : detail == "full"
                     ? table.Columns.OrderBy(c => c.OrdinalPosition).ToList()
                     : QueryToolCompiler.SummaryColumns(table);
@@ -257,50 +356,13 @@ namespace BifrostQL.Mcp
             query.Limit = limit;
             query.Offset = offset;
             query.IncludeResult = true;
-            query.Sort = sortTokens.Count > 0
-                ? QueryToolCompiler.CompileSort(table, sortTokens)
+            query.Sort = sort.Count > 0
+                ? QueryToolCompiler.CompileSort(table, sort)
                 : QueryToolCompiler.DefaultSort(table);
             if (filterElement is { ValueKind: not (JsonValueKind.Null or JsonValueKind.Undefined) } fe)
                 query.Filter = QueryToolCompiler.CompileFilter(table, fe);
 
-            var result = await executor.ExecuteAsync(new QueryIntent
-            {
-                Query = query,
-                UserContext = new Dictionary<string, object?>(userContextProvider()),
-                Endpoint = endpoint,
-            }, cancellationToken);
-
-            var totalCount = result.TotalCount ?? result.Rows.Count;
-            var payload = new JsonObject
-            {
-                ["table"] = table.DbName,
-                ["detail"] = fields is not null ? "fields" : detail,
-                ["rows"] = ToJsonRows(result.Rows),
-                ["totalCount"] = totalCount,
-                ["returnedCount"] = result.Rows.Count,
-                ["offset"] = offset,
-            };
-
-            if (offset + result.Rows.Count < totalCount)
-            {
-                payload["nextCursor"] = new QueryCursor
-                {
-                    Table = table.DbName,
-                    Offset = offset + result.Rows.Count,
-                    Limit = limit,
-                    Sort = sortTokens,
-                    Detail = detail,
-                    Fields = fields,
-                    FilterJson = filterElement is { ValueKind: not (JsonValueKind.Null or JsonValueKind.Undefined) } f
-                        ? f.GetRawText()
-                        : null,
-                }.Encode();
-                payload["message"] =
-                    $"{totalCount} rows match; showing {result.Rows.Count} starting at offset {offset} — " +
-                    "narrow with a filter, e.g. {\"status\":{\"_eq\":\"open\"}}, or pass page.cursor = nextCursor to continue.";
-            }
-
-            return payload;
+            return new ValidatedQuery(table, query, offset, limit, detail, fieldNames, sort, filterElement);
         }
 
         private static int GetPageLimit(JsonElement? page)
@@ -308,8 +370,7 @@ namespace BifrostQL.Mcp
             if (page is not { } p || p.ValueKind != JsonValueKind.Object
                 || !p.TryGetProperty("limit", out var limitElement))
                 return DefaultPageLimit;
-            if (limitElement.ValueKind != JsonValueKind.Number || !limitElement.TryGetInt32(out var limit)
-                || limit < 1 || limit > MaxPageLimit)
+            if (limitElement.ValueKind != JsonValueKind.Number || !limitElement.TryGetInt32(out var limit))
                 throw new ToolPromptException($"page.limit must be an integer between 1 and {MaxPageLimit}.");
             return limit;
         }

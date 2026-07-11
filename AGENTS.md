@@ -41,6 +41,8 @@ dotnet run --project src/BifrostQL.Host  # Web server
 6. `SqlExecutionManager` 執 SQL
 7. 結果返為 GraphQL response
 
+非 GraphQL 前門（protocol adapters）：adapter 僅擁 wire + codec。讀經 `IQueryIntentExecutor`（內delegate `SqlExecutionManager.ExecuteIntentAsync`），寫經 `IMutationIntentExecutor`（內 delegate `TableMutationPipeline`）；transformers 於彼二處套，adapter 無 API 可繞。identity 必經 `IBifrostAuthContextFactory`（諸 transport gates 共享，fail-closed）。非 HTTP 宿 Kestrel `ConnectionHandler` + `IHostedService`；contract 無 `HttpContext`。詳 docs concepts/protocol-adapters、guides/protocol-adapters。
+
 ### Key Components
 
 | Component | Location | Purpose |
@@ -53,6 +55,11 @@ dotnet run --project src/BifrostQL.Host  # Web server
 | `StringNormalizer` | `Utils/StringNormalizer.cs` | Centralized string normalization |
 | `MetadataKeys` | `Model/MetadataKeys.cs` | Constants for metadata keys |
 | `AppMetadataModel` | `AppMetadata/` | App-metadata overlay — client presentation layer (labels, forms, grids, relationships) |
+| `IProtocolAdapter` | `BifrostQL.Server/ProtocolAdapter.cs` | Non-GraphQL front-door hosting contract; register via `AddProtocolAdapter<T>` |
+| `IQueryIntentExecutor` | `Resolvers/QueryIntentExecutor.cs` | Adapter read seam — programmatic `GqlObjectQuery`, transformers unskippable |
+| `IMutationIntentExecutor` | `Resolvers/MutationIntentExecutor.cs` | Adapter write seam — full mutation transformer chain via `TableMutationPipeline` |
+| `IBifrostAuthContextFactory` | `BifrostQL.Server/BifrostAuthContextFactory.cs` | Shared identity projection for all transport gates, fail-closed |
+| `ProtocolAdapterConformanceTests` | `tests/BifrostQL.AdapterConformance/` | Derivable security-conformance kit; write adapters set `AdapterSupportsMutations` |
 
 ## Design Patterns
 

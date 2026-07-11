@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<PackageId>BifrostQL.Mcp</PackageId>
+		<PackageVersion>0.4.11</PackageVersion>
+		<Version>0.4.11</Version>
+		<Authors>Andy Brummer</Authors>
+		<Company>Standard Beagle Studio</Company>
+		<Description>Model Context Protocol (MCP) server adapter for BifrostQL: exposes database schema tools and resources to AI agents.</Description>
+		<PackageProjectUrl>https://github.com/standardbeagle/BifrostQL</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/standardbeagle/BifrostQL</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+		<PackageTags>GraphQL MCP ModelContextProtocol AI agents</PackageTags>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<Copyright>Copyright © Standard Beagle Studio LLC.</Copyright>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="ModelContextProtocol" Version="1.4.1" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\BifrostQL.Core\BifrostQL.Core.csproj" />
+		<ProjectReference Include="..\BifrostQL.Server\BifrostQL.Server.csproj" />
+	</ItemGroup>
+
+</Project>

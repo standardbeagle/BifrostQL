@@ -118,6 +118,20 @@ namespace BifrostQL.Server.Test
     }
 
     /// <summary>
+    /// An adapter whose startup fails, standing in for a real bind/listen error
+    /// (port in use, bad certificate, …). Used to prove the fail-fast lifecycle.
+    /// </summary>
+    public sealed class FailingStartProtocolAdapter : IProtocolAdapter
+    {
+        public const string FailureMessage = "protocol port bind failed";
+
+        public Task StartAsync(CancellationToken cancellationToken)
+            => throw new InvalidOperationException(FailureMessage);
+
+        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    /// <summary>
     /// Slice 3 acceptance: the protocol-adapter hosting contract. The echo adapter is
     /// registered via <c>AddProtocolAdapter&lt;T&gt;</c>, started/stopped by the host's
     /// lifecycle, and its requests run the full core path — auth-factory identity
@@ -216,6 +230,38 @@ namespace BifrostQL.Server.Test
             await host.StopAsync();
 
             adapter.StopCount.Should().Be(1);
+        }
+
+        [Fact]
+        public async Task HostStartup_AdapterStartFailure_AbortsHostStart()
+        {
+            DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
+            var builder = new HostBuilder().ConfigureWebHost(web =>
+            {
+                web.UseTestServer();
+                web.ConfigureServices(services =>
+                {
+                    services.AddBifrostEndpoints(o =>
+                    {
+                        o.AddEndpoint(e =>
+                        {
+                            e.ConnectionString = ConnString;
+                            e.Provider = "sqlite";
+                            e.Path = EndpointPath;
+                            e.DisableAuth = true;
+                        });
+                        o.AddProtocolAdapter<FailingStartProtocolAdapter>();
+                    });
+                });
+                web.Configure(_ => { });
+            });
+
+            // A bind/listen error must abort host startup — never a host that looks
+            // healthy while its protocol front end silently failed to start.
+            var act = () => builder.StartAsync();
+
+            await act.Should().ThrowAsync<InvalidOperationException>()
+                .WithMessage($"*{FailingStartProtocolAdapter.FailureMessage}*");
         }
 
         [Fact]

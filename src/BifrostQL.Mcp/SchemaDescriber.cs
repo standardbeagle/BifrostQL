@@ -126,21 +126,70 @@ namespace BifrostQL.Mcp
                 .ToArray();
             if (names.Length == 0)
                 return $"Unknown table '{requestedTable}'. No tables are available in this schema.";
+            return $"Unknown table '{requestedTable}'.{DidYouMean(names, requestedTable)} Available tables: {string.Join(", ", names)}.";
+        }
+
+        /// <summary>
+        /// Prompt-style message for a column name that does not exist on
+        /// <paramref name="table"/>: nearest-name suggestion plus the full column
+        /// list, mirroring <see cref="UnknownTableMessage"/> so filter/field/sort
+        /// mistakes are self-correctable in one round trip.
+        /// </summary>
+        internal static string UnknownColumnMessage(IDbTable table, string requestedColumn)
+        {
+            var names = table.Columns
+                .OrderBy(c => c.OrdinalPosition)
+                .Select(c => c.ColumnName)
+                .ToArray();
+            return $"Unknown column '{requestedColumn}' on table '{table.DbName}'." +
+                $"{DidYouMean(names, requestedColumn)} Available columns: {string.Join(", ", names)}.";
+        }
+
+        /// <summary>" Did you mean 'x'?" when the nearest candidate is plausibly a typo, else empty.</summary>
+        private static string DidYouMean(IReadOnlyList<string> names, string requested)
+        {
             var nearest = names
-                .Select(n => (Name: n, Distance: LevenshteinDistance(requestedTable, n)))
+                .Select(n => (Name: n, Distance: LevenshteinDistance(requested, n)))
                 .OrderBy(x => x.Distance)
                 .First();
-            var suggestion = nearest.Distance <= Math.Max(2, requestedTable.Length / 2)
+            return nearest.Distance <= Math.Max(2, requested.Length / 2)
                 ? $" Did you mean '{nearest.Name}'?"
                 : string.Empty;
-            return $"Unknown table '{requestedTable}'.{suggestion} Available tables: {string.Join(", ", names)}.";
+        }
+
+        /// <summary>
+        /// Picks the human-readable "display" column for a table's summary rows.
+        /// Heuristic (deliberately simple, documented for tuning): prefer a column
+        /// literally named <c>name</c>, <c>title</c>, or <c>label</c> — in that
+        /// priority order, case-insensitive — else fall back to the first
+        /// string-typed column in ordinal order. Null when the table has no
+        /// string column at all (e.g. a pure numeric junction table).
+        /// </summary>
+        internal static ColumnDto? DisplayColumn(IDbTable table)
+        {
+            foreach (var preferred in new[] { "name", "title", "label" })
+            {
+                var byName = table.Columns.FirstOrDefault(c =>
+                    string.Equals(c.ColumnName, preferred, StringComparison.OrdinalIgnoreCase));
+                if (byName is not null)
+                    return byName;
+            }
+            return table.Columns
+                .OrderBy(c => c.OrdinalPosition)
+                .FirstOrDefault(c => IsStringType(c.DataType));
+        }
+
+        internal static bool IsStringType(string dataType)
+        {
+            var normalized = dataType.ToLowerInvariant();
+            return normalized.Contains("char") || normalized.Contains("text") || normalized.Contains("string");
         }
 
         /// <summary>
         /// Links where <paramref name="table"/> holds the foreign-key columns
         /// (child side) — the table's outgoing references.
         /// </summary>
-        private static IEnumerable<TableLinkDto> OutgoingLinks(IDbTable table) =>
+        internal static IEnumerable<TableLinkDto> OutgoingLinks(IDbTable table) =>
             table.SingleLinks.Values
                 .Where(l => SameTable(l.ChildTable, table))
                 .OrderBy(l => l.ParentTable.DbName, StringComparer.OrdinalIgnoreCase);
@@ -149,7 +198,7 @@ namespace BifrostQL.Mcp
         /// Links where <paramref name="table"/> is the referenced (parent) side —
         /// other tables' foreign keys pointing at it.
         /// </summary>
-        private static IEnumerable<TableLinkDto> IncomingLinks(IDbTable table) =>
+        internal static IEnumerable<TableLinkDto> IncomingLinks(IDbTable table) =>
             table.MultiLinks.Values
                 .Where(l => SameTable(l.ParentTable, table))
                 .OrderBy(l => l.ChildTable.DbName, StringComparer.OrdinalIgnoreCase);

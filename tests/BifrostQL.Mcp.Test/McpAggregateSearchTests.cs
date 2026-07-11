@@ -308,5 +308,141 @@ namespace BifrostQL.Mcp.Test
             var text = await CallError("bifrost_aggregate", new() { ["table"] = "orders" });
             text.Should().Contain("measures").And.Contain("count");
         }
+
+        // ---- bifrost_search -----------------------------------------------------
+
+        [Fact]
+        public async Task Search_HitsAcrossTables_WithoutCrossTenantOrSoftDeletedLeaks()
+        {
+            var payload = await CallOk("bifrost_search", new() { ["term"] = "acme" });
+
+            var totals = payload.GetProperty("tables").EnumerateArray()
+                .ToDictionary(
+                    t => t.GetProperty("table").GetString()!,
+                    t => t.GetProperty("totalMatches").GetInt32());
+            totals.Should().BeEquivalentTo(new Dictionary<string, int>
+            {
+                // orders: 2 live tenant-A matches only — never the soft-deleted
+                // 'acme deleted order' (id 4) or tenant-B 'acme foreign order' (id 5).
+                ["customers"] = 1,
+                ["orders"] = 2,
+                ["order_items"] = 8,
+            });
+
+            var results = payload.GetProperty("results").EnumerateArray().ToList();
+            var orderIds = results
+                .Where(r => r.GetProperty("table").GetString() == "orders")
+                .Select(r => r.GetProperty("id")[0].GetInt64());
+            orderIds.Should().BeEquivalentTo(new[] { 1L, 2L });
+
+            var customer = results.Single(r => r.GetProperty("table").GetString() == "customers");
+            customer.GetProperty("displayName").GetString().Should().Be("Acme Corp");
+            customer.GetProperty("matchedColumns").EnumerateArray()
+                .Select(c => c.GetString()).Should().Equal("name");
+        }
+
+        [Fact]
+        public async Task Search_PerTableCap_TruncatesWithTotalsAndSteeringMessage()
+        {
+            var payload = await CallOk("bifrost_search", new()
+            {
+                ["term"] = "acme",
+                ["tables"] = new[] { "order_items" },
+            });
+
+            var itemTotals = payload.GetProperty("tables").EnumerateArray().Single();
+            itemTotals.GetProperty("totalMatches").GetInt32().Should().Be(8);
+            itemTotals.GetProperty("returned").GetInt32().Should().Be(5);
+            payload.GetProperty("results").GetArrayLength().Should().Be(5);
+            payload.GetProperty("results").EnumerateArray()
+                .Should().OnlyContain(r => r.GetProperty("table").GetString() == "order_items");
+            payload.GetProperty("message").GetString().Should()
+                .Contain("_contains").And.Contain("bifrost_query");
+        }
+
+        [Fact]
+        public async Task Search_ExplicitTables_RestrictsTheSweep()
+        {
+            var payload = await CallOk("bifrost_search", new()
+            {
+                ["term"] = "acme",
+                ["tables"] = new[] { "customers" },
+            });
+
+            payload.GetProperty("results").EnumerateArray()
+                .Should().OnlyContain(r => r.GetProperty("table").GetString() == "customers");
+            payload.GetProperty("tables").GetArrayLength().Should().Be(1);
+        }
+
+        [Fact]
+        public async Task Search_TermTooShort_Prompts()
+        {
+            var text = await CallError("bifrost_search", new() { ["term"] = "a" });
+            text.Should().Contain("at least 2 characters");
+        }
+
+        [Fact]
+        public async Task Search_UnknownTable_PromptsWithDidYouMean()
+        {
+            var text = await CallError("bifrost_search", new()
+            {
+                ["term"] = "acme",
+                ["tables"] = new[] { "ordrs" },
+            });
+
+            text.Should().Contain("Unknown table 'ordrs'").And.Contain("Did you mean 'orders'?");
+        }
+
+        /// <summary>
+        /// A caller with no tenant context cannot read tenant-filtered tables at
+        /// all; the search must skip them silently (fail-closed, no error entry
+        /// that would advertise unreachable data) while still searching the rest.
+        /// </summary>
+        [Fact]
+        public async Task Search_WithoutTenantContext_SilentlySkipsTenantFilteredTables()
+        {
+            var executor = _host.Services.GetRequiredService<IQueryIntentExecutor>();
+            // Default user-context provider: empty — no tenant identity.
+            var options = BifrostMcpServerFactory.CreateServerOptions(executor);
+
+            var clientToServer = new Pipe();
+            var serverToClient = new Pipe();
+            var transport = new StreamServerTransport(
+                clientToServer.Reader.AsStream(),
+                serverToClient.Writer.AsStream(),
+                serverName: "BifrostQL-no-tenant-test");
+            await using var server = McpServer.Create(transport, options, loggerFactory: null, serviceProvider: null);
+            using var stop = new CancellationTokenSource();
+            var run = server.RunAsync(stop.Token);
+            var client = await McpClient.CreateAsync(new StreamClientTransport(
+                serverInput: clientToServer.Writer.AsStream(),
+                serverOutput: serverToClient.Reader.AsStream()));
+            try
+            {
+                var result = await client.CallToolAsync("bifrost_search",
+                    new Dictionary<string, object?> { ["term"] = "acme" });
+
+                result.IsError.Should().NotBeTrue();
+                var payload = result.StructuredContent!.Value;
+                payload.GetProperty("tables").EnumerateArray()
+                    .Select(t => t.GetProperty("table").GetString())
+                    .Should().BeEquivalentTo("customers", "order_items");
+                payload.GetProperty("results").EnumerateArray()
+                    .Should().OnlyContain(r => r.GetProperty("table").GetString() != "orders");
+            }
+            finally
+            {
+                await client.DisposeAsync();
+                await stop.CancelAsync();
+                try
+                {
+                    await run;
+                }
+                catch (OperationCanceledException)
+                {
+                    // Normal shutdown path for a stream-transport session.
+                }
+            }
+        }
     }
 }

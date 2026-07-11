@@ -154,7 +154,7 @@ namespace BifrostQL.Mcp.Test
 
             tools.Select(t => t.Name).Should().BeEquivalentTo(
                 "bifrost_schema_overview", "bifrost_describe_table", "bifrost_query", "bifrost_row_context",
-                "bifrost_aggregate");
+                "bifrost_aggregate", "bifrost_search");
 
             foreach (var tool in tools)
             {

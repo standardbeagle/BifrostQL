@@ -153,6 +153,11 @@ namespace BifrostQL.Server
             int? maxComplexity,
             IConfigurationSection? loggingConfig)
         {
+            // Single identity seam for every transport gate (HTTP, binary WebSocket,
+            // protocol frontend, workflow endpoints). TryAdd so a host can substitute
+            // its own factory before AddBifrostQL runs.
+            services.TryAddSingleton<IBifrostAuthContextFactory, BifrostAuthContextFactory>();
+
             services.AddGraphQL(b => b
                     .AddSystemTextJson()
                     .AddComplexityAnalyzer(c => GraphQlComplexityLimits.Apply(c, maxDepth, maxComplexity))

@@ -625,7 +625,7 @@ namespace BifrostQL.Server
                 {
                     Query = request.Query,
                     Variables = variables,
-                    UserContext = BuildUserContext(httpContext),
+                    UserContext = BifrostAuthContextFactory.Resolve(httpContext).CreateUserContext(httpContext),
                     RequestServices = httpContext.RequestServices,
                     CancellationToken = httpContext.RequestAborted,
                 };
@@ -699,15 +699,6 @@ namespace BifrostQL.Server
             // executing the operation with no variables (which would run against
             // wrong/default inputs). The caller maps JsonException to an Error reply.
             return JsonSerializer.Deserialize<Dictionary<string, object?>>(variablesJson);
-        }
-
-        private static IDictionary<string, object?> BuildUserContext(HttpContext context)
-        {
-            var user = context.User;
-            if (user?.Identity?.IsAuthenticated == true)
-                return new BifrostContext(context);
-
-            return new Dictionary<string, object?>();
         }
 
         private static async Task SendResponseAsync(WebSocket webSocket, BifrostMessage response, CancellationToken cancellationToken)

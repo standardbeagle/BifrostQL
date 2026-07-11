@@ -21,11 +21,7 @@ namespace BifrostQL.Server
         {
             ArgumentNullException.ThrowIfNull(context);
 
-            var user = context.User;
-            if (user?.Identity?.IsAuthenticated == true)
-                return new BifrostContext(context);
-
-            return new Dictionary<string, object?>();
+            return BifrostAuthContextFactory.Resolve(context).CreateUserContext(context);
         }
     }
 }

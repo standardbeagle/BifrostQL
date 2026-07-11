@@ -47,7 +47,7 @@ namespace BifrostQL.Server
             IDictionary<string, object?> userContext;
             try
             {
-                userContext = BuildUserContext(context);
+                userContext = BifrostAuthContextFactory.Resolve(context).CreateUserContext(context);
             }
             catch (UnmappedOidcIssuerException)
             {
@@ -96,15 +96,6 @@ namespace BifrostQL.Server
             return string.Equals(request.Method, "POST", StringComparison.OrdinalIgnoreCase)
                 && request.ContentType != null
                 && request.ContentType.Contains("application/json", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static IDictionary<string, object?> BuildUserContext(HttpContext context)
-        {
-            var user = context.User;
-            if (user?.Identity?.IsAuthenticated == true)
-                return new BifrostContext(context);
-
-            return new Dictionary<string, object?>();
         }
     }
 

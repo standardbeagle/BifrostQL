@@ -54,7 +54,8 @@ namespace BifrostQL.Server
                 OperationName = bifrostRequest.OperationName,
                 Variables = bifrostRequest.Variables,
                 Extensions = bifrostRequest.Extensions,
-                UserContext = BuildUserContext(context, bifrostRequest.UserContext),
+                UserContext = BifrostAuthContextFactory.Resolve(context)
+                    .CreateUserContext(context, bifrostRequest.UserContext),
                 RequestServices = context.RequestServices,
                 CancellationToken = context.RequestAborted,
             };
@@ -71,24 +72,6 @@ namespace BifrostQL.Server
             return string.Equals(request.Method, "POST", StringComparison.OrdinalIgnoreCase)
                 && request.ContentType != null
                 && request.ContentType.Contains(_frontend.ContentType, StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static IDictionary<string, object?> BuildUserContext(HttpContext context, IDictionary<string, object?> existing)
-        {
-            var user = context.User;
-            if (user?.Identity?.IsAuthenticated == true)
-            {
-                var bifrostContext = new BifrostContext(context);
-                // Merge any user context from the parsed request
-                foreach (var kv in existing)
-                {
-                    if (!bifrostContext.ContainsKey(kv.Key))
-                        bifrostContext[kv.Key] = kv.Value;
-                }
-                return bifrostContext;
-            }
-
-            return existing.Count > 0 ? existing : new Dictionary<string, object?>();
         }
     }
 

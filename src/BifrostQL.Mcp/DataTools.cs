@@ -207,6 +207,18 @@ namespace BifrostQL.Mcp
                     throw new ToolPromptException(
                         $"page.cursor continues a query on table '{cursor.Table}' but table '{requestedTable}' was requested. " +
                         "Drop the cursor to start a new query, or drop the table argument to continue.");
+                // The cursor is caller-controlled bytes (unsigned base64 JSON), so
+                // resumed values pass the same range/enum validation as fresh
+                // arguments: limit in [1, MaxPageLimit], offset >= 0, detail in
+                // {summary, full}. Server-issued cursors always satisfy these, so
+                // any violation means a crafted or corrupted token — rejected with
+                // the same prompt as an undecodable cursor (no silent clamping,
+                // which would mask tampering; e.g. limit=-1 would otherwise hit
+                // the dialect's no-limit sentinel and dump the whole table).
+                if (cursor.Limit is < 1 or > MaxPageLimit
+                    || cursor.Offset < 0
+                    || cursor.Detail is not ("summary" or "full"))
+                    throw new ToolPromptException(QueryCursor.InvalidCursorMessage);
                 tableName = cursor.Table;
                 offset = cursor.Offset;
                 limit = cursor.Limit;

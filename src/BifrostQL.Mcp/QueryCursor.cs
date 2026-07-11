@@ -15,6 +15,15 @@ namespace BifrostQL.Mcp
     /// </summary>
     internal sealed record QueryCursor
     {
+        /// <summary>
+        /// Shared rejection text for any cursor that fails decoding OR carries
+        /// out-of-range field values: both mean the token is not one the server
+        /// issued, so both get the same guidance.
+        /// </summary>
+        internal const string InvalidCursorMessage =
+            "Invalid cursor. Pass the exact nextCursor value returned by a previous bifrost_query call, " +
+            "or omit page.cursor to start a new query.";
+
         public int Version { get; init; } = 1;
         public required string Table { get; init; }
         public int Offset { get; init; }
@@ -39,9 +48,7 @@ namespace BifrostQL.Mcp
             }
             catch (Exception e) when (e is FormatException or JsonException)
             {
-                throw new ToolPromptException(
-                    "Invalid cursor. Pass the exact nextCursor value returned by a previous bifrost_query call, " +
-                    "or omit page.cursor to start a new query.");
+                throw new ToolPromptException(InvalidCursorMessage);
             }
         }
     }

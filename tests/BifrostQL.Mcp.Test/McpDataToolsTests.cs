@@ -1,5 +1,7 @@
 using System.IO.Pipelines;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Server;
@@ -235,6 +237,54 @@ namespace BifrostQL.Mcp.Test
             var text = await CallError("bifrost_query", new()
             {
                 ["page"] = new Dictionary<string, object?> { ["cursor"] = "not-a-cursor" },
+            });
+
+            text.Should().Contain("Invalid cursor").And.Contain("nextCursor");
+        }
+
+        /// <summary>
+        /// Decodes a server-issued cursor, overwrites one field, and re-encodes —
+        /// the exact shape of a crafted-cursor attack (the token is unsigned
+        /// base64 JSON, so any caller can do this).
+        /// </summary>
+        private static string TamperCursor(string cursor, string property, JsonNode? value)
+        {
+            var json = JsonNode.Parse(Encoding.UTF8.GetString(Convert.FromBase64String(cursor)))!.AsObject();
+            json[property] = value;
+            return Convert.ToBase64String(Encoding.UTF8.GetBytes(json.ToJsonString()));
+        }
+
+        [Theory]
+        [InlineData("Limit", -1)] // would hit the dialect's no-limit sentinel → full-table dump
+        [InlineData("Limit", 0)]
+        [InlineData("Limit", 10_000)] // above MaxPageLimit (200)
+        [InlineData("Offset", -5)]
+        public async Task Query_CursorWithOutOfRangePagingValues_RejectedAsInvalidCursorNotClamped(
+            string property, int value)
+        {
+            var first = await CallOk("bifrost_query", new() { ["table"] = "order_items" });
+            var cursor = first.GetProperty("nextCursor").GetString()!;
+
+            var text = await CallError("bifrost_query", new()
+            {
+                ["page"] = new Dictionary<string, object?> { ["cursor"] = TamperCursor(cursor, property, value) },
+            });
+
+            // Same prompt as an undecodable cursor: server-issued cursors never
+            // carry these values, so out-of-range fields mean tampering, and no
+            // rows may be returned (a limit of -1 would otherwise dump the table).
+            text.Should().Contain("Invalid cursor").And.Contain("nextCursor");
+        }
+
+        [Fact]
+        public async Task Query_CursorWithUnknownDetail_RejectedAsInvalidCursor()
+        {
+            var first = await CallOk("bifrost_query", new() { ["table"] = "order_items" });
+            var cursor = first.GetProperty("nextCursor").GetString()!;
+
+            var text = await CallError("bifrost_query", new()
+            {
+                ["page"] = new Dictionary<string, object?> { ["cursor"] = TamperCursor(cursor, "Detail", "bogus") },
             });
 
             text.Should().Contain("Invalid cursor").And.Contain("nextCursor");

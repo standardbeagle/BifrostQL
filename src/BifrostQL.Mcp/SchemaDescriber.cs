@@ -114,7 +114,9 @@ namespace BifrostQL.Mcp
         /// <summary>
         /// Prompt-style message for a table name the model does not contain:
         /// nearest-name suggestion plus the full table list, so an agent can
-        /// self-correct without another round trip.
+        /// self-correct without another round trip. An empty model (no tables
+        /// exposed) still yields a prompt-style message rather than throwing,
+        /// so agents get an actionable error instead of a protocol fault.
         /// </summary>
         public static string UnknownTableMessage(IDbModel model, string requestedTable)
         {
@@ -122,6 +124,8 @@ namespace BifrostQL.Mcp
                 .Select(t => t.DbName)
                 .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+            if (names.Length == 0)
+                return $"Unknown table '{requestedTable}'. No tables are available in this schema.";
             var nearest = names
                 .Select(n => (Name: n, Distance: LevenshteinDistance(requestedTable, n)))
                 .OrderBy(x => x.Distance)

@@ -47,6 +47,10 @@ namespace BifrostQL.Mcp
             if (_server is not null)
                 throw new InvalidOperationException("BifrostMcpAdapter is already started.");
 
+            // Honor host-initiated cancellation before committing to the stdio
+            // session; once RunAsync starts, only StopAsync (via _stopping) ends it.
+            cancellationToken.ThrowIfCancellationRequested();
+
             var options = BifrostMcpServerFactory.CreateServerOptions(_executor);
             var transport = new StdioServerTransport(BifrostMcpServerFactory.ServerName, _loggerFactory);
             _server = McpServer.Create(transport, options, _loggerFactory, serviceProvider: null);

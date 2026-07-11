@@ -30,7 +30,9 @@ namespace BifrostQL.Mcp.Test
     /// 999, name contains 'acme']) → order_items(120 distinct SKUs, 8 of them
     /// containing 'acme'). Plus documents(7: six single-column 'zephyr' title
     /// matches at ids 1-6 and one two-column 'zephyr' title+body match at id 7)
-    /// to exercise relevance ranking against the per-table cap.
+    /// to exercise relevance ranking against the per-table cap. Plus secrets(1),
+    /// guarded by an auto-filter on a claim the contexts never carry, to prove
+    /// the search skips an auto-filtered table fail-closed rather than erroring.
     /// </summary>
     public sealed class McpAggregateSearchTests : IAsyncLifetime
     {
@@ -96,6 +98,12 @@ namespace BifrostQL.Mcp.Test
                     (6, 'zephyr foxtrot', 'unrelated'),
                     (7, 'zephyr golf', 'zephyr in the body too')
                 """,
+                // secrets: guarded by an auto-filter on a claim the test contexts
+                // never carry, so every read is denied. Its sole 'quokka' row
+                // exists only to prove the search skips an auto-filtered table
+                // (fail-closed) instead of failing the whole call.
+                "CREATE TABLE secrets (id INTEGER PRIMARY KEY, label TEXT NOT NULL, owner_id TEXT NOT NULL)",
+                "INSERT INTO secrets(id, label, owner_id) VALUES (1, 'quokka secret', 'someone')",
             };
             // 120 distinct SKUs (exceeds the 100-group aggregate cap); 8 contain
             // 'acme' (exceeds the per-table search cap of 5).
@@ -123,7 +131,11 @@ namespace BifrostQL.Mcp.Test
                             e.ConnectionString = _connString;
                             e.Provider = "sqlite";
                             e.Path = EndpointPath;
-                            e.Metadata = new[] { "*.orders { tenant-filter: tenant_id; soft-delete: deleted_at }" };
+                            e.Metadata = new[]
+                            {
+                                "*.orders { tenant-filter: tenant_id; soft-delete: deleted_at }",
+                                "*.secrets { auto-filter: owner_id:owner_claim }",
+                            };
                             e.DisableAuth = true;
                         });
                     });
@@ -423,6 +435,26 @@ namespace BifrostQL.Mcp.Test
                 .Select(c => c.GetString()).Should().BeEquivalentTo("title", "body");
             results.Select(r => r.GetProperty("id")[0].GetInt64())
                 .Should().Contain(7L, "the ranking cap must not discard the most relevant match");
+        }
+
+        /// <summary>
+        /// Fail-closed skipping must cover every authorization filter, not just
+        /// tenant scoping. The secrets table is auto-filtered on a claim absent
+        /// from the caller context, so its read is denied — the search must drop
+        /// the table and return an empty result, not fail the whole call. Regresses
+        /// the narrowed catch omitting AutoFilterTransformer's denial signal.
+        /// </summary>
+        [Fact]
+        public async Task Search_AutoFilterTableWithoutClaim_IsSkippedNotFailed()
+        {
+            var payload = await CallOk("bifrost_search", new()
+            {
+                ["term"] = "quokka",
+                ["tables"] = new[] { "secrets" },
+            });
+
+            payload.GetProperty("results").GetArrayLength().Should().Be(0);
+            payload.GetProperty("tables").GetArrayLength().Should().Be(0);
         }
 
         [Fact]

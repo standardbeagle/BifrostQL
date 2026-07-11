@@ -88,19 +88,26 @@ public sealed class AutoFilterTransformer : IFilterTransformer, IModuleNamed
                 $"Auto-filter column '{mapping.Column}' not found in table '{fullTableName}'.");
         }
 
-        // Get claim value from user context
+        // Get claim value from user context. A missing/null/empty claim is a
+        // fail-closed access denial (the caller lacks the identity this filter
+        // scopes on), not a server fault — tag it so per-table skippers such as
+        // bifrost_search treat it like tenant/policy denial rather than a hard
+        // error. Metadata-shape faults below (unknown column, bad mapping) stay
+        // untagged so they propagate as the misconfiguration they are.
         if (!context.UserContext.TryGetValue(mapping.Claim, out var claimValue))
         {
             throw new BifrostExecutionError(
                 $"Auto-filter claim '{mapping.Claim}' required but not found in user context " +
-                $"for column '{mapping.Column}' on table '{fullTableName}'.");
+                $"for column '{mapping.Column}' on table '{fullTableName}'.")
+            { ErrorCode = BifrostExecutionError.AccessDeniedCode };
         }
 
         if (claimValue == null)
         {
             throw new BifrostExecutionError(
                 $"Auto-filter claim '{mapping.Claim}' cannot be null " +
-                $"for column '{mapping.Column}' on table '{fullTableName}'.");
+                $"for column '{mapping.Column}' on table '{fullTableName}'.")
+            { ErrorCode = BifrostExecutionError.AccessDeniedCode };
         }
 
         // Array claims produce IN filters
@@ -111,7 +118,8 @@ public sealed class AutoFilterTransformer : IFilterTransformer, IModuleNamed
             {
                 throw new BifrostExecutionError(
                     $"Auto-filter claim '{mapping.Claim}' cannot be empty " +
-                    $"for column '{mapping.Column}' on table '{fullTableName}'.");
+                    $"for column '{mapping.Column}' on table '{fullTableName}'.")
+                { ErrorCode = BifrostExecutionError.AccessDeniedCode };
             }
             return TableFilterFactory.In(table.DbName, mapping.Column, values);
         }

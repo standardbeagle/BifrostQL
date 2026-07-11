@@ -156,6 +156,23 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
+        /// Registers each protocol adapter type as a singleton plus a dedicated
+        /// <see cref="Microsoft.Extensions.Hosting.IHostedService"/> wrapper, so the host
+        /// starts/stops every adapter with its own lifecycle. Adapter types resolve their
+        /// dependencies (IQueryIntentExecutor, IBifrostAuthContextFactory, …) from DI.
+        /// </summary>
+        public static void RegisterProtocolAdapterServices(IServiceCollection services, IReadOnlyList<Type> adapterTypes)
+        {
+            foreach (var adapterType in adapterTypes)
+            {
+                var type = adapterType;
+                services.TryAddSingleton(type);
+                services.AddSingleton<Microsoft.Extensions.Hosting.IHostedService>(sp =>
+                    new ProtocolAdapterHostedService((IProtocolAdapter)sp.GetRequiredService(type)));
+            }
+        }
+
+        /// <summary>
         /// Registers the GraphQL pipeline (System.Text.Json, the bounded depth/complexity
         /// analyzer, error logging) plus, when auth is enabled and JWT settings are bound, the
         /// cookie + OIDC authentication handlers. The complexity guard is applied even when

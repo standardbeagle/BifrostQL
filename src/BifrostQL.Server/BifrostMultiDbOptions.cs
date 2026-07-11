@@ -83,6 +83,7 @@ namespace BifrostQL.Server
         private readonly List<Type> _filterTransformerTypes = new();
         private readonly List<Type> _mutationTransformerTypes = new();
         private readonly List<Type> _queryObserverTypes = new();
+        private readonly List<Type> _protocolAdapterTypes = new();
         private IConfigurationSection? _loggingConfig;
         private IConfigurationSection? _queryLimitsConfig;
         private readonly BifrostProfileRegistry _profileRegistry = new();
@@ -217,6 +218,20 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
+        /// Registers a protocol adapter (see <see cref="IProtocolAdapter"/>), resolved from
+        /// DI and wrapped in its own hosted service so the host starts and stops it. The
+        /// adapter owns wire listening and its codec; it executes reads exclusively through
+        /// <see cref="BifrostQL.Core.Resolvers.IQueryIntentExecutor"/> and resolves identity
+        /// through <see cref="IBifrostAuthContextFactory"/>, both injected from DI.
+        /// </summary>
+        public BifrostMultiDbOptions AddProtocolAdapter<T>() where T : class, IProtocolAdapter
+        {
+            if (!_protocolAdapterTypes.Contains(typeof(T)))
+                _protocolAdapterTypes.Add(typeof(T));
+            return this;
+        }
+
+        /// <summary>
         /// Adds a named configuration profile that controls which modules are active.
         /// </summary>
         public BifrostMultiDbOptions AddProfile(BifrostProfile profile)
@@ -270,6 +285,7 @@ namespace BifrostQL.Server
 
             BifrostServiceRegistrar.RegisterComputedColumnServices(services);
             BifrostServiceRegistrar.RegisterQueryIntentServices(services);
+            BifrostServiceRegistrar.RegisterProtocolAdapterServices(services, _protocolAdapterTypes);
 
             // Same bounded depth/complexity guard as the single-database path; applied to
             // every endpoint's shared executor (which the binary transport also uses).

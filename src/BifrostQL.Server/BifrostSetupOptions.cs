@@ -41,6 +41,7 @@ namespace BifrostQL.Server
         private readonly List<Type> _filterTransformerTypes = new();
         private readonly List<Type> _mutationTransformerTypes = new();
         private readonly List<Type> _queryObserverTypes = new();
+        private readonly List<Type> _protocolAdapterTypes = new();
         private IReadOnlyList<IMetadataSource> _metadataSources = Array.Empty<IMetadataSource>();
         private readonly BifrostProfileRegistry _profileRegistry = new();
 
@@ -191,6 +192,20 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
+        /// Registers a protocol adapter (see <see cref="IProtocolAdapter"/>), resolved from
+        /// DI and wrapped in its own hosted service so the host starts and stops it. The
+        /// adapter owns wire listening and its codec; it executes reads exclusively through
+        /// <see cref="IQueryIntentExecutor"/> and resolves identity through
+        /// <see cref="IBifrostAuthContextFactory"/>, both injected from DI.
+        /// </summary>
+        public BifrostSetupOptions AddProtocolAdapter<T>() where T : class, IProtocolAdapter
+        {
+            if (!_protocolAdapterTypes.Contains(typeof(T)))
+                _protocolAdapterTypes.Add(typeof(T));
+            return this;
+        }
+
+        /// <summary>
         /// Adds a named configuration profile that controls which modules are active.
         /// </summary>
         public BifrostSetupOptions AddProfile(BifrostProfile profile)
@@ -302,6 +317,7 @@ namespace BifrostQL.Server
 
             BifrostServiceRegistrar.RegisterComputedColumnServices(services);
             BifrostServiceRegistrar.RegisterQueryIntentServices(services);
+            BifrostServiceRegistrar.RegisterProtocolAdapterServices(services, _protocolAdapterTypes);
 
             // Fail-secure default: missing DisableAuth means auth ON, consistent with
             // IsUsingAuth and the BindStandardConfig startup guard.

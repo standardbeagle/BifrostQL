@@ -1,4 +1,3 @@
-using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
@@ -10,6 +9,13 @@ using static BifrostQL.Core.Resolvers.DbParameterBinder;
 
 namespace BifrostQL.Core.Resolvers
 {
+    /// <summary>
+    /// GraphQL entry point for single-row mutations. Argument extraction (verb
+    /// selection, <c>_primaryKey</c>, module arguments) happens here; execution —
+    /// the mutation transformer chain, hooks, parameterized SQL — is delegated to
+    /// <see cref="TableMutationPipeline"/>, the seam shared with the protocol-adapter
+    /// mutation-intent path.
+    /// </summary>
     public sealed class DbTableMutateResolver : IBifrostResolver, IFieldResolver
     {
         private readonly IDbTable _table;
@@ -33,11 +39,11 @@ namespace BifrostQL.Core.Resolvers
                 case MutationAction.Sync:
                     return await SyncObject(context, table, mutationTransformers, model, conFactory, dialect);
                 case MutationAction.Insert:
-                    return await InsertObject(context, table, mutationTransformers, model, conFactory, dialect);
+                    return await InsertObject(context, table, mutationTransformers, model, conFactory);
                 case MutationAction.Update:
-                    return await UpdateObject(context, table, mutationTransformers, model, conFactory, dialect);
+                    return await UpdateObject(context, table, mutationTransformers, model, conFactory);
                 case MutationAction.Delete:
-                    return await DeleteObject(context, mutationTransformers, table, model, conFactory, dialect);
+                    return await DeleteObject(context, mutationTransformers, table, model, conFactory);
                 case MutationAction.Upsert:
                     return await UpsertObject(context, table, mutationTransformers, model, conFactory, dialect);
                 default:
@@ -71,15 +77,35 @@ namespace BifrostQL.Core.Resolvers
             // concurrent writer cannot cause silent data corruption here.
             if (propertyInfo.keyData.Any()
                 && await RowExistsAsync(conFactory, dialect, table, propertyInfo.keyData, context.CancellationToken))
-                return await UpdateObject(context, table, mutationTransformers, model, conFactory, dialect, "upsert");
+                return await UpdateObject(context, table, mutationTransformers, model, conFactory, "upsert");
 
-            return await InsertObject(context, table, mutationTransformers, model, conFactory, dialect, "upsert");
+            return await InsertObject(context, table, mutationTransformers, model, conFactory, "upsert");
         }
 
         ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
         {
             return ResolveAsync(new BifrostFieldContextAdapter(context));
         }
+
+        /// <summary>
+        /// Builds the shared pipeline context from the GraphQL field context: the
+        /// request's user context, the request-scoped service provider (hooks,
+        /// observers), and optional module arguments (delete's <c>_hardDelete</c>).
+        /// </summary>
+        private static MutationPipelineContext BuildPipelineContext(
+            IBifrostFieldContext context, IDbModel model, IDbConnFactory conFactory,
+            IMutationTransformers mutationTransformers,
+            IReadOnlyDictionary<string, object?>? moduleArguments = null)
+            => new()
+            {
+                Model = model,
+                ConnFactory = conFactory,
+                Transformers = mutationTransformers,
+                UserContext = context.UserContext,
+                Services = context.RequestServices,
+                ModuleArguments = moduleArguments ?? ModuleApiRegistry.EmptyArguments,
+                CancellationToken = context.CancellationToken,
+            };
 
         // Reads the mutation argument dictionary and optional positional _primaryKey
         // off the GraphQL context, then delegates the (pure) key/standard split to
@@ -124,7 +150,7 @@ namespace BifrostQL.Core.Resolvers
 
         private async Task<object?> DeleteObject(IBifrostFieldContext context,
             IMutationTransformers mutationTransformers, IDbTable table, IDbModel model,
-            IDbConnFactory conFactory, ISqlDialect dialect)
+            IDbConnFactory conFactory)
         {
             var data = context.GetArgument<Dictionary<string, object?>>("delete") ?? new();
             if (!data.Any())
@@ -137,206 +163,18 @@ namespace BifrostQL.Core.Resolvers
                     data[kv.Key] = kv.Value;
             }
 
-            // Snapshot the columns the client actually supplied (in DB-name space),
-            // captured BEFORE the pipeline runs. These are the intended WHERE-predicate
-            // columns (primary key + any extra predicate). Columns a transformer stamps
-            // afterwards (audit updated_at/deleted_at, soft-delete deleted_at/deleted_by)
-            // are NOT in this set and must never contaminate the delete predicate.
-            var clientColumns = new HashSet<string>(
-                data.Keys.Select(k => DbParameterBinder.ToDbColumnName(table, k)),
-                StringComparer.OrdinalIgnoreCase);
-
-            var userContext = context.UserContext;
-            var transformContext = new MutationTransformContext
-            {
-                Model = model,
-                UserContext = userContext,
-                Services = context.RequestServices,
-                ModuleArguments = ModuleApiRegistry.CaptureMutationArguments(context, table),
-            };
-            var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Delete, data, transformContext);
-
-            if (transformResult.Errors.Length > 0)
-                throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
-
-            // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
-            // IS NULL) is ANDed onto the WHERE clause so it narrows — never
-            // replaces — the primary-key predicate.
-            var additionalFilter = MutationCommandExecutor.RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
-
-            // Rekey to DB column names once so the PK split (via ColumnLookup) and
-            // the emitted WHERE/SET use one consistent name space even when a
-            // GraphQL field name differs from its column.
-            var dbData = DbParameterBinder.ToDbColumnKeys(table, transformResult.Data);
-
-            // A transformer may rewrite a delete into a soft-delete UPDATE (deleted_at
-            // stamped); otherwise it stays a hard DELETE. Both scope their rows by the
-            // same client-supplied predicate columns (see SelectPredicateColumns).
-            return transformResult.MutationType == MutationType.Update
-                ? await ExecuteSoftDeleteAsync(context, table, dialect, conFactory, userContext, dbData, clientColumns, additionalFilter)
-                : await ExecuteHardDeleteAsync(context, table, dialect, conFactory, userContext, dbData, clientColumns, additionalFilter);
-        }
-
-        /// <summary>
-        /// The columns that scope a delete's WHERE clause: the client-supplied
-        /// predicate columns (primary key plus any extra predicate the client sent),
-        /// NOT transformer-stamped columns (audit/soft-delete). Including a stamped
-        /// column would AND a never-matching term into the WHERE and silently affect
-        /// zero rows. Values come from the (possibly rewritten) transformed data so an
-        /// enum-name → DB-value mapping on a predicate column still reaches the WHERE.
-        /// </summary>
-        private static Dictionary<string, object?> SelectPredicateColumns(
-            Dictionary<string, object?> dbData, HashSet<string> clientColumns, IDbTable table)
-            => dbData
-                .Where(kv => clientColumns.Contains(kv.Key) || DbParameterBinder.IsPrimaryKeyColumn(table, kv.Key))
-                .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
-
-        // Soft-delete: the delete was transformed to UPDATE. The SET list carries ONLY
-        // the columns a transformer stamped (soft-delete deleted_at/deleted_by, audit
-        // updated_at/updated_by) — never a client-supplied column, or a delete predicate
-        // like status:"archived" would be written into the row unconditionally. The WHERE
-        // carries the client-supplied predicate columns, so a client predicate narrows
-        // which rows are soft-deleted. Before-commit hooks and the write commit atomically.
-        private async Task<object?> ExecuteSoftDeleteAsync(
-            IBifrostFieldContext context, IDbTable table, ISqlDialect dialect, IDbConnFactory conFactory,
-            IDictionary<string, object?> userContext, Dictionary<string, object?> dbData,
-            HashSet<string> clientColumns,
-            (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter)
-        {
-            var keyData = SelectPredicateColumns(dbData, clientColumns, table);
-            var setData = dbData
-                .Where(kv => !keyData.ContainsKey(kv.Key))
-                .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
-
-            if (keyData.Count == 0)
-                throw new BifrostExecutionError(
-                    "A soft delete requires a primary key or at least one predicate column to scope the affected rows.");
-
-            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, setData.Keys, keyData.Keys, additionalFilter.WhereSuffix);
-            var result = 0;
-            await MutationCommandExecutor.RunInTransactionAsync(conFactory, async (conn, transaction) =>
-            {
-                await MutationNotifier.RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, dbData, userContext);
-                result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, dbData, additionalFilter.Parameters, context.CancellationToken);
-            }, context.CancellationToken);
-            await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, MutationType.Update, dbData, result, userContext);
-            return result;
-        }
-
-        // Standard hard DELETE. WHERE is built from the client-supplied predicate
-        // columns only (see SelectPredicateColumns). Before-commit hooks and the write
-        // commit atomically.
-        private async Task<object?> ExecuteHardDeleteAsync(
-            IBifrostFieldContext context, IDbTable table, ISqlDialect dialect, IDbConnFactory conFactory,
-            IDictionary<string, object?> userContext, Dictionary<string, object?> dbData,
-            HashSet<string> clientColumns,
-            (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter)
-        {
-            var deleteData = SelectPredicateColumns(dbData, clientColumns, table);
-
-            if (deleteData.Count == 0)
-                throw new BifrostExecutionError(
-                    "A delete requires a primary key or at least one predicate column to scope the affected rows.");
-
-            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var sql = MutationCommandExecutor.BuildDeleteSql(dialect, tableRef, deleteData.Keys, additionalFilter.WhereSuffix);
-            var result = 0;
-            await MutationCommandExecutor.RunInTransactionAsync(conFactory, async (conn, transaction) =>
-            {
-                await MutationNotifier.RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Delete, deleteData, userContext);
-                result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, deleteData, additionalFilter.Parameters, context.CancellationToken);
-            }, context.CancellationToken);
-            await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, MutationType.Delete, deleteData, result, userContext);
-            return result;
+            var ctx = BuildPipelineContext(context, model, conFactory, mutationTransformers,
+                ModuleApiRegistry.CaptureMutationArguments(context, table));
+            return await TableMutationPipeline.DeleteAsync(table, data, ctx);
         }
 
         private async Task<object?> UpdateObject(IBifrostFieldContext context, IDbTable table,
             IMutationTransformers mutationTransformers, IDbModel model,
-            IDbConnFactory conFactory, ISqlDialect dialect, string parameterName = "update")
+            IDbConnFactory conFactory, string parameterName = "update")
         {
             var propertyInfo = GetPropertyInfo(context, table, parameterName);
-            if (!propertyInfo.data.Any())
-                return 0;
-
-            if (!propertyInfo.keyData.Any())
-                return 0;
-
-            if (!propertyInfo.standardData.Any())
-                return 0;
-
-            // The state-machine load, mutation transformers, before-commit hooks and
-            // the update run inside one transaction so the read the transformer gates
-            // on and the write it produces commit atomically or roll back together.
-            Dictionary<string, object?> updatedData = null!;
-            int result = 0;
-            StateTransitionInfo? stateTransition = null;
-            await MutationCommandExecutor.RunInTransactionAsync(conFactory, async (conn, transaction) =>
-            {
-                // Mutation transformers (e.g. the authorization policy engine) gate
-                // the update before any SQL is built; non-empty Errors abort it.
-                var currentRow = await MutationCommandExecutor.LoadCurrentStateMachineRow(
-                    conn,
-                    transaction,
-                    dialect,
-                    table,
-                    propertyInfo.keyData,
-                    context.CancellationToken);
-                var transformContext = new MutationTransformContext
-                {
-                    Model = model,
-                    UserContext = context.UserContext,
-                    CurrentRow = currentRow,
-                    Services = context.RequestServices,
-                };
-                var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Update, propertyInfo.data, transformContext);
-                if (transformResult.Errors.Length > 0)
-                    throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
-
-                // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
-                // IS NULL) is ANDed onto the WHERE clause so it narrows — never
-                // replaces — the primary-key predicate.
-                var additionalFilter = MutationCommandExecutor.RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
-
-                // Adopt the (possibly rewritten) data so transformer output — e.g.
-                // enum-name → DB-value mapping — reaches the SQL, rekeyed to real DB
-                // column names. keyData is already DB-named (see GetPropertyInfo), so
-                // the non-key split and WHERE share one name space; enum columns are
-                // non-key.
-                updatedData = DbParameterBinder.ToDbColumnKeys(table, transformResult.Data);
-                var standardData = updatedData
-                    .Where(d => !propertyInfo.keyData.ContainsKey(d.Key))
-                    .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
-
-                var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-                var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, standardData.Keys, propertyInfo.keyData.Keys, additionalFilter.WhereSuffix);
-                await MutationNotifier.RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Update, updatedData, context.UserContext);
-                result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, updatedData, additionalFilter.Parameters, context.CancellationToken);
-
-                // A zero-row update under a concurrency-token guard is a lost update:
-                // the token predicate matched no row, so the stored version moved since
-                // the client read it. Raise a CONFLICT (rolls back this transaction)
-                // rather than returning a silent no-op the way an out-of-scope
-                // tenant/policy update does. Gated by the transformer's flag so those
-                // legitimately-zero-row cases stay silent.
-                if (transformResult.ConflictOnNoRows && result == 0)
-                    throw new BifrostExecutionError(
-                        $"Update of '{table.TableSchema}.{table.DbName}' was rejected: the concurrency token no longer matches — the row was modified or removed since it was read. Reload and retry.")
-                    { ErrorCode = "CONFLICT" };
-
-                stateTransition = transformResult.StateTransition;
-            }, context.CancellationToken);
-            await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, MutationType.Update, updatedData, result, context.UserContext);
-            await MutationNotifier.NotifyStateTransitionAsync(context.RequestServices, stateTransition, context.UserContext);
-            // The update mutation field is typed `Int`, so its scalar return cannot
-            // carry a composite key. For a single-key table we keep returning the key
-            // value (identifies the affected row, back-compat). For a composite key
-            // `keyData.Values.First()` would silently surface only the FIRST key
-            // component — misleading — so instead return the affected row count
-            // (0 or 1), consistent with the delete mutation.
-            return propertyInfo.keyData.Count == 1
-                ? propertyInfo.keyData.Values.First()
-                : result;
+            var ctx = BuildPipelineContext(context, model, conFactory, mutationTransformers);
+            return await TableMutationPipeline.UpdateAsync(table, propertyInfo, ctx);
         }
 
         // Nested ("tree") sync: accepts a parent object with nested child
@@ -396,42 +234,11 @@ namespace BifrostQL.Core.Resolvers
 
         private async Task<object?> InsertObject(IBifrostFieldContext context, IDbTable table,
             IMutationTransformers mutationTransformers, IDbModel model,
-            IDbConnFactory conFactory, ISqlDialect dialect, string parameterName = "insert")
+            IDbConnFactory conFactory, string parameterName = "insert")
         {
             var data = context.GetArgument<Dictionary<string, object?>>(parameterName) ?? new();
-
-            // Mutation transformers (e.g. the authorization policy engine) gate
-            // the insert before any SQL is built; non-empty Errors abort it.
-            var transformContext = new MutationTransformContext { Model = model, UserContext = context.UserContext, Services = context.RequestServices };
-            var transformResult = await mutationTransformers.TransformAsync(table, MutationType.Insert, data, transformContext);
-            if (transformResult.Errors.Length > 0)
-                throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
-
-            // Adopt the (possibly rewritten) data so transformer output — e.g.
-            // enum-name → DB-value mapping — actually reaches the SQL, and rekey
-            // GraphQL field names to real DB column names so sanitized/prefixed
-            // columns land in the right column. Mirrors the delete path.
-            data = DbParameterBinder.ToDbColumnKeys(table, transformResult.Data);
-
-            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var insertInto = MutationCommandExecutor.BuildInsertInto(dialect, table, tableRef, data.Keys);
-            var returning = dialect.ReturningIdentityClauseFor(table.KeyColumns.Select(k => k.ColumnName).ToList());
-            var sql = returning != null
-                ? $"{insertInto}{returning};"
-                : $"{insertInto};SELECT {dialect.LastInsertedIdentity} ID;";
-
-            // Before-commit hooks and the insert (with its identity SELECT) run in
-            // one transaction so a hook veto or a failed write rolls back as a unit.
-            object? result = null;
-            await MutationCommandExecutor.RunInTransactionAsync(conFactory, async (conn, transaction) =>
-            {
-                await MutationNotifier.RunBeforeCommitHooksAsync(context.RequestServices, table, MutationType.Insert, data, context.UserContext);
-                result = HandleDecimals(await MutationCommandExecutor.ExecuteScalar(conn, transaction, sql, data, context.CancellationToken));
-            }, context.CancellationToken);
-            await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, MutationType.Insert, data, result, context.UserContext);
-            return result;
+            var ctx = BuildPipelineContext(context, model, conFactory, mutationTransformers);
+            return await TableMutationPipeline.InsertAsync(table, data, ctx);
         }
-
-
     }
 }

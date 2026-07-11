@@ -4,6 +4,7 @@ using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 using ModelContextProtocol.Protocol;
+using static BifrostQL.Mcp.ToolJson;
 
 namespace BifrostQL.Mcp
 {
@@ -547,70 +548,5 @@ namespace BifrostQL.Mcp
             return raw.Select((value, i) => QueryToolCompiler.CoerceKeyValue(keyColumns[i], value)).ToList();
         }
 
-        // ---- shared helpers ----------------------------------------------------
-
-        private static IDbTable ResolveTable(IDbModel model, string tableName) =>
-            model.Tables.FirstOrDefault(t => string.Equals(t.DbName, tableName, StringComparison.OrdinalIgnoreCase))
-            ?? throw new ToolPromptException(SchemaDescriber.UnknownTableMessage(model, tableName));
-
-        private static JsonArray ToJsonRows(IReadOnlyList<IReadOnlyDictionary<string, object?>> rows) =>
-            new(rows.Select(r => (JsonNode?)ToJsonRow(r)).ToArray());
-
-        private static JsonObject ToJsonRow(IReadOnlyDictionary<string, object?> row)
-        {
-            var obj = new JsonObject();
-            foreach (var (column, value) in row)
-                obj[column] = ToJsonNode(value);
-            return obj;
-        }
-
-        private static JsonNode? ToJsonNode(object? value) =>
-            value is null ? null : JsonSerializer.SerializeToNode(value);
-
-        private static JsonElement? GetArgument(IDictionary<string, JsonElement>? args, string name) =>
-            args is not null && args.TryGetValue(name, out var value) ? value : null;
-
-        private static string? GetStringArgument(IDictionary<string, JsonElement>? args, string name)
-        {
-            var element = GetArgument(args, name);
-            if (element is not { } e || e.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
-                return null;
-            if (e.ValueKind != JsonValueKind.String)
-                throw new ToolPromptException($"Argument '{name}' must be a string.");
-            return e.GetString();
-        }
-
-        private static string? GetString(JsonElement obj, string property)
-        {
-            if (obj.ValueKind != JsonValueKind.Object || !obj.TryGetProperty(property, out var value)
-                || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
-                return null;
-            if (value.ValueKind != JsonValueKind.String)
-                throw new ToolPromptException($"'{property}' must be a string.");
-            return value.GetString();
-        }
-
-        private static IReadOnlyList<string>? GetStringArray(IDictionary<string, JsonElement>? args, string name)
-        {
-            var element = GetArgument(args, name);
-            if (element is not { } e || e.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
-                return null;
-            if (e.ValueKind != JsonValueKind.Array)
-                throw new ToolPromptException($"Argument '{name}' must be an array of strings.");
-            var values = new List<string>();
-            foreach (var item in e.EnumerateArray())
-            {
-                if (item.ValueKind != JsonValueKind.String)
-                    throw new ToolPromptException($"Argument '{name}' must contain only strings.");
-                values.Add(item.GetString()!);
-            }
-            return values;
-        }
-
-        private static JsonElement ParseSchema(string json)
-        {
-            using var doc = JsonDocument.Parse(json);
-            return doc.RootElement.Clone();
-        }
     }
 }

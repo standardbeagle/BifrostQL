@@ -37,6 +37,7 @@ export default defineConfig({
 						{ label: 'EAV & the _meta Field', slug: 'concepts/eav-meta' },
 						{ label: 'App Schema Detection', slug: 'concepts/app-schema-detection' },
 						{ label: 'App Metadata Overlay', slug: 'concepts/app-metadata-overlay' },
+						{ label: 'Protocol Adapters', slug: 'concepts/protocol-adapters' },
 					],
 				},
 				{
@@ -55,6 +56,7 @@ export default defineConfig({
 						{ label: 'React Hooks & Components', slug: 'guides/react-hooks' },
 						{ label: 'Embeddable Data Editor', slug: 'guides/embedded-editor' },
 						{ label: 'Binary Transport', slug: 'guides/binary-transport' },
+						{ label: 'Authoring a Protocol Adapter', slug: 'guides/protocol-adapters' },
 						{ label: 'React Native', slug: 'guides/react-native' },
 						{ label: 'WordPress', slug: 'guides/wordpress' },
 					],

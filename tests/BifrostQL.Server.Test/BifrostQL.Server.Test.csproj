@@ -42,6 +42,9 @@
     <!-- The HostedSpa sample is a real coexisting SPA + GraphQL host used as the
          system under test for the hosted SPA/API smoke test. -->
     <ProjectReference Include="..\..\samples\HostedSpa\HostedSpa.csproj" />
+    <!-- Shared protocol-adapter security-conformance suite; the echo adapter is
+         its reference passing implementation. -->
+    <ProjectReference Include="..\BifrostQL.AdapterConformance\BifrostQL.AdapterConformance.csproj" />
   </ItemGroup>
 
 </Project>

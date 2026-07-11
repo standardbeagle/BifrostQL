@@ -153,7 +153,8 @@ namespace BifrostQL.Mcp.Test
             var tools = await _client.ListToolsAsync();
 
             tools.Select(t => t.Name).Should().BeEquivalentTo(
-                "bifrost_schema_overview", "bifrost_describe_table", "bifrost_query", "bifrost_row_context");
+                "bifrost_schema_overview", "bifrost_describe_table", "bifrost_query", "bifrost_row_context",
+                "bifrost_aggregate");
 
             foreach (var tool in tools)
             {

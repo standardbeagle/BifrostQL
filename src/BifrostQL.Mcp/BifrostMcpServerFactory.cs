@@ -180,7 +180,8 @@ namespace BifrostQL.Mcp
                     "BifrostQL exposes a SQL database. Start with bifrost_schema_overview to map the schema, " +
                     "then bifrost_describe_table for column-level detail. Read rows with bifrost_query " +
                     "(structured filter + cursor pagination) and fetch one row with its related parent/child " +
-                    "context via bifrost_row_context. Behavior notes describe server-enforced semantics " +
+                    "context via bifrost_row_context. Compute grouped counts and numeric sums/averages with " +
+                    "bifrost_aggregate. Behavior notes describe server-enforced semantics " +
                     "(tenant scoping, hidden soft-deleted rows) that apply to all data access.",
                 Capabilities = new ServerCapabilities
                 {
@@ -225,6 +226,7 @@ namespace BifrostQL.Mcp
             },
             DataTools.QueryToolDefinition(),
             DataTools.RowContextToolDefinition(),
+            AggregateTools.ToolDefinition(),
         ];
 
         private static async ValueTask<CallToolResult> CallToolAsync(
@@ -240,13 +242,16 @@ namespace BifrostQL.Mcp
             // (missing tenant context, policy-denied column, unsupported filter
             // shape) surface the same way — both are actionable by the calling
             // agent, so neither becomes a protocol fault.
-            if (parameters.Name is DataTools.QueryToolName or DataTools.RowContextToolName)
+            if (parameters.Name is DataTools.QueryToolName or DataTools.RowContextToolName or AggregateTools.ToolName)
             {
                 try
                 {
-                    var payload = parameters.Name == DataTools.QueryToolName
-                        ? await DataTools.ExecuteQueryAsync(executor, endpoint, userContextProvider, parameters, cancellationToken)
-                        : await DataTools.ExecuteRowContextAsync(executor, endpoint, userContextProvider, parameters, cancellationToken);
+                    var payload = parameters.Name switch
+                    {
+                        DataTools.QueryToolName => await DataTools.ExecuteQueryAsync(executor, endpoint, userContextProvider, parameters, cancellationToken),
+                        DataTools.RowContextToolName => await DataTools.ExecuteRowContextAsync(executor, endpoint, userContextProvider, parameters, cancellationToken),
+                        _ => await AggregateTools.ExecuteAsync(executor, endpoint, userContextProvider, parameters, cancellationToken),
+                    };
                     return StructuredResult(payload);
                 }
                 catch (ToolPromptException e)

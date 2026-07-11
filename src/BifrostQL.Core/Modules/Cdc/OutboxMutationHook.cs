@@ -38,11 +38,13 @@ namespace BifrostQL.Core.Modules.Cdc
                 && AffectedZeroRows(context.Result))
                 return;
 
-            // Ambient transaction state is populated only in the in-transaction phase.
-            // Its absence means this hook was invoked outside a mutation transaction —
+            // The in-transaction phase always supplies the connection, model and dialect.
+            // Their absence means this hook was invoked outside a mutation transaction —
             // a wiring bug — so fail closed rather than silently dropping the event.
-            if (context.Connection is null || context.Transaction is null
-                || context.Model is null || context.Dialect is null)
+            // Transaction MAY be null: the TreeSync path manages its transaction with
+            // SQL BEGIN/COMMIT keywords rather than a DbTransaction object, and the write
+            // still runs on that same connection-level transaction.
+            if (context.Connection is null || context.Model is null || context.Dialect is null)
                 throw new BifrostExecutionError(
                     "CDC outbox writer was invoked without an open transaction; the event could not be written.");
 

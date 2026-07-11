@@ -120,7 +120,11 @@ namespace BifrostQL.Core.Resolvers
             return await cmd.ExecuteScalarAsync(cancellationToken);
         }
 
-        public static async ValueTask<int> ExecuteNonQuery(DbConnection conn, DbTransaction transaction, string sql,
+        // transaction may be null when the caller manages the transaction at the SQL
+        // level (dialect BEGIN/COMMIT keywords) rather than through the ADO.NET
+        // DbTransaction API — the TreeSync path. A null cmd.Transaction then runs the
+        // command on the connection's ambient (SQL-level) transaction.
+        public static async ValueTask<int> ExecuteNonQuery(DbConnection conn, DbTransaction? transaction, string sql,
             Dictionary<string, object?> data, IReadOnlyList<SqlParameterInfo>? extraParameters = null, CancellationToken cancellationToken = default)
         {
             await using var cmd = conn.CreateCommand();

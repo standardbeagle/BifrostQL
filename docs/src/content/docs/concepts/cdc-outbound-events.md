@@ -14,11 +14,10 @@ it describes (the correct pattern versus lossy triggers or app-level dual-writes
 
 :::note
 The **metadata contract, the outbox table, and the transactional writer** are
-implemented: an opted-in table's insert/update/delete writes an event row into
-the outbox **in the same transaction** as the data change. The background
-**dispatcher** that drains the outbox to webhooks/queues (and honors
-`webhook-secret`) is a later slice. Batch and TreeSync mutations do not yet emit
-events (single-row writes only) — also a later slice.
+implemented across **all** write paths — single-row, batch, and nested TreeSync
+mutations each write an event row into the outbox **in the same transaction** as
+the data change. The background **dispatcher** that drains the outbox to
+webhooks/queues (and honors `webhook-secret`) is a later slice.
 :::
 
 ## Metadata

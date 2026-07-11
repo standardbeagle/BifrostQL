@@ -78,7 +78,7 @@ namespace BifrostQL.Core.Resolvers
             object? result,
             IDictionary<string, object?> userContext,
             DbConnection connection,
-            DbTransaction transaction,
+            DbTransaction? transaction,
             IDbModel model,
             ISqlDialect dialect)
         {

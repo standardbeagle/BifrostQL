@@ -181,6 +181,19 @@ namespace BifrostQL.Core.Resolvers
             };
         }
 
+        /// <summary>
+        /// Fires the after-write, in-transaction hooks (the CDC outbox writer) for one
+        /// batch action, on the batch's shared connection + transaction so the event
+        /// commits or rolls back with the whole batch. <paramref name="result"/> is the
+        /// generated identity for an insert (so the event can name the row) or the
+        /// affected-row count for an update/delete (so a zero-row no-op emits nothing).
+        /// </summary>
+        private static ValueTask FireInTransactionHookAsync(
+            BatchExecutionContext ctx, MutationType type, IDictionary<string, object?> data, object? result)
+            => MutationNotifier.RunInTransactionHooksAsync(
+                ctx.TransformContext.Services, ctx.Table, type, data, result, ctx.UserContext,
+                ctx.Conn, ctx.Transaction, ctx.Model, ctx.Dialect);
+
         private static async Task<BatchActionOutcome?> ExecuteInsert(BatchExecutionContext ctx, Dictionary<string, object?> data)
         {
             if (data.Count == 0) return null;
@@ -200,13 +213,21 @@ namespace BifrostQL.Core.Resolvers
             data = ToDbColumnKeys(table, transformResult.Data);
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var sql = $"{MutationCommandExecutor.BuildInsertInto(dialect, table, tableRef, data.Keys)};";
+            // Capture the generated identity (mirroring the single-row insert) so a CDC
+            // event can name a row whose key the client did not supply. A successful
+            // single-row insert affects exactly one row.
+            var insertInto = MutationCommandExecutor.BuildInsertInto(dialect, table, tableRef, data.Keys);
+            var returning = dialect.ReturningIdentityClauseFor(table.KeyColumns.Select(k => k.ColumnName).ToList());
+            var sql = returning != null
+                ? $"{insertInto}{returning};"
+                : $"{insertInto};SELECT {dialect.LastInsertedIdentity} ID;";
             await using var cmd = ctx.Conn.CreateCommand();
             cmd.CommandText = sql;
             cmd.Transaction = ctx.Transaction;
             AddParameters(cmd, data);
-            var affected = await cmd.ExecuteNonQueryAsync(ctx.Ct);
-            return new BatchActionOutcome(affected, MutationType.Insert, data, transformResult.StateTransition);
+            var id = await cmd.ExecuteScalarAsync(ctx.Ct);
+            await FireInTransactionHookAsync(ctx, MutationType.Insert, data, id);
+            return new BatchActionOutcome(1, MutationType.Insert, data, transformResult.StateTransition);
         }
 
         private static async Task<BatchActionOutcome?> ExecuteUpdate(BatchExecutionContext ctx, Dictionary<string, object?> data)
@@ -276,6 +297,7 @@ namespace BifrostQL.Core.Resolvers
                     $"Update of '{table.TableSchema}.{table.DbName}' was rejected: the concurrency token no longer matches — the row was modified or removed since it was read. Reload and retry.")
                 { ErrorCode = "CONFLICT" };
 
+            await FireInTransactionHookAsync(ctx, MutationType.Update, updatedData, affected);
             return new BatchActionOutcome(affected, MutationType.Update, updatedData, transformResult.StateTransition);
         }
 
@@ -327,6 +349,7 @@ namespace BifrostQL.Core.Resolvers
                 AddParameters(cmd, dbData);
                 AddExtraParameters(cmd, additionalFilter.Parameters);
                 var softAffected = await cmd.ExecuteNonQueryAsync(ctx.Ct);
+                await FireInTransactionHookAsync(ctx, MutationType.Update, dbData, softAffected);
                 return new BatchActionOutcome(softAffected, MutationType.Update, transformResult.Data, transformResult.StateTransition);
             }
 
@@ -341,6 +364,7 @@ namespace BifrostQL.Core.Resolvers
             AddParameters(deleteCmd, deleteData);
             AddExtraParameters(deleteCmd, additionalFilter.Parameters);
             var deleteAffected = await deleteCmd.ExecuteNonQueryAsync(ctx.Ct);
+            await FireInTransactionHookAsync(ctx, MutationType.Delete, deleteData, deleteAffected);
             return new BatchActionOutcome(deleteAffected, MutationType.Delete, deleteData, transformResult.StateTransition);
         }
 
@@ -390,6 +414,9 @@ namespace BifrostQL.Core.Resolvers
                 cmd.Transaction = ctx.Transaction;
                 AddParameters(cmd, upsertData);
                 var affected = await cmd.ExecuteNonQueryAsync(ctx.Ct);
+                // Upsert is keyed by primary key, so upsertData carries the key the event
+                // needs even when the statement inserts a new row.
+                await FireInTransactionHookAsync(ctx, MutationType.Update, upsertData, affected);
                 return new BatchActionOutcome(affected, MutationType.Update, upsertData, transformResult.StateTransition);
             }
 

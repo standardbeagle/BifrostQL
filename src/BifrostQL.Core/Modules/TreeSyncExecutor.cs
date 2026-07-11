@@ -124,6 +124,7 @@ public sealed class TreeSyncExecutor
                     additionalFilter = MutationCommandExecutor.RenderAdditionalFilter(result.AdditionalFilter, _dialect);
                 }
 
+                object? opResult;
                 switch (mutationType)
                 {
                     case MutationType.Insert:
@@ -132,14 +133,28 @@ public sealed class TreeSyncExecutor
                         idsByInstance[op.InstanceId] = id;
                         if (op.Depth == 0)
                             rootId = id;
+                        opResult = id;
                         break;
                     case MutationType.Update:
-                        await ExecuteUpdateAsync(conn, op.Table, data, additionalFilter);
+                        opResult = await ExecuteUpdateAsync(conn, op.Table, data, additionalFilter);
                         break;
                     case MutationType.Delete:
-                        await ExecuteDeleteAsync(conn, op.Table, data, additionalFilter);
+                        opResult = await ExecuteDeleteAsync(conn, op.Table, data, additionalFilter);
+                        break;
+                    default:
+                        opResult = null;
                         break;
                 }
+
+                // Emit the CDC event on the SAME connection (its transaction is managed
+                // with SQL BEGIN/COMMIT here, so no DbTransaction object is passed). Only
+                // when the transformer pipeline is active — a model is required to resolve
+                // the outbox; the raw-executor test path supplies none and skips CDC.
+                if (model != null)
+                    await MutationNotifier.RunInTransactionHooksAsync(
+                        services, op.Table, mutationType, data, opResult,
+                        userContext ?? new Dictionary<string, object?>(),
+                        conn, transaction: null, model, _dialect);
             }
 
             await ExecuteRawAsync(conn, _dialect.CommitTransactionSql);
@@ -212,13 +227,15 @@ public sealed class TreeSyncExecutor
         return HandleDecimals(await cmd.ExecuteScalarAsync());
     }
 
-    private async Task ExecuteUpdateAsync(DbConnection conn, IDbTable table, Dictionary<string, object?> data,
+    // Returns the affected-row count so the caller can skip emitting a CDC event for a
+    // zero-row no-op. Returns 0 for the degenerate no-key / no-set-columns case.
+    private async Task<int> ExecuteUpdateAsync(DbConnection conn, IDbTable table, Dictionary<string, object?> data,
         (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter)
     {
         var keyData = data.Where(kv => IsKey(table, kv.Key)).ToDictionary(kv => kv.Key, kv => kv.Value);
         var setData = data.Where(kv => !IsKey(table, kv.Key)).ToDictionary(kv => kv.Key, kv => kv.Value);
         if (keyData.Count == 0 || setData.Count == 0)
-            return;
+            return 0;
 
         var tableRef = _dialect.TableReference(table.TableSchema, table.DbName);
         var setClause = string.Join(",", setData.Select(kv => SetAssignment(_dialect, table, kv.Key)));
@@ -228,14 +245,14 @@ public sealed class TreeSyncExecutor
         cmd.CommandText = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
         AddParameters(cmd, data);
         AddExtraParameters(cmd, additionalFilter.Parameters);
-        await cmd.ExecuteNonQueryAsync();
+        return await cmd.ExecuteNonQueryAsync();
     }
 
-    private async Task ExecuteDeleteAsync(DbConnection conn, IDbTable table, Dictionary<string, object?> data,
+    private async Task<int> ExecuteDeleteAsync(DbConnection conn, IDbTable table, Dictionary<string, object?> data,
         (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter)
     {
         if (data.Count == 0)
-            return;
+            return 0;
 
         var tableRef = _dialect.TableReference(table.TableSchema, table.DbName);
         var whereClause = string.Join(" AND ", data.Select(kv => $"{_dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
@@ -244,7 +261,7 @@ public sealed class TreeSyncExecutor
         cmd.CommandText = $"DELETE FROM {tableRef} WHERE {whereClause}{additionalFilter.WhereSuffix};";
         AddParameters(cmd, data);
         AddExtraParameters(cmd, additionalFilter.Parameters);
-        await cmd.ExecuteNonQueryAsync();
+        return await cmd.ExecuteNonQueryAsync();
     }
 
     // Issues a plain (parameterless) statement on the open connection. Used for

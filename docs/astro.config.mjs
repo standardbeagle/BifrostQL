@@ -54,6 +54,7 @@ export default defineConfig({
 						{ label: 'State Machines', slug: 'guides/state-machines' },
 						{ label: 'Workflows', slug: 'guides/workflows' },
 						{ label: 'Workflow Mutations & Audit Trail', slug: 'guides/workflow-mutations' },
+						{ label: 'Emitting Change Events (CDC)', slug: 'guides/cdc-events' },
 						{ label: 'React Hooks & Components', slug: 'guides/react-hooks' },
 						{ label: 'Embeddable Data Editor', slug: 'guides/embedded-editor' },
 						{ label: 'Binary Transport', slug: 'guides/binary-transport' },

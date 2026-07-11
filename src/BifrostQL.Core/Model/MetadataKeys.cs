@@ -640,5 +640,114 @@ namespace BifrostQL.Core.Model
             public const string DetectionConfidence = "detection-confidence";
             public const string PrefixGroups = "prefix-groups";
         }
+
+        /// <summary>
+        /// Metadata keys for Change Data Capture / outbound domain events. A table
+        /// opts in by declaring which mutations emit events; the model names the
+        /// transactional outbox table the events are written to. Configured like the
+        /// tenant-filter convention:
+        ///   "dbo.orders { emit-events: insert,update,delete; event-sink: outbox; event-payload: changed }"
+        ///   ":root { outbox-table: dbo.__outbox; webhook-secret: ... }"
+        /// The runtime writer (before-commit hook) and dispatcher are later CDC
+        /// sub-tasks; this slice establishes the metadata contract, the outbox column
+        /// contract (<see cref="Cdc.OutboxColumns"/>), and fail-fast validation.
+        /// </summary>
+        public static class Cdc
+        {
+            /// <summary>
+            /// Table-level comma-separated list of mutation operations that emit an
+            /// event. Tokens are the <c>MutationType</c> names: <c>insert</c>,
+            /// <c>update</c>, <c>delete</c> (case-insensitive). Presence of this key
+            /// is what opts a table into event emission.
+            /// </summary>
+            public const string EmitEvents = "emit-events";
+
+            /// <summary>
+            /// Table-level durable event sink. The only sink in this slice is
+            /// <c>outbox</c> (a transactional outbox row written in the same
+            /// transaction as the data change). Defaults to <c>outbox</c> when
+            /// <see cref="EmitEvents"/> is present and this key is omitted.
+            /// </summary>
+            public const string EventSink = "event-sink";
+
+            /// <summary>
+            /// Table-level payload mode controlling how much of the row is captured
+            /// in the event: <c>full</c> (entire post-image), <c>changed</c> (only
+            /// the changed columns plus keys), or <c>keys</c> (primary key only).
+            /// Defaults to <c>full</c>. See <see cref="Cdc.PayloadModes"/>.
+            /// </summary>
+            public const string EventPayload = "event-payload";
+
+            /// <summary>
+            /// Model-level qualified name of the transactional outbox table events
+            /// are written to (e.g. <c>dbo.__outbox</c>). Required once any table
+            /// sets <see cref="EmitEvents"/>; the named table must exist and carry
+            /// the <see cref="OutboxColumns"/> contract.
+            /// </summary>
+            public const string OutboxTable = "outbox-table";
+
+            /// <summary>
+            /// Model-level shared secret used to sign webhook deliveries drained
+            /// from the outbox. Consumed by the dispatcher (a later CDC sub-task);
+            /// allow-listed here so configs that set it up front are not rejected.
+            /// </summary>
+            public const string WebhookSecret = "webhook-secret";
+
+            /// <summary>The only recognized <see cref="EventSink"/> value in this slice.</summary>
+            public const string SinkOutbox = "outbox";
+
+            /// <summary>Recognized <see cref="EventPayload"/> values.</summary>
+            public const string PayloadFull = "full";
+            public const string PayloadChanged = "changed";
+            public const string PayloadKeys = "keys";
+
+            /// <summary>
+            /// The set of recognized <see cref="EventPayload"/> modes. Used by
+            /// ModelConfigValidator to fail fast on a typo'd mode (which would
+            /// otherwise silently fall back to a default and capture the wrong data).
+            /// </summary>
+            public static readonly IReadOnlySet<string> PayloadModes =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    PayloadFull, PayloadChanged, PayloadKeys,
+                };
+
+            /// <summary>
+            /// The set of recognized <see cref="EventSink"/> values. Only
+            /// <see cref="SinkOutbox"/> is durable-transactional today; webhook /
+            /// queue sinks are drained FROM the outbox by the dispatcher rather than
+            /// named here.
+            /// </summary>
+            public static readonly IReadOnlySet<string> Sinks =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    SinkOutbox,
+                };
+
+            /// <summary>
+            /// The column contract every outbox table must expose. The before-commit
+            /// writer (next CDC sub-task) writes these columns in the same
+            /// transaction as the data change; the dispatcher drains and marks them.
+            /// ModelConfigValidator verifies the configured <see cref="OutboxTable"/>
+            /// carries every column so a misconfigured outbox fails at model load
+            /// rather than on the first event write.
+            /// <list type="bullet">
+            ///   <item><c>id</c> — surrogate PK, monotonic (drain order).</item>
+            ///   <item><c>aggregate</c> — qualified source table (e.g. <c>dbo.orders</c>).</item>
+            ///   <item><c>op</c> — <c>insert</c>/<c>update</c>/<c>delete</c>.</item>
+            ///   <item><c>payload</c> — JSON event body per the payload mode.</item>
+            ///   <item><c>tenant</c> — tenant id captured from user context (nullable).</item>
+            ///   <item><c>created_at</c> — write timestamp.</item>
+            ///   <item><c>dispatched_at</c> — set by the dispatcher on success (nullable = undelivered).</item>
+            ///   <item><c>attempts</c> — delivery attempt counter.</item>
+            ///   <item><c>dead</c> — dead-letter flag once attempts exhaust.</item>
+            /// </list>
+            /// </summary>
+            public static readonly IReadOnlyList<string> OutboxColumns = new[]
+            {
+                "id", "aggregate", "op", "payload", "tenant",
+                "created_at", "dispatched_at", "attempts", "dead",
+            };
+        }
     }
 }

@@ -137,6 +137,11 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Relationships.PolymorphicTypeCol,
             MetadataKeys.Relationships.PolymorphicIdCol,
             MetadataKeys.Relationships.PolymorphicMap,
+            // Change Data Capture / outbound events (table-level opt-in). A miscased
+            // key must be flagged, not silently drop the table from event emission.
+            MetadataKeys.Cdc.EmitEvents,
+            MetadataKeys.Cdc.EventSink,
+            MetadataKeys.Cdc.EventPayload,
         };
 
         // Internal for the same reason as KnownTableKeys above (case-casing
@@ -219,6 +224,10 @@ namespace BifrostQL.Core.Model
             GenericTableConfig.MaxRowsMetadataKey,
             GenericTableConfig.AllowedTablesMetadataKey,
             GenericTableConfig.DeniedTablesMetadataKey,
+            // Change Data Capture / outbound events (model-level). outbox-table names
+            // the transactional outbox; webhook-secret signs drained deliveries.
+            MetadataKeys.Cdc.OutboxTable,
+            MetadataKeys.Cdc.WebhookSecret,
         };
 
         /// <summary>

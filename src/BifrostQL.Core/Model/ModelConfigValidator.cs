@@ -6,6 +6,7 @@ using BifrostQL.Core.Model;
 using BifrostQL.Core.Model.AppSchema;
 using BifrostQL.Core.Model.Relationships;
 using BifrostQL.Core.Modules;
+using BifrostQL.Core.Modules.Cdc;
 using BifrostQL.Core.Modules.ComputedColumns;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Storage;
@@ -55,6 +56,7 @@ namespace BifrostQL.Core.Model
                 ValidateAutoFilter(table, errors);
                 ValidateStateMachine(table, errors);
                 ValidatePolicy(table, errors);
+                ValidateCdcTokens(table, errors);
 
                 var tableRef = $"{table.TableSchema}.{table.DbName}";
                 ValidateMetadataKeyCasing(table.Metadata, MetadataValidator.KnownTableKeys, "table", tableRef, errors);
@@ -72,6 +74,7 @@ namespace BifrostQL.Core.Model
             }
 
             ValidateEavConfigs(model, errors);
+            ValidateCdcOutbox(model, errors);
 
             if (errors.Count > 0)
             {
@@ -403,6 +406,108 @@ namespace BifrostQL.Core.Model
                     $"'{populate}' is not a recognized audit populator (expected one of " +
                     $"{string.Join(", ", MetadataKeys.AutoPopulate.KnownPopulators.OrderBy(p => p))}); " +
                     "the column would silently never be stamped.");
+        }
+
+        /// <summary>
+        /// Fail-fast validation for a table's Change Data Capture opt-in
+        /// (<c>emit-events</c> / <c>event-sink</c> / <c>event-payload</c>). An
+        /// unrecognized operation, sink, or payload token is silently dropped by the
+        /// parser's callers otherwise — the table would then either never emit or
+        /// capture the wrong payload with no error. Reuses <see cref="CdcEventConfig.FromTable"/>
+        /// so validation cannot drift from the runtime parse.
+        /// </summary>
+        private static void ValidateCdcTokens(IDbTable table, List<string> errors)
+        {
+            try
+            {
+                CdcEventConfig.FromTable(table);
+            }
+            catch (Exception ex)
+            {
+                errors.Add(Problem(table, MetadataKeys.Cdc.EmitEvents,
+                    table.GetMetadataValue(MetadataKeys.Cdc.EmitEvents), ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// Fail-fast validation for the transactional outbox contract. Once any table
+        /// opts into <c>emit-events</c>, the model must name an <c>outbox-table</c>,
+        /// that table must exist, and it must expose the full
+        /// <see cref="MetadataKeys.Cdc.OutboxColumns"/> contract. A missing outbox or a
+        /// column hole would surface only when the before-commit writer runs on the
+        /// first mutation — aborting a real write in production — so catch it at model
+        /// load instead.
+        /// </summary>
+        private static void ValidateCdcOutbox(IDbModel model, List<string> errors)
+        {
+            var emittingTables = model.Tables
+                .Where(t =>
+                {
+                    try { return CdcEventConfig.FromTable(t).EmitsEvents; }
+                    catch { return false; } // Token error already reported by ValidateCdcTokens.
+                })
+                .ToArray();
+
+            if (emittingTables.Length == 0)
+                return; // CDC not in use — outbox is optional.
+
+            var outboxName = model.GetMetadataValue(MetadataKeys.Cdc.OutboxTable);
+            if (string.IsNullOrWhiteSpace(outboxName))
+            {
+                errors.Add(
+                    $"  :root [{MetadataKeys.Cdc.OutboxTable}]: {emittingTables.Length} table(s) set " +
+                    $"'{MetadataKeys.Cdc.EmitEvents}' but no outbox table is configured; events have nowhere " +
+                    "to be written. Set a model-level 'outbox-table' naming the transactional outbox.");
+                return;
+            }
+
+            var outboxTable = FindTableByQualifiedName(model, outboxName);
+            if (outboxTable == null)
+            {
+                errors.Add(
+                    $"  :root [{MetadataKeys.Cdc.OutboxTable}]: '{outboxName}' does not name an existing table; " +
+                    "the transactional outbox must exist in the database before events can be written.");
+                return;
+            }
+
+            var missing = MetadataKeys.Cdc.OutboxColumns
+                .Where(c => !DbColumnExists(outboxTable, c))
+                .ToArray();
+
+            if (missing.Length > 0)
+            {
+                errors.Add(
+                    $"  :root [{MetadataKeys.Cdc.OutboxTable}]: outbox table '{outboxName}' is missing required " +
+                    $"column(s): {string.Join(", ", missing)}. The outbox contract is: " +
+                    $"{string.Join(", ", MetadataKeys.Cdc.OutboxColumns)}.");
+            }
+        }
+
+        /// <summary>
+        /// Resolves the <c>outbox-table</c> reference to a table. A schema-qualified
+        /// reference (<c>dbo.__outbox</c>) is matched on schema AND name — with NO
+        /// name-only fallback: falling back would silently bind the outbox to a
+        /// same-named table in a different schema, writing events to the wrong table
+        /// while reporting success, which is precisely the misconfiguration the
+        /// "outbox must exist" check exists to catch. A bare, unqualified reference
+        /// is matched by name only (there is no schema to honor). Matching is
+        /// case-insensitive.
+        /// </summary>
+        private static IDbTable? FindTableByQualifiedName(IDbModel model, string qualified)
+        {
+            var trimmed = qualified.Trim();
+            var dot = trimmed.LastIndexOf('.');
+            if (dot > 0)
+            {
+                var schema = trimmed[..dot];
+                var name = trimmed[(dot + 1)..];
+                return model.Tables.FirstOrDefault(t =>
+                    string.Equals(t.TableSchema, schema, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(t.DbName, name, StringComparison.OrdinalIgnoreCase));
+            }
+
+            return model.Tables.FirstOrDefault(t =>
+                string.Equals(t.DbName, trimmed, StringComparison.OrdinalIgnoreCase));
         }
 
         private static void ValidateStateMachine(IDbTable table, List<string> errors)

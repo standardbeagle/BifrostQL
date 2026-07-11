@@ -22,6 +22,18 @@ namespace BifrostQL.Core.Resolvers
         /// returns one <see cref="AggregateResultRow"/> per group.
         /// </summary>
         public ValueTask<IReadOnlyList<AggregateResultRow>> ResolveAggregateAsync(IBifrostFieldContext context, IDbTable table, GqlObjectQuery query);
+
+        /// <summary>
+        /// Executes a programmatic (adapter-built) read query with no GraphQL
+        /// document: the transformer pipeline — tenant isolation, soft-delete,
+        /// policy row scope, and column read guards — is applied here,
+        /// unconditionally, before parameterized SQL generation. This is the
+        /// single execution seam for <see cref="IQueryIntentExecutor"/>; keeping
+        /// transformer application inside the manager means an adapter cannot
+        /// reach SQL without it. Read-only: <see cref="GqlObjectQuery"/> emits
+        /// SELECT statements exclusively.
+        /// </summary>
+        public ValueTask<QueryIntentResult> ExecuteIntentAsync(GqlObjectQuery query, IDictionary<string, object?> userContext, IDbConnFactory connFactory, CancellationToken cancellationToken = default);
     }
 
     public sealed class SqlExecutionManager : ISqlExecutionManager
@@ -161,6 +173,57 @@ namespace BifrostQL.Core.Resolvers
                 return Array.Empty<AggregateResultRow>();
 
             return BuildAggregateRows(grouped, tableData.index, tableData.data);
+        }
+
+        public async ValueTask<QueryIntentResult> ExecuteIntentAsync(
+            GqlObjectQuery query,
+            IDictionary<string, object?> userContext,
+            IDbConnFactory connFactory,
+            CancellationToken cancellationToken = default)
+        {
+            if (query.GroupedAggregate != null)
+                throw new BifrostExecutionError(
+                    "Grouped-aggregate intents are not supported; use ResolveAggregateAsync.");
+
+            // Materialize declared Links into executable Joins (idempotent for a
+            // root-only query; the intent executor is the sole caller so a query
+            // instance passes through exactly once).
+            query.ConnectLinks(_dbModel);
+
+            // Same fail-closed transformer pass as GraphQL row queries, into a
+            // per-call overlay so a shared caller context is never mutated.
+            var scopedContext = new Dictionary<string, object?>(userContext);
+            _transformerService.ApplyTransformers(query, _dbModel, scopedContext);
+            ApplyEnumFilterRewrite(query);
+
+            var (data, sql) = await LoadDataParameterizedAsync(query, connFactory, cancellationToken);
+
+            if (!data.TryGetValue(query.KeyName, out var tableData))
+                throw new BifrostExecutionError(
+                    $"Query intent result set '{query.KeyName}' is missing from the execution results.");
+
+            var rows = new List<IReadOnlyDictionary<string, object?>>(tableData.data.Count);
+            foreach (var row in tableData.data)
+            {
+                var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                foreach (var (column, ordinal) in tableData.index)
+                {
+                    if (ordinal < row.Length)
+                        map[column] = ReaderEnum.DbConvert(row[ordinal]);
+                }
+                rows.Add(map);
+            }
+
+            int? total = null;
+            if (query.IncludeResult
+                && data.TryGetValue(query.KeyName + "=>count", out var countEntry)
+                && countEntry.data.Count > 0 && countEntry.data[0].Length > 0
+                && countEntry.data[0][0] is { } countObj)
+            {
+                total = Convert.ToInt32(countObj);
+            }
+
+            return new QueryIntentResult { Rows = rows, TotalCount = total, Sql = sql };
         }
 
         /// <summary>

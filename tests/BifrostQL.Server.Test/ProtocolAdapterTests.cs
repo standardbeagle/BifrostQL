@@ -32,6 +32,20 @@ namespace BifrostQL.Server.Test
     }
 
     /// <summary>
+    /// A write request on the echo adapter's "wire": the mutation counterpart of
+    /// <see cref="EchoRequest"/>.
+    /// </summary>
+    public sealed class EchoMutationRequest
+    {
+        public required string Table { get; init; }
+        public required MutationIntentAction Action { get; init; }
+        public required IReadOnlyDictionary<string, object?> Data { get; init; }
+        public IReadOnlyList<object?>? PrimaryKey { get; init; }
+        public ClaimsPrincipal? Principal { get; init; }
+        public string? Endpoint { get; init; }
+    }
+
+    /// <summary>
     /// Reference implementation of <see cref="IProtocolAdapter"/> with zero wire
     /// code: it proves the full hosting contract end to end. Identity is projected
     /// through <see cref="IBifrostAuthContextFactory"/> (the same seam every HTTP
@@ -44,6 +58,7 @@ namespace BifrostQL.Server.Test
     public sealed class EchoProtocolAdapter : IProtocolAdapter
     {
         private readonly IQueryIntentExecutor _executor;
+        private readonly IMutationIntentExecutor _mutationExecutor;
         private readonly IBifrostAuthContextFactory _authFactory;
         private readonly IServiceProvider _services;
         private int _started;
@@ -51,10 +66,12 @@ namespace BifrostQL.Server.Test
 
         public EchoProtocolAdapter(
             IQueryIntentExecutor executor,
+            IMutationIntentExecutor mutationExecutor,
             IBifrostAuthContextFactory authFactory,
             IServiceProvider services)
         {
             _executor = executor ?? throw new ArgumentNullException(nameof(executor));
+            _mutationExecutor = mutationExecutor ?? throw new ArgumentNullException(nameof(mutationExecutor));
             _authFactory = authFactory ?? throw new ArgumentNullException(nameof(authFactory));
             _services = services ?? throw new ArgumentNullException(nameof(services));
         }
@@ -114,6 +131,35 @@ namespace BifrostQL.Server.Test
                 Endpoint = request.Endpoint,
             }, cancellationToken);
             return result.Rows;
+        }
+
+        /// <summary>
+        /// The write counterpart of <see cref="ExecuteAsync"/>: identity projected
+        /// through the same auth seam, execution exclusively through
+        /// <see cref="IMutationIntentExecutor"/>, so the mutation transformer chain
+        /// (tenant pinning/scoping, soft delete, audit, concurrency) applies
+        /// unconditionally.
+        /// </summary>
+        public async Task<object?> MutateAsync(EchoMutationRequest request, CancellationToken cancellationToken = default)
+        {
+            if (_started == 0 || _stopped > 0)
+                throw new InvalidOperationException("Echo adapter is not running.");
+
+            var identityCarrier = new DefaultHttpContext { RequestServices = _services };
+            if (request.Principal is not null)
+                identityCarrier.User = request.Principal;
+            var userContext = _authFactory.CreateUserContext(identityCarrier);
+
+            var result = await _mutationExecutor.ExecuteAsync(new MutationIntent
+            {
+                Table = request.Table,
+                Action = request.Action,
+                Data = request.Data,
+                PrimaryKey = request.PrimaryKey,
+                UserContext = userContext,
+                Endpoint = request.Endpoint,
+            }, cancellationToken);
+            return result.Value;
         }
     }
 

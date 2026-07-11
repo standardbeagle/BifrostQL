@@ -43,6 +43,43 @@ namespace BifrostQL.AdapterConformance
         public required string Endpoint { get; init; }
     }
 
+    /// <summary>The mutation verb a <see cref="ConformanceMutationRequest"/> executes.</summary>
+    public enum ConformanceMutationAction
+    {
+        Insert,
+        Update,
+        Delete,
+    }
+
+    /// <summary>
+    /// A write request the conformance suite hands to an adapter under test — the
+    /// mutation counterpart of <see cref="ConformanceReadRequest"/>. The derived
+    /// suite translates it into the adapter's own wire format so the request
+    /// travels the adapter's real request path.
+    /// </summary>
+    public sealed class ConformanceMutationRequest
+    {
+        /// <summary>Database table name (e.g. <c>orders</c>).</summary>
+        public required string Table { get; init; }
+
+        public required ConformanceMutationAction Action { get; init; }
+
+        /// <summary>Column values (insert/update SET, delete predicate), by column name.</summary>
+        public required IReadOnlyDictionary<string, object?> Data { get; init; }
+
+        /// <summary>Optional positional primary-key values (composite-key safe).</summary>
+        public IReadOnlyList<object?>? PrimaryKey { get; init; }
+
+        /// <summary>
+        /// The caller identity as the adapter's wire would deliver it, or null for
+        /// an unauthenticated request.
+        /// </summary>
+        public ClaimsPrincipal? Principal { get; init; }
+
+        /// <summary>The registered BifrostQL endpoint path the write targets.</summary>
+        public required string Endpoint { get; init; }
+    }
+
     /// <summary>
     /// Reusable security-conformance suite for <see cref="IProtocolAdapter"/>
     /// implementations. Every adapter (RESP, MQTT, pgwire, …) derives from this
@@ -58,6 +95,10 @@ namespace BifrostQL.AdapterConformance
     /// <item><b>Policy read guards hold</b> — a <c>policy-read-deny</c> column is
     /// rejected whether selected or used as a filter oracle, and a missing tenant
     /// identity fails closed.</item>
+    /// <item><b>Mutations run the transformer chain</b> (write-capable adapters
+    /// only, see <see cref="AdapterSupportsMutations"/>) — inserts pin the caller's
+    /// tenant, cross-tenant update/delete are no-ops, deletes on a soft-delete
+    /// table soft-delete, and a missing tenant identity fails closed.</item>
     /// </list>
     ///
     /// <para><b>How to plug in a new adapter</b>: derive a class in your adapter's
@@ -68,7 +109,10 @@ namespace BifrostQL.AdapterConformance
     /// send it through the adapter's real request path, and decode the response
     /// rows. Server-side rejections must surface as a thrown exception carrying the
     /// server's error text (in its message chain) — a suite that swallows errors
-    /// cannot prove fail-closed behavior. The base class owns the fixture: a shared
+    /// cannot prove fail-closed behavior. A write-capable adapter additionally
+    /// overrides <see cref="AdapterSupportsMutations"/> (→ true) and
+    /// <see cref="ExecuteMutationAsync"/>; a read-only adapter leaves both alone
+    /// and the mutation facts are skipped. The base class owns the fixture: a shared
     /// in-memory SQLite database, the security metadata rules, the host, and a SQL
     /// capture observer. See <c>EchoProtocolAdapterConformanceTests</c> in
     /// BifrostQL.Server.Test for the reference derivation.</para>
@@ -102,6 +146,27 @@ namespace BifrostQL.AdapterConformance
         /// </summary>
         protected abstract Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ExecuteReadAsync(
             ConformanceReadRequest request);
+
+        /// <summary>
+        /// Whether the adapter under test exposes writes. A read-only adapter is
+        /// legitimate — leave this <c>false</c> (the default) and the mutation facts
+        /// are skipped. An adapter that exposes ANY write surface MUST return
+        /// <c>true</c> and override <see cref="ExecuteMutationAsync"/>; opting out
+        /// while shipping writes would leave its mutation path unproven against
+        /// tenant isolation and soft-delete semantics.
+        /// </summary>
+        protected virtual bool AdapterSupportsMutations => false;
+
+        /// <summary>
+        /// Executes a write through the adapter's real request path and returns the
+        /// adapter's scalar result (identity / key / affected count). Required when
+        /// <see cref="AdapterSupportsMutations"/> is true. Server-side rejections
+        /// must propagate as exceptions whose message chain contains the server
+        /// error text.
+        /// </summary>
+        protected virtual Task<object?> ExecuteMutationAsync(ConformanceMutationRequest request)
+            => throw new NotSupportedException(
+                $"{GetType().Name} sets {nameof(AdapterSupportsMutations)} but does not override {nameof(ExecuteMutationAsync)}.");
 
         private static readonly string[] MetadataRules =
         {
@@ -332,6 +397,134 @@ namespace BifrostQL.AdapterConformance
         public async Task Read_WithoutTenantIdentity_FailsClosed()
         {
             await AssertReadRejectedAsync(OrdersRequest(principal: null), "Tenant context required");
+        }
+
+        // ---- (d) mutation facts (write-capable adapters only) ---------------
+        //
+        // Each fact returns early for read-only adapters (AdapterSupportsMutations
+        // = false, the default) — read-only adapters are legitimate. A write-capable
+        // adapter must pass all of them: they prove the adapter's writes travel the
+        // mutation transformer chain (tenant pinning/scoping, soft-delete rewrite,
+        // fail-closed identity), not a shortcut into raw SQL.
+
+        /// <summary>Reads one scalar straight from the fixture database, bypassing the adapter.</summary>
+        private async Task<object?> DbScalarAsync(string sql)
+        {
+            await using var cmd = new SqliteCommand(sql, _keepAlive);
+            var value = await cmd.ExecuteScalarAsync();
+            return value == DBNull.Value ? null : value;
+        }
+
+        [Fact]
+        public async Task Mutate_Insert_PinsTenantFromIdentity_IgnoringClientTenantValue()
+        {
+            if (!AdapterSupportsMutations) return;
+
+            // The caller tries to plant the row in tenant-b; the tenant mutation
+            // transformer must pin it to the caller's own tenant.
+            await ExecuteMutationAsync(new ConformanceMutationRequest
+            {
+                Table = "orders",
+                Action = ConformanceMutationAction.Insert,
+                Data = new Dictionary<string, object?>
+                {
+                    ["name"] = "conformance-insert",
+                    ["tenant_id"] = "tenant-b",
+                },
+                Principal = TenantPrincipal("user-a", "tenant-a"),
+                Endpoint = EndpointPath,
+            });
+
+            (await DbScalarAsync("SELECT tenant_id FROM orders WHERE name = 'conformance-insert'"))
+                .Should().Be("tenant-a", "the tenant transformer pins the caller's tenant over the client value");
+        }
+
+        [Fact]
+        public async Task Mutate_Insert_WithoutTenantIdentity_FailsClosed()
+        {
+            if (!AdapterSupportsMutations) return;
+
+            var ex = await Assert.ThrowsAnyAsync<Exception>(() => ExecuteMutationAsync(new ConformanceMutationRequest
+            {
+                Table = "orders",
+                Action = ConformanceMutationAction.Insert,
+                Data = new Dictionary<string, object?> { ["name"] = "no-identity" },
+                Principal = null,
+                Endpoint = EndpointPath,
+            }));
+            FlattenMessages(ex).Should().Contain("Tenant context required",
+                "the adapter must surface the server-side rejection, not swallow or replace it");
+
+            (await DbScalarAsync("SELECT COUNT(*) FROM orders WHERE name = 'no-identity'"))
+                .Should().Be(0L, "nothing may be written without a tenant identity");
+        }
+
+        [Fact]
+        public async Task Mutate_CrossTenantUpdate_DoesNotTouchOtherTenantRows()
+        {
+            if (!AdapterSupportsMutations) return;
+
+            // Tenant-b addresses tenant-a's row 1. The tenant transformer ANDs the
+            // caller's tenant onto the WHERE, so the write matches nothing — the
+            // same silent no-op the GraphQL path produces.
+            await ExecuteMutationAsync(new ConformanceMutationRequest
+            {
+                Table = "orders",
+                Action = ConformanceMutationAction.Update,
+                Data = new Dictionary<string, object?> { ["name"] = "hijacked" },
+                PrimaryKey = new object?[] { 1 },
+                Principal = TenantPrincipal("user-b", "tenant-b"),
+                Endpoint = EndpointPath,
+            });
+
+            (await DbScalarAsync("SELECT name FROM orders WHERE id = 1"))
+                .Should().Be("a-first", "a caller must not update another tenant's rows");
+        }
+
+        [Fact]
+        public async Task Mutate_CrossTenantDelete_DoesNotTouchOtherTenantRows()
+        {
+            if (!AdapterSupportsMutations) return;
+
+            await ExecuteMutationAsync(new ConformanceMutationRequest
+            {
+                Table = "orders",
+                Action = ConformanceMutationAction.Delete,
+                Data = new Dictionary<string, object?>(),
+                PrimaryKey = new object?[] { 2 },
+                Principal = TenantPrincipal("user-b", "tenant-b"),
+                Endpoint = EndpointPath,
+            });
+
+            (await DbScalarAsync("SELECT deleted_at FROM orders WHERE id = 2"))
+                .Should().BeNull("a caller must not delete (even softly) another tenant's rows");
+        }
+
+        [Fact]
+        public async Task Mutate_Delete_OnSoftDeleteTable_SoftDeletesInsteadOfRemoving()
+        {
+            if (!AdapterSupportsMutations) return;
+
+            await ExecuteMutationAsync(new ConformanceMutationRequest
+            {
+                Table = "orders",
+                Action = ConformanceMutationAction.Delete,
+                Data = new Dictionary<string, object?>(),
+                PrimaryKey = new object?[] { 2 },
+                Principal = TenantPrincipal("user-a", "tenant-a"),
+                Endpoint = EndpointPath,
+            });
+
+            // The soft-delete transformer rewrote DELETE into an UPDATE: the row
+            // still exists, carries a deletion stamp, and vanishes from reads.
+            (await DbScalarAsync("SELECT COUNT(*) FROM orders WHERE id = 2"))
+                .Should().Be(1L, "soft delete must not physically remove the row");
+            (await DbScalarAsync("SELECT deleted_at FROM orders WHERE id = 2"))
+                .Should().NotBeNull("soft delete stamps the deleted_at column");
+
+            var rows = await ExecuteReadAsync(OrdersRequest(TenantPrincipal("user-a", "tenant-a")));
+            rows.Select(r => (string)r["name"]!).Should().NotContain("a-second",
+                "soft-deleted rows never surface on reads");
         }
 
         /// <summary>

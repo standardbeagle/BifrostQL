@@ -1,4 +1,5 @@
 using BifrostQL.AdapterConformance;
+using BifrostQL.Core.Resolvers;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Server.Test
@@ -24,6 +25,30 @@ namespace BifrostQL.Server.Test
                 Table = request.Table,
                 Columns = request.Columns,
                 Filter = request.Filter,
+                Principal = request.Principal,
+                Endpoint = request.Endpoint,
+            });
+        }
+
+        // The echo adapter exposes writes (MutateAsync), so it must prove the
+        // mutation facts; a read-only adapter would leave these members alone.
+        protected override bool AdapterSupportsMutations => true;
+
+        protected override async Task<object?> ExecuteMutationAsync(ConformanceMutationRequest request)
+        {
+            var adapter = Host.Services.GetRequiredService<EchoProtocolAdapter>();
+            return await adapter.MutateAsync(new EchoMutationRequest
+            {
+                Table = request.Table,
+                Action = request.Action switch
+                {
+                    ConformanceMutationAction.Insert => MutationIntentAction.Insert,
+                    ConformanceMutationAction.Update => MutationIntentAction.Update,
+                    ConformanceMutationAction.Delete => MutationIntentAction.Delete,
+                    _ => throw new ArgumentOutOfRangeException(nameof(request), request.Action, "Unknown conformance mutation action."),
+                },
+                Data = request.Data,
+                PrimaryKey = request.PrimaryKey,
                 Principal = request.Principal,
                 Endpoint = request.Endpoint,
             });

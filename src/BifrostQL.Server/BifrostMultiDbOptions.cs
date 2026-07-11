@@ -269,6 +269,7 @@ namespace BifrostQL.Server
                 _queryObservers, _queryObserverLoader, _queryObserverTypes);
 
             BifrostServiceRegistrar.RegisterComputedColumnServices(services);
+            BifrostServiceRegistrar.RegisterQueryIntentServices(services);
 
             // Same bounded depth/complexity guard as the single-database path; applied to
             // every endpoint's shared executor (which the binary transport also uses).

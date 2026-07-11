@@ -301,6 +301,7 @@ namespace BifrostQL.Server
                 _queryObservers, _queryObserverLoader, _queryObserverTypes);
 
             BifrostServiceRegistrar.RegisterComputedColumnServices(services);
+            BifrostServiceRegistrar.RegisterQueryIntentServices(services);
 
             // Fail-secure default: missing DisableAuth means auth ON, consistent with
             // IsUsingAuth and the BindStandardConfig startup guard.

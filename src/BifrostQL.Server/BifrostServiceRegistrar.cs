@@ -11,6 +11,7 @@ using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.ComputedColumns;
 using BifrostQL.Core.Modules.Eav;
 using BifrostQL.Core.QueryModel;
+using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
 using BifrostQL.Core.Storage;
 using BifrostQL.Core.Workflows;
@@ -137,6 +138,21 @@ namespace BifrostQL.Server
             services.AddSingleton<IComputedColumnProvider>(_ => new StateMachineTransitionsProvider());
             services.AddSingleton<IComputedColumnProvider, EavMetaProvider>();
             services.AddSingleton<IComputedColumnProviders>(sp => new ComputedColumnProviders(sp.GetServices<IComputedColumnProvider>()));
+        }
+
+        /// <summary>
+        /// Registers the protocol-adapter query-intent entry point. The executor resolves
+        /// endpoint schemas from the same PathCache the HTTP middleware uses and routes
+        /// execution through SqlExecutionManager, so the security transformer pipeline
+        /// (tenant isolation, soft-delete, policy, column read guards) applies to intents
+        /// exactly as it does to GraphQL requests — adapters have no way around it.
+        /// </summary>
+        public static void RegisterQueryIntentServices(IServiceCollection services)
+        {
+            services.AddSingleton<IQueryIntentExecutor>(sp => new QueryIntentExecutor(
+                sp.GetRequiredService<PathCache<GraphQL.Inputs>>(),
+                sp.GetRequiredService<IQueryTransformerService>(),
+                sp.GetService<IQueryObservers>()));
         }
 
         /// <summary>

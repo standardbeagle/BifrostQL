@@ -32,6 +32,15 @@ namespace BifrostQL.Core.Resolvers
         /// Error code for programmatic handling.
         /// </summary>
         public string? ErrorCode { get; init; }
+
+        /// <summary>
+        /// <see cref="ErrorCode"/> marking a read rejected by an authorization
+        /// transformer (tenant scoping, row/column policy). It distinguishes a
+        /// fail-closed access denial — which callers such as the MCP search tool
+        /// treat as "table not visible, skip" — from validation or database
+        /// failures, which must propagate rather than be swallowed as "no match".
+        /// </summary>
+        public const string AccessDeniedCode = "ACCESS_DENIED";
         
         /// <summary>
         /// Suggested actions the user can take to resolve this error.

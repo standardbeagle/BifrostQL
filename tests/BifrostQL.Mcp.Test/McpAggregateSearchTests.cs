@@ -28,7 +28,9 @@ namespace BifrostQL.Mcp.Test
     /// tenant-A ['open' 10.5 + 'open' 20 + 'closed' 5], one soft-deleted
     /// tenant-A ['open' 100, name contains 'acme'], one live tenant-B ['open'
     /// 999, name contains 'acme']) → order_items(120 distinct SKUs, 8 of them
-    /// containing 'acme').
+    /// containing 'acme'). Plus documents(7: six single-column 'zephyr' title
+    /// matches at ids 1-6 and one two-column 'zephyr' title+body match at id 7)
+    /// to exercise relevance ranking against the per-table cap.
     /// </summary>
     public sealed class McpAggregateSearchTests : IAsyncLifetime
     {
@@ -77,6 +79,22 @@ namespace BifrostQL.Mcp.Test
                     (3, 1, 'A', 'plain order', 'closed', 5.0, NULL),
                     (4, 2, 'A', 'acme deleted order', 'open', 100.0, '2026-01-01'),
                     (5, 2, 'B', 'acme foreign order', 'open', 999.0, NULL)
+                """,
+                // documents: two string columns so a row's match count can vary,
+                // seeded so the only two-column ('zephyr' in title AND body) match
+                // sits at the highest primary key. Under a fetch-then-rank cap of 5
+                // this row is fetched before ranking; a truncate-then-rank cap would
+                // discard it in favour of the five smaller-PK single-column matches.
+                "CREATE TABLE documents (id INTEGER PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL)",
+                """
+                INSERT INTO documents(id, title, body) VALUES
+                    (1, 'zephyr alpha', 'unrelated'),
+                    (2, 'zephyr bravo', 'unrelated'),
+                    (3, 'zephyr charlie', 'unrelated'),
+                    (4, 'zephyr delta', 'unrelated'),
+                    (5, 'zephyr echo', 'unrelated'),
+                    (6, 'zephyr foxtrot', 'unrelated'),
+                    (7, 'zephyr golf', 'zephyr in the body too')
                 """,
             };
             // 120 distinct SKUs (exceeds the 100-group aggregate cap); 8 contain
@@ -372,6 +390,39 @@ namespace BifrostQL.Mcp.Test
             payload.GetProperty("results").EnumerateArray()
                 .Should().OnlyContain(r => r.GetProperty("table").GetString() == "customers");
             payload.GetProperty("tables").GetArrayLength().Should().Be(1);
+        }
+
+        /// <summary>
+        /// Ranking must run over the fetched candidate set, not a PK-truncated
+        /// slice. The sole two-column match (documents id 7) carries the largest
+        /// primary key, so a cap that truncated by PK <em>before</em> ranking would
+        /// fetch only ids 1-5 and discard the most relevant row. With fetch-then-
+        /// rank it leads the results even though five smaller-PK rows also matched.
+        /// </summary>
+        [Fact]
+        public async Task Search_RanksHigherRelevanceRowAboveThePerTableCap()
+        {
+            var payload = await CallOk("bifrost_search", new()
+            {
+                ["term"] = "zephyr",
+                ["tables"] = new[] { "documents" },
+            });
+
+            var totals = payload.GetProperty("tables").EnumerateArray().Single();
+            totals.GetProperty("totalMatches").GetInt32().Should().Be(7);
+            totals.GetProperty("returned").GetInt32().Should().Be(5);
+
+            var results = payload.GetProperty("results").EnumerateArray().ToList();
+            results.Should().HaveCount(5);
+
+            // The two-column match is the highest-relevance row and must lead,
+            // despite its primary key exceeding the five single-column matches'.
+            var top = results[0];
+            top.GetProperty("id")[0].GetInt64().Should().Be(7);
+            top.GetProperty("matchedColumns").EnumerateArray()
+                .Select(c => c.GetString()).Should().BeEquivalentTo("title", "body");
+            results.Select(r => r.GetProperty("id")[0].GetInt64())
+                .Should().Contain(7L, "the ranking cap must not discard the most relevant match");
         }
 
         [Fact]

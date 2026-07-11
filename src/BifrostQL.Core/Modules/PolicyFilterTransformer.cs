@@ -88,7 +88,8 @@ public sealed class PolicyFilterTransformer : IFilterTransformer, IColumnReadGua
         var identity = BuildIdentity(context);
 
         if (!_evaluator.CanAct(policy, PolicyAction.Read, identity).Allowed)
-            throw new BifrostExecutionError(TableReadDeniedMessage);
+            throw new BifrostExecutionError(TableReadDeniedMessage)
+            { ErrorCode = BifrostExecutionError.AccessDeniedCode };
 
         // No row-scope expression: nothing to AND onto the query.
         if (policy.RowScopeExpression is null)
@@ -131,7 +132,8 @@ public sealed class PolicyFilterTransformer : IFilterTransformer, IColumnReadGua
                 continue;
 
             if (!_evaluator.IsColumnAllowed(policy, column, PolicyDirection.Read, identity).Allowed)
-                throw new BifrostExecutionError(ColumnReadDeniedMessage);
+                throw new BifrostExecutionError(ColumnReadDeniedMessage)
+                { ErrorCode = BifrostExecutionError.AccessDeniedCode };
         }
     }
 

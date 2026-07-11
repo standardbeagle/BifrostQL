@@ -34,6 +34,18 @@ namespace BifrostQL.Mcp
         private const int PerTableLimit = 5;
         private const int TotalLimit = 50;
 
+        /// <summary>
+        /// How many matching rows to pull per table before ranking. Ranking is a
+        /// client-side re-sort by matched-column count, so it can only reorder rows
+        /// it actually fetched — capping the SQL read at <see cref="PerTableLimit"/>
+        /// would rank an already-truncated (PK-ordered) slice and silently drop
+        /// higher-relevance rows. Fetching a larger candidate pool and keeping the
+        /// top <see cref="PerTableLimit"/> makes the ranking meaningful; a table with
+        /// more matches than this bound still ranks only its first candidates by PK,
+        /// which the truncation message steers the caller past.
+        /// </summary>
+        private const int RankingCandidateLimit = 50;
+
         private static readonly JsonElement InputSchema = ParseSchema(
             """
             {
@@ -147,10 +159,13 @@ namespace BifrostQL.Mcp
                         Endpoint = endpoint,
                     }, cancellationToken);
                 }
-                catch (BifrostExecutionError)
+                catch (BifrostExecutionError ex) when (ex.ErrorCode == BifrostExecutionError.AccessDeniedCode)
                 {
-                    // Fail-closed skip: the transformer pipeline rejected the read
-                    // (see class doc), so this table contributes nothing.
+                    // Fail-closed skip: an authorization transformer (tenant scoping,
+                    // row/column policy) rejected the read (see class doc), so this
+                    // table contributes nothing. Any other execution failure — a
+                    // genuine DB error, a malformed intent — is a real fault and must
+                    // propagate, not be silently reported as zero matches.
                     continue;
                 }
 
@@ -166,6 +181,8 @@ namespace BifrostQL.Mcp
                 var returned = 0;
                 foreach (var (row, matched) in ranked)
                 {
+                    if (returned >= PerTableLimit)
+                        break;
                     if (results.Count >= TotalLimit)
                     {
                         truncated = true;
@@ -264,7 +281,7 @@ namespace BifrostQL.Mcp
                     columns.Add(column);
 
             var query = QueryToolCompiler.BuildQuery(table, columns);
-            query.Limit = PerTableLimit;
+            query.Limit = RankingCandidateLimit;
             query.IncludeResult = true;
             query.Sort = QueryToolCompiler.DefaultSort(table);
 

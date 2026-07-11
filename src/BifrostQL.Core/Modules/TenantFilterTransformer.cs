@@ -40,13 +40,15 @@ public sealed class TenantFilterTransformer : ContextValueFilterTransformerBase
         {
             throw new BifrostExecutionError(
                 $"Tenant context required but not found. " +
-                $"Expected '{tenantContextKey}' in user context for table '{fullTableName}'.");
+                $"Expected '{tenantContextKey}' in user context for table '{fullTableName}'.")
+            { ErrorCode = BifrostExecutionError.AccessDeniedCode };
         }
 
         if (tenantId == null)
         {
             throw new BifrostExecutionError(
-                $"Tenant ID cannot be null for table '{fullTableName}'.");
+                $"Tenant ID cannot be null for table '{fullTableName}'.")
+            { ErrorCode = BifrostExecutionError.AccessDeniedCode };
         }
 
         return TableFilterFactory.Equals(table.DbName, columnName, tenantId);

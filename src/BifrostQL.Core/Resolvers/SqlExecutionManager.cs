@@ -252,11 +252,29 @@ namespace BifrostQL.Core.Resolvers
                     "or pivot on a lower-cardinality column.");
             var pivotValues = distinctRows.Select(r => ReaderEnum.DbConvert(r.Length > 0 ? r[0] : null)).ToList();
 
+            // Every output column — the row keys plus one per pivot value — becomes a
+            // result-set column name AND a JSON payload key, both of which must be
+            // unique. Two pivot values whose labels coincide (classically a NULL, which
+            // takes the null label, alongside a literal equal to that label) or a value
+            // whose label matches a row-key column name would emit duplicate columns:
+            // the reader can't index them and the JSON object can't hold both. Reject
+            // with an actionable message BEFORE running the pivot on EITHER dialect,
+            // rather than surfacing the reader's opaque duplicate-name failure.
+            var labels = pivotValues.Select(v => v?.ToString() ?? config.NullLabel).ToList();
+            var duplicate = config.GroupByColumns.Concat(labels)
+                .GroupBy(n => n, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault(g => g.Count() > 1);
+            if (duplicate != null)
+                throw new BifrostExecutionError(
+                    $"Pivot of '{request.PivotColumnGraphQlName}' produces two output columns named '{duplicate.Key}' " +
+                    "(two pivot values sharing a label — e.g. a NULL and a literal null label — or a value matching a " +
+                    "row-key column). Filter or rename one of the colliding values before pivoting.");
+
             // (2) Cross-tabulate with those values under the same scope filter.
             var pivotSql = PivotSqlGenerator.GeneratePivot(dialect, config, tableRef, pivotValues, filter);
             var (pivotIndex, pivotRows) = await ExecuteRawAsync(connFactory, pivotSql, context.CancellationToken);
 
-            return BuildPivotPayload(config, request, pivotValues, pivotIndex, pivotRows);
+            return BuildPivotPayload(config, request, labels, pivotIndex, pivotRows);
         }
 
         /// <summary>
@@ -301,17 +319,16 @@ namespace BifrostQL.Core.Resolvers
         /// <summary>
         /// Shapes the cross-tab result set into the JSON pivot payload. Row-key values
         /// are read by their DB column name and keyed by GraphQL name for a stable
-        /// client contract; each pivot cell is read by its column label — the same
-        /// label <see cref="PivotSqlGenerator"/> aliased the CASE column with
-        /// (the value's string form, or the config's null label for NULL).
+        /// client contract; each pivot cell is read by its column <paramref name="labels"/> —
+        /// the same labels <see cref="PivotSqlGenerator"/> aliased the CASE columns with
+        /// (each value's string form, or the config's null label for NULL), already
+        /// verified collision-free by the caller.
         /// </summary>
         private static IReadOnlyDictionary<string, object?> BuildPivotPayload(
             PivotQueryConfig config, PivotRequest request,
-            IReadOnlyList<object?> pivotValues,
+            IReadOnlyList<string> labels,
             IDictionary<string, int> index, IList<object?[]> rows)
         {
-            var labels = pivotValues.Select(v => v?.ToString() ?? config.NullLabel).ToList();
-
             var outRows = new List<object?>(rows.Count);
             foreach (var row in rows)
             {

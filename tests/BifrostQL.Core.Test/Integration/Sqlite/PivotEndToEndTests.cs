@@ -31,6 +31,7 @@ public sealed class PivotEndToEndTests : IAsyncLifetime
     {
         "*.orders { tenant-filter: tenant_id }",
         "*.events { tenant-filter: tenant_id }",
+        "*.tags { tenant-filter: tenant_id }",
     };
 
     public async Task InitializeAsync()
@@ -76,6 +77,25 @@ public sealed class PivotEndToEndTests : IAsyncLifetime
             """);
         for (var i = 1; i <= 101; i++)
             await Exec($"INSERT INTO events(id, tenant_id, grp, kind, val) VALUES ({i}, 1, 'x', 'k{i:000}', 1)");
+
+        // tags: a NULL label alongside a literal '_null_' — both map to the null
+        // label, so the pivot would emit two identically-named output columns.
+        await Exec("DROP TABLE IF EXISTS tags");
+        await Exec(
+            """
+            CREATE TABLE tags (
+                id INTEGER PRIMARY KEY,
+                tenant_id INTEGER NOT NULL,
+                grp TEXT NOT NULL,
+                label TEXT NULL
+            )
+            """);
+        await Exec(
+            """
+            INSERT INTO tags(id, tenant_id, grp, label) VALUES
+                (1, 1, 'x', NULL),
+                (2, 1, 'x', '_null_')
+            """);
 
         var factory = new SqliteDbConnFactory(ConnString);
         var loader = new DbModelLoader(factory, new MetadataLoader(Rules));
@@ -217,5 +237,22 @@ public sealed class PivotEndToEndTests : IAsyncLifetime
         execution.Errors.Should().NotBeNullOrEmpty();
         (execution.Errors![0].InnerException?.Message ?? execution.Errors![0].Message)
             .Should().Contain("must not appear in group-by");
+    }
+
+    [Fact]
+    public async Task Pivot_DuplicateOutputColumnLabel_ErrorsCleanly()
+    {
+        // A NULL value and a literal '_null_' both take the null label, so the pivot
+        // would produce two output columns named '_null_'. That is unrepresentable in
+        // the result set and the JSON payload alike — it must fail with an actionable
+        // message, not the reader's opaque duplicate-column-name failure.
+        var execution = await ExecuteAsTenantAsync(
+            """
+            { tagsPivot(rowKeys: [grp], pivotColumn: label, valueColumn: id, aggregate: count) }
+            """, tenantId: 1);
+
+        execution.Errors.Should().NotBeNullOrEmpty();
+        (execution.Errors![0].InnerException?.Message ?? execution.Errors![0].Message)
+            .Should().Contain("two output columns named '_null_'");
     }
 }

@@ -184,6 +184,9 @@ namespace BifrostQL.Core.Resolvers
             if (query.GroupedAggregate != null)
                 throw new BifrostExecutionError(
                     "Grouped-aggregate intents are not supported; use ResolveAggregateAsync.");
+            if (query.DbTable is null)
+                throw new BifrostExecutionError(
+                    "Query intent has no table: GqlObjectQuery.DbTable must be set.");
 
             // Materialize declared Links into executable Joins (idempotent for a
             // root-only query; the intent executor is the sole caller so a query
@@ -196,7 +199,18 @@ namespace BifrostQL.Core.Resolvers
             _transformerService.ApplyTransformers(query, _dbModel, scopedContext);
             ApplyEnumFilterRewrite(query);
 
+            // Same lifecycle notifications as the GraphQL path (minus Parsed — an
+            // intent is never parsed), so audit/metrics observers see protocol-
+            // adapter traffic too instead of silently skipping it.
+            await NotifyIntentAsync(QueryPhase.Transformed, query, scopedContext, filter: query.Filter);
+
+            var sw = Stopwatch.StartNew();
             var (data, sql) = await LoadDataParameterizedAsync(query, connFactory, cancellationToken);
+            sw.Stop();
+
+            await NotifyIntentAsync(QueryPhase.AfterExecute, query, scopedContext,
+                filter: query.Filter, sql: sql,
+                rowCount: data.Values.Sum(v => v.data.Count), duration: sw.Elapsed);
 
             if (!data.TryGetValue(query.KeyName, out var tableData))
                 throw new BifrostExecutionError(
@@ -292,6 +306,36 @@ namespace BifrostQL.Core.Resolvers
         /// only the fields that phase contributes (filter/sql/rowCount/duration are
         /// null for the phases that don't provide them — matching the record's defaults).
         /// </summary>
+        /// <summary>
+        /// Observer notification for the intent path, which has no
+        /// <see cref="IBifrostFieldContext"/>: the query's own path/name stand in.
+        /// </summary>
+        private async ValueTask NotifyIntentAsync(
+            QueryPhase phase,
+            GqlObjectQuery query,
+            IDictionary<string, object?> userContext,
+            TableFilter? filter = null,
+            string? sql = null,
+            int? rowCount = null,
+            TimeSpan? duration = null)
+        {
+            if (_observers is not { Count: > 0 })
+                return;
+
+            await _observers.NotifyAsync(phase, new QueryObserverContext
+            {
+                Table = query.DbTable!,
+                Model = _dbModel,
+                UserContext = userContext,
+                QueryType = query.QueryType,
+                Path = string.IsNullOrEmpty(query.Path) ? query.GraphQlName : query.Path,
+                Filter = filter,
+                Sql = sql,
+                RowCount = rowCount,
+                Duration = duration,
+            });
+        }
+
         private async ValueTask NotifyAsync(
             QueryPhase phase,
             IDbTable dbTable,

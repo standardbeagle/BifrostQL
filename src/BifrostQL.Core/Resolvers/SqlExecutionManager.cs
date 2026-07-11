@@ -31,7 +31,11 @@ namespace BifrostQL.Core.Resolvers
         /// single execution seam for <see cref="IQueryIntentExecutor"/>; keeping
         /// transformer application inside the manager means an adapter cannot
         /// reach SQL without it. Read-only: <see cref="GqlObjectQuery"/> emits
-        /// SELECT statements exclusively.
+        /// SELECT statements exclusively. Grouped-aggregate intents
+        /// (<see cref="GqlObjectQuery.GroupedAggregate"/>) are supported: the
+        /// same transformer pass constrains the WHERE before grouping, and the
+        /// flat grouped result set (group keys + aggregate aliases) comes back
+        /// as <see cref="QueryIntentResult.Rows"/>.
         /// </summary>
         public ValueTask<QueryIntentResult> ExecuteIntentAsync(GqlObjectQuery query, IDictionary<string, object?> userContext, IDbConnFactory connFactory, CancellationToken cancellationToken = default);
     }
@@ -181,12 +185,16 @@ namespace BifrostQL.Core.Resolvers
             IDbConnFactory connFactory,
             CancellationToken cancellationToken = default)
         {
-            if (query.GroupedAggregate != null)
-                throw new BifrostExecutionError(
-                    "Grouped-aggregate intents are not supported; use ResolveAggregateAsync.");
             if (query.DbTable is null)
                 throw new BifrostExecutionError(
                     "Query intent has no table: GqlObjectQuery.DbTable must be set.");
+
+            // Grouped-aggregate SQL generation ignores joins entirely, so a
+            // declared link on a grouped intent would be silently dropped —
+            // fail fast instead of returning subtly unscoped-looking results.
+            if (query.GroupedAggregate != null && query.Links.Count > 0)
+                throw new BifrostExecutionError(
+                    "Grouped-aggregate intents do not support linked tables; aggregate a single table.");
 
             // Materialize declared Links into executable Joins (idempotent for a
             // root-only query; the intent executor is the sole caller so a query

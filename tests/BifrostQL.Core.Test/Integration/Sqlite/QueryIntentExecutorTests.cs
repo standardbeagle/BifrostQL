@@ -309,4 +309,129 @@ public sealed class QueryIntentExecutorTests : IAsyncLifetime
         // count statement as well, not just the page.
         result.TotalCount.Should().Be(2);
     }
+
+    // ---- grouped-aggregate intents ------------------------------------------
+
+    private static GqlObjectQuery BuildOrdersCountAggregate(IDbModel model)
+    {
+        var table = model.GetTableFromDbName("orders");
+        return new GqlObjectQuery
+        {
+            DbTable = table,
+            SchemaName = table.TableSchema,
+            TableName = table.DbName,
+            GraphQlName = table.GraphQlName,
+            Path = table.GraphQlName,
+            GroupedAggregate = new GroupedAggregate
+            {
+                GroupColumns = Array.Empty<AggregateGroupColumn>(),
+                IncludeCount = true,
+                ValueColumns = Array.Empty<AggregateValueColumn>(),
+            },
+        };
+    }
+
+    [Fact]
+    public async Task AggregateIntent_TenantScopeConstrainsTheGroupedRows_CountsDifferPerTenant()
+    {
+        var executor = BuildExecutor();
+        var model = await executor.GetModelAsync(EndpointPath);
+
+        var tenant1 = await executor.ExecuteAsync(new QueryIntent
+        {
+            Query = BuildOrdersCountAggregate(model),
+            UserContext = TenantContext(1),
+            Endpoint = EndpointPath,
+        });
+        var tenant2 = await executor.ExecuteAsync(new QueryIntent
+        {
+            Query = BuildOrdersCountAggregate(model),
+            UserContext = TenantContext(2),
+            Endpoint = EndpointPath,
+        });
+
+        // The tenant filter must land BEFORE grouping: identical intents yield
+        // different aggregates per tenant, never the global count of 3.
+        Convert.ToInt64(tenant1.Rows.Single()[GroupedAggregate.CountAlias]).Should().Be(2);
+        Convert.ToInt64(tenant2.Rows.Single()[GroupedAggregate.CountAlias]).Should().Be(1);
+        tenant1.Sql.Should().MatchRegex(@"WHERE[\s\S]*tenant_id");
+        tenant1.Sql.Should().NotContain("tenant_id\" = 1", "tenant values must bind as parameters, not literals");
+    }
+
+    [Fact]
+    public async Task AggregateIntent_MissingTenantContext_FailsClosed()
+    {
+        var executor = BuildExecutor();
+        var model = await executor.GetModelAsync(EndpointPath);
+
+        var act = () => executor.ExecuteAsync(new QueryIntent
+        {
+            Query = BuildOrdersCountAggregate(model),
+            UserContext = new Dictionary<string, object?>(),
+            Endpoint = EndpointPath,
+        });
+
+        await act.Should().ThrowAsync<BifrostExecutionError>()
+            .WithMessage("*Tenant context required*");
+    }
+
+    [Fact]
+    public async Task AggregateIntent_GroupByWithSum_ReturnsFlatGroupRowsScopedToTenant()
+    {
+        var executor = BuildExecutor();
+        var model = await executor.GetModelAsync(EndpointPath);
+        var table = model.GetTableFromDbName("orders");
+        var nameColumn = table.ColumnLookup["name"];
+
+        var query = new GqlObjectQuery
+        {
+            DbTable = table,
+            SchemaName = table.TableSchema,
+            TableName = table.DbName,
+            GraphQlName = table.GraphQlName,
+            Path = table.GraphQlName,
+            GroupedAggregate = new GroupedAggregate
+            {
+                GroupColumns = new[] { new AggregateGroupColumn(nameColumn, nameColumn.GraphQlName) },
+                IncludeCount = true,
+                ValueColumns = new[]
+                {
+                    new AggregateValueColumn(AggregateOperationType.Max, table.ColumnLookup["id"], "_max", "_max_id"),
+                },
+            },
+        };
+
+        var result = await executor.ExecuteAsync(new QueryIntent
+        {
+            Query = query,
+            UserContext = TenantContext(1),
+            Endpoint = EndpointPath,
+        });
+
+        result.Rows.Should().HaveCount(2, "tenant 1 owns two distinctly named orders");
+        result.Rows.Select(r => (string?)r[nameColumn.GraphQlName])
+            .Should().BeEquivalentTo("tenant-one-a", "tenant-one-b");
+        result.Rows.Should().OnlyContain(r => Convert.ToInt64(r[GroupedAggregate.CountAlias]) == 1L);
+        result.Rows.Select(r => Convert.ToInt64(r["_max_id"])).Should().BeEquivalentTo(new[] { 1L, 2L });
+    }
+
+    [Fact]
+    public async Task AggregateIntent_WithDeclaredLink_FailsFastInsteadOfSilentlyDroppingTheJoin()
+    {
+        var executor = BuildExecutor();
+        var model = await executor.GetModelAsync(EndpointPath);
+
+        var query = BuildOrdersCountAggregate(model);
+        query.Links.Add(BuildOrdersQuery(model));
+
+        var act = () => executor.ExecuteAsync(new QueryIntent
+        {
+            Query = query,
+            UserContext = TenantContext(1),
+            Endpoint = EndpointPath,
+        });
+
+        await act.Should().ThrowAsync<BifrostExecutionError>()
+            .WithMessage("*do not support linked tables*");
+    }
 }

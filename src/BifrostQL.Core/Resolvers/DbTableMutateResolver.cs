@@ -32,7 +32,12 @@ namespace BifrostQL.Core.Resolvers
             var model = bifrost.Model;
             var dialect = conFactory.Dialect;
             var table = _table;
-            var mutationTransformers = context.RequestServices!.GetRequiredService<IMutationTransformers>();
+            // Filter the write-path transformer set by the request's active profile so a
+            // named profile governs writes and reads symmetrically (the read path applies
+            // the same FilterBy). Fail-closed: security/data-integrity transformers below
+            // the application floor are always retained.
+            var mutationTransformers = BifrostProfileRegistry.FilterBy(
+                context.RequestServices!.GetRequiredService<IMutationTransformers>(), context.UserContext);
 
             switch (MutationActionSelector.FromContext(context))
             {

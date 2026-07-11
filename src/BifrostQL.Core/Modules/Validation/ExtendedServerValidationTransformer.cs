@@ -18,7 +18,14 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
         _providers = providers.ToArray();
     }
 
-    public int Priority => 200;
+    // 199, not the application band (>=200): server validation is on by default for every
+    // write and opts out only per-table via `server-validation: off` metadata (see below).
+    // Every other default-on built-in mutation transformer sits below the application
+    // priority floor and is therefore always retained; keeping validation here means a
+    // client-selectable profile cannot globally strip input validation from writes — it
+    // stays a non-toggleable data-integrity guard, symmetric with the read path where no
+    // default-on transformer lives in the toggleable band.
+    public int Priority => 199;
 
     public string ModuleName => MetadataKeys.Validation.Server;
 

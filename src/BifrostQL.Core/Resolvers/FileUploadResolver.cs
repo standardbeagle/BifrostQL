@@ -64,7 +64,12 @@ namespace BifrostQL.Core.Resolvers
             foreach (var keyCol in keyColumns)
                 keyData[keyCol.ColumnName] = Convert.ChangeType(recordId, GetClrType(keyCol.DataType));
 
-            var mutationTransformers = context.RequestServices?.GetService<IMutationTransformers>();
+            // Filter by the request's active profile so the file-column write applies the
+            // same per-profile module set a normal update does (fail-closed floor retained).
+            var rawMutationTransformers = context.RequestServices?.GetService<IMutationTransformers>();
+            var mutationTransformers = rawMutationTransformers == null
+                ? null
+                : BifrostProfileRegistry.FilterBy(rawMutationTransformers, context.UserContext);
             var transformContext = new MutationTransformContext
             {
                 Model = model,

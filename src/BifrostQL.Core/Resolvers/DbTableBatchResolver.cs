@@ -26,7 +26,11 @@ namespace BifrostQL.Core.Resolvers
             var conFactory = bifrost.ConnFactory;
             var model = bifrost.Model;
             var dialect = conFactory.Dialect;
-            var mutationTransformers = context.RequestServices!.GetRequiredService<IMutationTransformers>();
+            // Filter by the request's active profile so a batch write applies the same
+            // per-profile module set a read (and a single-row write) does. Fail-closed:
+            // security/data-integrity transformers below the application floor are retained.
+            var mutationTransformers = BifrostProfileRegistry.FilterBy(
+                context.RequestServices!.GetRequiredService<IMutationTransformers>(), context.UserContext);
 
             var actions = context.GetArgument<List<Dictionary<string, object?>>>("actions");
             if (actions == null || actions.Count == 0)

@@ -130,7 +130,10 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
         {
             Model = model,
             ConnFactory = connFactory,
-            Transformers = _transformers,
+            // Filter by the intent's active profile so a protocol-adapter write applies the
+            // same per-profile module set the GraphQL write path does. A transport that never
+            // stamped a profile leaves the full set active (fail-closed for writes).
+            Transformers = BifrostProfileRegistry.FilterBy(_transformers, intent.UserContext),
             UserContext = intent.UserContext,
             Services = _services,
             CancellationToken = cancellationToken,

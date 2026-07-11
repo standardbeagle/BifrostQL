@@ -217,6 +217,23 @@ public sealed class BifrostProfileRegistry
     }
 
     /// <summary>
+    /// Write-path convenience: reads the active profile from the request
+    /// <paramref name="userContext"/> (stamped there by both the HTTP middleware and the
+    /// binary transport) and applies the same fail-closed module filter the read path
+    /// uses, so a named profile governs writes and reads symmetrically. A transport that
+    /// never stamped a profile (no key present) leaves the full transformer set active —
+    /// fail-closed for writes, since keeping a guard can only tighten, never weaken, a
+    /// mutation. Every built-in security/data-integrity mutation transformer sits below
+    /// <see cref="BifrostProfile.ApplicationPriorityFloor"/> and is therefore always
+    /// retained regardless of the profile's module list.
+    /// </summary>
+    public static IMutationTransformers FilterBy(IMutationTransformers source, IDictionary<string, object?> userContext)
+    {
+        var profile = BifrostProfile.FromUserContext(userContext);
+        return profile == null ? source : FilterBy(source, profile);
+    }
+
+    /// <summary>
     /// Returns observers for a given profile. Fail-closed like the filter/mutation
     /// overloads, but observers carry no <c>Priority</c>, so there is no band to place
     /// them in — a profile cannot tell a security-relevant audit observer from a

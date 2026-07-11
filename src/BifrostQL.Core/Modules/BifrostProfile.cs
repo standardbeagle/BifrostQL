@@ -41,6 +41,18 @@ public sealed class BifrostProfile
     public const int ApplicationPriorityFloor = 200;
 
     /// <summary>
+    /// The bottom of the reserved security band. Priorities below this (0-99) run before
+    /// every data-integrity and application transformer, so they are reserved for the
+    /// host's own built-in security transformers (tenant isolation, authorization policy,
+    /// state machine, audit). A consumer-supplied transformer with a priority below this
+    /// floor would silently run <em>ahead</em> of those guards — the exact ordering hazard
+    /// this floor closes. <see cref="ModulePriorityFloorGuard"/> rejects such a consumer
+    /// transformer at composition time unless it opts in via
+    /// <see cref="IAllowSecurityBandPriority"/>.
+    /// </summary>
+    public const int SecurityBandFloor = 100;
+
+    /// <summary>
     /// Whether a module at the given transformer priority may be enabled/disabled by
     /// profile selection. Only application-band modules (priority &gt;= the floor) are
     /// toggleable; security and data-integrity modules below the floor are always active.

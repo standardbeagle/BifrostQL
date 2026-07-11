@@ -48,6 +48,11 @@ namespace BifrostQL.Server
         internal static IReadOnlyCollection<IFilterTransformer> WithBuiltInFilterTransformers(
             IReadOnlyCollection<IFilterTransformer> configured)
         {
+            // Keep the reserved security band (priority 0-99) for the host's built-ins:
+            // a consumer filter below the floor would run ahead of tenant/policy filtering.
+            ModulePriorityFloorGuard.EnsureConsumerPrioritiesRespectSecurityFloor(
+                configured, t => t.Priority, "filter");
+
             var combined = new List<IFilterTransformer>();
 
             if (!configured.Any(t => t is PolicyFilterTransformer))
@@ -79,6 +84,12 @@ namespace BifrostQL.Server
             IReadOnlyCollection<IMutationTransformer> configured,
             IServiceProvider? services = null)
         {
+            // Keep the reserved security band (priority 0-99) for the host's built-ins:
+            // a consumer mutation transformer below the floor would run ahead of the
+            // tenant/policy/state-machine write guards.
+            ModulePriorityFloorGuard.EnsureConsumerPrioritiesRespectSecurityFloor(
+                configured, t => t.Priority, "mutation");
+
             var combined = new List<IMutationTransformer>();
 
             if (!configured.Any(t => t is PolicyMutationTransformer))

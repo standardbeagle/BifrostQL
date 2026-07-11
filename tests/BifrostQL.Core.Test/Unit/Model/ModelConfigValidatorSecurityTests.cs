@@ -61,11 +61,13 @@ public class ModelConfigValidatorSecurityTests
     }
 
     [Fact]
-    public void Validate_UnknownKeyEntirely_DoesNotThrowForCasing()
+    public void Validate_UnknownKeyEntirely_ThrowsViaTheUnknownKeyGate()
     {
-        // An entirely unrecognized key (not a near-miss of a known one) is a
-        // separate, pre-existing "unknown key" warning path — not a hard
-        // failure from this check.
+        // An entirely unrecognized key (not a near-miss of a known one, not the
+        // consumer 'x-' prefix) is now a hard model-load error via the central
+        // unknown-key gate — the casing check leaves it alone, but the gate rejects
+        // it so a typo cannot silently no-op. See UnknownMetadataKeyGateTests for the
+        // full gate contract (including the 'x-' opt-out).
         var model = DbModelTestFixture.Create()
             .WithTable("Orders", t => t
                 .WithSchema("dbo")
@@ -75,7 +77,9 @@ public class ModelConfigValidatorSecurityTests
 
         var act = () => ModelConfigValidator.Validate(model);
 
-        act.Should().NotThrow();
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("totally-unknown-key")
+            .And.Contain("unrecognized table metadata key");
     }
 
     // ---- Non-nullable soft-delete column ----

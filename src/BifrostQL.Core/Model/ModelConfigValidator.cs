@@ -40,6 +40,8 @@ namespace BifrostQL.Core.Model
             {
                 ValidateMetadataKeyCasing(
                     model.Metadata, MetadataValidator.KnownDatabaseKeys, "database", ":root", errors);
+                ValidateUnknownMetadataKeys(
+                    model.Metadata, MetadataValidator.KnownDatabaseKeys, "database", ":root", errors);
             }
 
             foreach (var table in model.Tables)
@@ -56,11 +58,15 @@ namespace BifrostQL.Core.Model
 
                 var tableRef = $"{table.TableSchema}.{table.DbName}";
                 ValidateMetadataKeyCasing(table.Metadata, MetadataValidator.KnownTableKeys, "table", tableRef, errors);
+                ValidateUnknownMetadataKeys(table.Metadata, MetadataValidator.KnownTableKeys, "table", tableRef, errors);
 
                 foreach (var column in table.Columns)
                 {
+                    var columnRef = $"{tableRef}.{column.ColumnName}";
                     ValidateMetadataKeyCasing(
-                        column.Metadata, MetadataValidator.KnownColumnKeys, "column", $"{tableRef}.{column.ColumnName}", errors);
+                        column.Metadata, MetadataValidator.KnownColumnKeys, "column", columnRef, errors);
+                    ValidateUnknownMetadataKeys(
+                        column.Metadata, MetadataValidator.KnownColumnKeys, "column", columnRef, errors);
                     ValidateAutoPopulate(table, column, errors);
                 }
             }
@@ -255,6 +261,41 @@ namespace BifrostQL.Core.Model
                         $"(expected '{canonical}'); the metadata dictionary is case-sensitive, so this key " +
                         "is silently ignored by every module that reads it.");
                 }
+            }
+        }
+
+        /// <summary>
+        /// Central unknown-key gate: every metadata key that is neither in the built-in
+        /// allow-list (<paramref name="knownKeys"/>, matched case-insensitively) nor a
+        /// consumer extension key (<see cref="MetadataValidator.ConsumerExtensionPrefix"/>)
+        /// is a hard error. Previously an unrecognized key produced only an advisory warning
+        /// and then silently no-op'd — the exact failure the module-security audit flagged:
+        /// a typo'd security key (e.g. <c>soft-delte</c> for <c>soft-delete</c>) disables the
+        /// feature with no error. A deliberate custom key opts out of the gate by carrying the
+        /// <c>x-</c> prefix; anything else fails fast at model load. Miscased-but-recognized
+        /// keys are contained by the case-insensitive allow-list here and reported separately
+        /// by <see cref="ValidateMetadataKeyCasing"/>, so they are not double-reported.
+        /// </summary>
+        private static void ValidateUnknownMetadataKeys(
+            IDictionary<string, object?> metadata,
+            HashSet<string> knownKeys,
+            string scope,
+            string reference,
+            List<string> errors)
+        {
+            foreach (var key in metadata.Keys)
+            {
+                if (knownKeys.Contains(key))
+                    continue; // Recognized (any casing); casing mismatch handled elsewhere.
+
+                if (MetadataValidator.IsConsumerExtensionKey(key))
+                    continue; // Intentional consumer extension key — never interpreted.
+
+                errors.Add(
+                    $"  {reference} [{key}]: unrecognized {scope} metadata key. Every built-in key is a " +
+                    $"fixed name, so this is treated as a typo that would silently do nothing. If it is a " +
+                    $"deliberate custom key, prefix it with '{MetadataValidator.ConsumerExtensionPrefix}' " +
+                    $"(e.g. '{MetadataValidator.ConsumerExtensionPrefix}{key}').");
             }
         }
 

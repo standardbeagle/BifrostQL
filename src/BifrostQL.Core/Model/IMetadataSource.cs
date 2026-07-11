@@ -1,3 +1,5 @@
+using BifrostQL.Core.Schema;
+
 namespace BifrostQL.Core.Model
 {
     /// <summary>
@@ -127,6 +129,7 @@ namespace BifrostQL.Core.Model
             // Storage bucket config blob.
             MetadataKeys.Storage.Config,
             // Enum configuration.
+            EnumTableConfig.MetadataKey,  // "enum": marks a lookup table as an enum source
             MetadataKeys.Enum.Values,
             MetadataKeys.Enum.Labels,
             MetadataKeys.Enum.Ref,
@@ -190,6 +193,9 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Model.DefaultLimit,
             MetadataKeys.Relationships.DynamicJoins,
             MetadataKeys.RawSql.Enabled,
+            MetadataKeys.RawSql.Role,
+            MetadataKeys.RawSql.Timeout,
+            MetadataKeys.RawSql.MaxRows,
             MetadataKeys.Schema.Prefix,
             MetadataKeys.Schema.PrefixDefault,
             MetadataKeys.Schema.PrefixFormat,
@@ -207,7 +213,30 @@ namespace BifrostQL.Core.Model
             MetadataKeys.AppSchema.App,
             MetadataKeys.AppSchema.Detected,
             MetadataKeys.AppSchema.DetectionConfidence,
+            // Generic-table (_table) query surface configuration (database-level).
+            GenericTableConfig.MetadataKey,
+            GenericTableConfig.RoleMetadataKey,
+            GenericTableConfig.MaxRowsMetadataKey,
+            GenericTableConfig.AllowedTablesMetadataKey,
+            GenericTableConfig.DeniedTablesMetadataKey,
         };
+
+        /// <summary>
+        /// Prefix marking a metadata key as an intentional consumer/extension key.
+        /// BifrostQL never interprets these — they are an escape hatch for host- or
+        /// consumer-specific metadata — so they pass the model-load unknown-key gate
+        /// (<see cref="ModelConfigValidator"/>) untouched. Every key without this prefix
+        /// that is not in a built-in allow-list is treated as a typo and rejected, closing
+        /// the class of bug where a mistyped key (e.g. "soft-delte") silently no-ops.
+        /// </summary>
+        public const string ConsumerExtensionPrefix = "x-";
+
+        /// <summary>
+        /// Whether <paramref name="key"/> is a consumer extension key (see
+        /// <see cref="ConsumerExtensionPrefix"/>), matched case-insensitively.
+        /// </summary>
+        public static bool IsConsumerExtensionKey(string key)
+            => !string.IsNullOrEmpty(key) && key.StartsWith(ConsumerExtensionPrefix, StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
         /// Validates a metadata dictionary and returns any warnings about unknown keys.

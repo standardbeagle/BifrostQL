@@ -183,6 +183,13 @@ namespace BifrostQL.Core.Model
             MetadataKeys.DataType.Default,
             MetadataKeys.DataType.Title,
             MetadataKeys.DataType.PhpSerialized,
+            // Field-level encryption / masking (column-level). Security keys — a
+            // miscased key must be flagged, not silently leave a column unencrypted.
+            MetadataKeys.Crypto.Encrypt,
+            MetadataKeys.Crypto.KeyRef,
+            MetadataKeys.Crypto.Mask,
+            MetadataKeys.Crypto.UnmaskRole,
+            MetadataKeys.Crypto.BlindIndex,
         };
 
         // Internal for the same reason as KnownTableKeys above (case-casing

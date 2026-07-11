@@ -642,6 +642,74 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
+        /// Metadata keys for field-level encryption and role-based masking. Configured
+        /// at the column level:
+        ///   "dbo.customers.ssn { encrypt: aes-256-gcm; key-ref: kms:pii; mask: last4; unmask-role: compliance; blind-index: ssn_bidx }"
+        /// This slice establishes the metadata contract, the key-management layer, and
+        /// fail-fast validation; the encrypt-on-write transformer and decrypt/mask-on-read
+        /// guard are later Crypto sub-tasks.
+        /// </summary>
+        public static class Crypto
+        {
+            /// <summary>
+            /// Column-level marker enabling envelope encryption of the column's values
+            /// at rest. The value is the algorithm (only <c>aes-256-gcm</c> today).
+            /// Presence opts the column into encryption.
+            /// </summary>
+            public const string Encrypt = "encrypt";
+
+            /// <summary>
+            /// Column-level reference to the data-encryption key (DEK) used for this
+            /// column, in <c>provider:id</c> form (e.g. <c>kms:pii</c>, <c>config:pii</c>).
+            /// Required when <see cref="Encrypt"/> is present so multiple columns can
+            /// share or separate keys deliberately.
+            /// </summary>
+            public const string KeyRef = "key-ref";
+
+            /// <summary>
+            /// Column-level mask mode applied to the plaintext for callers WITHOUT the
+            /// <see cref="UnmaskRole"/>. One of <see cref="MaskModes"/>. Defaults to
+            /// <c>redact</c> (fully hidden) when omitted.
+            /// </summary>
+            public const string Mask = "mask";
+
+            /// <summary>
+            /// Column-level role name that may read the decrypted plaintext. Callers
+            /// without it receive the masked value. When omitted, only the default
+            /// admin role sees plaintext (fail-closed).
+            /// </summary>
+            public const string UnmaskRole = "unmask-role";
+
+            /// <summary>
+            /// Column-level name of a sibling column that stores a deterministic
+            /// blind-index (keyed HMAC) of the plaintext, so equality search remains
+            /// possible on an otherwise non-deterministically encrypted column. The
+            /// named column must exist on the same table.
+            /// </summary>
+            public const string BlindIndex = "blind-index";
+
+            /// <summary>The only supported encryption algorithm value.</summary>
+            public const string AlgorithmAes256Gcm = "aes-256-gcm";
+
+            /// <summary>Recognized mask modes (what a non-unmask-role caller sees).</summary>
+            public const string MaskRedact = "redact";
+            public const string MaskLast4 = "last4";
+            public const string MaskEmail = "email";
+
+            /// <summary>Recognized <see cref="Encrypt"/> algorithm values.</summary>
+            public static readonly IReadOnlySet<string> Algorithms =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { AlgorithmAes256Gcm };
+
+            /// <summary>Recognized <see cref="Mask"/> modes.</summary>
+            public static readonly IReadOnlySet<string> MaskModes =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { MaskRedact, MaskLast4, MaskEmail };
+
+            /// <summary>Recognized <see cref="KeyRef"/> providers (the part before the colon).</summary>
+            public static readonly IReadOnlySet<string> KeyRefProviders =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "kms", "config" };
+        }
+
+        /// <summary>
         /// Metadata keys for Change Data Capture / outbound domain events. A table
         /// opts in by declaring which mutations emit events; the model names the
         /// transactional outbox table the events are written to. Configured like the

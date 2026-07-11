@@ -39,6 +39,7 @@ export default defineConfig({
 						{ label: 'App Metadata Overlay', slug: 'concepts/app-metadata-overlay' },
 						{ label: 'Protocol Adapters', slug: 'concepts/protocol-adapters' },
 						{ label: 'Change Data Capture & Events', slug: 'concepts/cdc-outbound-events' },
+						{ label: 'Field Encryption & Masking', slug: 'concepts/field-encryption' },
 					],
 				},
 				{

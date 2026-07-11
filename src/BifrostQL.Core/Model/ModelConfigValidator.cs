@@ -70,6 +70,7 @@ namespace BifrostQL.Core.Model
                     ValidateUnknownMetadataKeys(
                         column.Metadata, MetadataValidator.KnownColumnKeys, "column", columnRef, errors);
                     ValidateAutoPopulate(table, column, errors);
+                    ValidateCrypto(table, column, errors);
                 }
             }
 
@@ -508,6 +509,65 @@ namespace BifrostQL.Core.Model
 
             return model.Tables.FirstOrDefault(t =>
                 string.Equals(t.DbName, trimmed, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// Fail-fast validation for field-level encryption (<c>encrypt</c> / <c>key-ref</c>
+        /// / <c>mask</c> / <c>unmask-role</c> / <c>blind-index</c>). These are security
+        /// keys: a typo'd algorithm, an unparseable key-ref, or a blind-index naming a
+        /// missing column would either fail to encrypt (leaking plaintext at rest) or
+        /// throw deep in the mutation pipeline on the first write. Reject at model load.
+        /// </summary>
+        private static void ValidateCrypto(IDbTable table, ColumnDto column, List<string> errors)
+        {
+            var algorithm = column.GetMetadataValue(MetadataKeys.Crypto.Encrypt);
+            var keyRef = column.GetMetadataValue(MetadataKeys.Crypto.KeyRef);
+            var mask = column.GetMetadataValue(MetadataKeys.Crypto.Mask);
+            var blindIndex = column.GetMetadataValue(MetadataKeys.Crypto.BlindIndex);
+
+            var columnRef = $"{table.TableSchema}.{table.DbName}.{column.ColumnName}";
+            var encryptOptedIn = !string.IsNullOrWhiteSpace(algorithm);
+
+            // key-ref / mask / blind-index only make sense on an encrypted column; a
+            // stray one without encrypt is a misconfiguration that silently does nothing.
+            if (!encryptOptedIn)
+            {
+                foreach (var (key, value) in new[]
+                {
+                    (MetadataKeys.Crypto.KeyRef, keyRef),
+                    (MetadataKeys.Crypto.Mask, mask),
+                    (MetadataKeys.Crypto.BlindIndex, blindIndex),
+                    (MetadataKeys.Crypto.UnmaskRole, column.GetMetadataValue(MetadataKeys.Crypto.UnmaskRole)),
+                })
+                {
+                    if (!string.IsNullOrWhiteSpace(value))
+                        errors.Add(
+                            $"  {columnRef} [{key}]: set without '{MetadataKeys.Crypto.Encrypt}'; " +
+                            "encryption metadata has no effect on a column that is not encrypted.");
+                }
+                return;
+            }
+
+            if (!MetadataKeys.Crypto.Algorithms.Contains(algorithm!))
+                errors.Add(Problem(table, MetadataKeys.Crypto.Encrypt, algorithm,
+                    $"unsupported encryption algorithm (expected one of {string.Join(", ", MetadataKeys.Crypto.Algorithms)})"));
+
+            // key-ref is required, and must parse to a recognized provider:id.
+            if (string.IsNullOrWhiteSpace(keyRef))
+                errors.Add(
+                    $"  {columnRef} [{MetadataKeys.Crypto.KeyRef}]: an encrypted column requires a key-ref " +
+                    $"(e.g. 'kms:pii' or 'config:pii').");
+            else if (!BifrostQL.Core.Crypto.KeyRef.TryParse(keyRef, out _))
+                errors.Add(Problem(table, MetadataKeys.Crypto.KeyRef, keyRef,
+                    $"malformed key-ref (expected 'provider:id' with provider one of {string.Join(", ", MetadataKeys.Crypto.KeyRefProviders)})"));
+
+            if (!string.IsNullOrWhiteSpace(mask) && !MetadataKeys.Crypto.MaskModes.Contains(mask))
+                errors.Add(Problem(table, MetadataKeys.Crypto.Mask, mask,
+                    $"unrecognized mask mode (expected one of {string.Join(", ", MetadataKeys.Crypto.MaskModes)})"));
+
+            if (!string.IsNullOrWhiteSpace(blindIndex) && !DbColumnExists(table, blindIndex))
+                errors.Add(Problem(table, MetadataKeys.Crypto.BlindIndex, blindIndex,
+                    "blind-index names a column that does not exist on the table"));
         }
 
         private static void ValidateStateMachine(IDbTable table, List<string> errors)

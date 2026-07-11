@@ -24,6 +24,16 @@ namespace BifrostQL.Core.Resolvers
         public ValueTask<IReadOnlyList<AggregateResultRow>> ResolveAggregateAsync(IBifrostFieldContext context, IDbTable table, GqlObjectQuery query);
 
         /// <summary>
+        /// Executes a PIVOT: discovers the pivot column's distinct values within the
+        /// caller's scope, then cross-tabulates. The same filter transformers (tenant
+        /// isolation, soft-delete, policy row/column scope) as row queries constrain
+        /// BOTH the distinct-value discovery and the pivot, so cross-tenant column
+        /// headers and cell values can never leak. Returns the JSON payload
+        /// <c>{ pivotColumn, rowKeys, columns, rows }</c>.
+        /// </summary>
+        public ValueTask<IReadOnlyDictionary<string, object?>> ResolvePivotAsync(IBifrostFieldContext context, IDbTable table, PivotRequest request);
+
+        /// <summary>
         /// Executes a programmatic (adapter-built) read query with no GraphQL
         /// document: the transformer pipeline — tenant isolation, soft-delete,
         /// policy row scope, and column read guards — is applied here,
@@ -177,6 +187,152 @@ namespace BifrostQL.Core.Resolvers
                 return Array.Empty<AggregateResultRow>();
 
             return BuildAggregateRows(grouped, tableData.index, tableData.data);
+        }
+
+        public async ValueTask<IReadOnlyDictionary<string, object?>> ResolvePivotAsync(
+            IBifrostFieldContext context, IDbTable table, PivotRequest request)
+        {
+            var bifrost = new BifrostContextAdapter(context);
+            var connFactory = bifrost.ConnFactory;
+            var dialect = connFactory.Dialect;
+
+            // Validate shape (column existence, pivot-not-in-rowKeys) before any SQL,
+            // so a bad request fails fast with an authored message.
+            var config = PivotQueryConfig.Create(request.PivotColumn, request.ValueColumn, request.Aggregate, request.RowKeys);
+            config.ValidateColumns(table.ColumnLookup);
+
+            // Fail-closed transformer pass into a per-call overlay (sibling root fields
+            // resolve in parallel; the shared UserContext is not thread-safe). The
+            // referenced columns ride along on the query so the column-read guard
+            // asserts them — a policy-denied column cannot be pivoted or aggregated as
+            // an exfiltration oracle. The resulting combined Filter scopes discovery.
+            var scopedContext = new Dictionary<string, object?>(context.UserContext);
+            ModuleApiRegistry.CaptureQueryArguments(context, table, scopedContext);
+
+            var query = new GqlObjectQuery
+            {
+                DbTable = table,
+                TableName = table.DbName,
+                SchemaName = table.TableSchema,
+                GraphQlName = table.GraphQlName,
+                Filter = request.Filter,
+                ScalarColumns = request.ReferencedColumns.Select(c => new GqlObjectColumn(c)).ToList(),
+            };
+            _transformerService.ApplyTransformers(query, _dbModel, scopedContext);
+            ApplyEnumFilterRewrite(query);
+
+            // Compile the combined filter (client AND tenant/policy/soft-delete) to a
+            // single-table WHERE fragment, reusing the exact alias convention the row and
+            // aggregate paths use (WHERE qualifies by table name; FROM uses TableReference).
+            // A relationship filter would contribute a JOIN whose extra table makes the
+            // pivot's unqualified CASE/GROUP BY columns ambiguous — reject it with steering
+            // rather than emit ambiguous or subtly unscoped SQL.
+            var parameters = new SqlParameterCollection();
+            ParameterizedSql? filter = null;
+            if (query.Filter != null)
+            {
+                var parts = query.Filter.RenderParts(_dbModel, dialect, parameters, null);
+                if (!string.IsNullOrWhiteSpace(parts.Joins))
+                    throw new BifrostExecutionError(
+                        "Pivot filters can only reference the pivoted table's own columns, not related tables.");
+                if (!string.IsNullOrWhiteSpace(parts.Where))
+                    filter = new ParameterizedSql(" WHERE " + parts.Where, parts.Parameters);
+            }
+
+            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+
+            // (1) Discover the distinct pivot-column values WITHIN scope, then guard
+            // cardinality — a hard error above the cap, never a silent truncation.
+            var distinctSql = PivotSqlGenerator.GenerateDistinctValuesSql(dialect, config.PivotColumn, tableRef, filter);
+            var (_, distinctRows) = await ExecuteRawAsync(connFactory, distinctSql, context.CancellationToken);
+            if (distinctRows.Count > request.MaxPivotColumns)
+                throw new BifrostExecutionError(
+                    $"Pivot column '{request.PivotColumnGraphQlName}' has {distinctRows.Count} distinct values in scope, " +
+                    $"exceeding the limit of {request.MaxPivotColumns}. Add a filter to narrow the pivot column, " +
+                    "or pivot on a lower-cardinality column.");
+            var pivotValues = distinctRows.Select(r => ReaderEnum.DbConvert(r.Length > 0 ? r[0] : null)).ToList();
+
+            // (2) Cross-tabulate with those values under the same scope filter.
+            var pivotSql = PivotSqlGenerator.GeneratePivot(dialect, config, tableRef, pivotValues, filter);
+            var (pivotIndex, pivotRows) = await ExecuteRawAsync(connFactory, pivotSql, context.CancellationToken);
+
+            return BuildPivotPayload(config, request, pivotValues, pivotIndex, pivotRows);
+        }
+
+        /// <summary>
+        /// Runs one parameterized statement and materializes its single result set as
+        /// (column-name → ordinal) index plus raw rows — the low-level read the GraphQL
+        /// query path uses, exposed for the pivot's two raw <see cref="ParameterizedSql"/>
+        /// statements (distinct discovery + cross-tab) which are not <see cref="GqlObjectQuery"/>s.
+        /// </summary>
+        private static async Task<(IDictionary<string, int> index, IList<object?[]> rows)> ExecuteRawAsync(
+            IDbConnFactory connFactory, ParameterizedSql sql, CancellationToken cancellationToken)
+        {
+            await using var conn = connFactory.GetConnection();
+            try
+            {
+                await conn.OpenAsync(cancellationToken);
+                await using var command = conn.CreateCommand();
+                command.CommandText = sql.Sql;
+                DbParameterBinder.AddExtraParameters(command, sql.Parameters);
+
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                var index = Enumerable.Range(0, reader.FieldCount)
+                    .ToDictionary(reader.GetName, i => i, StringComparer.OrdinalIgnoreCase);
+                var rows = new List<object?[]>();
+                while (await reader.ReadAsync(cancellationToken))
+                {
+                    var row = new object?[reader.FieldCount];
+                    reader.GetValues(row!);
+                    rows.Add(row);
+                }
+                return (index, rows);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw BifrostExecutionError.FromDatabaseException(ex);
+            }
+        }
+
+        /// <summary>
+        /// Shapes the cross-tab result set into the JSON pivot payload. Row-key values
+        /// are read by their DB column name and keyed by GraphQL name for a stable
+        /// client contract; each pivot cell is read by its column label — the same
+        /// label <see cref="PivotSqlGenerator"/> aliased the CASE column with
+        /// (the value's string form, or the config's null label for NULL).
+        /// </summary>
+        private static IReadOnlyDictionary<string, object?> BuildPivotPayload(
+            PivotQueryConfig config, PivotRequest request,
+            IReadOnlyList<object?> pivotValues,
+            IDictionary<string, int> index, IList<object?[]> rows)
+        {
+            var labels = pivotValues.Select(v => v?.ToString() ?? config.NullLabel).ToList();
+
+            var outRows = new List<object?>(rows.Count);
+            foreach (var row in rows)
+            {
+                var rowObj = new Dictionary<string, object?>(StringComparer.Ordinal);
+                for (var i = 0; i < config.GroupByColumns.Count; i++)
+                    rowObj[request.RowKeyGraphQlNames[i]] = ReadCell(index, row, config.GroupByColumns[i]);
+
+                var cells = new Dictionary<string, object?>(StringComparer.Ordinal);
+                foreach (var label in labels)
+                    cells[label] = ReadCell(index, row, label);
+                rowObj["cells"] = cells;
+                outRows.Add(rowObj);
+            }
+
+            return new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["pivotColumn"] = request.PivotColumnGraphQlName,
+                ["rowKeys"] = request.RowKeyGraphQlNames,
+                ["columns"] = labels,
+                ["rows"] = outRows,
+            };
         }
 
         public async ValueTask<QueryIntentResult> ExecuteIntentAsync(

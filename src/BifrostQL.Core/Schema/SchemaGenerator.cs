@@ -29,6 +29,7 @@ namespace BifrostQL.Core.Schema
             {
                 builder.AppendLine(generator.GetTableFieldDefinition());
                 builder.AppendLine(generator.GetAggregateFieldDefinition());
+                builder.AppendLine(generator.GetPivotFieldDefinition());
             }
             foreach (var generator in readOnlySpGenerators)
             {
@@ -48,6 +49,10 @@ namespace BifrostQL.Core.Schema
                 builder.Append(FileStorageSchemaExtensions.GetFileStorageQueryFields());
             }
             builder.AppendLine("}");
+
+            // Global enum shared by every table's pivot field — emitted once so the
+            // SDL declares it a single time regardless of table count.
+            builder.AppendLine(PivotSurface.AggregateEnumDefinition());
 
             foreach (var generator in tableGenerators)
             {

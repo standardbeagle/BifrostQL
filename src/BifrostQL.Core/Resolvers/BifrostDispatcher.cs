@@ -123,6 +123,7 @@ namespace BifrostQL.Core.Resolvers
                 tableType.FieldFor("_agg").Resolver = this;
 
                 WireAggregateResolvers(builder, table);
+                WirePivotResolver(builder, table);
 
                 foreach (var column in table.Columns)
                     tableType.FieldFor(column.GraphQlName).Resolver = this;
@@ -234,6 +235,19 @@ namespace BifrostQL.Core.Resolvers
             var fieldsType = builder.Types.For(AggregateSurface.AggregateFieldsTypeName(table));
             foreach (var column in numericColumns)
                 fieldsType.FieldFor(column.GraphQlName).Resolver = AggregateFieldResolver.Instance;
+        }
+
+        /// <summary>
+        /// Wires the PIVOT surface for one table: the root <c>&lt;table&gt;Pivot</c>
+        /// field to a dedicated <see cref="PivotTableResolver"/>. The field returns the
+        /// JSON scalar (dynamic pivot columns), so there are no per-field output-type
+        /// resolvers to wire — the scalar serializes the resolver's payload directly.
+        /// </summary>
+        private void WirePivotResolver(SchemaBuilder builder, IDbTable table)
+        {
+            const string queryType = "database";
+            builder.Types.For(queryType).FieldFor(Schema.PivotSurface.PivotFieldName(table)).Resolver =
+                new PivotTableResolver(table);
         }
 
         private static Dictionary<(string typeName, string fieldName), IBifrostResolver> BuildResolverMap(IDbModel model)

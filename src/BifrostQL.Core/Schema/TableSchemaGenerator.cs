@@ -129,6 +129,19 @@ namespace BifrostQL.Core.Schema
             $"{AggregateSurface.AggregateFieldName(_table)}(filter: {_table.TableFilterTypeName}, groupBy: [{_table.ColumnEnumTypeName}!]): [{AggregateSurface.AggregateRowTypeName(_table)}!]!";
 
         /// <summary>
+        /// Root query field for this table's PIVOT:
+        /// <c>&lt;table&gt;Pivot(rowKeys, pivotColumn, valueColumn, aggregate, filter): JSON!</c>.
+        /// The three column arguments reuse the schema-derived column enum, so callers
+        /// can never pass an arbitrary column string, and <c>aggregate</c> is the global
+        /// <see cref="PivotSurface.AggregateEnumName"/> enum. The result is the
+        /// <c>JSON</c> scalar because a pivot's output columns are discovered per request
+        /// from the pivot column's distinct values and so cannot be a static GraphQL
+        /// object type — the payload is <c>{ pivotColumn, rowKeys, columns, rows:[{ &lt;rowKey&gt;…, cells }] }</c>.
+        /// </summary>
+        public string GetPivotFieldDefinition() =>
+            $"{PivotSurface.PivotFieldName(_table)}(rowKeys: [{_table.ColumnEnumTypeName}!]!, pivotColumn: {_table.ColumnEnumTypeName}!, valueColumn: {_table.ColumnEnumTypeName}!, aggregate: {PivotSurface.AggregateEnumName}! = count, filter: {_table.TableFilterTypeName}): JSON!";
+
+        /// <summary>
         /// Output types for the aggregate surface: one group-row type (every visible
         /// column as a nullable group key, plus <c>_count</c> and the value op groups)
         /// and, when the table has ≥1 numeric column, the shared aggregate-values type

@@ -113,18 +113,18 @@ public sealed class QueryIntentExecutor : IQueryIntentExecutor
 
     public async Task<IDbModel> GetModelAsync(string? endpoint = null)
     {
-        var inputs = await ResolveEndpointAsync(endpoint);
-        return GetRequired<IDbModel>(inputs, "model", endpoint);
+        var inputs = await IntentEndpointResolver.ResolveAsync(_endpoints, endpoint);
+        return IntentEndpointResolver.GetRequired<IDbModel>(inputs, "model", endpoint);
     }
 
     public async Task<QueryIntentResult> ExecuteAsync(QueryIntent intent, CancellationToken cancellationToken = default)
     {
         if (intent is null) throw new ArgumentNullException(nameof(intent));
 
-        var inputs = await ResolveEndpointAsync(intent.Endpoint);
-        var model = GetRequired<IDbModel>(inputs, "model", intent.Endpoint);
-        var schema = GetRequired<ISchema>(inputs, "dbSchema", intent.Endpoint);
-        var connFactory = GetRequired<IDbConnFactory>(inputs, "connFactory", intent.Endpoint);
+        var inputs = await IntentEndpointResolver.ResolveAsync(_endpoints, intent.Endpoint);
+        var model = IntentEndpointResolver.GetRequired<IDbModel>(inputs, "model", intent.Endpoint);
+        var schema = IntentEndpointResolver.GetRequired<ISchema>(inputs, "dbSchema", intent.Endpoint);
+        var connFactory = IntentEndpointResolver.GetRequired<IDbConnFactory>(inputs, "connFactory", intent.Endpoint);
 
         var query = intent.Query;
         if (query.DbTable is null)
@@ -139,37 +139,4 @@ public sealed class QueryIntentExecutor : IQueryIntentExecutor
         return await manager.ExecuteIntentAsync(query, intent.UserContext, connFactory, cancellationToken);
     }
 
-    /// <summary>
-    /// Resolves the endpoint's cached Inputs. A named endpoint must be registered
-    /// (case-insensitive, matching the middleware's lowercase keying); a null
-    /// endpoint is only valid when exactly one endpoint exists — with several
-    /// registered, guessing could silently target the wrong database.
-    /// </summary>
-    private async Task<Inputs> ResolveEndpointAsync(string? endpoint)
-    {
-        if (endpoint is not null)
-        {
-            var key = endpoint.ToLowerInvariant();
-            if (!_endpoints.HasPath(key))
-                throw new BifrostExecutionError($"Unknown BifrostQL endpoint '{endpoint}'.");
-            return await _endpoints.GetValueAsync(key);
-        }
-
-        if (_endpoints.Count == 0)
-            throw new BifrostExecutionError("No BifrostQL endpoints are registered.");
-        if (_endpoints.Count > 1)
-            throw new BifrostExecutionError(
-                "Multiple BifrostQL endpoints are registered; QueryIntent.Endpoint is required.");
-
-        return await _endpoints.GetFirstValueAsync()
-            ?? throw new BifrostExecutionError("No BifrostQL endpoints are registered.");
-    }
-
-    private static T GetRequired<T>(Inputs inputs, string key, string? endpoint) where T : class
-    {
-        if (!inputs.TryGetValue(key, out var value) || value is not T typed)
-            throw new BifrostExecutionError(
-                $"'{key}' is not configured for BifrostQL endpoint '{endpoint ?? "(default)"}'.");
-        return typed;
-    }
 }

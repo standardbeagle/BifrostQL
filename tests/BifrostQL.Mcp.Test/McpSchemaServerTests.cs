@@ -148,12 +148,12 @@ namespace BifrostQL.Mcp.Test
         // ---- tools/list ------------------------------------------------------
 
         [Fact]
-        public async Task ListTools_ExposesExactlyTheTwoSchemaTools_WithOutputSchemasAndReadOnlyAnnotations()
+        public async Task ListTools_ExposesSchemaAndDataTools_WithOutputSchemasAndReadOnlyAnnotations()
         {
             var tools = await _client.ListToolsAsync();
 
             tools.Select(t => t.Name).Should().BeEquivalentTo(
-                "bifrost_schema_overview", "bifrost_describe_table");
+                "bifrost_schema_overview", "bifrost_describe_table", "bifrost_query", "bifrost_row_context");
 
             foreach (var tool in tools)
             {

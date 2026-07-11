@@ -155,10 +155,19 @@ namespace BifrostQL.Mcp
         /// Creates the server options for one BifrostQL endpoint. <paramref name="endpoint"/>
         /// is the registered GraphQL endpoint path; null selects the single registered
         /// endpoint and an unknown path fails fast on first use (no fallback).
+        /// <paramref name="userContextProvider"/> supplies the caller identity
+        /// (tenant id, roles, …) applied to every row-reading intent; the default
+        /// is an EMPTY context, so tenant-filtered tables fail closed exactly like
+        /// an unauthenticated GraphQL request (stdio dev mode has no per-request
+        /// principal).
         /// </summary>
-        public static McpServerOptions CreateServerOptions(IQueryIntentExecutor executor, string? endpoint = null)
+        public static McpServerOptions CreateServerOptions(
+            IQueryIntentExecutor executor,
+            string? endpoint = null,
+            Func<IDictionary<string, object?>>? userContextProvider = null)
         {
             if (executor is null) throw new ArgumentNullException(nameof(executor));
+            var contextProvider = userContextProvider ?? (() => new Dictionary<string, object?>());
 
             return new McpServerOptions
             {
@@ -169,8 +178,10 @@ namespace BifrostQL.Mcp
                 },
                 ServerInstructions =
                     "BifrostQL exposes a SQL database. Start with bifrost_schema_overview to map the schema, " +
-                    "then bifrost_describe_table for column-level detail. Behavior notes describe " +
-                    "server-enforced semantics (tenant scoping, hidden soft-deleted rows) that apply to all data access.",
+                    "then bifrost_describe_table for column-level detail. Read rows with bifrost_query " +
+                    "(structured filter + cursor pagination) and fetch one row with its related parent/child " +
+                    "context via bifrost_row_context. Behavior notes describe server-enforced semantics " +
+                    "(tenant scoping, hidden soft-deleted rows) that apply to all data access.",
                 Capabilities = new ServerCapabilities
                 {
                     Tools = new ToolsCapability(),
@@ -179,7 +190,7 @@ namespace BifrostQL.Mcp
                 Handlers = new McpServerHandlers
                 {
                     ListToolsHandler = (_, _) => ValueTask.FromResult(new ListToolsResult { Tools = BuildTools() }),
-                    CallToolHandler = (request, ct) => CallToolAsync(executor, endpoint, request.Params, ct),
+                    CallToolHandler = (request, ct) => CallToolAsync(executor, endpoint, contextProvider, request.Params, ct),
                     ListResourcesHandler = (_, ct) => ListResourcesAsync(executor, endpoint, ct),
                     ReadResourceHandler = (request, ct) => ReadResourceAsync(executor, endpoint, request.Params, ct),
                 },
@@ -212,14 +223,41 @@ namespace BifrostQL.Mcp
                 OutputSchema = DescribeTableOutputSchema,
                 Annotations = new ToolAnnotations { ReadOnlyHint = true, IdempotentHint = true },
             },
+            DataTools.QueryToolDefinition(),
+            DataTools.RowContextToolDefinition(),
         ];
 
         private static async ValueTask<CallToolResult> CallToolAsync(
-            IQueryIntentExecutor executor, string? endpoint, CallToolRequestParams? parameters, CancellationToken cancellationToken)
+            IQueryIntentExecutor executor, string? endpoint, Func<IDictionary<string, object?>> userContextProvider,
+            CallToolRequestParams? parameters, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (parameters is null)
                 throw new McpProtocolException("Missing tool call parameters.", McpErrorCode.InvalidParams);
+
+            // Row-reading tools: argument mistakes surface as prompt-style tool
+            // errors (ToolPromptException), and execution-layer rejections
+            // (missing tenant context, policy-denied column, unsupported filter
+            // shape) surface the same way — both are actionable by the calling
+            // agent, so neither becomes a protocol fault.
+            if (parameters.Name is DataTools.QueryToolName or DataTools.RowContextToolName)
+            {
+                try
+                {
+                    var payload = parameters.Name == DataTools.QueryToolName
+                        ? await DataTools.ExecuteQueryAsync(executor, endpoint, userContextProvider, parameters, cancellationToken)
+                        : await DataTools.ExecuteRowContextAsync(executor, endpoint, userContextProvider, parameters, cancellationToken);
+                    return StructuredResult(payload);
+                }
+                catch (ToolPromptException e)
+                {
+                    return ErrorResult(e.Message);
+                }
+                catch (BifrostExecutionError e)
+                {
+                    return ErrorResult(e.Message);
+                }
+            }
 
             var model = await executor.GetModelAsync(endpoint);
             switch (parameters.Name)

@@ -77,8 +77,11 @@ namespace BifrostQL.Core.Resolvers
             object? result = null;
             await MutationCommandExecutor.RunInTransactionAsync(ctx.ConnFactory, async (conn, transaction) =>
             {
-                await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, table, MutationType.Insert, data, ctx.UserContext);
+                await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, table, MutationType.Insert, data, ctx.UserContext, conn, transaction, ctx.Model, dialect);
                 result = HandleDecimals(await MutationCommandExecutor.ExecuteScalar(conn, transaction, sql, data, ctx.CancellationToken));
+                // After-write, still in-transaction: the outbox writer runs here so the
+                // event can name the generated identity (result) returned by the insert.
+                await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, table, MutationType.Insert, data, result, ctx.UserContext, conn, transaction, ctx.Model, dialect);
             }, ctx.CancellationToken);
             await MutationNotifier.NotifyMutationAsync(ctx.Services, table, MutationType.Insert, data, result, ctx.UserContext);
             return result;
@@ -145,7 +148,7 @@ namespace BifrostQL.Core.Resolvers
 
                 var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
                 var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, standardData.Keys, propertyInfo.keyData.Keys, additionalFilter.WhereSuffix);
-                await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, table, MutationType.Update, updatedData, ctx.UserContext);
+                await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, table, MutationType.Update, updatedData, ctx.UserContext, conn, transaction, ctx.Model, dialect);
                 result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, updatedData, additionalFilter.Parameters, ctx.CancellationToken);
 
                 // A zero-row update under a concurrency-token guard is a lost update:
@@ -158,6 +161,11 @@ namespace BifrostQL.Core.Resolvers
                     throw new BifrostExecutionError(
                         $"Update of '{table.TableSchema}.{table.DbName}' was rejected: the concurrency token no longer matches — the row was modified or removed since it was read. Reload and retry.")
                     { ErrorCode = "CONFLICT" };
+
+                // After the write and the conflict check: emit the event only if a row
+                // actually changed (the hook skips zero-row updates via the count result),
+                // so an out-of-scope tenant/policy no-op does not fabricate an event.
+                await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, table, MutationType.Update, updatedData, result, ctx.UserContext, conn, transaction, ctx.Model, dialect);
 
                 stateTransition = transformResult.StateTransition;
             }, ctx.CancellationToken);
@@ -261,8 +269,10 @@ namespace BifrostQL.Core.Resolvers
             var result = 0;
             await MutationCommandExecutor.RunInTransactionAsync(ctx.ConnFactory, async (conn, transaction) =>
             {
-                await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, table, MutationType.Update, dbData, ctx.UserContext);
+                await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, table, MutationType.Update, dbData, ctx.UserContext, conn, transaction, ctx.Model, dialect);
                 result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, dbData, additionalFilter.Parameters, ctx.CancellationToken);
+                // Soft delete is modeled as an UPDATE; emit an update event (hook skips zero-row).
+                await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, table, MutationType.Update, dbData, result, ctx.UserContext, conn, transaction, ctx.Model, dialect);
             }, ctx.CancellationToken);
             await MutationNotifier.NotifyMutationAsync(ctx.Services, table, MutationType.Update, dbData, result, ctx.UserContext);
             return result;
@@ -288,8 +298,9 @@ namespace BifrostQL.Core.Resolvers
             var result = 0;
             await MutationCommandExecutor.RunInTransactionAsync(ctx.ConnFactory, async (conn, transaction) =>
             {
-                await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, table, MutationType.Delete, deleteData, ctx.UserContext);
+                await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, table, MutationType.Delete, deleteData, ctx.UserContext, conn, transaction, ctx.Model, dialect);
                 result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, deleteData, additionalFilter.Parameters, ctx.CancellationToken);
+                await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, table, MutationType.Delete, deleteData, result, ctx.UserContext, conn, transaction, ctx.Model, dialect);
             }, ctx.CancellationToken);
             await MutationNotifier.NotifyMutationAsync(ctx.Services, table, MutationType.Delete, deleteData, result, ctx.UserContext);
             return result;

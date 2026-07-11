@@ -1,6 +1,8 @@
+using System.Data.Common;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
+using BifrostQL.Core.QueryModel;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Core.Resolvers
@@ -26,7 +28,11 @@ namespace BifrostQL.Core.Resolvers
             IDbTable table,
             MutationType mutationType,
             IDictionary<string, object?> data,
-            IDictionary<string, object?> userContext)
+            IDictionary<string, object?> userContext,
+            DbConnection connection,
+            DbTransaction transaction,
+            IDbModel model,
+            ISqlDialect dialect)
         {
             if (services is null || IsWorkflowTriggerSuppressed(userContext))
                 return;
@@ -42,10 +48,59 @@ namespace BifrostQL.Core.Resolvers
                 Data = data,
                 Result = null,
                 UserContext = userContext,
+                // A before-commit hook may write into the SAME transaction (outbox /
+                // domain events), so it receives the open connection/transaction plus
+                // the model and dialect it needs to build that write.
+                Connection = connection,
+                Transaction = transaction,
+                Model = model,
+                Dialect = dialect,
             });
 
             if (errors.Count > 0)
                 throw new BifrostExecutionError(string.Join("; ", errors));
+        }
+
+        /// <summary>
+        /// Runs the after-write in-transaction phase: immediately after the data write
+        /// but before commit, with the write <paramref name="result"/> available (the
+        /// generated identity on an INSERT). A hook throw is NOT caught — it rolls the
+        /// transaction back so the event and its data change commit or fail as a unit.
+        /// Not gated by the workflow-trigger suppression flag: CDC captures every
+        /// committed data change regardless of origin, and the outbox writer cannot
+        /// recurse into workflow triggers the way an observer can.
+        /// </summary>
+        public static async ValueTask RunInTransactionHooksAsync(
+            IServiceProvider? services,
+            IDbTable table,
+            MutationType mutationType,
+            IDictionary<string, object?> data,
+            object? result,
+            IDictionary<string, object?> userContext,
+            DbConnection connection,
+            DbTransaction transaction,
+            IDbModel model,
+            ISqlDialect dialect)
+        {
+            if (services is null)
+                return;
+
+            var hooks = services.GetService<InTransactionMutationHooks>();
+            if (hooks is null)
+                return;
+
+            await hooks.RunAsync(new MutationObserverContext
+            {
+                Table = table,
+                MutationType = mutationType,
+                Data = data,
+                Result = result,
+                UserContext = userContext,
+                Connection = connection,
+                Transaction = transaction,
+                Model = model,
+                Dialect = dialect,
+            });
         }
 
         public static async ValueTask NotifyStateTransitionAsync(

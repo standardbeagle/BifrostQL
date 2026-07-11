@@ -1,4 +1,6 @@
+using System.Data.Common;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.QueryModel;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -16,6 +18,28 @@ public sealed class MutationObserverContext
     public required IDictionary<string, object?> Data { get; init; }
     public required object? Result { get; init; }
     public required IDictionary<string, object?> UserContext { get; init; }
+
+    // --- Before-commit-only ambient state ---
+    // These are populated ONLY during the before-commit phase (by
+    // MutationNotifier.RunBeforeCommitHooksAsync), where a hook may need to write
+    // into the SAME transaction as the data change — the transactional-outbox /
+    // domain-event pattern. In the post-commit observer phase the transaction has
+    // already committed and these are all null, exactly like Result is null in the
+    // before-commit phase. A before-commit hook that writes SQL must execute it on
+    // Connection/Transaction so its write commits or rolls back atomically with the
+    // mutation.
+
+    /// <summary>The open connection for the in-flight mutation (before-commit only; else null).</summary>
+    public DbConnection? Connection { get; init; }
+
+    /// <summary>The open transaction wrapping the mutation (before-commit only; else null).</summary>
+    public DbTransaction? Transaction { get; init; }
+
+    /// <summary>The database model, for reading model-level metadata (before-commit only; else null).</summary>
+    public IDbModel? Model { get; init; }
+
+    /// <summary>The SQL dialect for the in-flight mutation's connection (before-commit only; else null).</summary>
+    public ISqlDialect? Dialect { get; init; }
 }
 
 // A before-commit veto hook. Unlike IMutationObserver (which fires AFTER the
@@ -59,6 +83,38 @@ public sealed class BeforeCommitMutationHooks
                 (errors ??= new List<string>()).AddRange(hookErrors);
         }
         return (IReadOnlyList<string>?)errors ?? Array.Empty<string>();
+    }
+}
+
+// An after-write, in-transaction hook. Unlike IBeforeCommitMutationHook (which
+// runs BEFORE the write and cannot see its result) this runs immediately AFTER
+// the write but still INSIDE the same transaction, so context.Result carries the
+// write outcome — crucially, the database-generated identity on an INSERT. This
+// is the correct seam for the transactional outbox / domain-event pattern: the
+// event row is written in the same transaction as the data change AND can name
+// the generated key. A thrown exception is NOT swallowed — it rolls the whole
+// mutation back, so a failure to record the event prevents the data commit.
+public interface IInTransactionMutationHook
+{
+    ValueTask AfterWriteInTransactionAsync(MutationObserverContext context);
+}
+
+// Composite for after-write in-transaction hooks. Runs each in registration order
+// and does NOT swallow: a throw propagates so the caller's transaction rolls back
+// (exactly-once — no event without its data change, no data change without its event).
+public sealed class InTransactionMutationHooks
+{
+    private readonly IReadOnlyCollection<IInTransactionMutationHook> _hooks;
+
+    public InTransactionMutationHooks(IReadOnlyCollection<IInTransactionMutationHook> hooks)
+    {
+        _hooks = hooks;
+    }
+
+    public async ValueTask RunAsync(MutationObserverContext context)
+    {
+        foreach (var hook in _hooks)
+            await hook.AfterWriteInTransactionAsync(context);
     }
 }
 

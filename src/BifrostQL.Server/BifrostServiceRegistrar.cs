@@ -53,10 +53,16 @@ namespace BifrostQL.Server
             services.AddSingleton<MutationObservers>(sp => new MutationObservers(
                 new IMutationObserver[] { sp.GetRequiredService<WorkflowTriggerHost>() }));
             // Before-commit veto hooks: built from every registered
-            // IBeforeCommitMutationHook so a host/test can register one. There are
-            // no built-in hooks, so the collection is empty unless the host adds one.
+            // IBeforeCommitMutationHook. No built-in hooks — empty unless a host adds one.
             services.AddSingleton<BeforeCommitMutationHooks>(sp => new BeforeCommitMutationHooks(
                 sp.GetServices<IBeforeCommitMutationHook>().ToArray()));
+            // After-write, in-transaction hooks: the CDC transactional-outbox writer is
+            // the one built-in — it no-ops for tables without emit-events metadata and
+            // writes its event on the mutation's own transaction, after the write, so it
+            // can name the generated identity. A host/test may register additional hooks.
+            services.AddSingleton<IInTransactionMutationHook, BifrostQL.Core.Modules.Cdc.OutboxMutationHook>();
+            services.AddSingleton<InTransactionMutationHooks>(sp => new InTransactionMutationHooks(
+                sp.GetServices<IInTransactionMutationHook>().ToArray()));
             services.AddSingleton<StateTransitionObservers>(sp => new StateTransitionObservers(
                 new IStateTransitionObserver[]
                 {

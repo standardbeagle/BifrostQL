@@ -13,10 +13,12 @@ neither does, so an event can never be lost or fabricated relative to the write
 it describes (the correct pattern versus lossy triggers or app-level dual-writes).
 
 :::note
-This page documents the **metadata contract and the outbox table** (CDC slice 1).
-The before-commit writer that populates the outbox and the background dispatcher
-that drains it to webhooks/queues are later slices; the keys below are recognized
-and validated at model load today.
+The **metadata contract, the outbox table, and the transactional writer** are
+implemented: an opted-in table's insert/update/delete writes an event row into
+the outbox **in the same transaction** as the data change. The background
+**dispatcher** that drains the outbox to webhooks/queues (and honors
+`webhook-secret`) is a later slice. Batch and TreeSync mutations do not yet emit
+events (single-row writes only) — also a later slice.
 :::
 
 ## Metadata
@@ -66,6 +68,17 @@ dbo.orders {
 `keys` is the smallest and safest for sensitive tables; `full` is the most
 convenient for consumers that cannot re-query. `changed` is a middle ground for
 audit-style feeds.
+
+:::caution
+The writer runs **after the write but inside the same transaction**, so its event
+commits atomically with the change and captures the database-generated primary key
+on an INSERT. It reflects the mutation's *write inputs* (plus that generated key),
+not a re-read of every stored column. In practice: `keys` captures the primary
+key; `changed` captures the columns the mutation writes plus the key; and `full`
+currently equals `changed` (for an INSERT that is the whole new row including its
+generated key; for an UPDATE it is the changed columns). A true full post-image
+re-read of DB-defaulted columns is a planned refinement.
+:::
 
 ## Outbox table schema
 

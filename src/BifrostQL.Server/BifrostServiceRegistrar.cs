@@ -141,11 +141,13 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
-        /// Registers the protocol-adapter query-intent entry point. The executor resolves
-        /// endpoint schemas from the same PathCache the HTTP middleware uses and routes
-        /// execution through SqlExecutionManager, so the security transformer pipeline
-        /// (tenant isolation, soft-delete, policy, column read guards) applies to intents
-        /// exactly as it does to GraphQL requests — adapters have no way around it.
+        /// Registers the protocol-adapter intent entry points. Both executors resolve
+        /// endpoint schemas from the same PathCache the HTTP middleware uses and route
+        /// execution through the shared seams (SqlExecutionManager for reads,
+        /// TableMutationPipeline for writes), so the security transformer pipelines
+        /// (tenant isolation, soft-delete, policy, column read guards; policy/tenant/
+        /// audit/concurrency on mutations) apply to intents exactly as they do to
+        /// GraphQL requests — adapters have no way around them.
         /// </summary>
         public static void RegisterQueryIntentServices(IServiceCollection services)
         {
@@ -153,6 +155,10 @@ namespace BifrostQL.Server
                 sp.GetRequiredService<PathCache<GraphQL.Inputs>>(),
                 sp.GetRequiredService<IQueryTransformerService>(),
                 sp.GetService<IQueryObservers>()));
+            services.AddSingleton<IMutationIntentExecutor>(sp => new MutationIntentExecutor(
+                sp.GetRequiredService<PathCache<GraphQL.Inputs>>(),
+                sp.GetRequiredService<IMutationTransformers>(),
+                sp));
         }
 
         /// <summary>

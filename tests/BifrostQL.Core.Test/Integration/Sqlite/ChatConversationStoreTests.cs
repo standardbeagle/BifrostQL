@@ -366,6 +366,56 @@ public sealed class ChatConversationStoreTests : IAsyncLifetime
         value.Should().NotBe(plaintext).And.NotBe(stored);
     }
 
+    // ---- typed not-found + recent-history read (SSE endpoint seams) -----------
+
+    [Fact]
+    public async Task NotFound_IsTheTypedChatConversationNotFoundException()
+    {
+        // Transports (the SSE endpoint) map not-found to 404 by exception TYPE,
+        // never by string-matching messages — pin the type on both shapes.
+        var convA = await _store.CreateConversationAsync(Tenant(1), "a");
+
+        var crossTenant = () => _store.AppendMessageAsync(Tenant(2), convA!, ChatMessageRoles.User, "hijack");
+        var missing = () => _store.AppendMessageAsync(Tenant(1), 999_999L, ChatMessageRoles.User, "ghost");
+
+        await crossTenant.Should().ThrowAsync<ChatConversationNotFoundException>();
+        await missing.Should().ThrowAsync<ChatConversationNotFoundException>();
+    }
+
+    [Fact]
+    public async Task IsConversationVisible_TracksRowScope_FailClosed()
+    {
+        var conv = await _store.CreateConversationAsync(Tenant(1), "a");
+
+        (await _store.IsConversationVisibleAsync(Tenant(1), conv!)).Should().BeTrue();
+        (await _store.IsConversationVisibleAsync(Tenant(2), conv!))
+            .Should().BeFalse("another tenant's conversation reads as not visible");
+        (await _store.IsConversationVisibleAsync(Tenant(1), 999_999L))
+            .Should().BeFalse("a nonexistent conversation is indistinguishable from an out-of-scope one");
+    }
+
+    [Fact]
+    public async Task ListRecentMessages_ReturnsTheLastNChronologically_ShapedForTheCompletionService()
+    {
+        var conv = await _store.CreateConversationAsync(Tenant(1), "a");
+        // Seed through the store so content rides the encrypt-on-write pipeline;
+        // same-timestamp rows order by the monotonic primary key (append order).
+        await _store.AppendMessageAsync(Tenant(1), conv!, ChatMessageRoles.User, "oldest");
+        await _store.AppendMessageAsync(Tenant(1), conv!, ChatMessageRoles.Assistant, "middle");
+        await _store.AppendMessageAsync(Tenant(1), conv!, ChatMessageRoles.User, "newer");
+        await _store.AppendMessageAsync(Tenant(1), conv!, ChatMessageRoles.Assistant, "newest");
+
+        var bounded = await _store.ListRecentMessagesAsync(Tenant(1, ReaderRole), conv!, limit: 3);
+        var unbounded = await _store.ListRecentMessagesAsync(Tenant(1, ReaderRole), conv!, limit: 10);
+
+        // The unmask role decrypts through the read pipeline, so the completion
+        // service receives plaintext turns in chronological order, oldest truncated.
+        bounded.Select(m => (m.Role, m.Content)).Should().Equal(
+            ("assistant", "middle"), ("user", "newer"), ("assistant", "newest"));
+        unbounded.Should().HaveCount(4, "a conversation under the window is sent whole");
+        unbounded[0].Content.Should().Be("oldest");
+    }
+
     // ---- ordering + paging ---------------------------------------------------
 
     [Fact]

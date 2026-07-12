@@ -220,6 +220,30 @@ is therefore recorded as its ciphertext — the trail never becomes a plaintext 
 around field encryption. Exclude such a column with `history-columns` if you do not want
 even its ciphertext duplicated.
 
+## Concurrency
+
+The before-image is read immediately before the write, in the write's own transaction —
+and that read **locks the row for the transaction**. Without the lock, a concurrent
+transaction could commit its own change between the pre-image read and the update, and
+the trail would attribute that writer's changes to this actor with a `before` that never
+matched the actual pre-write state. With it, a concurrent writer simply blocks until this
+transaction ends, exactly as if the two writes had arrived in sequence.
+
+The lock takes each database's native form:
+
+| Database | Form |
+|----------|------|
+| SQL Server | `WITH (UPDLOCK)` table hint on the pre-image `SELECT` |
+| PostgreSQL | trailing `FOR UPDATE` |
+| MySQL | trailing `FOR UPDATE` |
+| SQLite | nothing — write locking is whole-database, so the transaction already serializes concurrent writers |
+
+Only the before-image capture read locks; ordinary reads (the after-image read-back
+included — the write itself already holds the row's lock by then) are unchanged. The
+emitted SQL shape is pinned per dialect in the test suite; the lock's hold-until-commit
+semantics are each database's documented guarantee, so no cross-process race is
+simulated in CI.
+
 ## Requirements and limits
 
 - **Updates and deletes must be primary-key scoped.** A predicate-only write (delete every

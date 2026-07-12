@@ -183,6 +183,14 @@ namespace BifrostQL.Core.Resolvers
         /// therefore never recorded anywhere the narrowed write did not itself reach.
         ///
         /// Returns null when no row matches the key.
+        ///
+        /// <paramref name="forUpdate"/> makes the read take the dialect's update lock
+        /// (<see cref="ISqlDialect.UpdateLockTableHint"/> / <see cref="ISqlDialect.UpdateLockClause"/>)
+        /// so the row cannot be changed by a concurrent transaction between this read and
+        /// the write it precedes. ONLY the before-image capture passes true: the
+        /// after-image read-back runs after the write inside the same transaction, so the
+        /// write itself already holds an exclusive lock on the row and a hint there would
+        /// be redundant. Ordinary reads are unaffected.
         /// </summary>
         public static async Task<IReadOnlyDictionary<string, object?>?> LoadRowByKey(
             DbConnection conn,
@@ -191,14 +199,13 @@ namespace BifrostQL.Core.Resolvers
             IDbTable table,
             IReadOnlyCollection<string> columns,
             Dictionary<string, object?> keyData,
+            bool forUpdate = false,
             CancellationToken cancellationToken = default)
         {
             if (columns.Count == 0 || keyData.Count == 0)
                 return null;
 
-            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var columnList = string.Join(",", columns.Select(dialect.EscapeIdentifier));
-            var sql = $"SELECT {columnList} FROM {tableRef} WHERE {BuildKeyPredicate(dialect, keyData.Keys)};";
+            var sql = BuildSelectRowByKeySql(dialect, table, columns, keyData.Keys, forUpdate);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
@@ -216,6 +223,28 @@ namespace BifrostQL.Core.Resolvers
                 row[reader.GetName(i)] = value;
             }
             return row;
+        }
+
+        /// <summary>
+        /// Builds the keyed single-row SELECT run by <see cref="LoadRowByKey"/>. With
+        /// <paramref name="forUpdate"/> the dialect's update-lock forms are applied: the
+        /// table hint sits after the FROM table reference (SQL Server's
+        /// <c>WITH (UPDLOCK)</c>) and the locking clause after the WHERE clause
+        /// (Postgres/MySQL <c>FOR UPDATE</c>); SQLite emits neither (whole-database write
+        /// locking already serializes writers). Without it the statement is a plain SELECT.
+        /// </summary>
+        public static string BuildSelectRowByKeySql(
+            ISqlDialect dialect,
+            IDbTable table,
+            IReadOnlyCollection<string> columns,
+            IEnumerable<string> keyColumns,
+            bool forUpdate)
+        {
+            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+            var columnList = string.Join(",", columns.Select(dialect.EscapeIdentifier));
+            var fromHint = forUpdate ? dialect.UpdateLockTableHint : "";
+            var lockClause = forUpdate ? dialect.UpdateLockClause : "";
+            return $"SELECT {columnList} FROM {tableRef}{fromHint} WHERE {BuildKeyPredicate(dialect, keyColumns)}{lockClause};";
         }
 
         /// <summary>

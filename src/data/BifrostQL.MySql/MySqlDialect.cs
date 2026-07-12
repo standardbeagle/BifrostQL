@@ -18,6 +18,15 @@ public sealed class MySqlDialect : LimitOffsetDialectBase
 
     /// <inheritdoc />
     /// <remarks>
+    /// MySQL/InnoDB locks a selected row with the standard trailing <c>FOR UPDATE</c>
+    /// clause, held until the transaction ends. The change-history before-image read uses
+    /// it so a concurrent writer blocks instead of committing between the pre-image read
+    /// and the UPDATE it precedes.
+    /// </remarks>
+    public override string UpdateLockClause => " FOR UPDATE";
+
+    /// <inheritdoc />
+    /// <remarks>
     /// MySQL uses CONCAT() function instead of || operator.
     /// </remarks>
     public override string LikePattern(string paramName, LikePatternType patternType) => patternType switch

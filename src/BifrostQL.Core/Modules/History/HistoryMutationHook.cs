@@ -83,9 +83,14 @@ namespace BifrostQL.Core.Modules.History
                 };
             }
 
+            // forUpdate: the capture read takes the dialect's update lock so a concurrent
+            // transaction cannot commit a change to this row between the pre-image read and
+            // the write it precedes — without it (under READ COMMITTED) the trail could
+            // attribute the other writer's changes to this actor, with a 'before' that
+            // disagrees with the actual pre-write state.
             var row = await MutationCommandExecutor.LoadRowByKey(
                 context.Connection, context.Transaction, context.Dialect, context.Table,
-                ReadColumns(context.Table, config), keyData);
+                ReadColumns(context.Table, config), keyData, forUpdate: true);
 
             context.MutationState[BeforeImageKey] = new BeforeImage(row);
             return Array.Empty<string>();
@@ -164,6 +169,9 @@ namespace BifrostQL.Core.Modules.History
             IReadOnlyDictionary<string, object?>? after = null;
             if (operation != MutationType.Delete)
             {
+                // No forUpdate here: this read-back runs after the write, inside the same
+                // transaction — the write already holds an exclusive lock on the row, so an
+                // update-lock hint would be redundant.
                 after = await MutationCommandExecutor.LoadRowByKey(
                     context.Connection, context.Transaction, context.Dialect, context.Table,
                     ReadColumns(context.Table, config), keyData);

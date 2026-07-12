@@ -22,6 +22,15 @@ public sealed class SqlServerDialect : SqlDialectBase
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// T-SQL takes row locks via table hints, which sit after the FROM table reference —
+    /// not via a trailing FOR UPDATE clause (T-SQL has none outside cursors). UPDLOCK
+    /// holds an update lock on the selected row until the transaction ends, so the
+    /// change-history before-image read blocks a concurrent writer instead of racing it.
+    /// </remarks>
+    public override string UpdateLockTableHint => " WITH (UPDLOCK)";
+
+    /// <inheritdoc />
     /// <remarks>SQL Server has no unbounded TEXT alias worth using; NVARCHAR(MAX) is the modern form.</remarks>
     public override string RenderColumnType(SqlColumnKind kind) => kind switch
     {

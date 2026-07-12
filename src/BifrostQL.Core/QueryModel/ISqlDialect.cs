@@ -288,6 +288,39 @@ public interface ISqlDialect
     string TextCast(string columnExpression, string dataType) => TextCast(columnExpression);
 
     /// <summary>
+    /// Table hint placed immediately after the table reference in a SELECT's FROM clause
+    /// when the read must take an update (write-intent) lock on the selected row for the
+    /// rest of the current transaction. Used by the change-history before-image capture
+    /// read: under READ COMMITTED a plain SELECT releases its lock immediately, so a
+    /// concurrent transaction could commit between the pre-image read and the UPDATE it
+    /// precedes — the trail would then attribute the other writer's changes to this actor
+    /// and record a 'before' that disagrees with the actual pre-write state.
+    ///
+    /// Per-dialect forms (a dialect uses EITHER the hint OR the clause, never both):
+    /// <list type="bullet">
+    ///   <item>SQL Server: <c>" WITH (UPDLOCK)"</c> — T-SQL locks via table hints, which
+    ///     sit after the FROM table reference, not at the end of the statement.</item>
+    ///   <item>PostgreSQL / MySQL: empty — they lock via the trailing
+    ///     <see cref="UpdateLockClause"/> instead.</item>
+    ///   <item>SQLite: empty — write locking is whole-database, so the transaction that
+    ///     opened with BEGIN already serializes concurrent writers; a row lock adds
+    ///     nothing.</item>
+    /// </list>
+    /// Includes its leading space (matching <see cref="LikeEscapeClause"/>) so an empty
+    /// value composes to exactly the unlocked statement.
+    /// </summary>
+    string UpdateLockTableHint => "";
+
+    /// <summary>
+    /// Locking clause appended after the WHERE clause when the read must take an update
+    /// lock — the counterpart of <see cref="UpdateLockTableHint"/> for dialects that lock
+    /// via a statement suffix. PostgreSQL and MySQL emit <c>" FOR UPDATE"</c>; SQL Server
+    /// (hint-based) and SQLite (whole-database write locking) emit nothing. Includes its
+    /// leading space; empty composes to exactly the unlocked statement.
+    /// </summary>
+    string UpdateLockClause => "";
+
+    /// <summary>
     /// The statement that opens an explicit transaction, emitted directly as SQL
     /// on the connection (rather than the ADO.NET DbTransaction API) so the
     /// transaction boundary is visible in the generated SQL. SQL Server uses

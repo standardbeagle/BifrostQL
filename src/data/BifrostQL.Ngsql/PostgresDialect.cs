@@ -24,6 +24,15 @@ public sealed class PostgresDialect : StandardConcatDialectBase
 
     /// <inheritdoc />
     /// <remarks>
+    /// Postgres locks a selected row with the standard trailing <c>FOR UPDATE</c> clause,
+    /// held until the transaction ends. The change-history before-image read uses it so a
+    /// concurrent writer blocks instead of committing between the pre-image read and the
+    /// UPDATE it precedes.
+    /// </remarks>
+    public override string UpdateLockClause => " FOR UPDATE";
+
+    /// <inheritdoc />
+    /// <remarks>
     /// For a single-column primary key, RETURNING the real key column makes the insert
     /// work for ANY key type — serial/bigserial, uuid (server-default gen_random_uuid()),
     /// or a client-supplied value — because it reads the row's own key rather than the

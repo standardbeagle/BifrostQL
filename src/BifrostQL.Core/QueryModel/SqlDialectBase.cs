@@ -220,6 +220,12 @@ public abstract class SqlDialectBase : ISqlDialect
     public virtual string TextCast(string columnExpression, string dataType) => TextCast(columnExpression);
 
     /// <inheritdoc />
+    public virtual string UpdateLockTableHint => "";
+
+    /// <inheritdoc />
+    public virtual string UpdateLockClause => "";
+
+    /// <inheritdoc />
     /// <remarks>SQL Server requires <c>BEGIN TRANSACTION</c>; LIMIT/OFFSET dialects override with <c>BEGIN</c>.</remarks>
     public virtual string BeginTransactionSql => "BEGIN TRANSACTION;";
 

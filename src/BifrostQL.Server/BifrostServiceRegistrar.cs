@@ -188,7 +188,8 @@ namespace BifrostQL.Server
             services.AddSingleton<IQueryIntentExecutor>(sp => new QueryIntentExecutor(
                 sp.GetRequiredService<PathCache<GraphQL.Inputs>>(),
                 sp.GetRequiredService<IQueryTransformerService>(),
-                sp.GetService<IQueryObservers>()));
+                sp.GetService<IQueryObservers>(),
+                sp));
             services.AddSingleton<IMutationIntentExecutor>(sp => new MutationIntentExecutor(
                 sp.GetRequiredService<PathCache<GraphQL.Inputs>>(),
                 sp.GetRequiredService<IMutationTransformers>(),

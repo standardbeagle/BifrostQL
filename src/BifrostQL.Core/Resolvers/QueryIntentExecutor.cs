@@ -100,15 +100,18 @@ public sealed class QueryIntentExecutor : IQueryIntentExecutor
     private readonly PathCache<Inputs> _endpoints;
     private readonly IQueryTransformerService _transformerService;
     private readonly IQueryObservers? _observers;
+    private readonly IServiceProvider? _services;
 
     public QueryIntentExecutor(
         PathCache<Inputs> endpoints,
         IQueryTransformerService transformerService,
-        IQueryObservers? observers = null)
+        IQueryObservers? observers = null,
+        IServiceProvider? services = null)
     {
         _endpoints = endpoints ?? throw new ArgumentNullException(nameof(endpoints));
         _transformerService = transformerService ?? throw new ArgumentNullException(nameof(transformerService));
         _observers = observers;
+        _services = services;
     }
 
     public async Task<IDbModel> GetModelAsync(string? endpoint = null)
@@ -136,7 +139,11 @@ public sealed class QueryIntentExecutor : IQueryIntentExecutor
         model.GetTableFromDbName(query.DbTable.DbName);
 
         var manager = new SqlExecutionManager(model, schema, _transformerService, _observers);
-        return await manager.ExecuteIntentAsync(query, intent.UserContext, connFactory, cancellationToken);
+        // The key manager (when registered) lets the seam's decrypt/mask projector
+        // resolve encrypted columns per the caller's roles — same policy as GraphQL
+        // reads. Absent, encrypted values redact; ciphertext never leaves the seam.
+        var keyManager = (BifrostQL.Core.Crypto.EnvelopeKeyManager?)_services?.GetService(typeof(BifrostQL.Core.Crypto.EnvelopeKeyManager));
+        return await manager.ExecuteIntentAsync(query, intent.UserContext, connFactory, cancellationToken, keyManager);
     }
 
 }

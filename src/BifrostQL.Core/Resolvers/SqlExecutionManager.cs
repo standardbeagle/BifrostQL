@@ -57,9 +57,12 @@ namespace BifrostQL.Core.Resolvers
         /// (<see cref="GqlObjectQuery.GroupedAggregate"/>) are supported: the
         /// same transformer pass constrains the WHERE before grouping, and the
         /// flat grouped result set (group keys + aggregate aliases) comes back
-        /// as <see cref="QueryIntentResult.Rows"/>.
+        /// as <see cref="QueryIntentResult.Rows"/>. Encrypted columns are
+        /// projected through the same decrypt/mask policy as GraphQL reads
+        /// (built from <paramref name="keyManager"/> and the caller's roles);
+        /// with no key manager they redact rather than leak ciphertext.
         /// </summary>
-        public ValueTask<QueryIntentResult> ExecuteIntentAsync(GqlObjectQuery query, IDictionary<string, object?> userContext, IDbConnFactory connFactory, CancellationToken cancellationToken = default);
+        public ValueTask<QueryIntentResult> ExecuteIntentAsync(GqlObjectQuery query, IDictionary<string, object?> userContext, IDbConnFactory connFactory, CancellationToken cancellationToken = default, BifrostQL.Core.Crypto.EnvelopeKeyManager? keyManager = null);
     }
 
     public sealed class SqlExecutionManager : ISqlExecutionManager
@@ -585,7 +588,8 @@ namespace BifrostQL.Core.Resolvers
             GqlObjectQuery query,
             IDictionary<string, object?> userContext,
             IDbConnFactory connFactory,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            BifrostQL.Core.Crypto.EnvelopeKeyManager? keyManager = null)
         {
             if (query.DbTable is null)
                 throw new BifrostExecutionError(
@@ -637,6 +641,13 @@ namespace BifrostQL.Core.Resolvers
                 throw new BifrostExecutionError(
                     $"Query intent result set '{query.KeyName}' is missing from the execution results.");
 
+            // Decrypt/mask projector — same construction as GraphQL base-table reads,
+            // so an adapter intent obeys the identical per-caller crypto policy: the
+            // unmask role (or admin) sees plaintext, everyone else the column's mask,
+            // and raw ciphertext never leaves the seam (no key manager ⇒ redaction).
+            var cryptoRead = new Modules.Crypto.CryptoReadProjector(
+                _dbModel, keyManager, ExtractRoles(userContext));
+
             var rows = new List<IReadOnlyDictionary<string, object?>>(tableData.data.Count);
             foreach (var row in tableData.data)
             {
@@ -644,7 +655,7 @@ namespace BifrostQL.Core.Resolvers
                 foreach (var (column, ordinal) in tableData.index)
                 {
                     if (ordinal < row.Length)
-                        map[column] = ReaderEnum.DbConvert(row[ordinal]);
+                        map[column] = cryptoRead.Project(query.DbTable.DbName, column, ReaderEnum.DbConvert(row[ordinal]));
                 }
                 rows.Add(map);
             }

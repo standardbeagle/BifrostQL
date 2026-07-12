@@ -11,8 +11,9 @@ published tables you own, the rest of BifrostQL composes with them unchanged —
 rest, and `history` records a change trail of the chat itself.
 
 :::note
-This slice establishes the **metadata contract and fail-fast validation**. The chat
-read/write surface (SSE streaming) is a later slice.
+This page covers the **metadata contract and fail-fast validation**. The HTTP surface
+over it — streaming chat endpoints with SSE — is covered in the
+[LLM Chat Endpoints guide](/guides/llm-chat/).
 :::
 
 ## Metadata

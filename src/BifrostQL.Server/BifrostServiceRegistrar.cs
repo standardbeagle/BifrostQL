@@ -63,6 +63,25 @@ namespace BifrostQL.Server
             services.AddSingleton<IInTransactionMutationHook, BifrostQL.Core.Modules.Cdc.OutboxMutationHook>();
             services.AddSingleton<InTransactionMutationHooks>(sp => new InTransactionMutationHooks(
                 sp.GetServices<IInTransactionMutationHook>().ToArray()));
+
+            // Field-level encryption: compose the envelope key manager from the host's
+            // root-key provider + wrapped-DEK store. Resolution is LAZY — the factory
+            // reads the dependencies when the manager is first requested, not at
+            // AddBifrostQL time — so a host that registers them AFTER AddBifrostQL still
+            // gets a working manager. When either is absent the factory returns null, and
+            // EncryptOnWriteMutationTransformer fails closed (refuses to write plaintext).
+            // We never fabricate a root key or an in-memory store here, since an in-memory
+            // store would silently lose DEKs (and make data unrecoverable) on restart.
+            services.TryAddSingleton<BifrostQL.Core.Crypto.EnvelopeKeyManager>(sp =>
+            {
+                var root = sp.GetService<BifrostQL.Core.Crypto.IRootKeyProvider>();
+                var store = sp.GetService<BifrostQL.Core.Crypto.IDataEncryptionKeyStore>();
+                // Null factory result ⇒ GetService returns null ⇒ the transformer fails
+                // closed. (No dependencies configured = encryption not available.)
+                return root is not null && store is not null
+                    ? new BifrostQL.Core.Crypto.EnvelopeKeyManager(root, store)
+                    : null!;
+            });
             services.AddSingleton<StateTransitionObservers>(sp => new StateTransitionObservers(
                 new IStateTransitionObserver[]
                 {

@@ -110,6 +110,13 @@ namespace BifrostQL.Server
             // the soft-delete column. Auto-registering only the filter (see
             // WithBuiltInFilterTransformers) would leave DELETEs hard — incoherent. A
             // no-op for tables without the soft-delete metadata key, so always safe.
+            // Field-level encryption (priority 40): encrypts columns marked with the
+            // `encrypt` metadata before SQL. A no-op for tables without an encrypted
+            // column; for tables WITH one it fails closed unless an EnvelopeKeyManager is
+            // configured, so it is always safe to auto-register.
+            if (!configured.Any(t => t is BifrostQL.Core.Modules.Crypto.EncryptOnWriteMutationTransformer))
+                combined.Add(new BifrostQL.Core.Modules.Crypto.EncryptOnWriteMutationTransformer());
+
             if (!configured.Any(t => t is SoftDeleteMutationTransformer))
                 combined.Add(new SoftDeleteMutationTransformer());
 

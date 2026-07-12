@@ -50,7 +50,7 @@ public class CryptoPrimitivesTests
     public void FieldCipher_RoundTrips_WithMatchingKeyAndAad()
     {
         var dek = Key(1);
-        var aad = CryptoAad.Build("dbo", "customers", "ssn", "42");
+        var aad = CryptoAad.Build("dbo", "customers", "ssn");
 
         var envelope = FieldCipher.Encrypt(dek, "123-45-6789", aad);
         FieldCipher.Decrypt(dek, envelope, aad).Should().Be("123-45-6789");
@@ -77,10 +77,10 @@ public class CryptoPrimitivesTests
     [Fact]
     public void FieldCipher_WrongAad_FailsAuthentication()
     {
-        // A ciphertext copy-pasted onto another cell (different AAD) will not decrypt.
+        // A ciphertext copy-pasted into another column (different AAD) will not decrypt.
         var dek = Key(1);
-        var envelope = FieldCipher.Encrypt(dek, "secret", CryptoAad.Build("dbo", "customers", "ssn", "42"));
-        var act = () => FieldCipher.Decrypt(dek, envelope, CryptoAad.Build("dbo", "customers", "ssn", "43"));
+        var envelope = FieldCipher.Encrypt(dek, "secret", CryptoAad.Build("dbo", "customers", "ssn"));
+        var act = () => FieldCipher.Decrypt(dek, envelope, CryptoAad.Build("dbo", "customers", "dob"));
         act.Should().Throw<CryptographicException>();
     }
 

@@ -45,18 +45,34 @@ namespace BifrostQL.Core.Crypto
 
     /// <summary>
     /// Builds the Additional Authenticated Data (AAD) that binds a ciphertext to the
-    /// exact cell it belongs to. AES-GCM authenticates but does not encrypt the AAD,
-    /// so decryption fails if a ciphertext is copy-pasted to another row, column, or
-    /// table — closing the "relocate an admin's encrypted SSN onto my row" attack.
+    /// column it belongs to. AES-GCM authenticates but does not encrypt the AAD, so
+    /// decryption fails if a ciphertext is copy-pasted to a different column or table —
+    /// closing the "relocate an admin's encrypted SSN into another column" attack.
+    ///
+    /// The binding is column-scoped (schema + table + column), NOT per-row: a row's
+    /// primary key is not available at encrypt time for a database-generated key
+    /// (encryption runs before the INSERT that mints the id), so binding to it would
+    /// make write and read asymmetric. Per-row binding is a documented future
+    /// enhancement requiring a post-insert re-encrypt or an AAD-kind envelope flag.
+    /// Column-scoping is length-prefixed so component boundaries are unambiguous even
+    /// when a name contains the delimiter.
     /// </summary>
     public static class CryptoAad
     {
-        /// <summary>
-        /// AAD = <c>schema.table:column:primaryKey</c> as UTF-8 bytes. The primary key
-        /// is the row's identity so the binding is per-row.
-        /// </summary>
-        public static byte[] Build(string schema, string table, string column, string primaryKey)
-            => Encoding.UTF8.GetBytes($"{schema}.{table}:{column}:{primaryKey}");
+        /// <summary>AAD = length-prefixed UTF-8 of (schema, table, column).</summary>
+        public static byte[] Build(string schema, string table, string column)
+        {
+            using var ms = new System.IO.MemoryStream();
+            Span<byte> len = stackalloc byte[4];
+            foreach (var part in new[] { schema, table, column })
+            {
+                var bytes = Encoding.UTF8.GetBytes(part ?? string.Empty);
+                System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(len, bytes.Length);
+                ms.Write(len);
+                ms.Write(bytes);
+            }
+            return ms.ToArray();
+        }
     }
 
     /// <summary>

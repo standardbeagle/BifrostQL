@@ -38,17 +38,49 @@ ciphertext** — there is no equality oracle in the stored ciphertext.
 ### Cell binding (AAD)
 
 GCM authenticates *Additional Authenticated Data* without encrypting it. Each
-field's AAD is:
+field's AAD binds the ciphertext to its **column** (length-prefixed
+`schema`, `table`, `column`). Because the AAD is authenticated, a ciphertext
+**cannot be relocated to another column or table** — decryption fails — closing
+the "paste an admin's encrypted SSN into another column" attack.
 
-```
-schema.table:column:primaryKey
-```
+The binding is column-scoped, not per-row: the primary key is not known at
+encrypt time for a database-generated key (encryption runs before the INSERT that
+mints the id), so binding to it would make write and read asymmetric. Per-row
+binding is a planned enhancement (a post-insert re-encrypt, or an AAD-kind flag in
+the envelope).
 
-Because the AAD is authenticated, a ciphertext **cannot be relocated** — copying
-one row's encrypted SSN onto another row (or another column) makes decryption
-fail. This closes the "paste an admin's ciphertext onto my row" attack.
+The stored envelope is base64 of `[version:1][nonce:12][tag:16][ciphertext:n]` —
+the format version, nonce (IV), and tag travel with the ciphertext in one column,
+so no separate IV/version columns are needed.
 
-The stored envelope is base64 of `[version:1][nonce:12][tag:16][ciphertext:n]`.
+## Encrypting on write
+
+Encryption happens in a mutation transformer (priority 40, security band): it runs
+after tenant/policy pinning and before soft-delete, so plaintext is confined to
+the security band and every downstream transformer and the SQL layer see only
+ciphertext. On INSERT/UPDATE it replaces each marked column's plaintext with the
+envelope and fills the `blind-index` sibling column.
+
+If a column is marked `encrypt` but no key manager is configured, the write is
+**refused** (fail-closed) rather than storing plaintext. Wire the key manager by
+registering an `IRootKeyProvider` (e.g. `ConfigRootKeyProvider`) and an
+`IDataEncryptionKeyStore` in DI; BifrostQL composes the `EnvelopeKeyManager` from
+them.
+
+:::danger
+The `InMemoryDataEncryptionKeyStore` loses its wrapped DEKs on restart, which makes
+all data encrypted under them **permanently unreadable**. Use it only for tests or
+throwaway dev. Production must register a durable `IDataEncryptionKeyStore` (a DB
+table or the KMS). BifrostQL deliberately does not auto-register an in-memory store.
+:::
+
+Because encryption runs early (priority 40) and server-side format validation runs
+late, a `pattern` / `min-length` validator on an *encrypted* column would validate
+the ciphertext, not the plaintext — so do not put format validators on encrypted
+columns; validate the plaintext at the application layer instead.
+
+Decryption and role-based masking on read (and rejecting filter/sort on encrypted
+columns) are a later slice.
 
 ## Searching encrypted columns
 

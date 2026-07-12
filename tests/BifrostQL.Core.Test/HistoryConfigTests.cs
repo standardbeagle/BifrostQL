@@ -22,9 +22,22 @@ public class HistoryConfigTests
         var dict = new Dictionary<string, object?>();
         foreach (var (key, value) in metadata)
             dict[key] = value;
+        // Case-insensitive, like DbModelLoader's real lookup — tracked-column
+        // canonicalization resolves miscased history-columns entries through it.
+        var columns = new[] { "id", "status", "total" }.ToDictionary(
+            c => c,
+            c => new ColumnDto
+            {
+                ColumnName = c,
+                GraphQlName = c,
+                NormalizedName = ColumnDto.NormalizeColumn(c),
+                DataType = "nvarchar",
+            },
+            StringComparer.OrdinalIgnoreCase);
         table.DbName.Returns("orders");
         table.TableSchema.Returns("dbo");
         table.Metadata.Returns(dict);
+        table.ColumnLookup.Returns(columns);
         table.GetMetadataValue(Arg.Any<string>())
             .Returns(ci => dict.TryGetValue((string)ci[0], out var v) ? v?.ToString() : null);
         return table;
@@ -137,6 +150,41 @@ public class HistoryConfigTests
         config.TrackedColumns.Should().Equal("status", "total");
         config.TracksColumn("STATUS").Should().BeTrue();   // column names match case-insensitively
         config.TracksColumn("internal_notes").Should().BeFalse();
+    }
+
+    [Fact]
+    public void FromTable_DuplicateHistoryColumns_Throws()
+    {
+        // Arrange: 'status' listed twice, differing only in case. The writer keys its
+        // projected images by tracked column in a case-insensitive dictionary, so the
+        // duplicate would crash every recorded write. Fail fast; never silently dedupe.
+        var table = TableWithMetadata(
+            (MetadataKeys.History.Enabled, MetadataKeys.History.AllOperations),
+            (MetadataKeys.History.Columns, "status,Status"));
+
+        // Act
+        var act = () => HistoryConfig.FromTable(table);
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("orders").And.Contain("Status").And.Contain("more than once");
+    }
+
+    [Fact]
+    public void FromTable_MiscasedHistoryColumns_CanonicalizedToDbCasing()
+    {
+        // Arrange: entries differ in case from the real columns. Tracked names become SQL
+        // identifiers (quoted verbatim on Postgres) and trail JSON keys, so the parse must
+        // adopt each column's database casing rather than the config's.
+        var table = TableWithMetadata(
+            (MetadataKeys.History.Enabled, MetadataKeys.History.AllOperations),
+            (MetadataKeys.History.Columns, "STATUS, Total"));
+
+        // Act
+        var config = HistoryConfig.FromTable(table);
+
+        // Assert
+        config.TrackedColumns.Should().Equal("status", "total");
     }
 
     [Fact]

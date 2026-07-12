@@ -88,13 +88,38 @@ namespace BifrostQL.Core.Modules.History
                     $"Provide '{MetadataKeys.History.AllOperations}' or a comma-separated subset of " +
                     $"{string.Join(", ", OperationNames)}.");
 
-            var trackedColumns = SplitList(table.GetMetadataValue(MetadataKeys.History.Columns)).ToList();
+            var trackedColumns = ParseTrackedColumns(table);
 
             var overrideTable = table.GetMetadataValue(MetadataKeys.History.Table);
             if (string.IsNullOrWhiteSpace(overrideTable))
                 overrideTable = null;
 
             return new HistoryConfig(operations, trackedColumns, overrideTable?.Trim());
+        }
+
+        /// <summary>
+        /// Parses <c>history-columns</c>. A case-insensitive duplicate is rejected rather
+        /// than deduped — the writer keys its projected images by tracked column in a
+        /// case-insensitive dictionary, so a duplicate would crash every recorded write,
+        /// and silently merging it would hide a config whose intent is ambiguous. Each
+        /// entry is canonicalized to the column's database casing: tracked names become
+        /// SQL identifiers (quoted verbatim on Postgres) and trail JSON keys. An entry
+        /// naming no column is kept verbatim for ModelConfigValidator to report.
+        /// </summary>
+        private static List<string> ParseTrackedColumns(IDbTable table)
+        {
+            var columns = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var name in SplitList(table.GetMetadataValue(MetadataKeys.History.Columns)))
+            {
+                if (!seen.Add(name))
+                    throw new InvalidOperationException(
+                        $"'{MetadataKeys.History.Columns}' on '{table.TableSchema}.{table.DbName}' lists " +
+                        $"column '{name}' more than once (column names match case-insensitively); remove the duplicate.");
+
+                columns.Add(table.ColumnLookup.TryGetValue(name, out var column) ? column.ColumnName : name);
+            }
+            return columns;
         }
 
         private static IEnumerable<MutationType> ParseOperations(string raw)

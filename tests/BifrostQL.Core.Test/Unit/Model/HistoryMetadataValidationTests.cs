@@ -170,6 +170,56 @@ public class HistoryMetadataValidationTests
     }
 
     [Fact]
+    public void Validate_HistoryEnabledTableWithoutPrimaryKey_Throws()
+    {
+        // Arrange: the table opts into history but has no key column. The writer names
+        // every trail row by the full primary key, so at runtime every insert would fail
+        // at read-back and every update/delete would be vetoed — the config is unusable
+        // and must be rejected at model load.
+        var model = DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.History.Table, "dbo.__history")
+            .WithTable("orders", t => t
+                .WithSchema("dbo")
+                .WithColumn("Status", "nvarchar")
+                .WithMetadata(MetadataKeys.History.Enabled, "update"))
+            .WithTable("__history", WithHistoryColumns)
+            .Build();
+
+        // Act
+        var act = () => ModelConfigValidator.Validate(model);
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.orders").And.Contain("primary-key");
+    }
+
+    [Fact]
+    public void Validate_DuplicateHistoryColumns_Throws()
+    {
+        // Arrange: 'status' is listed twice (differing only in case). The writer projects
+        // images into a case-insensitive dictionary keyed by the tracked columns, so the
+        // duplicate would crash every recorded write; reject it at model load instead of
+        // silently deduplicating a config whose intent is ambiguous.
+        var model = DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.History.Table, "dbo.__history")
+            .WithTable("orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Status", "nvarchar")
+                .WithMetadata(MetadataKeys.History.Enabled, "update")
+                .WithMetadata(MetadataKeys.History.Columns, "status,Status"))
+            .WithTable("__history", WithHistoryColumns)
+            .Build();
+
+        // Act
+        var act = () => ModelConfigValidator.Validate(model);
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("orders").And.Contain("Status").And.Contain("more than once");
+    }
+
+    [Fact]
     public void Validate_HistoryColumnDoesNotExist_Throws()
     {
         // Arrange: history-columns names a column the table does not have; its changes

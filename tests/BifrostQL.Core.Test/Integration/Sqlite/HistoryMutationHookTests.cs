@@ -365,6 +365,27 @@ public sealed class HistoryMutationHookTests : IAsyncLifetime
         Json(rows[0].After)["note"].GetString().Should().Be("edited");
     }
 
+    [Fact]
+    public async Task MiscasedHistoryColumns_TrailJsonKeysCarryDbCasing()
+    {
+        // history-columns entries are canonicalized to the database column casing at
+        // parse time, so the trail's JSON keys (and the read-back identifiers) carry
+        // the real column names, not the config's casing.
+        var model = await LoadModelAsync(
+            "main.orders { history: enabled; history-columns: STATUS,Total }",
+            ":root { history-table: main.__history }");
+
+        var result = await ExecuteMutationAsync(
+            "mutation { orders(update: { id: 1, status: \"shipped\" }) }", model);
+
+        result.Errors.Should().BeNullOrEmpty();
+        var rows = await HistoryRowsAsync();
+        rows.Should().ContainSingle();
+        Json(rows[0].Before).Keys.Should().BeEquivalentTo(new[] { "status", "total" });
+        Json(rows[0].After).Keys.Should().BeEquivalentTo(new[] { "status", "total" });
+        JsonArray(rows[0].ChangedColumns).Should().Equal("status");
+    }
+
     private async Task<ExecutionResult> ExecuteMutationAsync(
         string mutation,
         IDbModel? model = null,

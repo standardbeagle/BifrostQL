@@ -525,6 +525,15 @@ namespace BifrostQL.Core.Model
                 return;
             }
 
+            // The writer names every trail row by the table's full primary key and reads
+            // rows back by it: with no key column every insert fails at read-back and
+            // every update/delete is vetoed — the config can never record anything.
+            if (!table.KeyColumns.Any())
+                errors.Add(Problem(table, MetadataKeys.History.Enabled,
+                    table.GetMetadataValue(MetadataKeys.History.Enabled),
+                    "records history but the table has no primary-key column; a history row " +
+                    "could not name the row it describes."));
+
             foreach (var column in config.TrackedColumns)
             {
                 if (!DbColumnExists(table, column))

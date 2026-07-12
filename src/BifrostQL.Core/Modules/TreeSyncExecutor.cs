@@ -67,6 +67,17 @@ public sealed class TreeSyncExecutor
         if (operations.Count == 0)
             return null;
 
+        // History targets take no client writes on ANY seam — a nested sync could
+        // otherwise smuggle a forged trail row in as a tree node. Checked up front,
+        // before a connection is even taken, so a rejected tree writes nothing. The
+        // raw direct-executor path (model == null, no transformer pipeline) has no
+        // model to resolve targets against; every GraphQL entry supplies one.
+        if (model != null)
+        {
+            foreach (var op in operations)
+                TableMutationPipeline.GuardNotHistoryTarget(op.Table, model);
+        }
+
         await using var conn = connFactory.GetConnection();
         await conn.OpenAsync();
 

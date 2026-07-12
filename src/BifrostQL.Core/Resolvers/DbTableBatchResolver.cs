@@ -25,6 +25,11 @@ namespace BifrostQL.Core.Resolvers
             var bifrost = new BifrostContextAdapter(context);
             var conFactory = bifrost.ConnFactory;
             var model = bifrost.Model;
+            // Unreachable through the generated schema (no batch field is emitted for a
+            // history target), but guarded at the execution seam too, mirroring
+            // TableMutationPipeline: a hand-wired resolver or a future entry point must
+            // not be able to forge or edit trail rows through a batch.
+            TableMutationPipeline.GuardNotHistoryTarget(_table, model);
             var dialect = conFactory.Dialect;
             // Filter by the request's active profile so a batch write applies the same
             // per-profile module set a read (and a single-row write) does. Fail-closed:

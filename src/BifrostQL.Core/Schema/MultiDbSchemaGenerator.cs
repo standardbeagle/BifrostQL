@@ -127,11 +127,18 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine(generator.GetPagedTableTypeDefinition());
                 builder.AppendLine(generator.GetDynamicJoinDefinition(model, false));
                 builder.AppendLine(generator.GetDynamicJoinDefinition(model, true));
-                builder.AppendLine(generator.GetMutationParameterType(MutateActions.Insert, IdentityType.None));
-                builder.AppendLine(generator.GetMutationParameterType(MutateActions.Update, IdentityType.Required));
-                builder.AppendLine(generator.GetMutationParameterType(MutateActions.Upsert, IdentityType.Optional));
-                builder.AppendLine(generator.GetMutationParameterType(MutateActions.Delete, IdentityType.Optional, true));
-                builder.AppendLine(generator.GetBatchMutationParameterType());
+                // A history target has no mutation field, so its mutation input
+                // types would be unreferenced orphans — skip them, mirroring
+                // SchemaGenerator. Its filter/sort/enum types below stay: the
+                // `<table>History` trail field uses them.
+                if (!historyTargets.Contains(generator.Table))
+                {
+                    builder.AppendLine(generator.GetMutationParameterType(MutateActions.Insert, IdentityType.None));
+                    builder.AppendLine(generator.GetMutationParameterType(MutateActions.Update, IdentityType.Required));
+                    builder.AppendLine(generator.GetMutationParameterType(MutateActions.Upsert, IdentityType.Optional));
+                    builder.AppendLine(generator.GetMutationParameterType(MutateActions.Delete, IdentityType.Optional, true));
+                    builder.AppendLine(generator.GetBatchMutationParameterType());
+                }
                 builder.AppendLine(generator.GetTableFilterDefinition());
                 builder.AppendLine(generator.GetJoinDefinitions(model));
                 builder.AppendLine(generator.GetTableJoinType());

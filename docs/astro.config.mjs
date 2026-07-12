@@ -40,6 +40,7 @@ export default defineConfig({
 						{ label: 'Protocol Adapters', slug: 'concepts/protocol-adapters' },
 						{ label: 'Change Data Capture & Events', slug: 'concepts/cdc-outbound-events' },
 						{ label: 'Field Encryption & Masking', slug: 'concepts/field-encryption' },
+						{ label: 'Temporal Change History', slug: 'concepts/temporal-history' },
 					],
 				},
 				{

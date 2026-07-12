@@ -142,6 +142,11 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Cdc.EmitEvents,
             MetadataKeys.Cdc.EventSink,
             MetadataKeys.Cdc.EventPayload,
+            // Temporal change history (table-level opt-in). A miscased key must be
+            // flagged, not silently leave the table with no change trail.
+            MetadataKeys.History.Enabled,
+            MetadataKeys.History.Table,
+            MetadataKeys.History.Columns,
         };
 
         // Internal for the same reason as KnownTableKeys above (case-casing
@@ -235,6 +240,9 @@ namespace BifrostQL.Core.Model
             // the transactional outbox; webhook-secret signs drained deliveries.
             MetadataKeys.Cdc.OutboxTable,
             MetadataKeys.Cdc.WebhookSecret,
+            // Temporal change history (model-level). Shared default history table for
+            // every history-enabled table that does not override it.
+            MetadataKeys.History.Table,
         };
 
         /// <summary>

@@ -817,5 +817,81 @@ namespace BifrostQL.Core.Model
                 "created_at", "dispatched_at", "attempts", "dead",
             };
         }
+
+        /// <summary>
+        /// Metadata keys for temporal change history — the before/after field-level
+        /// trail beyond the created/updated audit columns. A table opts in by naming
+        /// the operations it records; each recorded mutation writes one history row
+        /// (before-image, after-image, changed columns, actor, timestamp) atomically
+        /// with the change. Configured like the tenant-filter convention:
+        ///   "dbo.orders { history: insert,update,delete; history-table: dbo.orders_history; history-columns: status,total }"
+        ///   ":root { history-table: dbo.__history }"
+        /// This slice establishes the metadata contract, the history column contract
+        /// (<see cref="History.HistoryColumns"/>), and fail-fast validation; the
+        /// before-image capture + diff writer and the history read surface are later
+        /// History sub-tasks.
+        /// </summary>
+        public static class History
+        {
+            /// <summary>
+            /// Table-level comma-separated list of mutation operations recorded into
+            /// history. Tokens are the <c>MutationType</c> names — <c>insert</c>,
+            /// <c>update</c>, <c>delete</c> (case-insensitive) — or the single token
+            /// <see cref="AllOperations"/> meaning all three. Presence of this key is
+            /// what opts a table into history.
+            /// </summary>
+            public const string Enabled = "history";
+
+            /// <summary>
+            /// Qualified name of the table history rows are written to. Valid at BOTH
+            /// levels: model-level it is the shared default for every history-enabled
+            /// table (e.g. <c>dbo.__history</c>); table-level it overrides that default
+            /// with a per-table history table (e.g. <c>dbo.orders_history</c>). Either
+            /// way the target carries the same <see cref="HistoryColumns"/> contract —
+            /// per-table vs shared is a routing/partitioning choice, not a shape choice.
+            /// A history-enabled table with neither is rejected at model load.
+            /// </summary>
+            public const string Table = "history-table";
+
+            /// <summary>
+            /// Table-level comma-separated allow-list of columns whose changes are
+            /// recorded. Omitted means every column of the table is tracked. Narrowing
+            /// keeps noisy or sensitive columns out of the trail. Every named column
+            /// must exist on the table.
+            /// </summary>
+            public const string Columns = "history-columns";
+
+            /// <summary>
+            /// The <see cref="Enabled"/> token that expands to every operation. Spelled
+            /// <c>enabled</c> so the common "just record everything" case reads as a
+            /// plain opt-in switch rather than an operation list.
+            /// </summary>
+            public const string AllOperations = "enabled";
+
+            /// <summary>
+            /// The column contract every history table must expose (per-table or shared
+            /// alike). The diff writer (next History sub-task) writes these columns in
+            /// the same transaction as the data change; the history read surface reads
+            /// them back. ModelConfigValidator verifies the configured
+            /// <see cref="Table"/> carries every column so a misconfigured history table
+            /// fails at model load rather than aborting the first real write.
+            /// <list type="bullet">
+            ///   <item><c>id</c> — surrogate PK, monotonic (trail order).</item>
+            ///   <item><c>entity</c> — qualified source table (e.g. <c>dbo.orders</c>); constant on a per-table history table, discriminator on a shared one.</item>
+            ///   <item><c>entity_id</c> — JSON object of the row's primary-key columns (composite-PK safe).</item>
+            ///   <item><c>op</c> — <c>insert</c>/<c>update</c>/<c>delete</c>.</item>
+            ///   <item><c>actor</c> — user id from the audit user-context (nullable: unauthenticated/system writes).</item>
+            ///   <item><c>changed_at</c> — write timestamp.</item>
+            ///   <item><c>before</c> — JSON pre-image of the tracked columns (null on insert).</item>
+            ///   <item><c>after</c> — JSON post-image of the tracked columns (null on delete).</item>
+            ///   <item><c>changed_columns</c> — JSON array of the tracked columns that actually differed.</item>
+            /// </list>
+            /// </summary>
+            public static readonly IReadOnlyList<string> HistoryColumns = new[]
+            {
+                "id", "entity", "entity_id", "op", "actor",
+                "changed_at", "before", "after", "changed_columns",
+            };
+        }
     }
 }

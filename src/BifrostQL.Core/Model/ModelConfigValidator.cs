@@ -8,6 +8,7 @@ using BifrostQL.Core.Model.Relationships;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.Cdc;
 using BifrostQL.Core.Modules.ComputedColumns;
+using BifrostQL.Core.Modules.History;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Storage;
 
@@ -57,6 +58,7 @@ namespace BifrostQL.Core.Model
                 ValidateStateMachine(table, errors);
                 ValidatePolicy(table, errors);
                 ValidateCdcTokens(table, errors);
+                ValidateHistoryTokens(table, errors);
 
                 var tableRef = $"{table.TableSchema}.{table.DbName}";
                 ValidateMetadataKeyCasing(table.Metadata, MetadataValidator.KnownTableKeys, "table", tableRef, errors);
@@ -76,6 +78,7 @@ namespace BifrostQL.Core.Model
 
             ValidateEavConfigs(model, errors);
             ValidateCdcOutbox(model, errors);
+            ValidateHistoryTargets(model, errors);
 
             if (errors.Count > 0)
             {
@@ -485,7 +488,137 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
-        /// Resolves the <c>outbox-table</c> reference to a table. A schema-qualified
+        /// Fail-fast validation for a table's temporal-history opt-in (<c>history</c> /
+        /// <c>history-table</c> / <c>history-columns</c>). An unrecognized operation token
+        /// leaves the table with no trail; a <c>history-columns</c> entry naming a missing
+        /// column silently drops that column from the diff. Both holes are invisible until
+        /// someone needs the history that was never written. Reuses
+        /// <see cref="HistoryConfig.FromTable"/> so validation cannot drift from the
+        /// runtime parse.
+        /// </summary>
+        private static void ValidateHistoryTokens(IDbTable table, List<string> errors)
+        {
+            HistoryConfig config;
+            try
+            {
+                config = HistoryConfig.FromTable(table);
+            }
+            catch (Exception ex)
+            {
+                errors.Add(Problem(table, MetadataKeys.History.Enabled,
+                    table.GetMetadataValue(MetadataKeys.History.Enabled), ex.Message));
+                return;
+            }
+
+            if (!config.RecordsHistory)
+            {
+                // history-table / history-columns without 'history' record nothing: the
+                // author believes the table is tracked and it is not.
+                foreach (var key in new[] { MetadataKeys.History.Table, MetadataKeys.History.Columns })
+                {
+                    var value = table.GetMetadataValue(key);
+                    if (!string.IsNullOrWhiteSpace(value))
+                        errors.Add(Problem(table, key, value,
+                            $"set without '{MetadataKeys.History.Enabled}'; the table records no history, " +
+                            "so this key has no effect."));
+                }
+                return;
+            }
+
+            foreach (var column in config.TrackedColumns)
+            {
+                if (!DbColumnExists(table, column))
+                    errors.Add(Problem(table, MetadataKeys.History.Columns, column,
+                        "history-columns names a column that does not exist; its changes would never be recorded"));
+            }
+        }
+
+        /// <summary>
+        /// Fail-fast validation of the history-table contract. Every history-enabled table
+        /// must resolve to a history table — its own <c>history-table</c> override, else the
+        /// model-level default — that exists and carries the full
+        /// <see cref="MetadataKeys.History.HistoryColumns"/> contract. Per-table and shared
+        /// history tables share one shape, so one check covers both. Also rejects a table
+        /// pointed at itself and a history table that itself records history: either would
+        /// make the writer recurse into the trail it is writing.
+        /// </summary>
+        private static void ValidateHistoryTargets(IDbModel model, List<string> errors)
+        {
+            var configs = new List<(IDbTable Table, HistoryConfig Config)>();
+            foreach (var table in model.Tables)
+            {
+                HistoryConfig config;
+                try { config = HistoryConfig.FromTable(table); }
+                catch { continue; } // Token error already reported by ValidateHistoryTokens.
+
+                if (config.RecordsHistory)
+                    configs.Add((table, config));
+            }
+
+            if (configs.Count == 0)
+                return; // History not in use — a model-level history-table is simply unused.
+
+            var sharedDefault = model.GetMetadataValue(MetadataKeys.History.Table);
+
+            foreach (var (table, config) in configs)
+            {
+                var targetName = config.HistoryTableOverride ?? sharedDefault;
+                if (string.IsNullOrWhiteSpace(targetName))
+                {
+                    errors.Add(Problem(table, MetadataKeys.History.Enabled,
+                        table.GetMetadataValue(MetadataKeys.History.Enabled),
+                        $"records history but no '{MetadataKeys.History.Table}' is configured on the table " +
+                        "or on the model; history rows have nowhere to be written."));
+                    continue;
+                }
+
+                var target = FindTableByQualifiedName(model, targetName);
+                if (target == null)
+                {
+                    errors.Add(Problem(table, MetadataKeys.History.Table, targetName,
+                        "does not name an existing table; the history table must exist in the database " +
+                        "before changes can be recorded."));
+                    continue;
+                }
+
+                if (ReferenceEquals(target, table))
+                {
+                    errors.Add(Problem(table, MetadataKeys.History.Table, targetName,
+                        "names the tracked table itself; each recorded change would write a row into the " +
+                        "table being tracked."));
+                    continue;
+                }
+
+                if (HistoryRecords(target))
+                {
+                    errors.Add(Problem(table, MetadataKeys.History.Table, targetName,
+                        $"names a table that itself sets '{MetadataKeys.History.Enabled}'; a history table " +
+                        "cannot be tracked, or writing a history row would record a change of its own."));
+                    continue;
+                }
+
+                var missing = MetadataKeys.History.HistoryColumns
+                    .Where(c => !DbColumnExists(target, c))
+                    .ToArray();
+
+                if (missing.Length > 0)
+                {
+                    errors.Add(Problem(table, MetadataKeys.History.Table, targetName,
+                        $"history table is missing required column(s): {string.Join(", ", missing)}. " +
+                        $"The history contract is: {string.Join(", ", MetadataKeys.History.HistoryColumns)}."));
+                }
+            }
+        }
+
+        private static bool HistoryRecords(IDbTable table)
+        {
+            try { return HistoryConfig.FromTable(table).RecordsHistory; }
+            catch { return false; } // Token error already reported by ValidateHistoryTokens.
+        }
+
+        /// <summary>
+        /// Resolves a model- or table-level table reference (<c>outbox-table</c>,
+        /// <c>history-table</c>) to a table. A schema-qualified
         /// reference (<c>dbo.__outbox</c>) is matched on schema AND name — with NO
         /// name-only fallback: falling back would silently bind the outbox to a
         /// same-named table in a different schema, writing events to the wrong table

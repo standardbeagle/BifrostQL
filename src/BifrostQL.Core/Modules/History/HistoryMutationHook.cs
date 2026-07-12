@@ -106,17 +106,40 @@ namespace BifrostQL.Core.Modules.History
                     "could not be recorded.");
 
             var historyTable = ResolveHistoryTable(context.Model, context.Table, config);
-            var keyData = ResolveKeyData(context.Table, context.Data, context.Result, context.MutationType);
             var trackedColumns = TrackedColumns(context.Table, config);
 
-            var before = context.MutationType == MutationType.Insert
-                ? null
-                : RequireBeforeImage(context);
+            // The operation as RECORDED, which is not always the operation as declared: an
+            // upsert is driven through the pipeline as an update, and when it inserts a new
+            // row there was no before-image to capture. Nothing existed before and a row
+            // exists now — that is an insert, and recording it as an update with an empty
+            // before-image would misstate what happened.
+            var operation = context.MutationType;
+            IReadOnlyDictionary<string, object?>? before = null;
+            if (operation != MutationType.Insert)
+            {
+                var captured = RequireCapturedBeforeImage(context);
+                if (captured.Row is null)
+                {
+                    if (operation == MutationType.Delete)
+                        throw new BifrostExecutionError(
+                            $"The change-history writer found no row to capture before a delete of " +
+                            $"'{Qualify(context.Table)}' that then affected a row. Refusing to record a change " +
+                            "with an empty before-image.");
+
+                    operation = MutationType.Insert;
+                }
+                else
+                {
+                    before = captured.Row;
+                }
+            }
+
+            var keyData = ResolveKeyData(context.Table, context.Data, context.Result, operation);
 
             // Read the stored post-image so DB defaults / triggers are recorded as stored.
             // A DELETE has none. The row must exist: the write we just ran affected it.
             IReadOnlyDictionary<string, object?>? after = null;
-            if (context.MutationType != MutationType.Delete)
+            if (operation != MutationType.Delete)
             {
                 after = await MutationCommandExecutor.LoadRowByKey(
                     context.Connection, context.Transaction, context.Dialect, context.Table,
@@ -128,18 +151,18 @@ namespace BifrostQL.Core.Modules.History
                         $"'{Qualify(context.Table)}'; refusing to record a change whose result cannot be read.");
             }
 
-            var changedColumns = ChangedColumns(context.MutationType, trackedColumns, before, after);
+            var changedColumns = ChangedColumns(operation, trackedColumns, before, after);
 
             // An update that moved no TRACKED column is not a change this table records — the
             // point of history-columns is to keep that noise out of the trail.
-            if (context.MutationType == MutationType.Update && changedColumns.Count == 0)
+            if (operation == MutationType.Update && changedColumns.Count == 0)
                 return;
 
             var historyRow = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
                 ["entity"] = Qualify(context.Table),
                 ["entity_id"] = JsonSerializer.Serialize(keyData),
-                ["op"] = context.MutationType.ToString().ToLowerInvariant(),
+                ["op"] = operation.ToString().ToLowerInvariant(),
                 ["actor"] = AuditMutationTransformer.ResolveActor(context.Model, context.UserContext)?.ToString(),
                 ["changed_at"] = DateTime.UtcNow,
                 ["before"] = before is null ? null : JsonSerializer.Serialize(Project(before, trackedColumns)),
@@ -157,31 +180,22 @@ namespace BifrostQL.Core.Modules.History
         }
 
         /// <summary>
-        /// The before-image this mutation's pre-write phase captured. Its ABSENCE means the
-        /// write path never ran that phase — the batch and nested-TreeSync paths do not yet —
-        /// so recording would invent a before-image the writer never read. Fail closed: an
-        /// audit trail with a fabricated pre-image is worse than a rejected write.
+        /// The capture this mutation's pre-write phase left behind — which may legitimately
+        /// hold no row (an upsert that inserted). Its ABSENCE, on the other hand, means the
+        /// write path never ran that phase at all, so recording would invent a before-image
+        /// the writer never read. Fail closed: a trail with a fabricated pre-image is worse
+        /// than a rejected write.
         /// </summary>
-        private static IReadOnlyDictionary<string, object?> RequireBeforeImage(MutationObserverContext context)
+        private static BeforeImage RequireCapturedBeforeImage(MutationObserverContext context)
         {
             if (!context.MutationState.TryGetValue(BeforeImageKey, out var captured)
                 || captured is not BeforeImage image)
                 throw new BifrostExecutionError(
                     $"No before-image was captured for the {context.MutationType.ToString().ToLowerInvariant()} of " +
-                    $"'{Qualify(context.Table)}', which records change history. This write path does not run the " +
-                    "before-commit phase (batch and nested TreeSync writes); use a single-row mutation, or disable " +
-                    "history on the table. Refusing to record a change without the row it replaced.");
+                    $"'{Qualify(context.Table)}', which records change history. Refusing to record a change without " +
+                    "the row it replaced.");
 
-            // The write affected a row, so the row existed before it. A missing before-image
-            // here means the pre-write read and the write disagreed about which row they
-            // addressed — a bug, not a user error. Never paper over it with a null pre-image.
-            if (image.Row is null)
-                throw new BifrostExecutionError(
-                    $"The change-history writer found no row to capture before a " +
-                    $"{context.MutationType.ToString().ToLowerInvariant()} of '{Qualify(context.Table)}' that then " +
-                    "affected a row. Refusing to record a change with an empty before-image.");
-
-            return image.Row;
+            return image;
         }
 
         /// <summary>

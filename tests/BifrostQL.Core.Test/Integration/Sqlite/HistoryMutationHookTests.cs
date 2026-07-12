@@ -254,26 +254,78 @@ public sealed class HistoryMutationHookTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task BatchInsert_IsRecorded_ButBatchUpdate_IsRejected()
+    public async Task Batch_RecordsEveryAction_InsertAndUpdate()
     {
-        // The batch path runs no pre-write phase yet. An insert needs none, so it records
-        // normally. An update does, so it must FAIL rather than commit with no trail — and
-        // the whole batch rolls back with it.
-        var inserted = await ExecuteMutationAsync(
-            "mutation { orders_batch(actions: [ { insert: { status: \"batched\", total: 3 } } ]) }");
+        // The batch path runs both hook phases per action, so each row of a batch carries
+        // its own before-image and lands in the trail like a single-row write.
+        var result = await ExecuteMutationAsync(
+            "mutation { orders_batch(actions: [ { insert: { status: \"batched\", total: 3 } }, " +
+            "{ update: { id: 1, status: \"shipped\" } } ]) }");
 
-        inserted.Errors.Should().BeNullOrEmpty();
+        result.Errors.Should().BeNullOrEmpty();
+
         var rows = await HistoryRowsAsync();
-        rows.Should().ContainSingle();
+        rows.Should().HaveCount(2);
+
         rows[0].Op.Should().Be("insert");
+        rows[0].Before.Should().BeNull();
         Json(rows[0].EntityId)["id"].GetInt64().Should().BeGreaterThan(1, "the generated key names the row");
 
-        var updated = await ExecuteMutationAsync(
-            "mutation { orders_batch(actions: [ { update: { id: 1, status: \"shipped\" } } ]) }");
+        rows[1].Op.Should().Be("update");
+        Json(rows[1].EntityId)["id"].GetInt64().Should().Be(1);
+        Json(rows[1].Before)["status"].GetString().Should().Be("packing",
+            "each action's before-image is its own — the insert's must not leak into the update's");
+        Json(rows[1].After)["status"].GetString().Should().Be("shipped");
+        JsonArray(rows[1].ChangedColumns).Should().Equal("status");
+    }
 
-        updated.Errors.Should().NotBeNullOrEmpty("no before-image can be captured on the batch path");
-        (await CountAsync("orders", "id = 1 AND status = 'packing'")).Should().Be(1, "the batch rolled back");
-        (await HistoryRowsAsync()).Should().ContainSingle("still just the insert — no trail for the rejected update");
+    [Fact]
+    public async Task FailedBatchAction_RollsBackEveryHistoryRowInTheBatch()
+    {
+        // The first action commits its history row inside the transaction; the second is
+        // rejected by the CHECK constraint. Both the data and the whole trail roll back.
+        var result = await ExecuteMutationAsync(
+            "mutation { orders_batch(actions: [ { update: { id: 1, status: \"shipped\" } }, " +
+            "{ insert: { status: \"boom\", total: 1 } } ]) }");
+
+        result.Errors.Should().NotBeNullOrEmpty();
+        (await CountAsync("orders", "id = 1 AND status = 'packing'")).Should().Be(1, "the data rolled back");
+        (await HistoryRowsAsync()).Should().BeEmpty("no trail for a batch that never committed");
+    }
+
+    [Fact]
+    public async Task TreeSync_RecordsEveryOperationInTheTree()
+    {
+        // A nested sync writes the parent and its children in one transaction; each
+        // operation records its own history row on that same transaction.
+        await Exec("DROP TABLE IF EXISTS posts");
+        await Exec("DROP TABLE IF EXISTS blogs");
+        await Exec("CREATE TABLE blogs (id INTEGER PRIMARY KEY, name TEXT NULL)");
+        await Exec(
+            """
+            CREATE TABLE posts (
+                id INTEGER PRIMARY KEY,
+                blog_id INTEGER NOT NULL REFERENCES blogs(id),
+                title TEXT NULL
+            )
+            """);
+        var model = await LoadModelAsync(
+            "main.blogs { history: enabled }",
+            "main.posts { history: enabled }",
+            ":root { history-table: main.__history }");
+
+        var result = await ExecuteMutationAsync(
+            "mutation { blogs(sync: { name: \"B\", posts: [ { title: \"first\" } ] }) }", model);
+
+        result.Errors.Should().BeNullOrEmpty();
+
+        var rows = await HistoryRowsAsync();
+        rows.Should().HaveCount(2);
+        rows[0].Entity.Should().Be("main.blogs");
+        rows[0].Op.Should().Be("insert");
+        rows[1].Entity.Should().Be("main.posts");
+        // The child's recorded row must carry the parent key the sync generated for it.
+        Json(rows[1].After)["blog_id"].GetInt64().Should().Be(Json(rows[0].EntityId)["id"].GetInt64());
     }
 
     [Fact]

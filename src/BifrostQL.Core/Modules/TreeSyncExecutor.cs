@@ -124,6 +124,23 @@ public sealed class TreeSyncExecutor
                     additionalFilter = MutationCommandExecutor.RenderAdditionalFilter(result.AdditionalFilter, _dialect);
                 }
 
+                // One scratchpad per operation in the tree, shared by this operation's
+                // before-commit and after-write phases (never across operations).
+                var mutationState = new Dictionary<string, object?>(StringComparer.Ordinal);
+
+                // Before-commit hooks run immediately before this operation's write, on the
+                // SAME connection (whose transaction is managed with SQL BEGIN/COMMIT here,
+                // so no DbTransaction object exists to pass). A veto throws, and the catch
+                // below rolls the whole tree back — a nested sync is one transaction, so a
+                // rejected node cannot leave its siblings committed. Only when the
+                // transformer pipeline is active: a model is required to resolve what a hook
+                // writes into, and the raw-executor test path supplies none.
+                if (model != null)
+                    await MutationNotifier.RunBeforeCommitHooksAsync(
+                        services, op.Table, mutationType, data,
+                        userContext ?? new Dictionary<string, object?>(),
+                        conn, transaction: null, model, _dialect, mutationState);
+
                 object? opResult;
                 switch (mutationType)
                 {
@@ -146,17 +163,14 @@ public sealed class TreeSyncExecutor
                         break;
                 }
 
-                // Emit the CDC event on the SAME connection (its transaction is managed
-                // with SQL BEGIN/COMMIT here, so no DbTransaction object is passed). Only
-                // when the transformer pipeline is active — a model is required to resolve
-                // the outbox; the raw-executor test path supplies none and skips CDC.
+                // After the write, still inside the same SQL-level transaction: the CDC event
+                // and the history row are written here, paired with this operation's
+                // before-commit capture through mutationState.
                 if (model != null)
                     await MutationNotifier.RunInTransactionHooksAsync(
                         services, op.Table, mutationType, data, opResult,
                         userContext ?? new Dictionary<string, object?>(),
-                        conn, transaction: null, model, _dialect,
-                        // A fresh scratchpad per operation in the tree — see the batch path.
-                        new Dictionary<string, object?>(StringComparer.Ordinal));
+                        conn, transaction: null, model, _dialect, mutationState);
             }
 
             await ExecuteRawAsync(conn, _dialect.CommitTransactionSql);

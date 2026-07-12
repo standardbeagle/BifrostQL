@@ -42,7 +42,11 @@ namespace BifrostQL.Core.Resolvers
             IDictionary<string, object?> data,
             IDictionary<string, object?> userContext,
             DbConnection connection,
-            DbTransaction transaction,
+            // Null on the TreeSync path, which drives its transaction with SQL BEGIN/COMMIT
+            // on the connection rather than through a DbTransaction object; a hook's own
+            // command then runs on that same ambient transaction. The connection's presence
+            // — not the transaction object's — is what tells a hook it is in-transaction.
+            DbTransaction? transaction,
             IDbModel model,
             ISqlDialect dialect,
             IDictionary<string, object?> mutationState)

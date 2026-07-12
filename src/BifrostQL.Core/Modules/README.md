@@ -99,9 +99,10 @@ phase with an unsuppressed after-write phase means a history write with no
 before-image). A hook that must stand down inside a workflow can check
 `MutationNotifier.IsWorkflowTriggerSuppressed(context.UserContext)` itself.
 
-> Wired on the single-row resolver (`DbTableMutateResolver`). The batch resolver
-> (`DbTableBatchResolver`) and `TreeSyncExecutor` fire the after-write phase only;
-> the before-commit phase on those paths is a follow-up.
+> Wired on every write path: the single-row pipeline (`TableMutationPipeline`), each
+> action of `DbTableBatchResolver`, and each operation of `TreeSyncExecutor`. A batch and
+> a nested sync are each ONE transaction, so a veto there rolls back every sibling row —
+> a rejected row cannot leave the rest committed.
 
 ### Audit Columns (`AuditMutationTransformer`)
 

@@ -12,13 +12,10 @@ This is the trail LOB and admin apps need for dispute resolution, field-level ro
 and the "who set this to `cancelled` on Tuesday?" question.
 
 :::note
-The **metadata contract and the writer** are implemented. Inserts are recorded on every
-write path; **updates and deletes are recorded on single-row mutations only** — the batch
-and nested TreeSync paths do not yet run the pre-write phase a before-image needs, so an
-update or delete through them against a history-enabled table is **rejected** rather than
-committed with no trail (a later slice lifts this). The history **read surface**
-(`orders_history(...)`, as-of reads) is also a later slice; until then the trail is
-queried as an ordinary table.
+The **metadata contract and the writer** are implemented across **all** write paths —
+single-row, batch, and nested TreeSync mutations each record their change in the same
+transaction as the change itself. The history **read surface** (`orders_history(...)`,
+as-of reads) is a later slice; until then the trail is queried as an ordinary table.
 :::
 
 ## Metadata
@@ -180,9 +177,11 @@ Consequences worth knowing:
 - **The mutation must name its row.** A history-enabled table rejects an update or delete
   scoped only by a predicate (e.g. delete every `status: "archived"` row); such a write
   can match an unbounded set the writer cannot enumerate. Scope by primary key.
-- **Batch and nested TreeSync updates/deletes on a history-enabled table are rejected**
-  for now (see the note above) rather than committed without a trail. Inserts through
-  those paths are recorded normally — an insert has no before-image to miss.
+- **Batch and nested TreeSync writes each record their own row**, on the batch's or the
+  sync's single transaction: if any action in a batch is rejected, the whole batch — and
+  its whole trail — rolls back together.
+- An **upsert** that inserts a new row is recorded as an `insert`, not an update: nothing
+  existed before it, and an update with an empty before-image would misstate what happened.
 - A **workflow-triggered** write is recorded like any other: it is a real change, and the
   trail names its actor.
 - A **soft delete** is recorded as an `update` (that is what it is at the row level: the

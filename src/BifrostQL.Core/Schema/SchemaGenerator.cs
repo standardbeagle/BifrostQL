@@ -23,13 +23,24 @@ namespace BifrostQL.Core.Schema
                 .Where(p => !p.IsReadOnly)
                 .Select(p => new StoredProcedureSchemaGenerator(p)).ToList();
 
+            // History targets are system tables (epic decision D2): no root query
+            // field, no aggregate/pivot field, no mutation field. Their TYPE
+            // definitions (row type, paged type, filter input, sort enum) are still
+            // emitted below — the generated `<table>History` trail fields reference
+            // them — but the only reachable data path is those trail fields, which
+            // force the entity discriminator, tenant scope, and crypto projection.
+            var historyTargets = HistorySurface.ResolveTargets(model);
+
             builder.AppendLine("schema { query: database mutation: databaseInput }");
             builder.AppendLine("type database {");
             foreach (var generator in tableGenerators)
             {
-                builder.AppendLine(generator.GetTableFieldDefinition());
-                builder.AppendLine(generator.GetAggregateFieldDefinition());
-                builder.AppendLine(generator.GetPivotFieldDefinition());
+                if (!historyTargets.Contains(generator.Table))
+                {
+                    builder.AppendLine(generator.GetTableFieldDefinition());
+                    builder.AppendLine(generator.GetAggregateFieldDefinition());
+                    builder.AppendLine(generator.GetPivotFieldDefinition());
+                }
                 var historyField = generator.GetHistoryFieldDefinition(model);
                 if (historyField.Length > 0)
                     builder.AppendLine(historyField);
@@ -118,6 +129,7 @@ namespace BifrostQL.Core.Schema
         private static StringBuilder GetInputAndArgumentTypes(IDbModel model, List<TableSchemaGenerator> tableGenerators, List<StoredProcedureSchemaGenerator> mutatingSpGenerators)
         {
             var builder = new StringBuilder();
+            var historyTargets = HistorySurface.ResolveTargets(model);
 
             // Only generate databaseInput type if there are mutations
             if (tableGenerators.Count > 0 || mutatingSpGenerators.Count > 0)
@@ -125,6 +137,11 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine("type databaseInput {");
                 foreach (var generator in tableGenerators)
                 {
+                    // History targets take no client writes: the change-history
+                    // writer inserts trail rows via direct SQL inside the tracked
+                    // write's transaction, never through the mutation surface.
+                    if (historyTargets.Contains(generator.Table))
+                        continue;
                     builder.AppendLine(generator.GetInputFieldDefinition());
                 }
                 foreach (var generator in mutatingSpGenerators)
@@ -140,12 +157,18 @@ namespace BifrostQL.Core.Schema
 
             foreach (var generator in tableGenerators)
             {
-                builder.AppendLine(generator.GetMutationParameterType(MutateActions.Insert, IdentityType.None));
-                builder.AppendLine(generator.GetMutationParameterType(MutateActions.Update, IdentityType.Required));
-                builder.AppendLine(generator.GetMutationParameterType(MutateActions.Upsert, IdentityType.Optional));
-                builder.AppendLine(generator.GetMutationParameterType(MutateActions.Delete, IdentityType.Optional, true));
-                builder.AppendLine(generator.GetBatchMutationParameterType());
-                builder.AppendLine(generator.GetNestedSyncInputType());
+                // A history target has no mutation field, so its mutation input
+                // types would be unreferenced — skip them. Its filter/sort/enum
+                // types below stay: the `<table>History` trail field uses them.
+                if (!historyTargets.Contains(generator.Table))
+                {
+                    builder.AppendLine(generator.GetMutationParameterType(MutateActions.Insert, IdentityType.None));
+                    builder.AppendLine(generator.GetMutationParameterType(MutateActions.Update, IdentityType.Required));
+                    builder.AppendLine(generator.GetMutationParameterType(MutateActions.Upsert, IdentityType.Optional));
+                    builder.AppendLine(generator.GetMutationParameterType(MutateActions.Delete, IdentityType.Optional, true));
+                    builder.AppendLine(generator.GetBatchMutationParameterType());
+                    builder.AppendLine(generator.GetNestedSyncInputType());
+                }
 
                 builder.AppendLine(generator.GetTableFilterDefinition());
 

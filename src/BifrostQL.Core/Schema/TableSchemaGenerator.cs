@@ -27,6 +27,9 @@ namespace BifrostQL.Core.Schema
             _enumColumns = enumColumns;
         }
 
+        /// <summary>The table this generator emits — lets <see cref="SchemaGenerator"/> gate per-table emission (e.g. history targets).</summary>
+        internal IDbTable Table => _table;
+
         /// <summary>
         /// A column is emitted to the GraphQL surface unless its visibility
         /// metadata marks it hidden — mirroring the table-level hide rule
@@ -207,9 +210,15 @@ namespace BifrostQL.Core.Schema
         public string GetDynamicJoinDefinition(IDbModel model, bool single)
         {
             var builder = new StringBuilder();
+            var historyTargets = HistorySurface.ResolveTargets(model);
             builder.AppendLine($"type {_table.GraphQlName}_{(single ? "single" : "join")} {{");
             foreach (var joinTable in model.Tables)
             {
+                // History targets are system tables — never navigable, even via the
+                // dynamic `_join`/`_single` escape hatch (which would bypass the trail
+                // field's forced predicates entirely).
+                if (historyTargets.Contains(joinTable))
+                    continue;
                 //if (single)
                 //{
                 builder.AppendLine(

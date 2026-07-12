@@ -66,9 +66,27 @@ namespace BifrostQL.Core.Resolvers
                 MutationState = MutationObserverContext.NewMutationState(),
             };
 
+        /// <summary>
+        /// History targets take no client writes on ANY pipeline entry point —
+        /// GraphQL mutation, batch, or adapter mutation intent. Their only writer is
+        /// the change-history hook, which inserts trail rows via direct SQL inside
+        /// the tracked write's transaction and never routes through this pipeline,
+        /// so this guard cannot block a legitimate trail write. Without it an
+        /// adapter could forge or edit trail rows through IMutationIntentExecutor.
+        /// </summary>
+        private static void GuardNotHistoryTarget(IDbTable table, MutationPipelineContext ctx)
+        {
+            if (Schema.HistorySurface.IsHistoryTarget(ctx.Model, table))
+                throw new BifrostExecutionError(
+                    $"Table '{table.TableSchema}.{table.DbName}' is a change-history table and is not writable. " +
+                    "Trail rows are written only by the change-history writer, in the tracked write's transaction.")
+                { ErrorCode = BifrostExecutionError.AccessDeniedCode };
+        }
+
         public static async Task<object?> InsertAsync(
             IDbTable table, Dictionary<string, object?> data, MutationPipelineContext ctx)
         {
+            GuardNotHistoryTarget(table, ctx);
             var dialect = ctx.ConnFactory.Dialect;
 
             // Mutation transformers (e.g. the authorization policy engine) gate
@@ -117,6 +135,8 @@ namespace BifrostQL.Core.Resolvers
             (Dictionary<string, object?> data, Dictionary<string, object?> keyData, Dictionary<string, object?> standardData) propertyInfo,
             MutationPipelineContext ctx)
         {
+            GuardNotHistoryTarget(table, ctx);
+
             if (!propertyInfo.data.Any())
                 return 0;
 
@@ -211,6 +231,8 @@ namespace BifrostQL.Core.Resolvers
         public static async Task<object?> DeleteAsync(
             IDbTable table, Dictionary<string, object?> data, MutationPipelineContext ctx)
         {
+            GuardNotHistoryTarget(table, ctx);
+
             if (!data.Any())
                 return 0;
 

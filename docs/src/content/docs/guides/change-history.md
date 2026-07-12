@@ -9,10 +9,23 @@ transaction as the change, so the trail can never disagree with the data. See
 [Temporal Change History](/concepts/temporal-history) for the concept and the row shape;
 this guide is the configuration walkthrough.
 
+:::caution[Breaking change: history tables are no longer published]
+A table that is a history target (the model-level `history-table` default or any
+per-table override) is a **system table**: it has **no root query field, no mutation
+field, and no join/link navigation** in the generated schema, and the protocol-adapter
+intent executors reject it — reads *and* writes. If you previously queried a published
+history table directly, switch to the generated
+[`<table>History` trail read field](#6-reading-the-trail), which is the only API path
+to trail data and the reason for the change: direct access carried none of the trail's
+authorization (entity discriminator, tenant scope, encrypted-image masking).
+:::
+
 ## 1. Create the history table
 
 BifrostQL publishes an existing database, so you create the history table. It must carry
-the documented column contract (validated at model load). SQLite example:
+the documented column contract (validated at model load). Once named as a history
+target it becomes a **system table** — never published as an ordinary table, readable
+only through the generated trail fields. SQLite example:
 
 ```sql
 CREATE TABLE __history (
@@ -169,26 +182,23 @@ lift this later.
 `<table>History` field name, model load fails with an error naming both tables — rename
 one or disable history.
 
-:::note
-GraphQL reserves names beginning with `__`, so a table literally named `__history` cannot
-be exposed as a GraphQL field of its own. The generated `<table>History` field is named
-after the *tracked* table, so it works against any history table name — but if you also
-want to query the history table directly, name it without the double underscore
-(`dbo.order_history`). The DDL above uses `__history` for a trail you read from the
-database.
-:::
+**The history table itself is unpublished.** A history target is a **system table**: it
+has no root query field, no mutation field, and no join/link navigation, and the
+protocol-adapter intent executors (`IQueryIntentExecutor` / `IMutationIntentExecutor`)
+reject it with an access-denied error — reads *and* writes. Trail rows are written only
+by the change-history writer, inside the tracked write's transaction; the generated
+`<table>History` fields are the only API read path. The field is named after the
+*tracked* table, so any history table name works — including `__history`, whose `__`
+prefix could never be a GraphQL field of its own.
 
 :::caution
-The history table itself is still a **table like any other**, so it is also exposed and
-authorized like any other. It holds every recorded value of every tracked column, which
-makes it as sensitive as the most sensitive column it tracks. Protect it deliberately — a
-`policy-read-deny-roles` rule restricting it to a compliance role, or a per-table
-history table you grant separately. In particular, a `policy-read-deny` rule on the
-*tracked* table does not carry over to its trail: the `<table>History` field reads the
-history table under the history table's own policy. Do not leave the history table
-readable by everyone who can read the tracked table's *current* row: the trail also
-contains the rows they were never allowed to see, and every value that was since
-corrected.
+The trail's history table can still be read **at the database level** (reporting, SQL,
+backups), and it holds every recorded value of every tracked column — as sensitive as
+the most sensitive column it tracks. Grant direct SQL access to it as deliberately as
+you would a credentials table. Within the API, the `<table>History` field applies the
+tracked table's tenant scope, but a caller who can read a tracked table's *current* rows
+can also read that table's trail — including values that were since corrected. Narrow
+`history-columns` if some columns should never enter the trail at all.
 :::
 
 ## What gets recorded

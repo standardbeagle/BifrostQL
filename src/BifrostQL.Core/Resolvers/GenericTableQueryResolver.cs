@@ -102,14 +102,24 @@ namespace BifrostQL.Core.Resolvers
             if (!_config.IsTableAllowed(tableName))
                 throw new BifrostExecutionError($"Access to table '{tableName}' is not allowed.");
 
+            IDbTable table;
             try
             {
-                return _model.GetTableByFullGraphQlName(tableName);
+                table = _model.GetTableByFullGraphQlName(tableName);
             }
             catch (Exception ex) when (ex is ArgumentOutOfRangeException or KeyNotFoundException)
             {
                 throw new BifrostExecutionError($"Table '{tableName}' does not exist.");
             }
+
+            // History targets are system tables: the generic `_table` escape hatch
+            // may not read them either — it would bypass the trail field's forced
+            // entity/tenant predicates and crypto image projection. Same message as
+            // the allow-list denial, so the response does not leak the reason.
+            if (Schema.HistorySurface.IsHistoryTarget(_model, table))
+                throw new BifrostExecutionError($"Access to table '{tableName}' is not allowed.");
+
+            return table;
         }
 
         public static IReadOnlyList<GenericColumnMetadata> ExtractColumnMetadata(IDbTable table)

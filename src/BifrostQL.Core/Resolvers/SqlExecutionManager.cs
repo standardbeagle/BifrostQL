@@ -591,6 +591,17 @@ namespace BifrostQL.Core.Resolvers
                 throw new BifrostExecutionError(
                     "Query intent has no table: GqlObjectQuery.DbTable must be set.");
 
+            // History targets are system tables: an adapter intent may not read
+            // them directly — that would bypass the trail field's forced entity
+            // discriminator, tenant scope predicate, and crypto image projection.
+            // (Links cannot smuggle one in either: the model carries no
+            // relationship links touching a history target.)
+            if (Schema.HistorySurface.IsHistoryTarget(_dbModel, query.DbTable))
+                throw new BifrostExecutionError(
+                    $"Table '{query.DbTable.TableSchema}.{query.DbTable.DbName}' is a change-history table and is " +
+                    "not directly queryable. Read a table's trail through its generated '<table>History' field.")
+                { ErrorCode = BifrostExecutionError.AccessDeniedCode };
+
             // Grouped-aggregate SQL generation ignores joins entirely, so a
             // declared link on a grouped intent would be silently dropped —
             // fail fast instead of returning subtly unscoped-looking results.

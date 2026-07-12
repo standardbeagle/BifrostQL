@@ -113,17 +113,27 @@ namespace BifrostQL.Core.Resolvers
             var query = builder.Types.For(queryType);
             var mut = builder.Types.For(mutationType);
 
+            var historyTargets = Schema.HistorySurface.ResolveTargets(_model);
+
             foreach (var table in _model.Tables)
             {
-                query.FieldFor(table.GraphQlName).Resolver = this;
-                mut.FieldFor(table.GraphQlName).Resolver = this;
-                mut.FieldFor($"{table.GraphQlName}_batch").Resolver = this;
+                // History targets are system tables: SchemaGenerator emits no root
+                // query/mutation/aggregate/pivot field for them, so there is nothing
+                // to wire. Their TYPE fields (columns, _agg) below ARE wired — the
+                // `<table>History` trail fields resolve rows of that type.
+                if (!historyTargets.Contains(table))
+                {
+                    query.FieldFor(table.GraphQlName).Resolver = this;
+                    mut.FieldFor(table.GraphQlName).Resolver = this;
+                    mut.FieldFor($"{table.GraphQlName}_batch").Resolver = this;
+
+                    WireAggregateResolvers(builder, table);
+                    WirePivotResolver(builder, table);
+                }
 
                 var tableType = builder.Types.For(table.GraphQlName);
                 tableType.FieldFor("_agg").Resolver = this;
 
-                WireAggregateResolvers(builder, table);
-                WirePivotResolver(builder, table);
                 WireHistoryResolver(builder, table);
 
                 foreach (var column in table.Columns)
@@ -278,8 +288,13 @@ namespace BifrostQL.Core.Resolvers
             const string queryType = "database";
             const string mutationType = "databaseInput";
 
+            var historyTargets = Schema.HistorySurface.ResolveTargets(model);
             foreach (var table in model.Tables)
             {
+                // No root fields exist for history targets (system tables), so no
+                // root resolvers either — mirroring SchemaGenerator/WireResolvers.
+                if (historyTargets.Contains(table))
+                    continue;
                 map[(queryType, table.GraphQlName)] = new DbTableResolver(table);
                 map[(mutationType, table.GraphQlName)] = new DbTableMutateResolver(table);
                 map[(mutationType, $"{table.GraphQlName}_batch")] = new DbTableBatchResolver(table);

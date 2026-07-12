@@ -4,6 +4,7 @@ using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.Crypto;
 using BifrostQL.Core.Modules.History;
+using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
 using BifrostQL.Model;
@@ -183,6 +184,117 @@ public sealed class HistoryTrailReadTests : IAsyncLifetime
         var disabled = await ExecuteQueryAsync("query { widgetsHistory { total } }", model);
         disabled.Errors.Should().NotBeNullOrEmpty("widgets records no history, so no trail read field is generated");
         disabled.Errors!.Single().Message.Should().Contain("widgetsHistory");
+    }
+
+    [Fact]
+    public async Task RawHistoryTable_HasNoRootQueryField_SharedAndDedicatedTargets()
+    {
+        // Epic decision D2: a history target is a system table. The only data path
+        // is the generated `<table>History` field with its forced predicates.
+        var model = await LoadModelAsync(
+            "main.orders { history: enabled }",
+            "main.tenant_docs { history: enabled; tenant-filter: tenant_id; history-table: main.scoped_history }",
+            ":root { history-table: main.audit_trail }");
+
+        foreach (var field in new[] { "audit_trail", "scoped_history" })
+        {
+            var result = await ExecuteQueryAsync($"query {{ {field} {{ total }} }}", model);
+            result.Errors.Should().NotBeNullOrEmpty($"the history target '{field}' must not be a root query field");
+            result.Errors!.Single().Message.Should().Contain($"Cannot query field '{field}'");
+        }
+    }
+
+    [Fact]
+    public async Task RawHistoryTable_HasNoMutationField()
+    {
+        var model = await LoadModelAsync(
+            "main.orders { history: enabled }",
+            ":root { history-table: main.audit_trail }");
+
+        foreach (var field in new[] { "audit_trail", "audit_trail_batch" })
+        {
+            var result = await ExecuteMutationAsync(
+                $"mutation {{ {field}(delete: {{ id: 1 }}) }}", model);
+            result.Errors.Should().NotBeNullOrEmpty($"the history target must not expose mutation field '{field}'");
+            result.Errors!.Single().Message.Should().Contain($"Cannot query field '{field}'");
+        }
+    }
+
+    [Fact]
+    public async Task QueryIntent_TargetingAHistoryTable_IsRejectedFailClosed()
+    {
+        // The adapter read seam must not bypass the trail field's forced
+        // entity/tenant predicates and crypto projection.
+        var model = await LoadModelAsync(
+            "main.orders { history: enabled }",
+            ":root { history-table: main.audit_trail }");
+        var manager = new SqlExecutionManager(model, DbSchema.FromModel(model));
+        var target = model.GetTableFromDbName("audit_trail");
+
+        var intent = new GqlObjectQuery
+        {
+            DbTable = target,
+            TableName = target.DbName,
+            SchemaName = target.TableSchema,
+            GraphQlName = target.GraphQlName,
+            ScalarColumns = { new GqlObjectColumn("id") },
+        };
+
+        var act = async () => await manager.ExecuteIntentAsync(
+            intent, new Dictionary<string, object?>(), new SqliteDbConnFactory(ConnString));
+
+        (await act.Should().ThrowAsync<BifrostExecutionError>())
+            .Which.Message.Should().Contain("change-history table").And.Contain("History");
+    }
+
+    [Fact]
+    public async Task MutationIntent_TargetingAHistoryTable_IsRejectedFailClosed()
+    {
+        // The trail writer inserts via direct SQL inside the tracked write's
+        // transaction, never through the mutation pipeline — so the pipeline can
+        // reject every client write against a history target: an adapter must not
+        // be able to forge or edit trail rows.
+        var pathCache = new PathCache<Inputs>();
+        pathCache.AddLoader("/graphql", async () =>
+        {
+            var factory = new SqliteDbConnFactory(ConnString);
+            var model = await new DbModelLoader(factory, new MetadataLoader(new[]
+            {
+                "main.orders { history: enabled }",
+                ":root { history-table: main.audit_trail }",
+            })).LoadAsync();
+            return new Inputs(new Dictionary<string, object?>
+            {
+                ["model"] = model,
+                ["connFactory"] = factory,
+            });
+        });
+        var executor = new MutationIntentExecutor(
+            pathCache, new MutationTransformersWrap { Transformers = Array.Empty<IMutationTransformer>() });
+
+        var act = async () => await executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "audit_trail",
+            Action = MutationIntentAction.Insert,
+            Data = new Dictionary<string, object?>
+            {
+                ["entity"] = "main.orders",
+                ["entity_id"] = "{\"id\":1}",
+                ["op"] = "update",
+                ["changed_at"] = "2026-01-01",
+                ["changed_columns"] = "[]",
+            },
+        });
+
+        (await act.Should().ThrowAsync<BifrostExecutionError>())
+            .Which.Message.Should().Contain("change-history table").And.Contain("not writable");
+        (await RowCountAsync("audit_trail")).Should().Be(0, "no forged trail row may land");
+    }
+
+    private async Task<long> RowCountAsync(string table)
+    {
+        await using var cmd = new SqliteCommand($"SELECT COUNT(*) FROM {table}", _keepAlive);
+        return Convert.ToInt64(await cmd.ExecuteScalarAsync());
     }
 
     [Fact]

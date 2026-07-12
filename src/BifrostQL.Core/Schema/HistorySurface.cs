@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules.History;
 
@@ -46,6 +47,39 @@ namespace BifrostQL.Core.Schema
                 return null; // No target configured — ModelConfigValidator reports it.
 
             return ModelTableReference.Find(model, targetName);
+        }
+
+        // The resolved history targets per model, cached because every intent-executor
+        // request and every mutation pipeline entry asks, and the model (with its
+        // metadata) is immutable after load. Keyed by model identity, so a reloaded
+        // model computes fresh and the old entry falls away with the old model.
+        private static readonly ConditionalWeakTable<IDbModel, IReadOnlySet<IDbTable>> TargetsByModel = new();
+
+        /// <summary>
+        /// Every table that is some history-enabled table's resolved history target —
+        /// the model-level <c>history-table</c> default and all per-table overrides.
+        /// These are system tables (epic decision D2): they are never published as
+        /// ordinary root query fields, mutation fields, or join/link targets, and the
+        /// intent executors reject them. Trail data is reachable ONLY through the
+        /// generated <c>&lt;table&gt;History</c> fields, which force the entity
+        /// discriminator, the tenant scope predicate, and the crypto image projection.
+        /// </summary>
+        public static IReadOnlySet<IDbTable> ResolveTargets(IDbModel model) =>
+            TargetsByModel.GetValue(model, ComputeTargets);
+
+        /// <summary>Whether <paramref name="table"/> is a resolved history target of <paramref name="model"/>.</summary>
+        public static bool IsHistoryTarget(IDbModel model, IDbTable table) =>
+            ResolveTargets(model).Contains(table);
+
+        private static IReadOnlySet<IDbTable> ComputeTargets(IDbModel model)
+        {
+            var targets = new HashSet<IDbTable>(); // reference identity — model tables are singletons per model
+            foreach (var table in model.Tables)
+            {
+                if (ResolveReadTarget(model, table) is { } target)
+                    targets.Add(target);
+            }
+            return targets;
         }
     }
 }

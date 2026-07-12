@@ -96,10 +96,16 @@ namespace BifrostQL.Core.Schema
                 .Select(t => new TableSchemaGenerator(t))
                 .ToList();
 
+            // History targets are system tables — no root query or mutation field
+            // on the multi-db surface either, mirroring SchemaGenerator.
+            var historyTargets = HistorySurface.ResolveTargets(model);
+
             // Database query type with table fields
             builder.AppendLine($"type {GetDbQueryTypeName(alias)} {{");
             foreach (var generator in tableGenerators)
             {
+                if (historyTargets.Contains(generator.Table))
+                    continue;
                 builder.AppendLine(generator.GetTableFieldDefinition());
             }
             builder.AppendLine("}");
@@ -108,6 +114,8 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine($"type {GetDbMutationTypeName(alias)} {{");
             foreach (var generator in tableGenerators)
             {
+                if (historyTargets.Contains(generator.Table))
+                    continue;
                 builder.AppendLine(generator.GetInputFieldDefinition());
             }
             builder.AppendLine("}");

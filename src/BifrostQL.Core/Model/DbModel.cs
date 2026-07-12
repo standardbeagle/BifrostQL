@@ -317,7 +317,57 @@ namespace BifrostQL.Core.Model
             model.EavConfigs = CollectEavConfigs(model.Tables);
 
             model.LinkTables(allForeignKeys, prefixGroups);
+            UnlinkHistoryTargets(model);
             return model;
+        }
+
+        /// <summary>
+        /// Removes every relationship link that touches a resolved history target.
+        /// History targets are system tables (epic decision D2): trail data is
+        /// reachable ONLY through the generated <c>&lt;table&gt;History</c> fields,
+        /// which force the entity discriminator, tenant scope, and crypto image
+        /// projection — so no navigable link (schema join field, filter
+        /// relationship, nested sync collection, aggregate hop) may reach a target.
+        /// Stripping the links here, at the single place links are built, means
+        /// schema emission, resolver wiring, and query construction all simply
+        /// never see them instead of each re-implementing the exclusion. The
+        /// tables themselves stay in the model: the change-history writer and the
+        /// trail read field still resolve them by name.
+        /// </summary>
+        private static void UnlinkHistoryTargets(DbModel model)
+        {
+            var targets = Core.Schema.HistorySurface.ResolveTargets(model);
+            if (targets.Count == 0)
+                return;
+
+            foreach (var table in model.Tables)
+            {
+                if (targets.Contains(table))
+                {
+                    table.SingleLinks.Clear();
+                    table.MultiLinks.Clear();
+                    table.ManyToManyLinks.Clear();
+                    continue;
+                }
+
+                RemoveWhere(table.SingleLinks, link => targets.Contains(link.ParentTable) || targets.Contains(link.ChildTable));
+                RemoveWhere(table.MultiLinks, link => targets.Contains(link.ParentTable) || targets.Contains(link.ChildTable));
+
+                foreach (var key in table.ManyToManyLinks
+                             .Where(kv => targets.Contains(kv.Value.SourceTable)
+                                          || targets.Contains(kv.Value.JunctionTable)
+                                          || targets.Contains(kv.Value.TargetTable))
+                             .Select(kv => kv.Key).ToList())
+                {
+                    table.ManyToManyLinks.Remove(key);
+                }
+            }
+        }
+
+        private static void RemoveWhere(IDictionary<string, TableLinkDto> links, Func<TableLinkDto, bool> predicate)
+        {
+            foreach (var key in links.Where(kv => predicate(kv.Value)).Select(kv => kv.Key).ToList())
+                links.Remove(key);
         }
 
         /// <summary>

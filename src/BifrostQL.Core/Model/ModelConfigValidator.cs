@@ -856,18 +856,43 @@ namespace BifrostQL.Core.Model
             if (pks.Length != 1)
                 return; // Missing/composite PK already reported by ValidateChatConversations.
 
-            var referencesPk = messages.SingleLinks.Values.Any(link =>
-                string.Equals(link.ChildId.ColumnName, fk, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(link.ParentTable.TableSchema, conversations.TableSchema, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(link.ParentTable.DbName, conversations.DbName, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(link.ParentId.ColumnName, pks[0].ColumnName, StringComparison.OrdinalIgnoreCase));
+            var linksToConversations = messages.SingleLinks.Values
+                .Where(link =>
+                    string.Equals(link.ParentTable.TableSchema, conversations.TableSchema, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(link.ParentTable.DbName, conversations.DbName, StringComparison.OrdinalIgnoreCase)
+                    && link.ChildIds.Any(c => string.Equals(c.ColumnName, fk, StringComparison.OrdinalIgnoreCase)))
+                .ToArray();
 
-            if (!referencesPk)
+            var referencesPk = linksToConversations.Any(link =>
+                !link.IsComposite
+                && string.Equals(link.ChildId.ColumnName, fk, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(link.ParentId.ColumnName, pks[0].ColumnName, StringComparison.OrdinalIgnoreCase));
+            if (referencesPk)
+                return;
+
+            // A composite FK exposes the chat column only as one component of a
+            // multi-column key. The chat surface joins messages to conversations on the
+            // single chat-conversation-fk column; joining on part of a composite key
+            // would silently mix conversations across the remaining key columns'
+            // values — reject it by name rather than fall through to the generic error.
+            var composite = linksToConversations.FirstOrDefault(link => link.IsComposite);
+            if (composite != null)
+            {
                 errors.Add(Problem(messages, MetadataKeys.Chat.ConversationFk, fk,
-                    $"column '{fk}' does not reference the conversations table " +
-                    $"'{conversations.TableSchema}.{conversations.DbName}' primary key '{pks[0].ColumnName}'. " +
-                    "Declare a foreign key (or an explicit 'join' metadata rule) from the messages table " +
-                    "to the conversations table's primary key."));
+                    $"column '{fk}' reaches the conversations table '{conversations.TableSchema}.{conversations.DbName}' " +
+                    $"only through the composite foreign key '{composite.Name}' " +
+                    $"({string.Join(", ", composite.ChildIds.Select(c => c.ColumnName))}). The chat surface joins on this " +
+                    "single column, and joining on part of a composite key would mix conversations across the remaining " +
+                    $"key columns; '{MetadataKeys.Chat.ConversationFk}' requires a single-column foreign key to the " +
+                    "conversations table's primary key."));
+                return;
+            }
+
+            errors.Add(Problem(messages, MetadataKeys.Chat.ConversationFk, fk,
+                $"column '{fk}' does not reference the conversations table " +
+                $"'{conversations.TableSchema}.{conversations.DbName}' primary key '{pks[0].ColumnName}'. " +
+                "Declare a foreign key (or an explicit 'join' metadata rule) from the messages table " +
+                "to the conversations table's primary key."));
         }
 
         // Picks the chat metadata key actually present on the table so a parse failure

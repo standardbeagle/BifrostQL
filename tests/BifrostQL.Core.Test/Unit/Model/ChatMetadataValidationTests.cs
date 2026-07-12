@@ -289,6 +289,41 @@ public class ChatMetadataValidationTests
     }
 
     [Fact]
+    public void Validate_ConversationFkOnlyReachableThroughCompositeLink_Throws()
+    {
+        // Arrange: the FK column reaches the conversations table only as the first
+        // component of a COMPOSITE foreign key (ConversationId, TenantId) — the shape
+        // relationship detection produces for a multi-column FK. Accepting it would let
+        // the chat surface join on half a key, mixing conversations across the other
+        // key column's values; the validator must name the composite link explicitly.
+        var model = ValidChatFixture(
+                conversations: t => t.WithColumn("TenantId", "int"),
+                messages: t => t.WithColumn("TenantId", "int"),
+                linkFkToConversationPk: false)
+            .Build();
+
+        var messages = model.GetTableFromDbName("messages");
+        var conversations = model.GetTableFromDbName("conversations");
+        messages.SingleLinks["conversation"] = new TableLinkDto
+        {
+            Name = "messages->conversations",
+            ChildTable = messages,
+            ParentTable = conversations,
+            ChildId = messages.ColumnLookup["ConversationId"],
+            ParentId = conversations.ColumnLookup["Id"],
+            ChildIds = new[] { messages.ColumnLookup["ConversationId"], messages.ColumnLookup["TenantId"] },
+            ParentIds = new[] { conversations.ColumnLookup["Id"], conversations.ColumnLookup["TenantId"] },
+        };
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.messages")
+            .And.Contain(MetadataKeys.Chat.ConversationFk)
+            .And.Contain("composite");
+    }
+
+    [Fact]
     public void Validate_HiddenChatTable_Throws()
     {
         // Arrange: a hidden table is not published into the GraphQL schema, so the

@@ -194,6 +194,17 @@ namespace BifrostQL.Core.Modules.History
                 // id is an identity column, so it is omitted from the INSERT column list.
             };
 
+            // A tenant-filtered table materializes its tenant scope value into the trail
+            // row's own column (validated to exist at model load), because history reads
+            // are authorized by plain column predicates against the trail itself. The
+            // value is the row's stored scope: the after-image on insert/update, the
+            // before-image on delete — copied even when history-columns narrows the
+            // tenant column out of the recorded images.
+            var scopeColumn = HistoryConfig.ResolveTenantScopeColumn(context.Table);
+            if (scopeColumn is not null)
+                historyRow[scopeColumn] = Lookup(
+                    (operation == MutationType.Delete ? before : after)!, scopeColumn);
+
             var tableRef = context.Dialect.TableReference(historyTable.TableSchema, historyTable.DbName);
             var sql = MutationCommandExecutor.BuildInsertInto(
                 context.Dialect, historyTable, tableRef, historyRow.Keys) + ";";
@@ -241,8 +252,10 @@ namespace BifrostQL.Core.Modules.History
                 ? table.Columns.Select(c => c.ColumnName).ToList()
                 : config.TrackedColumns;
 
-        // Read the tracked columns plus the key, so the images carry the row's identity even
-        // when history-columns narrows away the key column.
+        // Read the tracked columns plus the key — so the images carry the row's identity
+        // even when history-columns narrows away the key column — plus the tenant scope
+        // column, so the trail row can materialize the row's tenant value even when
+        // history-columns narrows the tenant column out of the images.
         private static IReadOnlyCollection<string> ReadColumns(IDbTable table, HistoryConfig config)
         {
             var columns = new List<string>(TrackedColumns(table, config));
@@ -252,6 +265,11 @@ namespace BifrostQL.Core.Modules.History
                 if (seen.Add(key))
                     columns.Add(key);
             }
+
+            var scopeColumn = HistoryConfig.ResolveTenantScopeColumn(table);
+            if (scopeColumn is not null && seen.Add(scopeColumn))
+                columns.Add(scopeColumn);
+
             return columns;
         }
 

@@ -35,10 +35,12 @@ public sealed class HistoryTrailShapeTests : IAsyncLifetime
         _keepAlive = new SqliteConnection(ConnString);
         await _keepAlive.OpenAsync();
 
-        foreach (var drop in new[] { "orders", "line_items", "secrets", "attachments", "__history", "orders_history" })
+        foreach (var drop in new[] { "orders", "line_items", "secrets", "attachments", "tenant_docs", "__history", "orders_history", "scoped_history" })
             await Exec($"DROP TABLE IF EXISTS {drop}");
 
         await Exec("CREATE TABLE orders (id INTEGER PRIMARY KEY, status TEXT NULL, deleted_at TEXT NULL)");
+        // A tenant-filtered table: its trail rows must materialize tenant_id.
+        await Exec("CREATE TABLE tenant_docs (id INTEGER PRIMARY KEY, body TEXT NULL, tenant_id INTEGER NULL)");
         // A binary column: byte[] images come back as fresh array instances on every
         // read, so change detection must compare contents, not references.
         await Exec("CREATE TABLE attachments (id INTEGER PRIMARY KEY, payload BLOB NULL, note TEXT NULL)");
@@ -55,13 +57,16 @@ public sealed class HistoryTrailShapeTests : IAsyncLifetime
         await Exec("CREATE TABLE secrets (id INTEGER PRIMARY KEY, ssn TEXT NULL)");
         await Exec(HistoryDdl("__history"));
         await Exec(HistoryDdl("orders_history"));
+        // The history-table contract plus the tenant scope column (nullable: it also
+        // serves tables without tenant metadata).
+        await Exec(HistoryDdl("scoped_history", extraColumns: ",\n    tenant_id INTEGER NULL"));
 
         await Exec("INSERT INTO orders(id, status) VALUES (1, 'packing')");
         await Exec("INSERT INTO line_items(order_id, line_no, qty) VALUES (7, 2, 5)");
         await Exec("INSERT INTO attachments(id, payload, note) VALUES (1, X'DEADBEEF', 'v1')");
     }
 
-    private static string HistoryDdl(string table) =>
+    private static string HistoryDdl(string table, string extraColumns = "") =>
         $"""
         CREATE TABLE {table} (
             id              INTEGER PRIMARY KEY,
@@ -72,7 +77,7 @@ public sealed class HistoryTrailShapeTests : IAsyncLifetime
             changed_at      TEXT NOT NULL,
             before          TEXT NULL,
             after           TEXT NULL,
-            changed_columns TEXT NULL
+            changed_columns TEXT NULL{extraColumns}
         )
         """;
 
@@ -497,6 +502,64 @@ public sealed class HistoryTrailShapeTests : IAsyncLifetime
         await hook.AfterWriteInTransactionAsync(Context(result: affected));
         await transaction.CommitAsync();
         return errors;
+    }
+
+    private async Task<List<(string Op, long? TenantId)>> ScopedHistoryRowsAsync()
+    {
+        var rows = new List<(string, long?)>();
+        await using var cmd = new SqliteCommand(
+            "SELECT op, tenant_id FROM scoped_history ORDER BY id", _keepAlive);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            rows.Add((reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetInt64(1)));
+        return rows;
+    }
+
+    [Fact]
+    public async Task TenantFilteredTable_TrailRowsCarryTheTenantValue_OnInsertUpdateAndDelete()
+    {
+        // History reads are authorized by plain column predicates, so every trail row of
+        // a tenant-filtered table must physically carry the tracked row's tenant value:
+        // the after-image value on insert/update, the before-image value on delete. The
+        // copy is independent of history-columns — body is the only tracked column here,
+        // yet the scope still lands in the trail's own tenant_id column.
+        var model = await LoadModelAsync(
+            "main.tenant_docs { history: enabled; history-columns: body; tenant-filter: tenant_id; history-table: main.scoped_history }");
+
+        foreach (var mutation in new[]
+        {
+            "mutation { tenant_docs(insert: { body: \"draft\", tenant_id: 42 }) }",
+            "mutation { tenant_docs(update: { id: 1, body: \"final\" }) }",
+            "mutation { tenant_docs(delete: { id: 1 }) }",
+        })
+        {
+            var result = await ExecuteMutationAsync(mutation, model);
+            result.Errors.Should().BeNullOrEmpty();
+        }
+
+        var rows = await ScopedHistoryRowsAsync();
+        rows.Should().Equal(("insert", 42L), ("update", 42L), ("delete", 42L));
+
+        // The scope is the physical column, not part of the (narrowed) JSON images.
+        var images = await HistoryRowsAsync("scoped_history");
+        Json(images[0].After).Keys.Should().BeEquivalentTo(new[] { "body" },
+            "history-columns narrows the images; the tenant scope travels in its own column");
+    }
+
+    [Fact]
+    public async Task NonTenantTable_OnAScopeCapableHistoryTable_LeavesTheScopeColumnNull()
+    {
+        // A tracked table WITHOUT tenant metadata copies nothing: the shared target's
+        // scope column stays NULL and the trail shape is otherwise unchanged.
+        var model = await LoadModelAsync(
+            "main.orders { history: enabled; history-table: main.scoped_history }");
+
+        var result = await ExecuteMutationAsync(
+            "mutation { orders(update: { id: 1, status: \"shipped\" }) }", model);
+
+        result.Errors.Should().BeNullOrEmpty();
+        var rows = await ScopedHistoryRowsAsync();
+        rows.Should().Equal(("update", (long?)null));
     }
 
     [Fact]

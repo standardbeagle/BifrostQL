@@ -60,7 +60,45 @@ Model load now fails fast if the history table is missing a contract column, if
 `history-columns` names a column that does not exist, or if the history table is itself
 tracked. A misconfiguration surfaces at startup, not on the first write.
 
-## 4. Attribute the actor
+## 4. Tenant-scoped tables: add the scope column
+
+If a tracked table is tenant-isolated (`tenant-filter`), its history table must also carry
+a column **with the same name** as the tracked table's tenant column — model load fails
+fast if it is missing:
+
+```sql
+ALTER TABLE __history ADD tenant_id INT NULL;
+```
+
+Every trail row then materializes the tracked row's tenant value into that column — the
+after-image value on an insert or update, the before-image value on a delete — in the same
+transaction as the change. That is what lets history reads be authorized with plain column
+predicates (the same `tenant-filter` mechanics as any other table) instead of parsing the
+JSON images. The copy happens even when `history-columns` excludes the tenant column from
+the recorded images.
+
+A **shared** history table serving tracked tables with *different* tenant column names
+must carry every one of those columns (nullable — each row fills only its own table's
+column). If that gets unwieldy, give each table its own `history-table` override instead.
+
+:::caution[Backfill before you rely on scoped reads]
+Trail rows written **before** you add the column predate it and hold `NULL` scope. Once
+the history read surface lands, `NULL`-scope rows are **invisible to scoped readers by
+design** — the trail fails closed rather than leaking rows whose tenant is unknown.
+Backfill the column from the tracked table (or the recorded images) if the older trail
+must remain visible to tenant-scoped readers:
+
+```sql
+UPDATE __history
+SET tenant_id = json_extract(COALESCE(after, before), '$.tenant_id')
+WHERE entity = 'dbo.orders' AND tenant_id IS NULL;
+```
+
+Only backfill from the images if the tenant column was tracked at the time; otherwise
+join back to the tracked table by `entity_id`.
+:::
+
+## 5. Attribute the actor
 
 The trail's `actor` is the user-context claim named by the model-level `user-audit-key` —
 the same claim that stamps `updated_by`, so a row and its trail can never disagree about
@@ -72,7 +110,7 @@ their author:
 
 Without it, `actor` is null. It is never taken from client input.
 
-## 5. Read the trail
+## 6. Read the trail
 
 There is no generated history field yet — `orders_history(...)` and as-of reads are a
 planned slice. Until then the trail is read as an ordinary table: from the database

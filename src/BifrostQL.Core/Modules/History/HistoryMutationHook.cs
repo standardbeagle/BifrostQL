@@ -49,7 +49,7 @@ namespace BifrostQL.Core.Modules.History
         public async ValueTask<IReadOnlyList<string>> BeforeCommitAsync(MutationObserverContext context)
         {
             var config = HistoryConfig.FromTable(context.Table);
-            if (!config.RecordsHistory || !config.Records(context.MutationType))
+            if (!config.RecordsHistory || !MayRecord(config, context.MutationType))
                 return Array.Empty<string>();
 
             if (context.MutationType == MutationType.Insert)
@@ -66,6 +66,14 @@ namespace BifrostQL.Core.Modules.History
             // mutation with a clear message rather than commit a change with no history.
             var keyData = TryBuildKeyData(context.Table, context.Data);
             if (keyData is null)
+            {
+                // The upsert path always carries the full primary key, so a keyless write
+                // is a plain predicate-scoped update/delete. When that operation itself is
+                // not recorded (the table is only here for a possible upsert insert-flip),
+                // there is nothing to capture — and nothing to veto.
+                if (!config.Records(context.MutationType))
+                    return Array.Empty<string>();
+
                 return new[]
                 {
                     $"Table '{Qualify(context.Table)}' records change history, so a " +
@@ -73,6 +81,7 @@ namespace BifrostQL.Core.Modules.History
                     $"({string.Join(", ", context.Table.KeyColumns.Select(k => k.ColumnName))}); the row's " +
                     "before-image cannot otherwise be captured.",
                 };
+            }
 
             var row = await MutationCommandExecutor.LoadRowByKey(
                 context.Connection, context.Transaction, context.Dialect, context.Table,
@@ -90,7 +99,7 @@ namespace BifrostQL.Core.Modules.History
         public async ValueTask AfterWriteInTransactionAsync(MutationObserverContext context)
         {
             var config = HistoryConfig.FromTable(context.Table);
-            if (!config.RecordsHistory || !config.Records(context.MutationType))
+            if (!config.RecordsHistory || !MayRecord(config, context.MutationType))
                 return;
 
             // An UPDATE/DELETE that affected zero rows changed nothing — an out-of-scope
@@ -117,6 +126,14 @@ namespace BifrostQL.Core.Modules.History
             IReadOnlyDictionary<string, object?>? before = null;
             if (operation != MutationType.Insert)
             {
+                // A keyless plain update on a table that records only inserts skipped
+                // capture in the pre-write phase — a keyless write can never be an upsert,
+                // so its actual operation is an update this table does not record.
+                if (operation == MutationType.Update
+                    && !config.Records(MutationType.Update)
+                    && !context.MutationState.ContainsKey(BeforeImageKey))
+                    return;
+
                 var captured = RequireCapturedBeforeImage(context);
                 if (captured.Row is null)
                 {
@@ -133,6 +150,12 @@ namespace BifrostQL.Core.Modules.History
                     before = captured.Row;
                 }
             }
+
+            // The insert-flip above decided what ACTUALLY happened; record only what the
+            // table opted into. An upsert-that-inserted on an update-only table (or the
+            // reverse) reached this point solely to make that determination.
+            if (!config.Records(operation))
+                return;
 
             var keyData = ResolveKeyData(context.Table, context.Data, context.Result, operation);
 
@@ -178,6 +201,17 @@ namespace BifrostQL.Core.Modules.History
             await MutationCommandExecutor.ExecuteNonQuery(
                 context.Connection, context.Transaction, sql, historyRow);
         }
+
+        /// <summary>
+        /// Whether the declared operation MIGHT need recording. An upsert is driven
+        /// through the pipeline as an Update but may turn out to be an insert (the
+        /// insert-flip in the post-write phase), so an update on an insert-recording
+        /// table must still reach capture; the actual operation is re-checked against
+        /// the config once the flip has decided what really happened.
+        /// </summary>
+        private static bool MayRecord(HistoryConfig config, MutationType declared)
+            => config.Records(declared)
+               || (declared == MutationType.Update && config.Records(MutationType.Insert));
 
         /// <summary>
         /// The capture this mutation's pre-write phase left behind — which may legitimately

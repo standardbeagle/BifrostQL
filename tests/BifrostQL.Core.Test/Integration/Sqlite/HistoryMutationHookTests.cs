@@ -366,6 +366,84 @@ public sealed class HistoryMutationHookTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task BatchUpsert_InsertOnlyConfig_NewKey_RecordsTheInsert()
+    {
+        // The batch upsert is driven through the pipeline as an update, but inserting a
+        // new row is an insert — a table recording only inserts must not silently skip it.
+        var model = await LoadModelAsync(
+            "main.orders { history: insert }",
+            ":root { history-table: main.__history }");
+
+        var result = await ExecuteMutationAsync(
+            "mutation { orders_batch(actions: [ { upsert: { id: 77, status: \"fresh\" } } ]) }", model);
+
+        result.Errors.Should().BeNullOrEmpty();
+        (await CountAsync("orders", "id = 77 AND status = 'fresh'")).Should().Be(1);
+
+        var rows = await HistoryRowsAsync();
+        rows.Should().ContainSingle("an upsert that inserted is an insert this table records");
+        rows[0].Op.Should().Be("insert");
+        rows[0].Before.Should().BeNull();
+        Json(rows[0].EntityId)["id"].GetInt64().Should().Be(77);
+        Json(rows[0].After)["status"].GetString().Should().Be("fresh");
+    }
+
+    [Fact]
+    public async Task BatchUpsert_InsertOnlyConfig_ExistingKey_RecordsNothing()
+    {
+        // The same upsert against an existing row is an update, which this table does
+        // not record.
+        var model = await LoadModelAsync(
+            "main.orders { history: insert }",
+            ":root { history-table: main.__history }");
+
+        var result = await ExecuteMutationAsync(
+            "mutation { orders_batch(actions: [ { upsert: { id: 1, status: \"shipped\" } } ]) }", model);
+
+        result.Errors.Should().BeNullOrEmpty();
+        (await CountAsync("orders", "id = 1 AND status = 'shipped'")).Should().Be(1, "the data change still happened");
+        (await HistoryRowsAsync()).Should().BeEmpty("the actual operation was an update, which is not opted in");
+    }
+
+    [Fact]
+    public async Task BatchUpsert_UpdateOnlyConfig_NewKey_RecordsNothing()
+    {
+        // An upsert that inserts a new row is an insert; a table recording only updates
+        // never opted into it.
+        var model = await LoadModelAsync(
+            "main.orders { history: update }",
+            ":root { history-table: main.__history }");
+
+        var result = await ExecuteMutationAsync(
+            "mutation { orders_batch(actions: [ { upsert: { id: 88, status: \"fresh\" } } ]) }", model);
+
+        result.Errors.Should().BeNullOrEmpty();
+        (await CountAsync("orders", "id = 88 AND status = 'fresh'")).Should().Be(1, "the row was still inserted");
+        (await HistoryRowsAsync()).Should().BeEmpty("the actual operation was an insert, which is not opted in");
+    }
+
+    [Fact]
+    public async Task BatchUpsert_UpdateOnlyConfig_ExistingKey_RecordsTheUpdate()
+    {
+        var model = await LoadModelAsync(
+            "main.orders { history: update }",
+            ":root { history-table: main.__history }");
+
+        var result = await ExecuteMutationAsync(
+            "mutation { orders_batch(actions: [ { upsert: { id: 1, status: \"shipped\" } } ]) }", model);
+
+        result.Errors.Should().BeNullOrEmpty();
+
+        var rows = await HistoryRowsAsync();
+        rows.Should().ContainSingle();
+        rows[0].Op.Should().Be("update");
+        Json(rows[0].EntityId)["id"].GetInt64().Should().Be(1);
+        Json(rows[0].Before)["status"].GetString().Should().Be("packing");
+        Json(rows[0].After)["status"].GetString().Should().Be("shipped");
+        JsonArray(rows[0].ChangedColumns).Should().Equal("status");
+    }
+
+    [Fact]
     public async Task MiscasedHistoryColumns_TrailJsonKeysCarryDbCasing()
     {
         // history-columns entries are canonicalized to the database column casing at

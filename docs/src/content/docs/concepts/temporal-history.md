@@ -12,9 +12,13 @@ This is the trail LOB and admin apps need for dispute resolution, field-level ro
 and the "who set this to `cancelled` on Tuesday?" question.
 
 :::note
-This slice establishes the **metadata contract and its fail-fast validation**. The
-before-image capture + diff writer, and the history read surface (`orders_history(...)`
-and as-of reads), are later slices.
+The **metadata contract and the writer** are implemented. Inserts are recorded on every
+write path; **updates and deletes are recorded on single-row mutations only** — the batch
+and nested TreeSync paths do not yet run the pre-write phase a before-image needs, so an
+update or delete through them against a history-enabled table is **rejected** rather than
+committed with no trail (a later slice lifts this). The history **read surface**
+(`orders_history(...)`, as-of reads) is also a later slice; until then the trail is
+queried as an ordinary table.
 :::
 
 ## Metadata
@@ -150,6 +154,39 @@ ciphertext at rest, not the plaintext — the trail never becomes a plaintext si
 around field encryption. Exclude the column with `history-columns` if you do not want its
 ciphertext duplicated into the trail at all.
 :::
+
+## How a change is recorded
+
+The writer spans both halves of the mutation's transaction, because a before/after trail
+needs one fact from each:
+
+1. **Before the write** it reads the current row — the only moment the pre-image still
+   exists — and holds it for this mutation.
+2. **After the write, still inside the transaction**, it knows the result: whether a row
+   actually changed, and the database-generated key of an `insert`. It reads the stored
+   row back as the after-image, diffs the tracked columns, and inserts the history row.
+
+Because the history row is written in the same transaction, a rejected write takes its
+trail entry down with it, and a committed change always has one.
+
+Consequences worth knowing:
+
+- **The after-image is read back, not assembled** from the mutation's inputs, so DB
+  defaults, triggers, and computed columns are recorded as they were *stored*.
+- **An update that moved no tracked column records nothing.** That is the point of
+  narrowing with `history-columns`: a heartbeat write does not become a trail entry.
+- **A write that affected no row records nothing** — an out-of-scope tenant/policy no-op
+  never fabricates a change.
+- **The mutation must name its row.** A history-enabled table rejects an update or delete
+  scoped only by a predicate (e.g. delete every `status: "archived"` row); such a write
+  can match an unbounded set the writer cannot enumerate. Scope by primary key.
+- **Batch and nested TreeSync updates/deletes on a history-enabled table are rejected**
+  for now (see the note above) rather than committed without a trail. Inserts through
+  those paths are recorded normally — an insert has no before-image to miss.
+- A **workflow-triggered** write is recorded like any other: it is a real change, and the
+  trail names its actor.
+- A **soft delete** is recorded as an `update` (that is what it is at the row level: the
+  `deleted_at` column moved), so `history: delete` alone does not record it.
 
 ## Validation
 

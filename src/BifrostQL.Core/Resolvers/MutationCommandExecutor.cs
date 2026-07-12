@@ -169,6 +169,56 @@ namespace BifrostQL.Core.Resolvers
         }
 
         /// <summary>
+        /// Reads the named columns of one keyed row inside the caller's transaction, for a
+        /// hook that must observe the row itself rather than the mutation's write inputs —
+        /// the change-history before-image (read before the write) and after-image (read
+        /// after it, so DB defaults and triggers are reflected, not guessed).
+        ///
+        /// The predicate is the primary key ONLY: it is deliberately NOT narrowed by the
+        /// mutation's tenant/policy/soft-delete filter. Narrowing here would need a second,
+        /// parallel construction of that filter, and a subtly different one would silently
+        /// drop a before-image for a legitimate write. The caller's own write carries the
+        /// narrowed predicate, so an out-of-scope row is one the write affects zero rows of
+        /// — and a zero-row write records no history, which discards the read. The row is
+        /// therefore never recorded anywhere the narrowed write did not itself reach.
+        ///
+        /// Returns null when no row matches the key.
+        /// </summary>
+        public static async Task<IReadOnlyDictionary<string, object?>?> LoadRowByKey(
+            DbConnection conn,
+            DbTransaction? transaction,
+            ISqlDialect dialect,
+            IDbTable table,
+            IReadOnlyCollection<string> columns,
+            Dictionary<string, object?> keyData,
+            CancellationToken cancellationToken = default)
+        {
+            if (columns.Count == 0 || keyData.Count == 0)
+                return null;
+
+            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+            var columnList = string.Join(",", columns.Select(dialect.EscapeIdentifier));
+            var sql = $"SELECT {columnList} FROM {tableRef} WHERE {BuildKeyPredicate(dialect, keyData.Keys)};";
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            cmd.Transaction = transaction;
+            AddParameters(cmd, keyData);
+
+            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                return null;
+
+            var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            for (var i = 0; i < reader.FieldCount; i++)
+            {
+                var value = await reader.IsDBNullAsync(i, cancellationToken) ? null : reader.GetValue(i);
+                row[reader.GetName(i)] = value;
+            }
+            return row;
+        }
+
+        /// <summary>
         /// Renders a transformer's <see cref="TableFilter"/> into an AND-prefixed WHERE
         /// suffix and its bound parameters (empty when no transformer contributed a
         /// filter). ANDed so it narrows — never replaces — the primary-key predicate.

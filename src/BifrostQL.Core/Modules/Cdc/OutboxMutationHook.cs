@@ -54,7 +54,7 @@ namespace BifrostQL.Core.Modules.Cdc
                     $"Table '{context.Table.TableSchema}.{context.Table.DbName}' emits events but no " +
                     $"model-level '{MetadataKeys.Cdc.OutboxTable}' is configured.");
 
-            var outbox = FindTable(context.Model, outboxName);
+            var outbox = ModelTableReference.Find(context.Model, outboxName);
             if (outbox is null)
                 throw new BifrostExecutionError(
                     $"Configured outbox table '{outboxName}' was not found in the model.");
@@ -155,29 +155,6 @@ namespace BifrostQL.Core.Modules.Cdc
                 key = MetadataKeys.Auth.DefaultTenantContextKey;
 
             return userContext.TryGetValue(key, out var value) ? value?.ToString() : null;
-        }
-
-        /// <summary>
-        /// Resolves the configured outbox reference to a model table. A schema-qualified
-        /// reference matches on schema AND name only (no cross-schema name-only fallback
-        /// that would bind the outbox to the wrong table); a bare name matches by name.
-        /// Mirrors the model-load validation in ModelConfigValidator.
-        /// </summary>
-        private static IDbTable? FindTable(IDbModel model, string qualified)
-        {
-            var trimmed = qualified.Trim();
-            var dot = trimmed.LastIndexOf('.');
-            if (dot > 0)
-            {
-                var schema = trimmed[..dot];
-                var name = trimmed[(dot + 1)..];
-                return model.Tables.FirstOrDefault(t =>
-                    string.Equals(t.TableSchema, schema, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(t.DbName, name, StringComparison.OrdinalIgnoreCase));
-            }
-
-            return model.Tables.FirstOrDefault(t =>
-                string.Equals(t.DbName, trimmed, StringComparison.OrdinalIgnoreCase));
         }
     }
 }

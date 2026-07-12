@@ -616,33 +616,11 @@ namespace BifrostQL.Core.Model
             catch { return false; } // Token error already reported by ValidateHistoryTokens.
         }
 
-        /// <summary>
-        /// Resolves a model- or table-level table reference (<c>outbox-table</c>,
-        /// <c>history-table</c>) to a table. A schema-qualified
-        /// reference (<c>dbo.__outbox</c>) is matched on schema AND name — with NO
-        /// name-only fallback: falling back would silently bind the outbox to a
-        /// same-named table in a different schema, writing events to the wrong table
-        /// while reporting success, which is precisely the misconfiguration the
-        /// "outbox must exist" check exists to catch. A bare, unqualified reference
-        /// is matched by name only (there is no schema to honor). Matching is
-        /// case-insensitive.
-        /// </summary>
+        // Resolution of an outbox-table / history-table reference is shared with the runtime
+        // writers (see ModelTableReference) so a reference that validates at model load
+        // resolves to the same table when the writer runs.
         private static IDbTable? FindTableByQualifiedName(IDbModel model, string qualified)
-        {
-            var trimmed = qualified.Trim();
-            var dot = trimmed.LastIndexOf('.');
-            if (dot > 0)
-            {
-                var schema = trimmed[..dot];
-                var name = trimmed[(dot + 1)..];
-                return model.Tables.FirstOrDefault(t =>
-                    string.Equals(t.TableSchema, schema, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(t.DbName, name, StringComparison.OrdinalIgnoreCase));
-            }
-
-            return model.Tables.FirstOrDefault(t =>
-                string.Equals(t.DbName, trimmed, StringComparison.OrdinalIgnoreCase));
-        }
+            => ModelTableReference.Find(model, qualified);
 
         /// <summary>
         /// Fail-fast validation for field-level encryption (<c>encrypt</c> / <c>key-ref</c>

@@ -40,6 +40,19 @@ public sealed class MutationObserverContext
 
     /// <summary>The SQL dialect for the in-flight mutation's connection (before-commit only; else null).</summary>
     public ISqlDialect? Dialect { get; init; }
+
+    /// <summary>
+    /// Scratchpad shared by the before-commit and after-write in-transaction phases of
+    /// the SAME mutation, so a hook that must observe the row BEFORE the write (the
+    /// change-history before-image) can hand that observation to its own after-write
+    /// phase, where the result — and thus whether the write actually changed anything —
+    /// is finally known. The caller creates one per mutation and passes it to both
+    /// phases; a write path that runs only one phase leaves the other's entry absent,
+    /// which every reader must treat as "not captured" and fail closed on rather than
+    /// as an empty before-image.
+    /// </summary>
+    public IDictionary<string, object?> MutationState { get; init; } =
+        new Dictionary<string, object?>(StringComparer.Ordinal);
 }
 
 // A before-commit veto hook. Unlike IMutationObserver (which fires AFTER the

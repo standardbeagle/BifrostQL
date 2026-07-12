@@ -20,8 +20,20 @@ namespace BifrostQL.Core.Resolvers
         /// Runs the before-commit veto phase immediately before the write (inside the
         /// transaction). If any hook returns errors (or throws), the aggregated errors
         /// surface as a <see cref="BifrostExecutionError"/> so the caller's write is
-        /// aborted and nothing is committed. The result is not known yet (null). Skipped
-        /// when triggers are suppressed (a workflow-triggered mutation) to avoid recursion.
+        /// aborted and nothing is committed. The result is not known yet (null).
+        ///
+        /// NOT gated by the workflow-trigger suppression flag, for the same reason the
+        /// after-write phase is not: these two phases are the two halves of ONE mutation's
+        /// in-transaction observation (the change-history writer reads the before-image in
+        /// this phase and records it in the next), so suppressing one and not the other
+        /// would leave a workflow-triggered write with no before-image and roll it back.
+        /// Suppression exists to stop a workflow trigger from re-firing itself — that
+        /// recursion is cut where it happens, in the post-commit observer phase
+        /// (<see cref="NotifyMutationAsync"/>, which hosts <c>WorkflowTriggerHost</c>).
+        /// Skipping veto hooks here additionally meant a workflow-triggered write bypassed
+        /// every veto a normal write must pass — a fail-open. A host hook that genuinely
+        /// must stand down inside a workflow can check
+        /// <see cref="IsWorkflowTriggerSuppressed"/> on its own user context.
         /// </summary>
         public static async ValueTask RunBeforeCommitHooksAsync(
             IServiceProvider? services,
@@ -32,9 +44,10 @@ namespace BifrostQL.Core.Resolvers
             DbConnection connection,
             DbTransaction transaction,
             IDbModel model,
-            ISqlDialect dialect)
+            ISqlDialect dialect,
+            IDictionary<string, object?> mutationState)
         {
-            if (services is null || IsWorkflowTriggerSuppressed(userContext))
+            if (services is null)
                 return;
 
             var hooks = services.GetService<BeforeCommitMutationHooks>();
@@ -55,6 +68,9 @@ namespace BifrostQL.Core.Resolvers
                 Transaction = transaction,
                 Model = model,
                 Dialect = dialect,
+                // Shared with this mutation's after-write phase: a hook that reads the
+                // pre-write row (the history before-image) leaves it here.
+                MutationState = mutationState,
             });
 
             if (errors.Count > 0)
@@ -80,7 +96,8 @@ namespace BifrostQL.Core.Resolvers
             DbConnection connection,
             DbTransaction? transaction,
             IDbModel model,
-            ISqlDialect dialect)
+            ISqlDialect dialect,
+            IDictionary<string, object?> mutationState)
         {
             if (services is null)
                 return;
@@ -100,6 +117,9 @@ namespace BifrostQL.Core.Resolvers
                 Transaction = transaction,
                 Model = model,
                 Dialect = dialect,
+                // The same bag the before-commit phase of THIS mutation wrote into, so a
+                // hook can pair its pre-write observation with the write's result.
+                MutationState = mutationState,
             });
         }
 

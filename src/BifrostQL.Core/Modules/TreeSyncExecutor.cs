@@ -154,7 +154,9 @@ public sealed class TreeSyncExecutor
                     await MutationNotifier.RunInTransactionHooksAsync(
                         services, op.Table, mutationType, data, opResult,
                         userContext ?? new Dictionary<string, object?>(),
-                        conn, transaction: null, model, _dialect);
+                        conn, transaction: null, model, _dialect,
+                        // A fresh scratchpad per operation in the tree — see the batch path.
+                        new Dictionary<string, object?>(StringComparer.Ordinal));
             }
 
             await ExecuteRawAsync(conn, _dialect.CommitTransactionSql);

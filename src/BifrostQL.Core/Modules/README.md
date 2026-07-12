@@ -71,23 +71,37 @@ public interface IBeforeCommitMutationHook
 - `context.Result` is **always null** in this phase — the write has not happened
   yet, so no generated id / affected-row count is available.
 
-**Transactional guarantee / limit (read this):** each write goes through
-`DbTableMutateResolver.ExecuteNonQuery`/`ExecuteScalar`, which opens its own
-connection and runs a **single statement** (implicitly atomic). There is no
-explicit multi-statement DB transaction wrapping a mutation. A before-commit
-veto therefore works by running *before* that single statement and preventing
-it from executing at all — it is **not** a DB transaction spanning multiple
-statements and cannot roll back a write that already ran. Post-write
-`IMutationObserver`s still run **only after** a successful write, so a veto
-prevents both the write and the post-commit observers from firing.
+**Transactional guarantee (read this):** the write runs inside a DB transaction
+(`MutationCommandExecutor.RunInTransactionAsync`), and this hook runs inside it,
+before the write. A veto therefore prevents the write from executing at all, and
+anything a hook itself writes on `context.Connection`/`context.Transaction`
+commits or rolls back with the data change. Post-write `IMutationObserver`s run
+**only after** a successful commit, so a veto prevents both the write and the
+post-commit observers from firing.
+
+The matching after-write phase is `IInTransactionMutationHook`
+(`AfterWriteInTransactionAsync`): same transaction, but *after* the write, so
+`context.Result` carries the outcome — the generated identity of an `INSERT`, the
+affected-row count of an `UPDATE`/`DELETE`. A throw there rolls the mutation back.
+The two phases are the two halves of one mutation's in-transaction observation and
+share a per-mutation scratchpad, `context.MutationState`: the change-history writer
+reads the row's before-image in the before-commit phase and records it in the
+after-write phase, where it finally knows whether anything actually changed.
 
 Hooks resolve from DI (`BeforeCommitMutationHooks`, built from every registered
-`IBeforeCommitMutationHook`). They run in registration order and their errors
-are aggregated. The `WorkflowTriggerHost` suppression guard is honored, mirroring
-the post-commit observer path.
+`IBeforeCommitMutationHook`). They run in registration order and their errors are
+aggregated. Neither in-transaction phase is gated by the `WorkflowTriggerHost`
+suppression guard — that guard exists to stop a workflow trigger from re-firing
+itself, and it is applied where that recursion happens, in the post-commit observer
+path. Gating these phases instead would let a workflow-triggered write bypass every
+veto hook, and would leave the two halves out of step (a suppressed before-commit
+phase with an unsuppressed after-write phase means a history write with no
+before-image). A hook that must stand down inside a workflow can check
+`MutationNotifier.IsWorkflowTriggerSuppressed(context.UserContext)` itself.
 
 > Wired on the single-row resolver (`DbTableMutateResolver`). The batch resolver
-> (`DbTableBatchResolver`) is a follow-up.
+> (`DbTableBatchResolver`) and `TreeSyncExecutor` fire the after-write phase only;
+> the before-commit phase on those paths is a follow-up.
 
 ### Audit Columns (`AuditMutationTransformer`)
 

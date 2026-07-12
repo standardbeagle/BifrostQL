@@ -192,7 +192,12 @@ namespace BifrostQL.Core.Resolvers
             BatchExecutionContext ctx, MutationType type, IDictionary<string, object?> data, object? result)
             => MutationNotifier.RunInTransactionHooksAsync(
                 ctx.TransformContext.Services, ctx.Table, type, data, result, ctx.UserContext,
-                ctx.Conn, ctx.Transaction, ctx.Model, ctx.Dialect);
+                ctx.Conn, ctx.Transaction, ctx.Model, ctx.Dialect,
+                // A fresh scratchpad per action: nothing may carry over between the rows of
+                // a batch. The batch path runs no before-commit phase yet, so a hook that
+                // needs a pre-write observation (change history) finds none and fails
+                // closed rather than recording a row it never read.
+                new Dictionary<string, object?>(StringComparer.Ordinal));
 
         private static async Task<BatchActionOutcome?> ExecuteInsert(BatchExecutionContext ctx, Dictionary<string, object?> data)
         {

@@ -131,4 +131,18 @@ public sealed class AuditMutationTransformer : IMutationTransformer, IModuleName
 
         return null;
     }
+
+    /// <summary>
+    /// The actor behind a mutation: the user-context claim named by the model-level
+    /// <c>user-audit-key</c>, or null when no key is configured or the claim is absent
+    /// (a system or unauthenticated write). This is the single definition of "who did
+    /// this" — the created-by/updated-by/deleted-by columns stamped here and the
+    /// <c>actor</c> column of a change-history row resolve the same way, so a row and
+    /// its trail can never disagree about their author.
+    /// </summary>
+    public static object? ResolveActor(IDbModel model, IDictionary<string, object?> userContext)
+    {
+        var auditKey = model.GetMetadataValue(MetadataKeys.Audit.UserKey);
+        return ResolveAuditUser(auditKey, userContext, !string.IsNullOrWhiteSpace(auditKey));
+    }
 }

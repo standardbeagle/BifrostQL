@@ -52,8 +52,17 @@ namespace BifrostQL.Server
             services.AddSingleton<WorkflowScheduler>();
             services.AddSingleton<MutationObservers>(sp => new MutationObservers(
                 new IMutationObserver[] { sp.GetRequiredService<WorkflowTriggerHost>() }));
-            // Before-commit veto hooks: built from every registered
-            // IBeforeCommitMutationHook. No built-in hooks — empty unless a host adds one.
+            // The change-history writer spans BOTH in-transaction phases: it reads the
+            // before-image in the before-commit phase and writes the history row in the
+            // after-write phase, where the write's result is known. One registration,
+            // surfaced under both hook interfaces. It no-ops for tables without history
+            // metadata.
+            services.AddSingleton<BifrostQL.Core.Modules.History.HistoryMutationHook>();
+            services.AddSingleton<IBeforeCommitMutationHook>(sp =>
+                sp.GetRequiredService<BifrostQL.Core.Modules.History.HistoryMutationHook>());
+            services.AddSingleton<IInTransactionMutationHook>(sp =>
+                sp.GetRequiredService<BifrostQL.Core.Modules.History.HistoryMutationHook>());
+            // Before-commit veto hooks: built from every registered IBeforeCommitMutationHook.
             services.AddSingleton<BeforeCommitMutationHooks>(sp => new BeforeCommitMutationHooks(
                 sp.GetServices<IBeforeCommitMutationHook>().ToArray()));
             // After-write, in-transaction hooks: the CDC transactional-outbox writer is

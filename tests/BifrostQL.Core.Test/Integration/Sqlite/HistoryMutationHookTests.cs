@@ -329,6 +329,68 @@ public sealed class HistoryMutationHookTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TreeSync_Resync_RecordsUpdateAndDeleteTrailRows()
+    {
+        // Arrange: a re-sync against seeded state exercises the two TreeSync operation
+        // kinds the insert-only sync test cannot reach — the diffed UPDATE of a changed
+        // node and the orphan DELETE of a child omitted from the submitted tree. Each
+        // must land in the trail like its single-row counterpart: the update with both
+        // images, the delete with a before-image naming the removed row.
+        await Exec("DROP TABLE IF EXISTS posts");
+        await Exec("DROP TABLE IF EXISTS blogs");
+        await Exec("CREATE TABLE blogs (id INTEGER PRIMARY KEY, name TEXT NULL)");
+        await Exec(
+            """
+            CREATE TABLE posts (
+                id INTEGER PRIMARY KEY,
+                blog_id INTEGER NOT NULL REFERENCES blogs(id),
+                title TEXT NULL
+            )
+            """);
+        await Exec("INSERT INTO blogs(id, name) VALUES (1, 'B')");
+        await Exec("INSERT INTO posts(id, blog_id, title) VALUES (10, 1, 'first'), (11, 1, 'orphan')");
+        var model = await LoadModelAsync(
+            "main.blogs { history: enabled }",
+            "main.posts { history: enabled }",
+            ":root { history-table: main.__history }");
+
+        // Act: rename the blog, edit post 10, omit post 11 (orphan-deleted).
+        var result = await ExecuteMutationAsync(
+            "mutation { blogs(sync: { id: 1, name: \"renamed\", posts: [ { id: 10, title: \"edited\" } ] }) }",
+            model);
+
+        // Assert
+        result.Errors.Should().BeNullOrEmpty();
+        (await CountAsync("blogs", "id = 1 AND name = 'renamed'")).Should().Be(1);
+        (await CountAsync("posts", "id = 10 AND title = 'edited'")).Should().Be(1);
+        (await CountAsync("posts", "id = 11")).Should().Be(0, "the omitted child is orphan-deleted");
+
+        var rows = await HistoryRowsAsync();
+        rows.Should().HaveCount(3, "the parent update, the child update, and the orphan delete each record");
+
+        rows[0].Entity.Should().Be("main.blogs");
+        rows[0].Op.Should().Be("update");
+        Json(rows[0].EntityId)["id"].GetInt64().Should().Be(1);
+        Json(rows[0].Before)["name"].GetString().Should().Be("B");
+        Json(rows[0].After)["name"].GetString().Should().Be("renamed");
+        JsonArray(rows[0].ChangedColumns).Should().Equal("name");
+
+        rows[1].Entity.Should().Be("main.posts");
+        rows[1].Op.Should().Be("update");
+        Json(rows[1].EntityId)["id"].GetInt64().Should().Be(10);
+        Json(rows[1].Before)["title"].GetString().Should().Be("first");
+        Json(rows[1].After)["title"].GetString().Should().Be("edited");
+        JsonArray(rows[1].ChangedColumns).Should().Equal("title");
+
+        rows[2].Entity.Should().Be("main.posts");
+        rows[2].Op.Should().Be("delete");
+        Json(rows[2].EntityId)["id"].GetInt64().Should().Be(11);
+        Json(rows[2].Before)["title"].GetString().Should().Be("orphan");
+        rows[2].After.Should().BeNull("a deleted row has no after-image");
+        JsonArray(rows[2].ChangedColumns).Should().Contain("title");
+    }
+
+    [Fact]
     public async Task NonHistoryTable_RecordsNothing()
     {
         await Exec("DROP TABLE IF EXISTS gadgets");

@@ -35,10 +35,13 @@ public sealed class HistoryTrailShapeTests : IAsyncLifetime
         _keepAlive = new SqliteConnection(ConnString);
         await _keepAlive.OpenAsync();
 
-        foreach (var drop in new[] { "orders", "line_items", "secrets", "__history", "orders_history" })
+        foreach (var drop in new[] { "orders", "line_items", "secrets", "attachments", "__history", "orders_history" })
             await Exec($"DROP TABLE IF EXISTS {drop}");
 
         await Exec("CREATE TABLE orders (id INTEGER PRIMARY KEY, status TEXT NULL, deleted_at TEXT NULL)");
+        // A binary column: byte[] images come back as fresh array instances on every
+        // read, so change detection must compare contents, not references.
+        await Exec("CREATE TABLE attachments (id INTEGER PRIMARY KEY, payload BLOB NULL, note TEXT NULL)");
         // Composite primary key: the trail must name such a row by BOTH components.
         await Exec(
             """
@@ -55,6 +58,7 @@ public sealed class HistoryTrailShapeTests : IAsyncLifetime
 
         await Exec("INSERT INTO orders(id, status) VALUES (1, 'packing')");
         await Exec("INSERT INTO line_items(order_id, line_no, qty) VALUES (7, 2, 5)");
+        await Exec("INSERT INTO attachments(id, payload, note) VALUES (1, X'DEADBEEF', 'v1')");
     }
 
     private static string HistoryDdl(string table) =>
@@ -267,6 +271,232 @@ public sealed class HistoryTrailShapeTests : IAsyncLifetime
         errors.Should().ContainSingle()
             .Which.Should().Contain("primary key");
         (await HistoryRowsAsync()).Should().BeEmpty("the write is vetoed before anything is recorded");
+    }
+
+    [Fact]
+    public async Task WritePathThatSkippedBeforeCommitPhase_FailsClosed_RatherThanRecordWithoutBeforeImage()
+    {
+        // Arrange: a write path that never ran the before-commit phase hands the
+        // after-write phase an EMPTY mutation-state bag. Recording anyway would invent a
+        // before-image the writer never read, so the hook must throw and roll the write
+        // back — the fail-closed contract of RequireCapturedBeforeImage.
+        var model = await LoadModelAsync(
+            "main.orders { history: enabled }",
+            ":root { history-table: main.__history }");
+        var factory = new SqliteDbConnFactory(ConnString);
+
+        await using var conn = (SqliteConnection)factory.GetConnection();
+        await conn.OpenAsync();
+        await using var transaction = (SqliteTransaction)await conn.BeginTransactionAsync();
+
+        // Act: the after-write phase alone, with a fresh (never-populated) state bag.
+        var act = async () => await new HistoryMutationHook().AfterWriteInTransactionAsync(new MutationObserverContext
+        {
+            Table = model.GetTableFromDbName("orders"),
+            MutationType = MutationType.Update,
+            Data = new Dictionary<string, object?> { ["id"] = 1L, ["status"] = "shipped" },
+            Result = 1,
+            UserContext = new Dictionary<string, object?>(),
+            Connection = conn,
+            Transaction = transaction,
+            Model = model,
+            Dialect = factory.Dialect,
+            MutationState = MutationObserverContext.NewMutationState(),
+        });
+
+        // Assert: the throw quotes the error contract.
+        (await act.Should().ThrowAsync<BifrostExecutionError>())
+            .WithMessage("*No before-image was captured*")
+            .WithMessage("*Refusing to record a change without the row it replaced*");
+        (await HistoryRowsAsync()).Should().BeEmpty("nothing may be recorded from a phase that fails closed");
+    }
+
+    [Fact]
+    public async Task AfterImageReadBackFindsNoRow_FailsClosed_RefusingToRecord()
+    {
+        // Arrange: the after-image is READ BACK from the database rather than assembled
+        // from the write inputs. If the key the writer resolves does not match a stored
+        // row (here: an insert whose row never landed), the trail cannot show what was
+        // actually stored — so the hook must throw rather than record a fabricated image.
+        var model = await LoadModelAsync(
+            "main.orders { history: enabled }",
+            ":root { history-table: main.__history }");
+        var factory = new SqliteDbConnFactory(ConnString);
+
+        await using var conn = (SqliteConnection)factory.GetConnection();
+        await conn.OpenAsync();
+        await using var transaction = (SqliteTransaction)await conn.BeginTransactionAsync();
+
+        // Act: an insert of id 999 that never actually wrote a row.
+        var act = async () => await new HistoryMutationHook().AfterWriteInTransactionAsync(new MutationObserverContext
+        {
+            Table = model.GetTableFromDbName("orders"),
+            MutationType = MutationType.Insert,
+            Data = new Dictionary<string, object?> { ["id"] = 999L, ["status"] = "ghost" },
+            Result = null,
+            UserContext = new Dictionary<string, object?>(),
+            Connection = conn,
+            Transaction = transaction,
+            Model = model,
+            Dialect = factory.Dialect,
+            MutationState = MutationObserverContext.NewMutationState(),
+        });
+
+        // Assert
+        (await act.Should().ThrowAsync<BifrostExecutionError>())
+            .WithMessage("*refusing to record a change whose result cannot be read*");
+        (await HistoryRowsAsync()).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task UnchangedBinaryColumn_IsNotReportedAsChanged()
+    {
+        // Arrange: the before- and after-images read the BLOB back as two distinct
+        // byte[] instances with identical content. Reference equality would report the
+        // payload as changed on every write; content comparison must keep it out.
+        var model = await LoadModelAsync(
+            "main.attachments { history: enabled }",
+            ":root { history-table: main.__history }");
+
+        // Act: move only the text column; the binary column is untouched.
+        await RunHookedWriteCycleAsync(
+            model, "attachments", MutationType.Update,
+            new Dictionary<string, object?> { ["id"] = 1L, ["note"] = "v2" },
+            "UPDATE attachments SET note = 'v2' WHERE id = 1");
+
+        // Assert
+        var rows = await HistoryRowsAsync();
+        rows.Should().ContainSingle();
+        JsonArray(rows[0].ChangedColumns).Should().Equal(new[] { "note" },
+            "the unchanged binary column must not appear — byte arrays compare by content, not reference");
+    }
+
+    [Fact]
+    public async Task ChangedBinaryColumn_IsReportedAsChanged()
+    {
+        // Arrange
+        var model = await LoadModelAsync(
+            "main.attachments { history: enabled }",
+            ":root { history-table: main.__history }");
+
+        // Act: move only the binary column.
+        await RunHookedWriteCycleAsync(
+            model, "attachments", MutationType.Update,
+            new Dictionary<string, object?> { ["id"] = 1L, ["payload"] = new byte[] { 0xC0, 0xFF, 0xEE } },
+            "UPDATE attachments SET payload = X'C0FFEE' WHERE id = 1");
+
+        // Assert
+        var rows = await HistoryRowsAsync();
+        rows.Should().ContainSingle();
+        JsonArray(rows[0].ChangedColumns).Should().Equal("payload");
+    }
+
+    [Fact]
+    public async Task KeylessUpdate_OnUpdateRecordingTable_IsVetoedFailClosed()
+    {
+        // Arrange: a keyless (predicate-scoped) update on a table that RECORDS updates
+        // can match an unbounded set the writer cannot enumerate into before-images, so
+        // the hook must veto it — the same fail-closed guard as the predicate delete.
+        var model = await LoadModelAsync(
+            "main.orders { history: update }",
+            ":root { history-table: main.__history }");
+        var factory = new SqliteDbConnFactory(ConnString);
+
+        await using var conn = (SqliteConnection)factory.GetConnection();
+        await conn.OpenAsync();
+        await using var transaction = (SqliteTransaction)await conn.BeginTransactionAsync();
+
+        // Act
+        var errors = await new HistoryMutationHook().BeforeCommitAsync(new MutationObserverContext
+        {
+            Table = model.GetTableFromDbName("orders"),
+            MutationType = MutationType.Update,
+            Data = new Dictionary<string, object?> { ["status"] = "bulk" }, // no primary key
+            Result = null,
+            UserContext = new Dictionary<string, object?>(),
+            Connection = conn,
+            Transaction = transaction,
+            Model = model,
+            Dialect = factory.Dialect,
+            MutationState = MutationObserverContext.NewMutationState(),
+        });
+
+        // Assert
+        errors.Should().ContainSingle()
+            .Which.Should().Contain("must be scoped by its full primary key");
+        (await HistoryRowsAsync()).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task KeylessUpdate_OnInsertOnlyTable_SkipsCaptureSilently_WriteSucceedsWithNoTrail()
+    {
+        // Arrange: an insert-only table reaches the capture phase for updates solely
+        // because an upsert might flip to an insert. A KEYLESS update can never be an
+        // upsert, and updates are not recorded here — so there is nothing to capture and
+        // nothing to veto: the write proceeds and the trail stays empty.
+        var model = await LoadModelAsync(
+            "main.orders { history: insert }",
+            ":root { history-table: main.__history }");
+
+        // Act: the full two-phase cycle around a real keyless UPDATE.
+        var errors = await RunHookedWriteCycleAsync(
+            model, "orders", MutationType.Update,
+            new Dictionary<string, object?> { ["status"] = "bulk" }, // no primary key
+            "UPDATE orders SET status = 'bulk'");
+
+        // Assert
+        errors.Should().BeEmpty("a keyless update the table does not record has nothing to veto");
+        (await RowCountAsync("orders", "status = 'bulk'")).Should().Be(1, "the write itself succeeds");
+        (await HistoryRowsAsync()).Should().BeEmpty("updates are not opted in, so nothing is recorded");
+    }
+
+    /// <summary>
+    /// Drives both in-transaction hook phases around a real SQL write, exactly as the
+    /// single-row write path does: capture, write, record, commit — one shared
+    /// mutation-state bag. Returns the before-commit veto errors; a veto skips the write.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> RunHookedWriteCycleAsync(
+        IDbModel model,
+        string tableName,
+        MutationType mutationType,
+        Dictionary<string, object?> data,
+        string writeSql)
+    {
+        var factory = new SqliteDbConnFactory(ConnString);
+        var hook = new HistoryMutationHook();
+        var state = MutationObserverContext.NewMutationState();
+
+        await using var conn = (SqliteConnection)factory.GetConnection();
+        await conn.OpenAsync();
+        await using var transaction = (SqliteTransaction)await conn.BeginTransactionAsync();
+
+        MutationObserverContext Context(object? result) => new()
+        {
+            Table = model.GetTableFromDbName(tableName),
+            MutationType = mutationType,
+            Data = data,
+            Result = result,
+            UserContext = new Dictionary<string, object?>(),
+            Connection = conn,
+            Transaction = transaction,
+            Model = model,
+            Dialect = factory.Dialect,
+            MutationState = state,
+        };
+
+        var errors = await hook.BeforeCommitAsync(Context(result: null));
+        if (errors.Count > 0)
+            return errors; // Vetoed: the write path would abort before any SQL runs.
+
+        int affected;
+        await using (var cmd = new SqliteCommand(writeSql, conn, transaction))
+        {
+            affected = await cmd.ExecuteNonQueryAsync();
+        }
+
+        await hook.AfterWriteInTransactionAsync(Context(result: affected));
+        await transaction.CommitAsync();
+        return errors;
     }
 
     [Fact]

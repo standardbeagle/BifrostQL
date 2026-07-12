@@ -84,6 +84,31 @@ public sealed class BeforeCommitBatchTreeSyncTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Batch_FiresBeforeCommitHook_ForUpsertAction()
+    {
+        // Arrange: the batch upsert is driven through the pipeline as an update (the
+        // single-statement ON CONFLICT path), for a new key and an existing key alike.
+        // The before-commit hook must fire for it like any other action — an upsert that
+        // slipped past the hook would be a write no observer saw and no veto could stop.
+        var hook = new RecordingHook();
+
+        // Act
+        var result = await ExecuteMutationAsync(
+            "mutation { widgets_batch(actions: [ { upsert: { id: 1, name: \"upserted\" } }, " +
+            "{ upsert: { id: 77, name: \"fresh\" } } ]) }",
+            hook);
+
+        // Assert
+        result.Errors.Should().BeNullOrEmpty();
+        hook.Seen.Should().Equal(new[] { MutationType.Update, MutationType.Update },
+            "an upsert is driven through the pipeline as an update, whether it inserts or updates");
+        hook.Tables.Should().Equal("widgets", "widgets");
+        hook.SawResult.Should().BeFalse("the write has not happened yet in the before-commit phase");
+        (await CountAsync("widgets", "id = 1 AND name = 'upserted'")).Should().Be(1, "the existing row was updated");
+        (await CountAsync("widgets", "id = 77 AND name = 'fresh'")).Should().Be(1, "the new row was inserted");
+    }
+
+    [Fact]
     public async Task Batch_HookVeto_RollsBackEveryActionInTheBatch()
     {
         // The hook vetoes the SECOND action. The first action's insert already ran inside

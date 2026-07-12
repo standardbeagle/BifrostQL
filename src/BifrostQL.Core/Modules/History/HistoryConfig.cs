@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using BifrostQL.Core.Model;
 
 namespace BifrostQL.Core.Modules.History
@@ -62,7 +63,28 @@ namespace BifrostQL.Core.Modules.History
             TracksAllColumns || _trackedColumns.Contains(column);
 
         /// <summary>
-        /// Parses the history config for a single table. Throws
+        /// The qualified name of the table this table's history rows are written to: the
+        /// table-level <see cref="HistoryTableOverride"/>, else the model-level
+        /// <c>history-table</c> default; null when neither is set. The single resolution
+        /// rule shared by the change-history writer and ModelConfigValidator, so a target
+        /// that validates at model load is the same target the writer resolves at runtime.
+        /// </summary>
+        public string? ResolveTargetName(IDbModel model)
+        {
+            var name = HistoryTableOverride ?? model.GetMetadataValue(MetadataKeys.History.Table);
+            return string.IsNullOrWhiteSpace(name) ? null : name;
+        }
+
+        // The parsed config per table, cached because both hook phases of EVERY mutation on
+        // EVERY table ask for it and the model (and its metadata) is immutable after load.
+        // ConditionalWeakTable is lock-free on the read path and keyed by table identity, so
+        // a reloaded model's fresh table instances parse fresh and the old entries fall away
+        // with the old model. A parse that throws (invalid token) is never cached — each
+        // caller sees the failure, exactly as before.
+        private static readonly ConditionalWeakTable<IDbTable, HistoryConfig> ConfigByTable = new();
+
+        /// <summary>
+        /// Parses the history config for a single table (cached per table instance). Throws
         /// <see cref="InvalidOperationException"/> on an unrecognized operation token so a
         /// typo fails fast rather than silently leaving the table with no trail — a hole in
         /// an audit trail is invisible precisely when it matters (a dispute, a rollback).
@@ -72,6 +94,11 @@ namespace BifrostQL.Core.Modules.History
             if (table is null)
                 throw new ArgumentNullException(nameof(table));
 
+            return ConfigByTable.GetValue(table, Parse);
+        }
+
+        private static HistoryConfig Parse(IDbTable table)
+        {
             var enabledRaw = table.GetMetadataValue(MetadataKeys.History.Enabled);
             if (string.IsNullOrWhiteSpace(enabledRaw))
                 return None;

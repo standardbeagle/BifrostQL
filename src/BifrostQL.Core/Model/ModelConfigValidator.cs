@@ -465,7 +465,10 @@ namespace BifrostQL.Core.Model
                 return;
             }
 
-            var outboxTable = FindTableByQualifiedName(model, outboxName);
+            // Resolved through ModelTableReference — the same lookup the runtime outbox
+            // writer uses — so a reference that validates here resolves to the same table
+            // when the writer runs.
+            var outboxTable = ModelTableReference.Find(model, outboxName);
             if (outboxTable == null)
             {
                 errors.Add(
@@ -567,12 +570,10 @@ namespace BifrostQL.Core.Model
             if (configs.Count == 0)
                 return; // History not in use — a model-level history-table is simply unused.
 
-            var sharedDefault = model.GetMetadataValue(MetadataKeys.History.Table);
-
             foreach (var (table, config) in configs)
             {
-                var targetName = config.HistoryTableOverride ?? sharedDefault;
-                if (string.IsNullOrWhiteSpace(targetName))
+                var targetName = config.ResolveTargetName(model);
+                if (targetName is null)
                 {
                     errors.Add(Problem(table, MetadataKeys.History.Enabled,
                         table.GetMetadataValue(MetadataKeys.History.Enabled),
@@ -581,7 +582,10 @@ namespace BifrostQL.Core.Model
                     continue;
                 }
 
-                var target = FindTableByQualifiedName(model, targetName);
+                // Resolved through ModelTableReference — the same lookup the change-history
+                // writer uses — so a reference that validates here resolves to the same
+                // table when the writer runs.
+                var target = ModelTableReference.Find(model, targetName);
                 if (target == null)
                 {
                     errors.Add(Problem(table, MetadataKeys.History.Table, targetName,
@@ -624,12 +628,6 @@ namespace BifrostQL.Core.Model
             try { return HistoryConfig.FromTable(table).RecordsHistory; }
             catch { return false; } // Token error already reported by ValidateHistoryTokens.
         }
-
-        // Resolution of an outbox-table / history-table reference is shared with the runtime
-        // writers (see ModelTableReference) so a reference that validates at model load
-        // resolves to the same table when the writer runs.
-        private static IDbTable? FindTableByQualifiedName(IDbModel model, string qualified)
-            => ModelTableReference.Find(model, qualified);
 
         /// <summary>
         /// Fail-fast validation for field-level encryption (<c>encrypt</c> / <c>key-ref</c>

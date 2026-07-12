@@ -183,14 +183,14 @@ namespace BifrostQL.Core.Modules.History
 
             var historyRow = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
-                ["entity"] = Qualify(context.Table),
-                ["entity_id"] = JsonSerializer.Serialize(keyData),
-                ["op"] = operation.ToString().ToLowerInvariant(),
-                ["actor"] = AuditMutationTransformer.ResolveActor(context.Model, context.UserContext)?.ToString(),
-                ["changed_at"] = DateTime.UtcNow,
-                ["before"] = before is null ? null : JsonSerializer.Serialize(Project(before, trackedColumns)),
-                ["after"] = after is null ? null : JsonSerializer.Serialize(Project(after, trackedColumns)),
-                ["changed_columns"] = JsonSerializer.Serialize(changedColumns),
+                [MetadataKeys.History.Column.Entity] = Qualify(context.Table),
+                [MetadataKeys.History.Column.EntityId] = JsonSerializer.Serialize(keyData),
+                [MetadataKeys.History.Column.Op] = operation.ToString().ToLowerInvariant(),
+                [MetadataKeys.History.Column.Actor] = AuditMutationTransformer.ResolveActor(context.Model, context.UserContext)?.ToString(),
+                [MetadataKeys.History.Column.ChangedAt] = DateTime.UtcNow,
+                [MetadataKeys.History.Column.Before] = before is null ? null : JsonSerializer.Serialize(Project(before, trackedColumns)),
+                [MetadataKeys.History.Column.After] = after is null ? null : JsonSerializer.Serialize(Project(after, trackedColumns)),
+                [MetadataKeys.History.Column.ChangedColumns] = JsonSerializer.Serialize(changedColumns),
                 // id is an identity column, so it is omitted from the INSERT column list.
             };
 
@@ -308,8 +308,8 @@ namespace BifrostQL.Core.Modules.History
         /// </summary>
         private static IDbTable ResolveHistoryTable(IDbModel model, IDbTable table, HistoryConfig config)
         {
-            var name = config.HistoryTableOverride ?? model.GetMetadataValue(MetadataKeys.History.Table);
-            if (string.IsNullOrWhiteSpace(name))
+            var name = config.ResolveTargetName(model);
+            if (name is null)
                 throw new BifrostExecutionError(
                     $"Table '{Qualify(table)}' records change history but no '{MetadataKeys.History.Table}' is " +
                     "configured on the table or on the model.");

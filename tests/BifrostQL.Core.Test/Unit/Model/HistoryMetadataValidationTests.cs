@@ -17,10 +17,10 @@ public class HistoryMetadataValidationTests
     // documented DDL; the same shape serves a shared or a per-table history table.
     private static void WithHistoryColumns(DbModelTestFixture.TableBuilder t)
     {
-        t.WithSchema("dbo").WithPrimaryKey("id");
+        t.WithSchema("dbo").WithPrimaryKey(MetadataKeys.History.Column.Id);
         foreach (var col in MetadataKeys.History.HistoryColumns)
         {
-            if (string.Equals(col, "id", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(col, MetadataKeys.History.Column.Id, StringComparison.OrdinalIgnoreCase))
                 continue; // added as PK above
             t.WithColumn(col, "nvarchar", isNullable: true);
         }
@@ -124,10 +124,10 @@ public class HistoryMetadataValidationTests
                 .WithMetadata(MetadataKeys.History.Enabled, "update"))
             .WithTable("__history", t =>
             {
-                t.WithSchema("audit").WithPrimaryKey("id");
+                t.WithSchema("audit").WithPrimaryKey(MetadataKeys.History.Column.Id);
                 foreach (var col in MetadataKeys.History.HistoryColumns)
                 {
-                    if (string.Equals(col, "id", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (string.Equals(col, MetadataKeys.History.Column.Id, StringComparison.OrdinalIgnoreCase)) continue;
                     t.WithColumn(col, "nvarchar", isNullable: true);
                 }
             })
@@ -153,11 +153,11 @@ public class HistoryMetadataValidationTests
                 .WithMetadata(MetadataKeys.History.Enabled, "update"))
             .WithTable("__history", t =>
             {
-                t.WithSchema("dbo").WithPrimaryKey("id");
+                t.WithSchema("dbo").WithPrimaryKey(MetadataKeys.History.Column.Id);
                 foreach (var col in MetadataKeys.History.HistoryColumns)
                 {
-                    if (string.Equals(col, "id", StringComparison.OrdinalIgnoreCase)) continue;
-                    if (string.Equals(col, "changed_columns", StringComparison.OrdinalIgnoreCase)) continue; // hole
+                    if (string.Equals(col, MetadataKeys.History.Column.Id, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (string.Equals(col, MetadataKeys.History.Column.ChangedColumns, StringComparison.OrdinalIgnoreCase)) continue; // hole
                     t.WithColumn(col, "nvarchar", isNullable: true);
                 }
             })
@@ -166,7 +166,7 @@ public class HistoryMetadataValidationTests
         var act = () => ModelConfigValidator.Validate(model);
 
         act.Should().Throw<InvalidOperationException>()
-            .Which.Message.Should().Contain("missing required").And.Contain("changed_columns");
+            .Which.Message.Should().Contain("missing required").And.Contain(MetadataKeys.History.Column.ChangedColumns);
     }
 
     [Fact]
@@ -248,10 +248,10 @@ public class HistoryMetadataValidationTests
         var model = DbModelTestFixture.Create()
             .WithTable("orders", t =>
             {
-                t.WithSchema("dbo").WithPrimaryKey("id");
+                t.WithSchema("dbo").WithPrimaryKey(MetadataKeys.History.Column.Id);
                 foreach (var col in MetadataKeys.History.HistoryColumns)
                 {
-                    if (string.Equals(col, "id", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (string.Equals(col, MetadataKeys.History.Column.Id, StringComparison.OrdinalIgnoreCase)) continue;
                     t.WithColumn(col, "nvarchar", isNullable: true);
                 }
                 t.WithMetadata(MetadataKeys.History.Enabled, "update")

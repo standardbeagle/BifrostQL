@@ -869,28 +869,53 @@ namespace BifrostQL.Core.Model
             public const string AllOperations = "enabled";
 
             /// <summary>
+            /// The column names of the history contract (see <see cref="HistoryColumns"/>).
+            /// The change-history writer writes these columns, ModelConfigValidator checks
+            /// for them, and the read surface reads them back — one set of names for all
+            /// three, so the contract cannot drift between writer and validator.
+            /// </summary>
+            public static class Column
+            {
+                /// <summary>Surrogate PK, monotonic (trail order).</summary>
+                public const string Id = "id";
+
+                /// <summary>Qualified source table (e.g. <c>dbo.orders</c>); constant on a per-table history table, discriminator on a shared one.</summary>
+                public const string Entity = "entity";
+
+                /// <summary>JSON object of the row's primary-key columns (composite-PK safe).</summary>
+                public const string EntityId = "entity_id";
+
+                /// <summary><c>insert</c>/<c>update</c>/<c>delete</c>.</summary>
+                public const string Op = "op";
+
+                /// <summary>User id from the audit user-context (nullable: unauthenticated/system writes).</summary>
+                public const string Actor = "actor";
+
+                /// <summary>Write timestamp.</summary>
+                public const string ChangedAt = "changed_at";
+
+                /// <summary>JSON pre-image of the tracked columns (null on insert).</summary>
+                public const string Before = "before";
+
+                /// <summary>JSON post-image of the tracked columns (null on delete).</summary>
+                public const string After = "after";
+
+                /// <summary>JSON array of the tracked columns that actually differed.</summary>
+                public const string ChangedColumns = "changed_columns";
+            }
+
+            /// <summary>
             /// The column contract every history table must expose (per-table or shared
-            /// alike). The diff writer (next History sub-task) writes these columns in
-            /// the same transaction as the data change; the history read surface reads
-            /// them back. ModelConfigValidator verifies the configured
-            /// <see cref="Table"/> carries every column so a misconfigured history table
-            /// fails at model load rather than aborting the first real write.
-            /// <list type="bullet">
-            ///   <item><c>id</c> — surrogate PK, monotonic (trail order).</item>
-            ///   <item><c>entity</c> — qualified source table (e.g. <c>dbo.orders</c>); constant on a per-table history table, discriminator on a shared one.</item>
-            ///   <item><c>entity_id</c> — JSON object of the row's primary-key columns (composite-PK safe).</item>
-            ///   <item><c>op</c> — <c>insert</c>/<c>update</c>/<c>delete</c>.</item>
-            ///   <item><c>actor</c> — user id from the audit user-context (nullable: unauthenticated/system writes).</item>
-            ///   <item><c>changed_at</c> — write timestamp.</item>
-            ///   <item><c>before</c> — JSON pre-image of the tracked columns (null on insert).</item>
-            ///   <item><c>after</c> — JSON post-image of the tracked columns (null on delete).</item>
-            ///   <item><c>changed_columns</c> — JSON array of the tracked columns that actually differed.</item>
-            /// </list>
+            /// alike). The diff writer writes these columns in the same transaction as
+            /// the data change; the history read surface reads them back.
+            /// ModelConfigValidator verifies the configured <see cref="Table"/> carries
+            /// every column so a misconfigured history table fails at model load rather
+            /// than aborting the first real write.
             /// </summary>
             public static readonly IReadOnlyList<string> HistoryColumns = new[]
             {
-                "id", "entity", "entity_id", "op", "actor",
-                "changed_at", "before", "after", "changed_columns",
+                Column.Id, Column.Entity, Column.EntityId, Column.Op, Column.Actor,
+                Column.ChangedAt, Column.Before, Column.After, Column.ChangedColumns,
             };
         }
     }

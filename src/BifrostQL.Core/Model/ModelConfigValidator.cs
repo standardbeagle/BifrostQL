@@ -628,6 +628,26 @@ namespace BifrostQL.Core.Model
                 // carry every one of them — each table checks its own name here — or split
                 // via per-table overrides.
                 var scopeColumn = HistoryConfig.ResolveTenantScopeColumn(table);
+
+                // A tenant column that shares a name with a fixed contract column would
+                // pass the existence check below trivially — every target has 'op', 'id',
+                // ... — and the writer's scope copy would then silently overwrite the
+                // contract value in every trail row (or break on the identity column).
+                // The contract names are the same on every target, so no history-table
+                // override can resolve this; only renaming the column or opting the
+                // table out of history can.
+                if (scopeColumn is not null
+                    && MetadataKeys.History.HistoryColumns.Contains(scopeColumn, StringComparer.OrdinalIgnoreCase))
+                {
+                    errors.Add(Problem(table, MetadataKeys.Security.TenantFilter, scopeColumn,
+                        $"the tenant column's name collides with the history column contract " +
+                        $"({string.Join(", ", MetadataKeys.History.HistoryColumns)}); materializing the tenant " +
+                        $"scope would overwrite the trail's own '{scopeColumn}' value in every history row. " +
+                        "Rename the tenant column or disable history on this table — the contract names are " +
+                        $"fixed, so a '{MetadataKeys.History.Table}' override cannot avoid the collision."));
+                    continue;
+                }
+
                 if (scopeColumn is not null && !DbColumnExists(target, scopeColumn))
                 {
                     errors.Add(Problem(table, MetadataKeys.Security.TenantFilter, scopeColumn,

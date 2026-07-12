@@ -452,6 +452,36 @@ public class HistoryMetadataValidationTests
     }
 
     [Fact]
+    public void Validate_TenantColumnNamedLikeAContractColumn_Throws()
+    {
+        // Arrange: the tracked table's tenant column is literally named 'op' — one of
+        // the fixed history contract names. Materializing it would silently overwrite
+        // the trail row's own 'op' value, so the config must be rejected even though
+        // the target trivially "has" a column of that name. A per-table history-table
+        // override cannot help: the contract names are the same on every target.
+        var model = DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.History.Table, "dbo.__history")
+            .WithTable("orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Status", "nvarchar")
+                .WithColumn("op", "int")
+                .WithMetadata(MetadataKeys.Security.TenantFilter, "op")
+                .WithMetadata(MetadataKeys.History.Enabled, "update"))
+            .WithTable("__history", WithHistoryColumns)
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.orders")
+            .And.Contain(MetadataKeys.Security.TenantFilter)
+            .And.Contain("'op'")
+            .And.Contain("history column contract")
+            .And.Contain("Rename the tenant column or disable history");
+    }
+
+    [Fact]
     public void Validate_NoHistoryConfigured_HistoryTableOptional()
     {
         // No table opts in → a history table is not required and validation passes.

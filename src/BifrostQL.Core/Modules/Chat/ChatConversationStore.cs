@@ -41,6 +41,24 @@ namespace BifrostQL.Core.Modules.Chat
     }
 
     /// <summary>
+    /// Typed not-found for a conversation outside the caller's row scope. Nonexistent
+    /// and cross-tenant conversations raise the SAME exception (fail-closed
+    /// indistinguishable); transports map it to 404 without string-matching messages.
+    /// </summary>
+    public sealed class ChatConversationNotFoundException : BifrostExecutionError
+    {
+        public ChatConversationNotFoundException(object conversationId)
+            : base($"Conversation '{conversationId}' was not found.")
+        {
+        }
+
+        public ChatConversationNotFoundException(object conversationId, Exception inner)
+            : base($"Conversation '{conversationId}' was not found.", inner)
+        {
+        }
+    }
+
+    /// <summary>
     /// Persistence layer for the chat module's conversation/message pair
     /// (<see cref="ChatConfig.FromModel"/>). Every read goes through
     /// <see cref="IQueryIntentExecutor"/> and every write through
@@ -227,6 +245,72 @@ namespace BifrostQL.Core.Modules.Chat
         }
 
         /// <summary>
+        /// Probes whether the caller can see a conversation through the read executor,
+        /// so row-scope transformers decide visibility. False covers nonexistent and
+        /// out-of-scope conversations alike — fail-closed indistinguishable. Transports
+        /// use this to answer 404 before acquiring per-conversation resources, so an
+        /// out-of-scope caller can never observe another tenant's stream state.
+        /// </summary>
+        public async Task<bool> IsConversationVisibleAsync(
+            IDictionary<string, object?> authContext, object conversationId, CancellationToken cancellationToken = default)
+        {
+            if (authContext is null) throw new ArgumentNullException(nameof(authContext));
+            if (conversationId is null) throw new ArgumentNullException(nameof(conversationId));
+            var chat = await ResolveChatAsync();
+            return await IsConversationVisibleAsync(chat, authContext, conversationId, cancellationToken);
+        }
+
+        /// <summary>
+        /// The page addressing the LAST <paramref name="limit"/> rows of a
+        /// chronologically-sorted result: offset <c>totalCount - limit</c> when the
+        /// conversation exceeds the window, otherwise offset 0. Pure so the bounding
+        /// rule is pinned by unit tests.
+        /// </summary>
+        public static ChatPage LastMessagesWindow(int totalCount, int limit)
+        {
+            if (totalCount < 0)
+                throw new ArgumentOutOfRangeException(nameof(totalCount), totalCount, "A message total cannot be negative.");
+            return new ChatPage(limit, Math.Max(0, totalCount - limit));
+        }
+
+        /// <summary>
+        /// Reads the last <paramref name="limit"/> messages of a conversation in
+        /// chronological order, shaped for <see cref="IChatCompletionService"/>. Older
+        /// messages beyond the window are truncated (the LLM never sees them). The
+        /// window is computed from the scoped total, then re-read at the computed
+        /// offset — a concurrent append between the two reads shifts the window by at
+        /// most the appended rows, never outside the conversation. A message row with
+        /// a non-string role or content (external writes; masked ciphertext is still a
+        /// string) is a data/config fault reported fail-fast, not silently skipped.
+        /// </summary>
+        public async Task<IReadOnlyList<ChatCompletionMessage>> ListRecentMessagesAsync(
+            IDictionary<string, object?> authContext, object conversationId, int limit,
+            CancellationToken cancellationToken = default)
+        {
+            var first = await PageMessagesAsync(authContext, conversationId, new ChatPage(limit), cancellationToken);
+            var page = first.TotalCount > limit
+                ? await PageMessagesAsync(authContext, conversationId, LastMessagesWindow(first.TotalCount, limit), cancellationToken)
+                : first;
+
+            var chat = await ResolveChatAsync();
+            var roleKey = GraphQlColumnName(chat.MessagesTable, chat.MessagesConfig.RoleColumn!);
+            var contentKey = GraphQlColumnName(chat.MessagesTable, chat.MessagesConfig.ContentColumn!);
+
+            var history = new List<ChatCompletionMessage>(page.Rows.Count);
+            foreach (var row in page.Rows)
+            {
+                if (row[roleKey] is not string role || string.IsNullOrWhiteSpace(role))
+                    throw new BifrostExecutionError(
+                        $"A message in conversation '{conversationId}' has no role; the row was not written through the chat store.");
+                if (row[contentKey] is not string content)
+                    throw new BifrostExecutionError(
+                        $"A message in conversation '{conversationId}' has no content; the row was not written through the chat store.");
+                history.Add(new ChatCompletionMessage(role, content));
+            }
+            return history;
+        }
+
+        /// <summary>
         /// Resolves the endpoint's chat pair from the cached model. No chat tables is
         /// a configuration error for a chat store — fail fast, never an empty surface.
         /// </summary>
@@ -303,10 +387,10 @@ namespace BifrostQL.Core.Modules.Chat
             }
         }
 
-        private static BifrostExecutionError ConversationNotFound(object conversationId, Exception? inner = null) =>
+        private static ChatConversationNotFoundException ConversationNotFound(object conversationId, Exception? inner = null) =>
             inner is null
-                ? new BifrostExecutionError($"Conversation '{conversationId}' was not found.")
-                : new BifrostExecutionError($"Conversation '{conversationId}' was not found.", inner);
+                ? new ChatConversationNotFoundException(conversationId)
+                : new ChatConversationNotFoundException(conversationId, inner);
 
         // The mutation pipeline wraps provider errors, so walk the chain for the
         // DbException that identifies a database-level failure (e.g. FK violation).

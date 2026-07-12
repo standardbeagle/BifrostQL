@@ -937,8 +937,9 @@ namespace BifrostQL.Core.Model
         ///   "dbo.conversations { chat-conversations: enabled; chat-title: Title }"
         ///   "dbo.messages { chat-messages: enabled; chat-role: Role; chat-content: Content;
         ///                   chat-conversation-fk: ConversationId; chat-created-at: CreatedAt }"
-        /// This slice establishes the metadata contract and fail-fast validation; the
-        /// chat read/write surface (SSE streaming) is a later Chat sub-task.
+        /// The HTTP surface over this contract is the chat SSE endpoints
+        /// (BifrostQL.Server's UseBifrostChat / BifrostChatMiddleware) backed by
+        /// ChatConversationStore over the intent executors.
         /// </summary>
         public static class Chat
         {

@@ -58,6 +58,21 @@ namespace BifrostQL.Core.Modules.Chat
             };
 
         /// <summary>
+        /// Database types accepted for the chat tables' primary-key columns across
+        /// the supported dialects. The chat surface ORDERS by these keys —
+        /// conversations list newest first by key descending, and message paging
+        /// breaks created-at ties by key ascending — so only monotonic integer keys
+        /// qualify; a GUID key would order randomly and silently break the contract.
+        /// </summary>
+        public static readonly IReadOnlySet<string> IntegerKeyColumnTypes =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "int", "integer", "bigint", "smallint", "tinyint", "mediumint",
+                "int2", "int4", "int8",
+                "serial", "bigserial", "smallserial",
+            };
+
+        /// <summary>
         /// Database types accepted for the date/time-typed <c>chat-created-at</c>
         /// column across the supported dialects.
         /// </summary>

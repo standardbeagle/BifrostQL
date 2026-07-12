@@ -794,6 +794,9 @@ namespace BifrostQL.Core.Model
                     table.GetMetadataValue(MetadataKeys.Chat.Conversations),
                     $"the conversations table has a composite primary key ({string.Join(", ", pks.Select(c => c.ColumnName))}); " +
                     $"'{MetadataKeys.Chat.ConversationFk}' is a single column, so a single-column primary key is required."));
+            else
+                ValidateChatOrderingKey(table, MetadataKeys.Chat.Conversations, pks[0],
+                    "the chat surface lists conversations newest first by ordering on this key descending", errors);
 
             var title = chat.ConversationsConfig.TitleColumn;
             if (title != null && !DbColumnExists(table, title))
@@ -806,10 +809,20 @@ namespace BifrostQL.Core.Model
             var table = chat.MessagesTable;
             var config = chat.MessagesConfig;
 
-            if (!table.KeyColumns.Any())
+            var pks = table.KeyColumns.ToArray();
+            if (pks.Length == 0)
                 errors.Add(Problem(table, MetadataKeys.Chat.Messages,
                     table.GetMetadataValue(MetadataKeys.Chat.Messages),
                     "the messages table has no primary-key column."));
+            else if (pks.Length > 1)
+                errors.Add(Problem(table, MetadataKeys.Chat.Messages,
+                    table.GetMetadataValue(MetadataKeys.Chat.Messages),
+                    $"the messages table has a composite primary key ({string.Join(", ", pks.Select(c => c.ColumnName))}); " +
+                    "message paging breaks created-at ties by ordering on a single key column, so a single-column " +
+                    "primary key is required."));
+            else
+                ValidateChatOrderingKey(table, MetadataKeys.Chat.Messages, pks[0],
+                    "message paging breaks created-at ties by ordering on this key ascending", errors);
 
             ValidateChatColumn(table, MetadataKeys.Chat.Role, config.RoleColumn!,
                 ChatConfig.StringColumnTypes, "string-typed", errors);
@@ -818,6 +831,21 @@ namespace BifrostQL.Core.Model
             ValidateChatColumn(table, MetadataKeys.Chat.CreatedAt, config.CreatedAtColumn!,
                 ChatConfig.DateTimeColumnTypes, "date/time-typed", errors);
             ValidateChatConversationFk(chat, errors);
+        }
+
+        // The chat surface's ordering contract — conversations newest first (key desc),
+        // message paging tiebreak (key asc) — is only true for a monotonic integer key;
+        // a GUID (or other non-integer) key orders randomly and would break it silently,
+        // so the contract is made impossible to misconfigure at model load.
+        private static void ValidateChatOrderingKey(
+            IDbTable table, string optInKey, ColumnDto keyColumn, string orderingContract, List<string> errors)
+        {
+            if (!ChatConfig.IntegerKeyColumnTypes.Contains(Utils.StringNormalizer.NormalizeType(keyColumn.DataType)))
+                errors.Add(Problem(table, optInKey, table.GetMetadataValue(optInKey),
+                    $"primary-key column '{keyColumn.ColumnName}' has type '{keyColumn.DataType}', but {orderingContract}; " +
+                    "that ordering is only creation order for a monotonic integer-typed key " +
+                    $"({string.Join("/", ChatConfig.IntegerKeyColumnTypes.OrderBy(t => t, StringComparer.Ordinal))}). " +
+                    "Use an integer identity key for this chat table."));
         }
 
         private static void ValidateChatColumn(

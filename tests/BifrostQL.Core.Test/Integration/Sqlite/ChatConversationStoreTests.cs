@@ -132,12 +132,12 @@ public sealed class ChatConversationStoreTests : IAsyncLifetime
     /// security transformers the server registers: tenant filter + encrypted-column
     /// guard on reads, tenant pinning + encrypt-on-write on mutations.
     /// </summary>
-    private static ChatConversationStore BuildStore(IServiceProvider provider)
+    private static ChatConversationStore BuildStore(IServiceProvider provider, string connString = ConnString)
     {
         var pathCache = new PathCache<Inputs>();
         pathCache.AddLoader(EndpointPath, async () =>
         {
-            var factory = new SqliteDbConnFactory(ConnString);
+            var factory = new SqliteDbConnFactory(connString);
             var model = await new DbModelLoader(factory, new MetadataLoader(Rules)).LoadAsync();
             return new Inputs(new Dictionary<string, object?>
             {
@@ -255,6 +255,43 @@ public sealed class ChatConversationStoreTests : IAsyncLifetime
         var missing = () => _store.AppendMessageAsync(Tenant(2), 999_999L, ChatMessageRoles.User, "ghost");
         await missing.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*not found*");
         (await ScalarAsync("SELECT COUNT(*) FROM messages")).Should().Be("0");
+    }
+
+    [Fact]
+    public async Task AppendMessage_ConversationDeletedBetweenProbeAndInsert_IsTypedNotFound_NoOrphan_FkEnforced()
+    {
+        // Race window pinned via the test seam: the conversation is hard-deleted
+        // between the visibility probe and the insert. The factory defaults SQLite to
+        // Foreign Keys=True, so the insert hits an FK violation — which must surface
+        // as the SAME typed not-found as a never-existing conversation, never as a
+        // provider DbException, and must leave no message row behind.
+        var conv = await _store.CreateConversationAsync(Tenant(1), "doomed");
+        _store.AfterConversationVisibilityProbe = () => Exec($"DELETE FROM conversations WHERE id = {conv}");
+
+        var act = () => _store.AppendMessageAsync(Tenant(1), conv!, ChatMessageRoles.User, "into the void");
+
+        await act.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*not found*");
+        (await ScalarAsync("SELECT COUNT(*) FROM messages")).Should().Be("0", "no orphaned message may survive the race");
+    }
+
+    [Fact]
+    public async Task AppendMessage_ConversationDeletedBetweenProbeAndInsert_IsCompensated_WhenFkIsNotEnforced()
+    {
+        // Same race on an engine/link that does NOT enforce the FK (explicit
+        // Foreign Keys=False stands in for metadata-only join rules and legacy
+        // SQLite files): the insert succeeds and would silently orphan the message.
+        // The post-insert re-probe must remove the orphan and report the same typed
+        // not-found. The remaining race — a delete landing after that re-probe — is
+        // indistinguishable from a delete after a successful append and is the
+        // conversation-delete path's responsibility.
+        var store = BuildStore(_provider, ConnString + ";Foreign Keys=False");
+        var conv = await store.CreateConversationAsync(Tenant(1), "doomed");
+        store.AfterConversationVisibilityProbe = () => Exec($"DELETE FROM conversations WHERE id = {conv}");
+
+        var act = () => store.AppendMessageAsync(Tenant(1), conv!, ChatMessageRoles.User, "into the void");
+
+        await act.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*not found*");
+        (await ScalarAsync("SELECT COUNT(*) FROM messages")).Should().Be("0", "the compensating delete removes the orphan");
     }
 
     // ---- append: role gate, server-side stamp, history, crypto ---------------

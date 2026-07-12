@@ -174,6 +174,76 @@ public class ChatMetadataValidationTests
     }
 
     [Fact]
+    public void Validate_ConversationsPrimaryKeyNotIntegerTyped_Throws()
+    {
+        // Arrange: a GUID key. Conversation listing promises "newest first" by primary
+        // key descending, which only a monotonic integer key can honor — a GUID orders
+        // randomly, so the contract must be rejected at model load, not silently broken.
+        var model = ValidChatFixture(linkFkToConversationPk: false)
+            .WithTable("conversations", t => t
+                .WithSchema("dbo").WithPrimaryKey("Id", "uniqueidentifier").WithColumn("Title", "nvarchar")
+                .WithMetadata(MetadataKeys.Chat.Conversations, MetadataKeys.Chat.Enabled)
+                .WithMetadata(MetadataKeys.Chat.Title, "Title"))
+            .WithSingleLink("messages", "ConversationId", "conversations", "Id", "conversation")
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.conversations")
+            .And.Contain("Id")
+            .And.Contain("uniqueidentifier")
+            .And.Contain("integer")
+            .And.Contain("order");
+    }
+
+    [Fact]
+    public void Validate_MessagesPrimaryKeyNotIntegerTyped_Throws()
+    {
+        // Arrange: message paging breaks created-at ties by primary key, so the
+        // messages key must be integer-typed too or same-timestamp rows page
+        // non-deterministically.
+        var model = ValidChatFixture(linkFkToConversationPk: false)
+            .WithTable("messages", t => t
+                .WithSchema("dbo").WithPrimaryKey("Id", "uniqueidentifier")
+                .WithColumn("Role", "nvarchar")
+                .WithColumn("Content", "nvarchar")
+                .WithColumn("ConversationId", "int")
+                .WithColumn("CreatedAt", "datetime2")
+                .WithMetadata(MetadataKeys.Chat.Messages, MetadataKeys.Chat.Enabled)
+                .WithMetadata(MetadataKeys.Chat.Role, "Role")
+                .WithMetadata(MetadataKeys.Chat.Content, "Content")
+                .WithMetadata(MetadataKeys.Chat.ConversationFk, "ConversationId")
+                .WithMetadata(MetadataKeys.Chat.CreatedAt, "CreatedAt"))
+            .WithSingleLink("messages", "ConversationId", "conversations", "Id", "conversation")
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.messages")
+            .And.Contain("Id")
+            .And.Contain("uniqueidentifier")
+            .And.Contain("integer")
+            .And.Contain("order");
+    }
+
+    [Fact]
+    public void Validate_MessagesCompositePrimaryKey_Throws()
+    {
+        // Arrange: a composite messages key cannot serve as the single deterministic
+        // paging tiebreak the chat surface sorts by.
+        var model = ValidChatFixture(messages: t => t
+                .WithColumn("Seq", "int", isPrimaryKey: true))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.messages").And.Contain("composite");
+    }
+
+    [Fact]
     public void Validate_MessagesWithoutPrimaryKey_Throws()
     {
         var model = ValidChatFixture(linkFkToConversationPk: false)

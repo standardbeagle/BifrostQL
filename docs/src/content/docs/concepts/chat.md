@@ -56,9 +56,14 @@ The configuration fails fast at model load — never silently at request time:
   the other.
 - Every mapped column must exist on its table; role/content must be string-typed and
   created-at date/time-typed.
-- The conversations table needs a **single-column primary key** (composite keys are
-  rejected with a clear error), and `chat-conversation-fk` must actually reference it
-  through a declared foreign key or an explicit `join` metadata rule.
+- Both chat tables need a **single-column, integer-typed primary key** (composite and
+  non-integer keys — GUIDs included — are rejected with a clear error). This is an
+  ordering contract: conversations list newest first by key descending and message
+  paging breaks created-at ties by key ascending, which is only creation order for a
+  monotonic integer identity key. `chat-conversation-fk` must actually reference the
+  conversations key through a declared **single-column** foreign key or an explicit
+  `join` metadata rule; a composite foreign key that merely includes the column is
+  rejected by name.
 - Both chat tables must be **published** (not `visibility: hidden`) and must not be
   change-history **targets**. They *may* be history-**enabled** — recording the chat's
   own change trail composes.

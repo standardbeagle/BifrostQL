@@ -261,6 +261,7 @@ public sealed class HistoryTrailShapeTests : IAsyncLifetime
             Transaction = transaction,
             Model = model,
             Dialect = factory.Dialect,
+            MutationState = MutationObserverContext.NewMutationState(),
         });
 
         errors.Should().ContainSingle()

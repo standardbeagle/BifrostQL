@@ -124,22 +124,33 @@ public sealed class TreeSyncExecutor
                     additionalFilter = MutationCommandExecutor.RenderAdditionalFilter(result.AdditionalFilter, _dialect);
                 }
 
-                // One scratchpad per operation in the tree, shared by this operation's
-                // before-commit and after-write phases (never across operations).
-                var mutationState = new Dictionary<string, object?>(StringComparer.Ordinal);
-
                 // Before-commit hooks run immediately before this operation's write, on the
                 // SAME connection (whose transaction is managed with SQL BEGIN/COMMIT here,
                 // so no DbTransaction object exists to pass). A veto throws, and the catch
                 // below rolls the whole tree back — a nested sync is one transaction, so a
                 // rejected node cannot leave its siblings committed. Only when the
                 // transformer pipeline is active: a model is required to resolve what a hook
-                // writes into, and the raw-executor test path supplies none.
+                // writes into, and the raw-executor test path supplies none. The context —
+                // and the state bag pairing the two hook phases — is scoped per operation
+                // in the tree, never across operations.
+                MutationObserverContext? hookContext = null;
                 if (model != null)
-                    await MutationNotifier.RunBeforeCommitHooksAsync(
-                        services, op.Table, mutationType, data,
-                        userContext ?? new Dictionary<string, object?>(),
-                        conn, transaction: null, model, _dialect, mutationState);
+                {
+                    hookContext = new MutationObserverContext
+                    {
+                        Table = op.Table,
+                        MutationType = mutationType,
+                        Data = data,
+                        Result = null,
+                        UserContext = userContext ?? new Dictionary<string, object?>(),
+                        Connection = conn,
+                        Transaction = null,
+                        Model = model,
+                        Dialect = _dialect,
+                        MutationState = MutationObserverContext.NewMutationState(),
+                    };
+                    await MutationNotifier.RunBeforeCommitHooksAsync(services, hookContext);
+                }
 
                 object? opResult;
                 switch (mutationType)
@@ -165,12 +176,9 @@ public sealed class TreeSyncExecutor
 
                 // After the write, still inside the same SQL-level transaction: the CDC event
                 // and the history row are written here, paired with this operation's
-                // before-commit capture through mutationState.
-                if (model != null)
-                    await MutationNotifier.RunInTransactionHooksAsync(
-                        services, op.Table, mutationType, data, opResult,
-                        userContext ?? new Dictionary<string, object?>(),
-                        conn, transaction: null, model, _dialect, mutationState);
+                // before-commit capture through the shared context's MutationState.
+                if (hookContext != null)
+                    await MutationNotifier.RunInTransactionHooksAsync(services, hookContext, opResult);
             }
 
             await ExecuteRawAsync(conn, _dialect.CommitTransactionSql);

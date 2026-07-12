@@ -11,7 +11,7 @@ public interface IMutationObserver
     ValueTask OnMutationAsync(MutationObserverContext context);
 }
 
-public sealed class MutationObserverContext
+public sealed record MutationObserverContext
 {
     public required IDbTable Table { get; init; }
     public required MutationType MutationType { get; init; }
@@ -32,7 +32,13 @@ public sealed class MutationObserverContext
     /// <summary>The open connection for the in-flight mutation (before-commit only; else null).</summary>
     public DbConnection? Connection { get; init; }
 
-    /// <summary>The open transaction wrapping the mutation (before-commit only; else null).</summary>
+    /// <summary>
+    /// The open transaction wrapping the mutation (before-commit only; else null). Also
+    /// null on the TreeSync path, which drives its transaction with SQL BEGIN/COMMIT on
+    /// the connection rather than through a DbTransaction object; a hook's own command
+    /// then runs on that same ambient transaction. The connection's presence — not the
+    /// transaction object's — is what tells a hook it is in-transaction.
+    /// </summary>
     public DbTransaction? Transaction { get; init; }
 
     /// <summary>The database model, for reading model-level metadata (before-commit only; else null).</summary>
@@ -49,10 +55,19 @@ public sealed class MutationObserverContext
     /// is finally known. The caller creates one per mutation and passes it to both
     /// phases; a write path that runs only one phase leaves the other's entry absent,
     /// which every reader must treat as "not captured" and fail closed on rather than
-    /// as an empty before-image.
+    /// as an empty before-image. Required — no silent default — so the compiler forces
+    /// every write path to decide which bag a mutation's two phases share.
     /// </summary>
-    public IDictionary<string, object?> MutationState { get; init; } =
-        new Dictionary<string, object?>(StringComparer.Ordinal);
+    public required IDictionary<string, object?> MutationState { get; init; }
+
+    /// <summary>
+    /// One scratchpad per mutation, shared by that mutation's before-commit and
+    /// after-write in-transaction hook phases (see <see cref="MutationState"/>). Scoped
+    /// per mutation — never per request, batch, or tree — so one row's before-image can
+    /// never be paired with the next row's write. Ordinal keys: state keys are exact,
+    /// code-owned strings.
+    /// </summary>
+    public static Dictionary<string, object?> NewMutationState() => new(StringComparer.Ordinal);
 }
 
 // A before-commit veto hook. Unlike IMutationObserver (which fires AFTER the

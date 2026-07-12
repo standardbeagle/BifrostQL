@@ -20,7 +20,11 @@ namespace BifrostQL.Core.Resolvers
         /// Runs the before-commit veto phase immediately before the write (inside the
         /// transaction). If any hook returns errors (or throws), the aggregated errors
         /// surface as a <see cref="BifrostExecutionError"/> so the caller's write is
-        /// aborted and nothing is committed. The result is not known yet (null).
+        /// aborted and nothing is committed. The caller builds ONE
+        /// <see cref="MutationObserverContext"/> per mutation (connection, transaction,
+        /// model, dialect, and the state bag both phases share) and passes it to both
+        /// phases; each phase stamps only its phase-specific field — here the result,
+        /// which is not known yet (null).
         ///
         /// NOT gated by the workflow-trigger suppression flag, for the same reason the
         /// after-write phase is not: these two phases are the two halves of ONE mutation's
@@ -36,20 +40,7 @@ namespace BifrostQL.Core.Resolvers
         /// <see cref="IsWorkflowTriggerSuppressed"/> on its own user context.
         /// </summary>
         public static async ValueTask RunBeforeCommitHooksAsync(
-            IServiceProvider? services,
-            IDbTable table,
-            MutationType mutationType,
-            IDictionary<string, object?> data,
-            IDictionary<string, object?> userContext,
-            DbConnection connection,
-            // Null on the TreeSync path, which drives its transaction with SQL BEGIN/COMMIT
-            // on the connection rather than through a DbTransaction object; a hook's own
-            // command then runs on that same ambient transaction. The connection's presence
-            // — not the transaction object's — is what tells a hook it is in-transaction.
-            DbTransaction? transaction,
-            IDbModel model,
-            ISqlDialect dialect,
-            IDictionary<string, object?> mutationState)
+            IServiceProvider? services, MutationObserverContext context)
         {
             if (services is null)
                 return;
@@ -58,24 +49,7 @@ namespace BifrostQL.Core.Resolvers
             if (hooks is null)
                 return;
 
-            var errors = await hooks.RunAsync(new MutationObserverContext
-            {
-                Table = table,
-                MutationType = mutationType,
-                Data = data,
-                Result = null,
-                UserContext = userContext,
-                // A before-commit hook may write into the SAME transaction (outbox /
-                // domain events), so it receives the open connection/transaction plus
-                // the model and dialect it needs to build that write.
-                Connection = connection,
-                Transaction = transaction,
-                Model = model,
-                Dialect = dialect,
-                // Shared with this mutation's after-write phase: a hook that reads the
-                // pre-write row (the history before-image) leaves it here.
-                MutationState = mutationState,
-            });
+            var errors = await hooks.RunAsync(context with { Result = null });
 
             if (errors.Count > 0)
                 throw new BifrostExecutionError(string.Join("; ", errors));
@@ -84,24 +58,17 @@ namespace BifrostQL.Core.Resolvers
         /// <summary>
         /// Runs the after-write in-transaction phase: immediately after the data write
         /// but before commit, with the write <paramref name="result"/> available (the
-        /// generated identity on an INSERT). A hook throw is NOT caught — it rolls the
+        /// generated identity on an INSERT). Takes the SAME per-mutation context the
+        /// before-commit phase ran with — including the state bag that phase wrote into,
+        /// so a hook can pair its pre-write observation with the write's result — and
+        /// stamps the now-known result onto it. A hook throw is NOT caught — it rolls the
         /// transaction back so the event and its data change commit or fail as a unit.
         /// Not gated by the workflow-trigger suppression flag: CDC captures every
         /// committed data change regardless of origin, and the outbox writer cannot
         /// recurse into workflow triggers the way an observer can.
         /// </summary>
         public static async ValueTask RunInTransactionHooksAsync(
-            IServiceProvider? services,
-            IDbTable table,
-            MutationType mutationType,
-            IDictionary<string, object?> data,
-            object? result,
-            IDictionary<string, object?> userContext,
-            DbConnection connection,
-            DbTransaction? transaction,
-            IDbModel model,
-            ISqlDialect dialect,
-            IDictionary<string, object?> mutationState)
+            IServiceProvider? services, MutationObserverContext context, object? result)
         {
             if (services is null)
                 return;
@@ -110,21 +77,7 @@ namespace BifrostQL.Core.Resolvers
             if (hooks is null)
                 return;
 
-            await hooks.RunAsync(new MutationObserverContext
-            {
-                Table = table,
-                MutationType = mutationType,
-                Data = data,
-                Result = result,
-                UserContext = userContext,
-                Connection = connection,
-                Transaction = transaction,
-                Model = model,
-                Dialect = dialect,
-                // The same bag the before-commit phase of THIS mutation wrote into, so a
-                // hook can pair its pre-write observation with the write's result.
-                MutationState = mutationState,
-            });
+            await hooks.RunAsync(context with { Result = result });
         }
 
         public static async ValueTask NotifyStateTransitionAsync(
@@ -161,6 +114,9 @@ namespace BifrostQL.Core.Resolvers
                     Data = data,
                     Result = result,
                     UserContext = userContext,
+                    // Post-commit: no hook phase pairs with this notification, so the bag
+                    // is fresh and empty — readers see "not captured" and fail closed.
+                    MutationState = MutationObserverContext.NewMutationState(),
                 });
             }
         }

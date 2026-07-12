@@ -45,6 +45,7 @@ public class WorkflowTriggerTests
             Data = new Dictionary<string, object?> { ["member_id"] = 1 },
             Result = 1,
             UserContext = new Dictionary<string, object?>(),
+            MutationState = MutationObserverContext.NewMutationState(),
         });
 
         runner.Runs.Should().ContainSingle();

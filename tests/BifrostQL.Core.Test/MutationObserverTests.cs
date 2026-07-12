@@ -44,6 +44,7 @@ public class MutationObserverTests
             Data = new Dictionary<string, object?> { ["id"] = 1 },
             Result = 1,
             UserContext = new Dictionary<string, object?>(),
+            MutationState = MutationObserverContext.NewMutationState(),
         };
     }
 

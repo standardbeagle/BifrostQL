@@ -411,4 +411,56 @@ public sealed class HistoryTrailReadTests : IAsyncLifetime
             .And.Contain("main.orders");
     }
 
+    // ---------------------------------------------------------------------------
+    // Encrypted images (decrypt/mask per caller policy)
+    // ---------------------------------------------------------------------------
+
+    private async Task<(IDbModel Model, string Ciphertext)> SeedEncryptedTrailAsync()
+    {
+        var model = await LoadModelAsync(
+            "main.secrets.ssn { encrypt: aes-256-gcm; key-ref: config:pii; mask: last4; unmask-role: compliance }",
+            "main.secrets { history: enabled }",
+            ":root { history-table: main.audit_trail }");
+
+        (await ExecuteMutationAsync($"mutation {{ secrets(insert: {{ ssn: \"{Plaintext}\" }}) }}", model))
+            .Errors.Should().BeNullOrEmpty();
+
+        await using var cmd = new SqliteCommand("SELECT ssn FROM secrets WHERE id = 1", _keepAlive);
+        var ciphertext = (string)(await cmd.ExecuteScalarAsync())!;
+        return (model, ciphertext);
+    }
+
+    private static string ImageSsn(ExecutionResult result)
+    {
+        var rows = Rows(result, "secretsHistory");
+        rows.Should().ContainSingle();
+        return JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+            rows[0].GetProperty("after").GetString()!)!["ssn"].GetString()!;
+    }
+
+    [Fact]
+    public async Task EncryptedImageValue_DecryptsForUnmaskRoleHolder()
+    {
+        var (model, _) = await SeedEncryptedTrailAsync();
+
+        var result = await ExecuteQueryAsync(
+            "query { secretsHistory { data { after } } }", model,
+            new Dictionary<string, object?> { ["roles"] = new[] { "compliance" } });
+
+        ImageSsn(result).Should().Be(Plaintext);
+    }
+
+    [Fact]
+    public async Task EncryptedImageValue_IsMaskedForOtherCallers_AndNeverCiphertext()
+    {
+        var (model, ciphertext) = await SeedEncryptedTrailAsync();
+
+        var result = await ExecuteQueryAsync(
+            "query { secretsHistory { data { after } } }", model,
+            new Dictionary<string, object?> { ["roles"] = Array.Empty<string>() });
+
+        var value = ImageSsn(result);
+        value.Should().Be("••••6789", "mask: last4 applies inside the image exactly as on a base-table read");
+        value.Should().NotBe(Plaintext).And.NotBe(ciphertext);
+    }
 }

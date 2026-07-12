@@ -82,9 +82,10 @@ must carry every one of those columns (nullable — each row fills only its own 
 column). If that gets unwieldy, give each table its own `history-table` override instead.
 
 :::caution[Backfill before you rely on scoped reads]
-Trail rows written **before** you add the column predate it and hold `NULL` scope. Once
-the history read surface lands, `NULL`-scope rows are **invisible to scoped readers by
-design** — the trail fails closed rather than leaking rows whose tenant is unknown.
+Trail rows written **before** you add the column predate it and hold `NULL` scope. On
+the trail read field (see [Reading the trail](#6-reading-the-trail)), `NULL`-scope rows
+are **invisible to scoped readers by design** — the trail fails closed rather than
+leaking rows whose tenant is unknown.
 Backfill the column from the tracked table (or the recorded images) if the older trail
 must remain visible to tenant-scoped readers:
 
@@ -110,27 +111,84 @@ their author:
 
 Without it, `actor` is null. It is never taken from client input.
 
-## 6. Read the trail
+## 6. Reading the trail
 
-There is no generated history field yet — `orders_history(...)` and as-of reads are a
-planned slice. Until then the trail is read as an ordinary table: from the database
-(reporting, SQL), or through the GraphQL API if you publish it like any other table.
+Every history-enabled table gets a generated **trail read field** on the root query type:
+`<table>History` — `ordersHistory` for `dbo.orders`. It returns the table's own trail
+rows from its resolved history table, paged like any other generated field:
+
+```graphql
+query {
+  ordersHistory(
+    filter: { op: { _eq: "update" }, changed_at: { _gte: "2026-01-01" } }
+    sort: [id_desc]
+    limit: 50
+  ) {
+    total
+    data { id entity_id op actor changed_at before after changed_columns }
+  }
+}
+```
+
+**Row shape.** The rows are the documented history contract — `id`, `entity`,
+`entity_id` (the JSON key object), `op`, `actor`, `changed_at`, `before`, `after`
+(the JSON images), `changed_columns` — plus the tenant scope column when the tracked
+table is tenant-filtered. The field reuses the history table's generated filter type,
+sort enum, and paged type, so the operator vocabulary is the one you already know:
+`entity_id: { _eq: ... }` for one row's trail, `changed_at` ranges
+(`_gt`/`_lt`/`_gte`/`_lte`/`_between`), `op` and `actor` equality, and `sort`/`limit`/
+`offset`/`total` paging. The field exposes plain trail columns only — no relationship
+or join fields.
+
+**The entity discriminator is server-side.** On a shared history table,
+`ordersHistory` always applies `entity = 'dbo.orders'` inside the server, ANDed with
+your filter — a filter can narrow within the table's own trail but can never widen the
+field to another table's rows.
+
+**Tenant authorization is fail-closed.** For a tenant-filtered tracked table the field
+adds the caller's tenant claim (the same `tenant-context-key` claim the base table's
+tenant filter reads) as a plain predicate on the materialized scope column — that is
+what the column exists for. A caller with no tenant claim gets **zero rows**, and
+`NULL`-scope legacy rows are invisible to scoped callers (see the backfill note above).
+
+**Encrypted images obey the read policy.** A recorded value of an
+[encrypted column](/concepts/field-encryption) is stored in the images as ciphertext.
+The trail read field passes it through the same decrypt/mask projection as a base-table
+read: a caller holding the column's `unmask-role` (or admin) sees plaintext inside
+`before`/`after`; every other caller sees the column's configured mask; raw ciphertext
+is never returned, so the trail cannot serve as a decryption oracle.
+
+**Policy row scoping is a current limitation.** A `policy-row-scope` expression has no
+materialized column on the history table to re-apply it to, so the trail read field
+cannot enforce it. Rather than expose trail rows of rows the caller is scoped out of,
+**model load fails fast** when a table combines `policy-row-scope` with `history`.
+Remove the row scope or disable history on that table; an explicit grant mechanism may
+lift this later.
+
+**Name collisions fail fast.** If a real table's GraphQL name equals a generated
+`<table>History` field name, model load fails with an error naming both tables — rename
+one or disable history.
 
 :::note
 GraphQL reserves names beginning with `__`, so a table literally named `__history` cannot
-be exposed as a GraphQL field. Name it without the double underscore — `dbo.order_history`
-— if you want to query the trail through the API. The DDL above uses `__history` for a
-trail you read from the database.
+be exposed as a GraphQL field of its own. The generated `<table>History` field is named
+after the *tracked* table, so it works against any history table name — but if you also
+want to query the history table directly, name it without the double underscore
+(`dbo.order_history`). The DDL above uses `__history` for a trail you read from the
+database.
 :::
 
 :::caution
-The history table is a **table like any other**, so it is exposed and authorized like any
-other. It holds every recorded value of every tracked column, which makes it as sensitive
-as the most sensitive column it tracks. Protect it deliberately — a
+The history table itself is still a **table like any other**, so it is also exposed and
+authorized like any other. It holds every recorded value of every tracked column, which
+makes it as sensitive as the most sensitive column it tracks. Protect it deliberately — a
 `policy-read-deny-roles` rule restricting it to a compliance role, or a per-table
-history table you grant separately. Do not leave it readable by everyone who can read the
-tracked table's *current* row: the trail also contains the rows they were never allowed to
-see, and every value that was since corrected.
+history table you grant separately. In particular, a `policy-read-deny` rule on the
+*tracked* table does not carry over to its trail: the `<table>History` field reads the
+history table under the history table's own policy. Do not leave the history table
+readable by everyone who can read the tracked table's *current* row: the trail also
+contains the rows they were never allowed to see, and every value that was since
+corrected.
 :::
 
 ## What gets recorded

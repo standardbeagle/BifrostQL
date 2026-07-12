@@ -14,8 +14,10 @@ and the "who set this to `cancelled` on Tuesday?" question.
 :::note
 The **metadata contract and the writer** are implemented across **all** write paths —
 single-row, batch, and nested TreeSync mutations each record their change in the same
-transaction as the change itself. The history **read surface** (`orders_history(...)`,
-as-of reads) is a later slice; until then the trail is queried as an ordinary table.
+transaction as the change itself. Each history-enabled table also gets a generated
+**`<table>History` trail read field** — see
+[Reading the trail](/guides/change-history#6-reading-the-trail). As-of reads
+(`orders(asOf: ...)`) are a later slice.
 :::
 
 ## Metadata

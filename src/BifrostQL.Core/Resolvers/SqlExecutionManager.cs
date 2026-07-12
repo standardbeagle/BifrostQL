@@ -294,6 +294,14 @@ namespace BifrostQL.Core.Resolvers
                 context.RequestServices?.GetService<BifrostQL.Core.Crypto.EnvelopeKeyManager>(),
                 ExtractRoles(context.UserContext));
 
+            // The before/after images carry the TRACKED table's column values as
+            // stored — for an encrypted column, the ciphertext envelope. Route each
+            // such value through the same projector a base-table read uses, so the
+            // caller sees exactly what a read of the row itself would show them
+            // (plaintext for the unmask role, the column's mask otherwise) and never
+            // the raw ciphertext as a decryption oracle.
+            ProjectEncryptedTrailImages(query, trackedTable, data, cryptoRead);
+
             var total = 0;
             if (data.TryGetValue(query.KeyName + "=>count", out var countEntry)
                 && countEntry.data.Count > 0 && countEntry.data[0].Length > 0
@@ -317,6 +325,98 @@ namespace BifrostQL.Core.Resolvers
             And = new List<TableFilter> { left, right },
             FilterType = FilterType.And,
         };
+
+        /// <summary>
+        /// Rewrites the selected <c>before</c>/<c>after</c> image cells in place,
+        /// projecting each encrypted tracked-table value through
+        /// <paramref name="cryptoRead"/>. Image keys are the tracked table's DB
+        /// column names (the writer's contract), so each key is matched against the
+        /// tracked table's encrypted columns; non-encrypted entries pass through
+        /// byte-for-byte. No-op when the tracked table has no encrypted column.
+        /// </summary>
+        private static void ProjectEncryptedTrailImages(
+            GqlObjectQuery query,
+            IDbTable trackedTable,
+            IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> results,
+            Modules.Crypto.CryptoReadProjector cryptoRead)
+        {
+            var encryptedColumns = trackedTable.Columns
+                .Where(c => !string.IsNullOrWhiteSpace(c.GetMetadataValue(Model.MetadataKeys.Crypto.Encrypt)))
+                .Select(c => c.ColumnName)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (encryptedColumns.Count == 0)
+                return;
+
+            if (!results.TryGetValue(query.KeyName, out var tableData))
+                return; // No row result set selected (e.g. a total-only query).
+
+            var imageOrdinals = query.ScalarColumns
+                .Where(c => string.Equals(c.DbDbName, Model.MetadataKeys.History.Column.Before, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(c.DbDbName, Model.MetadataKeys.History.Column.After, StringComparison.OrdinalIgnoreCase))
+                .Select(c => tableData.index.TryGetValue(c.GraphQlDbName, out var ordinal) ? ordinal : -1)
+                .Where(ordinal => ordinal >= 0)
+                .Distinct()
+                .ToList();
+            if (imageOrdinals.Count == 0)
+                return;
+
+            foreach (var row in tableData.data)
+            {
+                foreach (var ordinal in imageOrdinals)
+                {
+                    if (ordinal < row.Length)
+                        row[ordinal] = ProjectImage(trackedTable, encryptedColumns, cryptoRead, row[ordinal]);
+                }
+            }
+        }
+
+        private static object? ProjectImage(
+            IDbTable trackedTable,
+            IReadOnlySet<string> encryptedColumns,
+            Modules.Crypto.CryptoReadProjector cryptoRead,
+            object? cell)
+        {
+            if (cell is null || cell is DBNull)
+                return cell;
+
+            var json = cell.ToString();
+            if (string.IsNullOrWhiteSpace(json))
+                return cell;
+
+            Dictionary<string, System.Text.Json.JsonElement>? image;
+            try
+            {
+                image = System.Text.Json.JsonSerializer
+                    .Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(json);
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                // The image cannot be parsed, so its encrypted values cannot be
+                // masked — refuse to return it rather than leak raw ciphertext.
+                throw new BifrostExecutionError(
+                    $"A history image of '{trackedTable.TableSchema}.{trackedTable.DbName}' is not valid JSON, so " +
+                    "its encrypted values cannot be projected. Refusing to return the raw image.");
+            }
+            if (image is null)
+                return cell;
+
+            var projected = new Dictionary<string, object?>(image.Count, StringComparer.Ordinal);
+            var changed = false;
+            foreach (var (column, value) in image)
+            {
+                if (encryptedColumns.Contains(column) && value.ValueKind == System.Text.Json.JsonValueKind.String)
+                {
+                    projected[column] = cryptoRead.Project(trackedTable.DbName, column, value.GetString());
+                    changed = true;
+                }
+                else
+                {
+                    projected[column] = value;
+                }
+            }
+
+            return changed ? System.Text.Json.JsonSerializer.Serialize(projected) : cell;
+        }
 
         public async ValueTask<IReadOnlyDictionary<string, object?>> ResolvePivotAsync(
             IBifrostFieldContext context, IDbTable table, PivotRequest request)

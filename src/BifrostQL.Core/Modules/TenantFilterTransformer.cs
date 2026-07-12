@@ -31,7 +31,7 @@ public sealed class TenantFilterTransformer : ContextValueFilterTransformerBase
     protected override TableFilter BuildFilter(IDbTable table, string columnName, QueryTransformContext context)
     {
         // Determine which key to look up in UserContext
-        var tenantContextKey = GetTenantContextKey(context.Model);
+        var tenantContextKey = ResolveTenantContextKey(context.Model);
 
         var fullTableName = $"{table.TableSchema}.{table.DbName}";
 
@@ -54,7 +54,14 @@ public sealed class TenantFilterTransformer : ContextValueFilterTransformerBase
         return TableFilterFactory.Equals(table.DbName, columnName, tenantId);
     }
 
-    private static string GetTenantContextKey(IDbModel model)
+    /// <summary>
+    /// The user-context key the tenant claim is read from: the model-level
+    /// <c>tenant-context-key</c> metadata, else <see cref="DefaultTenantContextKey"/>.
+    /// Public because the history trail read authorizes by the SAME claim source —
+    /// one resolution rule, so the trail can never scope by a different claim than
+    /// the base table does.
+    /// </summary>
+    public static string ResolveTenantContextKey(IDbModel model)
     {
         if (model.Metadata.TryGetValue(TenantContextKeyMetadata, out var key) && key is string keyStr)
         {

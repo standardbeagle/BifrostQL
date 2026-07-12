@@ -591,6 +591,23 @@ namespace BifrostQL.Core.Model
                         $"'{table.TableSchema}.{table.DbName}'."));
                 }
 
+                // A policy row scope is an arbitrary expression evaluated against the
+                // TRACKED table's rows; the history table has no materialized column
+                // to re-apply it to, so the generated trail read field cannot enforce
+                // it — trail rows of rows the caller is scoped OUT of would be
+                // readable. There is no per-table grant to opt the trail out of the
+                // row scope, so the combination is rejected outright rather than
+                // silently exposing scoped-out history.
+                if (PolicyConfigCollector.FromTable(table).RowScopeExpression is not null)
+                {
+                    errors.Add(Problem(table, MetadataKeys.Policy.RowScope,
+                        table.GetMetadataValue(MetadataKeys.Policy.RowScope),
+                        $"cannot be combined with '{MetadataKeys.History.Enabled}': the policy row scope is an " +
+                        "arbitrary expression with no materialized column on the history table, so the generated " +
+                        $"'{readField}' trail read field cannot enforce it and would expose trail rows the caller's " +
+                        "row scope hides. Remove the row scope, or disable history on this table."));
+                }
+
                 var targetName = config.ResolveTargetName(model);
                 if (targetName is null)
                 {

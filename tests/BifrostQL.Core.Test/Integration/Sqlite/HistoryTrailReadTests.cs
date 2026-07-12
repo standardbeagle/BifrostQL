@@ -323,4 +323,92 @@ public sealed class HistoryTrailReadTests : IAsyncLifetime
         Data(crossEntity, "ordersHistory").GetProperty("total").GetInt32().Should().Be(0);
     }
 
+    // ---------------------------------------------------------------------------
+    // Tenant authorization (fail-closed)
+    // ---------------------------------------------------------------------------
+
+    private async Task<IDbModel> LoadTenantModelAsync() =>
+        await LoadModelAsync(
+            "main.tenant_docs { history: enabled; tenant-filter: tenant_id; history-table: main.scoped_history }");
+
+    private async Task SeedTenantTrailAsync(IDbModel model)
+    {
+        foreach (var mutation in new[]
+                 {
+                     "mutation { tenant_docs(insert: { body: \"a\", tenant_id: 42 }) }",
+                     "mutation { tenant_docs(insert: { body: \"b\", tenant_id: 7 }) }",
+                 })
+            (await ExecuteMutationAsync(mutation, model)).Errors.Should().BeNullOrEmpty();
+
+        // A legacy trail row that predates the scope column: NULL scope.
+        await Exec(
+            "INSERT INTO scoped_history(entity, entity_id, op, changed_at, after, changed_columns, tenant_id) " +
+            "VALUES ('main.tenant_docs', '{\"id\":99}', 'insert', '2001-01-01', '{\"body\":\"legacy\"}', '[\"body\"]', NULL)");
+    }
+
+    [Fact]
+    public async Task TenantScopedTrail_IsInvisibleAcrossTenants_InBothDirections()
+    {
+        var model = await LoadTenantModelAsync();
+        await SeedTenantTrailAsync(model);
+
+        var tenant42 = await ExecuteQueryAsync(
+            "query { tenant_docsHistory { total data { after } } }", model,
+            new Dictionary<string, object?> { ["tenant_id"] = 42 });
+        var rows42 = Rows(tenant42, "tenant_docsHistory");
+        rows42.Should().ContainSingle().Which.GetProperty("after").GetString().Should().Contain("\"a\"");
+
+        var tenant7 = await ExecuteQueryAsync(
+            "query { tenant_docsHistory { total data { after } } }", model,
+            new Dictionary<string, object?> { ["tenant_id"] = 7 });
+        var rows7 = Rows(tenant7, "tenant_docsHistory");
+        rows7.Should().ContainSingle().Which.GetProperty("after").GetString().Should().Contain("\"b\"");
+    }
+
+    [Fact]
+    public async Task CallerWithNoTenantClaim_SeesZeroRows_FailClosed()
+    {
+        var model = await LoadTenantModelAsync();
+        await SeedTenantTrailAsync(model);
+
+        var result = await ExecuteQueryAsync(
+            "query { tenant_docsHistory { total data { id } } }", model);
+
+        var payload = Data(result, "tenant_docsHistory");
+        payload.GetProperty("total").GetInt32().Should().Be(0);
+        payload.GetProperty("data").EnumerateArray().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task NullScopeLegacyRows_AreInvisibleToScopedCallers()
+    {
+        var model = await LoadTenantModelAsync();
+        await SeedTenantTrailAsync(model);
+
+        var result = await ExecuteQueryAsync(
+            "query { tenant_docsHistory { data { after } } }", model,
+            new Dictionary<string, object?> { ["tenant_id"] = 42 });
+
+        Rows(result, "tenant_docsHistory").Should().OnlyContain(
+            r => !r.GetProperty("after").GetString()!.Contains("legacy"),
+            "a NULL-scope row's tenant is unknown, so it fails closed for scoped callers");
+    }
+
+    // ---------------------------------------------------------------------------
+    // Policy row scope (fail-fast at model load)
+    // ---------------------------------------------------------------------------
+
+    [Fact]
+    public async Task PolicyRowScopedTable_EnablingHistory_FailsModelLoad()
+    {
+        var act = async () => await LoadModelAsync(
+            "main.orders { history: enabled; policy-row-scope: status = {status} }",
+            ":root { history-table: main.audit_trail }");
+
+        (await act.Should().ThrowAsync<InvalidOperationException>())
+            .Which.Message.Should()
+            .Contain("policy-row-scope").And.Contain("history")
+            .And.Contain("main.orders");
+    }
+
 }

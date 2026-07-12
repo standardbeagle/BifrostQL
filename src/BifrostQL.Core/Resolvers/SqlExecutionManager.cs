@@ -246,6 +246,33 @@ namespace BifrostQL.Core.Resolvers
                 Model.MetadataKeys.History.Column.Entity,
                 $"{trackedTable.TableSchema}.{trackedTable.DbName}");
 
+            // Tenant authorization, fail-closed. A tenant-filtered tracked table
+            // materializes its tenant value into every trail row's scope column
+            // (validated to exist at model load), so the trail is scoped by a plain
+            // predicate on that column — derived from the SAME claim source as
+            // TenantFilterTransformer, applied here where no argument shape can skip
+            // it. No claim (or a null claim) means the caller's tenant is unknown:
+            // zero rows, never everyone's trail. NULL-scope legacy rows are excluded
+            // by the equality predicate itself — a row whose tenant is unknown fails
+            // closed for scoped callers.
+            var scopeColumn = Modules.History.HistoryConfig.ResolveTenantScopeColumn(trackedTable);
+            if (scopeColumn is not null)
+            {
+                var claimKey = Modules.TenantFilterTransformer.ResolveTenantContextKey(_dbModel);
+                if (!context.UserContext.TryGetValue(claimKey, out var tenant) || tenant is null)
+                {
+                    return new TableResult
+                    {
+                        Total = 0,
+                        Offset = query.Offset,
+                        Limit = query.Limit,
+                        Data = Array.Empty<object?>(),
+                    };
+                }
+
+                forced = AndFilters(forced, TableFilterFactory.Equals(target.DbName, scopeColumn, tenant));
+            }
+
             query.Filter = query.Filter is null ? forced : AndFilters(query.Filter, forced);
 
             // Same fail-closed transformer pass as row queries over the TARGET table

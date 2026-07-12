@@ -911,6 +911,15 @@ namespace BifrostQL.Core.Model
             /// ModelConfigValidator verifies the configured <see cref="Table"/> carries
             /// every column so a misconfigured history table fails at model load rather
             /// than aborting the first real write.
+            ///
+            /// A tracked table that declares <see cref="Security.TenantFilter"/> requires
+            /// ONE ADDITIONAL column on its target, named after its own tenant column
+            /// (e.g. <c>tenant_id</c>): every trail row materializes the tracked row's
+            /// tenant scope value so history reads can be authorized by plain column
+            /// predicates. The name is per tracked table, so it is not part of this fixed
+            /// list — ModelConfigValidator enforces it conditionally, and a shared target
+            /// serving tables with different tenant column names must carry all of them
+            /// (nullable) or be split via per-table <see cref="Table"/> overrides.
             /// </summary>
             public static readonly IReadOnlyList<string> HistoryColumns = new[]
             {

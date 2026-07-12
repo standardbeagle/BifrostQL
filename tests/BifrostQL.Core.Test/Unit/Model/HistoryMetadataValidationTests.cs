@@ -311,6 +311,147 @@ public class HistoryMetadataValidationTests
     }
 
     [Fact]
+    public void Validate_TenantFilteredTable_HistoryTableCarriesTenantColumn_DoesNotThrow()
+    {
+        // Arrange: orders is tenant-filtered and its history table carries the same
+        // tenant column, so trail rows can materialize the scope value.
+        var model = DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.History.Table, "dbo.__history")
+            .WithTable("orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Status", "nvarchar")
+                .WithColumn("TenantId", "int")
+                .WithMetadata(MetadataKeys.Security.TenantFilter, "TenantId")
+                .WithMetadata(MetadataKeys.History.Enabled, "update"))
+            .WithTable("__history", t =>
+            {
+                WithHistoryColumns(t);
+                t.WithColumn("TenantId", "int", isNullable: true);
+            })
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void Validate_TenantFilteredTable_HistoryTableMissingTenantColumn_Throws()
+    {
+        // Arrange: orders is tenant-filtered, but the history table has no TenantId
+        // column, so its trail rows could not carry the scope value that history reads
+        // will be authorized by. The error must name the tracked table, the history
+        // table, and the missing column.
+        var model = DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.History.Table, "dbo.__history")
+            .WithTable("orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Status", "nvarchar")
+                .WithColumn("TenantId", "int")
+                .WithMetadata(MetadataKeys.Security.TenantFilter, "TenantId")
+                .WithMetadata(MetadataKeys.History.Enabled, "update"))
+            .WithTable("__history", WithHistoryColumns)
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.orders")
+            .And.Contain("dbo.__history")
+            .And.Contain("TenantId")
+            .And.Contain(MetadataKeys.Security.TenantFilter);
+    }
+
+    [Fact]
+    public void Validate_SharedHistoryTable_CarryingEveryTenantColumnName_DoesNotThrow()
+    {
+        // Arrange: two tenant-filtered tables with DIFFERENT tenant column names share
+        // one history table that carries both columns (nullable) — valid.
+        var model = DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.History.Table, "dbo.__history")
+            .WithTable("orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("TenantId", "int")
+                .WithMetadata(MetadataKeys.Security.TenantFilter, "TenantId")
+                .WithMetadata(MetadataKeys.History.Enabled, "update"))
+            .WithTable("customers", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("OrgId", "int")
+                .WithMetadata(MetadataKeys.Security.TenantFilter, "OrgId")
+                .WithMetadata(MetadataKeys.History.Enabled, "update"))
+            .WithTable("__history", t =>
+            {
+                WithHistoryColumns(t);
+                t.WithColumn("TenantId", "int", isNullable: true);
+                t.WithColumn("OrgId", "int", isNullable: true);
+            })
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void Validate_SharedHistoryTable_MissingOneTenantColumnName_Throws_WithOverrideGuidance()
+    {
+        // Arrange: the shared history table carries orders' TenantId but not customers'
+        // OrgId. The error must name the missing column and point at the per-table
+        // history-table override as the way out.
+        var model = DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.History.Table, "dbo.__history")
+            .WithTable("orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("TenantId", "int")
+                .WithMetadata(MetadataKeys.Security.TenantFilter, "TenantId")
+                .WithMetadata(MetadataKeys.History.Enabled, "update"))
+            .WithTable("customers", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("OrgId", "int")
+                .WithMetadata(MetadataKeys.Security.TenantFilter, "OrgId")
+                .WithMetadata(MetadataKeys.History.Enabled, "update"))
+            .WithTable("__history", t =>
+            {
+                WithHistoryColumns(t);
+                t.WithColumn("TenantId", "int", isNullable: true);
+            })
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.customers")
+            .And.Contain("OrgId")
+            .And.Contain(MetadataKeys.History.Table);
+    }
+
+    [Fact]
+    public void Validate_NonTenantHistoryTable_RequiresNoScopeColumn()
+    {
+        // A tracked table without tenant-filter metadata needs nothing extra on its
+        // history table — the base contract alone is sufficient.
+        var model = DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.History.Table, "dbo.__history")
+            .WithTable("orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Status", "nvarchar")
+                .WithMetadata(MetadataKeys.History.Enabled, "update"))
+            .WithTable("__history", WithHistoryColumns)
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().NotThrow();
+    }
+
+    [Fact]
     public void Validate_NoHistoryConfigured_HistoryTableOptional()
     {
         // No table opts in → a history table is not required and validation passes.

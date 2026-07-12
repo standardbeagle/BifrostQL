@@ -620,6 +620,23 @@ namespace BifrostQL.Core.Model
                         $"history table is missing required column(s): {string.Join(", ", missing)}. " +
                         $"The history contract is: {string.Join(", ", MetadataKeys.History.HistoryColumns)}."));
                 }
+
+                // A tenant-filtered tracked table materializes its tenant scope value into
+                // every trail row (history reads are authorized by plain column predicates),
+                // so the target must physically carry a column of the tenant column's name.
+                // A shared target serving tables with DIFFERENT tenant column names must
+                // carry every one of them — each table checks its own name here — or split
+                // via per-table overrides.
+                var scopeColumn = HistoryConfig.ResolveTenantScopeColumn(table);
+                if (scopeColumn is not null && !DbColumnExists(target, scopeColumn))
+                {
+                    errors.Add(Problem(table, MetadataKeys.Security.TenantFilter, scopeColumn,
+                        $"tracked table is tenant-filtered, but its history table '{targetName}' has no " +
+                        $"'{scopeColumn}' column. Every trail row materializes the tracked row's tenant scope " +
+                        "so history reads can be authorized by plain column predicates; add a nullable " +
+                        $"'{scopeColumn}' column to '{targetName}', or point this table at its own " +
+                        $"'{MetadataKeys.History.Table}' override."));
+                }
             }
         }
 

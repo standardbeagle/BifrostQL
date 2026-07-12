@@ -75,6 +75,26 @@ namespace BifrostQL.Core.Modules.History
             return string.IsNullOrWhiteSpace(name) ? null : name;
         }
 
+        /// <summary>
+        /// The tracked table's tenant-isolation column (the <c>tenant-filter</c> metadata),
+        /// canonicalized to the column's database casing; null when the table is not
+        /// tenant-filtered. History reads will be authorized by plain column predicates,
+        /// so every trail row of a tenant-filtered table materializes this column's value —
+        /// which requires the history target to carry a column of the same name. The single
+        /// resolution rule shared by the change-history writer (which copies the value) and
+        /// ModelConfigValidator (which requires the column on the target), so a scope that
+        /// validates at model load is the same scope the writer records at runtime.
+        /// </summary>
+        public static string? ResolveTenantScopeColumn(IDbTable table)
+        {
+            var name = table.GetMetadataValue(MetadataKeys.Security.TenantFilter);
+            if (string.IsNullOrWhiteSpace(name))
+                return null;
+
+            name = name.Trim();
+            return table.ColumnLookup.TryGetValue(name, out var column) ? column.ColumnName : name;
+        }
+
         // The parsed config per table, cached because both hook phases of EVERY mutation on
         // EVERY table ask for it and the model (and its metadata) is immutable after load.
         // ConditionalWeakTable is lock-free on the read path and keyed by table identity, so

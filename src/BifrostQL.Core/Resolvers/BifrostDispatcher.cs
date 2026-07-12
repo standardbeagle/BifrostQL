@@ -124,6 +124,7 @@ namespace BifrostQL.Core.Resolvers
 
                 WireAggregateResolvers(builder, table);
                 WirePivotResolver(builder, table);
+                WireHistoryResolver(builder, table);
 
                 foreach (var column in table.Columns)
                     tableType.FieldFor(column.GraphQlName).Resolver = this;
@@ -248,6 +249,26 @@ namespace BifrostQL.Core.Resolvers
             const string queryType = "database";
             builder.Types.For(queryType).FieldFor(Schema.PivotSurface.PivotFieldName(table)).Resolver =
                 new PivotTableResolver(table);
+        }
+
+        /// <summary>
+        /// Wires the trail read surface for one table: the root
+        /// <c>&lt;table&gt;History</c> field to a dedicated <see cref="HistoryTableResolver"/>.
+        /// Wired ONLY when <see cref="Schema.HistorySurface.ResolveReadTarget"/> resolves —
+        /// the identical condition <see cref="Schema.TableSchemaGenerator"/> emits the
+        /// field under, so the SDL and the wiring cannot drift. The target's row/paged
+        /// types need no extra wiring: the history table is an ordinary published table
+        /// whose type fields are already dispatched above.
+        /// </summary>
+        private void WireHistoryResolver(SchemaBuilder builder, IDbTable table)
+        {
+            var target = Schema.HistorySurface.ResolveReadTarget(_model, table);
+            if (target is null)
+                return;
+
+            const string queryType = "database";
+            builder.Types.For(queryType).FieldFor(Schema.HistorySurface.HistoryFieldName(table)).Resolver =
+                new HistoryTableResolver(table, target);
         }
 
         private static Dictionary<(string typeName, string fieldName), IBifrostResolver> BuildResolverMap(IDbModel model)

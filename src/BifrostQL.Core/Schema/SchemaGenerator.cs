@@ -30,6 +30,9 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine(generator.GetTableFieldDefinition());
                 builder.AppendLine(generator.GetAggregateFieldDefinition());
                 builder.AppendLine(generator.GetPivotFieldDefinition());
+                var historyField = generator.GetHistoryFieldDefinition(model);
+                if (historyField.Length > 0)
+                    builder.AppendLine(historyField);
             }
             foreach (var generator in readOnlySpGenerators)
             {

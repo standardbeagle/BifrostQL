@@ -34,6 +34,18 @@ namespace BifrostQL.Core.Resolvers
         public ValueTask<IReadOnlyDictionary<string, object?>> ResolvePivotAsync(IBifrostFieldContext context, IDbTable table, PivotRequest request);
 
         /// <summary>
+        /// Executes a pre-built trail read query (the generated <c>&lt;table&gt;History</c>
+        /// field) against <paramref name="trackedTable"/>'s resolved history target.
+        /// The entity discriminator (<c>entity = schema.table</c>) and, for a
+        /// tenant-filtered tracked table, the caller's tenant predicate on the
+        /// materialized scope column are applied HERE, unconditionally, before the
+        /// standard filter transformer pass and SQL generation — so no resolver or
+        /// argument shape can read another table's trail rows through a shared history
+        /// table, and tenant scoping fails closed (no claim ⇒ zero rows).
+        /// </summary>
+        public ValueTask<object?> ResolveHistoryTrailAsync(IBifrostFieldContext context, IDbTable trackedTable, GqlObjectQuery query);
+
+        /// <summary>
         /// Executes a programmatic (adapter-built) read query with no GraphQL
         /// document: the transformer pipeline — tenant isolation, soft-delete,
         /// policy row scope, and column read guards — is applied here,
@@ -198,6 +210,86 @@ namespace BifrostQL.Core.Resolvers
 
             return BuildAggregateRows(grouped, tableData.index, tableData.data);
         }
+
+        public async ValueTask<object?> ResolveHistoryTrailAsync(
+            IBifrostFieldContext context, IDbTable trackedTable, GqlObjectQuery query)
+        {
+            // Re-resolve the history target through the same rule the change-history
+            // writer uses. The resolver was wired against a resolved target at schema
+            // build; a mismatch here means the model changed underneath the schema —
+            // fail fast rather than read a table the writer is not writing.
+            var config = Modules.History.HistoryConfig.FromTable(trackedTable);
+            if (!config.RecordsHistory)
+                throw new BifrostExecutionError(
+                    $"Table '{trackedTable.TableSchema}.{trackedTable.DbName}' does not record change history; " +
+                    "it has no trail to read.");
+
+            var targetName = config.ResolveTargetName(_dbModel)
+                ?? throw new BifrostExecutionError(
+                    $"Table '{trackedTable.TableSchema}.{trackedTable.DbName}' records change history but no " +
+                    $"'{Model.MetadataKeys.History.Table}' is configured on the table or on the model.");
+            var target = ModelTableReference.Find(_dbModel, targetName)
+                ?? throw new BifrostExecutionError(
+                    $"The configured history table '{targetName}' was not found in the model.");
+            if (!ReferenceEquals(target, query.DbTable))
+                throw new BifrostExecutionError(
+                    $"The trail read of '{trackedTable.TableSchema}.{trackedTable.DbName}' targets " +
+                    $"'{query.DbTable.TableSchema}.{query.DbTable.DbName}', but its configured history table is " +
+                    $"'{targetName}'.");
+
+            // The entity discriminator: a shared history table holds many tables'
+            // trails, and this field exposes exactly ONE of them. ANDed with the
+            // client filter, so a filter can narrow within the tracked table's rows
+            // but never widen to another table's.
+            var forced = TableFilterFactory.Equals(
+                target.DbName,
+                Model.MetadataKeys.History.Column.Entity,
+                $"{trackedTable.TableSchema}.{trackedTable.DbName}");
+
+            query.Filter = query.Filter is null ? forced : AndFilters(query.Filter, forced);
+
+            // Same fail-closed transformer pass as row queries over the TARGET table
+            // (its own tenant/soft-delete/policy metadata still applies), into a
+            // per-call overlay (sibling root fields resolve in parallel; the shared
+            // UserContext is not thread-safe).
+            var scopedContext = new Dictionary<string, object?>(context.UserContext);
+            Modules.ModuleApiRegistry.CaptureQueryArguments(context, target, scopedContext);
+            _transformerService.ApplyTransformers(query, _dbModel, scopedContext);
+            ApplyEnumFilterRewrite(query);
+
+            var bifrost = new BifrostContextAdapter(context);
+            var (data, _) = await LoadDataParameterizedAsync(query, bifrost.ConnFactory, context.CancellationToken);
+
+            // Decrypt/mask projector — same construction as base-table reads, so a
+            // trail row's columns obey the identical per-caller policy.
+            var cryptoRead = new Modules.Crypto.CryptoReadProjector(
+                _dbModel,
+                context.RequestServices?.GetService<BifrostQL.Core.Crypto.EnvelopeKeyManager>(),
+                ExtractRoles(context.UserContext));
+
+            var total = 0;
+            if (data.TryGetValue(query.KeyName + "=>count", out var countEntry)
+                && countEntry.data.Count > 0 && countEntry.data[0].Length > 0
+                && countEntry.data[0][0] is { } countObj)
+            {
+                total = Convert.ToInt32(countObj);
+            }
+
+            var logger = context.RequestServices?.GetService<ILogger<SqlExecutionManager>>();
+            return new TableResult
+            {
+                Total = total,
+                Offset = query.Offset,
+                Limit = query.Limit,
+                Data = new ReaderEnum(query, data, _dbModel.EnumColumns, logger, cryptoRead),
+            };
+        }
+
+        private static TableFilter AndFilters(TableFilter left, TableFilter right) => new()
+        {
+            And = new List<TableFilter> { left, right },
+            FilterType = FilterType.And,
+        };
 
         public async ValueTask<IReadOnlyDictionary<string, object?>> ResolvePivotAsync(
             IBifrostFieldContext context, IDbTable table, PivotRequest request)

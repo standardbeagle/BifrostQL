@@ -182,6 +182,28 @@ namespace BifrostQL.Core.Schema
             return builder.ToString();
         }
 
+        /// <summary>
+        /// Root query field for this table's change-history trail read:
+        /// <c>&lt;table&gt;History(limit, offset, sort, filter): &lt;target&gt;_paged</c>.
+        /// Generated ONLY when the table records history and its resolved history
+        /// target exists in the model; every other table returns an empty string.
+        /// The field reuses the history TARGET table's generated filter type, sort
+        /// enum, and paged row type — the target is an ordinary published table, so
+        /// the trail row shape is the documented history column contract and the
+        /// filter vocabulary (entity_id equality, changed_at ranges, op, actor) is
+        /// the same operator set every generated field carries. The entity
+        /// discriminator and authorization predicates are applied server-side by the
+        /// resolver, never via these arguments.
+        /// </summary>
+        public string GetHistoryFieldDefinition(IDbModel model)
+        {
+            var target = HistorySurface.ResolveReadTarget(model, _table);
+            if (target is null)
+                return string.Empty;
+
+            return $"{HistorySurface.HistoryFieldName(_table)}(limit: Int, offset: Int, sort: [{target.TableColumnSortEnumName}!] filter: {target.TableFilterTypeName}): {target.GraphQlName}_paged";
+        }
+
         public string GetDynamicJoinDefinition(IDbModel model, bool single)
         {
             var builder = new StringBuilder();

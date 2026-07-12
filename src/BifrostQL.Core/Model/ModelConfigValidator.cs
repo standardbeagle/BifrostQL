@@ -572,6 +572,25 @@ namespace BifrostQL.Core.Model
 
             foreach (var (table, config) in configs)
             {
+                // Every history-enabled table generates a `<table>History` trail read
+                // field on the root query type. A real table whose generated query
+                // field carries that exact name would produce a duplicate GraphQL
+                // field and crash (or shadow) at schema build — reject at model load,
+                // naming both tables, while the config is still being written.
+                var readField = Schema.HistorySurface.HistoryFieldName(table);
+                var colliding = model.Tables.FirstOrDefault(t =>
+                    !ReferenceEquals(t, table)
+                    && string.Equals(t.GraphQlName, readField, StringComparison.Ordinal));
+                if (colliding != null)
+                {
+                    errors.Add(Problem(table, MetadataKeys.History.Enabled,
+                        table.GetMetadataValue(MetadataKeys.History.Enabled),
+                        $"generates the trail read field '{readField}', which collides with the generated query " +
+                        $"field of table '{colliding.TableSchema}.{colliding.DbName}' (GraphQL name " +
+                        $"'{colliding.GraphQlName}'). Rename one of the tables, or disable history on " +
+                        $"'{table.TableSchema}.{table.DbName}'."));
+                }
+
                 var targetName = config.ResolveTargetName(model);
                 if (targetName is null)
                 {

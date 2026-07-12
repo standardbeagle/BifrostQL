@@ -41,6 +41,7 @@ export default defineConfig({
 						{ label: 'Change Data Capture & Events', slug: 'concepts/cdc-outbound-events' },
 						{ label: 'Field Encryption & Masking', slug: 'concepts/field-encryption' },
 						{ label: 'Temporal Change History', slug: 'concepts/temporal-history' },
+						{ label: 'Chat over Your Tables', slug: 'concepts/chat' },
 					],
 				},
 				{

@@ -185,6 +185,23 @@ consistently.
 | `file-name-column` | column name | column | Column storing original filename |
 | `accept` | MIME pattern | column | Accepted upload MIME types |
 
+### Chat metadata
+
+Declares a chat schema over user-supplied tables — exactly one conversations table
+paired with exactly one messages table per model. Both tables must be published, and
+must not be change-history *targets* (they may themselves record history). See
+[Chat over your tables](/concepts/chat/).
+
+| Property | Values | Applies to | Description |
+|----------|--------|-----------|-------------|
+| `chat-conversations` | `enabled` | table | Mark the table as the chat conversations table |
+| `chat-title` | column name | table | Optional conversation title column (conversations table only) |
+| `chat-messages` | `enabled` | table | Mark the table as the chat messages table (requires the full column mapping below) |
+| `chat-role` | column name | table | Message role column; must be string-typed |
+| `chat-content` | column name | table | Message content column; must be string-typed |
+| `chat-conversation-fk` | column name | table | Column referencing the conversations table's single-column primary key (via a declared FK or `join` rule) |
+| `chat-created-at` | column name | table | Message timestamp column; must be date/time-typed |
+
 ### Populate values
 
 | Value | Description |

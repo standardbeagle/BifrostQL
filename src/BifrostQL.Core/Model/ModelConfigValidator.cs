@@ -7,6 +7,7 @@ using BifrostQL.Core.Model.AppSchema;
 using BifrostQL.Core.Model.Relationships;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.Cdc;
+using BifrostQL.Core.Modules.Chat;
 using BifrostQL.Core.Modules.ComputedColumns;
 using BifrostQL.Core.Modules.History;
 using BifrostQL.Core.Resolvers;
@@ -79,6 +80,7 @@ namespace BifrostQL.Core.Model
             ValidateEavConfigs(model, errors);
             ValidateCdcOutbox(model, errors);
             ValidateHistoryTargets(model, errors);
+            ValidateChat(model, errors);
 
             if (errors.Count > 0)
             {
@@ -700,6 +702,189 @@ namespace BifrostQL.Core.Model
         {
             try { return HistoryConfig.FromTable(table).RecordsHistory; }
             catch { return false; } // Token error already reported by ValidateHistoryTokens.
+        }
+
+        /// <summary>
+        /// Fail-fast validation for the chat metadata contract (<c>chat-*</c>). The chat
+        /// tables are user-supplied, so every structural assumption the chat surface will
+        /// make must hold at model load: exactly one conversations/messages pair, mapped
+        /// columns that exist with the right types, a message FK that actually reaches
+        /// the conversations table's single-column PK, published tables, and no overlap
+        /// with history TARGETS (chat tables MAY be history-ENABLED — that composes).
+        /// Reuses <see cref="ChatConfig.FromTable"/> / <see cref="ChatConfig.FromModel"/>
+        /// so validation cannot drift from the runtime parse.
+        /// </summary>
+        private static void ValidateChat(IDbModel model, List<string> errors)
+        {
+            // Per-table parse errors first (unknown tokens, present-but-empty values,
+            // mapping keys on the wrong table, incomplete messages mapping), attributed
+            // to the offending table + key.
+            var parseFailed = false;
+            foreach (var table in model.Tables)
+            {
+                try
+                {
+                    ChatConfig.FromTable(table);
+                }
+                catch (Exception ex)
+                {
+                    var key = FirstPresentChatKey(table);
+                    errors.Add(Problem(table, key, table.GetMetadataValue(key), ex.Message));
+                    parseFailed = true;
+                }
+            }
+
+            if (parseFailed)
+                return; // Pair resolution would re-throw the same parse errors.
+
+            ChatModelConfig? chat;
+            try
+            {
+                chat = ChatConfig.FromModel(model);
+            }
+            catch (Exception ex)
+            {
+                // Pair-level problem (multiples, half a pair); the message names the
+                // offending tables and keys.
+                errors.Add($"  {ex.Message}");
+                return;
+            }
+
+            if (chat == null)
+                return; // Chat not in use.
+
+            ValidateChatTablePublication(model, chat.ConversationsTable, MetadataKeys.Chat.Conversations, errors);
+            ValidateChatTablePublication(model, chat.MessagesTable, MetadataKeys.Chat.Messages, errors);
+            ValidateChatConversations(chat, errors);
+            ValidateChatMessages(chat, errors);
+        }
+
+        // Both chat tables must be ordinary published tables: the chat surface is built
+        // on the generated schema, and history targets are system tables whose reads the
+        // intent executors reject outright.
+        private static void ValidateChatTablePublication(
+            IDbModel model, IDbTable table, string optInKey, List<string> errors)
+        {
+            if (table.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden))
+                errors.Add(Problem(table, optInKey, table.GetMetadataValue(optInKey),
+                    $"a chat table must be published; '{MetadataKeys.Ui.Visibility}: {MetadataKeys.Ui.Hidden}' " +
+                    "removes it from the schema the chat surface is built on. Unhide the table or remove the chat opt-in."));
+
+            if (Schema.HistorySurface.IsHistoryTarget(model, table))
+                errors.Add(Problem(table, optInKey, table.GetMetadataValue(optInKey),
+                    $"a chat table cannot be a history target (a table named by some '{MetadataKeys.History.Table}'): " +
+                    "history targets are unpublished system tables whose reads are rejected. Point that " +
+                    $"'{MetadataKeys.History.Table}' elsewhere. A chat table MAY itself set " +
+                    $"'{MetadataKeys.History.Enabled}' — recording chat history composes."));
+        }
+
+        private static void ValidateChatConversations(ChatModelConfig chat, List<string> errors)
+        {
+            var table = chat.ConversationsTable;
+            var pks = table.KeyColumns.ToArray();
+
+            // The conversation FK is a single column, so the conversations PK must be a
+            // single column too — a composite PK cannot be referenced by it.
+            if (pks.Length == 0)
+                errors.Add(Problem(table, MetadataKeys.Chat.Conversations,
+                    table.GetMetadataValue(MetadataKeys.Chat.Conversations),
+                    "the conversations table has no primary-key column; messages reference conversations by primary key."));
+            else if (pks.Length > 1)
+                errors.Add(Problem(table, MetadataKeys.Chat.Conversations,
+                    table.GetMetadataValue(MetadataKeys.Chat.Conversations),
+                    $"the conversations table has a composite primary key ({string.Join(", ", pks.Select(c => c.ColumnName))}); " +
+                    $"'{MetadataKeys.Chat.ConversationFk}' is a single column, so a single-column primary key is required."));
+
+            var title = chat.ConversationsConfig.TitleColumn;
+            if (title != null && !DbColumnExists(table, title))
+                errors.Add(Problem(table, MetadataKeys.Chat.Title, title,
+                    "column does not exist on the conversations table"));
+        }
+
+        private static void ValidateChatMessages(ChatModelConfig chat, List<string> errors)
+        {
+            var table = chat.MessagesTable;
+            var config = chat.MessagesConfig;
+
+            if (!table.KeyColumns.Any())
+                errors.Add(Problem(table, MetadataKeys.Chat.Messages,
+                    table.GetMetadataValue(MetadataKeys.Chat.Messages),
+                    "the messages table has no primary-key column."));
+
+            ValidateChatColumn(table, MetadataKeys.Chat.Role, config.RoleColumn!,
+                ChatConfig.StringColumnTypes, "string-typed", errors);
+            ValidateChatColumn(table, MetadataKeys.Chat.Content, config.ContentColumn!,
+                ChatConfig.StringColumnTypes, "string-typed", errors);
+            ValidateChatColumn(table, MetadataKeys.Chat.CreatedAt, config.CreatedAtColumn!,
+                ChatConfig.DateTimeColumnTypes, "date/time-typed", errors);
+            ValidateChatConversationFk(chat, errors);
+        }
+
+        private static void ValidateChatColumn(
+            IDbTable table, string key, string columnName,
+            IReadOnlySet<string> allowedTypes, string typeRequirement, List<string> errors)
+        {
+            if (!table.ColumnLookup.TryGetValue(columnName, out var column))
+            {
+                errors.Add(Problem(table, key, columnName, "column does not exist on the messages table"));
+                return;
+            }
+
+            if (!allowedTypes.Contains(Utils.StringNormalizer.NormalizeType(column.DataType)))
+                errors.Add(Problem(table, key, columnName,
+                    $"column '{column.ColumnName}' has type '{column.DataType}'; the {key} column must be {typeRequirement}."));
+        }
+
+        // The chat surface joins messages to conversations through this column, so the
+        // reference must be a real relationship — a declared FK or an explicit 'join'
+        // metadata rule — that reaches the conversations table's PK, not merely a
+        // column that happens to hold ids.
+        private static void ValidateChatConversationFk(ChatModelConfig chat, List<string> errors)
+        {
+            var messages = chat.MessagesTable;
+            var conversations = chat.ConversationsTable;
+            var fk = chat.MessagesConfig.ConversationFkColumn!;
+
+            if (!DbColumnExists(messages, fk))
+            {
+                errors.Add(Problem(messages, MetadataKeys.Chat.ConversationFk, fk,
+                    "column does not exist on the messages table"));
+                return;
+            }
+
+            var pks = conversations.KeyColumns.ToArray();
+            if (pks.Length != 1)
+                return; // Missing/composite PK already reported by ValidateChatConversations.
+
+            var referencesPk = messages.SingleLinks.Values.Any(link =>
+                string.Equals(link.ChildId.ColumnName, fk, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(link.ParentTable.TableSchema, conversations.TableSchema, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(link.ParentTable.DbName, conversations.DbName, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(link.ParentId.ColumnName, pks[0].ColumnName, StringComparison.OrdinalIgnoreCase));
+
+            if (!referencesPk)
+                errors.Add(Problem(messages, MetadataKeys.Chat.ConversationFk, fk,
+                    $"column '{fk}' does not reference the conversations table " +
+                    $"'{conversations.TableSchema}.{conversations.DbName}' primary key '{pks[0].ColumnName}'. " +
+                    "Declare a foreign key (or an explicit 'join' metadata rule) from the messages table " +
+                    "to the conversations table's primary key."));
+        }
+
+        // Picks the chat metadata key actually present on the table so a parse failure
+        // is attributed to the real source rather than always to chat-conversations.
+        private static string FirstPresentChatKey(IDbTable table)
+        {
+            var keys = new[]
+            {
+                MetadataKeys.Chat.Conversations,
+                MetadataKeys.Chat.Messages,
+                MetadataKeys.Chat.Title,
+                MetadataKeys.Chat.Role,
+                MetadataKeys.Chat.Content,
+                MetadataKeys.Chat.ConversationFk,
+                MetadataKeys.Chat.CreatedAt,
+            };
+            return keys.FirstOrDefault(table.Metadata.ContainsKey) ?? MetadataKeys.Chat.Conversations;
         }
 
         /// <summary>

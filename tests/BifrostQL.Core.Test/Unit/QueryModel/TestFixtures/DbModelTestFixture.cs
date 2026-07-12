@@ -174,7 +174,10 @@ public sealed class DbModelTestFixture
         private readonly string _tableName;
         private string? _schema;
         private string? _graphQlName;
-        private readonly Dictionary<string, ColumnDto> _columns = new();
+        // OrdinalIgnoreCase to match the real loader (DbModelLoader.CloneForBuild /
+        // DbTable): column references resolve case-insensitively at runtime, so the
+        // fixture must not be stricter than the model it stands in for.
+        private readonly Dictionary<string, ColumnDto> _columns = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, object?> _metadata = new();
 
         public TableBuilder(string tableName)

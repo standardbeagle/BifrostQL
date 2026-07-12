@@ -927,5 +927,72 @@ namespace BifrostQL.Core.Model
                 Column.ChangedAt, Column.Before, Column.After, Column.ChangedColumns,
             };
         }
+
+        /// <summary>
+        /// Metadata keys for the chat module — a metadata-driven chat schema published
+        /// over user-supplied conversation/message tables. The tables are ordinary
+        /// published tables the user owns, so tenant isolation, field encryption, and
+        /// change history compose with them like with any other table. Configured like
+        /// the tenant-filter convention:
+        ///   "dbo.conversations { chat-conversations: enabled; chat-title: Title }"
+        ///   "dbo.messages { chat-messages: enabled; chat-role: Role; chat-content: Content;
+        ///                   chat-conversation-fk: ConversationId; chat-created-at: CreatedAt }"
+        /// This slice establishes the metadata contract and fail-fast validation; the
+        /// chat read/write surface (SSE streaming) is a later Chat sub-task.
+        /// </summary>
+        public static class Chat
+        {
+            /// <summary>
+            /// Table-level marker declaring the chat conversations table. The value must
+            /// be <see cref="Enabled"/>. Exactly one conversations table is allowed per
+            /// model, paired with exactly one <see cref="Messages"/> table.
+            /// </summary>
+            public const string Conversations = "chat-conversations";
+
+            /// <summary>
+            /// Optional column on the conversations table holding the conversation title.
+            /// Valid only alongside <see cref="Conversations"/>.
+            /// </summary>
+            public const string Title = "chat-title";
+
+            /// <summary>
+            /// Table-level marker declaring the chat messages table. The value must be
+            /// <see cref="Enabled"/>. Requires the full column mapping
+            /// (<see cref="Role"/>, <see cref="Content"/>, <see cref="ConversationFk"/>,
+            /// <see cref="CreatedAt"/>) — a partial mapping is rejected at model load.
+            /// </summary>
+            public const string Messages = "chat-messages";
+
+            /// <summary>
+            /// Column on the messages table holding the message role (e.g. user/assistant).
+            /// Must be string-typed.
+            /// </summary>
+            public const string Role = "chat-role";
+
+            /// <summary>
+            /// Column on the messages table holding the message content. Must be string-typed.
+            /// </summary>
+            public const string Content = "chat-content";
+
+            /// <summary>
+            /// Column on the messages table referencing the conversations table's
+            /// single-column primary key. The reference must be a real relationship
+            /// (a declared foreign key or an explicit <c>join</c> metadata rule).
+            /// </summary>
+            public const string ConversationFk = "chat-conversation-fk";
+
+            /// <summary>
+            /// Column on the messages table holding the message timestamp. Must be
+            /// date/time-typed (message ordering within a conversation).
+            /// </summary>
+            public const string CreatedAt = "chat-created-at";
+
+            /// <summary>
+            /// The only valid value of <see cref="Conversations"/> / <see cref="Messages"/>.
+            /// Spelled <c>enabled</c> so the opt-in reads as a plain switch, matching
+            /// <c>raw-sql: enabled</c> and the <c>history: enabled</c> token.
+            /// </summary>
+            public const string Enabled = "enabled";
+        }
     }
 }

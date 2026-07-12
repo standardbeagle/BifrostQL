@@ -147,6 +147,16 @@ namespace BifrostQL.Core.Model
             MetadataKeys.History.Enabled,
             MetadataKeys.History.Table,
             MetadataKeys.History.Columns,
+            // Chat module (table-level opt-in + column mappings). A miscased or
+            // typo'd key must be flagged, not silently leave the chat surface
+            // half-configured.
+            MetadataKeys.Chat.Conversations,
+            MetadataKeys.Chat.Title,
+            MetadataKeys.Chat.Messages,
+            MetadataKeys.Chat.Role,
+            MetadataKeys.Chat.Content,
+            MetadataKeys.Chat.ConversationFk,
+            MetadataKeys.Chat.CreatedAt,
         };
 
         // Internal for the same reason as KnownTableKeys above (case-casing

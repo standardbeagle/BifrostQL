@@ -194,6 +194,14 @@ namespace BifrostQL.Server
                 sp.GetRequiredService<PathCache<GraphQL.Inputs>>(),
                 sp.GetRequiredService<IMutationTransformers>(),
                 sp));
+            // Chat module LLM seam. TryAdd so a host can substitute its own provider;
+            // lazy singleton so the constructor's fail-fast api-key check fires when a
+            // chat feature first resolves it — hosts that never use chat don't need
+            // ANTHROPIC_API_KEY configured.
+            services.TryAddSingleton<BifrostQL.Core.Modules.Chat.IChatCompletionService>(sp =>
+                new BifrostQL.Core.Modules.Chat.AnthropicChatCompletionService(
+                    BifrostQL.Core.Modules.Chat.ChatCompletionOptions.FromConfiguration(
+                        sp.GetRequiredService<IConfiguration>())));
         }
 
         /// <summary>

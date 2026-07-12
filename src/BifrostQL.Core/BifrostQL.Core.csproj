@@ -56,6 +56,10 @@
 		     ASP.NET Core server transports or GraphiQL UI (those are presentation
 		     concerns and live in BifrostQL.Server). -->
 		<PackageReference Include="GraphQL" Version="8.3.0" />
+		<!-- Official Anthropic C# SDK — the chat completion service's only LLM
+		     dependency; wrapped behind IChatCompletionService so nothing else in
+		     Core touches the wire types. -->
+		<PackageReference Include="Anthropic" Version="12.35.1" />
 		<!-- Logging / configuration / DI abstractions Core uses directly. These
 		     were previously supplied transitively through the ASP.NET Core
 		     framework reference that GraphQL.Server.All dragged in; referenced

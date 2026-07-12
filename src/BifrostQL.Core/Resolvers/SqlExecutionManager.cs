@@ -142,6 +142,16 @@ namespace BifrostQL.Core.Resolvers
             var enumColumns = _dbModel.EnumColumns;
             var logger = context.RequestServices?.GetService<ILogger<SqlExecutionManager>>();
 
+            // Decrypt/mask projector for field-level encryption. Built per query from the
+            // caller's roles so each caller sees the plaintext or the masked value the
+            // column's unmask-role grants them. Absent key manager ⇒ encrypted columns
+            // read as redacted (never ciphertext). No-op for models with no encrypted
+            // columns (Project passes non-encrypted columns through).
+            var cryptoRead = new Modules.Crypto.CryptoReadProjector(
+                _dbModel,
+                context.RequestServices?.GetService<BifrostQL.Core.Crypto.EnvelopeKeyManager>(),
+                ExtractRoles(userContext));
+
             if (table.IncludeResult)
             {
                 // The "=>count" result set exists only when IncludeResult is set.
@@ -160,10 +170,10 @@ namespace BifrostQL.Core.Resolvers
                     Total = total,
                     Offset = table.Offset,
                     Limit = table.Limit,
-                    Data = new ReaderEnum(table, data, enumColumns, logger)
+                    Data = new ReaderEnum(table, data, enumColumns, logger, cryptoRead)
                 };
             }
-            return new ReaderEnum(table, data, enumColumns, logger);
+            return new ReaderEnum(table, data, enumColumns, logger, cryptoRead);
         }
 
         public async ValueTask<IReadOnlyList<AggregateResultRow>> ResolveAggregateAsync(IBifrostFieldContext context, IDbTable dbTable, GqlObjectQuery query)
@@ -764,6 +774,39 @@ namespace BifrostQL.Core.Resolvers
                 result[kv.Key] = ReaderEnum.DbConvert(row[kv.Value]);
             }
             return result;
+        }
+
+        /// <summary>
+        /// Reads the caller's roles from the user context (the <c>roles</c> claim),
+        /// tolerating a single string, a typed list, or an untyped sequence — mirroring
+        /// how the policy engine extracts roles. Used to decide field-encryption unmask.
+        /// </summary>
+        private static IReadOnlyList<string> ExtractRoles(IDictionary<string, object?> userContext)
+        {
+            if (userContext is null
+                || !userContext.TryGetValue(Model.MetadataKeys.Auth.DefaultRolesContextKey, out var rolesValue)
+                || rolesValue is null)
+                return Array.Empty<string>();
+
+            if (rolesValue is string single)
+                return new[] { single };
+
+            if (rolesValue is IEnumerable<string> typed)
+                return typed.ToArray();
+
+            if (rolesValue is System.Collections.IEnumerable sequence)
+            {
+                var result = new List<string>();
+                foreach (var item in sequence)
+                {
+                    var role = item?.ToString();
+                    if (!string.IsNullOrWhiteSpace(role))
+                        result.Add(role);
+                }
+                return result;
+            }
+
+            return Array.Empty<string>();
         }
     }
 }

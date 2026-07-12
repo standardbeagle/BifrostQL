@@ -79,8 +79,26 @@ late, a `pattern` / `min-length` validator on an *encrypted* column would valida
 the ciphertext, not the plaintext — so do not put format validators on encrypted
 columns; validate the plaintext at the application layer instead.
 
-Decryption and role-based masking on read (and rejecting filter/sort on encrypted
-columns) are a later slice.
+## Reading: decrypt or mask
+
+On read, a caller holding the column's `unmask-role` (or the admin role) receives
+the decrypted plaintext; every other caller receives the masked value per the
+column's `mask` mode (`redact`, `last4`, `email`). The raw ciphertext is never
+returned — if decryption is impossible (no key manager, wrong key, tampered value)
+the projector redacts, so a misconfiguration hides the value rather than leaking
+ciphertext. `last4`/`email` masking decrypts server-side to derive the masked form;
+only the masked value leaves the process.
+
+## No plaintext oracle
+
+An encrypted column may be **selected** for output (it is decrypted/masked as
+above) but may **not** be used in a `filter`, `_order` (sort), or aggregate
+position — those are rejected. A non-deterministic ciphertext used as a predicate
+would be either useless or an information oracle (a WHERE that changes the result
+set leaks whether a guessed value matches). Equality search is intended to run
+through the `blind-index` sibling column; server-side rewrite of an equality
+predicate onto the blind index is a planned enhancement (the index is populated on
+write today; the query-side routing is the remaining piece).
 
 ## Searching encrypted columns
 

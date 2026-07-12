@@ -58,6 +58,34 @@ public interface IColumnReadGuard
 }
 
 /// <summary>
+/// Optional companion to <see cref="IFilterTransformer"/> for transformers that must
+/// reject a query which references a column in a FILTER, SORT, or AGGREGATE position
+/// (as opposed to selecting it for output). Distinct from <see cref="IColumnReadGuard"/>,
+/// which is passed every referenced column including selected/output columns: a guard
+/// implementing this interface receives ONLY the non-output columns, so it can forbid
+/// using a column as a query predicate while still allowing it to be read out.
+///
+/// Field-level encryption uses this: an encrypted column may be SELECTed (it is then
+/// decrypted/masked on read) but must never appear in a WHERE / ORDER BY / aggregate,
+/// because a non-deterministic ciphertext used as a predicate would either be useless
+/// or an information oracle. Reject by throwing, same mechanism as
+/// <see cref="IColumnReadGuard.AssertColumnsReadable"/>.
+/// </summary>
+public interface IColumnFilterGuard
+{
+    /// <summary>
+    /// Throws to abort the query when <paramref name="filteredColumns"/> — the columns
+    /// used in filter/sort/aggregate positions on <paramref name="table"/> — includes
+    /// any column that may not be used as a query predicate. The message must be
+    /// generic and never name the column or table.
+    /// </summary>
+    void AssertColumnsFilterable(
+        IDbTable table,
+        IEnumerable<string> filteredColumns,
+        QueryTransformContext context);
+}
+
+/// <summary>
 /// Context available to filter transformers during query transformation.
 /// </summary>
 public sealed class QueryTransformContext

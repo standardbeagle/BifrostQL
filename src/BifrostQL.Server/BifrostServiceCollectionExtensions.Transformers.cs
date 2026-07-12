@@ -67,6 +67,12 @@ namespace BifrostQL.Server
             if (!configured.Any(t => t is AutoFilterTransformer))
                 combined.Add(new AutoFilterTransformer());
 
+            // Field-level encryption read guard: rejects filter/sort/aggregate on an
+            // encrypted column (no plaintext oracle). A no-op for tables without an
+            // encrypted column, so always safe to auto-register.
+            if (!configured.Any(t => t is BifrostQL.Core.Modules.Crypto.EncryptedColumnReadGuard))
+                combined.Add(new BifrostQL.Core.Modules.Crypto.EncryptedColumnReadGuard());
+
             combined.AddRange(configured);
             return combined;
         }

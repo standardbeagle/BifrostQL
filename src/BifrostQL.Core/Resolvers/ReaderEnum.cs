@@ -10,6 +10,7 @@ namespace BifrostQL.Core.Resolvers
         private readonly IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> _tables;
         private readonly GqlObjectQuery _tableSql;
         private readonly EnumColumnMap? _enumColumns;
+        private readonly BifrostQL.Core.Modules.Crypto.CryptoReadProjector? _cryptoRead;
         private readonly ILogger? _logger;
 
         // Per-result-set indexes, built once and shared across every parent probe
@@ -36,12 +37,14 @@ namespace BifrostQL.Core.Resolvers
             GqlObjectQuery gqlObjectQuery,
             IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> tableData,
             EnumColumnMap? enumColumns = null,
-            ILogger? logger = null)
+            ILogger? logger = null,
+            BifrostQL.Core.Modules.Crypto.CryptoReadProjector? cryptoRead = null)
         {
             _tableSql = gqlObjectQuery;
             _tables = tableData;
             _enumColumns = enumColumns;
             _logger = logger;
+            _cryptoRead = cryptoRead;
         }
 
         public ValueTask<object?> Get(int row, IBifrostFieldContext context)
@@ -68,6 +71,15 @@ namespace BifrostQL.Core.Resolvers
         /// applies uniformly regardless of read depth.
         /// </summary>
         internal object? MapEnumValueOrRaw(string tableDbName, string field, object? raw)
+        {
+            var mapped = MapEnumOnly(tableDbName, field, raw);
+            // Decrypt/mask on read. A column is never both an enum and encrypted, so the
+            // enum step above is a passthrough for encrypted columns; apply crypto to the
+            // (enum-passed-through) value. Non-encrypted columns pass through untouched.
+            return _cryptoRead != null ? _cryptoRead.Project(tableDbName, field, mapped) : mapped;
+        }
+
+        private object? MapEnumOnly(string tableDbName, string field, object? raw)
         {
             if (_enumColumns == null)
                 return raw;

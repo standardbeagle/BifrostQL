@@ -156,41 +156,51 @@ public sealed class QueryTransformerService : IQueryTransformerService
     private void EnforceColumnReadGuards(GqlObjectQuery query, QueryTransformContext context)
     {
         var guards = _filterTransformers.OfType<IColumnReadGuard>().ToArray();
-        if (guards.Length == 0)
+        var filterGuards = _filterTransformers.OfType<IColumnFilterGuard>().ToArray();
+        if (guards.Length == 0 && filterGuards.Length == 0)
             return;
 
         // Columns are collected per-table (a filter can traverse a SingleLinks
         // relationship into a different table entirely), so each table's set is
         // asserted against that table's own policy rather than the query node's.
+        // Two sets: every referenced column (read guard) and only the non-output
+        // filter/sort/aggregate columns (filter guard). A column used ONLY for output
+        // is in the first set, not the second — so an encrypted column can be selected
+        // (then decrypted/masked on read) but not used as a query predicate.
         var columnsByTable = new Dictionary<IDbTable, HashSet<string>>();
+        var filteredByTable = new Dictionary<IDbTable, HashSet<string>>();
 
-        void Add(IDbTable table, string? name)
+        static void AddTo(Dictionary<IDbTable, HashSet<string>> map, IDbTable table, string? name)
         {
             if (string.IsNullOrWhiteSpace(name))
                 return;
-
-            if (!columnsByTable.TryGetValue(table, out var set))
+            if (!map.TryGetValue(table, out var set))
             {
                 set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                columnsByTable[table] = set;
+                map[table] = set;
             }
             set.Add(name);
         }
 
-        void AddRange(IDbTable table, IEnumerable<string?> names)
+        // Read-only (output) column.
+        void AddRead(IDbTable table, string? name) => AddTo(columnsByTable, table, name);
+        // Column used as a filter/sort/aggregate predicate — counts for BOTH guards.
+        void AddFiltered(IDbTable table, string? name)
         {
-            foreach (var name in names)
-                Add(table, name);
+            AddTo(columnsByTable, table, name);
+            AddTo(filteredByTable, table, name);
         }
 
-        // Selected/output columns (scalar + computed-column dependencies).
-        AddRange(query.DbTable, query.ScalarColumns.SelectMany(c => ReadGuardColumnNames(query.DbTable, c)));
+        // Selected/output columns (scalar + computed-column dependencies) — read only.
+        foreach (var name in query.ScalarColumns.SelectMany(c => ReadGuardColumnNames(query.DbTable, c)))
+            AddRead(query.DbTable, name);
 
         // Filter (`filter` / WHERE) columns, including relationship traversals.
-        CollectFilterColumns(query.Filter, query.DbTable, Add);
+        CollectFilterColumns(query.Filter, query.DbTable, AddFiltered);
 
         // Sort (`_order`) columns. Tokens are "<GraphQlName>_asc" / "..._desc".
-        AddRange(query.DbTable, query.Sort.Select(s => ResolveColumnDbName(query.DbTable, StripSortSuffix(s))));
+        foreach (var s in query.Sort)
+            AddFiltered(query.DbTable, ResolveColumnDbName(query.DbTable, StripSortSuffix(s)));
 
         // Aggregate (`_agg`) value columns resolve against the final linked
         // table in the aggregate's join chain, mirroring the destination-table
@@ -202,18 +212,20 @@ public sealed class QueryTransformerService : IQueryTransformerService
 
             var (direction, link) = aggregate.Links[^1];
             var targetTable = direction == LinkDirection.ManyToOne ? link.ParentTable : link.ChildTable;
-            Add(targetTable, ResolveColumnDbName(targetTable, aggregate.FinalColumnName));
+            AddFiltered(targetTable, ResolveColumnDbName(targetTable, aggregate.FinalColumnName));
         }
 
         // GROUP BY aggregate (`<table>Aggregate`) group-key and value columns live
-        // directly on the queried table. They must clear the same read guard as
-        // scalar/filter/sort/_agg columns, or a policy-denied column could be
-        // grouped by or aggregated (SUM/AVG/MIN/MAX) through the aggregate surface —
-        // using the group partition or the aggregate value as an exfiltration oracle.
+        // directly on the queried table. They must clear the same guards as
+        // scalar/filter/sort/_agg columns, or a policy-denied (or encrypted) column
+        // could be grouped by or aggregated (SUM/AVG/MIN/MAX) through the aggregate
+        // surface — using the group partition or the aggregate value as an oracle.
         if (query.GroupedAggregate is { } grouped)
         {
-            AddRange(query.DbTable, grouped.GroupColumns.Select(g => g.Column.DbName));
-            AddRange(query.DbTable, grouped.ValueColumns.Select(v => v.Column.DbName));
+            foreach (var g in grouped.GroupColumns)
+                AddFiltered(query.DbTable, g.Column.DbName);
+            foreach (var v in grouped.ValueColumns)
+                AddFiltered(query.DbTable, v.Column.DbName);
         }
 
         foreach (var (table, columns) in columnsByTable)
@@ -224,6 +236,16 @@ public sealed class QueryTransformerService : IQueryTransformerService
             var names = columns.ToArray();
             foreach (var guard in guards)
                 guard.AssertColumnsReadable(table, names, context);
+        }
+
+        foreach (var (table, columns) in filteredByTable)
+        {
+            if (columns.Count == 0)
+                continue;
+
+            var names = columns.ToArray();
+            foreach (var guard in filterGuards)
+                guard.AssertColumnsFilterable(table, names, context);
         }
     }
 

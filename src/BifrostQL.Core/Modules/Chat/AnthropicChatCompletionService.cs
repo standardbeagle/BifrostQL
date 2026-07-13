@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Anthropic;
@@ -18,18 +19,33 @@ namespace BifrostQL.Core.Modules.Chat
     /// no sampling parameters — <c>temperature</c>/<c>top_p</c>/<c>top_k</c> are removed
     /// on the default model and would 400. The SDK's <see cref="IMessageService"/> is the
     /// system boundary: everything above it (request shape, delta mapping, stop-reason
-    /// taxonomy, exception taxonomy) is this class and is unit-tested against faked SDK
-    /// stream events. No retries and no fallbacks live here — failures surface as
-    /// <see cref="ChatCompletionException"/> with a <c>Retryable</c> flag and the caller
-    /// decides.
+    /// taxonomy, exception taxonomy, the multi-turn tool-use loop) is this class and is
+    /// unit-tested against faked SDK stream events.
+    ///
+    /// Tool loop (<see cref="ChatCompletionToolOptions"/>): on a <c>tool_use</c> stop
+    /// the FULL assistant turn — thinking blocks included, the API requires them back
+    /// verbatim when thinking is enabled — is appended to the conversation, every
+    /// <c>tool_use</c> block of the turn is executed (parallel-safe), and ALL results
+    /// return in ONE user message of <c>tool_result</c> blocks (the API contract), then
+    /// the loop continues until a terminal stop or the iteration cap
+    /// (<see cref="ChatToolLoopLimitException"/>). A connector throw becomes an
+    /// <c>is_error</c> tool result fed back to the model — the stream itself never
+    /// crashes on a tool failure. No retries and no fallbacks live here — provider
+    /// failures surface as <see cref="ChatCompletionException"/> with a
+    /// <c>Retryable</c> flag and the caller decides.
     /// </summary>
     public sealed class AnthropicChatCompletionService : IChatCompletionService, IDisposable
     {
-        // Wire stop reasons this service can receive for the request shape it sends
-        // (no tools, no stop sequences). Anything else is a contract violation.
+        // Wire stop reasons this service can receive for the request shapes it sends
+        // (no stop sequences; tools only when configured). Anything else is a
+        // contract violation.
         private const string StopEndTurn = "end_turn";
         private const string StopMaxTokens = "max_tokens";
         private const string StopRefusal = "refusal";
+        private const string StopToolUse = "tool_use";
+
+        // Tool-activity summaries are display material for transports, not payloads.
+        private const int SummaryLimit = 160;
 
         private readonly IMessageService _messages;
         private readonly ChatCompletionOptions _options;
@@ -70,8 +86,8 @@ namespace BifrostQL.Core.Modules.Chat
         {
             // Validate + build the request eagerly so caller bugs throw at the call
             // site instead of on first enumeration of the deferred iterator.
-            var parameters = BuildRequest(history, options);
-            return StreamCore(parameters, cancellationToken);
+            var (shape, turns) = BuildRequest(history, options);
+            return StreamCore(shape, turns, options?.Tools, cancellationToken);
         }
 
         private static AnthropicClient CreateClient(ChatCompletionOptions options)
@@ -96,7 +112,14 @@ namespace BifrostQL.Core.Modules.Chat
             return options;
         }
 
-        private MessageCreateParams BuildRequest(
+        /// <summary>The per-completion request fields that never change across loop turns.</summary>
+        private sealed record RequestShape(
+            string Model,
+            int MaxTokens,
+            MessageCreateParamsSystem? System,
+            IReadOnlyList<ToolUnion>? Tools);
+
+        private (RequestShape Shape, List<MessageParam> Turns) BuildRequest(
             IReadOnlyList<ChatCompletionMessage> history,
             ChatCompletionRequestOptions? options)
         {
@@ -131,103 +154,400 @@ namespace BifrostQL.Core.Modules.Chat
                     "The message history contains only system messages; at least one user or assistant turn is required.",
                     nameof(history));
 
-            return new MessageCreateParams
-            {
-                Model = options?.Model ?? _options.Model,
-                MaxTokens = options?.MaxTokens ?? _options.MaxTokens,
-                Messages = turns,
-                // Adaptive thinking, always. No temperature/top_p/top_k and no
-                // budget_tokens — all removed on the default model (400 if sent).
-                Thinking = new ThinkingConfigAdaptive(),
-                System = systemParts.Count > 0
+            var shape = new RequestShape(
+                options?.Model ?? _options.Model,
+                options?.MaxTokens ?? _options.MaxTokens,
+                systemParts.Count > 0
                     ? (MessageCreateParamsSystem)string.Join("\n\n", systemParts)
                     : null,
+                MapTools(options?.Tools));
+
+            return (shape, turns);
+        }
+
+        // Maps the connector tool definitions onto the wire tools param, fail-fast on
+        // shapes the API would reject: empty tool sets, blank descriptions, and input
+        // schemas that are not JSON objects are caller/connector bugs, not 400s to
+        // discover on the first chat request.
+        private static IReadOnlyList<ToolUnion>? MapTools(ChatCompletionToolOptions? tools)
+        {
+            if (tools is null)
+                return null;
+            if (tools.Tools.Count == 0)
+                throw new ArgumentException(
+                    "Tool options were supplied with no tools; omit the options instead.", nameof(tools));
+            if (tools.MaxToolIterations < 1)
+                throw new ArgumentException(
+                    "MaxToolIterations must be at least 1.", nameof(tools));
+
+            return tools.Tools.Select(MapToolDefinition).ToList();
+        }
+
+        private static ToolUnion MapToolDefinition(ChatToolDefinition definition)
+        {
+            if (string.IsNullOrWhiteSpace(definition.Description))
+                throw new InvalidOperationException(
+                    $"Chat tool '{definition.Name}' has no description; the model cannot know when to call it.");
+
+            InputSchema? schema;
+            try
+            {
+                schema = JsonSerializer.Deserialize<InputSchema>(definition.InputSchemaJson);
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidOperationException(
+                    $"Chat tool '{definition.Name}' has an invalid input schema; it must be a JSON Schema object.", ex);
+            }
+
+            if (schema is null)
+                throw new InvalidOperationException(
+                    $"Chat tool '{definition.Name}' has an empty input schema; it must be a JSON Schema object.");
+
+            return new Tool
+            {
+                Name = definition.Name,
+                Description = definition.Description,
+                InputSchema = schema,
             };
         }
 
+        private MessageCreateParams BuildTurnParams(RequestShape shape, List<MessageParam> turns) => new()
+        {
+            Model = shape.Model,
+            MaxTokens = shape.MaxTokens,
+            // Snapshot: the loop appends to `turns`; each wire request owns its list.
+            Messages = turns.ToList(),
+            // Adaptive thinking, always. No temperature/top_p/top_k and no
+            // budget_tokens — all removed on the default model (400 if sent).
+            Thinking = new ThinkingConfigAdaptive(),
+            System = shape.System,
+            Tools = shape.Tools,
+        };
+
         private async IAsyncEnumerable<ChatCompletionEvent> StreamCore(
-            MessageCreateParams parameters,
+            RequestShape shape,
+            List<MessageParam> turns,
+            ChatCompletionToolOptions? tools,
             [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             var text = new StringBuilder();
             long inputTokens = 0;
             long outputTokens = 0;
-            string? stopReason = null;
-            string? refusalCategory = null;
 
-            IAsyncEnumerator<RawMessageStreamEvent> enumerator;
-            try
+            for (var turnNumber = 1; ; turnNumber++)
             {
-                enumerator = _messages.CreateStreaming(parameters, cancellationToken)
-                    .GetAsyncEnumerator(cancellationToken);
-            }
-            catch (Exception ex) when (TryMapSdkException(ex, out var mapped))
-            {
-                throw mapped;
-            }
+                // The cap counts model turns; turn N ending in tool_use needs turn N+1,
+                // so exceeding the cap surfaces BEFORE another provider call is made.
+                if (tools is not null && turnNumber > tools.MaxToolIterations)
+                    throw new ChatToolLoopLimitException(tools.MaxToolIterations);
 
-            await using (enumerator.ConfigureAwait(false))
-            {
-                while (true)
+                var turn = new TurnAccumulator();
+                string? stopReason = null;
+                string? refusalCategory = null;
+                long turnInputTokens = 0;
+                long turnOutputTokens = 0;
+
+                IAsyncEnumerator<RawMessageStreamEvent> enumerator;
+                try
                 {
-                    bool moved;
-                    try
-                    {
-                        moved = await enumerator.MoveNextAsync().ConfigureAwait(false);
-                    }
-                    catch (Exception ex) when (TryMapSdkException(ex, out var mapped))
-                    {
-                        throw mapped;
-                    }
+                    enumerator = _messages.CreateStreaming(BuildTurnParams(shape, turns), cancellationToken)
+                        .GetAsyncEnumerator(cancellationToken);
+                }
+                catch (Exception ex) when (TryMapSdkException(ex, out var mapped))
+                {
+                    throw mapped;
+                }
 
-                    if (!moved)
-                        break;
-
-                    var streamEvent = enumerator.Current;
-                    if (streamEvent.TryPickContentBlockDelta(out var blockDelta))
+                await using (enumerator.ConfigureAwait(false))
+                {
+                    while (true)
                     {
-                        // Only assistant text is surfaced; thinking/signature/citation
-                        // deltas are model-internal and not part of the completion text.
-                        if (blockDelta.Delta.TryPickText(out var textDelta))
+                        bool moved;
+                        try
                         {
-                            text.Append(textDelta.Text);
-                            yield return new ChatCompletionDelta(textDelta.Text);
+                            moved = await enumerator.MoveNextAsync().ConfigureAwait(false);
                         }
-                    }
-                    else if (streamEvent.TryPickStart(out var start))
-                    {
-                        inputTokens = start.Message?.Usage?.InputTokens ?? 0;
-                    }
-                    else if (streamEvent.TryPickDelta(out var messageDelta))
-                    {
-                        stopReason = messageDelta.Delta?.StopReason?.Raw();
-                        refusalCategory = messageDelta.Delta?.StopDetails?.Category?.Raw();
-                        if (messageDelta.Usage is { } usage)
+                        catch (Exception ex) when (TryMapSdkException(ex, out var mapped))
                         {
-                            outputTokens = usage.OutputTokens;
-                            if (usage.InputTokens is { } deltaInputTokens)
-                                inputTokens = deltaInputTokens;
+                            throw mapped;
+                        }
+
+                        if (!moved)
+                            break;
+
+                        var streamEvent = enumerator.Current;
+                        if (streamEvent.TryPickContentBlockDelta(out var blockDelta))
+                        {
+                            // Assistant text is surfaced as deltas; thinking/signature/
+                            // tool-input deltas are accumulated for the turn replay but
+                            // are not part of the completion text.
+                            if (blockDelta.Delta.TryPickText(out var textDelta))
+                            {
+                                turn.AppendText(blockDelta.Index, textDelta.Text);
+                                text.Append(textDelta.Text);
+                                yield return new ChatCompletionDelta(textDelta.Text);
+                            }
+                            else if (blockDelta.Delta.TryPickInputJson(out var inputJson))
+                            {
+                                turn.AppendToolInputJson(blockDelta.Index, inputJson.PartialJson);
+                            }
+                            else if (blockDelta.Delta.TryPickThinking(out var thinkingDelta))
+                            {
+                                turn.AppendThinking(blockDelta.Index, thinkingDelta.Thinking);
+                            }
+                            else if (blockDelta.Delta.TryPickSignature(out var signatureDelta))
+                            {
+                                turn.AppendSignature(blockDelta.Index, signatureDelta.Signature);
+                            }
+                        }
+                        else if (streamEvent.TryPickContentBlockStart(out var blockStart))
+                        {
+                            turn.StartBlock(blockStart.Index, blockStart.ContentBlock);
+                        }
+                        else if (streamEvent.TryPickStart(out var start))
+                        {
+                            turnInputTokens = start.Message?.Usage?.InputTokens ?? 0;
+                        }
+                        else if (streamEvent.TryPickDelta(out var messageDelta))
+                        {
+                            stopReason = messageDelta.Delta?.StopReason?.Raw();
+                            refusalCategory = messageDelta.Delta?.StopDetails?.Category?.Raw();
+                            if (messageDelta.Usage is { } usage)
+                            {
+                                turnOutputTokens = usage.OutputTokens;
+                                if (usage.InputTokens is { } deltaInputTokens)
+                                    turnInputTokens = deltaInputTokens;
+                            }
                         }
                     }
                 }
-            }
 
-            yield return new ChatCompletionResult(
-                text.ToString(),
-                MapStopReason(stopReason),
-                refusalCategory,
-                inputTokens,
-                outputTokens);
+                inputTokens += turnInputTokens;
+                outputTokens += turnOutputTokens;
+
+                if (stopReason == StopToolUse && tools is not null)
+                {
+                    var toolUses = turn.ToolUses();
+                    if (toolUses.Count == 0)
+                        throw new ChatCompletionException(
+                            "The completion stopped for tool use but streamed no tool_use block.", retryable: false);
+
+                    // The assistant turn goes back VERBATIM — thinking blocks included,
+                    // the API rejects a tool continuation that drops them.
+                    turns.Add(new MessageParam { Role = Role.Assistant, Content = turn.BuildAssistantBlocks() });
+
+                    foreach (var toolUse in toolUses)
+                        yield return new ChatToolActivity(toolUse.Name, ChatToolPhase.Call, Summarize(toolUse.InputJson));
+
+                    // ALL tool calls of the turn execute (parallel-safe) and ALL results
+                    // return in ONE user message — the Anthropic tool_result contract.
+                    var results = await Task.WhenAll(
+                            toolUses.Select(toolUse => ExecuteToolAsync(tools.Executor, toolUse, cancellationToken)))
+                        .ConfigureAwait(false);
+
+                    var resultBlocks = new List<ContentBlockParam>(toolUses.Count);
+                    for (var i = 0; i < toolUses.Count; i++)
+                    {
+                        var result = results[i];
+                        yield return new ChatToolActivity(
+                            toolUses[i].Name,
+                            ChatToolPhase.Result,
+                            result.IsError ? $"error: {Summarize(result.TextPayload)}" : Summarize(result.TextPayload));
+                        resultBlocks.Add(new ToolResultBlockParam
+                        {
+                            ToolUseID = toolUses[i].Id,
+                            Content = result.TextPayload,
+                            IsError = result.IsError ? true : null,
+                        });
+                    }
+                    turns.Add(new MessageParam { Role = Role.User, Content = resultBlocks });
+                    continue;
+                }
+
+                yield return new ChatCompletionResult(
+                    text.ToString(),
+                    MapStopReason(stopReason),
+                    refusalCategory,
+                    inputTokens,
+                    outputTokens);
+                yield break;
+            }
         }
 
-        // The closed stop-reason taxonomy. A reason outside it (tool_use, pause_turn,
-        // stop_sequence — shapes this service never requests — or a future value) is a
-        // contract violation: fail fast rather than mislabel the outcome.
+        // A connector throw is a TOOL failure, not a stream failure: it feeds back to
+        // the model as an is_error result and the loop continues. Cancellation is the
+        // one exception — it is the caller tearing the stream down, not a tool fault.
+        private static async Task<ChatToolResult> ExecuteToolAsync(
+            IChatToolExecutor executor, ToolUseRequest toolUse, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var result = await executor.ExecuteAsync(toolUse.Name, toolUse.InputJson, cancellationToken)
+                    .ConfigureAwait(false);
+                return result ?? new ChatToolResult
+                {
+                    TextPayload = $"The tool '{toolUse.Name}' returned no result.",
+                    IsError = true,
+                };
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                return new ChatToolResult { TextPayload = ex.Message, IsError = true };
+            }
+        }
+
+        private static string Summarize(string payload)
+        {
+            var trimmed = payload.Trim();
+            return trimmed.Length <= SummaryLimit ? trimmed : trimmed[..(SummaryLimit - 1)] + "…";
+        }
+
+        /// <summary>One tool call the model requested in a turn.</summary>
+        private sealed record ToolUseRequest(string Id, string Name, string InputJson);
+
+        /// <summary>
+        /// Accumulates one model turn's content blocks by stream index so a tool_use
+        /// turn can be replayed verbatim as the next request's assistant message:
+        /// text, thinking (with signature), redacted thinking, and tool_use input
+        /// JSON assembled from <c>input_json_delta</c> fragments. Block kinds outside
+        /// those four belong to server tools this service never requests and are
+        /// ignored like every other model-internal shape.
+        /// </summary>
+        private sealed class TurnAccumulator
+        {
+            private sealed class Block
+            {
+                public required string Kind { get; init; }
+                public StringBuilder Text { get; } = new();
+                public StringBuilder Signature { get; } = new();
+                public string? ToolId { get; init; }
+                public string? ToolName { get; init; }
+                public string? RedactedData { get; init; }
+            }
+
+            private const string KindText = "text";
+            private const string KindThinking = "thinking";
+            private const string KindRedacted = "redacted_thinking";
+            private const string KindToolUse = "tool_use";
+
+            private readonly SortedDictionary<long, Block> _blocks = new();
+
+            public void StartBlock(long index, RawContentBlockStartEventContentBlock content)
+            {
+                if (content.TryPickToolUse(out var toolUse))
+                    _blocks[index] = new Block { Kind = KindToolUse, ToolId = toolUse.ID, ToolName = toolUse.Name };
+                else if (content.TryPickText(out var textBlock))
+                    GetOrAdd(index, KindText).Text.Append(textBlock.Text);
+                else if (content.TryPickThinking(out var thinkingBlock))
+                    GetOrAdd(index, KindThinking).Text.Append(thinkingBlock.Thinking);
+                else if (content.TryPickRedactedThinking(out var redacted))
+                    _blocks[index] = new Block { Kind = KindRedacted, RedactedData = redacted.Data };
+            }
+
+            public void AppendText(long index, string text) => GetOrAdd(index, KindText).Text.Append(text);
+
+            public void AppendThinking(long index, string thinking) => GetOrAdd(index, KindThinking).Text.Append(thinking);
+
+            public void AppendSignature(long index, string signature) =>
+                GetOrAdd(index, KindThinking).Signature.Append(signature);
+
+            public void AppendToolInputJson(long index, string partialJson)
+            {
+                if (!_blocks.TryGetValue(index, out var block) || block.Kind != KindToolUse)
+                    throw new ChatCompletionException(
+                        "The completion streamed tool-input JSON for a block that is not an open tool_use block.",
+                        retryable: false);
+                block.Text.Append(partialJson);
+            }
+
+            public IReadOnlyList<ToolUseRequest> ToolUses() =>
+                _blocks.Values
+                    .Where(b => b.Kind == KindToolUse)
+                    .Select(b => new ToolUseRequest(b.ToolId!, b.ToolName!, NormalizeInputJson(b)))
+                    .ToList();
+
+            public List<ContentBlockParam> BuildAssistantBlocks()
+            {
+                var blocks = new List<ContentBlockParam>(_blocks.Count);
+                foreach (var block in _blocks.Values)
+                {
+                    switch (block.Kind)
+                    {
+                        case KindText when block.Text.Length > 0:
+                            blocks.Add(new TextBlockParam(block.Text.ToString()));
+                            break;
+                        case KindThinking:
+                            blocks.Add(new ThinkingBlockParam
+                            {
+                                Thinking = block.Text.ToString(),
+                                Signature = block.Signature.ToString(),
+                            });
+                            break;
+                        case KindRedacted:
+                            blocks.Add(new RedactedThinkingBlockParam { Data = block.RedactedData! });
+                            break;
+                        case KindToolUse:
+                            blocks.Add(new ToolUseBlockParam
+                            {
+                                ID = block.ToolId!,
+                                Name = block.ToolName!,
+                                Input = ParseToolInput(NormalizeInputJson(block), block.ToolName!),
+                            });
+                            break;
+                    }
+                }
+                return blocks;
+            }
+
+            // A tool call with no arguments streams no input_json_delta at all; the
+            // executor contract promises a JSON object, so blank means {}.
+            private static string NormalizeInputJson(Block block)
+            {
+                var json = block.Text.ToString();
+                return string.IsNullOrWhiteSpace(json) ? "{}" : json;
+            }
+
+            private static IReadOnlyDictionary<string, JsonElement> ParseToolInput(string json, string toolName)
+            {
+                try
+                {
+                    return JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json)
+                        ?? throw new ChatCompletionException(
+                            $"The completion streamed a null argument object for tool '{toolName}'.", retryable: false);
+                }
+                catch (JsonException ex)
+                {
+                    throw new ChatCompletionException(
+                        $"The completion streamed malformed argument JSON for tool '{toolName}'.", retryable: false, ex);
+                }
+            }
+
+            private Block GetOrAdd(long index, string kind)
+            {
+                if (_blocks.TryGetValue(index, out var block))
+                    return block;
+                block = new Block { Kind = kind };
+                _blocks[index] = block;
+                return block;
+            }
+        }
+
+        // The closed TERMINAL stop-reason taxonomy. tool_use is consumed by the loop
+        // (never terminal); reaching here with it — or with pause_turn, stop_sequence,
+        // or a future value — is a contract violation: fail fast rather than mislabel
+        // the outcome.
         private static ChatCompletionStopReason MapStopReason(string? stopReason) => stopReason switch
         {
             StopEndTurn => ChatCompletionStopReason.Complete,
             StopMaxTokens => ChatCompletionStopReason.Truncated,
             StopRefusal => ChatCompletionStopReason.Refused,
+            StopToolUse => throw new ChatCompletionException(
+                "The completion stopped for tool use but the request carried no tools.", retryable: false),
             null => throw new ChatCompletionException(
                 "The completion stream ended without reporting a stop reason.", retryable: false),
             _ => throw new ChatCompletionException(

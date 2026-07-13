@@ -7,9 +7,13 @@ namespace BifrostQL.Core.Modules.Chat
     /// <summary>
     /// The chat module's single narrow seam onto the LLM. Implementations stream a
     /// completion for an ordered message history: zero or more
-    /// <see cref="ChatCompletionDelta"/> text deltas followed by exactly one terminal
-    /// <see cref="ChatCompletionResult"/>. Nothing else in Core touches the provider
-    /// SDK's wire types — callers consume this contract only.
+    /// <see cref="ChatCompletionDelta"/> text deltas — interleaved with
+    /// <see cref="ChatToolActivity"/> events when the request carries tools — followed
+    /// by exactly one terminal <see cref="ChatCompletionResult"/>. The multi-turn
+    /// tool-use loop lives INSIDE this seam: tool calls, tool results, and the
+    /// continuation turns are provider wire shapes, so nothing else in Core touches
+    /// them — callers supply <see cref="ChatCompletionToolOptions"/> and consume this
+    /// contract only.
     /// </summary>
     public interface IChatCompletionService
     {
@@ -39,26 +43,79 @@ namespace BifrostQL.Core.Modules.Chat
 
         /// <summary>Max output tokens override.</summary>
         public int? MaxTokens { get; init; }
+
+        /// <summary>
+        /// The tools offered to the model plus the executor that runs them. Null (the
+        /// default) sends no tools and the completion is a single model turn.
+        /// </summary>
+        public ChatCompletionToolOptions? Tools { get; init; }
     }
 
-    /// <summary>Base of the two stream event shapes; consumers switch on the concrete type.</summary>
+    /// <summary>
+    /// Tool configuration for one completion. The executor is already bound to the
+    /// caller's auth context (see <c>ChatToolSet.CreateExecutor</c>) — identity travels
+    /// with the request, never ambiently.
+    /// </summary>
+    public sealed record ChatCompletionToolOptions
+    {
+        /// <summary>The default <see cref="MaxToolIterations"/> cap.</summary>
+        public const int DefaultMaxToolIterations = 8;
+
+        /// <summary>The tool definitions sent to the model. Must be non-empty.</summary>
+        public required IReadOnlyList<ChatToolDefinition> Tools { get; init; }
+
+        /// <summary>Executes the model's tool calls under the caller's identity.</summary>
+        public required IChatToolExecutor Executor { get; init; }
+
+        /// <summary>
+        /// Maximum number of model turns (tool round-trips + the final answer) per
+        /// completion. Exceeding it raises <see cref="ChatToolLoopLimitException"/> —
+        /// a typed error, so no partial assistant text is ever persisted as an answer.
+        /// </summary>
+        public int MaxToolIterations { get; init; } = DefaultMaxToolIterations;
+    }
+
+    /// <summary>Base of the stream event shapes; consumers switch on the concrete type.</summary>
     public abstract record ChatCompletionEvent;
 
     /// <summary>One incremental chunk of assistant text.</summary>
     public sealed record ChatCompletionDelta(string Text) : ChatCompletionEvent;
 
     /// <summary>
+    /// Tool-loop progress: emitted once per tool call when the model requests it
+    /// (<see cref="ChatToolPhase.Call"/>) and once when its result is fed back
+    /// (<see cref="ChatToolPhase.Result"/>), in tool-block order, so transports can
+    /// relay live tool activity between text deltas. <see cref="Summary"/> is a short,
+    /// truncated rendering of the input/result — display material, not the payload.
+    /// </summary>
+    public sealed record ChatToolActivity(string ToolName, ChatToolPhase Phase, string Summary) : ChatCompletionEvent;
+
+    /// <summary>Which side of a tool round-trip a <see cref="ChatToolActivity"/> reports.</summary>
+    public enum ChatToolPhase
+    {
+        /// <summary>The model requested the tool call (before execution).</summary>
+        Call,
+
+        /// <summary>The tool executed and its result is being fed back to the model.</summary>
+        Result,
+    }
+
+    /// <summary>
     /// The terminal completion record — always the last event of a successful stream.
     /// <see cref="FullText"/> is exactly the concatenation of the preceding deltas.
     /// </summary>
-    /// <param name="FullText">The complete assistant text (empty on a pre-output refusal).</param>
+    /// <param name="FullText">
+    /// The complete assistant text (empty on a pre-output refusal). With tools this
+    /// spans every model turn of the loop — still exactly the concatenation of the
+    /// preceding text deltas.
+    /// </param>
     /// <param name="StopReason">The typed outcome; see <see cref="ChatCompletionStopReason"/>.</param>
     /// <param name="RefusalCategory">
     /// The provider's refusal category (e.g. "cyber") when <see cref="StopReason"/> is
     /// <see cref="ChatCompletionStopReason.Refused"/> and the provider reported one; null otherwise.
     /// </param>
-    /// <param name="InputTokens">Prompt tokens billed for the request.</param>
-    /// <param name="OutputTokens">Completion tokens billed for the response.</param>
+    /// <param name="InputTokens">Prompt tokens billed, summed over every model turn of the loop.</param>
+    /// <param name="OutputTokens">Completion tokens billed, summed over every model turn of the loop.</param>
     public sealed record ChatCompletionResult(
         string FullText,
         ChatCompletionStopReason StopReason,
@@ -67,8 +124,9 @@ namespace BifrostQL.Core.Modules.Chat
         long OutputTokens) : ChatCompletionEvent;
 
     /// <summary>
-    /// The closed outcome taxonomy. A stop reason outside this set (e.g. a tool-use stop
-    /// from a request shape this service never sends) is a contract violation and throws
+    /// The closed outcome taxonomy of the TERMINAL result. A tool-use stop is consumed
+    /// inside the loop (it continues the conversation, it is never an outcome); any
+    /// other stop reason outside this set is a contract violation and throws
     /// <see cref="ChatCompletionException"/> rather than being coerced into a bucket.
     /// </summary>
     public enum ChatCompletionStopReason
@@ -89,7 +147,7 @@ namespace BifrostQL.Core.Modules.Chat
     /// provider error (4xx incl. auth, protocol violations) is not. The original SDK
     /// exception is preserved as <see cref="Exception.InnerException"/>.
     /// </summary>
-    public sealed class ChatCompletionException : Exception
+    public class ChatCompletionException : Exception
     {
         public ChatCompletionException(string message, bool retryable, Exception? innerException = null)
             : base(message, innerException)
@@ -99,5 +157,24 @@ namespace BifrostQL.Core.Modules.Chat
 
         /// <summary>True when the caller may reasonably retry the request as-is.</summary>
         public bool Retryable { get; }
+    }
+
+    /// <summary>
+    /// The tool loop exceeded its <see cref="ChatCompletionToolOptions.MaxToolIterations"/>
+    /// cap without the model finishing its answer. Typed so transports can report it
+    /// distinctly (the chat middleware maps it to <c>error {code:"tool-loop-limit"}</c>);
+    /// non-retryable — retrying the same request would loop the same way.
+    /// </summary>
+    public sealed class ChatToolLoopLimitException : ChatCompletionException
+    {
+        public ChatToolLoopLimitException(int maxToolIterations)
+            : base($"The completion exceeded the tool-use iteration cap of {maxToolIterations} model turns " +
+                   "without finishing an answer.", retryable: false)
+        {
+            MaxToolIterations = maxToolIterations;
+        }
+
+        /// <summary>The cap that was exceeded.</summary>
+        public int MaxToolIterations { get; }
     }
 }

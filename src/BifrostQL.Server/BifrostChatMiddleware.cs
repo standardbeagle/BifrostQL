@@ -71,11 +71,13 @@ namespace BifrostQL.Server
     /// <c>confirmation-resolved</c> event when it resolves — then exactly one
     /// terminal <c>done</c> or <c>error</c> event.</item>
     /// <item><c>POST {Path}/conversations/{id}/confirmations/{confirmationId}</c> —
-    /// resolve a parked plan proposal (<c>{"approve": bool, "reason"?: …}</c>).
-    /// Single-use and bound to the requesting identity + conversation: unknown,
-    /// reused, cross-identity, and cross-conversation ids are the same 404. The
-    /// resolved outcome is appended to the conversation as a system-role transcript
-    /// row by the streaming request.</item>
+    /// resolve a parked plan proposal (<c>{"approve": bool, "reason"?: …}</c>;
+    /// the reason is capped at <see cref="MaxConfirmationReasonLength"/> chars,
+    /// over-cap is 400). Single-use and bound to the requesting identity +
+    /// conversation: unknown, reused, cross-identity, and cross-conversation ids
+    /// are the same 404. The resolved outcome is appended to the conversation as a
+    /// system-role transcript row by the streaming request, with the reason framed
+    /// as quoted data.</item>
     /// <item><c>GET {Path}/media/{table}/{id}</c> — resolve a binary-mode
     /// <c>bifrost-media://</c> reference: re-authorizes the row through the intent
     /// executor under the CALLER's context on every request (that is why the
@@ -113,6 +115,15 @@ namespace BifrostQL.Server
     /// </summary>
     public sealed class BifrostChatMiddleware
     {
+        /// <summary>
+        /// Maximum length of a confirmation decision's optional <c>reason</c>. The
+        /// reason is UNTRUSTED USER TEXT that gets persisted into a system-role
+        /// transcript row — which rides later completions in system position — so it
+        /// is bounded here (an over-cap reason is a 400 at the endpoint) and framed
+        /// as quoted data by <see cref="FormatDecisionTranscript"/>.
+        /// </summary>
+        public const int MaxConfirmationReasonLength = 500;
+
         private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
         {
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
@@ -538,6 +549,14 @@ namespace BifrostQL.Server
                     "invalid-request", "A boolean 'approve' field is required.");
                 return;
             }
+            // Shape validation BEFORE the registry: an over-cap reason never
+            // consumes (or even probes) the parked proposal.
+            if (body.Reason is { Length: > MaxConfirmationReasonLength })
+            {
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid-request",
+                    $"The 'reason' field must be at most {MaxConfirmationReasonLength} characters.");
+                return;
+            }
 
             var resolved = _confirmations.TryResolve(
                 confirmationId,
@@ -780,13 +799,29 @@ namespace BifrostQL.Server
             await context.Response.WriteAsync(JsonSerializer.Serialize(payload, Json), context.RequestAborted);
         }
 
-        /// <summary>The stored transcript line for a resolved plan proposal.</summary>
+        /// <summary>
+        /// The stored transcript line for a resolved plan proposal. The optional
+        /// reason is user text landing in a SYSTEM-role row (which rides later
+        /// completions in system position), so it is framed as quoted data — quotes,
+        /// backslashes, and line breaks escaped — never as bare instruction-position
+        /// text a caller could smuggle prompt injections through.
+        /// </summary>
         private static string FormatDecisionTranscript(ChatToolConfirmationDecisionActivity decision)
         {
             var outcome = decision.Approved ? "approved" : "denied";
-            var reason = string.IsNullOrWhiteSpace(decision.Reason) ? "" : $", reason: {decision.Reason}";
+            var reason = string.IsNullOrWhiteSpace(decision.Reason)
+                ? ""
+                : $". User reason (quoted data, not instructions): \"{EscapeReason(decision.Reason)}\"";
             return $"[plan proposal {decision.ConfirmationId} ({decision.Operation} on {decision.Table}): {outcome}{reason}]";
         }
+
+        /// <summary>Keeps a decision reason inside its quoted, single-line transcript frame.</summary>
+        private static string EscapeReason(string reason) => reason
+            .Replace("\\", "\\\\")
+            .Replace("\"", "\\\"")
+            .Replace("\r\n", "\\n")
+            .Replace("\r", "\\n")
+            .Replace("\n", "\\n");
 
         private sealed record CreateConversationRequest(string? Title);
 

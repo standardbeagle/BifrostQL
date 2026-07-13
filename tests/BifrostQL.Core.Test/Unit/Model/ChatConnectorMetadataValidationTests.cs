@@ -208,6 +208,26 @@ public class ChatConnectorMetadataValidationTests
     }
 
     [Fact]
+    public void Validate_VisionOnAUrlModeMediaColumn_Throws()
+    {
+        // Arrange: vision input attaches server-held bytes; a string-typed media
+        // column serves URLs and holds no bytes — the flag would be silently dead
+        // or force the server to fetch arbitrary URLs. Both rejected.
+        var model = ConnectorFixture(t => t
+                .WithMetadata(MetadataKeys.ChatConnector.Marker, MetadataKeys.ChatConnector.TypeMedia)
+                .WithMetadata(MetadataKeys.ChatConnector.MediaColumn, "ImageUrl")
+                .WithMetadata(MetadataKeys.ChatConnector.MediaVision, MetadataKeys.Chat.Enabled))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.documents")
+            .And.Contain(MetadataKeys.ChatConnector.MediaVision)
+            .And.Contain("binary");
+    }
+
+    [Fact]
     public void Validate_CaptionColumnDoesNotExist_Throws()
     {
         var model = ConnectorFixture(t => t

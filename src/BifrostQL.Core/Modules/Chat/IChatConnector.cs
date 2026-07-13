@@ -61,9 +61,11 @@ namespace BifrostQL.Core.Modules.Chat
     /// <summary>
     /// The outcome of one tool execution. <see cref="TextPayload"/> is the JSON string
     /// returned to the model as the tool result (or the error text when
-    /// <see cref="IsError"/>). Media references and confirmation requests are carried
-    /// for the media/plan slices that consume them; the tool loop passes them through
-    /// untouched today.
+    /// <see cref="IsError"/>). Media references travel to transports (the chat
+    /// middleware relays them as SSE <c>media</c> events); a vision image travels to
+    /// the MODEL (the tool loop attaches it to the <c>tool_result</c> as a base64
+    /// image block). Confirmation requests are carried for the plan slice that
+    /// consumes them.
     /// </summary>
     public sealed record ChatToolResult
     {
@@ -73,15 +75,43 @@ namespace BifrostQL.Core.Modules.Chat
         /// <summary>Marks the result as a tool error (<c>is_error</c> on the wire); the model sees it and recovers.</summary>
         public bool IsError { get; init; }
 
-        /// <summary>Media rows the result references (media connectors; consumed by a later slice).</summary>
+        /// <summary>
+        /// Media rows the result references (media connectors). The tool loop emits
+        /// them as a <see cref="ChatToolMediaActivity"/> stream event after the
+        /// result phase; they never enter the model conversation themselves.
+        /// </summary>
         public IReadOnlyList<ChatToolMediaReference>? MediaReferences { get; init; }
+
+        /// <summary>
+        /// An image to attach to the <c>tool_result</c> content as a base64 vision
+        /// block (media connectors with <c>chat-media-vision: enabled</c>). Null
+        /// means the tool result is text-only and no bytes leave the server.
+        /// </summary>
+        public ChatToolVisionImage? VisionImage { get; init; }
 
         /// <summary>A gated write awaiting user confirmation (plan connectors; consumed by a later slice).</summary>
         public ChatToolConfirmationRequest? ConfirmationRequest { get; init; }
     }
 
-    /// <summary>A row/column a tool result points at for media serving (later slice).</summary>
-    public sealed record ChatToolMediaReference(string Table, string Column, object RowId, string? ContentType);
+    /// <summary>
+    /// A media row a tool result points at, relayed to transports so clients can
+    /// render the media alongside the answer. <see cref="MediaReference"/> is the
+    /// client-usable reference: the stored URL for URL-mode bindings, or an opaque
+    /// <c>bifrost-media://&lt;table&gt;/&lt;id&gt;</c> reference resolved by the
+    /// auth-gated media fetch endpoint for binary-mode bindings — the reference
+    /// carries no secret because the endpoint re-authorizes the row on every fetch.
+    /// <see cref="ContentType"/> is set only when the server has seen the bytes
+    /// (vision loads); binary fetches sniff it at request time.
+    /// </summary>
+    public sealed record ChatToolMediaReference(
+        string Table, string Column, object RowId, string? ContentType, string MediaReference, string? Caption);
+
+    /// <summary>
+    /// Image bytes a tool result sends to the model as vision input.
+    /// <see cref="MediaType"/> is the sniffed image media type (e.g.
+    /// <c>image/png</c>); connectors must only attach recognized image formats.
+    /// </summary>
+    public sealed record ChatToolVisionImage(byte[] Data, string MediaType);
 
     /// <summary>A proposed gated write a plan tool wants the user to confirm (later slice).</summary>
     public sealed record ChatToolConfirmationRequest(string Kind, string Summary, string PayloadJson);

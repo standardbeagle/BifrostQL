@@ -90,6 +90,17 @@ namespace BifrostQL.Core.Modules.Chat
     /// </summary>
     public sealed record ChatToolActivity(string ToolName, ChatToolPhase Phase, string Summary) : ChatCompletionEvent;
 
+    /// <summary>
+    /// Media rows a tool result referenced (<see cref="ChatToolResult.MediaReferences"/>),
+    /// emitted once per media-bearing tool result immediately after its
+    /// <see cref="ChatToolPhase.Result"/> activity so transports can relay the
+    /// references to clients (the chat middleware maps this to an SSE <c>media</c>
+    /// event). Display/fetch material for the CLIENT — never part of the model
+    /// conversation.
+    /// </summary>
+    public sealed record ChatToolMediaActivity(
+        string ToolName, IReadOnlyList<ChatToolMediaReference> Items) : ChatCompletionEvent;
+
     /// <summary>Which side of a tool round-trip a <see cref="ChatToolActivity"/> reports.</summary>
     public enum ChatToolPhase
     {

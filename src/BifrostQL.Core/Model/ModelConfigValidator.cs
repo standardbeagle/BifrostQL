@@ -1031,6 +1031,17 @@ namespace BifrostQL.Core.Model
                     $"binary-typed (served as bytes: {TypeList(ChatConnectorConfig.BinaryColumnTypes)}) or " +
                     $"string-typed (served as a URL: {TypeList(ChatConfig.StringColumnTypes)})."));
             }
+            else if (config.VisionEnabled && config.MediaMode == ChatMediaMode.Url)
+            {
+                // Vision input sends server-held bytes to the model; a URL-mode media
+                // column holds no bytes, so the flag would either be silently dead or
+                // require the server to fetch arbitrary URLs — both rejected.
+                errors.Add(Problem(table, MetadataKeys.ChatConnector.MediaVision,
+                    table.GetMetadataValue(MetadataKeys.ChatConnector.MediaVision),
+                    $"'{MetadataKeys.ChatConnector.MediaVision}' requires a binary-typed media column: vision " +
+                    $"input attaches server-held bytes, and string-typed column '{mediaColumn}' serves URLs. " +
+                    "Remove the key or store the media bytes in a binary column."));
+            }
 
             var caption = config.MediaCaptionColumn;
             if (caption == null)

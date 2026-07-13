@@ -369,10 +369,14 @@ namespace BifrostQL.Core.Modules.Chat
                             toolUses[i].Name,
                             ChatToolPhase.Result,
                             result.IsError ? $"error: {Summarize(result.TextPayload)}" : Summarize(result.TextPayload));
+                        // Media references ride the STREAM (transports relay them to
+                        // clients), never the model conversation.
+                        if (result.MediaReferences is { Count: > 0 } mediaReferences)
+                            yield return new ChatToolMediaActivity(toolUses[i].Name, mediaReferences);
                         resultBlocks.Add(new ToolResultBlockParam
                         {
                             ToolUseID = toolUses[i].Id,
-                            Content = result.TextPayload,
+                            Content = BuildToolResultContent(result),
                             IsError = result.IsError ? true : null,
                         });
                     }
@@ -435,6 +439,26 @@ namespace BifrostQL.Core.Modules.Chat
                     IsError = true,
                 };
             }
+        }
+
+        // A vision-bearing result becomes a tool_result content BLOCK LIST — the text
+        // payload plus one base64 image block — instead of the plain string; that is
+        // the wire shape the Anthropic API defines for images inside tool results.
+        // Everything else stays the plain string it always was.
+        private static ToolResultBlockParamContent BuildToolResultContent(ChatToolResult result)
+        {
+            if (result.VisionImage is not { } image)
+                return result.TextPayload;
+
+            return new List<Block>
+            {
+                new TextBlockParam(result.TextPayload),
+                new ImageBlockParam(new Base64ImageSource
+                {
+                    Data = Convert.ToBase64String(image.Data),
+                    MediaType = image.MediaType,
+                }),
+            };
         }
 
         private static string Summarize(string payload)

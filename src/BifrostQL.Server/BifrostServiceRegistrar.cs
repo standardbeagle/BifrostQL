@@ -206,7 +206,8 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
-        /// Registers the chat-connector types (from <c>AddChatConnector&lt;T&gt;</c>) under
+        /// Registers the built-in <see cref="BifrostQL.Core.Modules.Chat.ExploreChatConnector"/>
+        /// plus the chat-connector types (from <c>AddChatConnector&lt;T&gt;</c>) under
         /// <see cref="BifrostQL.Core.Modules.Chat.IChatConnector"/> and the
         /// <see cref="BifrostQL.Core.Modules.Chat.ChatConnectorRegistry"/> that collects
         /// every registered connector — including any a host registered directly as
@@ -216,7 +217,22 @@ namespace BifrostQL.Server
         /// </summary>
         public static void RegisterChatConnectorServices(IServiceCollection services, IReadOnlyList<Type> connectorTypes)
         {
-            foreach (var connectorType in connectorTypes)
+            // The built-in explore connector ships by default (mirroring the built-in
+            // transformers): it exposes tools only for `chat-connector: explore`
+            // tables, so hosts without explore bindings carry no tools and pay
+            // nothing. Its factory pins the intent-executor seam explicitly; caps
+            // come from ChatConnectorOptions, overridable by registering one first.
+            services.TryAddSingleton<BifrostQL.Core.Modules.Chat.ChatConnectorOptions>();
+            services.TryAddSingleton(sp => new BifrostQL.Core.Modules.Chat.ExploreChatConnector(
+                sp.GetRequiredService<IQueryIntentExecutor>(),
+                sp.GetRequiredService<BifrostQL.Core.Modules.Chat.ChatConnectorOptions>()));
+
+            // De-duplicated against AddChatConnector<ExploreChatConnector>: a double
+            // registration would define every explore_* tool twice and fail the
+            // registry's collision gate on the first chat request.
+            var types = new List<Type> { typeof(BifrostQL.Core.Modules.Chat.ExploreChatConnector) };
+            types.AddRange(connectorTypes.Where(t => t != typeof(BifrostQL.Core.Modules.Chat.ExploreChatConnector)));
+            foreach (var connectorType in types)
             {
                 var type = connectorType;
                 services.TryAddSingleton(type);

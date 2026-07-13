@@ -34,10 +34,14 @@ namespace BifrostQL.Server.Test
             }
         }
 
-        /// <summary>One-tool fake connector recording every execution's auth context.</summary>
+        /// <summary>
+        /// One-tool fake connector recording every execution's auth context. Named
+        /// <c>fake_*</c> because the built-in <see cref="ExploreChatConnector"/> is
+        /// registered by default and already owns the <c>explore_*</c> names.
+        /// </summary>
         private sealed class FakeExploreConnector : IChatConnector
         {
-            public int Priority => 100;
+            public int Priority => 200;
 
             public List<IDictionary<string, object?>> AuthContexts { get; } = new();
 
@@ -45,7 +49,7 @@ namespace BifrostQL.Server.Test
                 => new[]
                 {
                     new ChatToolDefinition(
-                        $"explore_{binding.Table.DbName}",
+                        $"fake_{binding.Table.DbName}",
                         $"Query the {binding.Table.DbName} table when the user asks about its rows.",
                         """{"type":"object","properties":{}}"""),
                 };
@@ -129,15 +133,16 @@ namespace BifrostQL.Server.Test
             SseReader.Parse(await response.Content.ReadAsStringAsync())
                 .Select(e => e.Name).Should().EndWith("done");
 
-            // Assert: the request carried the connector's tool and the configured cap.
+            // Assert: the request carried the fake connector's tool — alongside the
+            // built-in explore connector's, which registers by default — and the cap.
             var options = _h.Fake.OptionsCalls.Should().ContainSingle().Which;
             var tools = options!.Tools.Should().NotBeNull().And.BeOfType<ChatCompletionToolOptions>().Which;
             tools.MaxToolIterations.Should().Be(8);
-            tools.Tools.Should().ContainSingle().Which.Name.Should().Be("explore_messages");
+            tools.Tools.Select(t => t.Name).Should().BeEquivalentTo("explore_messages", "fake_messages");
 
             // The executor runs under the caller's identity — invoking it reaches the
             // connector with the request's own auth context, never an ambient one.
-            await tools.Executor.ExecuteAsync("explore_messages", "{}", CancellationToken.None);
+            await tools.Executor.ExecuteAsync("fake_messages", "{}", CancellationToken.None);
             var authContext = connector.AuthContexts.Should().ContainSingle().Which;
             authContext.Should().ContainKey("user");
         }

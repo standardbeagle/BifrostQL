@@ -965,13 +965,20 @@ namespace BifrostQL.Core.Model
                 {
                     // Parse errors (unknown type/operation tokens, empty values, mapping
                     // keys without their type token), attributed to the offending key.
-                    var key = FirstPresentChatConnectorKey(table);
+                    var key = OffendingChatConnectorKey(table, ex.Message);
                     errors.Add(Problem(table, key, table.GetMetadataValue(key), ex.Message));
                     continue;
                 }
 
                 if (!config.IsConnector)
                     continue;
+
+                // The chat pair tables (chat-conversations / chat-messages) MAY also be
+                // connectors — deliberately. "Explore my own conversation history" is a
+                // legitimate tool, the pair tables are ordinary published tables, and the
+                // row-scope transformers guard connector reads exactly as they guard the
+                // chat store's. Rejecting the combination here would be an arbitrary
+                // restriction; pinned by test.
 
                 // A connector tool is built on the generated schema, so its table must
                 // be published; history targets are unpublished system tables whose
@@ -1041,21 +1048,24 @@ namespace BifrostQL.Core.Model
         private static string TypeList(IReadOnlySet<string> types) =>
             string.Join("/", types.OrderBy(t => t, StringComparer.Ordinal));
 
-        // Picks the chat-connector metadata key actually present on the table so a
-        // parse failure is attributed to the real source rather than always to
-        // chat-connector.
-        private static string FirstPresentChatConnectorKey(IDbTable table)
+        // Attributes a chat-connector parse failure to the actual offending key: the
+        // parse errors always name their key, so prefer the present key the message
+        // names (specific mapping keys before the marker, which the stray-key messages
+        // also mention), falling back to the first key present on the table.
+        private static string OffendingChatConnectorKey(IDbTable table, string errorMessage)
         {
             var keys = new[]
             {
-                MetadataKeys.ChatConnector.Marker,
                 MetadataKeys.ChatConnector.MediaColumn,
                 MetadataKeys.ChatConnector.MediaVision,
                 MetadataKeys.ChatConnector.MediaCaption,
                 MetadataKeys.ChatConnector.PlanOperations,
                 MetadataKeys.ChatConnector.ToolDescription,
+                MetadataKeys.ChatConnector.Marker,
             };
-            return keys.FirstOrDefault(table.Metadata.ContainsKey) ?? MetadataKeys.ChatConnector.Marker;
+            return keys.FirstOrDefault(k => table.Metadata.ContainsKey(k) && errorMessage.Contains($"'{k}'"))
+                ?? keys.FirstOrDefault(table.Metadata.ContainsKey)
+                ?? MetadataKeys.ChatConnector.Marker;
         }
 
         /// <summary>

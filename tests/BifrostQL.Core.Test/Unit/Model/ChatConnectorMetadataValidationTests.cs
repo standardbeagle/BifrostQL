@@ -327,6 +327,57 @@ public class ChatConnectorMetadataValidationTests
     }
 
     [Fact]
+    public void Validate_ParseError_AttributedToTheOffendingKey_NotTheMarker()
+    {
+        // Arrange: the marker is valid; the fault is the stray chat-plan-operations
+        // key without the plan token. The error must be attributed to that key, not
+        // blamed on chat-connector because it happens to be listed first.
+        var model = ConnectorFixture(t => t
+                .WithMetadata(MetadataKeys.ChatConnector.Marker, MetadataKeys.ChatConnector.TypeExplore)
+                .WithMetadata(MetadataKeys.ChatConnector.PlanOperations, "insert"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.documents")
+            .And.Contain($"[{MetadataKeys.ChatConnector.PlanOperations}]");
+    }
+
+    [Fact]
+    public void Validate_ExploreConnectorOnTheChatMessagesTable_IsAccepted()
+    {
+        // Arrange: the chat pair tables MAY be connectors — a conscious decision, not
+        // an oversight. "Explore my own conversation history" is a legitimate tool;
+        // the pair tables are ordinary published tables and the row-scope transformers
+        // guard connector reads exactly as they guard the chat store's.
+        var model = DbModelTestFixture.Create()
+            .WithTable("conversations", t => t
+                .WithSchema("dbo").WithPrimaryKey("Id").WithColumn("Title", "nvarchar")
+                .WithMetadata(MetadataKeys.Chat.Conversations, MetadataKeys.Chat.Enabled)
+                .WithMetadata(MetadataKeys.Chat.Title, "Title")
+                .WithMetadata(MetadataKeys.ChatConnector.Marker, MetadataKeys.ChatConnector.TypeExplore))
+            .WithTable("messages", t => t
+                .WithSchema("dbo").WithPrimaryKey("Id")
+                .WithColumn("Role", "nvarchar")
+                .WithColumn("Content", "nvarchar")
+                .WithColumn("ConversationId", "int")
+                .WithColumn("CreatedAt", "datetime2")
+                .WithMetadata(MetadataKeys.Chat.Messages, MetadataKeys.Chat.Enabled)
+                .WithMetadata(MetadataKeys.Chat.Role, "Role")
+                .WithMetadata(MetadataKeys.Chat.Content, "Content")
+                .WithMetadata(MetadataKeys.Chat.ConversationFk, "ConversationId")
+                .WithMetadata(MetadataKeys.Chat.CreatedAt, "CreatedAt")
+                .WithMetadata(MetadataKeys.ChatConnector.Marker, MetadataKeys.ChatConnector.TypeExplore))
+            .WithSingleLink("messages", "ConversationId", "conversations", "Id", "conversation")
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().NotThrow();
+    }
+
+    [Fact]
     public void Validate_ConnectorComposesWithChatPairAndHistoryEnabled_DoesNotThrow()
     {
         // Arrange: a connector on a table that also records history (history-ENABLED,

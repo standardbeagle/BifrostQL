@@ -84,6 +84,7 @@ namespace BifrostQL.Server
         private readonly List<Type> _mutationTransformerTypes = new();
         private readonly List<Type> _queryObserverTypes = new();
         private readonly List<Type> _protocolAdapterTypes = new();
+        private readonly List<Type> _chatConnectorTypes = new();
         private IConfigurationSection? _loggingConfig;
         private IConfigurationSection? _queryLimitsConfig;
         private readonly BifrostProfileRegistry _profileRegistry = new();
@@ -232,6 +233,18 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
+        /// Registers a chat connector (see <see cref="BifrostQL.Core.Modules.Chat.IChatConnector"/>),
+        /// resolved from DI and collected by the chat tool loop's connector registry.
+        /// Additive, mirroring <see cref="AddFilterTransformer{T}"/>.
+        /// </summary>
+        public BifrostMultiDbOptions AddChatConnector<T>() where T : class, BifrostQL.Core.Modules.Chat.IChatConnector
+        {
+            if (!_chatConnectorTypes.Contains(typeof(T)))
+                _chatConnectorTypes.Add(typeof(T));
+            return this;
+        }
+
+        /// <summary>
         /// Adds a named configuration profile that controls which modules are active.
         /// </summary>
         public BifrostMultiDbOptions AddProfile(BifrostProfile profile)
@@ -286,6 +299,7 @@ namespace BifrostQL.Server
             BifrostServiceRegistrar.RegisterComputedColumnServices(services);
             BifrostServiceRegistrar.RegisterQueryIntentServices(services);
             BifrostServiceRegistrar.RegisterProtocolAdapterServices(services, _protocolAdapterTypes);
+            BifrostServiceRegistrar.RegisterChatConnectorServices(services, _chatConnectorTypes);
 
             // Same bounded depth/complexity guard as the single-database path; applied to
             // every endpoint's shared executor (which the binary transport also uses).

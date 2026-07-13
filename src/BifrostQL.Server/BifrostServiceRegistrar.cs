@@ -205,6 +205,28 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
+        /// Registers the chat-connector types (from <c>AddChatConnector&lt;T&gt;</c>) under
+        /// <see cref="BifrostQL.Core.Modules.Chat.IChatConnector"/> and the
+        /// <see cref="BifrostQL.Core.Modules.Chat.ChatConnectorRegistry"/> that collects
+        /// every registered connector — including any a host registered directly as
+        /// <c>IChatConnector</c> services — in priority order. The registry is registered
+        /// unconditionally (an empty one is valid: the chat completion simply carries no
+        /// tools) so <see cref="BifrostChatMiddleware"/> can always resolve it.
+        /// </summary>
+        public static void RegisterChatConnectorServices(IServiceCollection services, IReadOnlyList<Type> connectorTypes)
+        {
+            foreach (var connectorType in connectorTypes)
+            {
+                var type = connectorType;
+                services.TryAddSingleton(type);
+                services.AddSingleton(sp =>
+                    (BifrostQL.Core.Modules.Chat.IChatConnector)sp.GetRequiredService(type));
+            }
+            services.AddSingleton(sp => new BifrostQL.Core.Modules.Chat.ChatConnectorRegistry(
+                sp.GetServices<BifrostQL.Core.Modules.Chat.IChatConnector>()));
+        }
+
+        /// <summary>
         /// Registers each protocol adapter type as a singleton plus a dedicated
         /// <see cref="Microsoft.Extensions.Hosting.IHostedService"/> wrapper, so the host
         /// starts/stops every adapter with its own lifecycle. Adapter types resolve their

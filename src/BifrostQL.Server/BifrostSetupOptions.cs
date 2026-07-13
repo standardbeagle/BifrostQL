@@ -42,6 +42,7 @@ namespace BifrostQL.Server
         private readonly List<Type> _mutationTransformerTypes = new();
         private readonly List<Type> _queryObserverTypes = new();
         private readonly List<Type> _protocolAdapterTypes = new();
+        private readonly List<Type> _chatConnectorTypes = new();
         private IReadOnlyList<IMetadataSource> _metadataSources = Array.Empty<IMetadataSource>();
         private readonly BifrostProfileRegistry _profileRegistry = new();
 
@@ -206,6 +207,18 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
+        /// Registers a chat connector (see <see cref="BifrostQL.Core.Modules.Chat.IChatConnector"/>),
+        /// resolved from DI and collected by the chat tool loop's connector registry.
+        /// Additive, mirroring <see cref="AddFilterTransformer{T}"/>.
+        /// </summary>
+        public BifrostSetupOptions AddChatConnector<T>() where T : class, BifrostQL.Core.Modules.Chat.IChatConnector
+        {
+            if (!_chatConnectorTypes.Contains(typeof(T)))
+                _chatConnectorTypes.Add(typeof(T));
+            return this;
+        }
+
+        /// <summary>
         /// Adds a named configuration profile that controls which modules are active.
         /// </summary>
         public BifrostSetupOptions AddProfile(BifrostProfile profile)
@@ -318,6 +331,7 @@ namespace BifrostQL.Server
             BifrostServiceRegistrar.RegisterComputedColumnServices(services);
             BifrostServiceRegistrar.RegisterQueryIntentServices(services);
             BifrostServiceRegistrar.RegisterProtocolAdapterServices(services, _protocolAdapterTypes);
+            BifrostServiceRegistrar.RegisterChatConnectorServices(services, _chatConnectorTypes);
 
             // Fail-secure default: missing DisableAuth means auth ON, consistent with
             // IsUsingAuth and the BindStandardConfig startup guard.

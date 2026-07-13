@@ -17,7 +17,10 @@ namespace BifrostQL.Core.Modules.Chat
     /// becomes one <c>explore_&lt;table&gt;</c> Claude tool whose input schema is
     /// derived from the table's columns (per-column filters with type-appropriate
     /// operators, sort, limit/offset, columns projection — <c>additionalProperties:
-    /// false</c> throughout, so the model cannot invent arguments). Execution
+    /// false</c> throughout, so the model cannot invent arguments).
+    /// <c>visibility: hidden</c> columns are excluded from the whole surface, and
+    /// encrypted columns from filters/sort (predicates over ciphertext are a
+    /// plaintext oracle), matching every other read surface. Execution
     /// re-validates every model-supplied name and operator against the schema —
     /// failures throw <see cref="ChatToolInputException"/> naming the valid choices
     /// so the model can recover — then rides <see cref="IQueryIntentExecutor"/>
@@ -126,8 +129,12 @@ namespace BifrostQL.Core.Modules.Chat
 
         private static string BuildInputSchema(IDbTable table)
         {
+            // Filters and sort exclude encrypted columns: a predicate over an
+            // encrypted column is a plaintext oracle, and the read guard rejects it
+            // downstream — the schema must not offer what execution refuses.
+            // Projection keeps them (values arrive decrypted or masked).
             var filterProperties = new JsonObject();
-            foreach (var column in table.Columns)
+            foreach (var column in PredicateColumns(table))
                 filterProperties[column.GraphQlName] = ColumnFilterSchema(column);
 
             var schema = new JsonObject
@@ -151,7 +158,7 @@ namespace BifrostQL.Core.Modules.Chat
                             ["column"] = new JsonObject
                             {
                                 ["type"] = "string",
-                                ["enum"] = ColumnNameArray(table),
+                                ["enum"] = ColumnNameArray(PredicateColumns(table)),
                             },
                             ["direction"] = new JsonObject
                             {
@@ -169,7 +176,7 @@ namespace BifrostQL.Core.Modules.Chat
                         ["items"] = new JsonObject
                         {
                             ["type"] = "string",
-                            ["enum"] = ColumnNameArray(table),
+                            ["enum"] = ColumnNameArray(VisibleColumns(table)),
                         },
                         ["minItems"] = 1,
                     },
@@ -178,8 +185,24 @@ namespace BifrostQL.Core.Modules.Chat
             return schema.ToJsonString();
         }
 
-        private static JsonArray ColumnNameArray(IDbTable table) =>
-            new(table.Columns.Select(c => (JsonNode)c.GraphQlName).ToArray());
+        private static JsonArray ColumnNameArray(IEnumerable<ColumnDto> columns) =>
+            new(columns.Select(c => (JsonNode)c.GraphQlName).ToArray());
+
+        /// <summary>
+        /// The columns the explore surface exposes at all: <c>visibility: hidden</c>
+        /// columns are omitted from the tool schema, the default projection, and the
+        /// valid-columns feedback — the same rule every other read surface applies
+        /// (TableSchemaGenerator, AggregateSurface, the meta resolvers).
+        /// </summary>
+        private static IEnumerable<ColumnDto> VisibleColumns(IDbTable table) =>
+            table.Columns.Where(c => !c.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden));
+
+        /// <summary>Visible columns usable as filter/sort predicates: encrypted columns excluded.</summary>
+        private static IEnumerable<ColumnDto> PredicateColumns(IDbTable table) =>
+            VisibleColumns(table).Where(c => !IsEncrypted(c));
+
+        private static bool IsEncrypted(ColumnDto column) =>
+            !string.IsNullOrWhiteSpace(column.GetMetadataValue(MetadataKeys.Crypto.Encrypt));
 
         private static JsonObject ColumnFilterSchema(ColumnDto column)
         {
@@ -307,17 +330,31 @@ namespace BifrostQL.Core.Modules.Chat
 
                 var effectiveLimit = Math.Min(limit ?? _options.ExploreRowCap, _options.ExploreRowCap);
                 return new ExploreInput(
-                    filter, sortTokens, projection ?? table.Columns.ToList(), effectiveLimit, offset);
+                    filter, sortTokens, projection ?? VisibleColumns(table).ToList(), effectiveLimit, offset);
             }
         }
 
+        // A hidden column gets the same rejection as a nonexistent one, and the
+        // valid-columns feedback lists only visible columns — the error message goes
+        // to the model, so it must not disclose what the schema hides.
         private static ColumnDto ResolveColumn(IDbTable table, string name, string argument)
         {
-            if (table.GraphQlLookup.TryGetValue(name, out var column))
+            if (table.GraphQlLookup.TryGetValue(name, out var column)
+                && !column.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden))
                 return column;
             throw new ChatToolInputException(
                 $"Unknown column '{name}' in '{argument}' on {table.GraphQlName}. " +
-                $"Valid columns: {string.Join(", ", table.Columns.Select(c => c.GraphQlName))}.");
+                $"Valid columns: {string.Join(", ", VisibleColumns(table).Select(c => c.GraphQlName))}.");
+        }
+
+        // Validation-first encrypted-predicate rejection: without it the read
+        // pipeline's guard still refuses the query, but deep in execution as a
+        // sanitized server error the model cannot learn from.
+        private static void RejectEncryptedPredicate(ColumnDto column, string argument)
+        {
+            if (IsEncrypted(column))
+                throw new ChatToolInputException(
+                    $"Column '{column.GraphQlName}' cannot be used in '{argument}'; it is encrypted.");
         }
 
         private static TableFilter? ParseFilters(IDbTable table, JsonElement filters)
@@ -330,6 +367,7 @@ namespace BifrostQL.Core.Modules.Chat
             foreach (var columnProperty in filters.EnumerateObject())
             {
                 var column = ResolveColumn(table, columnProperty.Name, "filters");
+                RejectEncryptedPredicate(column, "filters");
                 if (columnProperty.Value.ValueKind != JsonValueKind.Object)
                     throw new ChatToolInputException(
                         $"The filter for column '{column.GraphQlName}' must be an operator object, " +
@@ -429,6 +467,7 @@ namespace BifrostQL.Core.Modules.Chat
                 throw new ChatToolInputException("'sort' requires a 'column'.");
 
             var column = ResolveColumn(table, columnName, "sort");
+            RejectEncryptedPredicate(column, "sort");
             return $"{column.GraphQlName}_{direction}";
         }
 

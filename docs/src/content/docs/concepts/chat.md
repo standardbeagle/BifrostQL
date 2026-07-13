@@ -87,7 +87,10 @@ dbo.documents {
 ```
 
 - **`explore`** — the model can read and query the table. Any published table
-  qualifies; no extra columns needed.
+  qualifies; no extra columns needed. `visibility: hidden` columns are excluded
+  from the tool entirely, encrypted columns cannot be filter/sort predicates
+  (their values still project, decrypted or masked per the caller's roles), and
+  results are row- and payload-capped with explicit truncation notes.
 - **`media`** — the model can serve an image/file column (`chat-media-column`).
   The serving mode is derived from the column type — a binary column serves bytes,
   a string column serves URLs — and `chat-media-vision: enabled` opts the content
@@ -101,7 +104,11 @@ pair: unknown tokens, stray media/plan keys without their type token, missing or
 wrongly-typed columns, and unpublished or history-target tables are all rejected.
 The chat pair tables themselves **may** be connectors — "explore my own
 conversation history" is a legitimate tool, and the row-scope transformers guard
-connector reads exactly as they guard the chat store's.
+connector reads exactly as they guard the chat store's. Note the scope that
+implies: an explore tool on the **messages table is tenant-scoped, not
+conversation-scoped** — the model can read messages from any conversation within
+the caller's tenant, by design. If a chat surface must not see sibling
+conversations, do not mark the messages table `explore`.
 
 Custom connectors implement `IChatConnector` and register with
 `AddChatConnector<T>()` (mirroring `AddFilterTransformer`). A connector owns both

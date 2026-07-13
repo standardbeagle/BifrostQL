@@ -198,8 +198,11 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Enum.Values,
             MetadataKeys.Enum.Labels,
             MetadataKeys.Enum.Ref,
-            // Display / presentation hints.
+            // Display / presentation hints. Visibility is consumed on columns by
+            // TableSchemaGenerator/AggregateSurface ('visibility: hidden' omits the
+            // column from every read surface), so the gate must allow it here too.
             MetadataKeys.Ui.Label,
+            MetadataKeys.Ui.Visibility,
             MetadataKeys.Ui.Hidden,
             MetadataKeys.Ui.ReadOnly,
             MetadataKeys.Ui.DisplayFormat,

@@ -53,6 +53,7 @@ public sealed class ExploreChatConnectorTests : IAsyncLifetime
             "chat-tool-description: One row per customer order, totals are in USD.; " +
             "tenant-filter: tenant_id }",
         "main.orders.card_number { encrypt: aes-256-gcm; key-ref: config:orders; mask: redact; unmask-role: finance }",
+        "main.orders.internal_notes { visibility: hidden }",
     };
 
     public async Task InitializeAsync()
@@ -68,7 +69,8 @@ public sealed class ExploreChatConnectorTests : IAsyncLifetime
                 customer    TEXT NULL,
                 total       REAL NULL,
                 created_at  DATETIME NULL,
-                card_number TEXT NULL
+                card_number TEXT NULL,
+                internal_notes TEXT NULL
             )
             """);
 
@@ -205,11 +207,13 @@ public sealed class ExploreChatConnectorTests : IAsyncLifetime
             "filters", "sort", "limit", "offset", "columns");
 
         // filters: one entry per column, operator set derived from the column type.
+        // Encrypted columns are absent — they cannot be predicates (plaintext
+        // oracle), so the schema must not offer them.
         var filters = properties.GetProperty("filters");
         filters.GetProperty("additionalProperties").GetBoolean().Should().BeFalse();
         var filterColumns = filters.GetProperty("properties");
         filterColumns.EnumerateObject().Select(p => p.Name).Should().BeEquivalentTo(
-            "id", "tenant_id", "customer", "total", "created_at", "card_number");
+            "id", "tenant_id", "customer", "total", "created_at");
 
         static List<string> Operators(JsonElement column) =>
             column.GetProperty("properties").EnumerateObject().Select(p => p.Name).ToList();
@@ -228,12 +232,13 @@ public sealed class ExploreChatConnectorTests : IAsyncLifetime
         between.GetProperty("maxItems").GetInt32().Should().Be(2);
         between.GetProperty("items").GetProperty("type").GetString().Should().Be("number");
 
-        // sort: schema-derived column enum + asc/desc.
+        // sort: schema-derived column enum + asc/desc (encrypted columns excluded —
+        // ordering by ciphertext is a plaintext oracle and is rejected downstream).
         var sort = properties.GetProperty("sort");
         sort.GetProperty("additionalProperties").GetBoolean().Should().BeFalse();
         sort.GetProperty("properties").GetProperty("column").GetProperty("enum").EnumerateArray()
             .Select(e => e.GetString()).Should().BeEquivalentTo(
-                "id", "tenant_id", "customer", "total", "created_at", "card_number");
+                "id", "tenant_id", "customer", "total", "created_at");
         sort.GetProperty("properties").GetProperty("direction").GetProperty("enum").EnumerateArray()
             .Select(e => e.GetString()).Should().Equal("asc", "desc");
 
@@ -380,7 +385,66 @@ public sealed class ExploreChatConnectorTests : IAsyncLifetime
             .Should().Be(CardPlaintext, "the unmask role decrypts through the intent-read seam");
     }
 
+    // ---- hidden columns stay hidden -------------------------------------------------
+
+    [Fact]
+    public async Task HiddenColumn_IsAbsentFromTheToolSchema_AndTheDefaultProjection()
+    {
+        // visibility: hidden columns are excluded from every other read surface
+        // (GraphQL schema, aggregates, _meta); the explore tool must not leak them
+        // through its schema enums or its select-all default projection.
+        var model = await _reads.GetModelAsync(EndpointPath);
+        var binding = ChatConnectorConfig.FromModel(model).Should().ContainSingle().Subject;
+        var definition = _connector.GetToolDefinitions(model, binding).Should().ContainSingle().Subject;
+        definition.InputSchemaJson.Should().NotContain("internal_notes");
+
+        await SeedOrderAsync(1, "alice", 10.5);
+        using var payload = await ExecuteAsync("{}", Tenant(1));
+        var row = payload.RootElement.GetProperty("rows")[0];
+        row.TryGetProperty("internal_notes", out _).Should().BeFalse(
+            "the default projection must not return hidden columns");
+    }
+
+    [Fact]
+    public async Task HiddenColumn_NamedByTheModel_IsRejectedAsUnknown_WithoutNamingIt()
+    {
+        // The model naming a hidden column gets the same rejection as a nonexistent
+        // one — and the valid-columns feedback must not disclose the hidden name.
+        Task Run(string inputJson) => _connector.ExecuteAsync(
+            "explore_orders", inputJson, Tenant(1), CancellationToken.None);
+
+        foreach (var inputJson in new[]
+        {
+            """{"filters":{"internal_notes":{"_eq":"x"}}}""",
+            """{"sort":{"column":"internal_notes"}}""",
+            """{"columns":["internal_notes"]}""",
+        })
+        {
+            var message = (await ((Func<Task>)(() => Run(inputJson)))
+                .Should().ThrowAsync<ChatToolInputException>()).Which.Message;
+            message.Should().Contain("Unknown column 'internal_notes'");
+            message.Should().Contain("Valid columns: id, tenant_id, customer, total, created_at, card_number.");
+        }
+    }
+
     // ---- model-visible input validation --------------------------------------------
+
+    [Fact]
+    public async Task Execute_FilterOrSortOnAnEncryptedColumn_IsRejectedAtValidation()
+    {
+        // The read pipeline's EncryptedColumnReadGuard would reject this anyway, but
+        // deep in execution as a sanitized server error; the connector must refuse it
+        // validation-first with model-readable feedback so the model can recover.
+        var filter = () => _connector.ExecuteAsync(
+            "explore_orders", """{"filters":{"card_number":{"_eq":"x"}}}""", Tenant(1), CancellationToken.None);
+        var sort = () => _connector.ExecuteAsync(
+            "explore_orders", """{"sort":{"column":"card_number"}}""", Tenant(1), CancellationToken.None);
+
+        (await filter.Should().ThrowAsync<ChatToolInputException>())
+            .Which.Message.Should().Be("Column 'card_number' cannot be used in 'filters'; it is encrypted.");
+        (await sort.Should().ThrowAsync<ChatToolInputException>())
+            .Which.Message.Should().Be("Column 'card_number' cannot be used in 'sort'; it is encrypted.");
+    }
 
     [Fact]
     public async Task Execute_UnknownFilterColumn_ThrowsNamingTheValidColumns()

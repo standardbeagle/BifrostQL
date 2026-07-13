@@ -76,9 +76,23 @@ namespace BifrostQL.Server.Pgwire
                 }
 
                 var login = await _credentials.FindAsync(username, ct);
-                var verified = _options.AuthMethod == PgAuthMethod.Cleartext
-                    ? await AuthenticateCleartextAsync(stream, login, ct)
-                    : await AuthenticateScramAsync(stream, login, ct);
+                bool verified;
+                try
+                {
+                    verified = _options.AuthMethod == PgAuthMethod.Cleartext
+                        ? await AuthenticateCleartextAsync(stream, login, ct)
+                        : await AuthenticateScramAsync(stream, login, ct);
+                }
+                catch (PgScramProtocolException ex)
+                {
+                    // Malformed SCRAM from an unauthenticated peer is a protocol violation,
+                    // not a wrong password: answer with a protocol_violation ErrorResponse
+                    // and close cleanly on the (possibly TLS-wrapped) stream. The exception
+                    // also derives from PgProtocolException, so even outside this guard it
+                    // can never escape to Kestrel as unhandled.
+                    await RejectAsync(stream, PgWireProtocol.SqlStateProtocolViolation, ex.Message, ct);
+                    return;
+                }
                 if (!verified || login is null)
                 {
                     await RejectAsync(stream, PgWireProtocol.SqlStateInvalidPassword,
@@ -189,8 +203,12 @@ namespace BifrostQL.Server.Pgwire
             var supplied = TrimTrailingNul(message.Body);
             // Compare against the real secret, or a random decoy for an unknown user, so
             // the reject path costs the same either way (no trivial user enumeration).
+            // Run the fixed-time compare unconditionally BEFORE the null check so an
+            // unknown user is not distinguishable from a wrong password by timing —
+            // short-circuiting on `login is null` would skip the compare and leak it.
             var expected = Encoding.UTF8.GetBytes(login?.Secret ?? DecoySecret());
-            return login is not null && CryptographicOperations.FixedTimeEquals(supplied, expected);
+            var matches = CryptographicOperations.FixedTimeEquals(supplied, expected);
+            return login is not null && matches;
         }
 
         /// <summary>AuthenticationSASL(SCRAM-SHA-256) exchange; the secret never crosses the wire.</summary>
@@ -295,11 +313,12 @@ namespace BifrostQL.Server.Pgwire
                     return; // client disconnected
                 }
 
-                if (message.Type == (byte)'X') // Terminate
+                if (message.Type == PgWireProtocol.Terminate)
                     return;
 
                 await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.ErrorResponse,
-                    PgBackend.ErrorResponse("0A000", "query protocol not implemented (pgwire slice 1)."), ct);
+                    PgBackend.ErrorResponse(PgWireProtocol.SqlStateFeatureNotSupported,
+                        "query protocol not implemented (pgwire slice 1)."), ct);
                 await WriteReadyForQueryAsync(stream, ct);
             }
         }

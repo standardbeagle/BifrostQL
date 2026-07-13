@@ -133,7 +133,7 @@ namespace BifrostQL.Server.Pgwire
         }
 
         private static byte[] Hmac(byte[] key, byte[] message)
-            => new HMACSHA256(key).ComputeHash(message);
+            => HMACSHA256.HashData(key, message);
 
         private static byte[] Xor(byte[] a, byte[] b)
         {
@@ -167,8 +167,13 @@ namespace BifrostQL.Server.Pgwire
         }
     }
 
-    /// <summary>A SCRAM message was malformed or violated the protocol (client fault, protocol_violation).</summary>
-    internal sealed class PgScramProtocolException : Exception
+    /// <summary>
+    /// A SCRAM message was malformed or violated the protocol (client fault,
+    /// protocol_violation). Derives from <see cref="PgProtocolException"/> so the
+    /// connection handler's protocol-violation catch handles it — a malformed SCRAM
+    /// message from an unauthenticated peer never escapes to Kestrel as unhandled.
+    /// </summary>
+    internal sealed class PgScramProtocolException : PgProtocolException
     {
         public PgScramProtocolException(string message) : base(message) { }
     }

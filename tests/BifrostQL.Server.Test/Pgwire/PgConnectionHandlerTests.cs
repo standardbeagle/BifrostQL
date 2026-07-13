@@ -63,6 +63,28 @@ namespace BifrostQL.Server.Test.Pgwire
         }
 
         [Fact]
+        public async Task Scram_MalformedClientFirst_IsRejected_WithProtocolViolation()
+        {
+            // Arrange: a valid user so the server runs the SCRAM exchange (not the decoy path).
+            var store = new FakePgCredentialStore().Add("alice", "s3cret", TenantPrincipal("user-alice", "tenant-a"));
+            await using var fixture = await PgFixture.StartAsync(store, EmptyServices(),
+                new PgWireOptions { AuthMethod = PgAuthMethod.ScramSha256 });
+
+            // Act: send a malformed client-first (no r= nonce). Before the fix this threw an
+            // unhandled PgScramProtocolException to Kestrel and dropped the connection; now it
+            // must surface as a graceful protocol_violation ErrorResponse.
+            var client = new PgHandshakeClient(fixture.ClientStream);
+            await client.SendStartupAsync("alice");
+            await client.SendMalformedScramFirstAsync();
+            var result = await client.WaitForReadyOrErrorAsync().WaitAsync(Timeout);
+
+            // Assert
+            result.ReadyForQuery.Should().BeFalse();
+            result.WasRejected.Should().BeTrue();
+            result.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateProtocolViolation);
+        }
+
+        [Fact]
         public async Task Cleartext_WrongPassword_IsRejected()
         {
             // Arrange

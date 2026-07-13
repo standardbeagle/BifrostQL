@@ -113,8 +113,13 @@ namespace BifrostQL.Server.Pgwire
         }
     }
 
-    /// <summary>The client violated the wire framing (bad length, truncated packet).</summary>
-    internal sealed class PgProtocolException : Exception
+    /// <summary>
+    /// The client violated the wire framing or protocol (bad length, truncated packet,
+    /// malformed handshake message). Base type for the specific handshake-phase protocol
+    /// faults so the connection handler can catch them in one place and answer with a
+    /// protocol_violation ErrorResponse instead of leaking to Kestrel as unhandled.
+    /// </summary>
+    internal class PgProtocolException : Exception
     {
         public PgProtocolException(string message) : base(message) { }
     }

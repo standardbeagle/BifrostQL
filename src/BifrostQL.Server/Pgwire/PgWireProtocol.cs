@@ -39,6 +39,7 @@ namespace BifrostQL.Server.Pgwire
 
         // ---- Frontend (client → server) message type bytes ----
         public const byte PasswordMessage = (byte)'p'; // also SASLInitialResponse / SASLResponse
+        public const byte Terminate = (byte)'X';       // client asks to close the session
 
         // ---- Authentication request sub-codes (Int32 following the 'R' header) ----
         public const int AuthOk = 0;
@@ -61,5 +62,6 @@ namespace BifrostQL.Server.Pgwire
         public const string SqlStateInvalidAuthorization = "28000"; // invalid_authorization_specification
         public const string SqlStateInvalidPassword = "28P01";      // invalid_password
         public const string SqlStateProtocolViolation = "08P01";    // protocol_violation
+        public const string SqlStateFeatureNotSupported = "0A000";  // feature_not_supported
     }
 }

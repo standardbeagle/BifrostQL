@@ -112,6 +112,27 @@ namespace BifrostQL.Server.Test.Pgwire
             RequireAuthText(finType, finBody, PgWireProtocol.AuthSaslFinal);
         }
 
+        /// <summary>
+        /// Drives the SASL handshake but sends a malformed client-first-message (a valid
+        /// GS2 header with no <c>r=</c> nonce) so the server rejects it as a protocol
+        /// violation instead of continuing the exchange.
+        /// </summary>
+        public async Task SendMalformedScramFirstAsync()
+        {
+            var (type, body) = await ReadBackendAsync();
+            RequireAuth(type, body, PgWireProtocol.AuthSasl);
+
+            const string malformedClientFirst = "n,,n=user"; // GS2 header present, r= nonce missing
+            using var initial = new MemoryStream();
+            WriteCString(initial, PgWireProtocol.ScramSha256);
+            var clientFirstBytes = Encoding.UTF8.GetBytes(malformedClientFirst);
+            var len = new byte[4];
+            BinaryPrimitives.WriteInt32BigEndian(len, clientFirstBytes.Length);
+            initial.Write(len);
+            initial.Write(clientFirstBytes);
+            await WriteFrontendAsync(PgWireProtocol.PasswordMessage, initial.ToArray());
+        }
+
         /// <summary>Reads backend messages until ReadyForQuery (success) or ErrorResponse (rejection).</summary>
         public async Task<HandshakeResult> WaitForReadyOrErrorAsync()
         {

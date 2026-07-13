@@ -5,7 +5,7 @@ description: Serve streaming LLM chat over your own conversation tables with fai
 
 BifrostQL can host an LLM chat surface directly over two tables in your database. You declare a conversations/messages pair with `chat-*` metadata, opt in with `UseBifrostChat`, and BifrostQL exposes two HTTP endpoints: one to create conversations and one that appends the caller's message and streams the assistant completion back as [server-sent events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events).
 
-Every read and write rides the same intent executors as GraphQL requests and protocol adapters, so tenant isolation, policy, soft delete, field encryption, and change history apply to chat traffic by construction — the endpoints have no SQL of their own and no way around the transformer pipelines. See [Chat over Your Tables](/concepts/chat/) for the concept and metadata contract.
+Every read and write rides the same intent executors as GraphQL requests and protocol adapters, so tenant isolation, policy, soft delete, field encryption, and change history apply to chat traffic by construction — the endpoints have no SQL of their own and no way around the transformer pipelines. See [Chat over Your Tables](/concepts/chat/) for the concept and metadata contract, and the [Chat Connectors guide](/guides/chat-connectors/) for exposing tables to the model as tools.
 
 ## Declare the chat pair
 

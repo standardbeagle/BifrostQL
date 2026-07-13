@@ -233,7 +233,10 @@ The security contract, in order:
    authorized.
 
 The confirmation endpoint and event shapes are in the
-[LLM Chat Endpoints guide](/guides/llm-chat/#plan-confirmations). See the
+[LLM Chat Endpoints guide](/guides/llm-chat/#plan-confirmations). The
+[Chat Connectors guide](/guides/chat-connectors/) is the operator's reference —
+metadata per connector type, tool generation, caps, the confirmation protocol,
+vision caveats, and custom connector registration. See the
 [configuration reference](/reference/configuration/#chat-connector-metadata) for
 the key table.
 

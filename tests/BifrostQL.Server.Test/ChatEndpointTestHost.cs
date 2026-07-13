@@ -90,7 +90,7 @@ namespace BifrostQL.Server.Test
         public async Task<HttpClient> StartAsync(
             int historyLimit = 50, string? systemPrompt = null, IQueryObserver[]? observers = null,
             IChatConnector[]? connectors = null, bool messagesAsExploreConnector = false,
-            string[]? extraMetadata = null)
+            string[]? extraMetadata = null, Action<IServiceCollection>? configureServices = null)
         {
             DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
             var builder = new HostBuilder().ConfigureWebHost(web =>
@@ -98,6 +98,9 @@ namespace BifrostQL.Server.Test
                 web.UseTestServer();
                 web.ConfigureServices(services =>
                 {
+                    // Host overrides first (e.g. ChatConnectorOptions), mirroring a real
+                    // deployment registering options before AddBifrostEndpoints.
+                    configureServices?.Invoke(services);
                     services.AddSingleton<IChatCompletionService>(Fake);
                     foreach (var connector in connectors ?? Array.Empty<IChatConnector>())
                         services.AddSingleton(connector);
@@ -227,6 +230,15 @@ namespace BifrostQL.Server.Test
         public Func<IReadOnlyList<ChatCompletionMessage>, CancellationToken, IAsyncEnumerable<ChatCompletionEvent>> Script
         { get; set; } = Scripts.Deltas(new[] { "ok" }, new ChatCompletionResult("ok", ChatCompletionStopReason.Complete, null, 1, 1));
 
+        /// <summary>
+        /// Options-aware script for tool/confirmation tests: receives the request
+        /// options (tool definitions + caller-bound executor) so the fake can drive
+        /// the connector contract exactly as the real loop does. Wins over
+        /// <see cref="Script"/> when set.
+        /// </summary>
+        public Func<IReadOnlyList<ChatCompletionMessage>, ChatCompletionRequestOptions?, CancellationToken,
+            IAsyncEnumerable<ChatCompletionEvent>>? OptionsScript { get; set; }
+
         public List<IReadOnlyList<ChatCompletionMessage>> Calls { get; } = new();
 
         /// <summary>The request options of every call, in order — the tool-options pinning seam.</summary>
@@ -242,7 +254,9 @@ namespace BifrostQL.Server.Test
                 Calls.Add(history);
                 OptionsCalls.Add(options);
             }
-            return Script(history, cancellationToken);
+            return OptionsScript is not null
+                ? OptionsScript(history, options, cancellationToken)
+                : Script(history, cancellationToken);
         }
     }
 

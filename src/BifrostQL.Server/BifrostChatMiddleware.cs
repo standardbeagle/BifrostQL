@@ -65,8 +65,17 @@ namespace BifrostQL.Server
     /// interleaved with <c>tool</c> events (<c>{name, phase, summary}</c>,
     /// <c>phase</c> ∈ <c>call</c>/<c>result</c>) when connector tools run, plus a
     /// <c>media</c> event (<c>{toolName, items: [{id, mediaReference, contentType?,
-    /// caption?}]}</c>) after any media-bearing tool result — then exactly one
+    /// caption?}]}</c>) after any media-bearing tool result, plus a
+    /// <c>confirmation</c> event (<c>{confirmationId, toolName, table, operation,
+    /// rows, summary}</c>) when a plan tool parks a write proposal and a
+    /// <c>confirmation-resolved</c> event when it resolves — then exactly one
     /// terminal <c>done</c> or <c>error</c> event.</item>
+    /// <item><c>POST {Path}/conversations/{id}/confirmations/{confirmationId}</c> —
+    /// resolve a parked plan proposal (<c>{"approve": bool, "reason"?: …}</c>).
+    /// Single-use and bound to the requesting identity + conversation: unknown,
+    /// reused, cross-identity, and cross-conversation ids are the same 404. The
+    /// resolved outcome is appended to the conversation as a system-role transcript
+    /// row by the streaming request.</item>
     /// <item><c>GET {Path}/media/{table}/{id}</c> — resolve a binary-mode
     /// <c>bifrost-media://</c> reference: re-authorizes the row through the intent
     /// executor under the CALLER's context on every request (that is why the
@@ -115,6 +124,7 @@ namespace BifrostQL.Server
         private readonly IQueryIntentExecutor _reads;
         private readonly IChatCompletionService _completions;
         private readonly ChatConnectorRegistry _connectors;
+        private readonly ChatPlanConfirmationRegistry _confirmations;
         private readonly ILogger<BifrostChatMiddleware> _logger;
         private readonly ConcurrentDictionary<string, bool> _activeStreams = new();
 
@@ -125,6 +135,7 @@ namespace BifrostQL.Server
             IMutationIntentExecutor writes,
             IChatCompletionService completions,
             ChatConnectorRegistry connectors,
+            ChatPlanConfirmationRegistry confirmations,
             ILogger<BifrostChatMiddleware> logger)
         {
             _next = next ?? throw new ArgumentNullException(nameof(next));
@@ -133,6 +144,7 @@ namespace BifrostQL.Server
             _reads = reads ?? throw new ArgumentNullException(nameof(reads));
             _completions = completions ?? throw new ArgumentNullException(nameof(completions));
             _connectors = connectors ?? throw new ArgumentNullException(nameof(connectors));
+            _confirmations = confirmations ?? throw new ArgumentNullException(nameof(confirmations));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -184,24 +196,29 @@ namespace BifrostQL.Server
                 case ChatRouteKind.PostMessage:
                     await StreamMessageAsync(context, userContext, route.ConversationId!);
                     break;
+                case ChatRouteKind.ResolveConfirmation:
+                    await ResolveConfirmationAsync(context, userContext, route.ConversationId!, route.ConfirmationId!);
+                    break;
                 case ChatRouteKind.FetchMedia:
                     await FetchMediaAsync(context, userContext, route.MediaTable!, route.MediaRowId!);
                     break;
             }
         }
 
-        private enum ChatRouteKind { CreateConversation, PostMessage, FetchMedia }
+        private enum ChatRouteKind { CreateConversation, PostMessage, ResolveConfirmation, FetchMedia }
 
         private readonly record struct ChatRoute(
-            ChatRouteKind Kind, object? ConversationId = null, string? MediaTable = null, string? MediaRowId = null);
+            ChatRouteKind Kind, object? ConversationId = null, string? MediaTable = null, string? MediaRowId = null,
+            string? ConfirmationId = null);
 
         /// <summary>
         /// Matches <c>/conversations</c> (create), <c>/conversations/{id}/messages</c>
-        /// (stream), and <c>/media/{table}/{id}</c> (binary media fetch). A
-        /// conversation id must parse as an integer — chat primary keys are validated
-        /// integer identities — and a malformed id simply falls through to the next
-        /// middleware (404), the same outcome as a conversation the caller cannot
-        /// see. The media id stays raw text here: its shape depends on the media
+        /// (stream), <c>/conversations/{id}/confirmations/{confirmationId}</c> (resolve
+        /// a parked plan proposal), and <c>/media/{table}/{id}</c> (binary media
+        /// fetch). A conversation id must parse as an integer — chat primary keys are
+        /// validated integer identities — and a malformed id simply falls through to
+        /// the next middleware (404), the same outcome as a conversation the caller
+        /// cannot see. The media id stays raw text here: its shape depends on the media
         /// table's key column and is validated in <see cref="FetchMediaAsync"/>.
         /// </summary>
         private static bool TryMatchRoute(PathString rest, out ChatRoute route)
@@ -219,6 +236,15 @@ namespace BifrostQL.Server
                 && long.TryParse(id, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed))
             {
                 route = new ChatRoute(ChatRouteKind.PostMessage, ConversationId: parsed);
+                return true;
+            }
+
+            if (segments is ["conversations", var confId, "confirmations", var confirmationId]
+                && long.TryParse(confId, NumberStyles.None, CultureInfo.InvariantCulture, out var confParsed)
+                && confirmationId.Length > 0)
+            {
+                route = new ChatRoute(ChatRouteKind.ResolveConfirmation,
+                    ConversationId: confParsed, ConfirmationId: Uri.UnescapeDataString(confirmationId));
                 return true;
             }
 
@@ -314,7 +340,7 @@ namespace BifrostQL.Server
                     // Connector tools, resolved per request from the cached model and
                     // bound to THIS caller's auth context — a tool call can never run
                     // under any other identity. No connector tables = no tools param.
-                    requestOptions = await BuildToolRequestOptionsAsync(userContext);
+                    requestOptions = await BuildToolRequestOptionsAsync(userContext, conversationId);
 
                     userMessageId = await _store.AppendMessageAsync(
                         userContext, conversationId, ChatMessageRoles.User, body!.Content!, cancellation);
@@ -457,25 +483,74 @@ namespace BifrostQL.Server
         /// <summary>
         /// Builds the completion's tool options from the registered connectors: the
         /// model's connector tables become tool definitions and the executor is bound
-        /// to the caller's auth context. Null when no connector exposes a tool.
+        /// to the caller's auth context. The executor's context additionally carries
+        /// the conversation binding (a copy — the caller's own context is not
+        /// mutated), so plan proposals are conversation-bound: a confirmation POSTed
+        /// against any other conversation is a 404. Null when no connector exposes a
+        /// tool.
         /// </summary>
         private async Task<ChatCompletionRequestOptions?> BuildToolRequestOptionsAsync(
-            IDictionary<string, object?> userContext)
+            IDictionary<string, object?> userContext, object conversationId)
         {
             var model = await _reads.GetModelAsync(_options.GraphQlEndpoint);
             var toolSet = _connectors.BuildToolSet(model);
             if (toolSet.IsEmpty)
                 return null;
 
+            var toolContext = new Dictionary<string, object?>(userContext)
+            {
+                [ChatPlanConfirmationRegistry.ConversationContextKey] =
+                    ChatPlanConfirmationRegistry.CanonicalConversationKey(conversationId),
+            };
+
             return new ChatCompletionRequestOptions
             {
                 Tools = new ChatCompletionToolOptions
                 {
                     Tools = toolSet.Definitions,
-                    Executor = toolSet.CreateExecutor(userContext),
+                    Executor = toolSet.CreateExecutor(toolContext),
                     MaxToolIterations = _options.MaxToolIterations,
                 },
             };
+        }
+
+        /// <summary>
+        /// Resolves a parked plan proposal with the caller's confirm/deny. Fail-closed
+        /// by construction: the registry entry is single-use and bound to the
+        /// registrant's identity and conversation, so an unknown id, an already-used
+        /// id, another caller's id, and another conversation's id all answer the SAME
+        /// 404 — nothing distinguishes "not yours" from "never existed". The decision
+        /// is delivered to the parked completion stream; this response only
+        /// acknowledges it was accepted.
+        /// </summary>
+        private async Task ResolveConfirmationAsync(
+            HttpContext context, IDictionary<string, object?> userContext, object conversationId, string confirmationId)
+        {
+            var (body, bodyError) = await ReadBodyAsync<ResolveConfirmationRequest>(context);
+            if (bodyError != null)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid-request", bodyError);
+                return;
+            }
+            if (body?.Approve is not { } approve)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest,
+                    "invalid-request", "A boolean 'approve' field is required.");
+                return;
+            }
+
+            var resolved = _confirmations.TryResolve(
+                confirmationId,
+                ChatPlanConfirmationRegistry.RequireIdentityKey(userContext),
+                ChatPlanConfirmationRegistry.CanonicalConversationKey(conversationId),
+                new ChatPlanDecision(approve, body.Reason));
+            if (!resolved)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status404NotFound, "not-found", "Confirmation not found.");
+                return;
+            }
+
+            await WriteJsonAsync(context, StatusCodes.Status200OK, new { confirmationId, approved = approve });
         }
 
         /// <summary>
@@ -521,6 +596,38 @@ namespace BifrostQL.Server
                                 name = activity.ToolName,
                                 phase = activity.Phase == ChatToolPhase.Call ? "call" : "result",
                                 summary = activity.Summary,
+                            }, cancellation);
+                            break;
+
+                        case ChatToolConfirmationActivity confirmation:
+                            // A plan tool parked a write proposal: relay it so the
+                            // client can prompt the user, then the stream sits idle
+                            // until POST .../confirmations/{id} (or the timeout)
+                            // resolves it.
+                            await WriteEventAsync(context, "confirmation", new
+                            {
+                                confirmationId = confirmation.Request.ConfirmationId,
+                                toolName = confirmation.ToolName,
+                                table = confirmation.Request.Table,
+                                operation = confirmation.Request.Operation,
+                                rows = confirmation.Request.Rows,
+                                summary = confirmation.Request.Summary,
+                            }, cancellation);
+                            break;
+
+                        case ChatToolConfirmationDecisionActivity decision:
+                            // Transcript fidelity: the confirm/deny outcome is part of
+                            // the conversation — record it as a system-role message row
+                            // BEFORE relaying, so a persisted decision is never
+                            // observable without its transcript row.
+                            await _store.AppendMessageAsync(
+                                userContext, conversationId, ChatMessageRoles.System,
+                                FormatDecisionTranscript(decision), cancellation);
+                            await WriteEventAsync(context, "confirmation-resolved", new
+                            {
+                                confirmationId = decision.ConfirmationId,
+                                approved = decision.Approved,
+                                reason = decision.Reason,
                             }, cancellation);
                             break;
 
@@ -673,8 +780,18 @@ namespace BifrostQL.Server
             await context.Response.WriteAsync(JsonSerializer.Serialize(payload, Json), context.RequestAborted);
         }
 
+        /// <summary>The stored transcript line for a resolved plan proposal.</summary>
+        private static string FormatDecisionTranscript(ChatToolConfirmationDecisionActivity decision)
+        {
+            var outcome = decision.Approved ? "approved" : "denied";
+            var reason = string.IsNullOrWhiteSpace(decision.Reason) ? "" : $", reason: {decision.Reason}";
+            return $"[plan proposal {decision.ConfirmationId} ({decision.Operation} on {decision.Table}): {outcome}{reason}]";
+        }
+
         private sealed record CreateConversationRequest(string? Title);
 
         private sealed record PostMessageRequest(string? Content);
+
+        private sealed record ResolveConfirmationRequest(bool? Approve, string? Reason);
     }
 }

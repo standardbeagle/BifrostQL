@@ -8,7 +8,6 @@ using System.Threading.Tasks;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
-using BifrostQL.Core.Utils;
 
 namespace BifrostQL.Core.Modules.Chat
 {
@@ -20,40 +19,29 @@ namespace BifrostQL.Core.Modules.Chat
     /// false</c> throughout, so the model cannot invent arguments).
     /// <c>visibility: hidden</c> columns are excluded from the whole surface, and
     /// encrypted columns from filters/sort (predicates over ciphertext are a
-    /// plaintext oracle), matching every other read surface. Execution
-    /// re-validates every model-supplied name and operator against the schema —
-    /// failures throw <see cref="ChatToolInputException"/> naming the valid choices
-    /// so the model can recover — then rides <see cref="IQueryIntentExecutor"/>
-    /// under the caller's auth context: tenant isolation, policy row scope, and
-    /// encrypted-column decrypt/mask apply by construction, exactly like the chat
-    /// store's reads. Results are capped (<see cref="ChatConnectorOptions"/>) and
-    /// every trim is reported inside the payload — never silent.
+    /// plaintext oracle), matching every other read surface — those rules live in
+    /// <see cref="ConnectorQuerySchema"/>, shared with the media connector.
+    /// Execution re-validates every model-supplied name and operator against the
+    /// schema — failures throw <see cref="ChatToolInputException"/> naming the
+    /// valid choices so the model can recover — then rides
+    /// <see cref="IQueryIntentExecutor"/> under the caller's auth context: tenant
+    /// isolation, policy row scope, and encrypted-column decrypt/mask apply by
+    /// construction, exactly like the chat store's reads. Results are capped
+    /// (<see cref="ChatConnectorOptions"/>) and every trim is reported inside the
+    /// payload — never silent.
     /// </summary>
     public sealed class ExploreChatConnector : IChatConnector
     {
         /// <summary>
         /// The tool-name prefix, namespacing explore tools against the media_/plan_
-        /// tools of the later connector slices.
+        /// tools of the other connector slices.
         /// </summary>
         public const string ToolNamePrefix = "explore_";
 
-        private const string SortAscending = "asc";
-        private const string SortDescending = "desc";
         private const string ValidArguments = "filters, sort, limit, offset, columns";
 
-        /// <summary>
-        /// Database types the explore schema treats as numeric (range operators)
-        /// across the supported dialects: the chat integer-key family plus the
-        /// fractional families.
-        /// </summary>
-        internal static readonly IReadOnlySet<string> NumericColumnTypes =
-            new HashSet<string>(ChatConfig.IntegerKeyColumnTypes, StringComparer.OrdinalIgnoreCase)
-            {
-                "decimal", "numeric", "float", "real", "double", "double precision",
-                "money", "smallmoney", "number",
-            };
-
-        private enum ColumnFamily { Text, Numeric, Temporal, Other }
+        /// <inheritdoc cref="ConnectorQuerySchema.NumericColumnTypes"/>
+        internal static IReadOnlySet<string> NumericColumnTypes => ConnectorQuerySchema.NumericColumnTypes;
 
         private readonly IQueryIntentExecutor _reads;
         private readonly ChatConnectorOptions _options;
@@ -133,50 +121,25 @@ namespace BifrostQL.Core.Modules.Chat
             // encrypted column is a plaintext oracle, and the read guard rejects it
             // downstream — the schema must not offer what execution refuses.
             // Projection keeps them (values arrive decrypted or masked).
-            var filterProperties = new JsonObject();
-            foreach (var column in PredicateColumns(table))
-                filterProperties[column.GraphQlName] = ColumnFilterSchema(column);
-
+            var predicateColumns = ConnectorQuerySchema.PredicateColumns(table).ToList();
             var schema = new JsonObject
             {
                 ["type"] = "object",
                 ["additionalProperties"] = false,
                 ["properties"] = new JsonObject
                 {
-                    ["filters"] = new JsonObject
-                    {
-                        ["type"] = "object",
-                        ["additionalProperties"] = false,
-                        ["properties"] = filterProperties,
-                    },
-                    ["sort"] = new JsonObject
-                    {
-                        ["type"] = "object",
-                        ["additionalProperties"] = false,
-                        ["properties"] = new JsonObject
-                        {
-                            ["column"] = new JsonObject
-                            {
-                                ["type"] = "string",
-                                ["enum"] = ColumnNameArray(PredicateColumns(table)),
-                            },
-                            ["direction"] = new JsonObject
-                            {
-                                ["type"] = "string",
-                                ["enum"] = new JsonArray(SortAscending, SortDescending),
-                            },
-                        },
-                        ["required"] = new JsonArray("column"),
-                    },
-                    ["limit"] = new JsonObject { ["type"] = "integer", ["minimum"] = 1 },
-                    ["offset"] = new JsonObject { ["type"] = "integer", ["minimum"] = 0 },
+                    ["filters"] = ConnectorQuerySchema.FiltersSchema(predicateColumns),
+                    ["sort"] = ConnectorQuerySchema.SortSchema(predicateColumns),
+                    ["limit"] = ConnectorQuerySchema.LimitSchema(),
+                    ["offset"] = ConnectorQuerySchema.OffsetSchema(),
                     ["columns"] = new JsonObject
                     {
                         ["type"] = "array",
                         ["items"] = new JsonObject
                         {
                             ["type"] = "string",
-                            ["enum"] = ColumnNameArray(VisibleColumns(table)),
+                            ["enum"] = ConnectorQuerySchema.ColumnNameArray(
+                                ConnectorQuerySchema.VisibleColumns(table)),
                         },
                         ["minItems"] = 1,
                     },
@@ -184,78 +147,6 @@ namespace BifrostQL.Core.Modules.Chat
             };
             return schema.ToJsonString();
         }
-
-        private static JsonArray ColumnNameArray(IEnumerable<ColumnDto> columns) =>
-            new(columns.Select(c => (JsonNode)c.GraphQlName).ToArray());
-
-        /// <summary>
-        /// The columns the explore surface exposes at all: <c>visibility: hidden</c>
-        /// columns are omitted from the tool schema, the default projection, and the
-        /// valid-columns feedback — the same rule every other read surface applies
-        /// (TableSchemaGenerator, AggregateSurface, the meta resolvers).
-        /// </summary>
-        private static IEnumerable<ColumnDto> VisibleColumns(IDbTable table) =>
-            table.Columns.Where(c => !c.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden));
-
-        /// <summary>Visible columns usable as filter/sort predicates: encrypted columns excluded.</summary>
-        private static IEnumerable<ColumnDto> PredicateColumns(IDbTable table) =>
-            VisibleColumns(table).Where(c => !IsEncrypted(c));
-
-        private static bool IsEncrypted(ColumnDto column) =>
-            !string.IsNullOrWhiteSpace(column.GetMetadataValue(MetadataKeys.Crypto.Encrypt));
-
-        private static JsonObject ColumnFilterSchema(ColumnDto column)
-        {
-            var family = Classify(column);
-            var properties = new JsonObject();
-            foreach (var op in OperatorsFor(family))
-            {
-                properties[op] = op == FilterOperators.Between
-                    ? new JsonObject
-                    {
-                        ["type"] = "array",
-                        ["items"] = ValueSchema(family),
-                        ["minItems"] = 2,
-                        ["maxItems"] = 2,
-                    }
-                    : ValueSchema(family);
-            }
-            return new JsonObject
-            {
-                ["type"] = "object",
-                ["additionalProperties"] = false,
-                ["properties"] = properties,
-            };
-        }
-
-        private static ColumnFamily Classify(ColumnDto column)
-        {
-            var type = StringNormalizer.NormalizeType(column.DataType);
-            if (ChatConfig.StringColumnTypes.Contains(type)) return ColumnFamily.Text;
-            if (NumericColumnTypes.Contains(type)) return ColumnFamily.Numeric;
-            if (ChatConfig.DateTimeColumnTypes.Contains(type)) return ColumnFamily.Temporal;
-            return ColumnFamily.Other;
-        }
-
-        // Existing operator vocabulary, narrowed per column family: equality for
-        // everything, range operators for numeric/temporal, substring for text.
-        private static IReadOnlyList<string> OperatorsFor(ColumnFamily family) => family switch
-        {
-            ColumnFamily.Text => new[] { FilterOperators.Eq, FilterOperators.Contains },
-            ColumnFamily.Numeric or ColumnFamily.Temporal => new[]
-            {
-                FilterOperators.Eq, FilterOperators.Gt, FilterOperators.Gte,
-                FilterOperators.Lt, FilterOperators.Lte, FilterOperators.Between,
-            },
-            _ => new[] { FilterOperators.Eq },
-        };
-
-        private static JsonNode ValueSchema(ColumnFamily family) => family switch
-        {
-            ColumnFamily.Text or ColumnFamily.Temporal => new JsonObject { ["type"] = "string" },
-            ColumnFamily.Numeric => new JsonObject { ["type"] = "number" },
-            _ => new JsonObject(),
-        };
 
         // ---- input validation (the model is an untrusted caller) --------------------
 
@@ -305,16 +196,16 @@ namespace BifrostQL.Core.Modules.Chat
                     switch (property.Name)
                     {
                         case "filters":
-                            filter = ParseFilters(table, property.Value);
+                            filter = ConnectorQuerySchema.ParseFilters(table, property.Value);
                             break;
                         case "sort":
-                            sortTokens.Add(ParseSort(table, property.Value));
+                            sortTokens.Add(ConnectorQuerySchema.ParseSort(table, property.Value));
                             break;
                         case "limit":
-                            limit = ParseCount(property.Value, "limit", minimum: 1);
+                            limit = ConnectorQuerySchema.ParseCount(property.Value, "limit", minimum: 1);
                             break;
                         case "offset":
-                            offset = ParseCount(property.Value, "offset", minimum: 0);
+                            offset = ConnectorQuerySchema.ParseCount(property.Value, "offset", minimum: 0);
                             break;
                         case "columns":
                             projection = ParseColumns(table, property.Value);
@@ -326,149 +217,14 @@ namespace BifrostQL.Core.Modules.Chat
                 }
 
                 // Deterministic paging: the model's sort first, key columns as tiebreak.
-                sortTokens.AddRange(table.KeyColumns.Select(c => $"{c.GraphQlName}_{SortAscending}"));
+                sortTokens.AddRange(table.KeyColumns.Select(
+                    c => $"{c.GraphQlName}_{ConnectorQuerySchema.SortAscending}"));
 
                 var effectiveLimit = Math.Min(limit ?? _options.ExploreRowCap, _options.ExploreRowCap);
                 return new ExploreInput(
-                    filter, sortTokens, projection ?? VisibleColumns(table).ToList(), effectiveLimit, offset);
+                    filter, sortTokens,
+                    projection ?? ConnectorQuerySchema.VisibleColumns(table).ToList(), effectiveLimit, offset);
             }
-        }
-
-        // A hidden column gets the same rejection as a nonexistent one, and the
-        // valid-columns feedback lists only visible columns — the error message goes
-        // to the model, so it must not disclose what the schema hides.
-        private static ColumnDto ResolveColumn(IDbTable table, string name, string argument)
-        {
-            if (table.GraphQlLookup.TryGetValue(name, out var column)
-                && !column.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden))
-                return column;
-            throw new ChatToolInputException(
-                $"Unknown column '{name}' in '{argument}' on {table.GraphQlName}. " +
-                $"Valid columns: {string.Join(", ", VisibleColumns(table).Select(c => c.GraphQlName))}.");
-        }
-
-        // Validation-first encrypted-predicate rejection: without it the read
-        // pipeline's guard still refuses the query, but deep in execution as a
-        // sanitized server error the model cannot learn from.
-        private static void RejectEncryptedPredicate(ColumnDto column, string argument)
-        {
-            if (IsEncrypted(column))
-                throw new ChatToolInputException(
-                    $"Column '{column.GraphQlName}' cannot be used in '{argument}'; it is encrypted.");
-        }
-
-        private static TableFilter? ParseFilters(IDbTable table, JsonElement filters)
-        {
-            if (filters.ValueKind != JsonValueKind.Object)
-                throw new ChatToolInputException(
-                    "'filters' must be an object mapping column names to operator objects.");
-
-            var leaves = new List<TableFilter>();
-            foreach (var columnProperty in filters.EnumerateObject())
-            {
-                var column = ResolveColumn(table, columnProperty.Name, "filters");
-                RejectEncryptedPredicate(column, "filters");
-                if (columnProperty.Value.ValueKind != JsonValueKind.Object)
-                    throw new ChatToolInputException(
-                        $"The filter for column '{column.GraphQlName}' must be an operator object, " +
-                        "e.g. {\"_eq\": value}.");
-
-                var validOperators = OperatorsFor(Classify(column));
-                foreach (var operatorProperty in columnProperty.Value.EnumerateObject())
-                {
-                    if (!validOperators.Contains(operatorProperty.Name, StringComparer.Ordinal))
-                        throw new ChatToolInputException(
-                            $"Operator '{operatorProperty.Name}' is not valid for column '{column.GraphQlName}'. " +
-                            $"Valid operators: {string.Join(", ", validOperators)}.");
-                    leaves.Add(FilterLeaf(table, column, operatorProperty.Name, operatorProperty.Value));
-                }
-            }
-
-            return leaves.Count switch
-            {
-                0 => null,
-                1 => leaves[0],
-                _ => new TableFilter { And = leaves, FilterType = FilterType.And },
-            };
-        }
-
-        private static TableFilter FilterLeaf(IDbTable table, ColumnDto column, string op, JsonElement value) =>
-            new()
-            {
-                TableName = table.DbName,
-                ColumnName = column.GraphQlName,
-                FilterType = FilterType.Join,
-                Next = new TableFilter
-                {
-                    RelationName = op,
-                    Value = FilterValue(column, op, value),
-                    FilterType = FilterType.Relation,
-                },
-            };
-
-        private static object? FilterValue(ColumnDto column, string op, JsonElement value)
-        {
-            if (op == FilterOperators.Between)
-            {
-                if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() != 2)
-                    throw new ChatToolInputException(
-                        $"Operator '{FilterOperators.Between}' on column '{column.GraphQlName}' requires " +
-                        "an array of exactly two values (lower and upper bound).");
-                return value.EnumerateArray().Select(v => ScalarValue(column, op, v)).ToList();
-            }
-
-            if (op == FilterOperators.Contains && value.ValueKind != JsonValueKind.String)
-                throw new ChatToolInputException(
-                    $"Operator '{FilterOperators.Contains}' on column '{column.GraphQlName}' requires a string value.");
-
-            return ScalarValue(column, op, value);
-        }
-
-        private static object? ScalarValue(ColumnDto column, string op, JsonElement value) => value.ValueKind switch
-        {
-            JsonValueKind.String => value.GetString(),
-            JsonValueKind.Number => value.TryGetInt64(out var integer) ? integer : value.GetDouble(),
-            JsonValueKind.True => true,
-            JsonValueKind.False => false,
-            JsonValueKind.Null => null,
-            _ => throw new ChatToolInputException(
-                $"Operator '{op}' on column '{column.GraphQlName}' requires a scalar value."),
-        };
-
-        private static string ParseSort(IDbTable table, JsonElement sort)
-        {
-            if (sort.ValueKind != JsonValueKind.Object)
-                throw new ChatToolInputException("'sort' must be an object with 'column' and optional 'direction'.");
-
-            string? columnName = null;
-            var direction = SortAscending;
-            foreach (var property in sort.EnumerateObject())
-            {
-                switch (property.Name)
-                {
-                    case "column" when property.Value.ValueKind == JsonValueKind.String:
-                        columnName = property.Value.GetString();
-                        break;
-                    case "direction" when property.Value.ValueKind == JsonValueKind.String
-                        && property.Value.GetString() is SortAscending or SortDescending:
-                        direction = property.Value.GetString()!;
-                        break;
-                    case "column" or "direction":
-                        throw new ChatToolInputException(
-                            $"'sort.{property.Name}' must be a string" +
-                            $"{(property.Name == "direction" ? $": '{SortAscending}' or '{SortDescending}'" : "")}.");
-                    default:
-                        throw new ChatToolInputException(
-                            $"Unknown sort argument '{property.Name}'. Valid arguments: column, direction.");
-                }
-            }
-
-            if (columnName is null)
-                throw new ChatToolInputException("'sort' requires a 'column'.");
-
-            var column = ResolveColumn(table, columnName, "sort");
-            RejectEncryptedPredicate(column, "sort");
-            return $"{column.GraphQlName}_{direction}";
         }
 
         private static IReadOnlyList<ColumnDto> ParseColumns(IDbTable table, JsonElement columns)
@@ -481,16 +237,9 @@ namespace BifrostQL.Core.Modules.Chat
             {
                 if (element.ValueKind != JsonValueKind.String)
                     throw new ChatToolInputException("'columns' must be a non-empty array of column names.");
-                projection.Add(ResolveColumn(table, element.GetString()!, "columns"));
+                projection.Add(ConnectorQuerySchema.ResolveColumn(table, element.GetString()!, "columns"));
             }
             return projection;
-        }
-
-        private static int ParseCount(JsonElement value, string name, int minimum)
-        {
-            if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var parsed) && parsed >= minimum)
-                return parsed;
-            throw new ChatToolInputException($"'{name}' must be an integer of at least {minimum}.");
         }
 
         // ---- query + result -----------------------------------------------------------

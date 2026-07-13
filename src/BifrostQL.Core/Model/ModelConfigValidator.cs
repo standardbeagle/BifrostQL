@@ -1015,7 +1015,29 @@ namespace BifrostQL.Core.Model
         private static void ValidateChatConnectorMedia(
             IDbTable table, ChatConnectorConfig config, List<string> errors)
         {
+            // Media references address rows by a SINGLE id — the binary fetch route
+            // (bifrost-media://<table>/<id>) and the vision view_image_id input both
+            // carry one key value. Keyless and composite-key tables alike have no
+            // such id, so the tool the connector would generate could never work;
+            // fail at model load, not on the first chat request's tool-set build.
+            if (table.KeyColumns.Count() != 1)
+                errors.Add(Problem(table, MetadataKeys.ChatConnector.Marker,
+                    table.GetMetadataValue(MetadataKeys.ChatConnector.Marker),
+                    $"a '{MetadataKeys.ChatConnector.TypeMedia}' connector requires exactly one primary-key " +
+                    "column; media references address rows by a single id."));
+
             var mediaColumn = config.MediaColumn!;
+
+            // The media pipeline serves the RAW column value: the fetch endpoint and
+            // vision loads stream the bytes straight off the row, and URL mode hands
+            // the string out verbatim — none of them decrypt, so an encrypted media
+            // column would serve ciphertext (and break every vision call at runtime).
+            if (table.ColumnLookup.TryGetValue(mediaColumn, out var resolvedMediaColumn)
+                && !string.IsNullOrWhiteSpace(resolvedMediaColumn.GetMetadataValue(MetadataKeys.Crypto.Encrypt)))
+                errors.Add(Problem(table, MetadataKeys.ChatConnector.MediaColumn, mediaColumn,
+                    $"column '{resolvedMediaColumn.ColumnName}' is encrypted ('{MetadataKeys.Crypto.Encrypt}'); " +
+                    "media serving streams the raw column value and cannot decrypt it. Use an unencrypted column."));
+
             if (!table.ColumnLookup.ContainsKey(mediaColumn))
             {
                 errors.Add(Problem(table, MetadataKeys.ChatConnector.MediaColumn, mediaColumn,

@@ -208,6 +208,70 @@ public class ChatConnectorMetadataValidationTests
     }
 
     [Fact]
+    public void Validate_MediaConnectorWithoutAPrimaryKey_Throws()
+    {
+        // Arrange: media references address rows by a single id
+        // (bifrost-media://<table>/<id> and the view_image_id vision input); a
+        // keyless table has no id to hand out. Must fail at model load, not on
+        // the first chat request's tool-set build.
+        var model = DbModelTestFixture.Create()
+            .WithTable("documents", t => t
+                .WithSchema("dbo")
+                .WithColumn("Image", "varbinary")
+                .WithMetadata(MetadataKeys.ChatConnector.Marker, MetadataKeys.ChatConnector.TypeMedia)
+                .WithMetadata(MetadataKeys.ChatConnector.MediaColumn, "Image"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.documents")
+            .And.Contain(MetadataKeys.ChatConnector.Marker)
+            .And.Contain("single id");
+    }
+
+    [Fact]
+    public void Validate_MediaConnectorWithACompositePrimaryKey_Throws()
+    {
+        // Arrange: a composite key cannot be encoded as the single id segment of a
+        // media reference either.
+        var model = ConnectorFixture(t => t
+                .WithColumn("TenantId", "int", isPrimaryKey: true)
+                .WithMetadata(MetadataKeys.ChatConnector.Marker, MetadataKeys.ChatConnector.TypeMedia)
+                .WithMetadata(MetadataKeys.ChatConnector.MediaColumn, "Image"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.documents")
+            .And.Contain(MetadataKeys.ChatConnector.Marker)
+            .And.Contain("single id");
+    }
+
+    [Fact]
+    public void Validate_EncryptedMediaColumn_Throws()
+    {
+        // Arrange: the media pipeline serves the raw column value — the fetch
+        // endpoint and vision loads read bytes straight off the row, URL mode
+        // hands the string out verbatim. An encrypted column would serve
+        // ciphertext (or break every vision call at runtime); reject it at
+        // model load.
+        var model = ConnectorFixture(t => t
+                .WithMetadata(MetadataKeys.ChatConnector.Marker, MetadataKeys.ChatConnector.TypeMedia)
+                .WithMetadata(MetadataKeys.ChatConnector.MediaColumn, "Image")
+                .WithColumnMetadata("Image", MetadataKeys.Crypto.Encrypt, "aes-256-gcm"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.documents")
+            .And.Contain(MetadataKeys.ChatConnector.MediaColumn)
+            .And.Contain("encrypted");
+    }
+
+    [Fact]
     public void Validate_VisionOnAUrlModeMediaColumn_Throws()
     {
         // Arrange: vision input attaches server-held bytes; a string-typed media

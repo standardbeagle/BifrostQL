@@ -201,7 +201,8 @@ namespace BifrostQL.Server
             services.TryAddSingleton<BifrostQL.Core.Modules.Chat.IChatCompletionService>(sp =>
                 new BifrostQL.Core.Modules.Chat.AnthropicChatCompletionService(
                     BifrostQL.Core.Modules.Chat.ChatCompletionOptions.FromConfiguration(
-                        sp.GetRequiredService<IConfiguration>())));
+                        sp.GetRequiredService<IConfiguration>()),
+                    sp.GetService<ILogger<BifrostQL.Core.Modules.Chat.AnthropicChatCompletionService>>()));
         }
 
         /// <summary>

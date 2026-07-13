@@ -106,8 +106,9 @@ namespace BifrostQL.Core.Modules.Chat
         /// <summary>
         /// Dispatches one tool call to the connector that defined the tool. An unknown
         /// tool name (a model hallucination — the API constrains calls to the supplied
-        /// tools, so this should not occur) throws; the tool loop converts the throw
-        /// into an <c>is_error</c> result the model can recover from.
+        /// tools, so this should not occur) throws <see cref="ChatToolInputException"/>:
+        /// the message is authored and secret-free, so the tool loop feeds it back to
+        /// the model verbatim as an <c>is_error</c> result it can recover from.
         /// </summary>
         public Task<ChatToolResult> ExecuteAsync(
             string toolName,
@@ -118,7 +119,7 @@ namespace BifrostQL.Core.Modules.Chat
             if (authContext is null)
                 throw new ArgumentNullException(nameof(authContext));
             if (!_byName.TryGetValue(toolName, out var tool))
-                throw new InvalidOperationException(
+                throw new ChatToolInputException(
                     $"Unknown chat tool '{toolName}'; no registered connector defines it.");
             return tool.Connector.ExecuteAsync(toolName, inputJson ?? "{}", authContext, cancellationToken);
         }

@@ -305,37 +305,167 @@ public class ChatToolLoopTests
         payload.Should().Be("""{"orders":1}""");
     }
 
-    // ----- connector failure: is_error feedback, never a crashed stream -----
+    // ----- connector failure: sanitized is_error feedback, never a crashed stream -----
+
+    /// <summary>The tool_use first turn shared by the failure tests.</summary>
+    private static IAsyncEnumerable<RawMessageStreamEvent> SingleToolUseTurn(string toolName = "explore_documents") =>
+        Stream(
+            Start(1),
+            ToolUseStart(0, "toolu_1", toolName),
+            BlockStop(0),
+            FinalDelta("tool_use", 1));
 
     [Fact]
-    public async Task Connector_throw_feeds_an_is_error_tool_result_back_and_the_loop_continues()
+    public async Task Connector_throw_feeds_a_sanitized_is_error_tool_result_back_and_the_loop_continues()
     {
         var (service, requests) = ServiceOverTurns(
-            Stream(
-                Start(1),
-                ToolUseStart(0, "toolu_1", "explore_documents"),
-                BlockStop(0),
-                FinalDelta("tool_use", 1)),
+            SingleToolUseTurn(),
             Stream(Start(1), TextDeltaEvent("I could not read documents."), FinalDelta("end_turn", 1)));
         var executor = new FakeToolExecutor();
-        executor.Handlers["explore_documents"] = _ => throw new InvalidOperationException("documents table unavailable");
+        executor.Handlers["explore_documents"] = _ => throw new InvalidOperationException(
+            "Server=db1;Password=hunter2 rejected the connection");
 
         var events = await DrainAll(service, UserOnlyHistory, ToolOptions(executor));
 
-        // The stream survives: activity reports the error, the loop continues to a
-        // terminal result.
+        // The stream survives: activity reports the sanitized error, the loop
+        // continues to a terminal result.
         events.OfType<ChatToolActivity>().Should().Equal(
             new ChatToolActivity("explore_documents", ChatToolPhase.Call, "{}"),
-            new ChatToolActivity("explore_documents", ChatToolPhase.Result, "error: documents table unavailable"));
+            new ChatToolActivity("explore_documents", ChatToolPhase.Result,
+                "error: Tool 'explore_documents' failed: InvalidOperationException."));
         events.Last().Should().BeOfType<ChatCompletionResult>()
             .Which.StopReason.Should().Be(ChatCompletionStopReason.Complete);
 
-        // The model saw the failure as an is_error tool_result.
+        // The model saw an is_error tool_result carrying ONLY the tool name and the
+        // exception TYPE — the tool_result content is sent OFF-BOX to the provider,
+        // and raw exception messages routinely carry secrets like this one.
         requests[1].Messages[2].Content.TryPickContentBlockParams(out var blocks).Should().BeTrue();
         blocks![0].TryPickToolResult(out var toolResult).Should().BeTrue();
         toolResult!.IsError.Should().BeTrue();
         toolResult.Content!.TryPickString(out var payload).Should().BeTrue();
-        payload.Should().Be("documents table unavailable");
+        payload.Should().Be("Tool 'explore_documents' failed: InvalidOperationException.");
+        payload.Should().NotContain("hunter2");
+    }
+
+    [Fact]
+    public async Task Connector_exception_message_with_a_secret_never_reaches_the_wire_anywhere()
+    {
+        const string secret = "Password=hunter2";
+        var (service, requests) = ServiceOverTurns(
+            SingleToolUseTurn(),
+            Stream(Start(1), TextDeltaEvent("Sorry."), FinalDelta("end_turn", 1)));
+        var executor = new FakeToolExecutor();
+        executor.Handlers["explore_documents"] = _ => throw new InvalidOperationException($"boom {secret} boom");
+
+        var events = await DrainAll(service, UserOnlyHistory, ToolOptions(executor));
+
+        // Neither any captured provider request nor any streamed event carries the
+        // raw message.
+        foreach (var request in requests)
+            System.Text.Json.JsonSerializer.Serialize(request).Should().NotContain(secret);
+        events.OfType<ChatToolActivity>().Should().OnlyContain(a => !a.Summary.Contains(secret));
+    }
+
+    [Fact]
+    public async Task ChatToolInputException_message_is_model_visible_by_design()
+    {
+        // The one sanctioned channel for model-readable failure text: connectors
+        // throw ChatToolInputException for validation feedback they authored.
+        var (service, requests) = ServiceOverTurns(
+            SingleToolUseTurn(),
+            Stream(Start(1), TextDeltaEvent("Fixing my arguments."), FinalDelta("end_turn", 1)));
+        var executor = new FakeToolExecutor();
+        executor.Handlers["explore_documents"] = _ => throw new ChatToolInputException(
+            "The 'filter' argument must be a string.");
+
+        var events = await DrainAll(service, UserOnlyHistory, ToolOptions(executor));
+
+        requests[1].Messages[2].Content.TryPickContentBlockParams(out var blocks).Should().BeTrue();
+        blocks![0].TryPickToolResult(out var toolResult).Should().BeTrue();
+        toolResult!.IsError.Should().BeTrue();
+        toolResult.Content!.TryPickString(out var payload).Should().BeTrue();
+        payload.Should().Be("The 'filter' argument must be a string.");
+        events.OfType<ChatToolActivity>().Last().Summary
+            .Should().Be("error: The 'filter' argument must be a string.");
+    }
+
+    [Fact]
+    public async Task Connector_cancellation_with_an_unrelated_token_degrades_to_is_error_not_teardown()
+    {
+        // Only the REQUEST token's cancellation is caller teardown. A connector
+        // throwing OperationCanceledException from its own internal token (an HTTP
+        // client timeout, a self-imposed deadline) is a tool fault like any other:
+        // sanitized is_error, loop continues.
+        using var unrelated = new CancellationTokenSource();
+        unrelated.Cancel();
+        var (service, requests) = ServiceOverTurns(
+            SingleToolUseTurn(),
+            Stream(Start(1), TextDeltaEvent("The tool timed out."), FinalDelta("end_turn", 1)));
+        var executor = new FakeToolExecutor();
+        executor.Handlers["explore_documents"] = _ => throw new OperationCanceledException(unrelated.Token);
+
+        var events = await DrainAll(service, UserOnlyHistory, ToolOptions(executor));
+
+        events.Last().Should().BeOfType<ChatCompletionResult>()
+            .Which.StopReason.Should().Be(ChatCompletionStopReason.Complete);
+        requests[1].Messages[2].Content.TryPickContentBlockParams(out var blocks).Should().BeTrue();
+        blocks![0].TryPickToolResult(out var toolResult).Should().BeTrue();
+        toolResult!.IsError.Should().BeTrue();
+        toolResult.Content!.TryPickString(out var payload).Should().BeTrue();
+        payload.Should().Be("Tool 'explore_documents' failed: OperationCanceledException.");
+    }
+
+    [Fact]
+    public async Task Unknown_tool_name_through_the_full_loop_feeds_is_error_back_and_continues()
+    {
+        // End-to-end with the REAL dispatch (ChatToolSet executor): the model calls a
+        // tool no connector claims; the unknown-tool failure is model-visible (it is
+        // authored, secret-free text), feeds back as is_error, and the loop finishes.
+        var model = BifrostQL.Core.QueryModel.TestFixtures.DbModelTestFixture.Create()
+            .WithTable("documents", t => t
+                .WithSchema("dbo").WithPrimaryKey("Id")
+                .WithMetadata(
+                    BifrostQL.Core.Model.MetadataKeys.ChatConnector.Marker,
+                    BifrostQL.Core.Model.MetadataKeys.ChatConnector.TypeExplore))
+            .Build();
+        var toolSet = new ChatConnectorRegistry(new IChatConnector[] { new ClaimingConnector() })
+            .BuildToolSet(model);
+        var options = new ChatCompletionRequestOptions
+        {
+            Tools = new ChatCompletionToolOptions
+            {
+                Tools = toolSet.Definitions,
+                Executor = toolSet.CreateExecutor(new Dictionary<string, object?>()),
+            },
+        };
+        var (service, requests) = ServiceOverTurns(
+            SingleToolUseTurn(toolName: "explore_unknown"),
+            Stream(Start(1), TextDeltaEvent("That tool does not exist."), FinalDelta("end_turn", 1)));
+
+        var events = await DrainAll(service, UserOnlyHistory, options);
+
+        events.Last().Should().BeOfType<ChatCompletionResult>()
+            .Which.StopReason.Should().Be(ChatCompletionStopReason.Complete);
+        requests[1].Messages[2].Content.TryPickContentBlockParams(out var blocks).Should().BeTrue();
+        blocks![0].TryPickToolResult(out var toolResult).Should().BeTrue();
+        toolResult!.IsError.Should().BeTrue();
+        toolResult.Content!.TryPickString(out var payload).Should().BeTrue();
+        payload.Should().Contain("explore_unknown").And.Contain("no registered connector");
+    }
+
+    /// <summary>Connector claiming only 'explore_documents' for the unknown-tool test.</summary>
+    private sealed class ClaimingConnector : IChatConnector
+    {
+        public int Priority => 100;
+
+        public IReadOnlyList<ChatToolDefinition> GetToolDefinitions(
+            BifrostQL.Core.Model.IDbModel model, ChatConnectorBinding binding)
+            => new[] { new ChatToolDefinition("explore_documents", "Query documents.", """{"type":"object"}""") };
+
+        public Task<ChatToolResult> ExecuteAsync(
+            string toolName, string inputJson, IDictionary<string, object?> authContext,
+            CancellationToken cancellationToken)
+            => Task.FromResult(new ChatToolResult { TextPayload = "{}" });
     }
 
     // ----- iteration cap -----

@@ -163,15 +163,17 @@ public class ChatConnectorRegistryTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_UnknownTool_Throws()
+    public async Task ExecuteAsync_UnknownTool_ThrowsTheModelVisibleInputException()
     {
+        // ChatToolInputException so the tool loop feeds the (authored, secret-free)
+        // message back to the model verbatim instead of a sanitized type name.
         var tools = new ChatConnectorRegistry(new IChatConnector[] { new FakeConnector(100, "explore") })
             .BuildToolSet(ConnectorModel());
 
         var act = () => tools.ExecuteAsync(
             "not_a_tool", "{}", new Dictionary<string, object?>(), CancellationToken.None);
 
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*not_a_tool*");
+        await act.Should().ThrowAsync<ChatToolInputException>().WithMessage("*not_a_tool*");
     }
 
     [Fact]

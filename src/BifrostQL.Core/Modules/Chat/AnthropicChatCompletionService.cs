@@ -29,7 +29,10 @@ namespace BifrostQL.Core.Modules.Chat
     /// return in ONE user message of <c>tool_result</c> blocks (the API contract), then
     /// the loop continues until a terminal stop or the iteration cap
     /// (<see cref="ChatToolLoopLimitException"/>). A connector throw becomes an
-    /// <c>is_error</c> tool result fed back to the model — the stream itself never
+    /// <c>is_error</c> tool result fed back to the model — SANITIZED to the tool name
+    /// plus exception type (full detail logged server-side; only a
+    /// <see cref="ChatToolInputException"/> message travels verbatim), because the
+    /// tool_result content goes off-box to the provider. The stream itself never
     /// crashes on a tool failure. No retries and no fallbacks live here — provider
     /// failures surface as <see cref="ChatCompletionException"/> with a
     /// <c>Retryable</c> flag and the caller decides.
@@ -49,14 +52,19 @@ namespace BifrostQL.Core.Modules.Chat
 
         private readonly IMessageService _messages;
         private readonly ChatCompletionOptions _options;
+        private readonly Microsoft.Extensions.Logging.ILogger _logger;
         private readonly AnthropicClient? _ownedClient;
 
         /// <summary>
         /// Production constructor. Fails fast on a missing api key so a misconfigured
-        /// host errors at wiring time, not on the first chat request.
+        /// host errors at wiring time, not on the first chat request. The logger
+        /// receives the FULL detail of sanitized tool failures — the raw exception
+        /// stays server-side while the model sees only the safe summary.
         /// </summary>
-        public AnthropicChatCompletionService(ChatCompletionOptions options)
-            : this(CreateClient(options), options)
+        public AnthropicChatCompletionService(
+            ChatCompletionOptions options,
+            Microsoft.Extensions.Logging.ILogger<AnthropicChatCompletionService>? logger = null)
+            : this(CreateClient(options), options, logger)
         {
         }
 
@@ -64,14 +72,21 @@ namespace BifrostQL.Core.Modules.Chat
         /// Test seam: injects the SDK's message service directly (the system boundary the
         /// tests fake). Production always enters through the options constructor.
         /// </summary>
-        internal AnthropicChatCompletionService(IMessageService messages, ChatCompletionOptions options)
+        internal AnthropicChatCompletionService(
+            IMessageService messages,
+            ChatCompletionOptions options,
+            Microsoft.Extensions.Logging.ILogger? logger = null)
         {
             _messages = messages ?? throw new ArgumentNullException(nameof(messages));
             _options = ValidateOptions(options);
+            _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
         }
 
-        private AnthropicChatCompletionService(AnthropicClient client, ChatCompletionOptions options)
-            : this(client.Messages, options)
+        private AnthropicChatCompletionService(
+            AnthropicClient client,
+            ChatCompletionOptions options,
+            Microsoft.Extensions.Logging.ILogger? logger)
+            : this(client.Messages, options, logger)
         {
             _ownedClient = client;
         }
@@ -376,9 +391,20 @@ namespace BifrostQL.Core.Modules.Chat
         }
 
         // A connector throw is a TOOL failure, not a stream failure: it feeds back to
-        // the model as an is_error result and the loop continues. Cancellation is the
-        // one exception — it is the caller tearing the stream down, not a tool fault.
-        private static async Task<ChatToolResult> ExecuteToolAsync(
+        // the model as an is_error result and the loop continues.
+        //
+        // Two deliberate boundaries here:
+        //  - CANCELLATION ORIGIN: only the REQUEST token's cancellation is caller
+        //    teardown and rethrows. An OperationCanceledException from a connector's
+        //    own internal token (HTTP client timeout, self-imposed deadline) while the
+        //    request is still alive is a tool fault like any other.
+        //  - SANITIZATION: the tool_result content is sent OFF-BOX to the Anthropic
+        //    API, and raw exception messages routinely carry connection strings and
+        //    other server-side detail. The model therefore sees only the tool name and
+        //    the exception TYPE; the full exception is logged server-side. The one
+        //    sanctioned model-visible channel is ChatToolInputException, whose message
+        //    the connector authored FOR the model.
+        private async Task<ChatToolResult> ExecuteToolAsync(
             IChatToolExecutor executor, ToolUseRequest toolUse, CancellationToken cancellationToken)
         {
             try
@@ -391,13 +417,23 @@ namespace BifrostQL.Core.Modules.Chat
                     IsError = true,
                 };
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw;
             }
-            catch (Exception ex)
+            catch (ChatToolInputException ex)
             {
                 return new ChatToolResult { TextPayload = ex.Message, IsError = true };
+            }
+            catch (Exception ex)
+            {
+                Microsoft.Extensions.Logging.LoggerExtensions.LogError(_logger, ex,
+                    "Chat tool {ToolName} failed; a sanitized error was fed back to the model.", toolUse.Name);
+                return new ChatToolResult
+                {
+                    TextPayload = $"Tool '{toolUse.Name}' failed: {ex.GetType().Name}.",
+                    IsError = true,
+                };
             }
         }
 

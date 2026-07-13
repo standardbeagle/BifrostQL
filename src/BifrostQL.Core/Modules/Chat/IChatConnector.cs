@@ -87,6 +87,23 @@ namespace BifrostQL.Core.Modules.Chat
     public sealed record ChatToolConfirmationRequest(string Kind, string Summary, string PayloadJson);
 
     /// <summary>
+    /// A tool failure whose message is MODEL-VISIBLE BY DESIGN. Connectors throw this
+    /// for validation feedback the model should read and act on (bad arguments, an
+    /// unknown tool, a row it may not touch). Every other exception type is sanitized
+    /// before it reaches the provider: the model sees only the tool name and the
+    /// exception's TYPE name, never the raw message — exception messages routinely
+    /// carry connection strings, table internals, and other server-side detail that
+    /// must not leave the box. Author messages accordingly: this text goes off-box.
+    /// </summary>
+    public sealed class ChatToolInputException : Exception
+    {
+        public ChatToolInputException(string message, Exception? innerException = null)
+            : base(message, innerException)
+        {
+        }
+    }
+
+    /// <summary>
     /// Executes tool calls for ONE request: implementations are bound to a caller's
     /// auth context at creation (<see cref="ChatToolSet.CreateExecutor"/>), so the
     /// completion layer can run tools without ever holding an identity of its own.

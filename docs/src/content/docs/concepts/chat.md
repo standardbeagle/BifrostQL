@@ -99,8 +99,43 @@ dbo.documents {
 Connector configuration fails fast at model load with the same rigor as the chat
 pair: unknown tokens, stray media/plan keys without their type token, missing or
 wrongly-typed columns, and unpublished or history-target tables are all rejected.
-This page covers the metadata contract only — the generated explore, media, and
-plan tools land in later slices. See the
+The chat pair tables themselves **may** be connectors — "explore my own
+conversation history" is a legitimate tool, and the row-scope transformers guard
+connector reads exactly as they guard the chat store's.
+
+Custom connectors implement `IChatConnector` and register with
+`AddChatConnector<T>()` (mirroring `AddFilterTransformer`). A connector owns both
+the tool definitions the model sees — prescriptive *when-to-call* descriptions,
+incorporating `chat-tool-description` when present — and the execution behind
+them. Tool names must be unique across all connectors; a collision fails fast
+with an error naming both connectors and the tool.
+
+### The tool-use loop
+
+When any connector exposes tools, the completion becomes a **multi-turn tool
+loop** inside the completion service:
+
+1. The request carries every connector tool. When the model stops to call tools,
+   **all** tool calls of the turn execute (parallel-safe) under the **caller's
+   own auth context** — reads and writes ride the intent executors with tenant
+   isolation, policy, and the rest of the transformer pipeline applied, exactly
+   like any other transport. There is no ambient identity.
+2. All results return to the model in one message (the Anthropic `tool_result`
+   contract) and the loop continues until the model finishes its answer.
+3. A connector failure is fed back to the model as an `is_error` tool result —
+   the model sees the error text and recovers; the stream itself never crashes on
+   a tool fault.
+4. The loop is capped at `MaxToolIterations` model turns (default **8**,
+   configurable on the chat endpoint options). Exceeding the cap is a **typed
+   error** — the SSE stream ends with `error {code:"tool-loop-limit"}` and **no
+   assistant row is persisted**.
+
+Tool activity streams live as SSE `tool` events (`{name, phase, summary}`,
+`phase` ∈ `call`/`result`) interleaved with the text deltas, so clients can show
+progress. The persistence contract is unchanged by tools: the assistant row is
+the **final answer text only** — the tool transcript is streamed, not stored.
+
+The generated explore, media, and plan tools land in later slices. See the
 [configuration reference](/reference/configuration/#chat-connector-metadata) for
 the key table.
 

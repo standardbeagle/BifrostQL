@@ -40,6 +40,14 @@ namespace BifrostQL.Server
         /// configuration only — never client input.
         /// </summary>
         public string? SystemPrompt { get; set; }
+
+        /// <summary>
+        /// Maximum model turns per completion when chat connectors expose tools
+        /// (see <see cref="ChatCompletionToolOptions.MaxToolIterations"/>). Exceeding
+        /// it ends the stream with <c>error {code:"tool-loop-limit"}</c> and persists
+        /// no assistant row. Default: 8.
+        /// </summary>
+        public int MaxToolIterations { get; set; } = ChatCompletionToolOptions.DefaultMaxToolIterations;
     }
 
     /// <summary>
@@ -50,9 +58,19 @@ namespace BifrostQL.Server
     /// <c>{"title": …}</c> body), <c>200 {"id": …}</c>.</item>
     /// <item><c>POST {Path}/conversations/{id}/messages</c> — append the caller's
     /// message (<c>{"content": …}</c>) and stream the assistant completion as
-    /// <c>text/event-stream</c>: <c>message-accepted</c>, then <c>delta</c> events,
-    /// then exactly one terminal <c>done</c> or <c>error</c> event.</item>
+    /// <c>text/event-stream</c>: <c>message-accepted</c>, then <c>delta</c> events —
+    /// interleaved with <c>tool</c> events (<c>{name, phase, summary}</c>,
+    /// <c>phase</c> ∈ <c>call</c>/<c>result</c>) when connector tools run — then
+    /// exactly one terminal <c>done</c> or <c>error</c> event.</item>
     /// </list>
+    ///
+    /// Chat connectors (<see cref="ChatConnectorRegistry"/>) expose tools to the model;
+    /// the tool loop runs inside <see cref="IChatCompletionService"/> under the
+    /// caller's own auth context. The persistence contract is UNCHANGED by tools: the
+    /// assistant row is the final answer text only — the tool transcript (calls,
+    /// results, intermediate turns) is streamed live but NOT persisted in this slice.
+    /// A tool loop that exceeds <see cref="BifrostChatOptions.MaxToolIterations"/> is
+    /// a typed failure: <c>error {code:"tool-loop-limit"}</c>, no assistant row.
     ///
     /// Identity is fail-closed via <see cref="IBifrostAuthContextFactory"/>: an
     /// unauthenticated request is 401 before the body is read or any store/provider
@@ -82,7 +100,9 @@ namespace BifrostQL.Server
         private readonly RequestDelegate _next;
         private readonly BifrostChatOptions _options;
         private readonly ChatConversationStore _store;
+        private readonly IQueryIntentExecutor _reads;
         private readonly IChatCompletionService _completions;
+        private readonly ChatConnectorRegistry _connectors;
         private readonly ILogger<BifrostChatMiddleware> _logger;
         private readonly ConcurrentDictionary<string, bool> _activeStreams = new();
 
@@ -92,12 +112,15 @@ namespace BifrostQL.Server
             IQueryIntentExecutor reads,
             IMutationIntentExecutor writes,
             IChatCompletionService completions,
+            ChatConnectorRegistry connectors,
             ILogger<BifrostChatMiddleware> logger)
         {
             _next = next ?? throw new ArgumentNullException(nameof(next));
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _store = new ChatConversationStore(reads, writes, options.GraphQlEndpoint);
+            _reads = reads ?? throw new ArgumentNullException(nameof(reads));
             _completions = completions ?? throw new ArgumentNullException(nameof(completions));
+            _connectors = connectors ?? throw new ArgumentNullException(nameof(connectors));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -251,8 +274,14 @@ namespace BifrostQL.Server
             {
                 object? userMessageId;
                 IReadOnlyList<ChatCompletionMessage> history;
+                ChatCompletionRequestOptions? requestOptions;
                 try
                 {
+                    // Connector tools, resolved per request from the cached model and
+                    // bound to THIS caller's auth context — a tool call can never run
+                    // under any other identity. No connector tables = no tools param.
+                    requestOptions = await BuildToolRequestOptionsAsync(userContext);
+
                     userMessageId = await _store.AppendMessageAsync(
                         userContext, conversationId, ChatMessageRoles.User, body!.Content!, cancellation);
                     history = await _store.ListRecentMessagesAsync(
@@ -261,6 +290,15 @@ namespace BifrostQL.Server
                 catch (BifrostExecutionError ex)
                 {
                     await WriteExecutionErrorAsync(context, ex);
+                    return;
+                }
+                catch (InvalidOperationException ex)
+                {
+                    // Connector misconfiguration (tool-name collisions, invalid tool
+                    // names/schemas) is a deployment fault — loud, before any persist.
+                    _logger.LogError(ex, "Chat connector tool-set build failed on configuration.");
+                    await WriteErrorAsync(context, StatusCodes.Status500InternalServerError,
+                        "configuration-error", ex.Message);
                     return;
                 }
 
@@ -274,12 +312,37 @@ namespace BifrostQL.Server
                     history = withPrompt;
                 }
 
-                await StreamCompletionAsync(context, userContext, conversationId, userMessageId, history, cancellation);
+                await StreamCompletionAsync(
+                    context, userContext, conversationId, userMessageId, history, requestOptions, cancellation);
             }
             finally
             {
                 _activeStreams.TryRemove(streamKey, out _);
             }
+        }
+
+        /// <summary>
+        /// Builds the completion's tool options from the registered connectors: the
+        /// model's connector tables become tool definitions and the executor is bound
+        /// to the caller's auth context. Null when no connector exposes a tool.
+        /// </summary>
+        private async Task<ChatCompletionRequestOptions?> BuildToolRequestOptionsAsync(
+            IDictionary<string, object?> userContext)
+        {
+            var model = await _reads.GetModelAsync(_options.GraphQlEndpoint);
+            var toolSet = _connectors.BuildToolSet(model);
+            if (toolSet.IsEmpty)
+                return null;
+
+            return new ChatCompletionRequestOptions
+            {
+                Tools = new ChatCompletionToolOptions
+                {
+                    Tools = toolSet.Definitions,
+                    Executor = toolSet.CreateExecutor(userContext),
+                    MaxToolIterations = _options.MaxToolIterations,
+                },
+            };
         }
 
         /// <summary>
@@ -292,6 +355,7 @@ namespace BifrostQL.Server
             object conversationId,
             object? userMessageId,
             IReadOnlyList<ChatCompletionMessage> history,
+            ChatCompletionRequestOptions? requestOptions,
             CancellationToken cancellation)
         {
             var response = context.Response;
@@ -307,13 +371,24 @@ namespace BifrostQL.Server
 
                 // The completion stream is a cold IAsyncEnumerable — enumerated
                 // exactly once, here.
-                await foreach (var evt in _completions.StreamAsync(history, options: null, cancellation)
+                await foreach (var evt in _completions.StreamAsync(history, requestOptions, cancellation)
                                    .WithCancellation(cancellation))
                 {
                     switch (evt)
                     {
                         case ChatCompletionDelta delta:
                             await WriteEventAsync(context, "delta", new { text = delta.Text }, cancellation);
+                            break;
+
+                        case ChatToolActivity activity:
+                            // Live tool progress, interleaved in stream order. Not
+                            // persisted: the assistant row stays final-text-only.
+                            await WriteEventAsync(context, "tool", new
+                            {
+                                name = activity.ToolName,
+                                phase = activity.Phase == ChatToolPhase.Call ? "call" : "result",
+                                summary = activity.Summary,
+                            }, cancellation);
                             break;
 
                         case ChatCompletionResult { StopReason: ChatCompletionStopReason.Refused } refusal:
@@ -345,6 +420,13 @@ namespace BifrostQL.Server
             {
                 // Client disconnected: the same token cancelled the provider stream;
                 // no assistant row is written and the user message stays.
+            }
+            catch (ChatToolLoopLimitException ex)
+            {
+                // The tool loop never converged: typed failure, nothing persisted for
+                // the assistant (deltas already streamed are display-only).
+                await TryWriteEventAsync(context, "error",
+                    new { code = "tool-loop-limit", message = ex.Message });
             }
             catch (ChatCompletionException ex)
             {

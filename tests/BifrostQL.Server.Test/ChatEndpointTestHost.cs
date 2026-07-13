@@ -88,7 +88,8 @@ namespace BifrostQL.Server.Test
         }
 
         public async Task<HttpClient> StartAsync(
-            int historyLimit = 50, string? systemPrompt = null, IQueryObserver[]? observers = null)
+            int historyLimit = 50, string? systemPrompt = null, IQueryObserver[]? observers = null,
+            IChatConnector[]? connectors = null, bool messagesAsExploreConnector = false)
         {
             DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
             var builder = new HostBuilder().ConfigureWebHost(web =>
@@ -97,6 +98,8 @@ namespace BifrostQL.Server.Test
                 web.ConfigureServices(services =>
                 {
                     services.AddSingleton<IChatCompletionService>(Fake);
+                    foreach (var connector in connectors ?? Array.Empty<IChatConnector>())
+                        services.AddSingleton(connector);
                     services.AddAuthentication(HeaderAuthHandler.SchemeName)
                         .AddScheme<AuthenticationSchemeOptions, HeaderAuthHandler>(HeaderAuthHandler.SchemeName, _ => { });
                     services.AddBifrostEndpoints(o =>
@@ -111,7 +114,8 @@ namespace BifrostQL.Server.Test
                                 "*.conversations { chat-conversations: enabled; chat-title: title; tenant-filter: tenant_id }",
                                 "*.messages { chat-messages: enabled; chat-role: role; chat-content: content; " +
                                     "chat-conversation-fk: conversation_id; chat-created-at: created_at; " +
-                                    "tenant-filter: tenant_id; history: enabled }",
+                                    "tenant-filter: tenant_id; history: enabled" +
+                                    (messagesAsExploreConnector ? "; chat-connector: explore" : "") + " }",
                                 ":root { history-table: main.__history }",
                             };
                             e.DisableAuth = true;
@@ -222,13 +226,19 @@ namespace BifrostQL.Server.Test
 
         public List<IReadOnlyList<ChatCompletionMessage>> Calls { get; } = new();
 
+        /// <summary>The request options of every call, in order — the tool-options pinning seam.</summary>
+        public List<ChatCompletionRequestOptions?> OptionsCalls { get; } = new();
+
         public IAsyncEnumerable<ChatCompletionEvent> StreamAsync(
             IReadOnlyList<ChatCompletionMessage> history,
             ChatCompletionRequestOptions? options = null,
             CancellationToken cancellationToken = default)
         {
             lock (Calls)
+            {
                 Calls.Add(history);
+                OptionsCalls.Add(options);
+            }
             return Script(history, cancellationToken);
         }
     }

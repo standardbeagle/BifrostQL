@@ -74,9 +74,46 @@ public sealed class MutationIntentResult
 }
 
 /// <summary>
+/// A multi-row write request executed as ONE transaction: every action runs the
+/// full mutation transformer chain and hook choreography, and a veto anywhere
+/// rolls the whole batch back — no partial batch, ever. The plan chat connector's
+/// confirmed writes and multi-row protocol adapters use this instead of looping
+/// <see cref="MutationIntent"/>s, which would commit row-by-row.
+/// </summary>
+public sealed class MutationBatchIntent
+{
+    /// <summary>Database table name (e.g. <c>orders</c>); unknown tables fail fast.</summary>
+    public required string Table { get; init; }
+
+    /// <summary>The actions, executed in order inside one transaction.</summary>
+    public required IReadOnlyList<MutationBatchAction> Actions { get; init; }
+
+    /// <inheritdoc cref="MutationIntent.UserContext"/>
+    public IDictionary<string, object?> UserContext { get; init; } = new Dictionary<string, object?>();
+
+    /// <inheritdoc cref="MutationIntent.Endpoint"/>
+    public string? Endpoint { get; init; }
+}
+
+/// <summary>
+/// One action of a <see cref="MutationBatchIntent"/>. <paramref name="Data"/>
+/// carries column values keyed by GraphQL field name or database column name
+/// (case-insensitive): the full row for an insert, primary key + SET columns for
+/// an update, and the key/predicate columns for a delete.
+/// </summary>
+public sealed record MutationBatchAction(MutationIntentAction Action, IReadOnlyDictionary<string, object?> Data);
+
+/// <summary>Result of a batch intent: the total affected row count, matching the GraphQL batch field.</summary>
+public sealed class MutationBatchIntentResult
+{
+    public required int TotalAffected { get; init; }
+}
+
+/// <summary>
 /// Write entry point for protocol adapters. Implementations MUST route execution
-/// through <see cref="TableMutationPipeline"/> — the seam shared with the GraphQL
-/// resolver — so the mutation transformer chain, before-commit hooks, and
+/// through <see cref="TableMutationPipeline"/> (single row) and
+/// <see cref="BatchMutationPipeline"/> (batch) — the seams shared with the GraphQL
+/// resolvers — so the mutation transformer chain, before-commit hooks, and
 /// parameterized SQL apply unconditionally; an adapter has no API surface to
 /// skip them.
 /// </summary>
@@ -87,6 +124,13 @@ public interface IMutationIntentExecutor
     /// connection. Unknown endpoint or table throws; there is no fallback.
     /// </summary>
     Task<MutationIntentResult> ExecuteAsync(MutationIntent intent, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Executes every action of the batch inside ONE transaction — a transformer
+    /// veto or database failure on any action rolls back the entire batch. The
+    /// per-table batch size cap (<c>batch-max-size</c>, default 100) applies.
+    /// </summary>
+    Task<MutationBatchIntentResult> ExecuteBatchAsync(MutationBatchIntent intent, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -149,6 +193,41 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
             _ => throw new BifrostExecutionError($"Unsupported mutation intent action '{intent.Action}'."),
         };
         return new MutationIntentResult { Value = value };
+    }
+
+    public async Task<MutationBatchIntentResult> ExecuteBatchAsync(
+        MutationBatchIntent intent, CancellationToken cancellationToken = default)
+    {
+        if (intent is null) throw new ArgumentNullException(nameof(intent));
+
+        var inputs = await IntentEndpointResolver.ResolveAsync(_endpoints, intent.Endpoint);
+        var model = IntentEndpointResolver.GetRequired<IDbModel>(inputs, "model", intent.Endpoint);
+        var connFactory = IntentEndpointResolver.GetRequired<IDbConnFactory>(inputs, "connFactory", intent.Endpoint);
+        var table = model.GetTableFromDbName(intent.Table);
+
+        var actions = intent.Actions.Select(action => new BatchMutationPipeline.BatchAction(
+            action.Action switch
+            {
+                MutationIntentAction.Insert => MutationAction.Insert,
+                MutationIntentAction.Update => MutationAction.Update,
+                MutationIntentAction.Delete => MutationAction.Delete,
+                _ => throw new BifrostExecutionError($"Unsupported mutation intent action '{action.Action}'."),
+            },
+            new Dictionary<string, object?>(action.Data, StringComparer.OrdinalIgnoreCase))).ToList();
+
+        var ctx = new MutationPipelineContext
+        {
+            Model = model,
+            ConnFactory = connFactory,
+            // Same per-profile module filtering as the single-row intent path.
+            Transformers = BifrostProfileRegistry.FilterBy(_transformers, intent.UserContext),
+            UserContext = intent.UserContext,
+            Services = _services,
+            CancellationToken = cancellationToken,
+        };
+
+        var totalAffected = await BatchMutationPipeline.ExecuteBatchAsync(table, actions, ctx);
+        return new MutationBatchIntentResult { TotalAffected = totalAffected };
     }
 
     private static Task<object?> InsertAsync(IDbTable table, MutationIntent intent, MutationPipelineContext ctx)

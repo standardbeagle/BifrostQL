@@ -6,8 +6,17 @@ A small Vite + React SPA over the BifrostQL chat module:
   published `conversations` table, plus a create/switch flow.
 - **Chat pane** — message history via GraphQL (chronological), a send box that
   POSTs to the chat SSE endpoint, incremental rendering of streamed `delta`
-  events, typed error states (refusal rendered distinctly), a `409
-  stream-in-progress` notice, and a Stop button that aborts the fetch.
+  events, typed error states (refusal and `tool-loop-limit` rendered
+  distinctly), a `409 stream-in-progress` notice, and a Stop button that
+  aborts the fetch.
+- **Connector UX** — live `tool` events render as inline status chips
+  (calling… / result summary), `media` events render as an inline image grid
+  (binary `bifrost-media://` references fetched through the auth-gated media
+  route with credentials, stored URLs rendered directly, captions as alt
+  text), and `confirmation` events render a proposal card (operation, table,
+  rows, approve/deny with an optional ≤500-char reason) while the stream sits
+  parked waiting for your decision. Tool chips and media are per-turn display
+  state — the server persists final answer text only.
 
 The GraphQL client and SSE parser are local to this example on purpose — the
 repo intentionally keeps its GraphQL clients separate (see the root
@@ -15,6 +24,7 @@ repo intentionally keeps its GraphQL clients separate (see the root
 
 Endpoint contract: [LLM Chat Endpoints guide](../../docs/src/content/docs/guides/llm-chat.md).
 Metadata contract: [Chat over Your Tables](../../docs/src/content/docs/concepts/chat.md).
+Connector guide: [Chat Connectors](../../docs/src/content/docs/guides/chat-connectors.md).
 
 ## Backend setup
 
@@ -33,11 +43,20 @@ do not work out of the box and need a temporary (uncommitted) host tweak:
 sqlite3 chat-demo.db < examples/chat/sample/chat-demo.sql
 ```
 
-The schema is two tables — `conversations(id, title)` and
-`messages(id, conversation_id, role, content, created_at)` — with integer
-identity keys (the chat module orders by them). The demo config skips tenancy;
-to demo isolation, add `tenant_id` columns and `tenant-filter: tenant_id` to
-both tables' metadata.
+The chat pair is `conversations(id, title)` and
+`messages(id, conversation_id, role, content, created_at)` — integer identity
+keys (the chat module orders by them). The demo config skips tenancy; to demo
+isolation, add `tenant_id` columns and `tenant-filter: tenant_id` to both
+tables' metadata.
+
+Around the pair, the sample grows three **connector scenarios** (see the
+[Chat Connectors guide](../../docs/src/content/docs/guides/chat-connectors.md)):
+
+| Table | Connector | Demo |
+|---|---|---|
+| `orders` | `explore` | The model queries orders in chat (read-only, capped) |
+| `products` | `media` | Product images render inline — `image` is a BLOB, so references resolve through the auth-gated media route; `caption` is the alt text |
+| `blog_posts` + `publish_schedule` | `explore` + `plan` (insert,update) | The model proposes schedule writes; nothing lands until you approve the proposal card |
 
 ### 2. Point the host at it
 
@@ -50,8 +69,23 @@ metadata keys:
 "Metadata": [
   ":root { auto-join: true; de-pluralize: false; default-limit: 100; }",
   "main.conversations { chat-conversations: enabled; chat-title: title }",
-  "main.messages { chat-messages: enabled; chat-role: role; chat-content: content; chat-conversation-fk: conversation_id; chat-created-at: created_at }"
+  "main.messages { chat-messages: enabled; chat-role: role; chat-content: content; chat-conversation-fk: conversation_id; chat-created-at: created_at }",
+  "main.orders { chat-connector: explore; chat-tool-description: Customer orders with status and totals }",
+  "main.products { chat-connector: media; chat-media-column: image; chat-media-caption: caption; chat-tool-description: Product catalog with photos }",
+  "main.blog_posts { chat-connector: explore; chat-tool-description: Blog posts the publish schedule refers to by post_id }",
+  "main.publish_schedule { chat-connector: plan; chat-plan-operations: insert,update; chat-tool-description: Publish schedule for blog posts — every write needs user approval }"
 ]
+```
+
+To let the model **look at** the product images itself (not just hand them to
+the UI), add the vision flag to the products line — left off by default
+because every viewed image rides the provider request as base64 (cost) and
+image contents become model input (prompt-injection surface, see the guide's
+caveats):
+
+```text
+main.products { chat-connector: media; chat-media-column: image;
+                chat-media-caption: caption; chat-media-vision: enabled }
 ```
 
 ### 3. Enable the chat endpoints in the host
@@ -115,9 +149,12 @@ pnpm --dir examples/chat test     # vitest: SSE parser + event mapping + query b
 ```
 
 The scripted tests cover the SSE wire parsing (multi-line data, chunk-boundary
-splits, CRLF, comments, discarded trailing frames, multi-byte splits), the
-event-name-to-typed-event mapping, and the GraphQL query builders. The
-streaming UI itself is verified with the manual script below — no browser E2E.
+splits, CRLF/LF/lone-CR line endings, a CRLF straddling a chunk boundary,
+comments, discarded trailing frames, multi-byte splits), the
+event-name-to-typed-event mapping (including tool / media / confirmation /
+confirmation-resolved and the non-JSON-data guard), and the GraphQL query
+builders plus the media reference-to-route mapping. The streaming UI itself is
+verified with the manual script below — no browser E2E.
 
 ## Manual smoke script
 
@@ -138,6 +175,36 @@ streaming UI itself is verified with the manual script below — no browser E2E.
 8. Error states: stop the host mid-stream to see the stream-error notice; a
    refusal ends the stream with a distinct refusal notice and discards the
    partial deltas (nothing is persisted for the assistant).
+
+### Connector smoke script
+
+9. **Explore** — ask "Which orders are still pending, largest total first?"
+   An `explore_orders` chip appears (calling…, then a result summary) and the
+   answer names Cara Okafor, Faisal Khan, and Bo Lindqvist from the seed data.
+10. **Media** — ask "Show me the product images." A `media_products` chip runs
+    and an inline image grid renders the three seeded swatches, captions as
+    alt text. Each image is fetched through
+    `GET /_chat/media/products/<id>` — the auth-gated binary route — not from
+    the tool payload.
+11. **Plan, approve** — ask "Schedule the 'Launching the new catalog' post for
+    August 1st at 10:00." The model explores `blog_posts` for the post id,
+    then a proposal card appears (insert on `publish_schedule`, the row
+    visible), the stream parks ("waiting for your approval"), and the send box
+    stays busy. Click **Approve**: the stream resumes, the answer confirms,
+    and the row landed —
+
+    ```bash
+    sqlite3 chat-demo.db "SELECT post_id, publish_at, status FROM publish_schedule"
+    ```
+
+12. **Plan, deny** — ask for another schedule, then click **Deny** with a
+    reason like "wrong date — use September 1st". Nothing is written (re-run
+    the `sqlite3` check), the model receives your reason, and it revises —
+    typically proposing a corrected row in a fresh card on the same stream.
+13. **Timeout / second tab** — leave a proposal card unanswered for the
+    confirmation timeout (default 5 minutes) or resolve it from another tab:
+    the card clears itself when the stream's `confirmation-resolved` event
+    arrives, and an unanswered proposal denies itself.
 
 ### About failed sends
 

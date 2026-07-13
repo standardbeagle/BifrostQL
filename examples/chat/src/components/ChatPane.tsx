@@ -1,23 +1,40 @@
 import { useEffect, useRef, useState } from 'react';
+import type { ConfirmationRequest, MediaItem } from '../lib/chat-api';
 import type { MessageRow } from '../lib/graphql';
+import { ConfirmationCard } from './ConfirmationCard';
+import { MediaGrid } from './MediaGrid';
 
 /** Typed UI states for the non-happy paths the chat contract defines. */
 export type ChatNotice =
   | { kind: 'refusal'; category?: string }
+  | { kind: 'tool-loop-limit' } // error {code:"tool-loop-limit"}: no assistant row
   | { kind: 'stream-error'; code: string; message: string; retryable?: boolean }
   | { kind: 'busy' } // 409 stream-in-progress
   | { kind: 'send-failed'; status: number; message: string } // message may already be saved
   | { kind: 'cancelled' }
   | { kind: 'truncated' };
 
+/**
+ * Live tool activity for the current (or just-finished) turn, in stream
+ * order. Not persisted server-side — the assistant row is final text only —
+ * so this is display state that clears on the next send or a conversation
+ * switch.
+ */
+export type ActivityItem =
+  | { kind: 'tool'; key: number; name: string; phase: 'call' | 'result'; summary?: string }
+  | { kind: 'media'; key: number; toolName: string; items: MediaItem[] };
+
 export interface ChatPaneProps {
   conversationId: number | null;
   messages: MessageRow[];
   draft: string | null; // streaming assistant text, null when not streaming
   streaming: boolean;
+  activity: ActivityItem[];
+  confirmation: ConfirmationRequest | null;
   notice: ChatNotice | null;
   onSend: (content: string) => void;
   onCancel: () => void;
+  onDecideConfirmation: (approve: boolean, reason?: string) => Promise<void>;
   onReloadHistory: () => void;
 }
 
@@ -28,6 +45,13 @@ function NoticeBanner({ notice, onReloadHistory }: { notice: ChatNotice; onReloa
         <div className="notice refusal">
           The model declined to answer{notice.category ? ` (${notice.category})` : ''}. The
           partial response was discarded and nothing was saved; your message was kept.
+        </div>
+      );
+    case 'tool-loop-limit':
+      return (
+        <div className="notice error">
+          The assistant hit the tool-call limit before finishing an answer. Nothing was saved
+          for this turn; your message was kept. Try a narrower question.
         </div>
       );
     case 'stream-error':
@@ -70,14 +94,30 @@ function NoticeBanner({ notice, onReloadHistory }: { notice: ChatNotice; onReloa
   }
 }
 
+function ToolChip({ item }: { item: Extract<ActivityItem, { kind: 'tool' }> }) {
+  return (
+    <span className={`tool-chip ${item.phase}`}>
+      <span className="tool-chip-name">{item.name}</span>
+      {item.phase === 'call' ? (
+        <span className="tool-chip-status">calling…</span>
+      ) : (
+        <span className="tool-chip-status">{item.summary ?? 'done'}</span>
+      )}
+    </span>
+  );
+}
+
 export function ChatPane({
   conversationId,
   messages,
   draft,
   streaming,
+  activity,
+  confirmation,
   notice,
   onSend,
   onCancel,
+  onDecideConfirmation,
   onReloadHistory,
 }: ChatPaneProps) {
   const [input, setInput] = useState('');
@@ -85,7 +125,7 @@ export function ChatPane({
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages, draft]);
+  }, [messages, draft, activity, confirmation]);
 
   if (conversationId === null) {
     return <main className="chat-pane empty-state">Select or create a conversation.</main>;
@@ -106,6 +146,24 @@ export function ChatPane({
             {message.content}
           </div>
         ))}
+        {activity.length > 0 && (
+          <div className="activity">
+            {activity.map((item) =>
+              item.kind === 'tool' ? (
+                <ToolChip key={item.key} item={item} />
+              ) : (
+                <MediaGrid key={item.key} toolName={item.toolName} items={item.items} />
+              ),
+            )}
+          </div>
+        )}
+        {confirmation && (
+          <ConfirmationCard
+            key={confirmation.confirmationId}
+            confirmation={confirmation}
+            onDecide={onDecideConfirmation}
+          />
+        )}
         {draft !== null && (
           <div className="bubble assistant streaming">
             {draft}

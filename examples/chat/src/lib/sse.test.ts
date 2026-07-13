@@ -55,6 +55,32 @@ describe('parseSseStream', () => {
     expect(frames).toEqual([{ event: 'delta', data: '{"text":"crlf"}' }]);
   });
 
+  it('handles lone-CR line endings (SSE allows CR, LF, and CRLF)', async () => {
+    const frames = await collect(['event: delta\rdata: {"text":"cr"}\r\r']);
+    expect(frames).toEqual([{ event: 'delta', data: '{"text":"cr"}' }]);
+  });
+
+  it('does not split a CRLF that straddles a chunk boundary into two line endings', async () => {
+    // The CR arrives as the last byte of one chunk, the LF as the first byte
+    // of the next. Treating that trailing CR as a lone terminator would
+    // inject a phantom blank line and dispatch the frame early.
+    const frames = await collect(['event: delta\r', '\ndata: {"text":"split"}\r\n\r\n']);
+    expect(frames).toEqual([{ event: 'delta', data: '{"text":"split"}' }]);
+  });
+
+  it('flushes a trailing lone CR when the stream ends', async () => {
+    const frames = await collect(['data: one\r\rdata: two\r\r']);
+    expect(frames).toEqual([
+      { event: 'message', data: 'one' },
+      { event: 'message', data: 'two' },
+    ]);
+  });
+
+  it('handles mixed line endings within one frame', async () => {
+    const frames = await collect(['event: delta\rdata: a\r\ndata: b\n\n']);
+    expect(frames).toEqual([{ event: 'delta', data: 'a\nb' }]);
+  });
+
   it('ignores comment lines and id/retry fields', async () => {
     const frames = await collect([
       ': keep-alive\nid: 3\nretry: 1000\nevent: delta\ndata: {"text":"x"}\n\n: trailing comment\n\n',

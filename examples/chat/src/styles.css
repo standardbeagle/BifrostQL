@@ -136,6 +136,174 @@ body {
   }
 }
 
+.activity {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.tool-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 70%;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid #c6ccd4;
+  background: #eef1f5;
+  font-size: 0.8em;
+  overflow: hidden;
+}
+
+.tool-chip.call {
+  border-style: dashed;
+}
+
+.tool-chip-name {
+  font-family: ui-monospace, monospace;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tool-chip-status {
+  color: #545b64;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 70%;
+}
+
+.media-thumb {
+  margin: 0;
+  width: 160px;
+  border: 1px solid #d9dce1;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.media-thumb img {
+  display: block;
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+}
+
+.media-thumb figcaption {
+  padding: 6px 8px;
+  font-size: 0.8em;
+  color: #545b64;
+}
+
+.media-loading,
+.media-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 120px;
+  padding: 8px;
+  font-size: 0.8em;
+  color: #7a8088;
+  text-align: center;
+}
+
+.media-error {
+  color: #b3261e;
+}
+
+.confirmation-card {
+  align-self: flex-start;
+  max-width: 85%;
+  padding: 12px 14px;
+  border: 1px solid #e5c48f;
+  border-radius: 12px;
+  background: #fff9ef;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.confirmation-title {
+  font-size: 0.95em;
+}
+
+.confirmation-summary {
+  font-size: 0.9em;
+  color: #545b64;
+}
+
+.confirmation-rows {
+  overflow-x: auto;
+}
+
+.confirmation-rows table {
+  border-collapse: collapse;
+  font-size: 0.85em;
+}
+
+.confirmation-rows th,
+.confirmation-rows td {
+  border: 1px solid #e0d4bb;
+  padding: 4px 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.confirmation-rows th {
+  background: #f7efdd;
+}
+
+.confirmation-parked {
+  font-size: 0.8em;
+  color: #7a6a45;
+}
+
+.confirmation-error {
+  font-size: 0.85em;
+  color: #b3261e;
+}
+
+.confirmation-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.confirmation-actions input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid #c6ccd4;
+  border-radius: 6px;
+}
+
+.confirmation-actions button {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  cursor: pointer;
+}
+
+.confirmation-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.confirmation-actions button.approve {
+  background: #1d7a3d;
+}
+
+.confirmation-actions button.deny {
+  background: #b3261e;
+}
+
 .notice {
   margin: 0 16px 8px;
   padding: 10px 14px;

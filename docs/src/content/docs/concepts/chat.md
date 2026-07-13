@@ -91,10 +91,11 @@ dbo.documents {
   from the tool entirely, encrypted columns cannot be filter/sort predicates
   (their values still project, decrypted or masked per the caller's roles), and
   results are row- and payload-capped with explicit truncation notes.
-- **`media`** — the model can serve an image/file column (`chat-media-column`).
-  The serving mode is derived from the column type — a binary column serves bytes,
-  a string column serves URLs — and `chat-media-vision: enabled` opts the content
-  into vision input.
+- **`media`** — the model can look up an image/file column (`chat-media-column`)
+  and hand out references to it. The serving mode is derived from the column type
+  — a binary column serves bytes through the auth-gated media route, a string
+  column serves stored URLs — and `chat-media-vision: enabled` (binary mode only)
+  lets the model view images itself. See [Media tools](#media-tools) below.
 - **`plan`** — the model can propose gated writes, limited to the
   `chat-plan-operations` allow-list. `delete` is never implied; it must be listed
   explicitly, and the table must have a primary key.
@@ -142,7 +143,59 @@ Tool activity streams live as SSE `tool` events (`{name, phase, summary}`,
 progress. The persistence contract is unchanged by tools: the assistant row is
 the **final answer text only** — the tool transcript is streamed, not stored.
 
-The generated explore, media, and plan tools land in later slices. See the
+### Media tools
+
+A `chat-connector: media` table becomes one `media_<table>` lookup tool. It
+shares the explore tool's `filters`/`sort`/`limit`/`offset` input surface (same
+hidden-column and encrypted-predicate rules; the media content column itself is
+never a predicate) but its result shape is **fixed** — no columns projection:
+
+```json
+{"rows": [{"id": 7, "caption": "Contract page 1",
+           "mediaReference": "bifrost-media://documents/7"}]}
+```
+
+The `mediaReference` depends on the serving mode derived from the media column's
+type:
+
+- **URL mode** (string column) — the stored URL, verbatim. The client uses it
+  directly; the server never fetches it.
+- **Binary mode** (binary column) — the opaque reference
+  `bifrost-media://<table>/<id>`, resolved by `GET {Path}/media/{table}/{id}` on
+  the chat endpoints. The route is **auth-gated and re-authorizing**: every fetch
+  reads the row through the intent executor under the caller's own context, so
+  tenant isolation and policy scope apply on each request and the reference
+  carries no secret — it needs no signature, no expiry, and no token store.
+  Unknown tables, non-media tables, URL-mode tables, cross-tenant rows, and
+  nonexistent rows all answer the same 404. The response content type is sniffed
+  from the bytes' magic numbers (png/jpeg/gif/webp; `application/octet-stream`
+  otherwise) — the media contract has no content-type column. The bytes
+  themselves never ride the lookup payload or the model conversation.
+
+Alongside the SSE `tool` events, a media-bearing tool result is followed by one
+`media` event the client renders from:
+
+```text
+event: media
+data: {"toolName":"media_documents","items":[
+  {"id":7,"mediaReference":"bifrost-media://documents/7","caption":"Contract page 1"}]}
+```
+
+**Vision** — with `chat-media-vision: enabled` (valid only on binary-mode media
+columns; the validator rejects it on URL columns rather than leaving it silently
+dead) the tool gains one extra input, `view_image_id`. Set to a single row id —
+it cannot be combined with the lookup arguments — the connector loads that row's
+bytes through the same caller-scoped intent read and attaches them to the tool
+result as a base64 image block, so the model can actually look at the image.
+Guard rails, all model-visible errors rather than silent drops: the row must be
+visible to the caller (cross-tenant and nonexistent ids read identically), the
+bytes must sniff as png/jpeg/gif/webp, and the raw size is capped by
+`ChatConnectorOptions.MediaVisionByteCap` (default ~3.5 MB, keeping the base64
+under the provider's per-image limit). With vision **off**, the `view_image_id`
+input does not exist in the tool schema at all and media bytes never leave the
+server.
+
+The generated plan tools land in a later slice. See the
 [configuration reference](/reference/configuration/#chat-connector-metadata) for
 the key table.
 

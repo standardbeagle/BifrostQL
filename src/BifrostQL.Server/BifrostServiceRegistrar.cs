@@ -207,6 +207,7 @@ namespace BifrostQL.Server
 
         /// <summary>
         /// Registers the built-in <see cref="BifrostQL.Core.Modules.Chat.ExploreChatConnector"/>
+        /// and <see cref="BifrostQL.Core.Modules.Chat.MediaChatConnector"/>
         /// plus the chat-connector types (from <c>AddChatConnector&lt;T&gt;</c>) under
         /// <see cref="BifrostQL.Core.Modules.Chat.IChatConnector"/> and the
         /// <see cref="BifrostQL.Core.Modules.Chat.ChatConnectorRegistry"/> that collects
@@ -217,21 +218,31 @@ namespace BifrostQL.Server
         /// </summary>
         public static void RegisterChatConnectorServices(IServiceCollection services, IReadOnlyList<Type> connectorTypes)
         {
-            // The built-in explore connector ships by default (mirroring the built-in
-            // transformers): it exposes tools only for `chat-connector: explore`
-            // tables, so hosts without explore bindings carry no tools and pay
-            // nothing. Its factory pins the intent-executor seam explicitly; caps
-            // come from ChatConnectorOptions, overridable by registering one first.
+            // The built-in explore and media connectors ship by default (mirroring
+            // the built-in transformers): they expose tools only for tables carrying
+            // their `chat-connector` type token, so hosts without bindings carry no
+            // tools and pay nothing. The factories pin the intent-executor seam
+            // explicitly; caps come from ChatConnectorOptions, overridable by
+            // registering one first.
             services.TryAddSingleton<BifrostQL.Core.Modules.Chat.ChatConnectorOptions>();
             services.TryAddSingleton(sp => new BifrostQL.Core.Modules.Chat.ExploreChatConnector(
                 sp.GetRequiredService<IQueryIntentExecutor>(),
                 sp.GetRequiredService<BifrostQL.Core.Modules.Chat.ChatConnectorOptions>()));
+            services.TryAddSingleton(sp => new BifrostQL.Core.Modules.Chat.MediaChatConnector(
+                sp.GetRequiredService<IQueryIntentExecutor>(),
+                sp.GetRequiredService<BifrostQL.Core.Modules.Chat.ChatConnectorOptions>()));
 
-            // De-duplicated against AddChatConnector<ExploreChatConnector>: a double
-            // registration would define every explore_* tool twice and fail the
-            // registry's collision gate on the first chat request.
-            var types = new List<Type> { typeof(BifrostQL.Core.Modules.Chat.ExploreChatConnector) };
-            types.AddRange(connectorTypes.Where(t => t != typeof(BifrostQL.Core.Modules.Chat.ExploreChatConnector)));
+            // De-duplicated against AddChatConnector<ExploreChatConnector> (or the
+            // media connector): a double registration would define every generated
+            // tool twice and fail the registry's collision gate on the first chat
+            // request.
+            var builtIns = new[]
+            {
+                typeof(BifrostQL.Core.Modules.Chat.ExploreChatConnector),
+                typeof(BifrostQL.Core.Modules.Chat.MediaChatConnector),
+            };
+            var types = new List<Type>(builtIns);
+            types.AddRange(connectorTypes.Where(t => !builtIns.Contains(t)));
             foreach (var connectorType in types)
             {
                 var type = connectorType;

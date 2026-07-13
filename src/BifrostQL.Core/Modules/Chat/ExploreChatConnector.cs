@@ -40,9 +40,6 @@ namespace BifrostQL.Core.Modules.Chat
 
         private const string ValidArguments = "filters, sort, limit, offset, columns";
 
-        /// <inheritdoc cref="ConnectorQuerySchema.NumericColumnTypes"/>
-        internal static IReadOnlySet<string> NumericColumnTypes => ConnectorQuerySchema.NumericColumnTypes;
-
         private readonly IQueryIntentExecutor _reads;
         private readonly ChatConnectorOptions _options;
         private readonly string? _endpoint;

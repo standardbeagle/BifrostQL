@@ -89,7 +89,8 @@ namespace BifrostQL.Server.Test
 
         public async Task<HttpClient> StartAsync(
             int historyLimit = 50, string? systemPrompt = null, IQueryObserver[]? observers = null,
-            IChatConnector[]? connectors = null, bool messagesAsExploreConnector = false)
+            IChatConnector[]? connectors = null, bool messagesAsExploreConnector = false,
+            string[]? extraMetadata = null)
         {
             DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
             var builder = new HostBuilder().ConfigureWebHost(web =>
@@ -117,7 +118,7 @@ namespace BifrostQL.Server.Test
                                     "tenant-filter: tenant_id; history: enabled" +
                                     (messagesAsExploreConnector ? "; chat-connector: explore" : "") + " }",
                                 ":root { history-table: main.__history }",
-                            };
+                            }.Concat(extraMetadata ?? Array.Empty<string>()).ToArray();
                             e.DisableAuth = true;
                         });
                         if (observers is not null)
@@ -168,9 +169,11 @@ namespace BifrostQL.Server.Test
                 Post($"/_chat/conversations/{conversationId}/messages", new { content }, $"user-of-{tenant}", tenant),
                 completion, cancellationToken);
 
-        public async Task ExecAsync(string sql)
+        public async Task ExecAsync(string sql, params (string Name, object? Value)[] parameters)
         {
             await using var cmd = new SqliteCommand(sql, _keepAlive);
+            foreach (var (name, value) in parameters)
+                cmd.Parameters.AddWithValue(name, value ?? DBNull.Value);
             await cmd.ExecuteNonQueryAsync();
         }
 

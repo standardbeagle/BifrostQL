@@ -3,7 +3,10 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.Chat;
+using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
@@ -60,8 +63,17 @@ namespace BifrostQL.Server
     /// message (<c>{"content": …}</c>) and stream the assistant completion as
     /// <c>text/event-stream</c>: <c>message-accepted</c>, then <c>delta</c> events —
     /// interleaved with <c>tool</c> events (<c>{name, phase, summary}</c>,
-    /// <c>phase</c> ∈ <c>call</c>/<c>result</c>) when connector tools run — then
-    /// exactly one terminal <c>done</c> or <c>error</c> event.</item>
+    /// <c>phase</c> ∈ <c>call</c>/<c>result</c>) when connector tools run, plus a
+    /// <c>media</c> event (<c>{toolName, items: [{id, mediaReference, contentType?,
+    /// caption?}]}</c>) after any media-bearing tool result — then exactly one
+    /// terminal <c>done</c> or <c>error</c> event.</item>
+    /// <item><c>GET {Path}/media/{table}/{id}</c> — resolve a binary-mode
+    /// <c>bifrost-media://</c> reference: re-authorizes the row through the intent
+    /// executor under the CALLER's context on every request (that is why the
+    /// reference needs no signature), sniffs the image content type from the bytes
+    /// (octet-stream fallback), and streams the binary. Unknown table, non-media
+    /// table, URL-mode table (clients use the stored URL directly), cross-tenant
+    /// and nonexistent row are all the same 404.</item>
     /// </list>
     ///
     /// Chat connectors (<see cref="ChatConnectorRegistry"/>) expose tools to the model;
@@ -127,17 +139,18 @@ namespace BifrostQL.Server
         public async Task InvokeAsync(HttpContext context)
         {
             if (!context.Request.Path.StartsWithSegments(_options.Path, StringComparison.OrdinalIgnoreCase, out var rest)
-                || !TryMatchRoute(rest, out var isCreate, out var conversationId))
+                || !TryMatchRoute(rest, out var route))
             {
                 await _next(context);
                 return;
             }
 
-            if (!HttpMethods.IsPost(context.Request.Method))
+            var expectedMethod = route.Kind == ChatRouteKind.FetchMedia ? HttpMethods.Get : HttpMethods.Post;
+            if (!HttpMethods.Equals(context.Request.Method, expectedMethod))
             {
-                context.Response.Headers.Allow = "POST";
+                context.Response.Headers.Allow = expectedMethod;
                 await WriteErrorAsync(context, StatusCodes.Status405MethodNotAllowed,
-                    "method-not-allowed", "Chat endpoints accept POST only.");
+                    "method-not-allowed", $"This chat endpoint accepts {expectedMethod} only.");
                 return;
             }
 
@@ -163,35 +176,56 @@ namespace BifrostQL.Server
                 return;
             }
 
-            if (isCreate)
-                await CreateConversationAsync(context, userContext);
-            else
-                await StreamMessageAsync(context, userContext, conversationId!);
+            switch (route.Kind)
+            {
+                case ChatRouteKind.CreateConversation:
+                    await CreateConversationAsync(context, userContext);
+                    break;
+                case ChatRouteKind.PostMessage:
+                    await StreamMessageAsync(context, userContext, route.ConversationId!);
+                    break;
+                case ChatRouteKind.FetchMedia:
+                    await FetchMediaAsync(context, userContext, route.MediaTable!, route.MediaRowId!);
+                    break;
+            }
         }
 
+        private enum ChatRouteKind { CreateConversation, PostMessage, FetchMedia }
+
+        private readonly record struct ChatRoute(
+            ChatRouteKind Kind, object? ConversationId = null, string? MediaTable = null, string? MediaRowId = null);
+
         /// <summary>
-        /// Matches <c>/conversations</c> (create) and
-        /// <c>/conversations/{id}/messages</c> (stream). The id must parse as an
-        /// integer — chat primary keys are validated integer identities — and a
-        /// malformed id simply falls through to the next middleware (404), the same
-        /// outcome as a conversation the caller cannot see.
+        /// Matches <c>/conversations</c> (create), <c>/conversations/{id}/messages</c>
+        /// (stream), and <c>/media/{table}/{id}</c> (binary media fetch). A
+        /// conversation id must parse as an integer — chat primary keys are validated
+        /// integer identities — and a malformed id simply falls through to the next
+        /// middleware (404), the same outcome as a conversation the caller cannot
+        /// see. The media id stays raw text here: its shape depends on the media
+        /// table's key column and is validated in <see cref="FetchMediaAsync"/>.
         /// </summary>
-        private static bool TryMatchRoute(PathString rest, out bool isCreate, out object? conversationId)
+        private static bool TryMatchRoute(PathString rest, out ChatRoute route)
         {
-            isCreate = false;
-            conversationId = null;
+            route = default;
             var segments = (rest.Value ?? string.Empty).Trim('/').Split('/');
 
             if (segments is ["conversations"])
             {
-                isCreate = true;
+                route = new ChatRoute(ChatRouteKind.CreateConversation);
                 return true;
             }
 
             if (segments is ["conversations", var id, "messages"]
                 && long.TryParse(id, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed))
             {
-                conversationId = parsed;
+                route = new ChatRoute(ChatRouteKind.PostMessage, ConversationId: parsed);
+                return true;
+            }
+
+            if (segments is ["media", var table, var mediaId] && table.Length > 0 && mediaId.Length > 0)
+            {
+                route = new ChatRoute(ChatRouteKind.FetchMedia,
+                    MediaTable: Uri.UnescapeDataString(table), MediaRowId: Uri.UnescapeDataString(mediaId));
                 return true;
             }
 
@@ -322,6 +356,105 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
+        /// Resolves a binary-mode <c>bifrost-media://{table}/{id}</c> reference and
+        /// streams the bytes. Fail-closed by construction: the row is read through
+        /// the intent executor under the CALLER's auth context on every fetch — that
+        /// re-authorization is what lets the reference itself carry no secret — and
+        /// every not-servable case (unknown table, non-media table, URL-mode table,
+        /// malformed id, cross-tenant row, nonexistent row, null content) is the same
+        /// 404. The content type is sniffed from the bytes' magic numbers (the media
+        /// contract has no content-type column), falling back to octet-stream.
+        /// </summary>
+        private async Task FetchMediaAsync(
+            HttpContext context, IDictionary<string, object?> userContext, string tableName, string rawRowId)
+        {
+            try
+            {
+                var model = await _reads.GetModelAsync(_options.GraphQlEndpoint);
+                var binding = ChatConnectorConfig.FromModel(model).FirstOrDefault(b =>
+                    b.Config.Media && string.Equals(b.Table.GraphQlName, tableName, StringComparison.Ordinal));
+                if (binding is null
+                    || binding.Config.MediaMode != ChatMediaMode.Binary
+                    || binding.Table.KeyColumns.Count() != 1)
+                {
+                    await WriteMediaNotFoundAsync(context);
+                    return;
+                }
+
+                var table = binding.Table;
+                var key = table.KeyColumns.Single();
+                if (!TryParseRowId(key, rawRowId, out var rowId))
+                {
+                    await WriteMediaNotFoundAsync(context);
+                    return;
+                }
+
+                var mediaColumn = table.ColumnLookup[binding.Config.MediaColumn!];
+                var query = new GqlObjectQuery
+                {
+                    DbTable = table,
+                    SchemaName = table.TableSchema,
+                    TableName = table.DbName,
+                    GraphQlName = table.GraphQlName,
+                    Path = table.GraphQlName,
+                    Filter = TableFilterFactory.Equals(table.DbName, key.ColumnName, rowId),
+                    Limit = 1,
+                };
+                query.ScalarColumns.Add(new GqlObjectColumn(mediaColumn.DbName, mediaColumn.GraphQlName));
+
+                var result = await _reads.ExecuteAsync(new QueryIntent
+                {
+                    Query = query,
+                    UserContext = userContext,
+                    Endpoint = _options.GraphQlEndpoint,
+                }, context.RequestAborted);
+
+                if (result.Rows.Count == 0 || result.Rows[0][mediaColumn.GraphQlName] is not byte[] bytes)
+                {
+                    await WriteMediaNotFoundAsync(context);
+                    return;
+                }
+
+                context.Response.StatusCode = StatusCodes.Status200OK;
+                context.Response.ContentType =
+                    MediaContentSniffer.SniffImageMediaType(bytes) ?? MediaContentSniffer.DefaultContentType;
+                context.Response.ContentLength = bytes.Length;
+                await context.Response.Body.WriteAsync(bytes, context.RequestAborted);
+            }
+            catch (BifrostExecutionError ex)
+            {
+                await WriteExecutionErrorAsync(context, ex);
+            }
+            catch (InvalidOperationException ex)
+            {
+                // Connector/model misconfiguration is a deployment fault — loud.
+                _logger.LogError(ex, "Chat media fetch for table {Table} failed on configuration.", tableName);
+                await WriteErrorAsync(context, StatusCodes.Status500InternalServerError,
+                    "configuration-error", ex.Message);
+            }
+        }
+
+        // The media id arrives as a path segment; it must parse as the key column's
+        // own shape. Integer keys reject non-integers here (a malformed id is a 404,
+        // indistinguishable from a missing row); anything else passes through as text.
+        private static bool TryParseRowId(ColumnDto key, string rawRowId, out object rowId)
+        {
+            if (ChatConfig.IntegerKeyColumnTypes.Contains(
+                    Core.Utils.StringNormalizer.NormalizeType(key.DataType)))
+            {
+                var ok = long.TryParse(rawRowId, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed);
+                rowId = parsed;
+                return ok;
+            }
+
+            rowId = rawRowId;
+            return true;
+        }
+
+        private static Task WriteMediaNotFoundAsync(HttpContext context) =>
+            WriteErrorAsync(context, StatusCodes.Status404NotFound, "not-found", "Media not found.");
+
+        /// <summary>
         /// Builds the completion's tool options from the registered connectors: the
         /// model's connector tables become tool definitions and the executor is bound
         /// to the caller's auth context. Null when no connector exposes a tool.
@@ -388,6 +521,24 @@ namespace BifrostQL.Server
                                 name = activity.ToolName,
                                 phase = activity.Phase == ChatToolPhase.Call ? "call" : "result",
                                 summary = activity.Summary,
+                            }, cancellation);
+                            break;
+
+                        case ChatToolMediaActivity media:
+                            // Media references a tool result handed out, relayed after
+                            // its result-phase tool event so the client can render the
+                            // media (fetch bifrost-media:// references through the
+                            // auth-gated media route, use stored URLs directly).
+                            await WriteEventAsync(context, "media", new
+                            {
+                                toolName = media.ToolName,
+                                items = media.Items.Select(item => new
+                                {
+                                    id = item.RowId,
+                                    mediaReference = item.MediaReference,
+                                    contentType = item.ContentType,
+                                    caption = item.Caption,
+                                }),
                             }, cancellation);
                             break;
 

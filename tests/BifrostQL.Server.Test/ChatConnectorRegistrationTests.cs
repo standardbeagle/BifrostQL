@@ -8,11 +8,11 @@ using Xunit;
 namespace BifrostQL.Server.Test
 {
     /// <summary>
-    /// Connector slice 3 registration wiring: the built-in
-    /// <see cref="ExploreChatConnector"/> ships with the default chat-connector
-    /// registration (mirroring the built-in transformers), so a host gets the
-    /// explore tools with zero extra code the moment any <c>chat-connector:
-    /// explore</c> binding exists — and never gets it twice.
+    /// Connector slice 3/4 registration wiring: the built-in
+    /// <see cref="ExploreChatConnector"/> and <see cref="MediaChatConnector"/> ship
+    /// with the default chat-connector registration (mirroring the built-in
+    /// transformers), so a host gets the generated tools with zero extra code the
+    /// moment any <c>chat-connector</c> binding exists — and never gets one twice.
     /// </summary>
     public class ChatConnectorRegistrationTests
     {
@@ -25,36 +25,42 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
-        public void RegisterChatConnectorServices_WiresTheExploreConnectorByDefault()
+        public void RegisterChatConnectorServices_WiresTheBuiltInConnectorsByDefault_InPriorityOrder()
         {
             using var provider = Build();
 
             var registry = provider.GetRequiredService<ChatConnectorRegistry>();
 
-            registry.Connectors.Should().ContainSingle()
-                .Which.Should().BeOfType<ExploreChatConnector>()
+            registry.Connectors.Should().HaveCount(2);
+            registry.Connectors[0].Should().BeOfType<ExploreChatConnector>()
                 .Which.Priority.Should().Be(100);
+            registry.Connectors[1].Should().BeOfType<MediaChatConnector>()
+                .Which.Priority.Should().Be(110);
         }
 
         [Fact]
-        public void RegisterChatConnectorServices_HostAddingTheExploreConnectorAgain_DoesNotDuplicateIt()
+        public void RegisterChatConnectorServices_HostAddingABuiltInConnectorAgain_DoesNotDuplicateIt()
         {
-            // A duplicate registration would define every explore_* tool twice and
+            // A duplicate registration would define every generated tool twice and
             // fail the registry's collision gate on the first chat request.
-            using var provider = Build(typeof(ExploreChatConnector));
+            using var provider = Build(typeof(ExploreChatConnector), typeof(MediaChatConnector));
 
             provider.GetRequiredService<ChatConnectorRegistry>().Connectors
-                .Should().ContainSingle().Which.Should().BeOfType<ExploreChatConnector>();
+                .Select(c => c.GetType())
+                .Should().BeEquivalentTo(new[] { typeof(ExploreChatConnector), typeof(MediaChatConnector) });
         }
 
         [Fact]
-        public void RegisterChatConnectorServices_HostConnectors_RegisterAlongsideTheBuiltIn()
+        public void RegisterChatConnectorServices_HostConnectors_RegisterAlongsideTheBuiltIns()
         {
             using var provider = Build(typeof(FakeHostConnector));
 
             provider.GetRequiredService<ChatConnectorRegistry>().Connectors
                 .Select(c => c.GetType())
-                .Should().BeEquivalentTo(new[] { typeof(ExploreChatConnector), typeof(FakeHostConnector) });
+                .Should().BeEquivalentTo(new[]
+                {
+                    typeof(ExploreChatConnector), typeof(MediaChatConnector), typeof(FakeHostConnector),
+                });
         }
 
         private sealed class FakeHostConnector : IChatConnector

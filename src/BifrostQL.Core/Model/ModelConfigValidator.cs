@@ -81,6 +81,7 @@ namespace BifrostQL.Core.Model
             ValidateCdcOutbox(model, errors);
             ValidateHistoryTargets(model, errors);
             ValidateChat(model, errors);
+            ValidateChatConnectors(model, errors);
 
             if (errors.Count > 0)
             {
@@ -938,6 +939,123 @@ namespace BifrostQL.Core.Model
                 MetadataKeys.Chat.CreatedAt,
             };
             return keys.FirstOrDefault(table.Metadata.ContainsKey) ?? MetadataKeys.Chat.Conversations;
+        }
+
+        /// <summary>
+        /// Fail-fast validation for the chat-connector metadata contract
+        /// (<c>chat-connector</c> + media/plan/tool-description keys). A connector
+        /// exposes its table to the chat LLM as a Claude tool, so every structural
+        /// assumption the tool generator will make must hold at model load: a published,
+        /// non-system table; a media column that exists and is binary- or string-typed
+        /// (the serving mode is derived from that type); a string-typed caption column;
+        /// and a primary key behind gated plan writes. Reuses
+        /// <see cref="ChatConnectorConfig.FromTable"/> so validation cannot drift from
+        /// the runtime parse.
+        /// </summary>
+        private static void ValidateChatConnectors(IDbModel model, List<string> errors)
+        {
+            foreach (var table in model.Tables)
+            {
+                ChatConnectorConfig config;
+                try
+                {
+                    config = ChatConnectorConfig.FromTable(table);
+                }
+                catch (Exception ex)
+                {
+                    // Parse errors (unknown type/operation tokens, empty values, mapping
+                    // keys without their type token), attributed to the offending key.
+                    var key = FirstPresentChatConnectorKey(table);
+                    errors.Add(Problem(table, key, table.GetMetadataValue(key), ex.Message));
+                    continue;
+                }
+
+                if (!config.IsConnector)
+                    continue;
+
+                // A connector tool is built on the generated schema, so its table must
+                // be published; history targets are unpublished system tables whose
+                // reads the intent executors reject outright.
+                if (table.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden))
+                    errors.Add(Problem(table, MetadataKeys.ChatConnector.Marker,
+                        table.GetMetadataValue(MetadataKeys.ChatConnector.Marker),
+                        $"a chat-connector table must be published; '{MetadataKeys.Ui.Visibility}: " +
+                        $"{MetadataKeys.Ui.Hidden}' removes it from the schema the connector tools are built on. " +
+                        "Unhide the table or remove the connector opt-in."));
+
+                if (Schema.HistorySurface.IsHistoryTarget(model, table))
+                    errors.Add(Problem(table, MetadataKeys.ChatConnector.Marker,
+                        table.GetMetadataValue(MetadataKeys.ChatConnector.Marker),
+                        $"a chat-connector table cannot be a history target (a table named by some " +
+                        $"'{MetadataKeys.History.Table}'): history targets are unpublished system tables whose " +
+                        $"reads are rejected. Point that '{MetadataKeys.History.Table}' elsewhere. A connector " +
+                        $"table MAY itself set '{MetadataKeys.History.Enabled}' — recording its changes composes."));
+
+                if (config.Media)
+                    ValidateChatConnectorMedia(table, config, errors);
+
+                // Plan writes target rows by primary key; a keyless table cannot name
+                // the row a plan step would update or delete. Explore needs no extra
+                // structure — any published table qualifies.
+                if (config.Plan && !table.KeyColumns.Any())
+                    errors.Add(Problem(table, MetadataKeys.ChatConnector.Marker,
+                        table.GetMetadataValue(MetadataKeys.ChatConnector.Marker),
+                        $"a '{MetadataKeys.ChatConnector.TypePlan}' connector requires a primary-key column; " +
+                        "gated writes could not name the row they target."));
+            }
+        }
+
+        private static void ValidateChatConnectorMedia(
+            IDbTable table, ChatConnectorConfig config, List<string> errors)
+        {
+            var mediaColumn = config.MediaColumn!;
+            if (!table.ColumnLookup.ContainsKey(mediaColumn))
+            {
+                errors.Add(Problem(table, MetadataKeys.ChatConnector.MediaColumn, mediaColumn,
+                    "column does not exist on the connector table"));
+            }
+            else if (config.MediaMode is null)
+            {
+                // The column resolved but has neither servable type, so no mode can be
+                // derived: it can hold neither bytes (binary mode) nor a URL (URL mode).
+                var column = table.ColumnLookup[mediaColumn];
+                errors.Add(Problem(table, MetadataKeys.ChatConnector.MediaColumn, mediaColumn,
+                    $"column '{column.ColumnName}' has type '{column.DataType}'; the media column must be " +
+                    $"binary-typed (served as bytes: {TypeList(ChatConnectorConfig.BinaryColumnTypes)}) or " +
+                    $"string-typed (served as a URL: {TypeList(ChatConfig.StringColumnTypes)})."));
+            }
+
+            var caption = config.MediaCaptionColumn;
+            if (caption == null)
+                return;
+
+            if (!table.ColumnLookup.TryGetValue(caption, out var captionColumn))
+                errors.Add(Problem(table, MetadataKeys.ChatConnector.MediaCaption, caption,
+                    "column does not exist on the connector table"));
+            else if (!ChatConfig.StringColumnTypes.Contains(Utils.StringNormalizer.NormalizeType(captionColumn.DataType)))
+                errors.Add(Problem(table, MetadataKeys.ChatConnector.MediaCaption, caption,
+                    $"column '{captionColumn.ColumnName}' has type '{captionColumn.DataType}'; the " +
+                    $"{MetadataKeys.ChatConnector.MediaCaption} column must be string-typed."));
+        }
+
+        private static string TypeList(IReadOnlySet<string> types) =>
+            string.Join("/", types.OrderBy(t => t, StringComparer.Ordinal));
+
+        // Picks the chat-connector metadata key actually present on the table so a
+        // parse failure is attributed to the real source rather than always to
+        // chat-connector.
+        private static string FirstPresentChatConnectorKey(IDbTable table)
+        {
+            var keys = new[]
+            {
+                MetadataKeys.ChatConnector.Marker,
+                MetadataKeys.ChatConnector.MediaColumn,
+                MetadataKeys.ChatConnector.MediaVision,
+                MetadataKeys.ChatConnector.MediaCaption,
+                MetadataKeys.ChatConnector.PlanOperations,
+                MetadataKeys.ChatConnector.ToolDescription,
+            };
+            return keys.FirstOrDefault(table.Metadata.ContainsKey) ?? MetadataKeys.ChatConnector.Marker;
         }
 
         /// <summary>

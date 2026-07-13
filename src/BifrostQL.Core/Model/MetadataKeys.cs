@@ -995,5 +995,86 @@ namespace BifrostQL.Core.Model
             /// </summary>
             public const string Enabled = "enabled";
         }
+
+        /// <summary>
+        /// Metadata keys for chat connectors — tables the chat module exposes to the
+        /// LLM as Claude tools. A table opts in by naming its connector types:
+        /// <c>explore</c> (read/query), <c>media</c> (serve an image/file column), and
+        /// <c>plan</c> (gated writes from an approved plan). Configured like the
+        /// tenant-filter convention:
+        ///   "dbo.orders { chat-connector: explore,plan; chat-plan-operations: insert,update }"
+        ///   "dbo.documents { chat-connector: media; chat-media-column: Image;
+        ///                    chat-media-vision: enabled; chat-media-caption: Caption }"
+        /// This slice establishes the metadata contract
+        /// (<c>ChatConnectorConfig</c>) and fail-fast validation; the generated tools —
+        /// explore queries, media serving, plan execution — are later connector slices.
+        /// </summary>
+        public static class ChatConnector
+        {
+            /// <summary>
+            /// Table-level comma-separated list of connector type tokens
+            /// (<see cref="TypeExplore"/> / <see cref="TypeMedia"/> / <see cref="TypePlan"/>).
+            /// Presence of this key is what opts a table into the chat-connector surface.
+            /// </summary>
+            public const string Marker = "chat-connector";
+
+            /// <summary>
+            /// The image/file column a <see cref="TypeMedia"/> connector serves. Required
+            /// when the media token is present. The serving mode is derived from the
+            /// column's type — a binary-typed column serves bytes (binary mode), a
+            /// string-typed column serves URLs (URL mode) — so there is no explicit
+            /// mode key to fall out of sync with the schema.
+            /// </summary>
+            public const string MediaColumn = "chat-media-column";
+
+            /// <summary>
+            /// Opt-in flag sending the media content to the model as vision input.
+            /// The only valid value is <see cref="Chat.Enabled"/>. Valid only alongside
+            /// the <see cref="TypeMedia"/> token.
+            /// </summary>
+            public const string MediaVision = "chat-media-vision";
+
+            /// <summary>
+            /// Optional string-typed column carrying a caption/alt-text for the media
+            /// column's content. Valid only alongside the <see cref="TypeMedia"/> token.
+            /// </summary>
+            public const string MediaCaption = "chat-media-caption";
+
+            /// <summary>
+            /// Comma-separated allow-list of write operations a <see cref="TypePlan"/>
+            /// connector may perform: <c>insert</c>, <c>update</c>, <c>delete</c>
+            /// (the <c>MutationType</c> names, case-insensitive). Required when the plan
+            /// token is present — a plan connector allowing nothing gates nothing.
+            /// <c>delete</c> is NEVER implied; it must be listed explicitly.
+            /// </summary>
+            public const string PlanOperations = "chat-plan-operations";
+
+            /// <summary>
+            /// Optional free-text feeding the generated Claude tool description for any
+            /// connector type. Present-but-empty is rejected: a blank description is
+            /// worse than the schema-derived default.
+            /// </summary>
+            public const string ToolDescription = "chat-tool-description";
+
+            /// <summary>Read/query connector: the table is exposed as an explore tool.</summary>
+            public const string TypeExplore = "explore";
+
+            /// <summary>Media connector: the table serves an image/file column.</summary>
+            public const string TypeMedia = "media";
+
+            /// <summary>Plan connector: gated writes from an approved plan.</summary>
+            public const string TypePlan = "plan";
+
+            /// <summary>
+            /// The recognized <see cref="Marker"/> type tokens. Used to fail fast on a
+            /// typo'd token, which would otherwise expose the wrong tool — or none —
+            /// with no error.
+            /// </summary>
+            public static readonly IReadOnlySet<string> KnownTypes =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    TypeExplore, TypeMedia, TypePlan,
+                };
+        }
     }
 }

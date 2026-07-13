@@ -69,5 +69,40 @@ The configuration fails fast at model load — never silently at request time:
   change-history **targets**. They *may* be history-**enabled** — recording the chat's
   own change trail composes.
 
+## Chat connectors
+
+Beyond the conversation store, any table can be exposed **to the chat LLM as a
+Claude tool** by declaring connector types on it:
+
+```text
+dbo.orders { chat-connector: explore,plan; chat-plan-operations: insert,update }
+
+dbo.documents {
+  chat-connector: media;
+  chat-media-column: Image;
+  chat-media-vision: enabled;
+  chat-media-caption: Caption;
+  chat-tool-description: Scanned contract documents
+}
+```
+
+- **`explore`** — the model can read and query the table. Any published table
+  qualifies; no extra columns needed.
+- **`media`** — the model can serve an image/file column (`chat-media-column`).
+  The serving mode is derived from the column type — a binary column serves bytes,
+  a string column serves URLs — and `chat-media-vision: enabled` opts the content
+  into vision input.
+- **`plan`** — the model can propose gated writes, limited to the
+  `chat-plan-operations` allow-list. `delete` is never implied; it must be listed
+  explicitly, and the table must have a primary key.
+
+Connector configuration fails fast at model load with the same rigor as the chat
+pair: unknown tokens, stray media/plan keys without their type token, missing or
+wrongly-typed columns, and unpublished or history-target tables are all rejected.
+This page covers the metadata contract only — the generated explore, media, and
+plan tools land in later slices. See the
+[configuration reference](/reference/configuration/#chat-connector-metadata) for
+the key table.
+
 See the [configuration reference](/reference/configuration/#chat-metadata) for the
-key table.
+chat pair's key table.

@@ -157,6 +157,15 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Chat.Content,
             MetadataKeys.Chat.ConversationFk,
             MetadataKeys.Chat.CreatedAt,
+            // Chat connectors (table-level opt-in + media/plan mappings). A miscased
+            // or typo'd key must be flagged, not silently expose the wrong Claude
+            // tool — or none.
+            MetadataKeys.ChatConnector.Marker,
+            MetadataKeys.ChatConnector.MediaColumn,
+            MetadataKeys.ChatConnector.MediaVision,
+            MetadataKeys.ChatConnector.MediaCaption,
+            MetadataKeys.ChatConnector.PlanOperations,
+            MetadataKeys.ChatConnector.ToolDescription,
         };
 
         // Internal for the same reason as KnownTableKeys above (case-casing

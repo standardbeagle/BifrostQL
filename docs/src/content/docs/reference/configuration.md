@@ -202,6 +202,31 @@ must not be change-history *targets* (they may themselves record history). See
 | `chat-conversation-fk` | column name | table | Column referencing the conversations table's single-column primary key (via a declared FK or `join` rule) |
 | `chat-created-at` | column name | table | Message timestamp column; must be date/time-typed |
 
+### Chat connector metadata
+
+Exposes a table to the chat LLM as a Claude tool. A table opts in with
+`chat-connector`, naming one or more connector types: `explore` (read/query),
+`media` (serve an image/file column), `plan` (gated writes). Any number of tables
+may be connectors. A connector table must be published (not `visibility: hidden`)
+and must not be a change-history *target* (it may itself record history). See
+[Chat over your tables](/concepts/chat/#chat-connectors).
+
+| Property | Values | Applies to | Description |
+|----------|--------|-----------|-------------|
+| `chat-connector` | comma list of `explore`/`media`/`plan` | table | Connector types the table exposes; unknown tokens and empty values are rejected |
+| `chat-media-column` | column name | table | Image/file column a `media` connector serves (required with the `media` token). The serving mode is derived from the column type: binary-typed columns serve bytes, string-typed columns serve URLs |
+| `chat-media-vision` | `enabled` | table | Send the media content to the model as vision input (`media` token required) |
+| `chat-media-caption` | column name | table | Optional caption/alt-text column; must be string-typed (`media` token required) |
+| `chat-plan-operations` | comma list of `insert`/`update`/`delete` | table | Write allow-list for a `plan` connector (required with the `plan` token). `delete` is never implied — it must be listed explicitly. The table must have a primary key |
+| `chat-tool-description` | free text | table | Optional description feeding the generated Claude tool (any connector type); present-but-empty is rejected |
+
+Validation fails fast at model load: unknown type tokens or operations, media/plan
+keys without their type token, a media column that does not exist or is neither
+binary- nor string-typed, a non-string caption column, a plan connector on a
+keyless table, and any unrecognized `chat-connector-*`/`chat-media-*`/`chat-plan-*`
+key are all rejected before the first chat request. An `explore` connector needs no
+extra columns — any published table qualifies.
+
 ### Populate values
 
 | Value | Description |

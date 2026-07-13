@@ -108,6 +108,8 @@ The response is `text/event-stream`, flushed per event. Named events with JSON d
 |---|---|---|
 | `message-accepted` | `{ "userMessageId": 7, "conversationId": 42 }` | The user message is persisted; streaming begins. |
 | `delta` | `{ "text": "…" }` | One incremental chunk of assistant text. |
+| `confirmation` | `{ "confirmationId": "…", "toolName": "plan_insert_posts", "table": "posts", "operation": "insert", "rows": […], "summary": "…" }` | A plan tool parked a write proposal; prompt the user and resolve it via the confirmations endpoint. |
+| `confirmation-resolved` | `{ "confirmationId": "…", "approved": true \| false, "reason": "…" }` | The proposal resolved (user decision, or the timeout's deny); the stream resumes. |
 | `done` | `{ "assistantMessageId": 8, "stopReason": "complete" \| "truncated" }` | Terminal success; the assistant message is persisted. |
 | `error` | `{ "code": "…", "message": "…", … }` | Terminal failure; the stream ends after this event. |
 
@@ -127,6 +129,47 @@ Error codes: `refusal` (with `refusalCategory` when the provider reported one), 
 | `409 stream-in-progress` | A completion is already streaming for this conversation. |
 
 Once the SSE stream has started the HTTP status is committed to `200`; every later failure travels as a terminal `error` event instead.
+
+### `POST {Path}/conversations/{id}/confirmations/{confirmationId}`
+
+Resolves a parked [plan proposal](/concepts/chat/#plan-tools-human-gated-writes):
+
+```json
+// request
+{ "approve": true }
+// or
+{ "approve": false, "reason": "wrong publish date" }
+
+// 200 response — the decision was delivered to the parked stream
+{ "confirmationId": "…", "approved": true }
+```
+
+The decision is delivered to the streaming request, which executes (or declines)
+the write and reports the outcome on the stream; this response only acknowledges
+delivery. Fail-closed resolution: the confirmation id is **single-use** and bound
+to the identity and conversation that produced it, so an unknown id, an
+already-resolved id, another caller's id, and another conversation's id all
+answer the **same `404`** — and a mismatched attempt does not consume the real
+caller's proposal. A missing/non-boolean `approve` is `400`.
+
+### Plan confirmations
+
+While a proposal is parked the SSE stream is idle — no events flow until the
+confirmation, the deny, or the timeout (`ChatConnectorOptions.
+PlanConfirmationTimeout`, default 5 minutes, resolving as a deny). Size any
+proxy/load-balancer idle timeouts accordingly, or lower the confirmation
+timeout. The one-stream-per-conversation guard stays held while parked, so a
+concurrent message POST to the same conversation is still `409`. Like that
+guard, the confirmation registry is **in-process**: in a multi-node deployment
+the confirmation POST must reach the node holding the parked stream (sticky
+sessions).
+
+Both outcomes are appended to the conversation as a **system-role transcript
+row** — `[plan proposal <id> (<operation> on <table>): approved]` or
+`[…: denied, reason: …]` — before the stream resumes, so the stored
+conversation records exactly what the user authorized. On later completions
+those rows travel in the system prompt like any other system message, keeping
+the model aware of past decisions.
 
 ## Semantics
 

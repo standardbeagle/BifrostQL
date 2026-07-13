@@ -195,7 +195,45 @@ under the provider's per-image limit). With vision **off**, the `view_image_id`
 input does not exist in the tool schema at all and media bytes never leave the
 server.
 
-The generated plan tools land in a later slice. See the
+### Plan tools: human-gated writes
+
+A `chat-connector: plan` table becomes one tool **per operation in its
+`chat-plan-operations` allow-list** — `plan_insert_<table>`,
+`plan_update_<table>`, `plan_delete_<table>`. A disallowed operation's tool is
+**absent from the schema entirely** (not present-and-refused), and `delete` is
+never implied.
+
+The security contract, in order:
+
+1. **A plan tool call never writes.** Execution validates the model's rows
+   (unknown and hidden columns rejected identically, database-generated columns
+   not writable, update/delete rows must carry the full primary key, row count
+   capped at `ChatConnectorOptions.PlanRowCap`, default 20) and produces a
+   **write proposal**. The tool loop relays it to the client (SSE
+   `confirmation` event) and **parks** — between provider turns, so no
+   upstream request is held open — until the user decides.
+2. **A confirmed proposal executes through the batch mutation-intent seam under
+   the original caller's identity.** The full mutation transformer chain
+   (tenant stamp, policy, validation, audit, encryption) and the in-transaction
+   hooks (change-history trail, CDC outbox) apply by construction, and **all
+   rows commit in one transaction** — a transformer veto on any row rolls the
+   whole proposal back and the model receives a sanitized `is_error` result:
+   there is no partial batch.
+3. **A denied proposal writes nothing.** The model receives a declined
+   (non-error) tool result carrying the user's reason and continues — it can
+   revise the proposal. A proposal nobody answers **denies itself** after
+   `ChatConnectorOptions.PlanConfirmationTimeout` (default 5 minutes).
+4. **The confirmation id is single-use** — cryptographically random, bound to
+   the requesting identity (tenant + user) and conversation, and it dies with
+   the stream that parked on it. An unknown, reused, cross-identity, or
+   cross-conversation id resolves nothing, indistinguishably.
+5. **Both outcomes are recorded in the conversation** as a system-role
+   transcript row (`[plan proposal <id> (<operation> on <table>):
+   approved/denied…]`), so the stored history is faithful to what the user
+   authorized.
+
+The confirmation endpoint and event shapes are in the
+[LLM Chat Endpoints guide](/guides/llm-chat/#plan-confirmations). See the
 [configuration reference](/reference/configuration/#chat-connector-metadata) for
 the key table.
 

@@ -249,6 +249,13 @@ namespace BifrostQL.Core.Modules.Chat
             var text = new StringBuilder();
             long inputTokens = 0;
             long outputTokens = 0;
+            // Tools whose results park on a user confirmation (plan tools): their
+            // presence in a turn switches that turn's tool execution to serial.
+            var confirmationTools = new HashSet<string>(
+                (tools?.Tools ?? Array.Empty<ChatToolDefinition>())
+                    .Where(t => t.RequiresConfirmation)
+                    .Select(t => t.Name),
+                StringComparer.Ordinal);
 
             for (var turnNumber = 1; ; turnNumber++)
             {
@@ -355,16 +362,46 @@ namespace BifrostQL.Core.Modules.Chat
                     foreach (var toolUse in toolUses)
                         yield return new ChatToolActivity(toolUse.Name, ChatToolPhase.Call, Summarize(toolUse.InputJson));
 
-                    // ALL tool calls of the turn execute (parallel-safe) and ALL results
-                    // return in ONE user message — the Anthropic tool_result contract.
-                    var results = await Task.WhenAll(
-                            toolUses.Select(toolUse => ExecuteToolAsync(tools.Executor, toolUse, cancellationToken)))
-                        .ConfigureAwait(false);
+                    // ALL tool calls of the turn execute and ALL results return in ONE
+                    // user message — the Anthropic tool_result contract. Parallel-safe,
+                    // EXCEPT when the turn requests a confirmation-gated (plan) tool:
+                    // then the calls run SERIALLY so at most one write proposal parks
+                    // awaiting the user at a time, in tool-block order.
+                    var serial = toolUses.Any(toolUse => confirmationTools.Contains(toolUse.Name));
+                    var parallelResults = serial
+                        ? null
+                        : await Task.WhenAll(
+                                toolUses.Select(toolUse => ExecuteToolAsync(tools.Executor, toolUse, cancellationToken)))
+                            .ConfigureAwait(false);
 
                     var resultBlocks = new List<ContentBlockParam>(toolUses.Count);
                     for (var i = 0; i < toolUses.Count; i++)
                     {
-                        var result = results[i];
+                        var result = parallelResults is not null
+                            ? parallelResults[i]
+                            : await ExecuteToolAsync(tools.Executor, toolUses[i], cancellationToken)
+                                .ConfigureAwait(false);
+
+                        if (result.ConfirmationRequest is { } confirmation)
+                        {
+                            // A write proposal: relay it, then PARK until the user's
+                            // decision (or the timeout's deny) resolves it. The park
+                            // happens here, BETWEEN provider turns — this turn's stream
+                            // was fully drained above (stop_reason tool_use consumed),
+                            // so no Anthropic HTTP request is held open while waiting.
+                            yield return new ChatToolConfirmationActivity(toolUses[i].Name, confirmation);
+                            var outcome = await ResolveConfirmationAsync(confirmation, toolUses[i].Name, cancellationToken)
+                                .ConfigureAwait(false);
+                            yield return new ChatToolConfirmationDecisionActivity(
+                                toolUses[i].Name,
+                                confirmation.ConfirmationId,
+                                confirmation.Table,
+                                confirmation.Operation,
+                                outcome.Approved,
+                                outcome.Reason);
+                            result = outcome.Result;
+                        }
+
                         yield return new ChatToolActivity(
                             toolUses[i].Name,
                             ChatToolPhase.Result,
@@ -438,6 +475,40 @@ namespace BifrostQL.Core.Modules.Chat
                     TextPayload = $"Tool '{toolUse.Name}' failed: {ex.GetType().Name}.",
                     IsError = true,
                 };
+            }
+        }
+
+        // Parks on a confirmation request's resolution with the same two boundaries as
+        // ExecuteToolAsync: only the REQUEST token's cancellation is caller teardown
+        // (rethrows — the proposal's registry entry died with the request); any other
+        // failure is SANITIZED before it reaches the provider, reported as a denied
+        // outcome so the transcript never claims an approval that produced no result.
+        private async Task<ChatToolConfirmationOutcome> ResolveConfirmationAsync(
+            ChatToolConfirmationRequest confirmation, string toolName, CancellationToken cancellationToken)
+        {
+            try
+            {
+                return await confirmation.ResolveAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (ChatToolInputException ex)
+            {
+                return new ChatToolConfirmationOutcome(false, ex.Message,
+                    new ChatToolResult { TextPayload = ex.Message, IsError = true });
+            }
+            catch (Exception ex)
+            {
+                Microsoft.Extensions.Logging.LoggerExtensions.LogError(_logger, ex,
+                    "Chat tool {ToolName} confirmation resolution failed; a sanitized error was fed back to the model.",
+                    toolName);
+                return new ChatToolConfirmationOutcome(false, null, new ChatToolResult
+                {
+                    TextPayload = $"Tool '{toolName}' failed: {ex.GetType().Name}.",
+                    IsError = true,
+                });
             }
         }
 

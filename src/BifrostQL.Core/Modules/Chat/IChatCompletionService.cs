@@ -101,6 +101,32 @@ namespace BifrostQL.Core.Modules.Chat
     public sealed record ChatToolMediaActivity(
         string ToolName, IReadOnlyList<ChatToolMediaReference> Items) : ChatCompletionEvent;
 
+    /// <summary>
+    /// A plan tool parked a write proposal awaiting the user's confirmation, emitted
+    /// after the tool's <see cref="ChatToolPhase.Call"/> activity and BEFORE the loop
+    /// parks on the decision — transports relay it (the chat middleware maps it to an
+    /// SSE <c>confirmation</c> event) so the client can prompt the user. The loop
+    /// yields no further events for this tool until the proposal resolves.
+    /// </summary>
+    public sealed record ChatToolConfirmationActivity(
+        string ToolName, ChatToolConfirmationRequest Request) : ChatCompletionEvent;
+
+    /// <summary>
+    /// A parked proposal resolved (user confirm/deny, or the timeout's deny), emitted
+    /// before the tool's <see cref="ChatToolPhase.Result"/> activity so transports can
+    /// record the outcome (the chat middleware appends a system-role transcript row and
+    /// relays an SSE <c>confirmation-resolved</c> event). <see cref="Approved"/> is the
+    /// user's decision — an approved-but-vetoed write still reports <c>true</c> here and
+    /// carries the veto as an <c>is_error</c> tool result.
+    /// </summary>
+    public sealed record ChatToolConfirmationDecisionActivity(
+        string ToolName,
+        string ConfirmationId,
+        string Table,
+        string Operation,
+        bool Approved,
+        string? Reason) : ChatCompletionEvent;
+
     /// <summary>Which side of a tool round-trip a <see cref="ChatToolActivity"/> reports.</summary>
     public enum ChatToolPhase
     {

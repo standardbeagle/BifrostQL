@@ -20,9 +20,16 @@ namespace BifrostQL.Core.Modules.Chat
         /// </summary>
         public const int DefaultMediaVisionByteCap = 3_500_000;
 
+        public const int DefaultPlanRowCap = 20;
+
+        /// <summary>Default time a plan proposal waits for the user before denying itself.</summary>
+        public static readonly TimeSpan DefaultPlanConfirmationTimeout = TimeSpan.FromMinutes(5);
+
         private readonly int _exploreRowCap = DefaultExploreRowCap;
         private readonly int _explorePayloadCharCap = DefaultExplorePayloadCharCap;
         private readonly int _mediaVisionByteCap = DefaultMediaVisionByteCap;
+        private readonly int _planRowCap = DefaultPlanRowCap;
+        private readonly TimeSpan _planConfirmationTimeout = DefaultPlanConfirmationTimeout;
 
         /// <summary>Maximum rows one explore tool call returns (default 50).</summary>
         public int ExploreRowCap
@@ -60,6 +67,34 @@ namespace BifrostQL.Core.Modules.Chat
                 ? value
                 : throw new ArgumentOutOfRangeException(
                     nameof(MediaVisionByteCap), value, "The media vision byte cap must be at least 1.");
+        }
+
+        /// <summary>
+        /// Maximum rows one plan tool call may propose (default 20). An over-cap
+        /// proposal is a model-visible error naming the cap, never a silent trim —
+        /// a write proposal must be exactly what the user confirms.
+        /// </summary>
+        public int PlanRowCap
+        {
+            get => _planRowCap;
+            init => _planRowCap = value >= 1
+                ? value
+                : throw new ArgumentOutOfRangeException(
+                    nameof(PlanRowCap), value, "The plan row cap must be at least 1.");
+        }
+
+        /// <summary>
+        /// How long a plan proposal waits for the user's confirm/deny before denying
+        /// itself (default 5 minutes). On timeout the model receives a declined tool
+        /// result and continues; nothing is written.
+        /// </summary>
+        public TimeSpan PlanConfirmationTimeout
+        {
+            get => _planConfirmationTimeout;
+            init => _planConfirmationTimeout = value > TimeSpan.Zero
+                ? value
+                : throw new ArgumentOutOfRangeException(
+                    nameof(PlanConfirmationTimeout), value, "The plan confirmation timeout must be positive.");
         }
     }
 }

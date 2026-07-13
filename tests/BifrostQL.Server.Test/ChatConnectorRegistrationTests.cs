@@ -8,18 +8,25 @@ using Xunit;
 namespace BifrostQL.Server.Test
 {
     /// <summary>
-    /// Connector slice 3/4 registration wiring: the built-in
-    /// <see cref="ExploreChatConnector"/> and <see cref="MediaChatConnector"/> ship
-    /// with the default chat-connector registration (mirroring the built-in
-    /// transformers), so a host gets the generated tools with zero extra code the
-    /// moment any <c>chat-connector</c> binding exists — and never gets one twice.
+    /// Connector slice 3/4/5 registration wiring: the built-in
+    /// <see cref="ExploreChatConnector"/>, <see cref="MediaChatConnector"/>, and
+    /// <see cref="PlanChatConnector"/> ship with the default chat-connector
+    /// registration (mirroring the built-in transformers), so a host gets the
+    /// generated tools with zero extra code the moment any <c>chat-connector</c>
+    /// binding exists — and never gets one twice.
     /// </summary>
     public class ChatConnectorRegistrationTests
     {
+        private static readonly Type[] BuiltIns =
+        {
+            typeof(ExploreChatConnector), typeof(MediaChatConnector), typeof(PlanChatConnector),
+        };
+
         private static ServiceProvider Build(params Type[] connectorTypes)
         {
             var services = new ServiceCollection();
             services.AddSingleton(Substitute.For<IQueryIntentExecutor>());
+            services.AddSingleton(Substitute.For<IMutationIntentExecutor>());
             BifrostServiceRegistrar.RegisterChatConnectorServices(services, connectorTypes);
             return services.BuildServiceProvider();
         }
@@ -31,11 +38,13 @@ namespace BifrostQL.Server.Test
 
             var registry = provider.GetRequiredService<ChatConnectorRegistry>();
 
-            registry.Connectors.Should().HaveCount(2);
+            registry.Connectors.Should().HaveCount(3);
             registry.Connectors[0].Should().BeOfType<ExploreChatConnector>()
                 .Which.Priority.Should().Be(100);
             registry.Connectors[1].Should().BeOfType<MediaChatConnector>()
                 .Which.Priority.Should().Be(110);
+            registry.Connectors[2].Should().BeOfType<PlanChatConnector>()
+                .Which.Priority.Should().Be(120);
         }
 
         [Fact]
@@ -43,11 +52,11 @@ namespace BifrostQL.Server.Test
         {
             // A duplicate registration would define every generated tool twice and
             // fail the registry's collision gate on the first chat request.
-            using var provider = Build(typeof(ExploreChatConnector), typeof(MediaChatConnector));
+            using var provider = Build(BuiltIns);
 
             provider.GetRequiredService<ChatConnectorRegistry>().Connectors
                 .Select(c => c.GetType())
-                .Should().BeEquivalentTo(new[] { typeof(ExploreChatConnector), typeof(MediaChatConnector) });
+                .Should().BeEquivalentTo(BuiltIns);
         }
 
         [Fact]
@@ -57,10 +66,7 @@ namespace BifrostQL.Server.Test
 
             provider.GetRequiredService<ChatConnectorRegistry>().Connectors
                 .Select(c => c.GetType())
-                .Should().BeEquivalentTo(new[]
-                {
-                    typeof(ExploreChatConnector), typeof(MediaChatConnector), typeof(FakeHostConnector),
-                });
+                .Should().BeEquivalentTo(BuiltIns.Append(typeof(FakeHostConnector)));
         }
 
         private sealed class FakeHostConnector : IChatConnector

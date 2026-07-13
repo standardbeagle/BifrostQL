@@ -56,7 +56,16 @@ namespace BifrostQL.Core.Modules.Chat
     /// Schema object (<c>{"type":"object",...}</c>) kept as a JSON string so the
     /// connector contract stays free of provider SDK wire types.
     /// </summary>
-    public sealed record ChatToolDefinition(string Name, string Description, string InputSchemaJson);
+    public sealed record ChatToolDefinition(string Name, string Description, string InputSchemaJson)
+    {
+        /// <summary>
+        /// True for tools whose results carry a
+        /// <see cref="ChatToolResult.ConfirmationRequest"/> (plan tools). The tool
+        /// loop executes a turn's tool calls SERIALLY when any requested tool sets
+        /// this, so at most one proposal parks awaiting confirmation at a time.
+        /// </summary>
+        public bool RequiresConfirmation { get; init; }
+    }
 
     /// <summary>
     /// The outcome of one tool execution. <see cref="TextPayload"/> is the JSON string
@@ -89,7 +98,14 @@ namespace BifrostQL.Core.Modules.Chat
         /// </summary>
         public ChatToolVisionImage? VisionImage { get; init; }
 
-        /// <summary>A gated write awaiting user confirmation (plan connectors; consumed by a later slice).</summary>
+        /// <summary>
+        /// A gated write awaiting user confirmation (plan connectors). The tool loop
+        /// does NOT feed <see cref="TextPayload"/> back to the model: it relays the
+        /// request to transports (SSE <c>confirmation</c> event), PARKS on
+        /// <see cref="ChatToolConfirmationRequest.ResolveAsync"/> until the user
+        /// confirms or denies (or the timeout denies), and feeds the outcome's result
+        /// back instead. Producing this result must not have written anything.
+        /// </summary>
         public ChatToolConfirmationRequest? ConfirmationRequest { get; init; }
     }
 
@@ -113,8 +129,52 @@ namespace BifrostQL.Core.Modules.Chat
     /// </summary>
     public sealed record ChatToolVisionImage(byte[] Data, string MediaType);
 
-    /// <summary>A proposed gated write a plan tool wants the user to confirm (later slice).</summary>
-    public sealed record ChatToolConfirmationRequest(string Kind, string Summary, string PayloadJson);
+    /// <summary>
+    /// A proposed gated write a plan tool wants the user to confirm. The proposal is
+    /// data-only for transports (<see cref="Table"/>/<see cref="Operation"/>/
+    /// <see cref="Rows"/>/<see cref="Summary"/> travel as the SSE <c>confirmation</c>
+    /// event); <see cref="ResolveAsync"/> is the connector-supplied continuation the
+    /// tool loop parks on. It completes when the user's decision arrives (or the
+    /// timeout denies), EXECUTES the confirmed write inside the connector — under the
+    /// original caller's context, through the mutation-intent seam — and returns the
+    /// tool result to feed back to the model. <see cref="ConfirmationId"/> is
+    /// single-use, cryptographically random, and bound to the requesting identity and
+    /// conversation (see <see cref="ChatPlanConfirmationRegistry"/>).
+    /// </summary>
+    public sealed record ChatToolConfirmationRequest
+    {
+        /// <summary>The single-use confirmation id transports resolve against.</summary>
+        public required string ConfirmationId { get; init; }
+
+        /// <summary>The target table's GraphQL name (client display; execution is bound internally).</summary>
+        public required string Table { get; init; }
+
+        /// <summary>The proposed operation: <c>insert</c>, <c>update</c>, or <c>delete</c>.</summary>
+        public required string Operation { get; init; }
+
+        /// <summary>The proposed rows exactly as validated, keyed by GraphQL column name.</summary>
+        public required IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows { get; init; }
+
+        /// <summary>A one-line human-readable rendering of the proposal.</summary>
+        public required string Summary { get; init; }
+
+        /// <summary>
+        /// Parks until the user's decision (or the timeout) resolves the proposal,
+        /// executes an approved write, and returns the outcome. Cancellation of the
+        /// request token is caller teardown and must propagate as
+        /// <see cref="OperationCanceledException"/> — nothing is written.
+        /// </summary>
+        public required Func<CancellationToken, Task<ChatToolConfirmationOutcome>> ResolveAsync { get; init; }
+    }
+
+    /// <summary>
+    /// The resolution of a parked confirmation: the user's decision plus the tool
+    /// result the loop feeds back to the model — the approved write's outcome, a
+    /// declined (non-error) result the model continues from, or an <c>is_error</c>
+    /// result when the approved write was vetoed by the mutation pipeline (in which
+    /// case NOTHING was written: the batch is one transaction).
+    /// </summary>
+    public sealed record ChatToolConfirmationOutcome(bool Approved, string? Reason, ChatToolResult Result);
 
     /// <summary>
     /// A tool failure whose message is MODEL-VISIBLE BY DESIGN. Connectors throw this

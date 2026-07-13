@@ -1005,9 +1005,10 @@ namespace BifrostQL.Core.Model
         ///   "dbo.orders { chat-connector: explore,plan; chat-plan-operations: insert,update }"
         ///   "dbo.documents { chat-connector: media; chat-media-column: Image;
         ///                    chat-media-vision: enabled; chat-media-caption: Caption }"
-        /// This slice establishes the metadata contract
-        /// (<c>ChatConnectorConfig</c>) and fail-fast validation; the generated tools —
-        /// explore queries, media serving, plan execution — are later connector slices.
+        /// The metadata contract (<c>ChatConnectorConfig</c>) fails fast at model
+        /// load; the generated tools are the built-in connectors: explore queries
+        /// (<c>ExploreChatConnector</c>), media serving (<c>MediaChatConnector</c>),
+        /// and confirmation-gated plan writes (<c>PlanChatConnector</c>).
         /// </summary>
         public static class ChatConnector
         {

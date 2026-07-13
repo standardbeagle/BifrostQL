@@ -206,8 +206,9 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
-        /// Registers the built-in <see cref="BifrostQL.Core.Modules.Chat.ExploreChatConnector"/>
-        /// and <see cref="BifrostQL.Core.Modules.Chat.MediaChatConnector"/>
+        /// Registers the built-in <see cref="BifrostQL.Core.Modules.Chat.ExploreChatConnector"/>,
+        /// <see cref="BifrostQL.Core.Modules.Chat.MediaChatConnector"/>, and
+        /// <see cref="BifrostQL.Core.Modules.Chat.PlanChatConnector"/>
         /// plus the chat-connector types (from <c>AddChatConnector&lt;T&gt;</c>) under
         /// <see cref="BifrostQL.Core.Modules.Chat.IChatConnector"/> and the
         /// <see cref="BifrostQL.Core.Modules.Chat.ChatConnectorRegistry"/> that collects
@@ -231,15 +232,26 @@ namespace BifrostQL.Server
             services.TryAddSingleton(sp => new BifrostQL.Core.Modules.Chat.MediaChatConnector(
                 sp.GetRequiredService<IQueryIntentExecutor>(),
                 sp.GetRequiredService<BifrostQL.Core.Modules.Chat.ChatConnectorOptions>()));
+            // The plan connector's confirmation registry is in-process, per-node —
+            // like the chat middleware's one-stream-per-conversation guard; a
+            // confirmation must reach the node holding the parked stream.
+            services.TryAddSingleton<BifrostQL.Core.Modules.Chat.ChatPlanConfirmationRegistry>();
+            services.TryAddSingleton(sp => new BifrostQL.Core.Modules.Chat.PlanChatConnector(
+                sp.GetRequiredService<IQueryIntentExecutor>(),
+                sp.GetRequiredService<IMutationIntentExecutor>(),
+                sp.GetRequiredService<BifrostQL.Core.Modules.Chat.ChatPlanConfirmationRegistry>(),
+                sp.GetRequiredService<BifrostQL.Core.Modules.Chat.ChatConnectorOptions>(),
+                logger: sp.GetService<ILogger<BifrostQL.Core.Modules.Chat.PlanChatConnector>>()));
 
             // De-duplicated against AddChatConnector<ExploreChatConnector> (or the
-            // media connector): a double registration would define every generated
-            // tool twice and fail the registry's collision gate on the first chat
-            // request.
+            // media/plan connectors): a double registration would define every
+            // generated tool twice and fail the registry's collision gate on the
+            // first chat request.
             var builtIns = new[]
             {
                 typeof(BifrostQL.Core.Modules.Chat.ExploreChatConnector),
                 typeof(BifrostQL.Core.Modules.Chat.MediaChatConnector),
+                typeof(BifrostQL.Core.Modules.Chat.PlanChatConnector),
             };
             var types = new List<Type>(builtIns);
             types.AddRange(connectorTypes.Where(t => !builtIns.Contains(t)));

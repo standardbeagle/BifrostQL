@@ -202,5 +202,70 @@ namespace BifrostQL.Server.Test.Pgwire
             result.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateFeatureNotSupported);
             result.TransactionStatus.Should().Be('I');
         }
+
+        [Fact]
+        public async Task BindOutOfRangeNumericParam_YieldsCleanError_SessionSurvives_NoLeak()
+        {
+            var executor = PgWireTestHarness.UsersExecutor(TwoUsers(), out _);
+            await using var harness = new PgWireTestHarness(executor);
+            var client = (await harness.OpenSessionAsync()).Client;
+
+            // $1 declared int8 but the bound text value overflows long.Parse. This must NOT
+            // escape the bind loop as an unhandled OverflowException (which would drop the
+            // connection with no ErrorResponse); it must yield a clean bind error + skip-to-Sync.
+            const string overflow = "99999999999999999999999999999";
+            await client.SendParseAsync("", "SELECT id FROM users WHERE id = $1", PgTypeMap.OidInt8);
+            await client.SendBindAsync("", "", overflow);
+            await client.SendExecuteAsync(""); // discarded during skip-until-Sync
+            await client.SendSyncAsync();
+
+            var result = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
+
+            // Clean bind ErrorResponse — not a dropped connection / unhandled throw.
+            result.HasError.Should().BeTrue();
+            result.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateProtocolViolation);
+            result.BindComplete.Should().BeFalse();
+            result.TransactionStatus.Should().Be('I');
+
+            // No leak: neither the raw value nor exception text ("Overflow") reaches the wire.
+            result.ErrorMessage.Should().NotContain(overflow);
+            result.ErrorMessage.Should().NotContain("Overflow");
+
+            // The session survives: a follow-up valid Parse/Bind/Execute on the SAME connection
+            // round-trips normally.
+            await client.SendParseAsync("", "SELECT id FROM users WHERE id = $1", PgTypeMap.OidInt8);
+            await client.SendBindAsync("", "", "5");
+            await client.SendExecuteAsync("");
+            await client.SendSyncAsync();
+
+            var second = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
+            second.HasError.Should().BeFalse();
+            second.BindComplete.Should().BeTrue();
+            second.CommandTag.Should().Be("SELECT 2");
+        }
+
+        [Fact]
+        public async Task BindMalformedNumericParam_HitsSameCleanBindErrorPath()
+        {
+            var executor = PgWireTestHarness.UsersExecutor(TwoUsers(), out _);
+            await using var harness = new PgWireTestHarness(executor);
+            var client = (await harness.OpenSessionAsync()).Client;
+
+            // A non-numeric text value for a declared int8 OID raises FormatException from
+            // long.Parse and must take the same clean bind-error path, not crash the session.
+            const string garbage = "not-a-number";
+            await client.SendParseAsync("", "SELECT id FROM users WHERE id = $1", PgTypeMap.OidInt8);
+            await client.SendBindAsync("", "", garbage);
+            await client.SendExecuteAsync("");
+            await client.SendSyncAsync();
+
+            var result = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
+
+            result.HasError.Should().BeTrue();
+            result.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateProtocolViolation);
+            result.BindComplete.Should().BeFalse();
+            result.TransactionStatus.Should().Be('I');
+            result.ErrorMessage.Should().NotContain(garbage);
+        }
     }
 }

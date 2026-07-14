@@ -152,8 +152,14 @@ namespace BifrostQL.Server.Pgwire
                 {
                     values[i] = DecodeTextParameter(oid, raw);
                 }
-                catch (FormatException)
+                catch (Exception ex) when (ex is FormatException or OverflowException or ArgumentException)
                 {
+                    // A malformed (FormatException/ArgumentException) or out-of-range
+                    // (OverflowException from long/decimal/double.Parse) text value for the
+                    // declared numeric/typed OID is a client fault, not a server fault: emit a
+                    // clean bind ErrorResponse and enter skip-until-Sync so the SESSION SURVIVES.
+                    // The raw value + exception detail stay server-side only (invariant 3).
+                    _logger.LogWarning(ex, "pgwire extended bind: parameter ${Param} text value invalid for its declared type.", i + 1);
                     await FailAsync(PgWireProtocol.SqlStateProtocolViolation,
                         $"parameter ${i + 1} text value is not valid for its declared type.", ct);
                     return;
@@ -429,7 +435,9 @@ namespace BifrostQL.Server.Pgwire
         /// Decodes a TEXT-format parameter to a CLR value typed by its pg OID, so a bound
         /// parameter behaves like the equivalent SQL literal when it reaches the filter. An
         /// unspecified OID (0) or an unmapped type stays a string. A value that does not parse
-        /// for its declared type raises <see cref="FormatException"/> (→ clean bind error).
+        /// for its declared type raises <see cref="FormatException"/>/<see cref="ArgumentException"/>,
+        /// and an out-of-range numeric raises <see cref="OverflowException"/> — the Bind caller
+        /// turns any of these into a clean bind error (skip-until-Sync), never an unhandled throw.
         /// </summary>
         private static object? DecodeTextParameter(int oid, byte[] raw)
         {

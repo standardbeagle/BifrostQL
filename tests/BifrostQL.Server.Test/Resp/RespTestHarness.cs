@@ -73,7 +73,8 @@ namespace BifrostQL.Server.Test.Resp
         }
 
         public static async Task<RespFixture> StartAsync(
-            IRespCredentialStore store, IServiceProvider services, RespWireOptions options)
+            IRespCredentialStore store, IServiceProvider services, RespWireOptions options,
+            params IRespCommandHandler[] dataHandlers)
         {
             var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
@@ -84,7 +85,9 @@ namespace BifrostQL.Server.Test.Resp
             var serverSocket = await listener.AcceptTcpClientAsync();
             await connectTask;
 
-            var handler = new RespConnectionHandler(store, BifrostAuthContextFactory.Instance, services, options);
+            var handler = new RespConnectionHandler(
+                store, BifrostAuthContextFactory.Instance, services, options,
+                dataHandlers.Length > 0 ? dataHandlers : null);
             // Close the server socket when the handler returns (QUIT / protocol-error / EOF), exactly
             // as Kestrel closes the connection when OnConnectedAsync returns — so a client blocked on a
             // read observes EOF instead of hanging.

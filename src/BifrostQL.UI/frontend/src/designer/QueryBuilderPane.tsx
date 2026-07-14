@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { SavedObject } from "@standardbeagle/edit-db";
+import { SavedObjectConflictError } from "@standardbeagle/edit-db";
 import { BridgeError } from "../lib/native-bridge";
 import {
   getBuilderSchema,
@@ -32,14 +34,46 @@ import {
   type DesignerState,
   type M2mJoinPlan,
 } from "./designer-state";
+import {
+  serializeQuery,
+  parseQueryDefinition,
+  detectSchemaDrift,
+  describeDrift,
+  hasDrift,
+  type SavedQueryDefinition,
+  type SchemaDrift,
+} from "./saved-query";
+import { savedQueryStore, SAVED_QUERY_TYPE, newQueryId } from "./saved-query-store";
+
+/** The saved query currently open in the designer (id is stable across renames). */
+interface ActiveQuery {
+  id: string;
+  name: string;
+  /** Store version, echoed back on save for optimistic-concurrency detection. */
+  version: number;
+}
+
+interface QueryBuilderPaneProps {
+  /** A saved query the shell's nav asked us to open. */
+  openRequest?: SavedObject | null;
+  /** Reports which saved query is open (or null) so the nav can highlight it. */
+  onActiveChange?: (id: string | null) => void;
+  /** Fired after a save/rename/delete so the nav refetches its list. */
+  onStoreChanged?: () => void;
+}
 
 /**
  * The Access-style visual query builder pane: palette + canvas + join editor +
  * criteria grid, with View SQL (build-sql preview) and Run (build-and-exec into
  * the shared result grid). Photino-only; in a browser the bridge is absent and a
  * notice is shown.
+ *
+ * Designs persist as `type: 'query'` saved objects. Opening one restores the
+ * design and diffs its schema fingerprint against the live schema: broken
+ * references open the query in degraded mode (running is blocked, the definition
+ * is left exactly as stored) so the user — not the app — decides the repair.
  */
-export function QueryBuilderPane() {
+export function QueryBuilderPane({ openRequest, onActiveChange, onStoreChanged }: QueryBuilderPaneProps = {}) {
   const [schema, setSchema] = useState<BuilderSchema | null>(null);
   const [schemaError, setSchemaError] = useState<string | null>(null);
   const [state, setState] = useState<DesignerState>(emptyDesignerState);
@@ -49,6 +83,14 @@ export function QueryBuilderPane() {
   const [result, setResult] = useState<BuildAndExecResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+
+  // Saved-query session: what's open, what was last persisted, and whether the
+  // stored design still matches the live schema.
+  const [active, setActive] = useState<ActiveQuery | null>(null);
+  const [savedDefinition, setSavedDefinition] = useState<SavedQueryDefinition | null>(null);
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
+  const [driftOnOpen, setDriftOnOpen] = useState<SchemaDrift | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
 
   const available = isBuilderBridgeAvailable();
 
@@ -62,6 +104,122 @@ export function QueryBuilderPane() {
       cancelled = true;
     };
   }, [available]);
+
+  // Open a saved query: restore the design as stored, then diff its fingerprint
+  // against the live schema. Never rewrite the definition to "fix" it.
+  useEffect(() => {
+    if (!openRequest || !schema) return;
+    const definition = parseQueryDefinition(openRequest.definition);
+    if (!definition) {
+      setError(`"${openRequest.name}" is not a saved visual query this version can open.`);
+      return;
+    }
+    setState(definition.state);
+    setSavedDefinition(definition);
+    setSavedSnapshot(JSON.stringify(definition.state));
+    setActive({ id: openRequest.id, name: openRequest.name, version: openRequest.version });
+    setDriftOnOpen(detectSchemaDrift(definition, schema));
+    setAmbiguous([]);
+    setM2mPlans([]);
+    setSqlPreview(null);
+    setResult(null);
+    setError(null);
+    setStatus(null);
+    onActiveChange?.(openRequest.id);
+  }, [openRequest, schema, onActiveChange]);
+
+  const dirty = useMemo(() => {
+    if (savedSnapshot === null) return state.tables.length > 0;
+    return JSON.stringify(state) !== savedSnapshot;
+  }, [state, savedSnapshot]);
+
+  // Degraded mode: the query opened with references the database no longer has.
+  // Building SQL from it would fail anyway, so Run/View SQL stay blocked and the
+  // broken references are listed. The stored definition is never rewritten — but
+  // once the user edits the offending references away, the design is runnable
+  // again, so the warning is re-derived from what is currently on the canvas.
+  const drift = useMemo(() => {
+    if (!schema || driftOnOpen === null || !hasDrift(driftOnOpen)) return null;
+    return detectSchemaDrift(serializeQuery(state), schema);
+  }, [state, schema, driftOnOpen]);
+  const degraded = drift !== null && hasDrift(drift);
+
+  /** Persists the given definition under `id`/`name`; returns false when it failed. */
+  const persist = useCallback(
+    async (id: string, name: string, version: number, definition: SavedQueryDefinition): Promise<boolean> => {
+      try {
+        const stored = await savedQueryStore.put({
+          id,
+          type: SAVED_QUERY_TYPE,
+          name,
+          definition,
+          version,
+        });
+        setActive({ id: stored.id, name: stored.name, version: stored.version });
+        setSavedDefinition(definition);
+        setSavedSnapshot(JSON.stringify(definition.state));
+        setError(null);
+        setStatus(`Saved "${stored.name}".`);
+        onActiveChange?.(stored.id);
+        onStoreChanged?.();
+        return true;
+      } catch (e) {
+        setStatus(null);
+        setError(
+          e instanceof SavedObjectConflictError
+            ? `"${name}" was changed elsewhere. Reopen it before saving to avoid overwriting that change.`
+            : errMsg(e),
+        );
+        return false;
+      }
+    },
+    [onActiveChange, onStoreChanged],
+  );
+
+  const onSaveAs = useCallback(async () => {
+    const name = window.prompt("Save query as", active ? `${active.name} copy` : "Untitled query");
+    if (name === null || name.trim() === "") return;
+    // A new object: fresh id, version 0 (the store assigns the stored version).
+    await persist(newQueryId(), name.trim(), 0, serializeQuery(state));
+  }, [active, state, persist]);
+
+  const onSave = useCallback(async () => {
+    if (!active) {
+      await onSaveAs();
+      return;
+    }
+    await persist(active.id, active.name, active.version, serializeQuery(state));
+  }, [active, state, persist, onSaveAs]);
+
+  // Rename keeps the id — and the stored definition — so a rename can never
+  // smuggle in unsaved design edits (or auto-repair a drifted definition).
+  const onRename = useCallback(async () => {
+    if (!active || !savedDefinition) return;
+    const name = window.prompt("Rename query", active.name);
+    if (name === null || name.trim() === "" || name.trim() === active.name) return;
+    await persist(active.id, name.trim(), active.version, savedDefinition);
+  }, [active, savedDefinition, persist]);
+
+  const onDelete = useCallback(async () => {
+    if (!active) return;
+    if (!window.confirm(`Delete the saved query "${active.name}"? This cannot be undone.`)) return;
+    try {
+      await savedQueryStore.remove(SAVED_QUERY_TYPE, active.id);
+    } catch (e) {
+      setError(errMsg(e));
+      return;
+    }
+    // The design stays on the canvas — deleting the saved copy shouldn't throw
+    // away the work in front of the user — but it is no longer attached to one.
+    setActive(null);
+    setSavedDefinition(null);
+    setSavedSnapshot(null);
+    setDriftOnOpen(null);
+    setError(null);
+    setStatus(`Deleted "${active.name}". The design is still open, unsaved.`);
+    onActiveChange?.(null);
+    onStoreChanged?.();
+  }, [active, onActiveChange, onStoreChanged]);
 
   const onAddTable = useCallback(
     (qualified: string) => {
@@ -134,6 +292,16 @@ export function QueryBuilderPane() {
 
   return (
     <div className="qbe" style={styles.root}>
+      {degraded && drift && (
+        <div role="alert" style={styles.drift}>
+          <strong>This saved query no longer matches the database.</strong>
+          <span>
+            {describeDrift(drift).join(", ")} {drift.missingTables.length + drift.missingColumns.length === 1 ? "is" : "are"} gone.
+            The saved definition was left untouched — edit the design to repair it, then save.
+          </span>
+        </div>
+      )}
+
       <div style={styles.top}>
         <TablePalette schema={schema} onAddTable={onAddTable} />
         <div style={styles.canvasCol}>
@@ -196,8 +364,25 @@ export function QueryBuilderPane() {
       </div>
 
       <div style={styles.toolbar}>
-        <button type="button" onClick={() => void onViewSql()} style={styles.btn}>View SQL</button>
-        <button type="button" onClick={() => void onRun()} disabled={running} style={styles.runBtn}>
+        <span style={styles.name}>
+          {active ? active.name : "Untitled query"}
+          {dirty && (
+            <span style={styles.dirty} title="Unsaved changes" aria-label="Unsaved changes">
+              •
+            </span>
+          )}
+        </span>
+        <button type="button" onClick={() => void onSave()} disabled={!dirty && active !== null} style={styles.btn}>
+          Save
+        </button>
+        <button type="button" onClick={() => void onSaveAs()} style={styles.btn}>Save as…</button>
+        <button type="button" onClick={() => void onRename()} disabled={!active} style={styles.btn}>Rename</button>
+        <button type="button" onClick={() => void onDelete()} disabled={!active} style={styles.btn}>Delete</button>
+
+        <span style={styles.spacer} />
+
+        <button type="button" onClick={() => void onViewSql()} disabled={degraded} style={styles.btn}>View SQL</button>
+        <button type="button" onClick={() => void onRun()} disabled={running || degraded} style={styles.runBtn}>
           {running ? "Running…" : "Run"}
         </button>
         {result && (
@@ -205,6 +390,7 @@ export function QueryBuilderPane() {
             {result.rows.length} row(s){result.truncated ? " (truncated)" : ""}
           </span>
         )}
+        {!result && status && <span style={styles.status}>{status}</span>}
       </div>
 
       {error && <div role="alert" style={styles.error}>{error}</div>}
@@ -221,11 +407,15 @@ function errMsg(e: unknown): string {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  root: { display: "flex", flexDirection: "column", height: "100%", minHeight: 0 },
+  root: { display: "flex", flexDirection: "column", height: "100%", minHeight: 0, flex: 1, minWidth: 0 },
   top: { display: "flex", flex: 1, minHeight: 0, borderBottom: "1px solid var(--border, #d1d5db)" },
   canvasCol: { display: "flex", flexDirection: "column", flex: 1, minWidth: 0, overflow: "auto" },
   ambiguous: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "6px 12px", background: "#fffbeb", borderTop: "1px solid #fde68a", fontSize: 12 },
-  toolbar: { display: "flex", alignItems: "center", gap: 12, padding: "8px 12px" },
+  drift: { display: "flex", flexDirection: "column", gap: 4, padding: "8px 12px", background: "#fffbeb", borderBottom: "1px solid #fde68a", color: "#92400e", fontSize: 12 },
+  toolbar: { display: "flex", alignItems: "center", gap: 8, padding: "8px 12px" },
+  name: { fontSize: 13, fontWeight: 600, marginRight: 4 },
+  dirty: { color: "#b45309", marginLeft: 4, fontSize: 16, lineHeight: 1 },
+  spacer: { flex: 1 },
   btn: { border: "1px solid currentColor", background: "transparent", borderRadius: 6, padding: "6px 14px", cursor: "pointer", font: "inherit" },
   runBtn: { background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", cursor: "pointer", font: "inherit" },
   status: { fontSize: 12, color: "#6b7280" },

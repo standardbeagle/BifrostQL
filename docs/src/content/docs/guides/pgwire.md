@@ -114,7 +114,7 @@ from a typo (see the error contract below):
 | CTEs (`WITH …`) | rejected (not a recognized statement start) |
 | Non-`INNER` joins, multi-condition `ON`, a second join | `0A000 feature_not_supported` |
 | Composite-FK joins, one-to-many (collection) joins | `0A000 feature_not_supported` |
-| Referencing a joined-table column in `WHERE`/`ORDER BY`/`SELECT` | `0A000 feature_not_supported` |
+| Referencing a joined-table column in `WHERE`/`ORDER BY` (joined columns are readable in the `SELECT` list only) | `0A000 feature_not_supported` |
 
 Writes are **not supported at all** — this is a read-only surface. There is no
 `INSERT`/`UPDATE`/`DELETE` path; the parser simply never recognizes them as a valid

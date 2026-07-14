@@ -57,10 +57,6 @@ namespace BifrostQL.Server.Pgwire
         // pg_get_userbyid(relowner) as the "Owner" column of \d / \dt.
         private const string SyntheticOwnerName = "bifrost";
 
-        private static readonly Regex CatalogRelationPattern = new(
-            @"\b(from|join)\s+pg_(class|namespace|attribute|type)\b",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
         // Structural signature of the query psql issues for \d and \dt: a pg_class ⋈
         // pg_namespace join carrying the relkind IN (...) filter and the
         // pg_table_is_visible(oid) guard, ending in the positional ORDER BY 1[,2].
@@ -102,20 +98,34 @@ namespace BifrostQL.Server.Pgwire
                 return BuildDescribeRelations(describeVisible, describe);
             }
 
-            // 3. Only a query that actually references an emulated catalog relation is
-            //    ours. Everything else returns null so the normal read path is untouched.
-            if (!ReferencesCatalogRelation(sql))
+            // 3. Single-relation catalog SELECT. Decide catalog-vs-user by the PARSED
+            //    FROM target, not a substring anywhere in the text: a user query that
+            //    merely carries "information_schema.tables" / "pg_class" inside a string
+            //    literal or column value must fall through to the read path, not be
+            //    misrouted here. A query that does not parse under the subset is not one
+            //    we own either — the read path emits the canonical error for it.
+            PgSelectStatement stmt;
+            try
+            {
+                stmt = PgSqlSubsetParser.Parse(sql);
+            }
+            catch (PgQueryTranslationException)
+            {
                 return null;
-
-            // Parse with the shared allowlist grammar. A parse failure here is a genuine
-            // client error on a catalog query and maps to a clean pg error.
-            var stmt = PgSqlSubsetParser.Parse(sql);
+            }
 
             var relation = PgCatalog.ResolveRelation(stmt.From.Schema, stmt.From.Name);
             if (relation is null)
-                throw new PgQueryTranslationException(
-                    $"pgwire: catalog relation \"{stmt.From.Name}\" is not emulated.",
-                    PgWireProtocol.SqlStateFeatureNotSupported);
+            {
+                // An explicit pg_catalog / information_schema qualification we do not
+                // emulate is a genuine catalog query → clean fail-closed error. Any other
+                // FROM target is a user table → fall through to the read path unchanged.
+                if (IsCatalogSchema(stmt.From.Schema))
+                    throw new PgQueryTranslationException(
+                        $"pgwire: catalog relation \"{stmt.From.Name}\" is not emulated.",
+                        PgWireProtocol.SqlStateFeatureNotSupported);
+                return null;
+            }
 
             if (stmt.Join is not null)
                 throw new PgQueryTranslationException(
@@ -162,13 +172,9 @@ namespace BifrostQL.Server.Pgwire
 
         // ---- recognition -----------------------------------------------------
 
-        private static bool ReferencesCatalogRelation(string sql)
-        {
-            var lower = sql.ToLowerInvariant();
-            return lower.Contains("information_schema.")
-                || lower.Contains("pg_catalog.")
-                || CatalogRelationPattern.IsMatch(lower);
-        }
+        private static bool IsCatalogSchema(string? schema) =>
+            string.Equals(schema, "pg_catalog", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(schema, "information_schema", StringComparison.OrdinalIgnoreCase);
 
         // ---- psql \d / \dt relation list (in-memory pg_class ⋈ pg_namespace) -
 

@@ -212,6 +212,27 @@ namespace BifrostQL.Server.Test.Pgwire
         }
 
         [Fact]
+        public async Task UserQuery_WithCatalogTextInStringLiteral_ExecutesAndIsNotMisrouted()
+        {
+            // A genuine user query that merely carries "information_schema.tables" as a
+            // string-literal value, while selecting FROM a real user table, must route
+            // to the read path — catalog detection keys off the parsed FROM target, not
+            // a substring anywhere in the text.
+            var executor = CatalogExecutor(ordersRows: new IReadOnlyDictionary<string, object?>[]
+            {
+                new Dictionary<string, object?> { ["id"] = 7, ["customer"] = "acme" },
+            });
+            await using var session = await PgSession.StartAsync(executor, MemberPrincipal());
+
+            await session.Client.SendQueryAsync(
+                "SELECT id FROM orders WHERE customer = 'see information_schema.tables for details'");
+            var result = await session.Client.ReadQueryResultAsync().WaitAsync(Timeout);
+
+            result.HasError.Should().BeFalse();               // not misrouted to feature_not_supported
+            result.Rows.Should().ContainSingle().Which.Should().Equal("7");
+        }
+
+        [Fact]
         public async Task UnknownCatalogColumn_MapsToCleanSyntaxError_AndSessionSurvives()
         {
             var executor = CatalogExecutor();

@@ -42,10 +42,37 @@ namespace BifrostQL.Server.Pgwire
         public const byte DataRow = (byte)'D';          // backend: one result row (text values)
         public const byte CommandComplete = (byte)'C';  // backend: command tag, e.g. "SELECT 3"
 
+        // ---- Extended query protocol backend message type bytes (slice 5) ----
+        // Direction disambiguates the reused letters: '1'/'2'/'3'/'t'/'n'/'s' are
+        // backend-only here, while the frontend Parse/Bind/Describe/Execute/Sync/Close
+        // messages below share letters with unrelated backend types (e.g. frontend
+        // Execute 'E' vs backend ErrorResponse 'E') but never on the same direction.
+        public const byte ParseComplete = (byte)'1';         // backend: Parse succeeded
+        public const byte BindComplete = (byte)'2';          // backend: Bind succeeded
+        public const byte CloseComplete = (byte)'3';         // backend: Close succeeded
+        public const byte ParameterDescription = (byte)'t';  // backend: prepared-statement param type OIDs
+        public const byte NoData = (byte)'n';                // backend: statement/portal yields no rows
+        public const byte PortalSuspended = (byte)'s';       // backend: Execute row-limit reached, more rows remain
+
         // ---- Frontend (client → server) message type bytes ----
         public const byte PasswordMessage = (byte)'p'; // also SASLInitialResponse / SASLResponse
         public const byte Query = (byte)'Q';           // simple query: a single SQL string
         public const byte Terminate = (byte)'X';       // client asks to close the session
+
+        // ---- Extended query protocol frontend message type bytes (slice 5) ----
+        public const byte ParseMessage = (byte)'P';    // frontend: prepare a named/unnamed statement
+        public const byte BindMessage = (byte)'B';     // frontend: bind params into a portal
+        public const byte DescribeMessage = (byte)'D'; // frontend: describe a statement ('S') or portal ('P')
+        public const byte ExecuteMessage = (byte)'E';  // frontend: run a portal
+        public const byte SyncMessage = (byte)'S';     // frontend: close the extended sequence → ReadyForQuery
+        public const byte CloseMessage = (byte)'C';    // frontend: drop a statement ('S') or portal ('P')
+        public const byte FlushMessage = (byte)'H';    // frontend: flush buffered output (no-op here — we flush each frame)
+
+        /// <summary>Describe/Close target discriminator: a prepared statement.</summary>
+        public const byte DescribeStatement = (byte)'S';
+
+        /// <summary>Describe/Close target discriminator: a portal.</summary>
+        public const byte DescribePortal = (byte)'P';
 
         /// <summary>
         /// ReadyForQuery transaction-status byte for autocommit: 'I' = idle, not inside a
@@ -90,6 +117,20 @@ namespace BifrostQL.Server.Pgwire
         // stays usable (autocommit), unlike the "FATAL" handshake rejections above.
         public const string SqlStateSyntaxError = "42601";    // syntax_error (unrecognized SQL)
         public const string SqlStateInternalError = "XX000";  // internal_error (execution fault)
+
+        // SQLSTATE codes used by the extended query protocol + connection admission (slice 5).
+        public const string SqlStateQueryCanceled = "57014";        // query_canceled (CancelRequest matched)
+        public const string SqlStateTooManyConnections = "53300";   // too_many_connections (over the limit)
+        public const string SqlStateInvalidSqlStatementName = "26000"; // reference to an unknown prepared statement/portal
+
+        /// <summary>
+        /// Client-safe ErrorResponse message for a query aborted by a matching CancelRequest.
+        /// This is the standard PostgreSQL wording; it carries no server-internal detail.
+        /// </summary>
+        public const string QueryCanceledMessage = "canceling statement due to user request";
+
+        /// <summary>Client-safe ErrorResponse message when the connection limit is reached.</summary>
+        public const string TooManyConnectionsMessage = "too many connections for the pgwire endpoint";
 
         /// <summary>
         /// Generic, client-safe ErrorResponse message for a query that failed with an

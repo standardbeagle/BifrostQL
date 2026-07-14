@@ -34,6 +34,14 @@ namespace BifrostQL.Server.Pgwire
         public PgAuthMethod AuthMethod { get; set; } = PgAuthMethod.ScramSha256;
 
         /// <summary>
+        /// Maximum number of concurrent authenticated + admitted connections. The N+1th
+        /// connection is refused cleanly with <c>53300 too_many_connections</c> during
+        /// startup and closed — never left to crash or hang. Enforced lock-free by
+        /// <see cref="PgConnectionLimiter"/>. Default 100.
+        /// </summary>
+        public int MaxConnections { get; set; } = 100;
+
+        /// <summary>
         /// The server certificate presented when a client issues SSLRequest. Required:
         /// the front door refuses to start without it rather than silently answering 'N'
         /// (no-TLS) to every client — credentials must never cross the wire in the clear

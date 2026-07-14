@@ -120,6 +120,20 @@ namespace BifrostQL.Server.Pgwire
             return ms.ToArray();
         }
 
+        /// <summary>
+        /// ParameterDescription body (extended protocol): Int16 parameter count followed
+        /// by that many Int32 parameter type OIDs. Sent in reply to a Describe of a
+        /// prepared statement so the driver learns each <c>$N</c> placeholder's type.
+        /// </summary>
+        public static byte[] ParameterDescription(IReadOnlyList<int> parameterTypeOids)
+        {
+            using var ms = new MemoryStream();
+            WriteInt16(ms, (short)parameterTypeOids.Count);
+            foreach (var oid in parameterTypeOids)
+                WriteInt32(ms, oid);
+            return ms.ToArray();
+        }
+
         private static byte[] Int32Body(int value)
         {
             var body = new byte[4];

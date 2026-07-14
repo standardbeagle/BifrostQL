@@ -97,7 +97,7 @@ namespace BifrostQL.Server.Resp
                     if (arguments.Count == 0)
                         continue; // Redis silently ignores an empty multibulk.
 
-                    var keepOpen = await DispatchAsync(stream, session, arguments, ct);
+                    var keepOpen = await DispatchAsync(stream, session, frame, arguments, ct);
                     if (!keepOpen)
                         return;
                 }
@@ -135,7 +135,7 @@ namespace BifrostQL.Server.Resp
         /// inline; every other name is looked up in the data-command seam, gated by auth.
         /// </summary>
         private async Task<bool> DispatchAsync(
-            Stream stream, RespSession session, IReadOnlyList<string> arguments, CancellationToken ct)
+            Stream stream, RespSession session, RespValue frame, IReadOnlyList<string> arguments, CancellationToken ct)
         {
             var name = arguments[0].ToUpperInvariant();
             switch (name)
@@ -160,6 +160,11 @@ namespace BifrostQL.Server.Resp
                 case RespProtocol.Ping:
                     if (await RequireAuthAsync(stream, session, ct))
                         await HandlePingAsync(stream, arguments, ct);
+                    return true;
+
+                case RespProtocol.Echo:
+                    if (await RequireAuthAsync(stream, session, ct))
+                        await HandleEchoAsync(stream, frame, ct);
                     return true;
 
                 case RespProtocol.Select:
@@ -200,6 +205,26 @@ namespace BifrostQL.Server.Resp
                 ? (RespValue)RespValue.Bulk(arguments[1])
                 : RespValue.Simple(RespProtocol.Pong);
             await Reply(stream, reply, ct);
+        }
+
+        /// <summary>
+        /// ECHO &lt;message&gt;. Returns the single message argument verbatim as a bulk string. Redis
+        /// clients use ECHO as the per-connection handshake tracer, so answering it is what lets a real
+        /// StackExchange.Redis / redis-cli client complete its connection to this front door.
+        ///
+        /// <para>Echoes the RAW argument bytes straight off the decoded frame, NOT the UTF-8-decoded
+        /// command string: ECHO must be binary-safe (StackExchange.Redis's tracer is a 16-byte binary
+        /// GUID), and round-tripping through the string dispatch path would re-encode non-UTF-8 bytes and
+        /// change the bulk length, desyncing the client. This is the one command that needs the frame.</para>
+        /// </summary>
+        private static async Task HandleEchoAsync(Stream stream, RespValue frame, CancellationToken ct)
+        {
+            if (frame is RespArray { Items: { Count: 2 } items } && items[1] is RespBulkString { Value: { } raw })
+            {
+                await Reply(stream, new RespBulkString(raw), ct);
+                return;
+            }
+            await Reply(stream, RespValue.Err(RespProtocol.WrongArgCount(RespProtocol.Echo)), ct);
         }
 
         /// <summary>
@@ -382,7 +407,7 @@ namespace BifrostQL.Server.Resp
             // every non-plumbing command is an unknown command.
             if (!_dataHandlers.TryGetValue(name, out var handler))
             {
-                await Reply(stream, RespValue.Err($"ERR unknown command '{arguments[0]}'"), ct);
+                await Reply(stream, RespValue.Err(RespProtocol.UnknownCommand(arguments)), ct);
                 return;
             }
             if (handler.RequiresAuthentication && !await RequireAuthAsync(stream, session, ct))

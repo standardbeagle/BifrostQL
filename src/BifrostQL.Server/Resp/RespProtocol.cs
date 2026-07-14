@@ -52,6 +52,10 @@ namespace BifrostQL.Server.Resp
         public const string Command = "COMMAND";
         public const string Client = "CLIENT";
 
+        /// <summary><c>ECHO &lt;message&gt;</c> — returns the message verbatim. Redis clients (StackExchange.Redis)
+        /// use ECHO as the connection tracer during the handshake, so it is core plumbing, not a data command.</summary>
+        public const string Echo = "ECHO";
+
         // ---- Data command names (slice 2 read surface; dispatched at the IRespCommandHandler seam) ----
         public const string Get = "GET";
         public const string MGet = "MGET";
@@ -169,6 +173,20 @@ namespace BifrostQL.Server.Resp
         /// client-facing wire (it can carry schema/driver detail).
         /// </summary>
         public const string InternalError = "ERR internal error";
+
+        /// <summary>
+        /// The Redis-compatible unknown-command error: names the command and echoes the arguments that
+        /// followed, so a client (redis-cli, StackExchange.Redis) gets the same actionable guidance a real
+        /// Redis sends — <c>ERR unknown command 'FOO', with args beginning with: 'a', 'b'</c>. The command
+        /// name is quoted verbatim (never dispatched), so this can neither hang the loop nor leak internals.
+        /// </summary>
+        public static string UnknownCommand(IReadOnlyList<string> arguments)
+        {
+            var args = arguments.Count > 1
+                ? string.Join(", ", arguments.Skip(1).Select(a => $"'{a}'"))
+                : string.Empty;
+            return $"ERR unknown command '{arguments[0]}', with args beginning with: {args}";
+        }
 
         /// <summary>The Redis wrong-argument-count error for <paramref name="command"/> (lower-cased, quoted).</summary>
         public static string WrongArgCount(string command) =>

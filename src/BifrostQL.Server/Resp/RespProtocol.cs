@@ -58,6 +58,13 @@ namespace BifrostQL.Server.Resp
         public const string Exists = "EXISTS";
         public const string Type = "TYPE";
 
+        // ---- Hash command names (slice 3: a row projected as a field/value hash) ----
+        /// <summary><c>HGETALL &lt;table&gt;:&lt;pk…&gt;</c> — the whole row as a field/value hash.</summary>
+        public const string HGetAll = "HGETALL";
+
+        /// <summary><c>HGET &lt;table&gt;:&lt;pk…&gt; &lt;field&gt;</c> — one visible column's value.</summary>
+        public const string HGet = "HGET";
+
         /// <summary>
         /// The Redis key-space separator. A data-command key is addressed as
         /// <c>&lt;table&gt;:&lt;pk1&gt;[:&lt;pk2&gt;…]</c>; the first segment is the table and the

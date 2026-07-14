@@ -33,7 +33,7 @@ namespace BifrostQL.Server.Resp
                 var executor = context.Services.GetRequiredService<IQueryIntentExecutor>();
                 var model = await executor.GetModelAsync(context.Endpoint);
 
-                var keys = ParseKeys(model, context.Arguments, out var parseError);
+                var keys = ParseKeys(model, context.Arguments, TrailingNonKeyArgumentCount, out var parseError);
                 if (parseError is not null)
                     return RespValue.Err(parseError);
 
@@ -49,6 +49,13 @@ namespace BifrostQL.Server.Resp
         /// <summary>Returns a clean <c>-ERR</c> when the argument count is wrong, otherwise null.</summary>
         protected abstract RespValue? ValidateArity(int argumentCount);
 
+        /// <summary>
+        /// How many trailing arguments are NOT keys (e.g. HGET's <c>&lt;field&gt;</c>). The key-parsing
+        /// range excludes them, so they are never mis-parsed as a key. Default: none (every argument after
+        /// the command name is a key, as for GET/MGET/EXISTS/TYPE).
+        /// </summary>
+        protected virtual int TrailingNonKeyArgumentCount => 0;
+
         /// <summary>Produces the reply from the already-parsed, validated keys.</summary>
         protected abstract Task<RespValue> ExecuteAsync(
             RespCommandContext context, IQueryIntentExecutor executor, IReadOnlyList<RespKey> keys, CancellationToken cancellationToken);
@@ -57,14 +64,20 @@ namespace BifrostQL.Server.Resp
         protected static RespValue? RequireExactArgs(int argumentCount, string command) =>
             argumentCount == 2 ? null : RespValue.Err(RespProtocol.WrongArgCount(command));
 
+        /// <summary>An exact fixed argument count (command name included), e.g. HGETALL=2, HGET=3.</summary>
+        protected static RespValue? RequireArgs(int argumentCount, int expected, string command) =>
+            argumentCount == expected ? null : RespValue.Err(RespProtocol.WrongArgCount(command));
+
         /// <summary>The multi-key commands (MGET/EXISTS) resolve one or more keys.</summary>
         protected static RespValue? RequireAtLeastOneKey(int argumentCount, string command) =>
             argumentCount >= 2 ? null : RespValue.Err(RespProtocol.WrongArgCount(command));
 
-        private static IReadOnlyList<RespKey> ParseKeys(IDbModel model, IReadOnlyList<string> arguments, out string? error)
+        private static IReadOnlyList<RespKey> ParseKeys(
+            IDbModel model, IReadOnlyList<string> arguments, int trailingNonKeyArgumentCount, out string? error)
         {
-            var keys = new List<RespKey>(arguments.Count - 1);
-            for (var i = 1; i < arguments.Count; i++)
+            var keyEnd = arguments.Count - trailingNonKeyArgumentCount;
+            var keys = new List<RespKey>(Math.Max(0, keyEnd - 1));
+            for (var i = 1; i < keyEnd; i++)
             {
                 var parse = RespReadEngine.ParseKey(model, arguments[i]);
                 if (!parse.Ok)

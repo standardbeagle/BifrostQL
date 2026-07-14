@@ -141,6 +141,58 @@ namespace BifrostQL.Server.Resp
             return JsonSerializer.Serialize(ordered, JsonOptions);
         }
 
+        /// <summary>
+        /// The authoritative visible-column set for the field/value hash surface (HGETALL/HGET): the
+        /// columns the transformer pipeline ACTUALLY RETURNED for this identity, in schema ordinal order.
+        /// This intersects the model's columns with the returned row's keys — a column the pipeline
+        /// masked/omitted (crypto masking, column policy) is simply absent from <paramref name="row"/>
+        /// and therefore never surfaces here. Reflecting the returned columns (NOT the full
+        /// <see cref="IDbTable.Columns"/> set) is what keeps HGETALL from exposing more than the pipeline
+        /// authorized; a masked value present in the row is returned as-is (never unmasked).
+        /// </summary>
+        public static IReadOnlyList<KeyValuePair<string, object?>> VisibleFields(
+            IReadOnlyDictionary<string, object?> row, IDbTable table)
+        {
+            var fields = new List<KeyValuePair<string, object?>>();
+            foreach (var column in table.Columns.OrderBy(c => c.OrdinalPosition))
+                if (row.TryGetValue(column.DbName, out var value))
+                    fields.Add(new KeyValuePair<string, object?>(column.DbName, value));
+            return fields;
+        }
+
+        /// <summary>
+        /// Resolves a single requested HGET field to its value IFF it is a column the pipeline returned
+        /// for this identity. The field name is matched against the model column set (DB name or GraphQL
+        /// name), then the RETURNED <paramref name="row"/> must actually carry that column. A column that
+        /// exists in the model but was masked/omitted by the pipeline is reported as absent — exactly like
+        /// an unknown field — so an existing-but-denied column never leaks its existence via a distinct
+        /// outcome. Returns false (→ caller emits Null) in both the unknown-field and denied-column cases.
+        /// </summary>
+        public static bool TryResolveVisibleField(
+            IReadOnlyDictionary<string, object?> row, IDbTable table, string fieldName, out object? value)
+        {
+            value = null;
+            var column = table.Columns.FirstOrDefault(c =>
+                string.Equals(c.DbName, fieldName, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.GraphQlName, fieldName, StringComparison.OrdinalIgnoreCase));
+            return column is not null && row.TryGetValue(column.DbName, out value);
+        }
+
+        /// <summary>
+        /// Renders one column value as its scalar text for the field/value hash surface, consistent with
+        /// <see cref="RowToJson"/>'s per-value serialization: a string passes through unquoted, every other
+        /// scalar uses its JSON literal (numbers/booleans as-is, dates ISO-8601, byte arrays base64). A SQL
+        /// NULL has no scalar text — the caller maps it to the protocol's Null — so this is only ever
+        /// called for a non-null value.
+        /// </summary>
+        public static string FieldValueText(object? value)
+        {
+            var json = JsonSerializer.Serialize(value, JsonOptions);
+            return json.Length >= 2 && json[0] == '"'
+                ? JsonSerializer.Deserialize<string>(json)!
+                : json;
+        }
+
         private static async Task ResolveSinglePkBatchAsync(
             IQueryIntentExecutor executor,
             IReadOnlyList<RespKey> keys,

@@ -44,6 +44,11 @@ namespace BifrostQL.Server.Resp
             services.AddSingleton<IRespCommandHandler, RespExistsCommandHandler>();
             services.AddSingleton<IRespCommandHandler, RespTypeCommandHandler>();
 
+            // Slice-3 hash commands reuse the same single-row read path; the row is projected as a
+            // field/value hash (HGETALL) or a single visible column (HGET).
+            services.AddSingleton<IRespCommandHandler, RespHGetAllCommandHandler>();
+            services.AddSingleton<IRespCommandHandler, RespHGetCommandHandler>();
+
             // Adapter lifecycle via the shared adapter/hosted-service pattern.
             services.TryAddSingleton<RespWireAdapter>();
             services.AddSingleton<IHostedService>(sp =>

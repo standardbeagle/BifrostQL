@@ -57,5 +57,18 @@ namespace BifrostQL.Server.Resp
         /// slices.
         /// </summary>
         public string? Endpoint { get; set; }
+
+        /// <summary>
+        /// Master gate for the RESP WRITE surface (SET/HSET/DEL). <b>Off by default</b>: until a
+        /// deployment explicitly opts in by setting this <c>true</c>, every write command is
+        /// refused with a clean <c>-ERR</c> and executes NOTHING — the front door exposes reads
+        /// only. This is a fail-closed posture: a write path is the highest-risk surface, so it
+        /// stays dark unless deliberately turned on. When enabled, writes route through
+        /// <c>IMutationIntentExecutor</c> under the session identity, so the full mutation
+        /// transformer chain (tenant scoping, audit actor, soft-delete, field-encryption-on-write,
+        /// CDC/history hooks) applies and is unskippable. Enabling it is logged at startup as a
+        /// notable posture change.
+        /// </summary>
+        public bool EnableWrites { get; set; }
     }
 }

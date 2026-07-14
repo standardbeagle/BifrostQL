@@ -69,6 +69,16 @@ namespace BifrostQL.Server.Resp
         /// <summary><c>SCAN &lt;cursor&gt; MATCH &lt;table&gt;:* [COUNT n] [TYPE t]</c> — cursor-paginated PK enumeration.</summary>
         public const string Scan = "SCAN";
 
+        // ---- Write command names (slice 5: opt-in row mutation through IMutationIntentExecutor) ----
+        /// <summary><c>SET &lt;table&gt;:&lt;pk…&gt; &lt;json&gt;</c> — update a row's columns from a JSON object.</summary>
+        public const string SetCommand = "SET";
+
+        /// <summary><c>HSET &lt;table&gt;:&lt;pk…&gt; &lt;field&gt; &lt;value&gt; […]</c> — update named columns of a row.</summary>
+        public const string HSet = "HSET";
+
+        /// <summary><c>DEL &lt;key&gt; […]</c> — delete the addressed rows.</summary>
+        public const string Del = "DEL";
+
         /// <summary>SCAN option keyword: the glob that names the table to enumerate (only <c>&lt;table&gt;:*</c> is supported).</summary>
         public const string ScanMatchOption = "MATCH";
 
@@ -144,6 +154,13 @@ namespace BifrostQL.Server.Resp
 
         /// <summary>The Redis generic-error prefix for a client-facing, honestly-worded command error.</summary>
         public const string ErrPrefix = "ERR ";
+
+        /// <summary>
+        /// Refusal for a write command (SET/HSET/DEL) while the write surface is disabled — the
+        /// default posture (<see cref="RespWireOptions.EnableWrites"/> is false). Honest and clean:
+        /// the command executes nothing and no mutation intent is ever built.
+        /// </summary>
+        public const string WritesDisabledError = "ERR write commands are disabled";
 
         /// <summary>
         /// Sanitized, client-safe wording for an unexpected server-side failure while executing a data

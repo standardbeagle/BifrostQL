@@ -40,9 +40,16 @@ namespace BifrostQL.Server.Resp
                     "without an established identity. Enable RequireAuthentication unless this is deliberate.",
                     _options.Port);
 
+            if (_options.EnableWrites)
+                _logger.LogWarning(
+                    "resp front door on port {Port} started with WRITE commands ENABLED (SET/HSET/DEL) — " +
+                    "row mutations route through the mutation pipeline under the session identity. This is a " +
+                    "deliberate opt-in; leave EnableWrites off unless writes are intended.",
+                    _options.Port);
+
             _logger.LogInformation(
-                "resp front door ready on port {Port} (auth required: {RequireAuth}, endpoint: {Endpoint}).",
-                _options.Port, _options.RequireAuthentication, _options.Endpoint ?? "(default)");
+                "resp front door ready on port {Port} (auth required: {RequireAuth}, writes enabled: {Writes}, endpoint: {Endpoint}).",
+                _options.Port, _options.RequireAuthentication, _options.EnableWrites, _options.Endpoint ?? "(default)");
             return Task.CompletedTask;
         }
 

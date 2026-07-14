@@ -1,4 +1,3 @@
-using System.Collections;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
@@ -43,9 +42,6 @@ namespace BifrostQL.Core.Modules;
 /// </summary>
 public sealed class PolicyFilterTransformer : IFilterTransformer, IColumnReadGuard, IModuleNamed
 {
-    private const string UserIdContextKey = MetadataKeys.Auth.DefaultUserIdContextKey;
-    private const string RolesContextKey = MetadataKeys.Auth.DefaultRolesContextKey;
-
     private const string TableReadDeniedMessage =
         "Access denied by authorization policy.";
 
@@ -137,50 +133,11 @@ public sealed class PolicyFilterTransformer : IFilterTransformer, IColumnReadGua
         }
     }
 
+    // Identity projection is shared with every other policy-gated surface via
+    // PolicyIdentity so the same user id + roles are resolved everywhere; a local
+    // reimplementation could drift into a weaker (fail-open) check.
     private static AppIdentity BuildIdentity(QueryTransformContext context)
-    {
-        var userContext = context.UserContext;
-
-        var userId = userContext.TryGetValue(UserIdContextKey, out var idValue)
-                     && idValue is not null
-            ? idValue.ToString()
-            : null;
-
-        // A request with no resolved user still needs an identity for the
-        // evaluator; use a stable anonymous id so policy checks run normally.
-        if (string.IsNullOrWhiteSpace(userId))
-            userId = "anonymous";
-
-        var roles = ExtractRoles(userContext);
-
-        return new AppIdentity(userId, "query-context", roles: roles);
-    }
-
-    private static IReadOnlyList<string> ExtractRoles(IDictionary<string, object?> userContext)
-    {
-        if (!userContext.TryGetValue(RolesContextKey, out var rolesValue) || rolesValue is null)
-            return Array.Empty<string>();
-
-        if (rolesValue is string singleRole)
-            return new[] { singleRole };
-
-        if (rolesValue is IEnumerable<string> typedRoles)
-            return typedRoles.ToArray();
-
-        if (rolesValue is IEnumerable sequence)
-        {
-            var result = new List<string>();
-            foreach (var item in sequence)
-            {
-                var role = item?.ToString();
-                if (!string.IsNullOrWhiteSpace(role))
-                    result.Add(role);
-            }
-            return result;
-        }
-
-        return Array.Empty<string>();
-    }
+        => PolicyIdentity.FromUserContext(context.UserContext);
 
     // A policy that has restrictions (HasPolicy is true) but permits no action.
     // Only the evaluator's admin bypass can pass a Read check against it, so it

@@ -401,7 +401,10 @@ namespace BifrostQL.Server.Pgwire
         /// </summary>
         private static (string SqlState, string Message) MapQueryError(Exception ex) => ex switch
         {
-            PgQueryTranslationException => (PgWireProtocol.SqlStateSyntaxError, ex.Message),
+            // The translator's curated, deliberately user-facing message is forwarded
+            // with its own SQLSTATE: syntax_error for an unrecognized statement,
+            // feature_not_supported for a recognized but out-of-subset construct.
+            PgQueryTranslationException t => (t.SqlState, t.Message),
             _ => (PgWireProtocol.SqlStateInternalError, PgWireProtocol.InternalQueryErrorMessage),
         };
 

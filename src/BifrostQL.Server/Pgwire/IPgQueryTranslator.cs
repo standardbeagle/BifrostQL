@@ -1,5 +1,3 @@
-using System.Text.RegularExpressions;
-using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 
@@ -26,6 +24,19 @@ namespace BifrostQL.Server.Pgwire
     internal sealed class PgQueryTranslationException : Exception
     {
         public PgQueryTranslationException(string message) : base(message) { }
+
+        public PgQueryTranslationException(string message, string sqlState) : base(message)
+        {
+            SqlState = sqlState;
+        }
+
+        /// <summary>
+        /// The pg SQLSTATE to answer with. Defaults to <c>syntax_error</c> (an
+        /// unrecognized statement); recognized-but-out-of-subset constructs
+        /// (GROUP BY, UNION, functions, subqueries, non-INNER joins) set
+        /// <c>feature_not_supported</c> so the client can tell the two apart.
+        /// </summary>
+        public string SqlState { get; } = PgWireProtocol.SqlStateSyntaxError;
     }
 
     /// <summary>
@@ -41,104 +52,5 @@ namespace BifrostQL.Server.Pgwire
             IDictionary<string, object?> userContext,
             string? endpoint,
             CancellationToken cancellationToken);
-    }
-
-    /// <summary>
-    /// SLICE 3 replaces this with the full SQL-subset parser (SELECT + WHERE / ORDER BY /
-    /// LIMIT / OFFSET + joins → <see cref="GqlObjectQuery"/>). This slice-2 implementation
-    /// is the THINNEST recognizer that proves the encoding + round-trip path end to end:
-    /// <c>SELECT &lt;*|col,col&gt; FROM &lt;table&gt;</c> against a single table, no
-    /// predicates. Anything richer (WHERE/ORDER/JOIN/LIMIT) fails as a syntax error — it is
-    /// slice 3's job, not a silent partial execution. Swapping slice 3 in is a one-line DI
-    /// change in <c>AddBifrostPgwire</c>; the protocol loop and result encoding do not move.
-    /// </summary>
-    internal sealed class PgSimpleQueryTranslator : IPgQueryTranslator
-    {
-        // SELECT <cols> FROM <table>, optional trailing ';'. The table token stops at the
-        // first whitespace/';', so a trailing WHERE/ORDER/JOIN/LIMIT leaves unmatched tail
-        // text and the whole match fails — exactly the slice-3 boundary we want to reject.
-        private static readonly Regex SelectPattern = new(
-            @"^\s*SELECT\s+(?<cols>.+?)\s+FROM\s+(?<table>[^\s;]+)\s*;?\s*$",
-            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
-
-        public async Task<PgQueryPlan> TranslateAsync(
-            IQueryIntentExecutor executor,
-            string sql,
-            IDictionary<string, object?> userContext,
-            string? endpoint,
-            CancellationToken cancellationToken)
-        {
-            var match = SelectPattern.Match(sql ?? "");
-            if (!match.Success)
-                throw new PgQueryTranslationException(
-                    "pgwire slice 2 supports only 'SELECT <columns> FROM <table>' (no WHERE/ORDER BY/JOIN/LIMIT yet).");
-
-            var model = await executor.GetModelAsync(endpoint);
-            var table = ResolveTable(model, Unquote(match.Groups["table"].Value));
-            var columns = ResolveColumns(table, match.Groups["cols"].Value);
-
-            var query = new GqlObjectQuery
-            {
-                DbTable = table,
-                SchemaName = table.TableSchema,
-                TableName = table.DbName,
-                GraphQlName = table.GraphQlName,
-                Path = table.GraphQlName,
-            };
-            foreach (var column in columns)
-                query.ScalarColumns.Add(new GqlObjectColumn(column.DbName));
-
-            return new PgQueryPlan
-            {
-                Intent = new QueryIntent
-                {
-                    Query = query,
-                    UserContext = userContext,
-                    Endpoint = endpoint,
-                },
-                // Row dictionaries are keyed by DB column name, so the RowDescription field
-                // name and the DataRow projection both key off DbName.
-                Columns = columns.Select(c => new PgResultColumn(c.DbName, c.DataType)).ToList(),
-            };
-        }
-
-        private static IDbTable ResolveTable(IDbModel model, string name)
-        {
-            var table = model.Tables.FirstOrDefault(t =>
-                string.Equals(t.DbName, name, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(t.GraphQlName, name, StringComparison.OrdinalIgnoreCase));
-            if (table is null)
-                throw new PgQueryTranslationException($"relation \"{name}\" does not exist.");
-            return table;
-        }
-
-        private static IReadOnlyList<ColumnDto> ResolveColumns(IDbTable table, string columnList)
-        {
-            var trimmed = columnList.Trim();
-            if (trimmed == "*")
-                return table.Columns.OrderBy(c => c.OrdinalPosition).ToList();
-
-            var result = new List<ColumnDto>();
-            foreach (var raw in trimmed.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                var name = Unquote(raw);
-                var column = table.Columns.FirstOrDefault(c =>
-                    string.Equals(c.DbName, name, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(c.GraphQlName, name, StringComparison.OrdinalIgnoreCase));
-                if (column is null)
-                    throw new PgQueryTranslationException(
-                        $"column \"{name}\" does not exist on relation \"{table.DbName}\".");
-                result.Add(column);
-            }
-            if (result.Count == 0)
-                throw new PgQueryTranslationException("SELECT requires at least one column.");
-            return result;
-        }
-
-        private static string Unquote(string token)
-        {
-            var t = token.Trim();
-            return t.Length >= 2 && t[0] == '"' && t[^1] == '"' ? t[1..^1] : t;
-        }
     }
 }

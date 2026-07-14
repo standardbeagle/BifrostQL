@@ -19,7 +19,7 @@ namespace BifrostQL.Server.Test.Pgwire
     /// (<see cref="IQueryIntentExecutor"/>) is mocked so the tests pin the wire behavior —
     /// RowDescription/DataRow/CommandComplete encoding, pg type mapping, error mapping,
     /// autocommit resilience, and that the authenticated identity reaches the seam — while
-    /// the real <see cref="PgSimpleQueryTranslator"/> and encoders run unmocked.
+    /// the real <see cref="PgSubsetQueryTranslator"/> and encoders run unmocked.
     /// </summary>
     public sealed class PgSimpleQueryTests
     {
@@ -287,7 +287,7 @@ namespace BifrostQL.Server.Test.Pgwire
             {
                 var services = new ServiceCollection()
                     .AddSingleton(executor)
-                    .AddSingleton<IPgQueryTranslator, PgSimpleQueryTranslator>()
+                    .AddSingleton<IPgQueryTranslator, PgSubsetQueryTranslator>()
                     .BuildServiceProvider();
 
                 var store = new FakePgCredentialStore().Add("alice", "s3cret", TenantPrincipal("user-alice", "tenant-a"));

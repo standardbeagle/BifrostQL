@@ -150,10 +150,77 @@ namespace BifrostQL.Server.Test.Pgwire
                 .WhoseValue.Should().Be("tenant-a");
         }
 
+        [Fact]
+        public async Task ExecutionThrowsSensitiveText_WireMessageIsGenericSanitized_NotRawDetail_AndSessionSurvives()
+        {
+            // A BifrostExecutionError whose message wraps raw DB detail is the exact leak
+            // vector the review advisory flagged: FromDatabaseException/ConnectionFailed can
+            // embed driver/schema text, so its Message is NOT provably client-safe. It must
+            // be sanitized to a generic internal_error, never forwarded verbatim.
+            const string SensitiveText = "column secret_x does not exist in table users";
+            var executor = ThrowingExecutor(UsersTable(),
+                new BifrostExecutionError($"Database error: {SensitiveText}"));
+            await using var fixture = await PgSession.StartAsync(executor);
+
+            // Act 1: a well-formed SELECT that translates fine but throws at execution.
+            await fixture.Client.SendQueryAsync("SELECT id FROM users");
+            var errored = await fixture.Client.ReadQueryResultAsync().WaitAsync(Timeout);
+
+            // Assert 1: internal_error SQLSTATE, generic wire message, NO sensitive substring.
+            errored.HasError.Should().BeTrue();
+            errored.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateInternalError);
+            errored.ErrorMessage.Should().Be(PgWireProtocol.InternalQueryErrorMessage);
+            errored.ErrorMessage.Should().NotContain("secret_x");
+            errored.ErrorMessage.Should().NotContain(SensitiveText);
+            errored.TransactionStatus.Should().Be('I'); // non-fatal, still autocommit idle
+
+            // Act 2: the SAME connection still serves a translation error cleanly, proving
+            // the sanitized error did not tear the connection down.
+            await fixture.Client.SendQueryAsync("DELETE FROM users WHERE id = 1");
+            var next = await fixture.Client.ReadQueryResultAsync().WaitAsync(Timeout);
+            next.HasError.Should().BeTrue();
+            next.TransactionStatus.Should().Be('I');
+        }
+
+        [Fact]
+        public async Task UserFacingTranslationError_ForwardsCuratedMessage_WithSyntaxSqlState()
+        {
+            // A deliberately user-facing query error (unknown relation) must NOT be
+            // over-sanitized: the translator's curated message reaches the client so callers
+            // can see what was wrong, with the syntax_error SQLSTATE.
+            var executor = FakeExecutor(UsersTable(), Array.Empty<IReadOnlyDictionary<string, object?>>(), out _);
+            await using var fixture = await PgSession.StartAsync(executor);
+
+            await fixture.Client.SendQueryAsync("SELECT * FROM nonexistent");
+            var result = await fixture.Client.ReadQueryResultAsync().WaitAsync(Timeout);
+
+            result.HasError.Should().BeTrue();
+            result.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateSyntaxError);
+            result.ErrorMessage.Should().Contain("nonexistent"); // curated detail survives
+            result.ErrorMessage.Should().NotBe(PgWireProtocol.InternalQueryErrorMessage);
+            result.TransactionStatus.Should().Be('I');
+        }
+
         // ---- fixtures / doubles --------------------------------------------
 
         /// <summary>Captures the intent that reached the read seam.</summary>
         private sealed class CapturedIntent { public QueryIntent? Intent { get; set; } }
+
+        /// <summary>
+        /// An executor that translates (GetModelAsync resolves the table) but throws
+        /// <paramref name="toThrow"/> at execution, exercising the query-phase error path.
+        /// </summary>
+        private static IQueryIntentExecutor ThrowingExecutor(IDbTable table, Exception toThrow)
+        {
+            var model = Substitute.For<IDbModel>();
+            model.Tables.Returns(new[] { table });
+
+            var executor = Substitute.For<IQueryIntentExecutor>();
+            executor.GetModelAsync(Arg.Any<string?>()).Returns(Task.FromResult<IDbModel>(model));
+            executor.ExecuteAsync(Arg.Any<QueryIntent>(), Arg.Any<CancellationToken>())
+                .Returns<Task<QueryIntentResult>>(_ => throw toThrow);
+            return executor;
+        }
 
         private static IQueryIntentExecutor FakeExecutor(
             IDbTable table, IReadOnlyList<IReadOnlyDictionary<string, object?>> rows, out CapturedIntent captured)

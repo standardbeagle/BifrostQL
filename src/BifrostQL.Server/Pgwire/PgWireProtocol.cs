@@ -91,6 +91,15 @@ namespace BifrostQL.Server.Pgwire
         public const string SqlStateSyntaxError = "42601";    // syntax_error (unrecognized SQL)
         public const string SqlStateInternalError = "XX000";  // internal_error (execution fault)
 
+        /// <summary>
+        /// Generic, client-safe ErrorResponse message for a query that failed with an
+        /// unexpected or non-user-facing execution fault. The raw exception text (driver/DB
+        /// identifiers, schema names, stack detail) is logged server-side and NEVER sent on
+        /// the wire — only a deliberately user-facing query error (a translation/syntax
+        /// error) forwards its curated message. Fail-closed toward this string.
+        /// </summary>
+        public const string InternalQueryErrorMessage = "internal error during query execution.";
+
         /// <summary>ErrorResponse severity for a handshake rejection: the connection closes.</summary>
         public const string SeverityFatal = "FATAL";
 

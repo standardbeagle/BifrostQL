@@ -388,17 +388,21 @@ namespace BifrostQL.Server.Pgwire
         }
 
         /// <summary>
-        /// Maps a query-phase exception to a client-safe (SQLSTATE, message) pair. A
-        /// recognizer failure is a syntax error; a <see cref="BifrostExecutionError"/>
-        /// already carries an authored, leak-free message (raw DB errors are sanitized at
-        /// their source), so it passes through as internal_error. Anything else is reported
-        /// generically — an unexpected exception's text is never forwarded to the wire.
+        /// Maps a query-phase exception to a client-safe (SQLSTATE, message) pair. Only a
+        /// <see cref="PgQueryTranslationException"/> — the recognizer's own curated,
+        /// deliberately user-facing message (bad syntax, unknown relation/column) — is
+        /// forwarded to the wire, as a syntax_error. Every other exception, including
+        /// <see cref="BifrostExecutionError"/>, is sanitized to a generic internal_error:
+        /// its message is NOT provably leak-free (e.g. <see cref="BifrostExecutionError.FromDatabaseException"/>
+        /// can wrap raw driver/DB text, and <see cref="BifrostExecutionError.ConnectionFailed"/>
+        /// embeds caller-supplied detail), so forwarding it verbatim could leak schema names
+        /// or infrastructure detail. The full exception is logged server-side by the caller;
+        /// only the sanitized string crosses the wire. Fail closed toward sanitization.
         /// </summary>
         private static (string SqlState, string Message) MapQueryError(Exception ex) => ex switch
         {
             PgQueryTranslationException => (PgWireProtocol.SqlStateSyntaxError, ex.Message),
-            BifrostExecutionError => (PgWireProtocol.SqlStateInternalError, ex.Message),
-            _ => (PgWireProtocol.SqlStateInternalError, "internal error during query execution."),
+            _ => (PgWireProtocol.SqlStateInternalError, PgWireProtocol.InternalQueryErrorMessage),
         };
 
         private async Task RejectAsync(Stream stream, string sqlState, string message, CancellationToken ct)

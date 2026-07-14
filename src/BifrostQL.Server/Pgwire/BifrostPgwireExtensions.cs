@@ -34,6 +34,11 @@ namespace BifrostQL.Server.Pgwire
             // The per-connection handler is resolved by the Kestrel listener from DI.
             services.TryAddSingleton<PgConnectionHandler>();
 
+            // Simple query recognizer (slice 2). Registered behind IPgQueryTranslator so the
+            // slice-3 full SQL-subset parser swaps in here without touching the query loop or
+            // result encoding. Stateless — the executor is passed per query.
+            services.TryAddSingleton<IPgQueryTranslator, PgSimpleQueryTranslator>();
+
             // Adapter lifecycle via the shared adapter/hosted-service pattern.
             services.TryAddSingleton<PgWireAdapter>();
             services.AddSingleton<IHostedService>(sp =>

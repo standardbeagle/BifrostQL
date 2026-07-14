@@ -133,6 +133,94 @@ namespace BifrostQL.Server.Test.Pgwire
             await WriteFrontendAsync(PgWireProtocol.PasswordMessage, initial.ToArray());
         }
 
+        /// <summary>Sends a simple Query ('Q') message: the SQL string as a C-string body.</summary>
+        public async Task SendQueryAsync(string sql)
+        {
+            using var body = new MemoryStream();
+            WriteCString(body, sql);
+            await WriteFrontendAsync(PgWireProtocol.Query, body.ToArray());
+        }
+
+        /// <summary>
+        /// Reads a full simple-query response cycle: the RowDescription (if any), every
+        /// DataRow, the CommandComplete tag or an ErrorResponse, up to and including the
+        /// terminating ReadyForQuery. Decodes each DataRow value as UTF-8 text (NULL → null).
+        /// </summary>
+        public async Task<SimpleQueryResult> ReadQueryResultAsync()
+        {
+            var fields = new List<PgFieldDescription>();
+            var rows = new List<IReadOnlyList<string?>>();
+            string? commandTag = null;
+            string? errorSqlState = null;
+            string? errorMessage = null;
+
+            while (true)
+            {
+                var (type, body) = await ReadBackendAsync();
+                switch (type)
+                {
+                    case PgWireProtocol.RowDescription:
+                        fields.AddRange(ParseRowDescription(body));
+                        break;
+                    case PgWireProtocol.DataRow:
+                        rows.Add(ParseDataRow(body));
+                        break;
+                    case PgWireProtocol.CommandComplete:
+                        commandTag = ReadCString(body);
+                        break;
+                    case PgWireProtocol.ErrorResponse:
+                        (errorSqlState, errorMessage) = ParseError(body);
+                        break;
+                    case PgWireProtocol.ReadyForQuery:
+                        return new SimpleQueryResult(fields, rows, commandTag, errorSqlState, errorMessage,
+                            TransactionStatus: (char)body[0]);
+                }
+            }
+        }
+
+        private static List<PgFieldDescription> ParseRowDescription(byte[] body)
+        {
+            var count = BinaryPrimitives.ReadInt16BigEndian(body.AsSpan(0, 2));
+            var fields = new List<PgFieldDescription>(count);
+            var offset = 2;
+            for (var i = 0; i < count; i++)
+            {
+                var start = offset;
+                while (body[offset] != 0) offset++;
+                var name = Encoding.UTF8.GetString(body, start, offset - start);
+                offset++; // terminator
+                offset += 4; // table OID
+                offset += 2; // column attribute number
+                var typeOid = BinaryPrimitives.ReadInt32BigEndian(body.AsSpan(offset, 4)); offset += 4;
+                var typeLen = BinaryPrimitives.ReadInt16BigEndian(body.AsSpan(offset, 2)); offset += 2;
+                offset += 4; // type modifier
+                var format = BinaryPrimitives.ReadInt16BigEndian(body.AsSpan(offset, 2)); offset += 2;
+                fields.Add(new PgFieldDescription(name, typeOid, typeLen, format));
+            }
+            return fields;
+        }
+
+        private static List<string?> ParseDataRow(byte[] body)
+        {
+            var count = BinaryPrimitives.ReadInt16BigEndian(body.AsSpan(0, 2));
+            var values = new List<string?>(count);
+            var offset = 2;
+            for (var i = 0; i < count; i++)
+            {
+                var len = BinaryPrimitives.ReadInt32BigEndian(body.AsSpan(offset, 4)); offset += 4;
+                if (len < 0) { values.Add(null); continue; }
+                values.Add(Encoding.UTF8.GetString(body, offset, len));
+                offset += len;
+            }
+            return values;
+        }
+
+        private static string ReadCString(byte[] body)
+        {
+            var end = Array.IndexOf(body, (byte)0);
+            return Encoding.UTF8.GetString(body, 0, end < 0 ? body.Length : end);
+        }
+
         /// <summary>Reads backend messages until ReadyForQuery (success) or ErrorResponse (rejection).</summary>
         public async Task<HandshakeResult> WaitForReadyOrErrorAsync()
         {
@@ -209,6 +297,21 @@ namespace BifrostQL.Server.Test.Pgwire
             s.Write(Encoding.UTF8.GetBytes(text));
             s.WriteByte(0);
         }
+    }
+
+    /// <summary>One decoded RowDescription field: name and advertised pg type facts.</summary>
+    internal sealed record PgFieldDescription(string Name, int TypeOid, short TypeLength, short FormatCode);
+
+    /// <summary>A fully decoded simple-query response cycle (through ReadyForQuery).</summary>
+    internal sealed record SimpleQueryResult(
+        IReadOnlyList<PgFieldDescription> Fields,
+        IReadOnlyList<IReadOnlyList<string?>> Rows,
+        string? CommandTag,
+        string? ErrorSqlState,
+        string? ErrorMessage,
+        char TransactionStatus)
+    {
+        public bool HasError => ErrorSqlState is not null;
     }
 
     /// <summary>A test credential store: an in-memory username → (secret, principal) map.</summary>

@@ -5,8 +5,10 @@ using System.Security.Authentication;
 using System.Text;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using BifrostQL.Core.Resolvers;
 
 namespace BifrostQL.Server.Pgwire
 {
@@ -116,14 +118,14 @@ namespace BifrostQL.Server.Pgwire
 
                 await CompleteHandshakeAsync(stream, ct);
 
-                // ---- QUERY-LOOP SEAM (later slice) ----
-                // The session is authenticated and ReadyForQuery has been sent. The
-                // simple/extended query protocol dispatch — decoding Query/Parse/Bind/
-                // Execute and routing reads through IQueryIntentExecutor / writes through
-                // IMutationIntentExecutor with _userContext — attaches here. Until then
-                // the seam keeps the connection well-behaved: it answers queries with
-                // feature_not_supported and honors Terminate.
-                await RunQuerySeamAsync(stream, ct);
+                // ---- QUERY LOOP ----
+                // The session is authenticated and ReadyForQuery has been sent. Slice 2
+                // handles the simple query ('Q') path: reads run through IQueryIntentExecutor
+                // under _userContext (the transformer pipeline is unskippable), results are
+                // encoded as RowDescription/DataRow/CommandComplete, and query errors surface
+                // as non-fatal ErrorResponses that leave the autocommit session usable.
+                // Parse/Bind/Execute (extended protocol) and writes are later slices.
+                await RunQueryLoopAsync(stream, _userContext, ct);
             }
             catch (Exception ex) when (ex is IOException or OperationCanceledException or PgProtocolException or AuthenticationException)
             {
@@ -295,11 +297,13 @@ namespace BifrostQL.Server.Pgwire
         }
 
         /// <summary>
-        /// Query-protocol seam. The session is ready; the real dispatch is a later slice.
-        /// Until then, honor Terminate and answer any query with feature_not_supported so
-        /// the connection stays protocol-clean rather than hanging or crashing a client.
+        /// Simple query protocol loop (autocommit only). Dispatches each frontend message:
+        /// Terminate ends the session; a Query is executed and its result streamed back;
+        /// any other message type is answered with a non-fatal feature_not_supported so the
+        /// session stays usable. Wire-framing violations (<see cref="PgProtocolException"/>)
+        /// are left to propagate to the outer handler, which tears the connection down.
         /// </summary>
-        private static async Task RunQuerySeamAsync(Stream stream, CancellationToken ct)
+        private async Task RunQueryLoopAsync(Stream stream, IDictionary<string, object?> userContext, CancellationToken ct)
         {
             while (true)
             {
@@ -313,15 +317,89 @@ namespace BifrostQL.Server.Pgwire
                     return; // client disconnected
                 }
 
-                if (message.Type == PgWireProtocol.Terminate)
-                    return;
+                switch (message.Type)
+                {
+                    case PgWireProtocol.Terminate:
+                        return;
 
-                await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.ErrorResponse,
-                    PgBackend.ErrorResponse(PgWireProtocol.SqlStateFeatureNotSupported,
-                        "query protocol not implemented (pgwire slice 1)."), ct);
-                await WriteReadyForQueryAsync(stream, ct);
+                    case PgWireProtocol.Query:
+                        await HandleSimpleQueryAsync(stream, message.Body, userContext, ct);
+                        break;
+
+                    default:
+                        await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.ErrorResponse,
+                            PgBackend.ErrorResponse(PgWireProtocol.SqlStateFeatureNotSupported,
+                                $"unsupported message '{(char)message.Type}' (pgwire slice 2: simple query only).",
+                                PgWireProtocol.SeverityError), ct);
+                        await WriteReadyForQueryAsync(stream, ct);
+                        break;
+                }
             }
         }
+
+        /// <summary>
+        /// Executes one simple query and streams its result: RowDescription → DataRow* →
+        /// CommandComplete. Reads route through <see cref="IQueryIntentExecutor"/> under
+        /// <paramref name="userContext"/>, so the security transformer pipeline (tenant
+        /// isolation, soft-delete, policy row/column scope) is applied unconditionally. A
+        /// translation or execution error is caught and answered as a non-fatal
+        /// ERROR-severity ErrorResponse; either way a ReadyForQuery closes the exchange and
+        /// the autocommit session remains usable for the next query. Connection-lifecycle
+        /// faults (IO, cancellation) and wire-framing violations are re-thrown to the outer
+        /// handler untouched.
+        /// </summary>
+        private async Task HandleSimpleQueryAsync(Stream stream, byte[] body, IDictionary<string, object?> userContext, CancellationToken ct)
+        {
+            try
+            {
+                var sql = Encoding.UTF8.GetString(TrimTrailingNul(body));
+                var executor = _services.GetService<IQueryIntentExecutor>()
+                    ?? throw new BifrostExecutionError("pgwire endpoint has no registered query executor.");
+                var translator = _services.GetService<IPgQueryTranslator>()
+                    ?? throw new BifrostExecutionError("pgwire endpoint has no registered query translator.");
+
+                var plan = await translator.TranslateAsync(executor, sql, userContext, _options.Endpoint, ct);
+                var result = await executor.ExecuteAsync(plan.Intent, ct);
+
+                await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.RowDescription,
+                    PgBackend.RowDescription(plan.Columns), ct);
+
+                foreach (var row in result.Rows)
+                {
+                    var values = plan.Columns
+                        .Select(c => PgValueEncoder.ToText(row.TryGetValue(c.Name, out var v) ? v : null))
+                        .ToList();
+                    await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.DataRow,
+                        PgBackend.DataRow(values), ct);
+                }
+
+                await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.CommandComplete,
+                    PgBackend.CommandComplete($"SELECT {result.Rows.Count}"), ct);
+            }
+            catch (Exception ex) when (ex is not (IOException or OperationCanceledException or EndOfStreamException or PgProtocolException))
+            {
+                var (sqlState, clientMessage) = MapQueryError(ex);
+                _logger.LogWarning(ex, "pgwire query failed ({SqlState}): {Message}", sqlState, ex.Message);
+                await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.ErrorResponse,
+                    PgBackend.ErrorResponse(sqlState, clientMessage, PgWireProtocol.SeverityError), ct);
+            }
+
+            await WriteReadyForQueryAsync(stream, ct);
+        }
+
+        /// <summary>
+        /// Maps a query-phase exception to a client-safe (SQLSTATE, message) pair. A
+        /// recognizer failure is a syntax error; a <see cref="BifrostExecutionError"/>
+        /// already carries an authored, leak-free message (raw DB errors are sanitized at
+        /// their source), so it passes through as internal_error. Anything else is reported
+        /// generically — an unexpected exception's text is never forwarded to the wire.
+        /// </summary>
+        private static (string SqlState, string Message) MapQueryError(Exception ex) => ex switch
+        {
+            PgQueryTranslationException => (PgWireProtocol.SqlStateSyntaxError, ex.Message),
+            BifrostExecutionError => (PgWireProtocol.SqlStateInternalError, ex.Message),
+            _ => (PgWireProtocol.SqlStateInternalError, "internal error during query execution."),
+        };
 
         private async Task RejectAsync(Stream stream, string sqlState, string message, CancellationToken ct)
         {
@@ -349,7 +427,8 @@ namespace BifrostQL.Server.Pgwire
         }
 
         private static async Task WriteReadyForQueryAsync(Stream stream, CancellationToken ct)
-            => await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.ReadyForQuery, new[] { (byte)'I' }, ct);
+            => await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.ReadyForQuery,
+                new[] { PgWireProtocol.TransactionStatusIdle }, ct);
 
         /// <summary>Parses a SASLInitialResponse body: mechanism C-string + Int32 length + client-first bytes.</summary>
         private static (string Mechanism, string ClientFirst) ParseSaslInitialResponse(byte[] body)

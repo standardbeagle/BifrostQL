@@ -166,14 +166,14 @@ namespace BifrostQL.Server.Resp
             var byKey = new Dictionary<string, IReadOnlyDictionary<string, object?>>(StringComparer.Ordinal);
             foreach (var row in result.Rows)
             {
-                var token = KeyToken(row.GetValueOrDefault(pkColumn.DbName));
+                var token = KeyToken(pkColumn, row.GetValueOrDefault(pkColumn.DbName));
                 if (token is not null)
                     byKey.TryAdd(token, row); // a PK is unique; first row wins defensively
             }
 
             foreach (var i in indices)
             {
-                var token = KeyToken(keys[i].KeyValues[0]);
+                var token = KeyToken(pkColumn, keys[i].KeyValues[0]);
                 results[i] = token is not null && byKey.TryGetValue(token, out var row) ? row : null;
             }
         }
@@ -210,31 +210,25 @@ namespace BifrostQL.Server.Resp
         private static bool TryCoerceKeySegment(ColumnDto column, string segment, out object? value, out string error)
         {
             error = string.Empty;
-            var type = column.DataType.ToLowerInvariant();
-            var isInteger = type.Contains("int");
-            var isDecimal = !isInteger && (type.Contains("decimal") || type.Contains("numeric")
-                || type.Contains("real") || type.Contains("float") || type.Contains("double") || type.Contains("money"));
-
-            if (isInteger)
+            switch (ClassifyKeyColumn(column))
             {
-                if (long.TryParse(segment, NumberStyles.Integer, CultureInfo.InvariantCulture, out var l))
-                {
-                    value = l;
+                case KeyColumnKind.Integer:
+                    if (long.TryParse(segment, NumberStyles.Integer, CultureInfo.InvariantCulture, out var l))
+                    {
+                        value = l;
+                        return true;
+                    }
+                    break;
+                case KeyColumnKind.Decimal:
+                    if (decimal.TryParse(segment, NumberStyles.Number, CultureInfo.InvariantCulture, out var d))
+                    {
+                        value = d;
+                        return true;
+                    }
+                    break;
+                default:
+                    value = segment;
                     return true;
-                }
-            }
-            else if (isDecimal)
-            {
-                if (decimal.TryParse(segment, NumberStyles.Number, CultureInfo.InvariantCulture, out var d))
-                {
-                    value = d;
-                    return true;
-                }
-            }
-            else
-            {
-                value = segment;
-                return true;
             }
 
             value = null;
@@ -242,11 +236,53 @@ namespace BifrostQL.Server.Resp
             return false;
         }
 
+        /// <summary>The CLR comparison family a PK column belongs to, derived once from its declared SQL type.</summary>
+        private enum KeyColumnKind { Integer, Decimal, Other }
+
         /// <summary>
-        /// A culture-invariant string token for matching a requested key value against a returned
-        /// row's primary-key value. Both sides are the same coerced CLR type for int/decimal/string
-        /// PKs, so their invariant string forms match exactly.
+        /// Classifies a key column's declared SQL type into the family whose canonical form both
+        /// <see cref="TryCoerceKeySegment"/> (request side) and <see cref="KeyToken"/> (DB-row side) use,
+        /// so equal values always produce the same token regardless of which side materialized them.
         /// </summary>
-        private static string? KeyToken(object? value) => Convert.ToString(value, CultureInfo.InvariantCulture);
+        private static KeyColumnKind ClassifyKeyColumn(ColumnDto column)
+        {
+            var type = column.DataType.ToLowerInvariant();
+            if (type.Contains("int"))
+                return KeyColumnKind.Integer;
+            if (type.Contains("decimal") || type.Contains("numeric") || type.Contains("real")
+                || type.Contains("float") || type.Contains("double") || type.Contains("money"))
+                return KeyColumnKind.Decimal;
+            return KeyColumnKind.Other;
+        }
+
+        /// <summary>
+        /// Enough fractional '#' placeholders to render any <see cref="decimal"/> exactly while dropping
+        /// trailing zeros — so <c>1</c>, <c>1.0</c>, and <c>1.00</c> collapse to the same canonical token
+        /// but <c>1</c> and <c>1.5</c> never do.
+        /// </summary>
+        private const string DecimalCanonicalFormat = "0.############################";
+
+        /// <summary>
+        /// A culture-invariant, TYPE-CANONICAL token for matching a requested key value against a
+        /// returned row's primary-key value. Because a numeric PK can arrive as one CLR form on the
+        /// request side (the coerced segment) and a different scale/type on the DB-row side (e.g. the
+        /// request <c>1.0</c> vs a stored <c>1</c>/<c>1.00</c>), both sides are normalized through the
+        /// column's <see cref="KeyColumnKind"/>: integers via a common long form, decimals via a
+        /// trailing-zero-stripped canonical form, everything else via its invariant string. Equal values
+        /// therefore always collide, and distinct values never do.
+        /// </summary>
+        private static string? KeyToken(ColumnDto column, object? value)
+        {
+            if (value is null)
+                return null;
+            return ClassifyKeyColumn(column) switch
+            {
+                KeyColumnKind.Integer => Convert.ToInt64(value, CultureInfo.InvariantCulture)
+                    .ToString(CultureInfo.InvariantCulture),
+                KeyColumnKind.Decimal => Convert.ToDecimal(value, CultureInfo.InvariantCulture)
+                    .ToString(DecimalCanonicalFormat, CultureInfo.InvariantCulture),
+                _ => Convert.ToString(value, CultureInfo.InvariantCulture),
+            };
+        }
     }
 }

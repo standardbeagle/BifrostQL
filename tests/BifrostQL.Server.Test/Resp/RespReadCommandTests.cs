@@ -114,6 +114,55 @@ namespace BifrostQL.Server.Test.Resp
             executor.Intents.Should().HaveCount(2);
         }
 
+        [Fact]
+        public async Task MGet_IntentReturnsRowsOutOfOrder_EachKeyStillGetsItsOwnRow()
+        {
+            // Request order is 2,1 but the fake returns rows in store order 1,2. If mapping were
+            // positional the values would be swapped; by-token mapping keeps each key with ITS row.
+            var (executor, ctx) = Arrange(Tenant1);
+            var reply = await new RespMGetCommandHandler().HandleAsync(Ctx(ctx, "MGET", "users:2", "users:1"), CancellationToken.None);
+
+            var items = reply.Should().BeOfType<RespArray>().Which.Items!;
+            items.Should().HaveCount(2);
+            BulkText(items[0]).Should().Contain("\"name\":\"bob\"").And.Contain("\"id\":2");
+            BulkText(items[1]).Should().Contain("\"name\":\"alice\"").And.Contain("\"id\":1");
+            executor.Intents.Should().HaveCount(1);
+        }
+
+        [Fact]
+        public async Task MGet_DuplicateKeys_EveryPositionGetsTheCorrectRow()
+        {
+            // The batch _in intent de-dups the wanted values; each of the three positions must still
+            // resolve to its own row (the duplicate must not drop a position).
+            var (executor, ctx) = Arrange(Tenant1);
+            var reply = await new RespMGetCommandHandler().HandleAsync(Ctx(ctx, "MGET", "users:1", "users:2", "users:1"), CancellationToken.None);
+
+            var items = reply.Should().BeOfType<RespArray>().Which.Items!;
+            items.Should().HaveCount(3);
+            BulkText(items[0]).Should().Contain("\"name\":\"alice\"");
+            BulkText(items[1]).Should().Contain("\"name\":\"bob\"");
+            BulkText(items[2]).Should().Contain("\"name\":\"alice\"");
+            executor.Intents.Should().HaveCount(1, "duplicate single-PK keys still collapse into one _in intent");
+        }
+
+        [Fact]
+        public async Task DecimalPk_GetAndMget_RequestScaleDiffersFromStoredRow_StillResolves()
+        {
+            // Regression for the canonical-key-token fix: request "1.0"/"2.5" against rows whose PK is
+            // stored as 1 / 2.50. A raw string token ("1.0" vs "1") would false-miss a visible row.
+            var (executor, ctx) = Arrange(Tenant1);
+
+            var get = await new RespGetCommandHandler().HandleAsync(Ctx(ctx, "GET", "prices:1.0"), CancellationToken.None);
+            BulkText(get).Should().Contain("\"label\":\"cheap\"");
+
+            var mget = await new RespMGetCommandHandler().HandleAsync(Ctx(ctx, "MGET", "prices:1.0", "prices:2.5"), CancellationToken.None);
+            var items = mget.Should().BeOfType<RespArray>().Which.Items!;
+            items.Should().HaveCount(2);
+            BulkText(items[0]).Should().Contain("\"label\":\"cheap\"");
+            BulkText(items[1]).Should().Contain("\"label\":\"fair\"");
+            executor.Intents.Should().HaveCount(2, "one GET intent plus one batched MGET _in intent");
+        }
+
         // ---- EXISTS ---------------------------------------------------------
 
         [Fact]
@@ -220,8 +269,12 @@ namespace BifrostQL.Server.Test.Resp
                 Col("line_no", "int", 2, pk: true),
                 Col("sku", "varchar", 3));
 
+            var prices = FakeTable("prices",
+                Col("id", "decimal", 1, pk: true),
+                Col("label", "varchar", 2));
+
             var model = Substitute.For<IDbModel>();
-            model.Tables.Returns(new[] { users, orderItems });
+            model.Tables.Returns(new[] { users, orderItems, prices });
             return model;
         }
 
@@ -268,6 +321,13 @@ namespace BifrostQL.Server.Test.Resp
                 {
                     Row(("order_id", 10), ("line_no", 1), ("sku", "gadget")),
                     Row(("order_id", 10), ("line_no", 2), ("sku", "widget")),
+                },
+                // PKs materialize in a DIFFERENT decimal form than the request segments will supply
+                // (stored 1 / 2.50 vs requested "1.0" / "2.5"), so a non-canonical token would false-miss.
+                ["prices"] = new()
+                {
+                    Row(("id", 1m), ("label", "cheap")),
+                    Row(("id", 2.50m), ("label", "fair")),
                 },
             };
         }
@@ -324,7 +384,16 @@ namespace BifrostQL.Server.Test.Resp
             return acc;
         }
 
-        private static string Token(object? value) => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+        // Models SQL numeric equality: a stored numeric PK matches a bound parameter of equal value
+        // regardless of scale/type (e.g. stored 1 vs parameter 1.0), so the harness returns the row and
+        // the engine's key-token mapping is what's actually under test for decimal keys.
+        private static string Token(object? value)
+        {
+            var text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+            return decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out var d)
+                ? d.ToString("0.############################", CultureInfo.InvariantCulture)
+                : text;
+        }
 
         private static Dictionary<string, object?> Row(params (string Column, object? Value)[] cells) =>
             cells.ToDictionary(c => c.Column, c => c.Value, StringComparer.Ordinal);

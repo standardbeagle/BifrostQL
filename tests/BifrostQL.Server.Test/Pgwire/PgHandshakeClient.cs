@@ -24,6 +24,12 @@ namespace BifrostQL.Server.Test.Pgwire
 
         public PgHandshakeClient(Stream stream) => _stream = stream;
 
+        /// <summary>Backend PID from the captured BackendKeyData (0 until the handshake completes).</summary>
+        public int BackendPid { get; private set; }
+
+        /// <summary>Backend secret key from the captured BackendKeyData, echoed in a CancelRequest.</summary>
+        public int BackendSecret { get; private set; }
+
         public async Task NegotiateTlsAsync()
         {
             // SSLRequest: [Int32 len=8][Int32 code].
@@ -234,7 +240,11 @@ namespace BifrostQL.Server.Test.Pgwire
                     case PgWireProtocol.ErrorResponse:
                         var (code, message) = ParseError(body);
                         return new HandshakeResult(false, code, message);
-                    // AuthenticationOk, ParameterStatus, BackendKeyData: skip.
+                    case PgWireProtocol.BackendKeyData:
+                        BackendPid = BinaryPrimitives.ReadInt32BigEndian(body.AsSpan(0, 4));
+                        BackendSecret = BinaryPrimitives.ReadInt32BigEndian(body.AsSpan(4, 4));
+                        break;
+                    // AuthenticationOk, ParameterStatus: skip.
                 }
             }
         }
@@ -292,11 +302,190 @@ namespace BifrostQL.Server.Test.Pgwire
             return (code, message);
         }
 
+        // ---- Extended query protocol (slice 5) ------------------------------
+
+        /// <summary>Parse (P): statement name, SQL, and optional parameter type OIDs.</summary>
+        public async Task SendParseAsync(string statementName, string sql, params int[] paramTypeOids)
+        {
+            using var body = new MemoryStream();
+            WriteCString(body, statementName);
+            WriteCString(body, sql);
+            WriteInt16(body, (short)paramTypeOids.Length);
+            foreach (var oid in paramTypeOids) WriteInt32(body, oid);
+            await WriteFrontendAsync(PgWireProtocol.ParseMessage, body.ToArray());
+        }
+
+        /// <summary>
+        /// Bind (B): binds text-format parameter values into a portal. A null entry encodes a
+        /// SQL NULL. Uses the all-text format (no format codes) for params and results.
+        /// </summary>
+        public async Task SendBindAsync(string portalName, string statementName, params string?[] textValues)
+        {
+            using var body = new MemoryStream();
+            WriteCString(body, portalName);
+            WriteCString(body, statementName);
+            WriteInt16(body, 0); // parameter format codes: none → all text
+            WriteInt16(body, (short)textValues.Length);
+            foreach (var value in textValues)
+            {
+                if (value is null) { WriteInt32(body, -1); continue; }
+                var bytes = Encoding.UTF8.GetBytes(value);
+                WriteInt32(body, bytes.Length);
+                body.Write(bytes);
+            }
+            WriteInt16(body, 0); // result format codes: none → all text
+            await WriteFrontendAsync(PgWireProtocol.BindMessage, body.ToArray());
+        }
+
+        /// <summary>Bind that requests a BINARY result format (to exercise the honest rejection).</summary>
+        public async Task SendBindBinaryResultAsync(string portalName, string statementName)
+        {
+            using var body = new MemoryStream();
+            WriteCString(body, portalName);
+            WriteCString(body, statementName);
+            WriteInt16(body, 0);   // param format codes: none
+            WriteInt16(body, 0);   // param values: none
+            WriteInt16(body, 1);   // one result format code…
+            WriteInt16(body, 1);   // …= binary
+            await WriteFrontendAsync(PgWireProtocol.BindMessage, body.ToArray());
+        }
+
+        public async Task SendDescribeStatementAsync(string statementName)
+            => await SendDescribeAsync(PgWireProtocol.DescribeStatement, statementName);
+
+        public async Task SendDescribePortalAsync(string portalName)
+            => await SendDescribeAsync(PgWireProtocol.DescribePortal, portalName);
+
+        private async Task SendDescribeAsync(byte target, string name)
+        {
+            using var body = new MemoryStream();
+            body.WriteByte(target);
+            WriteCString(body, name);
+            await WriteFrontendAsync(PgWireProtocol.DescribeMessage, body.ToArray());
+        }
+
+        /// <summary>Execute (E): run a portal, optionally capped at <paramref name="maxRows"/> (0 = all).</summary>
+        public async Task SendExecuteAsync(string portalName, int maxRows = 0)
+        {
+            using var body = new MemoryStream();
+            WriteCString(body, portalName);
+            WriteInt32(body, maxRows);
+            await WriteFrontendAsync(PgWireProtocol.ExecuteMessage, body.ToArray());
+        }
+
+        public async Task SendCloseStatementAsync(string statementName)
+        {
+            using var body = new MemoryStream();
+            body.WriteByte(PgWireProtocol.DescribeStatement);
+            WriteCString(body, statementName);
+            await WriteFrontendAsync(PgWireProtocol.CloseMessage, body.ToArray());
+        }
+
+        public async Task SendSyncAsync() => await WriteFrontendAsync(PgWireProtocol.SyncMessage, Array.Empty<byte>());
+
+        /// <summary>
+        /// Reads a whole extended-protocol response cycle up to and including ReadyForQuery,
+        /// decoding each backend message into <see cref="ExtendedResult"/>.
+        /// </summary>
+        public async Task<ExtendedResult> ReadExtendedUntilReadyAsync()
+        {
+            var order = new List<byte>();
+            var fields = new List<PgFieldDescription>();
+            var rows = new List<IReadOnlyList<string?>>();
+            var paramOids = new List<int>();
+            string? commandTag = null, errorSqlState = null, errorMessage = null;
+            bool parseComplete = false, bindComplete = false, closeComplete = false, noData = false, portalSuspended = false;
+
+            while (true)
+            {
+                var (type, body) = await ReadBackendAsync();
+                order.Add(type);
+                switch (type)
+                {
+                    case PgWireProtocol.ParseComplete: parseComplete = true; break;
+                    case PgWireProtocol.BindComplete: bindComplete = true; break;
+                    case PgWireProtocol.CloseComplete: closeComplete = true; break;
+                    case PgWireProtocol.NoData: noData = true; break;
+                    case PgWireProtocol.PortalSuspended: portalSuspended = true; break;
+                    case PgWireProtocol.ParameterDescription: paramOids.AddRange(ParseParameterDescription(body)); break;
+                    case PgWireProtocol.RowDescription: fields.AddRange(ParseRowDescription(body)); break;
+                    case PgWireProtocol.DataRow: rows.Add(ParseDataRow(body)); break;
+                    case PgWireProtocol.CommandComplete: commandTag = ReadCString(body); break;
+                    case PgWireProtocol.ErrorResponse: (errorSqlState, errorMessage) = ParseError(body); break;
+                    case PgWireProtocol.ReadyForQuery:
+                        return new ExtendedResult(order, parseComplete, bindComplete, closeComplete, noData,
+                            portalSuspended, paramOids, fields, rows, commandTag, errorSqlState, errorMessage,
+                            TransactionStatus: (char)body[0]);
+                }
+            }
+        }
+
+        private static List<int> ParseParameterDescription(byte[] body)
+        {
+            var count = BinaryPrimitives.ReadInt16BigEndian(body.AsSpan(0, 2));
+            var oids = new List<int>(count);
+            var offset = 2;
+            for (var i = 0; i < count; i++) { oids.Add(BinaryPrimitives.ReadInt32BigEndian(body.AsSpan(offset, 4))); offset += 4; }
+            return oids;
+        }
+
+        /// <summary>
+        /// Opens a fresh connection to <paramref name="endpoint"/> and sends a bare
+        /// CancelRequest (<c>[Int32 len=16][Int32 code][Int32 pid][Int32 secret]</c>), then
+        /// closes — exactly as a client's cancel path does on a second socket.
+        /// </summary>
+        public static async Task SendCancelRequestAsync(System.Net.IPEndPoint endpoint, int pid, int secret)
+        {
+            using var socket = new System.Net.Sockets.TcpClient();
+            await socket.ConnectAsync(endpoint.Address, endpoint.Port);
+            await using var stream = socket.GetStream();
+            var packet = new byte[16];
+            BinaryPrimitives.WriteInt32BigEndian(packet.AsSpan(0, 4), 16);
+            BinaryPrimitives.WriteInt32BigEndian(packet.AsSpan(4, 4), PgWireProtocol.CancelRequestCode);
+            BinaryPrimitives.WriteInt32BigEndian(packet.AsSpan(8, 4), pid);
+            BinaryPrimitives.WriteInt32BigEndian(packet.AsSpan(12, 4), secret);
+            await stream.WriteAsync(packet);
+            await stream.FlushAsync();
+        }
+
+        private static void WriteInt16(Stream s, short value)
+        {
+            Span<byte> buffer = stackalloc byte[2];
+            BinaryPrimitives.WriteInt16BigEndian(buffer, value);
+            s.Write(buffer);
+        }
+
+        private static void WriteInt32(Stream s, int value)
+        {
+            Span<byte> buffer = stackalloc byte[4];
+            BinaryPrimitives.WriteInt32BigEndian(buffer, value);
+            s.Write(buffer);
+        }
+
         private static void WriteCString(Stream s, string text)
         {
             s.Write(Encoding.UTF8.GetBytes(text));
             s.WriteByte(0);
         }
+    }
+
+    /// <summary>A fully decoded extended-protocol response cycle (through ReadyForQuery).</summary>
+    internal sealed record ExtendedResult(
+        IReadOnlyList<byte> MessageOrder,
+        bool ParseComplete,
+        bool BindComplete,
+        bool CloseComplete,
+        bool NoData,
+        bool PortalSuspended,
+        IReadOnlyList<int> ParameterTypeOids,
+        IReadOnlyList<PgFieldDescription> Fields,
+        IReadOnlyList<IReadOnlyList<string?>> Rows,
+        string? CommandTag,
+        string? ErrorSqlState,
+        string? ErrorMessage,
+        char TransactionStatus)
+    {
+        public bool HasError => ErrorSqlState is not null;
     }
 
     /// <summary>One decoded RowDescription field: name and advertised pg type facts.</summary>

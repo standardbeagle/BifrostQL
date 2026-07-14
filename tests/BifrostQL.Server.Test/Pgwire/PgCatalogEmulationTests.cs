@@ -54,6 +54,54 @@ namespace BifrostQL.Server.Test.Pgwire
             adminNames.Should().NotContain("broken");       // fail closed for everyone
         }
 
+        // ---- psql \d / \dt relation list -------------------------------------
+
+        // The exact query psql (v16) issues for \dt: a pg_class ⋈ pg_namespace join
+        // with a CASE-mapped relkind, pg_get_userbyid(relowner), the relkind IN filter,
+        // system-namespace exclusions, pg_table_is_visible(oid), and positional
+        // ORDER BY 1,2 — none of which the slice-3 subset grammar accepts.
+        private const string PsqlDtQuery =
+            "SELECT n.nspname as \"Schema\",\n" +
+            "  c.relname as \"Name\",\n" +
+            "  CASE c.relkind WHEN 'r' THEN 'table' WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized view' WHEN 'S' THEN 'sequence' WHEN 'f' THEN 'foreign table' WHEN 'p' THEN 'partitioned table' END as \"Type\",\n" +
+            "  pg_catalog.pg_get_userbyid(c.relowner) as \"Owner\"\n" +
+            "FROM pg_catalog.pg_class c\n" +
+            "     LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n" +
+            "WHERE c.relkind IN ('r','p','')\n" +
+            "      AND n.nspname <> 'pg_catalog'\n" +
+            "      AND n.nspname !~ '^pg_toast'\n" +
+            "      AND n.nspname <> 'information_schema'\n" +
+            "  AND pg_catalog.pg_table_is_visible(c.oid)\n" +
+            "ORDER BY 1,2;";
+
+        [Fact]
+        public async Task PsqlDt_ListsPermittedTables_OrderedAndIdentityFiltered()
+        {
+            var executor = CatalogExecutor();
+
+            // Member: sees only the tables it may read, ordered by (schema, name);
+            // read-denied and fail-closed tables are absent.
+            await using var member = await PgSession.StartAsync(executor, MemberPrincipal());
+            await member.Client.SendQueryAsync(PsqlDtQuery);
+            var memberResult = await member.Client.ReadQueryResultAsync().WaitAsync(Timeout);
+
+            memberResult.HasError.Should().BeFalse();
+            memberResult.Fields.Select(f => f.Name).Should().Equal("Schema", "Name", "Type", "Owner");
+            memberResult.Rows.Select(r => r[1]).Should().Equal("orders", "profiles"); // ORDER BY 1,2
+            memberResult.Rows.Select(r => r[1]).Should().NotContain("audit_log");      // read-denied
+            memberResult.Rows.Select(r => r[1]).Should().NotContain("broken");         // fail closed
+            memberResult.Rows.Should().OnlyContain(r => (string?)r[0] == "dbo");        // Schema
+            memberResult.Rows.Should().OnlyContain(r => (string?)r[2] == "table");      // Type (relkind 'r')
+
+            // Admin: additionally sees the read-denied table, still ordered, broken absent.
+            await using var admin = await PgSession.StartAsync(executor, AdminPrincipal());
+            await admin.Client.SendQueryAsync(PsqlDtQuery);
+            var adminResult = await admin.Client.ReadQueryResultAsync().WaitAsync(Timeout);
+
+            adminResult.HasError.Should().BeFalse();
+            adminResult.Rows.Select(r => r[1]).Should().Equal("audit_log", "orders", "profiles");
+        }
+
         // ---- identity filtering: pg_class ------------------------------------
 
         [Fact]

@@ -52,9 +52,28 @@ namespace BifrostQL.Server.Pgwire
         private const string DefaultSchema = "public";
         private const string DatabaseName = "bifrost";
 
+        // The emulated catalog has no real pg roles; every synthesized relation is
+        // owned by one honest synthetic owner, reported where psql renders
+        // pg_get_userbyid(relowner) as the "Owner" column of \d / \dt.
+        private const string SyntheticOwnerName = "bifrost";
+
         private static readonly Regex CatalogRelationPattern = new(
             @"\b(from|join)\s+pg_(class|namespace|attribute|type)\b",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        // Structural signature of the query psql issues for \d and \dt: a pg_class ⋈
+        // pg_namespace join carrying the relkind IN (...) filter and the
+        // pg_table_is_visible(oid) guard, ending in the positional ORDER BY 1[,2].
+        // This shape (CASE, function calls, LEFT JOIN, quoted aliases) is far outside
+        // the slice-3 subset grammar, so it is recognized here and answered by an
+        // in-memory join over the visibility-filtered projection — never routed
+        // through PgSqlSubsetParser, which is deliberately left untouched. Group 1
+        // captures the relkind list so the filter is applied faithfully. Requiring the
+        // pg_class + pg_namespace + pg_table_is_visible signature keeps this narrow: a
+        // user query does not carry pg_table_is_visible.
+        private static readonly Regex DescribeRelationsPattern = new(
+            @"from\s+(?:pg_catalog\.)?pg_class\b.*\bjoin\s+(?:pg_catalog\.)?pg_namespace\b.*\brelkind\s+in\s*\(([^)]*)\).*\bpg_table_is_visible\b.*\border\s+by\s+1",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
 
         public async Task<PgCatalogResponse?> TryRespondAsync(
             IQueryIntentExecutor executor,
@@ -71,7 +90,19 @@ namespace BifrostQL.Server.Pgwire
             if (scalar is not null)
                 return scalar;
 
-            // 2. Only a query that actually references an emulated catalog relation is
+            // 2. psql \d / \dt relation-list query: a pg_class ⋈ pg_namespace join with
+            //    the relkind / pg_table_is_visible signature. Answered by an in-memory
+            //    join over the identity-visible projection — the subset parser does not
+            //    accept this shape and is intentionally not loosened for it.
+            var describe = DescribeRelationsPattern.Match(sql);
+            if (describe.Success)
+            {
+                var describeModel = await executor.GetModelAsync(endpoint);
+                var describeVisible = PgCatalogVisibility.Project(describeModel, userContext);
+                return BuildDescribeRelations(describeVisible, describe);
+            }
+
+            // 3. Only a query that actually references an emulated catalog relation is
             //    ours. Everything else returns null so the normal read path is untouched.
             if (!ReferencesCatalogRelation(sql))
                 return null;
@@ -138,6 +169,96 @@ namespace BifrostQL.Server.Pgwire
                 || lower.Contains("pg_catalog.")
                 || CatalogRelationPattern.IsMatch(lower);
         }
+
+        // ---- psql \d / \dt relation list (in-memory pg_class ⋈ pg_namespace) -
+
+        /// <summary>
+        /// Answers the psql \d / \dt relation-list query by joining the synthesized
+        /// pg_class and pg_namespace relations in memory over the identity-visible
+        /// projection, honoring the query's relkind IN (...) filter and treating every
+        /// visible table as pg_table_is_visible = true. Output mirrors psql's expected
+        /// Schema / Name / Type / Owner columns, positionally ordered by (schema, name)
+        /// to satisfy the query's ORDER BY 1,2. Because the input is the SAME
+        /// PgCatalogVisibility projection the other catalog relations use, an
+        /// identity-unreadable table is absent here too (fail closed).
+        /// </summary>
+        private static PgCatalogResponse BuildDescribeRelations(
+            IReadOnlyList<PgCatalogTable> visible, Match describe)
+        {
+            var relkinds = ParseRelkindList(describe.Groups[1].Value);
+
+            // Reuse the canonical relation builders so the join operates on exactly the
+            // rows the catalog would otherwise expose (no re-derivation of visibility).
+            var pgClass = PgCatalog.Build(PgCatalog.RelationKind.PgClass, visible);
+            var pgNamespace = PgCatalog.Build(PgCatalog.RelationKind.PgNamespace, visible);
+
+            var nspByOid = new Dictionary<int, object?>();
+            foreach (var ns in pgNamespace.Rows)
+                nspByOid[Convert.ToInt32(ns["oid"])] = ns["nspname"];
+
+            var joined = new List<(object? Schema, object? Name, object? Type)>();
+            foreach (var row in pgClass.Rows)
+            {
+                var relkind = row["relkind"] as string ?? "";
+                if (!relkinds.Contains(relkind))
+                    continue; // relkind IN (...) filter from the query
+
+                nspByOid.TryGetValue(Convert.ToInt32(row["relnamespace"]), out var schema);
+                if (IsSystemNamespace(schema as string))
+                    continue; // the query excludes pg_catalog / information_schema / pg_toast
+
+                // pg_table_is_visible(c.oid): every table surviving the identity-visible
+                // projection is, by construction, visible.
+                joined.Add((schema, row["relname"], DescribeRelkind(relkind)));
+            }
+
+            var columns = new[]
+            {
+                new PgResultColumn("Schema", "varchar"),
+                new PgResultColumn("Name", "varchar"),
+                new PgResultColumn("Type", "varchar"),
+                new PgResultColumn("Owner", "varchar"),
+            };
+
+            var rows = joined
+                .OrderBy(x => x.Schema, ValueComparer.Instance)
+                .ThenBy(x => x.Name, ValueComparer.Instance)
+                .Select(x => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>
+                {
+                    ["Schema"] = x.Schema,
+                    ["Name"] = x.Name,
+                    ["Type"] = x.Type,
+                    ["Owner"] = SyntheticOwnerName,
+                })
+                .ToList();
+
+            return new PgCatalogResponse(columns, rows);
+        }
+
+        private static HashSet<string> ParseRelkindList(string inner)
+        {
+            var set = new HashSet<string>(StringComparer.Ordinal);
+            foreach (Match m in Regex.Matches(inner, "'([^']*)'"))
+                set.Add(m.Groups[1].Value);
+            return set;
+        }
+
+        // The synthesized pg_class only ever emits relkind 'r' (ordinary table); the
+        // partitioned-table kind is mapped for faithfulness to psql's CASE.
+        private static string DescribeRelkind(string relkind) => relkind switch
+        {
+            "p" => "partitioned table",
+            _ => "table",
+        };
+
+        // The pg system namespaces psql's \d / \dt query explicitly excludes. The
+        // synthesized namespaces are user schemas, so this is normally a no-op, but it
+        // is applied defensively to match the query's WHERE.
+        private static bool IsSystemNamespace(string? nsp) =>
+            nsp is null
+            || string.Equals(nsp, "pg_catalog", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(nsp, "information_schema", StringComparison.OrdinalIgnoreCase)
+            || nsp.StartsWith("pg_toast", StringComparison.OrdinalIgnoreCase);
 
         // ---- projection / filtering over synthesized rows --------------------
 

@@ -65,6 +65,8 @@ export default defineConfig({
 						{ label: 'Embeddable Data Editor', slug: 'guides/embedded-editor' },
 						{ label: 'Binary Transport', slug: 'guides/binary-transport' },
 						{ label: 'Authoring a Protocol Adapter', slug: 'guides/protocol-adapters' },
+						{ label: 'PostgreSQL Wire Protocol (pgwire)', slug: 'guides/pgwire' },
+						{ label: 'pgwire BI-Tool Smoke Runbook', slug: 'guides/pgwire-bi-smoke' },
 						{ label: 'React Native', slug: 'guides/react-native' },
 						{ label: 'WordPress', slug: 'guides/wordpress' },
 					],

@@ -202,6 +202,12 @@ The base class owns the whole fixture: a per-suite in-memory SQLite database, th
 
 `EchoProtocolAdapterConformanceTests` in `tests/BifrostQL.Server.Test` is the reference derivation — about forty lines, since the base class supplies every fact.
 
+For a full production adapter built on exactly this surface, see the
+[PostgreSQL Wire Protocol (pgwire)](/BifrostQL/guides/pgwire/) guide — a read-only
+postgres front door that reads through `IQueryIntentExecutor`, projects identity through
+`IBifrostAuthContextFactory`, hosts raw TCP under a Kestrel connection handler, and
+derives the conformance kit over the wire.
+
 ## Checklist
 
 - [ ] `IProtocolAdapter` implemented; `StartAsync` throws on bind/listen failure.

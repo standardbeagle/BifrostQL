@@ -201,6 +201,74 @@ namespace BifrostQL.Server.Test.Pgwire
             result.TransactionStatus.Should().Be('I');
         }
 
+        [Fact]
+        public async Task WhereQuery_CarriesFilterToTheReadSeam_AndRoundTrips()
+        {
+            var rows = new IReadOnlyDictionary<string, object?>[]
+            {
+                new Dictionary<string, object?> { ["id"] = 1, ["name"] = "alice", ["active"] = true },
+            };
+            var executor = FakeExecutor(UsersTable(), rows, out var captured);
+            await using var fixture = await PgSession.StartAsync(executor);
+
+            await fixture.Client.SendQueryAsync("SELECT id, name FROM users WHERE id > 5 AND name = 'alice'");
+            var result = await fixture.Client.ReadQueryResultAsync().WaitAsync(Timeout);
+
+            result.HasError.Should().BeFalse();
+            result.Fields.Select(f => f.Name).Should().Equal("id", "name");
+            // The parsed WHERE must reach the intent as a filter the security pipeline
+            // extends — a null filter would mean the predicate was silently dropped.
+            captured.Intent!.Query.Filter.Should().NotBeNull();
+        }
+
+        [Fact]
+        public async Task OutOfSubsetFeature_ReturnsFeatureNotSupported_AndSessionSurvives()
+        {
+            var executor = FakeExecutor(UsersTable(),
+                new IReadOnlyDictionary<string, object?>[]
+                {
+                    new Dictionary<string, object?> { ["id"] = 1, ["name"] = "alice", ["active"] = true },
+                }, out _);
+            await using var fixture = await PgSession.StartAsync(executor);
+
+            // GROUP BY is recognized but out of subset → feature_not_supported (not syntax).
+            await fixture.Client.SendQueryAsync("SELECT id FROM users GROUP BY id");
+            var errored = await fixture.Client.ReadQueryResultAsync().WaitAsync(Timeout);
+
+            errored.HasError.Should().BeTrue();
+            errored.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateFeatureNotSupported);
+            errored.TransactionStatus.Should().Be('I');
+
+            // The connection stays usable afterward.
+            await fixture.Client.SendQueryAsync("SELECT id FROM users");
+            var ok = await fixture.Client.ReadQueryResultAsync().WaitAsync(Timeout);
+            ok.HasError.Should().BeFalse();
+        }
+
+        [Fact]
+        public async Task Join_ProjectsQualifiedJoinedColumns_OverTheWire()
+        {
+            // The executor is mocked, so it returns the row the Core flatten would
+            // produce (root scalar + the table-qualified joined column). This pins the
+            // wire projection of a joined column; the flatten itself is proven in the
+            // Core QueryIntentJoinFlattenTests against a real database.
+            var rows = new IReadOnlyDictionary<string, object?>[]
+            {
+                new Dictionary<string, object?> { ["id"] = 10, ["users.name"] = "alice" },
+            };
+            var executor = FakeExecutor(OrdersModel(), rows, out var captured);
+            await using var fixture = await PgSession.StartAsync(executor);
+
+            await fixture.Client.SendQueryAsync(
+                "SELECT o.id, u.name FROM orders o JOIN users u ON o.user_id = u.id");
+            var result = await fixture.Client.ReadQueryResultAsync().WaitAsync(Timeout);
+
+            result.HasError.Should().BeFalse();
+            result.Fields.Select(f => f.Name).Should().Equal("id", "users.name");
+            result.Rows.Should().ContainSingle().Which.Should().Equal("10", "alice");
+            captured.Intent!.Query.Links.Should().HaveCount(1);
+        }
+
         // ---- fixtures / doubles --------------------------------------------
 
         /// <summary>Captures the intent that reached the read seam.</summary>
@@ -236,6 +304,54 @@ namespace BifrostQL.Server.Test.Pgwire
             executor.ExecuteAsync(Arg.Do<QueryIntent>(i => capture.Intent = i), Arg.Any<CancellationToken>())
                 .Returns(Task.FromResult(new QueryIntentResult { Rows = rows, Sql = "-- mocked" }));
             return executor;
+        }
+
+        /// <summary>Executor over a prebuilt multi-table model (for join queries).</summary>
+        private static IQueryIntentExecutor FakeExecutor(
+            IDbModel model, IReadOnlyList<IReadOnlyDictionary<string, object?>> rows, out CapturedIntent captured)
+        {
+            var capture = new CapturedIntent();
+            captured = capture;
+
+            var executor = Substitute.For<IQueryIntentExecutor>();
+            executor.GetModelAsync(Arg.Any<string?>()).Returns(Task.FromResult(model));
+            executor.ExecuteAsync(Arg.Do<QueryIntent>(i => capture.Intent = i), Arg.Any<CancellationToken>())
+                .Returns(Task.FromResult(new QueryIntentResult { Rows = rows, Sql = "-- mocked" }));
+            return executor;
+        }
+
+        /// <summary>orders (FK user_id → users.id) + users, with the forward single-link.</summary>
+        private static IDbModel OrdersModel()
+        {
+            var users = UsersTable();
+            var orders = Substitute.For<IDbTable>();
+            orders.DbName.Returns("orders");
+            orders.GraphQlName.Returns("orders");
+            orders.TableSchema.Returns("dbo");
+            var orderCols = new[]
+            {
+                new ColumnDto { ColumnName = "id", GraphQlName = "id", DataType = "int", OrdinalPosition = 1, IsPrimaryKey = true },
+                new ColumnDto { ColumnName = "user_id", GraphQlName = "user_id", DataType = "int", OrdinalPosition = 2 },
+            };
+            orders.Columns.Returns(orderCols);
+            orders.MultiLinks.Returns(new Dictionary<string, TableLinkDto>());
+
+            // Materialize the link (which reads users.Columns) before configuring the
+            // substitute call, so NSubstitute doesn't see a nested configuration.
+            var usersId = users.Columns.First(c => c.ColumnName == "id");
+            var link = new TableLinkDto
+            {
+                Name = "users",
+                ParentTable = users,
+                ChildTable = orders,
+                ParentId = usersId,
+                ChildId = orderCols.First(c => c.ColumnName == "user_id"),
+            };
+            orders.SingleLinks.Returns(new Dictionary<string, TableLinkDto> { ["users"] = link });
+
+            var model = Substitute.For<IDbModel>();
+            model.Tables.Returns(new[] { orders, users });
+            return model;
         }
 
         private static IDbTable UsersTable()

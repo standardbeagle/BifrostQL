@@ -185,9 +185,12 @@ namespace BifrostQL.Server.Pgwire
                 i++;
             }
             var text = sql[start..i];
+            // Cast one branch to object so the conditional's common type does not
+            // coerce the integer branch to decimal (which would defeat the `is long`
+            // check in LIMIT/OFFSET parsing).
             object literal = seenDot
                 ? decimal.Parse(text, CultureInfo.InvariantCulture)
-                : long.Parse(text, CultureInfo.InvariantCulture);
+                : (object)long.Parse(text, CultureInfo.InvariantCulture);
             return new Tok(TokKind.Number, text, literal);
         }
 

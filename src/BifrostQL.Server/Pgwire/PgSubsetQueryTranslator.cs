@@ -174,32 +174,37 @@ namespace BifrostQL.Server.Pgwire
             if (link.IsComposite)
                 throw RejectFeature($"JOIN to '{target.DbName}' uses a composite foreign key, which is not supported.");
 
-            ValidateOnClause(stmt.Join!, fromTable, target, link);
+            ValidateOnClause(stmt, fromTable, target, link);
             return new JoinResolution(target, fieldName);
         }
 
         /// <summary>Confirms the ON equality names the link's FK (child) and key (parent) columns.</summary>
-        private static void ValidateOnClause(PgJoinClause join, IDbTable fromTable, IDbTable target, TableLinkDto link)
+        private static void ValidateOnClause(PgSelectStatement stmt, IDbTable fromTable, IDbTable target, TableLinkDto link)
         {
-            var (childRef, parentRef) = MatchSides(join, fromTable, target);
+            var (childRef, parentRef) = MatchSides(stmt, fromTable, target);
             if (!ColumnMatches(childRef, link.ChildId) || !ColumnMatches(parentRef, link.ParentId))
                 throw RejectFeature(
                     $"JOIN ON does not match the '{fromTable.DbName}'→'{target.DbName}' relationship " +
                     $"({link.ChildId.ColumnName} = {link.ParentId.ColumnName}).");
         }
 
-        private static (PgColumnRef Child, PgColumnRef Parent) MatchSides(PgJoinClause join, IDbTable fromTable, IDbTable target)
+        private static (PgColumnRef Child, PgColumnRef Parent) MatchSides(PgSelectStatement stmt, IDbTable fromTable, IDbTable target)
         {
-            // Either side of `=` may name the FROM or the JOIN table.
-            if (IsQualifierFor(join.Left.Qualifier, fromTable) && IsQualifierFor(join.Right.Qualifier, target))
-                return (join.Left, join.Right);
-            if (IsQualifierFor(join.Right.Qualifier, fromTable) && IsQualifierFor(join.Left.Qualifier, target))
-                return (join.Right, join.Left);
+            var join = stmt.Join!;
+            // Either side of `=` may name the FROM or the JOIN table, by table name or alias.
+            bool LeftIsFrom() => IsQualifierFor(join.Left.Qualifier, stmt.From, fromTable);
+            bool RightIsTarget() => IsQualifierFor(join.Right.Qualifier, join.Table, target);
+            bool RightIsFrom() => IsQualifierFor(join.Right.Qualifier, stmt.From, fromTable);
+            bool LeftIsTarget() => IsQualifierFor(join.Left.Qualifier, join.Table, target);
+
+            if (LeftIsFrom() && RightIsTarget()) return (join.Left, join.Right);
+            if (RightIsFrom() && LeftIsTarget()) return (join.Right, join.Left);
             throw RejectFeature("JOIN ON must relate the FROM table to the joined table by their key columns.");
         }
 
-        private static bool IsQualifierFor(string? qualifier, IDbTable table) =>
+        private static bool IsQualifierFor(string? qualifier, PgTableRef reference, IDbTable table) =>
             qualifier is null
+            || string.Equals(qualifier, reference.Alias, StringComparison.OrdinalIgnoreCase)
             || string.Equals(qualifier, table.DbName, StringComparison.OrdinalIgnoreCase)
             || string.Equals(qualifier, table.GraphQlName, StringComparison.OrdinalIgnoreCase);
 

@@ -56,6 +56,12 @@ interface ActiveQuery {
 interface QueryBuilderPaneProps {
   /** A saved query the shell's nav asked us to open. */
   openRequest?: SavedObject | null;
+  /**
+   * Fired once the open request has been consumed (opened, declined, or
+   * rejected). The shell clears it, so a later unmount/remount of this pane
+   * cannot replay a stale request and resurrect a deleted or superseded query.
+   */
+  onOpenHandled?: () => void;
   /** Reports which saved query is open (or null) so the nav can highlight it. */
   onActiveChange?: (id: string | null) => void;
   /** Fired after a save/rename/delete so the nav refetches its list. */
@@ -73,7 +79,12 @@ interface QueryBuilderPaneProps {
  * references open the query in degraded mode (running is blocked, the definition
  * is left exactly as stored) so the user — not the app — decides the repair.
  */
-export function QueryBuilderPane({ openRequest, onActiveChange, onStoreChanged }: QueryBuilderPaneProps = {}) {
+export function QueryBuilderPane({
+  openRequest,
+  onOpenHandled,
+  onActiveChange,
+  onStoreChanged,
+}: QueryBuilderPaneProps = {}) {
   const [schema, setSchema] = useState<BuilderSchema | null>(null);
   const [schemaError, setSchemaError] = useState<string | null>(null);
   const [state, setState] = useState<DesignerState>(emptyDesignerState);
@@ -89,7 +100,6 @@ export function QueryBuilderPane({ openRequest, onActiveChange, onStoreChanged }
   const [active, setActive] = useState<ActiveQuery | null>(null);
   const [savedDefinition, setSavedDefinition] = useState<SavedQueryDefinition | null>(null);
   const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
-  const [driftOnOpen, setDriftOnOpen] = useState<SchemaDrift | null>(null);
   const [status, setStatus] = useState<string | null>(null);
 
   const available = isBuilderBridgeAvailable();
@@ -105,20 +115,46 @@ export function QueryBuilderPane({ openRequest, onActiveChange, onStoreChanged }
     };
   }, [available]);
 
-  // Open a saved query: restore the design as stored, then diff its fingerprint
-  // against the live schema. Never rewrite the definition to "fix" it.
+  const dirty = useMemo(() => {
+    if (savedSnapshot === null) return state.tables.length > 0;
+    return JSON.stringify(state) !== savedSnapshot;
+  }, [state, savedSnapshot]);
+
+  // Degraded mode: the design on the canvas references something the database no
+  // longer has. Derived from the state itself — never from a stored fingerprint,
+  // which could disagree with the state and only ever by under-reporting. So a
+  // query saved by an older build, or with a truncated fingerprint, still opens
+  // degraded; and once the user edits the offending references away, the design
+  // is runnable again. Building SQL from a drifted design would fail anyway, so
+  // Run/View SQL are blocked; Save/Save-as are blocked too, so the one action
+  // that writes a broken design back to the store isn't the one left open.
+  const drift: SchemaDrift | null = useMemo(
+    () => (schema ? detectSchemaDrift(serializeQuery(state), schema) : null),
+    [state, schema],
+  );
+  const degraded = drift !== null && hasDrift(drift);
+  // Nothing to save: an empty canvas that isn't attached to a saved query.
+  const empty = state.tables.length === 0 && active === null;
+
+  // Open a saved query: restore the design exactly as stored, after confirming
+  // any unsaved edits may be discarded. Consumed one-shot (onOpenHandled) so a
+  // pane switch cannot replay it. Never rewrites the definition to "fix" it.
   useEffect(() => {
     if (!openRequest || !schema) return;
     const definition = parseQueryDefinition(openRequest.definition);
     if (!definition) {
       setError(`"${openRequest.name}" is not a saved visual query this version can open.`);
+      onOpenHandled?.();
+      return;
+    }
+    if (dirty && !window.confirm(`Discard unsaved changes and open "${openRequest.name}"?`)) {
+      onOpenHandled?.();
       return;
     }
     setState(definition.state);
     setSavedDefinition(definition);
     setSavedSnapshot(JSON.stringify(definition.state));
     setActive({ id: openRequest.id, name: openRequest.name, version: openRequest.version });
-    setDriftOnOpen(detectSchemaDrift(definition, schema));
     setAmbiguous([]);
     setM2mPlans([]);
     setSqlPreview(null);
@@ -126,23 +162,11 @@ export function QueryBuilderPane({ openRequest, onActiveChange, onStoreChanged }
     setError(null);
     setStatus(null);
     onActiveChange?.(openRequest.id);
-  }, [openRequest, schema, onActiveChange]);
-
-  const dirty = useMemo(() => {
-    if (savedSnapshot === null) return state.tables.length > 0;
-    return JSON.stringify(state) !== savedSnapshot;
-  }, [state, savedSnapshot]);
-
-  // Degraded mode: the query opened with references the database no longer has.
-  // Building SQL from it would fail anyway, so Run/View SQL stay blocked and the
-  // broken references are listed. The stored definition is never rewritten — but
-  // once the user edits the offending references away, the design is runnable
-  // again, so the warning is re-derived from what is currently on the canvas.
-  const drift = useMemo(() => {
-    if (!schema || driftOnOpen === null || !hasDrift(driftOnOpen)) return null;
-    return detectSchemaDrift(serializeQuery(state), schema);
-  }, [state, schema, driftOnOpen]);
-  const degraded = drift !== null && hasDrift(drift);
+    onOpenHandled?.();
+    // `dirty` is read to guard the discard; the request is consumed on the first
+    // run, so this cannot re-fire for the same request when dirty later changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openRequest, schema, onActiveChange, onOpenHandled]);
 
   /** Persists the given definition under `id`/`name`; returns false when it failed. */
   const persist = useCallback(
@@ -214,7 +238,6 @@ export function QueryBuilderPane({ openRequest, onActiveChange, onStoreChanged }
     setActive(null);
     setSavedDefinition(null);
     setSavedSnapshot(null);
-    setDriftOnOpen(null);
     setError(null);
     setStatus(`Deleted "${active.name}". The design is still open, unsaved.`);
     onActiveChange?.(null);
@@ -372,10 +395,24 @@ export function QueryBuilderPane({ openRequest, onActiveChange, onStoreChanged }
             </span>
           )}
         </span>
-        <button type="button" onClick={() => void onSave()} disabled={!dirty && active !== null} style={styles.btn}>
+        <button
+          type="button"
+          onClick={() => void onSave()}
+          disabled={degraded || empty || (!dirty && active !== null)}
+          title={degraded ? DEGRADED_SAVE_HINT : undefined}
+          style={styles.btn}
+        >
           Save
         </button>
-        <button type="button" onClick={() => void onSaveAs()} style={styles.btn}>Save as…</button>
+        <button
+          type="button"
+          onClick={() => void onSaveAs()}
+          disabled={degraded || empty}
+          title={degraded ? DEGRADED_SAVE_HINT : undefined}
+          style={styles.btn}
+        >
+          Save as…
+        </button>
         <button type="button" onClick={() => void onRename()} disabled={!active} style={styles.btn}>Rename</button>
         <button type="button" onClick={() => void onDelete()} disabled={!active} style={styles.btn}>Delete</button>
 
@@ -401,6 +438,9 @@ export function QueryBuilderPane({ openRequest, onActiveChange, onStoreChanged }
     </div>
   );
 }
+
+const DEGRADED_SAVE_HINT =
+  "Repair the broken references before saving — saving now would store a design the database can no longer run.";
 
 function errMsg(e: unknown): string {
   return e instanceof BridgeError || e instanceof Error ? e.message : String(e);

@@ -46,12 +46,20 @@ export default function App() {
   // Saved queries (builder pane). The nav rail lists them and asks the designer
   // to open one; the designer owns save/rename/delete and tells the rail when the
   // store changed. A fresh object per click so reopening the same query re-loads
-  // it (discarding unsaved edits) rather than being a no-op.
+  // it (after confirming any unsaved edits) rather than being a no-op.
+  //
+  // The request is one-shot: the designer clears it once consumed. The builder
+  // pane is conditionally rendered, so a pane switch unmounts and remounts it —
+  // a request left standing would be replayed on remount and resurrect a query
+  // the user had since deleted, with its old id and version.
   const [savedQueryToOpen, setSavedQueryToOpen] = useState<SavedObject | null>(null);
   const [activeSavedQueryId, setActiveSavedQueryId] = useState<string | null>(null);
   const [savedQueryListToken, setSavedQueryListToken] = useState(0);
   const handleOpenSavedQuery = useCallback((query: SavedObject) => {
     setSavedQueryToOpen({ ...query });
+  }, []);
+  const handleSavedQueryOpenHandled = useCallback(() => {
+    setSavedQueryToOpen(null);
   }, []);
   const handleSavedQueryStoreChanged = useCallback(() => {
     setSavedQueryListToken((t) => t + 1);
@@ -297,6 +305,7 @@ export default function App() {
             />
             <QueryBuilderPane
               openRequest={savedQueryToOpen}
+              onOpenHandled={handleSavedQueryOpenHandled}
               onActiveChange={setActiveSavedQueryId}
               onStoreChanged={handleSavedQueryStoreChanged}
             />

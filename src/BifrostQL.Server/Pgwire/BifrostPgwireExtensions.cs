@@ -40,6 +40,12 @@ namespace BifrostQL.Server.Pgwire
             // loop or result encoding. Stateless — the executor is passed per query.
             services.TryAddSingleton<IPgQueryTranslator, PgSubsetQueryTranslator>();
 
+            // Catalog emulation (slice 4): answers pg_catalog/information_schema
+            // introspection (psql \d, BI-tool schema discovery) from a DbModel-derived,
+            // identity-filtered projection, before the SQL read path. Consulted per query
+            // by the connection handler; returns null for non-catalog queries.
+            services.TryAddSingleton<IPgCatalogResponder, PgCatalogResponder>();
+
             // Adapter lifecycle via the shared adapter/hosted-service pattern.
             services.TryAddSingleton<PgWireAdapter>();
             services.AddSingleton<IHostedService>(sp =>

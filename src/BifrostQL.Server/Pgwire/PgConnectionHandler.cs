@@ -355,26 +355,32 @@ namespace BifrostQL.Server.Pgwire
                 var sql = Encoding.UTF8.GetString(TrimTrailingNul(body));
                 var executor = _services.GetService<IQueryIntentExecutor>()
                     ?? throw new BifrostExecutionError("pgwire endpoint has no registered query executor.");
+
+                // Catalog / introspection queries (psql \d, BI-tool schema discovery) are
+                // answered from a DbModel-derived, identity-filtered projection — NOT from a
+                // physical database. The responder returns null for everything else, so the
+                // normal SQL read path below is unchanged. The projection runs under the
+                // authenticated userContext and reuses the query path's authoritative table/
+                // column visibility check, so it is not a security bypass.
+                var catalog = _services.GetService<IPgCatalogResponder>();
+                if (catalog is not null)
+                {
+                    var response = await catalog.TryRespondAsync(executor, sql, userContext, _options.Endpoint, ct);
+                    if (response is not null)
+                    {
+                        await WriteResultAsync(stream, response.Columns, response.Rows, ct);
+                        await WriteReadyForQueryAsync(stream, ct);
+                        return;
+                    }
+                }
+
                 var translator = _services.GetService<IPgQueryTranslator>()
                     ?? throw new BifrostExecutionError("pgwire endpoint has no registered query translator.");
 
                 var plan = await translator.TranslateAsync(executor, sql, userContext, _options.Endpoint, ct);
                 var result = await executor.ExecuteAsync(plan.Intent, ct);
 
-                await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.RowDescription,
-                    PgBackend.RowDescription(plan.Columns), ct);
-
-                foreach (var row in result.Rows)
-                {
-                    var values = plan.Columns
-                        .Select(c => PgValueEncoder.ToText(row.TryGetValue(c.Name, out var v) ? v : null))
-                        .ToList();
-                    await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.DataRow,
-                        PgBackend.DataRow(values), ct);
-                }
-
-                await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.CommandComplete,
-                    PgBackend.CommandComplete($"SELECT {result.Rows.Count}"), ct);
+                await WriteResultAsync(stream, plan.Columns, result.Rows, ct);
             }
             catch (Exception ex) when (ex is not (IOException or OperationCanceledException or EndOfStreamException or PgProtocolException))
             {
@@ -385,6 +391,34 @@ namespace BifrostQL.Server.Pgwire
             }
 
             await WriteReadyForQueryAsync(stream, ct);
+        }
+
+        /// <summary>
+        /// Streams a result set as RowDescription → DataRow* → CommandComplete. Each row
+        /// is projected positionally by the ordered <paramref name="columns"/> (a missing
+        /// key encodes as SQL NULL), so the real read path and the catalog responder share
+        /// one encoder.
+        /// </summary>
+        private static async Task WriteResultAsync(
+            Stream stream,
+            IReadOnlyList<PgResultColumn> columns,
+            IReadOnlyList<IReadOnlyDictionary<string, object?>> rows,
+            CancellationToken ct)
+        {
+            await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.RowDescription,
+                PgBackend.RowDescription(columns), ct);
+
+            foreach (var row in rows)
+            {
+                var values = columns
+                    .Select(c => PgValueEncoder.ToText(row.TryGetValue(c.Name, out var v) ? v : null))
+                    .ToList();
+                await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.DataRow,
+                    PgBackend.DataRow(values), ct);
+            }
+
+            await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.CommandComplete,
+                PgBackend.CommandComplete($"SELECT {rows.Count}"), ct);
         }
 
         /// <summary>

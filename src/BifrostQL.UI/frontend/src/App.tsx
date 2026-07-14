@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import Editor from '@standardbeagle/edit-db';
+import Editor, { type SavedObject } from '@standardbeagle/edit-db';
 import '@standardbeagle/edit-db/style.css';
 import {
   WelcomePanel,
@@ -12,6 +12,7 @@ import { AboutPanel } from './about/AboutPanel';
 import { loadSession } from './connection/session';
 import { SqlConsole } from './SqlConsole';
 import { QueryBuilderPane } from './designer/QueryBuilderPane';
+import { SavedQueryList } from './designer/SavedQueryList';
 import { FormBuilderPane } from './forms/FormBuilderPane';
 import { runFormsMigrationOnce } from './forms/forms-migration-boot';
 import { isSqlBridgeAvailable } from './lib/sql-bridge';
@@ -41,6 +42,20 @@ export default function App() {
   // console rides the Photino bridge, so it's only offered inside the desktop app.
   const [editorPane, setEditorPane] = useState<EditorPane>('graphql');
   const sqlBridgeAvailable = isSqlBridgeAvailable();
+
+  // Saved queries (builder pane). The nav rail lists them and asks the designer
+  // to open one; the designer owns save/rename/delete and tells the rail when the
+  // store changed. A fresh object per click so reopening the same query re-loads
+  // it (discarding unsaved edits) rather than being a no-op.
+  const [savedQueryToOpen, setSavedQueryToOpen] = useState<SavedObject | null>(null);
+  const [activeSavedQueryId, setActiveSavedQueryId] = useState<string | null>(null);
+  const [savedQueryListToken, setSavedQueryListToken] = useState(0);
+  const handleOpenSavedQuery = useCallback((query: SavedObject) => {
+    setSavedQueryToOpen({ ...query });
+  }, []);
+  const handleSavedQueryStoreChanged = useCallback(() => {
+    setSavedQueryListToken((t) => t + 1);
+  }, []);
 
   // API profiles (slice 6a endpoint). The picker re-points the embedded editor
   // at `?profile=<serverProfile>` so the server serves that profile's schema.
@@ -274,7 +289,18 @@ export default function App() {
         {editorPane === 'sql' ? (
           <SqlConsole />
         ) : editorPane === 'builder' ? (
-          <QueryBuilderPane />
+          <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+            <SavedQueryList
+              activeId={activeSavedQueryId}
+              reloadToken={savedQueryListToken}
+              onOpen={handleOpenSavedQuery}
+            />
+            <QueryBuilderPane
+              openRequest={savedQueryToOpen}
+              onActiveChange={setActiveSavedQueryId}
+              onStoreChanged={handleSavedQueryStoreChanged}
+            />
+          </div>
         ) : editorPane === 'forms' ? (
           <FormBuilderPane />
         ) : editorFetcher && transport && transport.mode === transportMode ? (

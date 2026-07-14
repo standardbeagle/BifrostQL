@@ -158,6 +158,19 @@ namespace BifrostQL.AdapterConformance
         protected virtual bool AdapterSupportsMutations => false;
 
         /// <summary>
+        /// Whether the adapter's write surface exposes an INSERT (new-row) verb. Some
+        /// write-capable adapters expose only UPDATE/DELETE against existing rows — a
+        /// key-addressed protocol like RESP (SET = update, DEL = delete) has no wire
+        /// command that creates a row. Such an adapter still sets
+        /// <see cref="AdapterSupportsMutations"/> to <c>true</c> (its update/delete path
+        /// MUST prove tenant scoping, soft-delete and fail-closed identity) but returns
+        /// <c>false</c> here, so the two INSERT-specific facts are skipped honestly
+        /// rather than faked through an update. An adapter with a genuine insert path
+        /// (the default) leaves this <c>true</c> and proves those facts too.
+        /// </summary>
+        protected virtual bool AdapterSupportsInserts => true;
+
+        /// <summary>
         /// Executes a write through the adapter's real request path and returns the
         /// adapter's scalar result (identity / key / affected count). Required when
         /// <see cref="AdapterSupportsMutations"/> is true. Server-side rejections
@@ -432,7 +445,7 @@ namespace BifrostQL.AdapterConformance
         [Fact]
         public async Task Mutate_Insert_PinsTenantFromIdentity_IgnoringClientTenantValue()
         {
-            if (!AdapterSupportsMutations) return;
+            if (!AdapterSupportsMutations || !AdapterSupportsInserts) return;
 
             // The caller tries to plant the row in tenant-b; the tenant mutation
             // transformer must pin it to the caller's own tenant.
@@ -456,7 +469,7 @@ namespace BifrostQL.AdapterConformance
         [Fact]
         public async Task Mutate_Insert_WithoutTenantIdentity_FailsClosed()
         {
-            if (!AdapterSupportsMutations) return;
+            if (!AdapterSupportsMutations || !AdapterSupportsInserts) return;
 
             var ex = await Assert.ThrowsAnyAsync<Exception>(() => ExecuteMutationAsync(new ConformanceMutationRequest
             {

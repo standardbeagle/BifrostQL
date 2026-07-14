@@ -52,6 +52,21 @@ namespace BifrostQL.Server.Resp
         public const string Command = "COMMAND";
         public const string Client = "CLIENT";
 
+        // ---- Data command names (slice 2 read surface; dispatched at the IRespCommandHandler seam) ----
+        public const string Get = "GET";
+        public const string MGet = "MGET";
+        public const string Exists = "EXISTS";
+        public const string Type = "TYPE";
+
+        /// <summary>
+        /// The Redis key-space separator. A data-command key is addressed as
+        /// <c>&lt;table&gt;:&lt;pk1&gt;[:&lt;pk2&gt;…]</c>; the first segment is the table and the
+        /// remaining segments are the primary-key values in schema order. A key value that itself
+        /// contains this separator cannot be addressed — it splits into the wrong segment count and
+        /// is refused, mirroring the Redis keyspace convention (callers encode such values).
+        /// </summary>
+        public const char KeySeparator = ':';
+
         // ---- HELLO option keywords ----
         public const string HelloAuthOption = "AUTH";
         public const string HelloSetNameOption = "SETNAME";
@@ -63,6 +78,13 @@ namespace BifrostQL.Server.Resp
         public const string Pong = "PONG";
         public const string Ok = "OK";
         public const string ResetReply = "RESET";
+
+        // ---- TYPE command replies (a Bifrost row is modeled as a JSON string value) ----
+        /// <summary>TYPE reply for an existing, visible row: it is exposed as a JSON string value.</summary>
+        public const string TypeString = "string";
+
+        /// <summary>TYPE reply for a missing key OR a row the caller's identity cannot see (indistinguishable).</summary>
+        public const string TypeNone = "none";
 
         // ---- Canonical error strings (first token is the Redis error code) ----
         /// <summary>Refusal for a command that needs an established identity before AUTH.</summary>
@@ -87,6 +109,21 @@ namespace BifrostQL.Server.Resp
 
         /// <summary>Generic, client-safe wording for a wire-framing / protocol violation before the connection closes.</summary>
         public const string ProtocolErrorPrefix = "ERR Protocol error: ";
+
+        /// <summary>The Redis generic-error prefix for a client-facing, honestly-worded command error.</summary>
+        public const string ErrPrefix = "ERR ";
+
+        /// <summary>
+        /// Sanitized, client-safe wording for an unexpected server-side failure while executing a data
+        /// command. The real exception is logged server-side; its message never reaches the wire, per the
+        /// protocol-adapter security invariant that Bifrost-internal exception text is untrusted on any
+        /// client-facing wire (it can carry schema/driver detail).
+        /// </summary>
+        public const string InternalError = "ERR internal error";
+
+        /// <summary>The Redis wrong-argument-count error for <paramref name="command"/> (lower-cased, quoted).</summary>
+        public static string WrongArgCount(string command) =>
+            $"ERR wrong number of arguments for '{command.ToLowerInvariant()}' command";
 
         // ---- HELLO server-info map keys ----
         public const string HelloServer = "server";

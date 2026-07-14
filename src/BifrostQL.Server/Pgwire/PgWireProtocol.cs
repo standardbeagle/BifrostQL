@@ -37,9 +37,30 @@ namespace BifrostQL.Server.Pgwire
         public const byte ParameterStatus = (byte)'S';
         public const byte BackendKeyData = (byte)'K';
 
+        // ---- Simple query protocol message type bytes (slice 2) ----
+        public const byte RowDescription = (byte)'T';   // backend: result column layout
+        public const byte DataRow = (byte)'D';          // backend: one result row (text values)
+        public const byte CommandComplete = (byte)'C';  // backend: command tag, e.g. "SELECT 3"
+
         // ---- Frontend (client → server) message type bytes ----
         public const byte PasswordMessage = (byte)'p'; // also SASLInitialResponse / SASLResponse
+        public const byte Query = (byte)'Q';           // simple query: a single SQL string
         public const byte Terminate = (byte)'X';       // client asks to close the session
+
+        /// <summary>
+        /// ReadyForQuery transaction-status byte for autocommit: 'I' = idle, not inside a
+        /// transaction block. Slice 2 is autocommit only, so every ReadyForQuery is idle.
+        /// </summary>
+        public const byte TransactionStatusIdle = (byte)'I';
+
+        /// <summary>
+        /// Format code for a result column value in the simple query protocol. Simple
+        /// query has no binary format negotiation — every value is text (0).
+        /// </summary>
+        public const short FormatText = 0;
+
+        /// <summary>ErrorResponse/RowDescription/DataRow use a NULL value length of -1.</summary>
+        public const int NullValueLength = -1;
 
         // ---- Authentication request sub-codes (Int32 following the 'R' header) ----
         public const int AuthOk = 0;
@@ -63,5 +84,17 @@ namespace BifrostQL.Server.Pgwire
         public const string SqlStateInvalidPassword = "28P01";      // invalid_password
         public const string SqlStateProtocolViolation = "08P01";    // protocol_violation
         public const string SqlStateFeatureNotSupported = "0A000";  // feature_not_supported
+
+        // SQLSTATE codes used by the simple query path (slice 2). A query-phase error
+        // is non-fatal: it surfaces as a "ERROR"-severity ErrorResponse and the session
+        // stays usable (autocommit), unlike the "FATAL" handshake rejections above.
+        public const string SqlStateSyntaxError = "42601";    // syntax_error (unrecognized SQL)
+        public const string SqlStateInternalError = "XX000";  // internal_error (execution fault)
+
+        /// <summary>ErrorResponse severity for a handshake rejection: the connection closes.</summary>
+        public const string SeverityFatal = "FATAL";
+
+        /// <summary>ErrorResponse severity for a query error: the connection stays alive.</summary>
+        public const string SeverityError = "ERROR";
     }
 }

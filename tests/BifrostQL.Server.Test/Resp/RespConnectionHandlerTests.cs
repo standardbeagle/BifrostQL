@@ -58,6 +58,54 @@ namespace BifrostQL.Server.Test.Resp
         }
 
         [Fact]
+        public async Task Echo_ReturnsMessageVerbatim()
+        {
+            // Arrange
+            await using var fixture = await StartAsync(WithUser());
+            await Authenticate(fixture);
+
+            // Act
+            await fixture.Client.SendCommandAsync("ECHO", "hello");
+            var reply = await ReadAsync(fixture);
+
+            // Assert
+            Bulk(reply).Should().Be("hello");
+        }
+
+        [Fact]
+        public async Task Echo_BinaryPayload_RoundTripsExactly()
+        {
+            // A real Redis client (StackExchange.Redis) uses ECHO as its connection tracer with a BINARY
+            // payload (a 16-byte GUID). ECHO must be binary-safe: the reply bytes must equal the request
+            // bytes exactly, or the bulk length changes and the client desyncs. Bytes 0x80/0xFF/0x00 are not
+            // valid UTF-8, so a string-round-trip would corrupt them — this pins the raw-byte echo.
+            await using var fixture = await StartAsync(WithUser());
+            await Authenticate(fixture);
+
+            var payload = new byte[] { 0x80, 0xFF, 0x00, 0x0D, 0x41, 0x0A };
+            var frame = new List<byte>();
+            frame.AddRange(Encoding.ASCII.GetBytes("*2\r\n$4\r\nECHO\r\n$" + payload.Length + "\r\n"));
+            frame.AddRange(payload);
+            frame.AddRange(Encoding.ASCII.GetBytes("\r\n"));
+            await fixture.Client.SendRawAsync(frame.ToArray());
+
+            var reply = await ReadAsync(fixture);
+            reply.Should().BeOfType<RespBulkString>().Which.Value.Should().Equal(payload,
+                "ECHO must echo the raw bytes so a binary tracer round-trips exactly");
+        }
+
+        [Fact]
+        public async Task Echo_BeforeAuth_ReturnsNoAuth()
+        {
+            await using var fixture = await StartAsync(WithUser());
+
+            await fixture.Client.SendCommandAsync("ECHO", "hi");
+            var reply = await ReadAsync(fixture);
+
+            Error(reply).Should().StartWith("NOAUTH");
+        }
+
+        [Fact]
         public async Task Ping_BeforeAuth_ReturnsNoAuth()
         {
             // Arrange

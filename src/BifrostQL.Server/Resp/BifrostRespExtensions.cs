@@ -35,6 +35,15 @@ namespace BifrostQL.Server.Resp
             // instance is shared across all connections (Kestrel resolves it once).
             services.TryAddSingleton<RespConnectionHandler>();
 
+            // Slice-2 read commands attach at the IRespCommandHandler seam — the connection handler
+            // indexes every registered handler by name for dispatch, with no edit to the loop. All
+            // reads route through IQueryIntentExecutor under the session identity, so the security
+            // transformer pipeline is unskippable.
+            services.AddSingleton<IRespCommandHandler, RespGetCommandHandler>();
+            services.AddSingleton<IRespCommandHandler, RespMGetCommandHandler>();
+            services.AddSingleton<IRespCommandHandler, RespExistsCommandHandler>();
+            services.AddSingleton<IRespCommandHandler, RespTypeCommandHandler>();
+
             // Adapter lifecycle via the shared adapter/hosted-service pattern.
             services.TryAddSingleton<RespWireAdapter>();
             services.AddSingleton<IHostedService>(sp =>

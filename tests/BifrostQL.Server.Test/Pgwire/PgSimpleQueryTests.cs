@@ -222,6 +222,56 @@ namespace BifrostQL.Server.Test.Pgwire
         }
 
         [Fact]
+        public async Task NegativeLiteralWhere_RoundTrips_CarryingSignedFilter()
+        {
+            var rows = new IReadOnlyDictionary<string, object?>[]
+            {
+                new Dictionary<string, object?> { ["id"] = -3, ["name"] = "neg", ["active"] = true },
+            };
+            var executor = FakeExecutor(UsersTable(), rows, out var captured);
+            await using var fixture = await PgSession.StartAsync(executor);
+
+            // A negative numeric literal in WHERE must parse and reach the read seam as a
+            // bound filter (not a rejected '-') so the correct rows come back.
+            await fixture.Client.SendQueryAsync("SELECT id, name FROM users WHERE id = -3");
+            var result = await fixture.Client.ReadQueryResultAsync().WaitAsync(Timeout);
+
+            result.HasError.Should().BeFalse();
+            captured.Intent!.Query.Filter.Should().NotBeNull();
+            result.Rows.Should().ContainSingle().Which.Should().Equal("-3", "neg");
+        }
+
+        [Fact]
+        public async Task OversizedNumericLiteral_ReturnsSyntaxError_NotInternalError_AndSessionSurvives()
+        {
+            const string oversized = "99999999999999999999999999999";
+            var executor = FakeExecutor(UsersTable(),
+                new IReadOnlyDictionary<string, object?>[]
+                {
+                    new Dictionary<string, object?> { ["id"] = 1, ["name"] = "alice", ["active"] = true },
+                }, out _);
+            await using var fixture = await PgSession.StartAsync(executor);
+
+            // An out-of-range literal is client input error: clean 42601, never the
+            // internal_error an escaped OverflowException would have produced, and it must
+            // not tear the connection down or echo the raw value.
+            await fixture.Client.SendQueryAsync($"SELECT id FROM users WHERE id = {oversized}");
+            var errored = await fixture.Client.ReadQueryResultAsync().WaitAsync(Timeout);
+
+            errored.HasError.Should().BeTrue();
+            errored.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateSyntaxError);
+            errored.ErrorSqlState.Should().NotBe(PgWireProtocol.SqlStateInternalError);
+            errored.ErrorMessage.Should().NotContain(oversized);
+            errored.ErrorMessage.Should().NotBe(PgWireProtocol.InternalQueryErrorMessage);
+            errored.TransactionStatus.Should().Be('I');
+
+            // The SAME connection still serves a subsequent valid query.
+            await fixture.Client.SendQueryAsync("SELECT id FROM users");
+            var ok = await fixture.Client.ReadQueryResultAsync().WaitAsync(Timeout);
+            ok.HasError.Should().BeFalse();
+        }
+
+        [Fact]
         public async Task OutOfSubsetFeature_ReturnsFeatureNotSupported_AndSessionSurvives()
         {
             var executor = FakeExecutor(UsersTable(),

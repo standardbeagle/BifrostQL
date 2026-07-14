@@ -72,6 +72,63 @@ namespace BifrostQL.Server.Test.Pgwire
             plan.Intent.Query.Filter.Should().NotBeNull();
         }
 
+        [Theory]
+        [InlineData("SELECT id FROM users WHERE id = -5", -5L)]
+        [InlineData("SELECT id FROM users WHERE id = +7", 7L)]
+        public void NegativeAndSignedNumericLiteral_InWhere_BindsSignedValue(string sql, long expected)
+        {
+            // Signed numeric literals are squarely in the Phase-1 subset; the parser must
+            // bind the signed value (never string-concatenate it) rather than reject '-'.
+            var stmt = PgSqlSubsetParser.Parse(sql);
+            var predicate = stmt.Where.Should().BeOfType<PgPredicate>().Subject;
+            predicate.Value.Should().Be(expected);
+        }
+
+        [Fact]
+        public void NegativeDecimalLiteral_PreservesDecimalKind()
+        {
+            var stmt = PgSqlSubsetParser.Parse("SELECT id FROM users WHERE total = -5.0");
+            var predicate = stmt.Where.Should().BeOfType<PgPredicate>().Subject;
+            predicate.Value.Should().Be(-5.0m);
+        }
+
+        [Fact]
+        public void Between_NegativeBounds_AreParsed()
+        {
+            var stmt = PgSqlSubsetParser.Parse("SELECT id FROM users WHERE id BETWEEN -10 AND -1");
+            var predicate = stmt.Where.Should().BeOfType<PgPredicate>().Subject;
+            predicate.Op.Should().Be(PgCompareOp.Between);
+            predicate.Values.Should().Equal(-10L, -1L);
+        }
+
+        [Theory]
+        [InlineData("SELECT id FROM users LIMIT -5")]
+        [InlineData("SELECT id FROM users OFFSET -1")]
+        public async Task NegativeLimitOrOffset_IsSyntaxError(string sql)
+        {
+            // A negative LIMIT/OFFSET is not a supported literal position — it must be
+            // rejected honestly as a syntax_error, never negated into a valid bound.
+            var ex = await Rejected(sql, UsersOnlyModel());
+            ex.Should().BeOfType<PgQueryTranslationException>()
+                .Which.SqlState.Should().Be(PgWireProtocol.SqlStateSyntaxError);
+        }
+
+        [Fact]
+        public async Task OversizedNumericLiteral_IsSyntaxError_NotInternalError_AndDoesNotLeak()
+        {
+            const string oversized = "99999999999999999999999999999";
+            var ex = await Rejected($"SELECT id FROM users WHERE id = {oversized}", UsersOnlyModel());
+
+            var translation = ex.Should().BeOfType<PgQueryTranslationException>().Subject;
+            // Out-of-range literal is client input error: clean 42601, NOT the internal_error
+            // an escaped OverflowException would have mapped to.
+            translation.SqlState.Should().Be(PgWireProtocol.SqlStateSyntaxError);
+            translation.SqlState.Should().NotBe(PgWireProtocol.SqlStateInternalError);
+            // The raw oversized value (and any OverflowException text) must not leak (invariant 3).
+            translation.Message.Should().NotContain(oversized);
+            translation.Message.Should().NotContain("Overflow");
+        }
+
         [Fact]
         public async Task UnknownTable_IsRejected()
         {

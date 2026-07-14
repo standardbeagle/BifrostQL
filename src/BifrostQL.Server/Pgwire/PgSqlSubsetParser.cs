@@ -126,7 +126,10 @@ namespace BifrostQL.Server.Pgwire
                 if (c == '<' && i + 1 < n && (sql[i + 1] == '=' || sql[i + 1] == '>')) { tokens.Add(new Tok(TokKind.Symbol, sql.Substring(i, 2), null)); i += 2; continue; }
                 if (c == '>' && i + 1 < n && sql[i + 1] == '=') { tokens.Add(new Tok(TokKind.Symbol, ">=", null)); i += 2; continue; }
                 if (c == '!' && i + 1 < n && sql[i + 1] == '=') { tokens.Add(new Tok(TokKind.Symbol, "!=", null)); i += 2; continue; }
-                if ("=<>().,;*".IndexOf(c) >= 0) { tokens.Add(new Tok(TokKind.Symbol, c.ToString(), null)); i++; continue; }
+                // '-'/'+' are the sign of a numeric LITERAL only (see ParseLiteral);
+                // the '--' comment form is already rejected above. They are not general
+                // arithmetic operators — the parser accepts them solely in value position.
+                if ("=<>().,;*-+".IndexOf(c) >= 0) { tokens.Add(new Tok(TokKind.Symbol, c.ToString(), null)); i++; continue; }
 
                 throw Reject($"unexpected character '{c}'.");
             }
@@ -188,9 +191,21 @@ namespace BifrostQL.Server.Pgwire
             // Cast one branch to object so the conditional's common type does not
             // coerce the integer branch to decimal (which would defeat the `is long`
             // check in LIMIT/OFFSET parsing).
-            object literal = seenDot
-                ? decimal.Parse(text, CultureInfo.InvariantCulture)
-                : (object)long.Parse(text, CultureInfo.InvariantCulture);
+            object literal;
+            try
+            {
+                literal = seenDot
+                    ? decimal.Parse(text, CultureInfo.InvariantCulture)
+                    : (object)long.Parse(text, CultureInfo.InvariantCulture);
+            }
+            catch (OverflowException)
+            {
+                // An out-of-range numeric literal is malformed CLIENT input, not a
+                // server fault: raise a clean syntax_error (42601) so it never escapes
+                // as an OverflowException mapped to internal_error. The raw value is not
+                // echoed back (invariant 3); full detail stays server-side.
+                throw Reject("numeric literal is out of range.");
+            }
             return new Tok(TokKind.Number, text, literal);
         }
 
@@ -323,6 +338,10 @@ namespace BifrostQL.Server.Pgwire
 
             private int ParseNonNegInt(string clause)
             {
+                // A signed value is never valid here: LIMIT/OFFSET must be non-negative.
+                // Reject the sign honestly as a syntax_error rather than silently negating.
+                if (IsSymbol("-") || IsSymbol("+"))
+                    throw Reject($"{clause} must be a non-negative integer.");
                 if (Peek.Kind != TokKind.Number || Peek.Literal is not long v)
                     throw Reject($"{clause} requires an integer.");
                 _p++;
@@ -455,6 +474,19 @@ namespace BifrostQL.Server.Pgwire
 
             private object? ParseLiteral()
             {
+                // A leading '-'/'+' is the sign of the numeric LITERAL that follows —
+                // NOT arithmetic. The sign must be immediately followed by a number
+                // token and binds to that single literal (still bound as a parameter).
+                if (IsSymbol("-") || IsSymbol("+"))
+                {
+                    var negate = IsSymbol("-");
+                    _p++;
+                    if (Peek.Kind != TokKind.Number)
+                        throw Reject("a numeric sign must be followed by a number literal.");
+                    var num = Next();
+                    return negate ? NegateNumber(num.Literal) : num.Literal;
+                }
+
                 var t = Peek;
                 if (t.Kind == TokKind.Number) { _p++; return t.Literal; }
                 if (t.Kind == TokKind.String) { _p++; return t.Literal; }
@@ -468,6 +500,15 @@ namespace BifrostQL.Server.Pgwire
                 }
                 throw Reject("expected a literal value (number, quoted string, TRUE/FALSE/NULL).");
             }
+
+            // Applies a leading minus to a numeric literal token, preserving its integer
+            // (long) vs. decimal kind so LIMIT/OFFSET's `is long` check still holds.
+            private static object NegateNumber(object? literal) => literal switch
+            {
+                long l => -l,
+                decimal d => -d,
+                _ => throw Reject("only numeric literals may be signed."),
+            };
 
             private string ExpectIdentifier(string what)
             {

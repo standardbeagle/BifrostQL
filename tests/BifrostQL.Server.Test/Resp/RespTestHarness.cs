@@ -35,7 +35,7 @@ namespace BifrostQL.Server.Test.Resp
         public RespTestClient(Stream stream)
         {
             _stream = stream;
-            _reader = new RespReader(stream, 1 << 20, 1 << 20);
+            _reader = new RespReader(stream, 1 << 20, 1 << 20, 32);
         }
 
         public async Task SendCommandAsync(params string[] arguments)

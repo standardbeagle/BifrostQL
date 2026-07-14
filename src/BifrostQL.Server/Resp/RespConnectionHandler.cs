@@ -69,7 +69,7 @@ namespace BifrostQL.Server.Resp
         internal async Task HandleConnectionAsync(Stream stream, CancellationToken ct)
         {
             var session = new RespSession(Interlocked.Increment(ref _connectionCounter));
-            var reader = new RespReader(stream, _options.MaxBulkLength, _options.MaxAggregateElements);
+            var reader = new RespReader(stream, _options.MaxBulkLength, _options.MaxAggregateElements, _options.MaxNestingDepth);
             try
             {
                 while (true)

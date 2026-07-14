@@ -20,25 +20,29 @@ namespace BifrostQL.Server.Resp
     /// <summary>
     /// Streaming RESP frame decoder over a byte <see cref="Stream"/>. Buffers reads so the
     /// same instance drives a real socket (tests, production) frame after frame. A hard
-    /// per-frame cap on bulk length, line length and aggregate element count bounds every
-    /// allocation, so a hostile length prefix on the UNAUTHENTICATED path cannot drive an
-    /// unbounded allocation (mirrors the pgwire <c>MaxMessageLength</c> DoS guard). Every
-    /// malformed input raises <see cref="RespProtocolException"/> — never an unhandled throw.
+    /// per-frame cap on bulk length, line length, aggregate element count and nesting depth
+    /// bounds every allocation and every stack frame, so a hostile length prefix or a deeply
+    /// nested aggregate on the UNAUTHENTICATED path cannot drive an unbounded allocation or an
+    /// unbounded (uncatchable-<c>StackOverflowException</c>) recursion (mirrors the pgwire
+    /// <c>MaxMessageLength</c> DoS guard). Every malformed input raises
+    /// <see cref="RespProtocolException"/> — never an unhandled throw.
     /// </summary>
     internal sealed class RespReader
     {
         private readonly Stream _stream;
         private readonly int _maxBulkLength;
         private readonly int _maxElements;
+        private readonly int _maxNestingDepth;
         private readonly byte[] _buffer = new byte[8192];
         private int _start;
         private int _end;
 
-        public RespReader(Stream stream, int maxBulkLength, int maxElements)
+        public RespReader(Stream stream, int maxBulkLength, int maxElements, int maxNestingDepth)
         {
             _stream = stream ?? throw new ArgumentNullException(nameof(stream));
             _maxBulkLength = maxBulkLength;
             _maxElements = maxElements;
+            _maxNestingDepth = maxNestingDepth;
         }
 
         /// <summary>
@@ -50,10 +54,10 @@ namespace BifrostQL.Server.Resp
             var marker = await ReadRawByteAsync(ct);
             if (marker < 0)
                 return null; // clean EOF between frames
-            return await ReadBodyAsync((byte)marker, ct);
+            return await ReadBodyAsync((byte)marker, depth: 0, ct);
         }
 
-        private async Task<RespValue> ReadBodyAsync(byte marker, CancellationToken ct)
+        private async Task<RespValue> ReadBodyAsync(byte marker, int depth, CancellationToken ct)
         {
             switch (marker)
             {
@@ -68,13 +72,13 @@ namespace BifrostQL.Server.Resp
                 case RespProtocol.VerbatimString:
                     return await ReadVerbatimAsync(ct);
                 case RespProtocol.Array:
-                    return new RespArray(await ReadAggregateAsync(ct, allowNull: true));
+                    return new RespArray(await ReadAggregateAsync(depth, ct, allowNull: true));
                 case RespProtocol.Set:
-                    return new RespSet(await ReadNonNullAggregateAsync(ct, "set"));
+                    return new RespSet(await ReadNonNullAggregateAsync(depth, ct, "set"));
                 case RespProtocol.Push:
-                    return new RespPush(await ReadNonNullAggregateAsync(ct, "push"));
+                    return new RespPush(await ReadNonNullAggregateAsync(depth, ct, "push"));
                 case RespProtocol.Map:
-                    return await ReadMapAsync(ct);
+                    return await ReadMapAsync(depth, ct);
                 case RespProtocol.Null:
                     var body = await ReadLineAsync(ct);
                     if (body.Length != 0)
@@ -121,28 +125,37 @@ namespace BifrostQL.Server.Resp
             return new RespVerbatimString(format, content);
         }
 
-        private async Task<RespValue> ReadMapAsync(CancellationToken ct)
+        private async Task<RespValue> ReadMapAsync(int depth, CancellationToken ct)
         {
             var count = ParseInt(await ReadLineAsync(ct));
             if (count < 0)
                 throw new RespProtocolException($"invalid map length {count}.");
             if (count > _maxElements)
                 throw new RespProtocolException($"map length {count} exceeds cap {_maxElements}.");
-            var entries = new KeyValuePair<RespValue, RespValue>[count];
+            // Guard the physical stack BEFORE descending into entries: a map whose entries are
+            // themselves maps/arrays would recurse one frame per level, and with buffered socket
+            // data the awaits complete synchronously so the stack grows unbounded → uncatchable
+            // StackOverflowException. Reject past the cap as a clean protocol error instead.
+            var childDepth = NextDepth(depth);
+            // Grow incrementally rather than pre-allocating `count` entries: a tiny lying prefix
+            // (e.g. `%1000000\r\n`) must not force a proportional up-front allocation; each entry
+            // is materialized only as its bytes actually arrive, and a truncated stream throws
+            // on EOF long before the declared count is reached.
+            var entries = new List<KeyValuePair<RespValue, RespValue>>();
             for (var i = 0; i < count; i++)
             {
-                var key = await ReadRequiredValueAsync(ct, "map key");
-                var value = await ReadRequiredValueAsync(ct, "map value");
-                entries[i] = new KeyValuePair<RespValue, RespValue>(key, value);
+                var key = await ReadRequiredValueAsync(childDepth, ct, "map key");
+                var value = await ReadRequiredValueAsync(childDepth, ct, "map value");
+                entries.Add(new KeyValuePair<RespValue, RespValue>(key, value));
             }
             return new RespMap(entries);
         }
 
-        private async Task<IReadOnlyList<RespValue>> ReadNonNullAggregateAsync(CancellationToken ct, string kind)
-            => await ReadAggregateAsync(ct, allowNull: false)
+        private async Task<IReadOnlyList<RespValue>> ReadNonNullAggregateAsync(int depth, CancellationToken ct, string kind)
+            => await ReadAggregateAsync(depth, ct, allowNull: false)
                ?? throw new RespProtocolException($"{kind} aggregate cannot be null.");
 
-        private async Task<IReadOnlyList<RespValue>?> ReadAggregateAsync(CancellationToken ct, bool allowNull)
+        private async Task<IReadOnlyList<RespValue>?> ReadAggregateAsync(int depth, CancellationToken ct, bool allowNull)
         {
             var count = ParseInt(await ReadLineAsync(ct));
             if (count == RespProtocol.NullLength)
@@ -155,15 +168,34 @@ namespace BifrostQL.Server.Resp
                 throw new RespProtocolException($"invalid aggregate length {count}.");
             if (count > _maxElements)
                 throw new RespProtocolException($"aggregate length {count} exceeds cap {_maxElements}.");
-            var items = new RespValue[count];
+            // Guard the physical stack BEFORE descending into elements — see ReadMapAsync.
+            var childDepth = NextDepth(depth);
+            // Grow incrementally rather than pre-allocating `count` elements — see ReadMapAsync.
+            var items = new List<RespValue>();
             for (var i = 0; i < count; i++)
-                items[i] = await ReadRequiredValueAsync(ct, "aggregate element");
+                items.Add(await ReadRequiredValueAsync(childDepth, ct, "aggregate element"));
             return items;
         }
 
-        private async Task<RespValue> ReadRequiredValueAsync(CancellationToken ct, string what)
-            => await ReadValueAsync(ct)
-               ?? throw new RespProtocolException($"unexpected end of stream reading {what}.");
+        /// <summary>
+        /// The nesting level for the children of a value at <paramref name="depth"/>, refusing
+        /// to descend past <see cref="_maxNestingDepth"/>. Called BEFORE the recursive read so a
+        /// hostile deeply-nested aggregate never actually grows the stack past the cap.
+        /// </summary>
+        private int NextDepth(int depth)
+        {
+            if (depth >= _maxNestingDepth)
+                throw new RespProtocolException($"nesting depth exceeds cap {_maxNestingDepth}.");
+            return depth + 1;
+        }
+
+        private async Task<RespValue> ReadRequiredValueAsync(int depth, CancellationToken ct, string what)
+        {
+            var marker = await ReadRawByteAsync(ct);
+            if (marker < 0)
+                throw new RespProtocolException($"unexpected end of stream reading {what}.");
+            return await ReadBodyAsync((byte)marker, depth, ct);
+        }
 
         // ---- primitives ----
 

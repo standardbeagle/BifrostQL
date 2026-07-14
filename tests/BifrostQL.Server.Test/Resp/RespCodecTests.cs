@@ -140,7 +140,7 @@ namespace BifrostQL.Server.Test.Resp
         public async Task MalformedFrame_RaisesCleanProtocolException(string wire)
         {
             // Arrange
-            var reader = new RespReader(new MemoryStream(System.Text.Encoding.ASCII.GetBytes(wire)), 1 << 20, 1 << 20);
+            var reader = new RespReader(new MemoryStream(System.Text.Encoding.ASCII.GetBytes(wire)), 1 << 20, 1 << 20, 32);
 
             // Act
             var act = async () => await reader.ReadValueAsync(default);
@@ -153,7 +153,7 @@ namespace BifrostQL.Server.Test.Resp
         public async Task OversizedBulkLength_IsRejected_NotAllocated()
         {
             // Arrange: a bulk length far beyond the cap must be refused before allocation (DoS guard).
-            var reader = new RespReader(new MemoryStream(System.Text.Encoding.ASCII.GetBytes("$1000\r\n")), maxBulkLength: 16, maxElements: 16);
+            var reader = new RespReader(new MemoryStream(System.Text.Encoding.ASCII.GetBytes("$1000\r\n")), maxBulkLength: 16, maxElements: 16, maxNestingDepth: 32);
 
             // Act
             var act = async () => await reader.ReadValueAsync(default);
@@ -166,13 +166,66 @@ namespace BifrostQL.Server.Test.Resp
         public async Task OversizedAggregateLength_IsRejected_NotAllocated()
         {
             // Arrange: a huge multibulk element count must be refused before pre-allocating (DoS guard).
-            var reader = new RespReader(new MemoryStream(System.Text.Encoding.ASCII.GetBytes("*1000000\r\n")), maxBulkLength: 16, maxElements: 8);
+            var reader = new RespReader(new MemoryStream(System.Text.Encoding.ASCII.GetBytes("*1000000\r\n")), maxBulkLength: 16, maxElements: 8, maxNestingDepth: 32);
 
             // Act
             var act = async () => await reader.ReadValueAsync(default);
 
             // Assert
             await act.Should().ThrowAsync<RespProtocolException>();
+        }
+
+        [Fact]
+        public async Task DeeplyNestedAggregate_ExceedingDepthCap_IsRejected_NoStackOverflow()
+        {
+            // Arrange: cap+1 nested single-element array headers. With the whole frame buffered
+            // the reads complete synchronously, so an unguarded recursive decoder would grow the
+            // physical stack one frame per level → uncatchable StackOverflowException tearing down
+            // the host. The depth guard must turn this into a clean, catchable protocol error.
+            const int cap = 8;
+            var wire = string.Concat(System.Linq.Enumerable.Repeat("*1\r\n", cap + 1)) + ":1\r\n";
+            var reader = new RespReader(new MemoryStream(System.Text.Encoding.ASCII.GetBytes(wire)), 1 << 20, 1 << 20, maxNestingDepth: cap);
+
+            // Act
+            var act = async () => await reader.ReadValueAsync(default);
+
+            // Assert: rejected as a protocol error (the caught base), never a crash.
+            await act.Should().ThrowAsync<RespProtocolException>();
+        }
+
+        [Fact]
+        public async Task Nesting_UpToDepthCap_StillParses()
+        {
+            // Arrange: exactly `cap` nested single-element arrays around an integer leaf — the
+            // deepest input the guard must still accept (depth cap is headroom, not a false trip).
+            const int cap = 8;
+            var wire = string.Concat(System.Linq.Enumerable.Repeat("*1\r\n", cap)) + ":42\r\n";
+            var reader = new RespReader(new MemoryStream(System.Text.Encoding.ASCII.GetBytes(wire)), 1 << 20, 1 << 20, maxNestingDepth: cap);
+
+            // Act
+            var decoded = await reader.ReadValueAsync(default);
+
+            // Assert: it parses to the nested-array structure with the integer at the bottom.
+            var node = decoded;
+            for (var i = 0; i < cap; i++)
+                node = node.Should().BeOfType<RespArray>().Which.Items!.Should().ContainSingle().Which;
+            node.Should().BeOfType<RespInteger>().Which.Value.Should().Be(42);
+        }
+
+        [Fact]
+        public async Task LyingAggregateLength_WithTinyPrefix_RejectsOnTruncation_WithoutProportionalAllocation()
+        {
+            // Arrange: a ~14-byte prefix declares a million elements but supplies none. The reader
+            // must NOT pre-allocate a million-slot array up front; it grows incrementally and hits
+            // end-of-stream after the header, throwing a clean protocol error instead.
+            var reader = new RespReader(new MemoryStream(System.Text.Encoding.ASCII.GetBytes("*1000000\r\n")), 1 << 20, maxElements: 1 << 20, maxNestingDepth: 32);
+
+            // Act
+            var act = async () => await reader.ReadValueAsync(default);
+
+            // Assert: rejected on truncation, having only materialized the elements that arrived (none).
+            await act.Should().ThrowAsync<RespProtocolException>()
+                .WithMessage("*end of stream*");
         }
 
         // ---- helpers ----
@@ -189,7 +242,7 @@ namespace BifrostQL.Server.Test.Resp
         private static async Task<RespValue> RoundTripAsync(RespValue value)
         {
             var bytes = RespWriter.EncodeToArray(value);
-            var reader = new RespReader(new MemoryStream(bytes), 1 << 20, 1 << 20);
+            var reader = new RespReader(new MemoryStream(bytes), 1 << 20, 1 << 20, 32);
             var decoded = await reader.ReadValueAsync(default);
             decoded.Should().NotBeNull("the encoded value must decode back to a frame");
             return decoded!;

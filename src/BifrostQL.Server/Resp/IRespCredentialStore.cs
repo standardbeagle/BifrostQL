@@ -34,6 +34,14 @@ namespace BifrostQL.Server.Resp
         /// Resolves the login for <paramref name="username"/>, or returns <c>null</c> when no
         /// such user exists. Never returns a fallback identity.
         /// </summary>
+        /// <remarks>
+        /// Implementations MUST perform a constant-time lookup and MUST NOT short-circuit on an
+        /// unknown user: returning <c>null</c> faster for a missing username than a present one
+        /// reintroduces a user-existence timing oracle that the connection handler's
+        /// <see cref="System.Security.Cryptography.CryptographicOperations.FixedTimeEquals"/>
+        /// decoy compare is specifically there to close. Mirror the pgwire credential-store
+        /// contract: the cost of a lookup must not reveal whether the account exists.
+        /// </remarks>
         Task<RespLogin?> FindAsync(string username, CancellationToken cancellationToken);
     }
 }

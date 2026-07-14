@@ -37,6 +37,20 @@ namespace BifrostQL.Server.Resp
         public int MaxAggregateElements { get; set; } = 1 << 20;
 
         /// <summary>
+        /// Hard cap on how deeply aggregates (array/set/push/map) may nest, applied on the
+        /// UNAUTHENTICATED path (DoS guard). The recursive decoder consumes one physical stack
+        /// frame per nesting level, and because buffered socket bytes let the reads complete
+        /// synchronously, an unauthenticated peer sending a few KB of repeated aggregate headers
+        /// (e.g. <c>*1\r\n</c>×N) would otherwise grow the stack without bound until an
+        /// uncatchable <c>StackOverflowException</c> tears down the whole host process. The
+        /// decoder refuses to descend past this cap, raising a clean protocol error the
+        /// connection loop handles instead. Default 32: real RESP3 traffic (push → array of
+        /// maps, HELLO reply maps, nested command arrays) nests only a handful deep, so 32 is
+        /// generous headroom while a chain that deep is unambiguously hostile.
+        /// </summary>
+        public int MaxNestingDepth { get; set; } = 32;
+
+        /// <summary>
         /// Registered BifrostQL endpoint path (e.g. <c>/graphql</c>) whose model, schema and
         /// connection authenticated sessions execute their data commands against. Null selects
         /// the single registered endpoint. Unused by slice-1 plumbing; carried for the data

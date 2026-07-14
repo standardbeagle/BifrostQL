@@ -25,7 +25,24 @@ namespace BifrostQL.Server.Pgwire
         public IReadOnlyList<PgOrderTerm> OrderBy { get; init; } = Array.Empty<PgOrderTerm>();
         public int? Limit { get; init; }
         public int? Offset { get; init; }
+
+        /// <summary>
+        /// The highest <c>$N</c> placeholder ordinal referenced in the statement (0 when
+        /// none). The extended query protocol binds one value per ordinal at Bind time;
+        /// this drives the ParameterDescription count. Simple-query statements carry 0.
+        /// </summary>
+        public int ParameterCount { get; init; }
     }
+
+    /// <summary>
+    /// A <c>$N</c> extended-protocol parameter placeholder occupying a value position in
+    /// the parsed WHERE/IN/BETWEEN/LIKE tree. It is a MARKER, never a literal: the
+    /// translator replaces it with the Bind message's bound value (as DATA — bound through
+    /// <c>TableFilter.FromObject</c>, never concatenated), so a hostile string bound to
+    /// <c>$1</c> is a filter value, not SQL. <see cref="Ordinal"/> is 1-based per the
+    /// protocol.
+    /// </summary>
+    internal sealed record PgBoundParameter(int Ordinal);
 
     /// <summary>A <c>schema.table</c> (or bare <c>table</c>) reference with an optional alias.</summary>
     internal sealed record PgTableRef(string? Schema, string Name, string? Alias);
@@ -80,7 +97,7 @@ namespace BifrostQL.Server.Pgwire
 
         // ---- tokenizer -------------------------------------------------------
 
-        private enum TokKind { Word, Number, String, Symbol, End }
+        private enum TokKind { Word, Number, String, Symbol, Parameter, End }
 
         private readonly record struct Tok(TokKind Kind, string Text, object? Literal);
 
@@ -108,6 +125,11 @@ namespace BifrostQL.Server.Pgwire
                 if (c == '"')
                 {
                     tokens.Add(ReadQuotedIdent(sql, ref i));
+                    continue;
+                }
+                if (c == '$' && i + 1 < n && char.IsDigit(sql[i + 1]))
+                {
+                    tokens.Add(ReadParameter(sql, ref i));
                     continue;
                 }
                 if (char.IsDigit(c) || (c == '.' && i + 1 < n && char.IsDigit(sql[i + 1])))
@@ -177,6 +199,22 @@ namespace BifrostQL.Server.Pgwire
             throw Reject("unterminated quoted identifier.");
         }
 
+        /// <summary>
+        /// Reads a <c>$N</c> extended-protocol parameter placeholder. The ordinal is 1-based
+        /// per the protocol; <c>$0</c> is invalid. The parsed value carried is the int ordinal.
+        /// </summary>
+        private static Tok ReadParameter(string sql, ref int i)
+        {
+            i++; // '$'
+            var start = i;
+            var n = sql.Length;
+            while (i < n && char.IsDigit(sql[i])) i++;
+            var text = sql[start..i];
+            if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var ordinal) || ordinal < 1)
+                throw Reject($"invalid parameter placeholder '${text}'.");
+            return new Tok(TokKind.Parameter, "$" + text, ordinal);
+        }
+
         private static Tok ReadNumber(string sql, ref int i)
         {
             var start = i;
@@ -215,6 +253,7 @@ namespace BifrostQL.Server.Pgwire
         {
             private readonly List<Tok> _t;
             private int _p;
+            private int _maxParameterOrdinal;
 
             public Cursor(List<Tok> tokens) { _t = tokens; }
 
@@ -313,6 +352,7 @@ namespace BifrostQL.Server.Pgwire
                     OrderBy = orderBy,
                     Limit = limit,
                     Offset = offset,
+                    ParameterCount = _maxParameterOrdinal,
                 };
             }
 
@@ -474,6 +514,15 @@ namespace BifrostQL.Server.Pgwire
 
             private object? ParseLiteral()
             {
+                // A $N extended-protocol placeholder stands in a value position. It is not a
+                // literal — the translator swaps in the Bind message's bound value (as DATA).
+                if (Peek.Kind == TokKind.Parameter)
+                {
+                    var ordinal = (int)Next().Literal!;
+                    if (ordinal > _maxParameterOrdinal) _maxParameterOrdinal = ordinal;
+                    return new PgBoundParameter(ordinal);
+                }
+
                 // A leading '-'/'+' is the sign of the numeric LITERAL that follows —
                 // NOT arithmetic. The sign must be immediately followed by a number
                 // token and binds to that single literal (still bound as a parameter).

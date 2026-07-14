@@ -12,6 +12,12 @@ namespace BifrostQL.Server.Pgwire
     {
         public required QueryIntent Intent { get; init; }
         public required IReadOnlyList<PgResultColumn> Columns { get; init; }
+
+        /// <summary>
+        /// Number of <c>$N</c> extended-protocol placeholders the source statement carries
+        /// (0 for a simple query). Drives the extended protocol's ParameterDescription.
+        /// </summary>
+        public int ParameterCount { get; init; }
     }
 
     /// <summary>
@@ -49,6 +55,23 @@ namespace BifrostQL.Server.Pgwire
         Task<PgQueryPlan> TranslateAsync(
             IQueryIntentExecutor executor,
             string sql,
+            IDictionary<string, object?> userContext,
+            string? endpoint,
+            CancellationToken cancellationToken);
+
+        /// <summary>
+        /// Extended-protocol translate: like the simple-query overload, but each <c>$N</c>
+        /// placeholder in the SQL is resolved to <paramref name="parameters"/><c>[N-1]</c>
+        /// as a BOUND filter value (never concatenated). Pass <c>null</c> to translate for
+        /// column/parameter description only (Describe before Bind): placeholders resolve to
+        /// null, the intent's filter is a throwaway, and only <see cref="PgQueryPlan.Columns"/>
+        /// and <see cref="PgQueryPlan.ParameterCount"/> are meaningful. A placeholder ordinal
+        /// past the supplied parameter count is a bind mismatch and is rejected.
+        /// </summary>
+        Task<PgQueryPlan> TranslateAsync(
+            IQueryIntentExecutor executor,
+            string sql,
+            IReadOnlyList<object?>? parameters,
             IDictionary<string, object?> userContext,
             string? endpoint,
             CancellationToken cancellationToken);

@@ -18,14 +18,24 @@ namespace BifrostQL.Server.Pgwire
     /// </summary>
     internal sealed class PgSubsetQueryTranslator : IPgQueryTranslator
     {
-        public async Task<PgQueryPlan> TranslateAsync(
+        public Task<PgQueryPlan> TranslateAsync(
             IQueryIntentExecutor executor,
             string sql,
             IDictionary<string, object?> userContext,
             string? endpoint,
             CancellationToken cancellationToken)
+            => TranslateAsync(executor, sql, parameters: null, userContext, endpoint, cancellationToken);
+
+        public async Task<PgQueryPlan> TranslateAsync(
+            IQueryIntentExecutor executor,
+            string sql,
+            IReadOnlyList<object?>? parameters,
+            IDictionary<string, object?> userContext,
+            string? endpoint,
+            CancellationToken cancellationToken)
         {
             var stmt = PgSqlSubsetParser.Parse(sql);
+            var binding = new ParameterBinding(parameters);
             var model = await executor.GetModelAsync(endpoint);
             var fromTable = ResolveTable(model, stmt.From.Name);
 
@@ -51,7 +61,7 @@ namespace BifrostQL.Server.Pgwire
             ProjectColumns(stmt, scope, query, joinNode, joinLink, outputColumns);
 
             if (stmt.Where is not null)
-                query.Filter = TableFilter.FromObject(BuildFilter(stmt.Where, scope), fromTable.DbName);
+                query.Filter = TableFilter.FromObject(BuildFilter(stmt.Where, scope, binding), fromTable.DbName);
 
             foreach (var term in stmt.OrderBy)
             {
@@ -66,7 +76,33 @@ namespace BifrostQL.Server.Pgwire
             {
                 Intent = new QueryIntent { Query = query, UserContext = userContext, Endpoint = endpoint },
                 Columns = outputColumns,
+                ParameterCount = stmt.ParameterCount,
             };
+        }
+
+        /// <summary>
+        /// Resolves <c>$N</c> placeholders to bound values. In describe mode
+        /// (<c>parameters</c> is null) every placeholder resolves to null — the filter is a
+        /// throwaway used only to discover output columns. In bind mode a placeholder whose
+        /// ordinal exceeds the supplied count is a mismatch and is rejected, so a hostile
+        /// query can never read past the caller's bound parameter array.
+        /// </summary>
+        private sealed class ParameterBinding
+        {
+            private readonly IReadOnlyList<object?>? _parameters;
+            public ParameterBinding(IReadOnlyList<object?>? parameters) => _parameters = parameters;
+
+            public object? Resolve(PgBoundParameter marker)
+            {
+                if (_parameters is null) return null; // describe mode: columns don't depend on values
+                if (marker.Ordinal > _parameters.Count)
+                    throw Reject($"bind message supplies {_parameters.Count} parameter(s) but the statement references ${marker.Ordinal}.");
+                return _parameters[marker.Ordinal - 1];
+            }
+
+            /// <summary>Resolves a value that may be a placeholder marker or a plain literal.</summary>
+            public object? Value(object? literalOrMarker)
+                => literalOrMarker is PgBoundParameter marker ? Resolve(marker) : literalOrMarker;
         }
 
         // ---- projection ------------------------------------------------------
@@ -214,7 +250,7 @@ namespace BifrostQL.Server.Pgwire
 
         // ---- WHERE → filter dictionary --------------------------------------
 
-        private static Dictionary<string, object?> BuildFilter(PgBoolExpr expr, QualifierScope scope)
+        private static Dictionary<string, object?> BuildFilter(PgBoolExpr expr, QualifierScope scope, ParameterBinding binding)
         {
             switch (expr)
             {
@@ -222,29 +258,29 @@ namespace BifrostQL.Server.Pgwire
                     var key = combine.IsAnd ? "and" : "or";
                     return new Dictionary<string, object?>
                     {
-                        [key] = combine.Terms.Select(t => (object?)BuildFilter(t, scope)).ToList(),
+                        [key] = combine.Terms.Select(t => (object?)BuildFilter(t, scope, binding)).ToList(),
                     };
                 case PgPredicate predicate:
-                    return BuildLeaf(predicate, scope);
+                    return BuildLeaf(predicate, scope, binding);
                 default:
                     throw Reject("unsupported WHERE expression.");
             }
         }
 
-        private static Dictionary<string, object?> BuildLeaf(PgPredicate predicate, QualifierScope scope)
+        private static Dictionary<string, object?> BuildLeaf(PgPredicate predicate, QualifierScope scope, ParameterBinding binding)
         {
             var column = ResolveRootColumn(predicate.Column, scope, "WHERE");
             var opMap = predicate.Op switch
             {
-                PgCompareOp.Eq => (FilterOperators.Eq, predicate.Value),
-                PgCompareOp.Neq => (FilterOperators.Neq, predicate.Value),
-                PgCompareOp.Lt => (FilterOperators.Lt, predicate.Value),
-                PgCompareOp.Lte => (FilterOperators.Lte, predicate.Value),
-                PgCompareOp.Gt => (FilterOperators.Gt, predicate.Value),
-                PgCompareOp.Gte => (FilterOperators.Gte, predicate.Value),
-                PgCompareOp.Like => (FilterOperators.Like, predicate.Value),
-                PgCompareOp.In => (FilterOperators.In, (object?)predicate.Values!.ToList()),
-                PgCompareOp.Between => (FilterOperators.Between, (object?)predicate.Values!.ToList()),
+                PgCompareOp.Eq => (FilterOperators.Eq, binding.Value(predicate.Value)),
+                PgCompareOp.Neq => (FilterOperators.Neq, binding.Value(predicate.Value)),
+                PgCompareOp.Lt => (FilterOperators.Lt, binding.Value(predicate.Value)),
+                PgCompareOp.Lte => (FilterOperators.Lte, binding.Value(predicate.Value)),
+                PgCompareOp.Gt => (FilterOperators.Gt, binding.Value(predicate.Value)),
+                PgCompareOp.Gte => (FilterOperators.Gte, binding.Value(predicate.Value)),
+                PgCompareOp.Like => (FilterOperators.Like, binding.Value(predicate.Value)),
+                PgCompareOp.In => (FilterOperators.In, (object?)predicate.Values!.Select(binding.Value).ToList()),
+                PgCompareOp.Between => (FilterOperators.Between, (object?)predicate.Values!.Select(binding.Value).ToList()),
                 PgCompareOp.IsNull => (FilterOperators.Null, (object?)true),
                 PgCompareOp.IsNotNull => (FilterOperators.Null, (object?)false),
                 _ => throw Reject("unsupported comparison operator."),

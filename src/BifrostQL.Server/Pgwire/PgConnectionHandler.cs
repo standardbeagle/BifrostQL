@@ -34,6 +34,8 @@ namespace BifrostQL.Server.Pgwire
         private readonly IBifrostAuthContextFactory _authFactory;
         private readonly IServiceProvider _services;
         private readonly PgWireOptions _options;
+        private readonly PgCancellationRegistry _cancelRegistry;
+        private readonly PgConnectionLimiter _connectionLimiter;
         private readonly ILogger<PgConnectionHandler> _logger;
 
         public PgConnectionHandler(
@@ -41,12 +43,18 @@ namespace BifrostQL.Server.Pgwire
             IBifrostAuthContextFactory authFactory,
             IServiceProvider services,
             PgWireOptions options,
+            PgCancellationRegistry? cancelRegistry = null,
+            PgConnectionLimiter? connectionLimiter = null,
             ILogger<PgConnectionHandler>? logger = null)
         {
             _credentials = credentials ?? throw new ArgumentNullException(nameof(credentials));
             _authFactory = authFactory ?? throw new ArgumentNullException(nameof(authFactory));
             _services = services ?? throw new ArgumentNullException(nameof(services));
             _options = options ?? throw new ArgumentNullException(nameof(options));
+            // A single handler instance is shared across all connections (Kestrel resolves it
+            // once), so these shared coordination objects live for the front door's lifetime.
+            _cancelRegistry = cancelRegistry ?? new PgCancellationRegistry();
+            _connectionLimiter = connectionLimiter ?? new PgConnectionLimiter(options.MaxConnections);
             _logger = logger ?? NullLogger<PgConnectionHandler>.Instance;
         }
 
@@ -63,11 +71,25 @@ namespace BifrostQL.Server.Pgwire
         /// </summary>
         internal async Task HandleConnectionAsync(Stream rawStream, CancellationToken ct)
         {
+            var admitted = false;
+            PgCancellationRegistration? cancellation = null;
             try
             {
                 var (stream, startup) = await NegotiateStartupAsync(rawStream, ct);
                 if (startup is null)
                     return; // client closed or a handled non-startup packet (Cancel/GSS)
+
+                // ---- Connection-limit admission ----
+                // Reserve a slot once we have a real StartupMessage and a stream to answer on
+                // (post-TLS). Over the limit: a clean 53300 too_many_connections then close —
+                // never a crash or a silent hang. The slot is released in the finally below.
+                if (!_connectionLimiter.TryAcquire())
+                {
+                    await RejectAsync(stream, PgWireProtocol.SqlStateTooManyConnections,
+                        PgWireProtocol.TooManyConnectionsMessage, ct);
+                    return;
+                }
+                admitted = true;
 
                 var parameters = PgProtocolIO.ParseStartupParameters(startup.Value.Span);
                 if (!parameters.TryGetValue("user", out var username) || string.IsNullOrEmpty(username))
@@ -116,22 +138,30 @@ namespace BifrostQL.Server.Pgwire
                     return;
                 }
 
-                await CompleteHandshakeAsync(stream, ct);
+                // Publish this session's cancellation key and hand it to the handshake so the
+                // BackendKeyData the client receives can be matched by a later CancelRequest.
+                cancellation = _cancelRegistry.Register();
+                await CompleteHandshakeAsync(stream, cancellation, ct);
 
                 // ---- QUERY LOOP ----
-                // The session is authenticated and ReadyForQuery has been sent. Slice 2
-                // handles the simple query ('Q') path: reads run through IQueryIntentExecutor
-                // under _userContext (the transformer pipeline is unskippable), results are
-                // encoded as RowDescription/DataRow/CommandComplete, and query errors surface
-                // as non-fatal ErrorResponses that leave the autocommit session usable.
-                // Parse/Bind/Execute (extended protocol) and writes are later slices.
-                await RunQueryLoopAsync(stream, _userContext, ct);
+                // The session is authenticated and ReadyForQuery has been sent. The loop drives
+                // both the simple query ('Q') path and the extended query protocol
+                // (Parse/Bind/Describe/Execute/Sync/Close). Reads run through
+                // IQueryIntentExecutor under _userContext (the transformer pipeline is
+                // unskippable); query errors surface as non-fatal ErrorResponses that leave the
+                // autocommit session usable. An in-flight query is cancelable via CancelRequest.
+                await RunQueryLoopAsync(stream, _userContext, cancellation, ct);
             }
             catch (Exception ex) when (ex is IOException or OperationCanceledException or PgProtocolException or AuthenticationException)
             {
                 // Expected connection-lifecycle faults: peer disconnect, cancellation,
                 // wire-framing violations, TLS handshake failure. Nothing to send.
                 _logger.LogDebug(ex, "pgwire connection ended: {Reason}", ex.Message);
+            }
+            finally
+            {
+                if (cancellation is not null) _cancelRegistry.Unregister(cancellation);
+                if (admitted) _connectionLimiter.Release();
             }
         }
 
@@ -166,7 +196,10 @@ namespace BifrostQL.Server.Pgwire
                         continue;
 
                     case PgWireProtocol.CancelRequestCode:
-                        // No running query to cancel during the handshake; drop it.
+                        // An out-of-band CancelRequest on its own connection: [Int32 PID][Int32 secret].
+                        // Match it against the registry (best-effort, fail-closed on a wrong/unknown
+                        // secret) and then close — a CancelRequest connection never runs queries.
+                        HandleCancelRequest(rest);
                         return (stream, null);
 
                     case PgWireProtocol.ProtocolVersion3:
@@ -178,6 +211,24 @@ namespace BifrostQL.Server.Pgwire
                         return (stream, null);
                 }
             }
+        }
+
+        /// <summary>
+        /// Decodes a CancelRequest payload (<c>[Int32 PID][Int32 secret]</c>) and asks the
+        /// registry to signal the target session. Fail-closed: a malformed payload, an unknown
+        /// PID, or a mismatched secret is silently ignored — a canceller can never abort a
+        /// session it does not hold the exact secret for, and never errors anyone else's session.
+        /// </summary>
+        private void HandleCancelRequest(byte[] payload)
+        {
+            if (payload.Length < 8)
+            {
+                _logger.LogDebug("pgwire CancelRequest payload too short ({Length} bytes); ignoring.", payload.Length);
+                return;
+            }
+            var pid = BinaryPrimitives.ReadInt32BigEndian(payload.AsSpan(0, 4));
+            var secret = BinaryPrimitives.ReadInt32BigEndian(payload.AsSpan(4, 4));
+            _cancelRegistry.TryCancel(pid, secret);
         }
 
         private async Task<Stream> UpgradeToTlsAsync(Stream inner, CancellationToken ct)
@@ -281,7 +332,7 @@ namespace BifrostQL.Server.Pgwire
             }
         }
 
-        private static async Task CompleteHandshakeAsync(Stream stream, CancellationToken ct)
+        private static async Task CompleteHandshakeAsync(Stream stream, PgCancellationRegistration cancellation, CancellationToken ct)
         {
             await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.AuthenticationRequest,
                 PgBackend.AuthenticationOk(), ct);
@@ -292,7 +343,7 @@ namespace BifrostQL.Server.Pgwire
             await WriteParameterStatusAsync(stream, "client_encoding", "UTF8", ct);
             await WriteParameterStatusAsync(stream, "DateStyle", "ISO, MDY", ct);
 
-            await WriteBackendKeyDataAsync(stream, ct);
+            await WriteBackendKeyDataAsync(stream, cancellation, ct);
             await WriteReadyForQueryAsync(stream, ct);
         }
 
@@ -303,8 +354,12 @@ namespace BifrostQL.Server.Pgwire
         /// session stays usable. Wire-framing violations (<see cref="PgProtocolException"/>)
         /// are left to propagate to the outer handler, which tears the connection down.
         /// </summary>
-        private async Task RunQueryLoopAsync(Stream stream, IDictionary<string, object?> userContext, CancellationToken ct)
+        private async Task RunQueryLoopAsync(
+            Stream stream, IDictionary<string, object?> userContext,
+            PgCancellationRegistration cancellation, CancellationToken ct)
         {
+            var extended = CreateExtendedProcessor(stream, userContext, cancellation, ct);
+
             while (true)
             {
                 PgFrontendMessage message;
@@ -323,18 +378,50 @@ namespace BifrostQL.Server.Pgwire
                         return;
 
                     case PgWireProtocol.Query:
-                        await HandleSimpleQueryAsync(stream, message.Body, userContext, ct);
+                        // A simple query is an implicit sync point: it is refused while the
+                        // extended protocol is skipping to a Sync, matching pg semantics.
+                        if (!extended.IsSkipping)
+                            await HandleSimpleQueryAsync(stream, message.Body, userContext, cancellation, ct);
+                        break;
+
+                    case PgWireProtocol.ParseMessage:
+                    case PgWireProtocol.BindMessage:
+                    case PgWireProtocol.DescribeMessage:
+                    case PgWireProtocol.ExecuteMessage:
+                    case PgWireProtocol.SyncMessage:
+                    case PgWireProtocol.CloseMessage:
+                    case PgWireProtocol.FlushMessage:
+                        await extended.HandleAsync(message, ct);
                         break;
 
                     default:
                         await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.ErrorResponse,
                             PgBackend.ErrorResponse(PgWireProtocol.SqlStateFeatureNotSupported,
-                                $"unsupported message '{(char)message.Type}' (pgwire slice 2: simple query only).",
+                                $"unsupported message '{(char)message.Type}'.",
                                 PgWireProtocol.SeverityError), ct);
                         await WriteReadyForQueryAsync(stream, ct);
                         break;
                 }
             }
+        }
+
+        /// <summary>
+        /// Builds the per-connection extended query protocol driver, resolving the SAME
+        /// executor/translator/catalog seams the simple path uses so both share one security
+        /// pipeline and one set of encoders.
+        /// </summary>
+        private PgExtendedQueryProcessor CreateExtendedProcessor(
+            Stream stream, IDictionary<string, object?> userContext,
+            PgCancellationRegistration cancellation, CancellationToken ct)
+        {
+            var executor = _services.GetService<IQueryIntentExecutor>()
+                ?? throw new BifrostExecutionError("pgwire endpoint has no registered query executor.");
+            var translator = _services.GetService<IPgQueryTranslator>()
+                ?? throw new BifrostExecutionError("pgwire endpoint has no registered query translator.");
+            var catalog = _services.GetService<IPgCatalogResponder>();
+            return new PgExtendedQueryProcessor(
+                stream, userContext, executor, translator, catalog,
+                _options.Endpoint, cancellation, ct, _logger);
         }
 
         /// <summary>
@@ -348,8 +435,13 @@ namespace BifrostQL.Server.Pgwire
         /// faults (IO, cancellation) and wire-framing violations are re-thrown to the outer
         /// handler untouched.
         /// </summary>
-        private async Task HandleSimpleQueryAsync(Stream stream, byte[] body, IDictionary<string, object?> userContext, CancellationToken ct)
+        private async Task HandleSimpleQueryAsync(
+            Stream stream, byte[] body, IDictionary<string, object?> userContext,
+            PgCancellationRegistration cancellation, CancellationToken ct)
         {
+            // Open a per-query cancel scope so a matching CancelRequest aborts THIS query while
+            // leaving the autocommit session alive. The token is linked to the connection token.
+            var queryToken = cancellation.BeginQuery(ct);
             try
             {
                 var sql = Encoding.UTF8.GetString(TrimTrailingNul(body));
@@ -365,7 +457,7 @@ namespace BifrostQL.Server.Pgwire
                 var catalog = _services.GetService<IPgCatalogResponder>();
                 if (catalog is not null)
                 {
-                    var response = await catalog.TryRespondAsync(executor, sql, userContext, _options.Endpoint, ct);
+                    var response = await catalog.TryRespondAsync(executor, sql, userContext, _options.Endpoint, queryToken);
                     if (response is not null)
                     {
                         await WriteResultAsync(stream, response.Columns, response.Rows, ct);
@@ -377,17 +469,30 @@ namespace BifrostQL.Server.Pgwire
                 var translator = _services.GetService<IPgQueryTranslator>()
                     ?? throw new BifrostExecutionError("pgwire endpoint has no registered query translator.");
 
-                var plan = await translator.TranslateAsync(executor, sql, userContext, _options.Endpoint, ct);
-                var result = await executor.ExecuteAsync(plan.Intent, ct);
+                var plan = await translator.TranslateAsync(executor, sql, userContext, _options.Endpoint, queryToken);
+                var result = await executor.ExecuteAsync(plan.Intent, queryToken);
 
                 await WriteResultAsync(stream, plan.Columns, result.Rows, ct);
             }
+            catch (OperationCanceledException) when (cancellation.WasCancelRequested && !ct.IsCancellationRequested)
+            {
+                // A matching CancelRequest aborted this query. The session survives: emit the
+                // standard query_canceled error, then the ReadyForQuery below.
+                _logger.LogDebug("pgwire simple query canceled by CancelRequest.");
+                await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.ErrorResponse,
+                    PgBackend.ErrorResponse(PgWireProtocol.SqlStateQueryCanceled,
+                        PgWireProtocol.QueryCanceledMessage, PgWireProtocol.SeverityError), ct);
+            }
             catch (Exception ex) when (ex is not (IOException or OperationCanceledException or EndOfStreamException or PgProtocolException))
             {
-                var (sqlState, clientMessage) = MapQueryError(ex);
+                var (sqlState, clientMessage) = PgQueryError.Map(ex);
                 _logger.LogWarning(ex, "pgwire query failed ({SqlState}): {Message}", sqlState, ex.Message);
                 await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.ErrorResponse,
                     PgBackend.ErrorResponse(sqlState, clientMessage, PgWireProtocol.SeverityError), ct);
+            }
+            finally
+            {
+                cancellation.EndQuery();
             }
 
             await WriteReadyForQueryAsync(stream, ct);
@@ -421,27 +526,6 @@ namespace BifrostQL.Server.Pgwire
                 PgBackend.CommandComplete($"SELECT {rows.Count}"), ct);
         }
 
-        /// <summary>
-        /// Maps a query-phase exception to a client-safe (SQLSTATE, message) pair. Only a
-        /// <see cref="PgQueryTranslationException"/> — the recognizer's own curated,
-        /// deliberately user-facing message (bad syntax, unknown relation/column) — is
-        /// forwarded to the wire, as a syntax_error. Every other exception, including
-        /// <see cref="BifrostExecutionError"/>, is sanitized to a generic internal_error:
-        /// its message is NOT provably leak-free (e.g. <see cref="BifrostExecutionError.FromDatabaseException"/>
-        /// can wrap raw driver/DB text, and <see cref="BifrostExecutionError.ConnectionFailed"/>
-        /// embeds caller-supplied detail), so forwarding it verbatim could leak schema names
-        /// or infrastructure detail. The full exception is logged server-side by the caller;
-        /// only the sanitized string crosses the wire. Fail closed toward sanitization.
-        /// </summary>
-        private static (string SqlState, string Message) MapQueryError(Exception ex) => ex switch
-        {
-            // The translator's curated, deliberately user-facing message is forwarded
-            // with its own SQLSTATE: syntax_error for an unrecognized statement,
-            // feature_not_supported for a recognized but out-of-subset construct.
-            PgQueryTranslationException t => (t.SqlState, t.Message),
-            _ => (PgWireProtocol.SqlStateInternalError, PgWireProtocol.InternalQueryErrorMessage),
-        };
-
         private async Task RejectAsync(Stream stream, string sqlState, string message, CancellationToken ct)
         {
             _logger.LogWarning("pgwire handshake rejected ({SqlState}): {Message}", sqlState, message);
@@ -459,11 +543,13 @@ namespace BifrostQL.Server.Pgwire
             await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.ParameterStatus, ms.ToArray(), ct);
         }
 
-        private static async Task WriteBackendKeyDataAsync(Stream stream, CancellationToken ct)
+        private static async Task WriteBackendKeyDataAsync(Stream stream, PgCancellationRegistration cancellation, CancellationToken ct)
         {
+            // The (PID, secret) the client must echo in a CancelRequest to abort this session.
+            // Both come from the registry so the later out-of-band lookup can match them.
             var body = new byte[8];
-            BinaryPrimitives.WriteInt32BigEndian(body.AsSpan(0, 4), Environment.ProcessId);
-            BinaryPrimitives.WriteInt32BigEndian(body.AsSpan(4, 4), RandomNumberGenerator.GetInt32(int.MaxValue));
+            BinaryPrimitives.WriteInt32BigEndian(body.AsSpan(0, 4), cancellation.Pid);
+            BinaryPrimitives.WriteInt32BigEndian(body.AsSpan(4, 4), cancellation.Secret);
             await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.BackendKeyData, body, ct);
         }
 

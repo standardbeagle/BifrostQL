@@ -31,6 +31,12 @@ namespace BifrostQL.Server.Pgwire
             configure(options);
             services.AddSingleton(options);
 
+            // Shared, front-door-lifetime coordination objects (slice 5): the CancelRequest ⇄
+            // BackendKeyData table and the lock-free connection-admission counter. Both must be
+            // singletons so every connection consults the same state.
+            services.TryAddSingleton<PgCancellationRegistry>();
+            services.TryAddSingleton(new PgConnectionLimiter(options.MaxConnections));
+
             // The per-connection handler is resolved by the Kestrel listener from DI.
             services.TryAddSingleton<PgConnectionHandler>();
 

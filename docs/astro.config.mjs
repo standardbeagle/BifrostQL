@@ -67,6 +67,8 @@ export default defineConfig({
 						{ label: 'Authoring a Protocol Adapter', slug: 'guides/protocol-adapters' },
 						{ label: 'PostgreSQL Wire Protocol (pgwire)', slug: 'guides/pgwire' },
 						{ label: 'pgwire BI-Tool Smoke Runbook', slug: 'guides/pgwire-bi-smoke' },
+						{ label: 'Redis Wire Protocol (RESP)', slug: 'guides/resp' },
+						{ label: 'RESP Smoke Runbook', slug: 'guides/resp-smoke' },
 						{ label: 'React Native', slug: 'guides/react-native' },
 						{ label: 'WordPress', slug: 'guides/wordpress' },
 					],

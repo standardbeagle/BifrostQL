@@ -18,6 +18,8 @@ no external service, and runs headless in CI.
 
 This runbook is the **manual cross-process** complement: point a `redis-cli`
 binary or a standalone StackExchange.Redis app at a **running** BifrostQL host.
+For the full command map, key format, and security model, see the
+[Redis Wire Protocol (RESP) guide](/BifrostQL/guides/resp/).
 
 > **Honesty note.** The automated suite proves a real StackExchange.Redis client
 > completes the handshake (HELLO/AUTH/CLIENT/binary-ECHO tracer) and reads

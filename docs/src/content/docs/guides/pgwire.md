@@ -223,4 +223,5 @@ login — is the [pgwire BI-Tool Smoke Runbook](/BifrostQL/guides/pgwire-bi-smok
 - [Protocol Adapters (concept)](/BifrostQL/concepts/protocol-adapters/) — why an adapter owns only its wire and codec.
 - [Authoring a Protocol Adapter](/BifrostQL/guides/protocol-adapters/) — the intent APIs and conformance kit pgwire is built on.
 - [pgwire BI-Tool Smoke Runbook](/BifrostQL/guides/pgwire-bi-smoke/) — validate real Grafana/Metabase end to end.
+- [Redis Wire Protocol (RESP)](/BifrostQL/guides/resp/) — the sibling front door that reads rows as key-addressed values.
 - [Authentication](/BifrostQL/guides/authentication/) — how principals and claims are mapped.

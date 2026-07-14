@@ -53,6 +53,15 @@ namespace BifrostQL.Server.Resp
             // through IQueryIntentExecutor under the session identity so only visible PKs are emitted.
             services.AddSingleton<IRespCommandHandler, RespScanCommandHandler>();
 
+            // Slice-5 WRITE commands (SET/HSET/DEL) route through IMutationIntentExecutor under the
+            // session identity, so the full mutation transformer chain (tenant scoping, audit actor,
+            // soft-delete, field-encryption-on-write, CDC/history hooks) is unskippable. They are gated
+            // OFF BY DEFAULT: each handler refuses with a clean -ERR and executes nothing unless the
+            // deployment set RespWireOptions.EnableWrites — registering them here is inert until then.
+            services.AddSingleton<IRespCommandHandler, RespSetCommandHandler>();
+            services.AddSingleton<IRespCommandHandler, RespHSetCommandHandler>();
+            services.AddSingleton<IRespCommandHandler, RespDelCommandHandler>();
+
             // Adapter lifecycle via the shared adapter/hosted-service pattern.
             services.TryAddSingleton<RespWireAdapter>();
             services.AddSingleton<IHostedService>(sp =>

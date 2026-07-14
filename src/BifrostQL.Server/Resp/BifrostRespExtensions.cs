@@ -49,6 +49,10 @@ namespace BifrostQL.Server.Resp
             services.AddSingleton<IRespCommandHandler, RespHGetAllCommandHandler>();
             services.AddSingleton<IRespCommandHandler, RespHGetCommandHandler>();
 
+            // Slice-4 SCAN maps <table>:* to keyset pagination over the table's primary key, enumerated
+            // through IQueryIntentExecutor under the session identity so only visible PKs are emitted.
+            services.AddSingleton<IRespCommandHandler, RespScanCommandHandler>();
+
             // Adapter lifecycle via the shared adapter/hosted-service pattern.
             services.TryAddSingleton<RespWireAdapter>();
             services.AddSingleton<IHostedService>(sp =>

@@ -259,7 +259,7 @@ namespace BifrostQL.Server.Resp
         /// data-tool coercion (which BifrostQL.Server cannot reference); non-numeric columns keep the
         /// raw string. A numeric segment that does not parse is a clean, client-safe error.
         /// </summary>
-        private static bool TryCoerceKeySegment(ColumnDto column, string segment, out object? value, out string error)
+        internal static bool TryCoerceKeySegment(ColumnDto column, string segment, out object? value, out string error)
         {
             error = string.Empty;
             switch (ClassifyKeyColumn(column))

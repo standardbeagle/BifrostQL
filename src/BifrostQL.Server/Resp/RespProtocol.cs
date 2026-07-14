@@ -65,6 +65,31 @@ namespace BifrostQL.Server.Resp
         /// <summary><c>HGET &lt;table&gt;:&lt;pk…&gt; &lt;field&gt;</c> — one visible column's value.</summary>
         public const string HGet = "HGET";
 
+        // ---- Cursor-scan command (slice 4: PK enumeration over a table) ----
+        /// <summary><c>SCAN &lt;cursor&gt; MATCH &lt;table&gt;:* [COUNT n] [TYPE t]</c> — cursor-paginated PK enumeration.</summary>
+        public const string Scan = "SCAN";
+
+        /// <summary>SCAN option keyword: the glob that names the table to enumerate (only <c>&lt;table&gt;:*</c> is supported).</summary>
+        public const string ScanMatchOption = "MATCH";
+
+        /// <summary>SCAN option keyword: the caller's page-size hint, capped at <see cref="MaxScanPageSize"/>.</summary>
+        public const string ScanCountOption = "COUNT";
+
+        /// <summary>SCAN option keyword: a Redis type filter — accepted and ignored (a Bifrost row has no single Redis type).</summary>
+        public const string ScanTypeOption = "TYPE";
+
+        /// <summary>The <c>&lt;table&gt;:*</c> suffix that is the only MATCH pattern this front door supports.</summary>
+        public const string ScanWildcardSuffix = ":*";
+
+        /// <summary>The Redis SCAN start/terminal cursor sentinel: iteration begins at <c>0</c> and ends when the reply is <c>0</c>.</summary>
+        public const string ScanStartCursor = "0";
+
+        /// <summary>Default page size when the caller supplies no COUNT (Redis' own SCAN default).</summary>
+        public const int DefaultScanPageSize = 10;
+
+        /// <summary>Hard upper bound on a single SCAN page — COUNT is a hint, capped here to bound per-page latency/memory.</summary>
+        public const int MaxScanPageSize = 1000;
+
         /// <summary>
         /// The Redis key-space separator. A data-command key is addressed as
         /// <c>&lt;table&gt;:&lt;pk1&gt;[:&lt;pk2&gt;…]</c>; the first segment is the table and the

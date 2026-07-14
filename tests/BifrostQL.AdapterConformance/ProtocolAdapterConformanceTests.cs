@@ -287,10 +287,24 @@ namespace BifrostQL.AdapterConformance
             return string.Join("\n---\n", sql);
         }
 
+        /// <summary>
+        /// The text a fail-closed rejection surfaces on THIS adapter's wire. Adapters that
+        /// forward the server error verbatim (the default) match the canonical server
+        /// fragment. An adapter that sanitizes client-facing errors to a generic message —
+        /// per protocol-adapter-security invariant 3, e.g. pgwire mapping every
+        /// non-translation fault to one internal_error string — overrides this to its
+        /// sanitized wire text: the fact still proves fail-closed (the read is rejected and
+        /// no rows are delivered — <see cref="ExecuteReadAsync"/> must throw, never return
+        /// rows), while honoring the adapter's contract that the specific reason is withheld
+        /// from the wire. Overriding it does NOT let a swallowed error pass — the throw is
+        /// still required; it only relaxes which text the surfaced rejection must carry.
+        /// </summary>
+        protected virtual string ExpectedRejectionFragment(string canonicalServerFragment) => canonicalServerFragment;
+
         private async Task AssertReadRejectedAsync(ConformanceReadRequest request, string expectedErrorFragment)
         {
             var ex = await Assert.ThrowsAnyAsync<Exception>(() => ExecuteReadAsync(request));
-            FlattenMessages(ex).Should().Contain(expectedErrorFragment,
+            FlattenMessages(ex).Should().Contain(ExpectedRejectionFragment(expectedErrorFragment),
                 "the adapter must surface the server-side rejection, not swallow or replace it");
         }
 

@@ -660,6 +660,15 @@ namespace BifrostQL.Core.Resolvers
                 rows.Add(map);
             }
 
+            // Flatten forward single-link (many-to-one) joined columns into each root
+            // row under a table-qualified key. ExecuteIntentAsync otherwise returns only
+            // the root result set; a protocol adapter that declared a single-link join
+            // (e.g. pgwire `SELECT ... JOIN parent ON child.fk = parent.pk`) needs the
+            // joined scalars alongside the root row. Only single-column QueryType.Single
+            // links are flattened — collection (one-to-many), composite, and m2m joins
+            // are not row-flat and are rejected upstream.
+            FlattenSingleLinkJoins(query, data, rows, cryptoRead);
+
             int? total = null;
             if (query.IncludeResult
                 && data.TryGetValue(query.KeyName + "=>count", out var countEntry)
@@ -670,6 +679,61 @@ namespace BifrostQL.Core.Resolvers
             }
 
             return new QueryIntentResult { Rows = rows, TotalCount = total, Sql = sql };
+        }
+
+        /// <summary>
+        /// Merges forward single-link (many-to-one) joined columns into each flat root
+        /// row. Each such join emitted a separate result set keyed by
+        /// <see cref="TableJoin.JoinName"/> that projects the parent FK value as
+        /// <see cref="JoinKeyNames.SrcIdSingle"/> plus the parent's selected columns; a
+        /// single link yields at most one parent row per source key, so the merge is a
+        /// well-defined per-row flatten (no cardinality fan-out). Joined columns land
+        /// under a table-qualified key (<c>&lt;parentTable&gt;.&lt;col&gt;</c>) so they
+        /// never overwrite a same-named root column, and go through the same crypto
+        /// read projector as the root scalars.
+        /// </summary>
+        private static void FlattenSingleLinkJoins(
+            GqlObjectQuery query,
+            IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> data,
+            List<IReadOnlyDictionary<string, object?>> rows,
+            Modules.Crypto.CryptoReadProjector cryptoRead)
+        {
+            foreach (var join in query.Joins)
+            {
+                if (join.QueryType != QueryType.Single || join.IsComposite)
+                    continue;
+                if (!data.TryGetValue(join.JoinName, out var joinData))
+                    continue;
+                if (!joinData.index.TryGetValue(JoinKeyNames.SrcIdSingle, out var srcIdx))
+                    continue;
+
+                var connectedTable = join.ConnectedTable.DbTable.DbName;
+                var connectedCols = joinData.index
+                    .Where(kv => !string.Equals(kv.Key, JoinKeyNames.SrcIdSingle, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                // src_id (the parent FK value) → the single joined row.
+                var bySrcId = new Dictionary<object, object?[]>();
+                foreach (var jr in joinData.data)
+                {
+                    if (srcIdx >= jr.Length) continue;
+                    var key = ReaderEnum.DbConvert(jr[srcIdx]);
+                    if (key is not null) bySrcId.TryAdd(key, jr);
+                }
+
+                foreach (var row in rows)
+                {
+                    var map = (Dictionary<string, object?>)row;
+                    if (!map.TryGetValue(join.FromColumn, out var fk) || fk is null) continue;
+                    if (!bySrcId.TryGetValue(fk, out var jr)) continue;
+                    foreach (var (colName, idx) in connectedCols)
+                    {
+                        if (idx >= jr.Length) continue;
+                        map[$"{connectedTable}.{colName}"] =
+                            cryptoRead.Project(connectedTable, colName, ReaderEnum.DbConvert(jr[idx]));
+                    }
+                }
+            }
         }
 
         /// <summary>

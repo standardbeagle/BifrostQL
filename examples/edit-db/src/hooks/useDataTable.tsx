@@ -32,6 +32,7 @@ import {
 } from "../lib/query-builder";
 import { rowIdOf, encodeRouteParts } from "../lib/row-id";
 import { isComposite } from "../lib/fk";
+import { exportAllRows, type ExportRunner } from "../lib/export";
 
 // Re-export for existing filter component imports.
 export { getFilterOperators } from "../lib/query-builder";
@@ -452,6 +453,14 @@ interface UseDataTableResult {
     pageCount: number;
     /** Current page data rows */
     rows: RowData[];
+    /** Total matching rows for the active filter/sort (across all pages). */
+    totalRows: number;
+    /**
+     * Export the FULL result set for the current filters + sort, paging through
+     * the same fetcher/query — not just the visible page. Null when there is no
+     * active query/table to export.
+     */
+    exportRows: ExportRunner;
     /** Whether data is currently loading (no rows to show yet) */
     loading: boolean;
     /** Error object if the query failed */
@@ -678,6 +687,46 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
 
     const primaryKeys = table?.primaryKeys ?? [];
 
+    // Full-result-set export. Re-issues the SAME query (so the active header
+    // filter, column filters, and sort all carry) with a paging window, reading
+    // `total` to drive the loop. FK anchor/join objects live under separate
+    // response keys, so projecting on the table's own column names yields the
+    // flat scalar grid (FK scalar values included) — the shared util then does
+    // the lossless CSV/JSON coercion.
+    const exportRows = useCallback<ExportRunner>(async (options) => {
+        if (!query || !table) return null;
+        const exportColumns = table.columns;
+        const headers = exportColumns.map((c) => c.label);
+        const fields = exportColumns.map((c) => c.name);
+        return exportAllRows({
+            headers,
+            format: options.format,
+            signal: options.signal,
+            onProgress: options.onProgress,
+            rowCap: options.rowCap,
+            // Grid CSV targets Excel — emit the BOM so it opens as UTF-8.
+            csv: { bom: true },
+            fetchPage: async (offset, limit) => {
+                // Override only the paging window; every filter/sort variable
+                // stays as the grid built it.
+                const vars = { ...queryVariables, limit, offset };
+                const pageData = await fetcher.query<QueryData>(query, vars, { signal: options.signal });
+                let pageRecords: RowData[];
+                let total: number;
+                if (drill && !canFlatFilterDrill(drill.childJoin)) {
+                    const page = unwrapDrillDownPage(pageData, drill.parentTable.name, drill.childField);
+                    pageRecords = page.data as RowData[];
+                    total = page.total;
+                } else {
+                    const td = pageData?.[table.name] as { data?: RowData[]; total?: number } | undefined;
+                    pageRecords = td?.data ?? [];
+                    total = td?.total ?? 0;
+                }
+                return { rows: pageRecords.map((r) => fields.map((f) => r[f])), total };
+            },
+        });
+    }, [query, table, queryVariables, fetcher, drill]);
+
     return {
         columns,
         sorting,
@@ -687,6 +736,8 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         pageSize,
         pageCount,
         rows,
+        totalRows,
+        exportRows,
         loading: isLoading,
         error: error as Error | null,
         onSortingChange,

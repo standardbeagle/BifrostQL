@@ -17,3 +17,24 @@ export type {
   SavedObjectType,
   SavedObjectsClient,
 } from './common/saved-objects';
+export {
+  buildCsv,
+  buildJson,
+  formatCsvCell,
+  exportAllRows,
+  downloadTextFile,
+  filenameFor,
+  mimeFor,
+  UTF8_BOM,
+  DEFAULT_ROW_CAP,
+} from './lib/export';
+export type {
+  ExportFormat,
+  JsonMode,
+  CsvOptions,
+  JsonOptions,
+  ExportPage,
+  ExportResult,
+  ExportRunner,
+  RunExportOptions,
+} from './lib/export';

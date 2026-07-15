@@ -224,6 +224,30 @@ export async function exportAllRows(
     return { content, rowCount: all.length, total, truncated };
 }
 
+/**
+ * Default confirmation threshold: exporting more than this many rows prompts the
+ * user first, since it means paging the full result set out of the database.
+ */
+export const DEFAULT_ROW_CAP = 100_000;
+
+/** Options passed to a bound {@link ExportRunner}. */
+export interface RunExportOptions {
+    format: ExportFormat;
+    signal?: AbortSignal;
+    onProgress?: (fetched: number, total: number) => void;
+    rowCap?: number;
+}
+
+/**
+ * A surface-bound export runner: closes over the surface's headers + paging
+ * fetcher and drains the full result set. Returns null when the surface has
+ * nothing to export (no active query/table). This is the seam the grid toolbar
+ * and any other paged surface hand to the shared export button.
+ */
+export type ExportRunner = (
+    options: RunExportOptions,
+) => Promise<ExportResult | null>;
+
 /** MIME type for a downloaded file of the given format. */
 export function mimeFor(format: ExportFormat): string {
     return format === 'csv'

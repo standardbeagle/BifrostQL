@@ -48,6 +48,10 @@
 	</PropertyGroup>
 	<ItemGroup>
 		<InternalsVisibleTo Include="BifrostQL.Core.Test" />
+		<!-- Server wires the CDC NATS sink, whose INatsPublisher seam + sink ctor
+		     are internal (broker-free testability) — the DI factory in
+		     BifrostServiceRegistrar constructs them. -->
+		<InternalsVisibleTo Include="BifrostQL.Server" />
 		<InternalsVisibleTo Include="BifrostQL.Sqlite" />
 		<InternalsVisibleTo Include="BifrostQL.SqlServer" />
 	</ItemGroup>

@@ -278,6 +278,26 @@ namespace BifrostQL.Server
         /// </summary>
         public static void RegisterCdcDispatcherServices(IServiceCollection services)
         {
+            // Opt-in NATS sink: registered BEFORE the webhook sink so that when a NATS URL is
+            // configured it wins (TryAdd = first registration wins). The NatsConnection is built
+            // LAZILY inside the factory, so a host that configures NO NATS URL opens no connection
+            // at startup — the factory returns null! (like the webhook one) and the next
+            // TryAddSingleton (webhook) applies. A host configuring NEITHER opens nothing.
+            services.TryAddSingleton<BifrostQL.Core.Modules.Cdc.IEventSink>(sp =>
+            {
+                var url = sp.GetRequiredService<IConfiguration>()[
+                    BifrostQL.Core.Modules.Cdc.NatsEventSink.UrlConfigKey];
+                if (string.IsNullOrWhiteSpace(url))
+                    return null!; // No NATS URL configured: fall through to the webhook registration.
+
+                var connection = new NATS.Client.Core.NatsConnection(
+                    new NATS.Client.Core.NatsOpts { Url = url });
+                var publisher = new BifrostQL.Core.Modules.Cdc.NatsConnectionPublisher(connection);
+                return new BifrostQL.Core.Modules.Cdc.NatsEventSink(
+                    publisher,
+                    logger: sp.GetService<ILogger<BifrostQL.Core.Modules.Cdc.NatsEventSink>>());
+            });
+
             // Opt-in HTTP webhook sink: registered only when a webhook URL is configured, and
             // TryAdd so a host that registers its OWN IEventSink first always wins. Signing
             // secrets are resolved LAZILY from the model's `webhook-secret` metadata each

@@ -402,6 +402,34 @@ describe('serializeColumnFilters', () => {
         expect((deserialized[0].value as ColumnFilterValue).operator).toBe('_contains');
         expect((deserialized[1].value as ColumnFilterValue).value).toEqual([1, 10]);
     });
+
+    // Composite-PK compliance (task 5.2): a BigInt primary key filtered through the
+    // grid must survive the `cf` URL param round-trip with its EXACT value. The value
+    // is carried as a decimal string precisely because a JS number cannot hold it:
+    // 9007199254740993 > Number.MAX_SAFE_INTEGER, so Number-coercion silently rounds
+    // the trailing 3 to a 2. This pins the string-carriage contract so a future change
+    // that parses cf values through Number() (or JSON numbers) fails loudly here.
+    it('round-trips a BigInt PK filter through the cf param without precision loss', () => {
+        const bigIntPk = 9007199254740993n; // one past Number.MAX_SAFE_INTEGER (…991)
+        const exact = bigIntPk.toString();
+
+        // Sanity: this value genuinely cannot survive a Number coercion — the
+        // trailing 3 rounds to a 2 the instant it passes through a JS number.
+        expect(String(Number(exact))).toBe('9007199254740992');
+
+        const filters = [
+            { id: 'id', value: { operator: '_eq', value: exact } as ColumnFilterValue },
+        ];
+
+        // serialize -> (URLSearchParams cf=…) -> deserialize, exactly the useDataTable path.
+        const cfParam = serializeColumnFilters(filters);
+        const roundTripped = new URLSearchParams(new URLSearchParams({ cf: cfParam }).toString()).get('cf')!;
+        const restored = deserializeColumnFilters(roundTripped);
+
+        const restoredValue = (restored[0].value as ColumnFilterValue).value;
+        expect(restoredValue).toBe(exact); // exact string, never Number-coerced
+        expect(BigInt(restoredValue as string)).toBe(bigIntPk); // survives as the same BigInt
+    });
 });
 
 describe('deserializeColumnFilters', () => {

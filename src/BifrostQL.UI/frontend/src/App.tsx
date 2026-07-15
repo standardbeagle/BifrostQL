@@ -295,7 +295,7 @@ export default function App() {
           queries flow over the newly selected mode.
         */}
         {editorPane === 'sql' ? (
-          <SqlConsole />
+          <SqlConsole provider={connectionInfo?.provider} />
         ) : editorPane === 'builder' ? (
           <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
             <SavedQueryList

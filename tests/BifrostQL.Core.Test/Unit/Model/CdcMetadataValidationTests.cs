@@ -184,4 +184,67 @@ public class CdcMetadataValidationTests
 
         act.Should().NotThrow();
     }
+
+    [Fact]
+    public void Validate_SubscriptionTablesNamingExistingTable_DoesNotThrow()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.Cdc.OutboxTable, "dbo.__outbox")
+            .WithModelMetadata(MetadataKeys.Cdc.SubscriptionTables, "dbo.orders")
+            .WithModelMetadata(MetadataKeys.Cdc.SubscriptionTenant, "tenant-x")
+            .WithModelMetadata(MetadataKeys.Cdc.SubscriptionRedact, "Total")
+            .WithTable("orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Total", "decimal")
+                .WithMetadata(MetadataKeys.Cdc.EmitEvents, "insert,update,delete"))
+            .WithTable("__outbox", WithOutboxColumns)
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void Validate_UnknownSubscriptionKey_Throws()
+    {
+        // A typo in the subscription-* family must fail the model-load unknown-key gate,
+        // not silently no-op the delivery scope.
+        var model = DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.Cdc.OutboxTable, "dbo.__outbox")
+            .WithModelMetadata("subscription-tabels", "dbo.orders") // typo
+            .WithTable("orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Total", "decimal")
+                .WithMetadata(MetadataKeys.Cdc.EmitEvents, "insert"))
+            .WithTable("__outbox", WithOutboxColumns)
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("subscription-tabels").And.Contain("unrecognized");
+    }
+
+    [Fact]
+    public void Validate_SubscriptionTablesNamingMissingTable_Throws()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.Cdc.OutboxTable, "dbo.__outbox")
+            .WithModelMetadata(MetadataKeys.Cdc.SubscriptionTables, "dbo.orders, dbo.ghosts")
+            .WithTable("orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Total", "decimal")
+                .WithMetadata(MetadataKeys.Cdc.EmitEvents, "insert"))
+            .WithTable("__outbox", WithOutboxColumns)
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.ghosts").And.Contain("does not name an existing");
+    }
 }

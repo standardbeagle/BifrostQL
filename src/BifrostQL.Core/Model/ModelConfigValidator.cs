@@ -79,6 +79,7 @@ namespace BifrostQL.Core.Model
 
             ValidateEavConfigs(model, errors);
             ValidateCdcOutbox(model, errors);
+            ValidateCdcSubscription(model, errors);
             ValidateHistoryTargets(model, errors);
             ValidateChat(model, errors);
             ValidateChatConnectors(model, errors);
@@ -490,6 +491,46 @@ namespace BifrostQL.Core.Model
                     $"  :root [{MetadataKeys.Cdc.OutboxTable}]: outbox table '{outboxName}' is missing required " +
                     $"column(s): {string.Join(", ", missing)}. The outbox contract is: " +
                     $"{string.Join(", ", MetadataKeys.Cdc.OutboxColumns)}.");
+            }
+        }
+
+        /// <summary>
+        /// Fail-fast validation for the model-level CDC subscription
+        /// (<c>subscription-tables</c> / <c>subscription-tenant</c> /
+        /// <c>subscription-redact</c>). The subscription routes fail-closed, so a malformed
+        /// or dangling allow-list must be caught at model load rather than silently
+        /// scoping delivery to nothing: a present-but-empty list value (<c>","</c>) and an
+        /// allow-list entry that names no existing table are both rejected. Reuses
+        /// <see cref="CdcSubscription.FromModel"/> for the present-but-empty guard so
+        /// validation cannot drift from the runtime parse.
+        /// </summary>
+        private static void ValidateCdcSubscription(IDbModel model, List<string> errors)
+        {
+            try
+            {
+                CdcSubscription.FromModel(model);
+            }
+            catch (Exception ex)
+            {
+                // Present-but-empty list value; the message names the offending key.
+                errors.Add($"  :root: {ex.Message}");
+                return; // The table-existence loop below would re-throw the same parse error.
+            }
+
+            var tablesRaw = model.GetMetadataValue(MetadataKeys.Cdc.SubscriptionTables);
+            if (string.IsNullOrWhiteSpace(tablesRaw))
+                return; // No allow-list (subscription may be tenant/redact-only) — nothing to resolve.
+
+            foreach (var entry in tablesRaw.Split(
+                ',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                // Resolved through ModelTableReference — the same lookup the drain uses for
+                // the outbox and aggregate tables — so an entry that validates here names
+                // the same table the router gates on.
+                if (ModelTableReference.Find(model, entry) is null)
+                    errors.Add(
+                        $"  :root [{MetadataKeys.Cdc.SubscriptionTables}]: '{entry}' does not name an existing " +
+                        "table; a subscription allow-list entry must name a source table in the model.");
             }
         }
 

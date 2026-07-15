@@ -75,9 +75,11 @@ describe('buildJson', () => {
         const json = buildJson(['id', 'name'], [[9007199254740993n, 'row']]);
         const parsed = JSON.parse(json) as { id: unknown; name: string }[];
         // bigint -> exact decimal string, never coerced through Number (which would
-        // round 9007199254740993 -> 9007199254740992).
+        // round 9007199254740993 -> ...992, losing the trailing 3).
         expect(parsed[0].id).toBe('9007199254740993');
-        expect(Number(parsed[0].id)).not.toBe(9007199254740993);
+        expect(typeof parsed[0].id).toBe('string');
+        // Number-coercing would have dropped the final digit to 2.
+        expect(String(parsed[0].id).endsWith('3')).toBe(true);
         expect(parsed[0].name).toBe('row');
     });
 

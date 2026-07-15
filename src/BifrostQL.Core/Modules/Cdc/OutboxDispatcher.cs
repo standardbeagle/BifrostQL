@@ -198,23 +198,31 @@ namespace BifrostQL.Core.Modules.Cdc
             var rows = await ReadEligibleAsync(conn, dialect, outbox, batchSize, cancellationToken);
 
             // Group by aggregate + subject (composite PK honoured by ComputeSubject) so each
-            // key drains independently. Rows arrive in id order; GroupBy preserves that within
-            // a group. A row whose subject cannot be computed gets a unique key so it fails on
-            // its own without blocking any real key.
-            var keyed = new List<(Dictionary<string, object?> Row, string Key)>(rows.Count);
+            // key drains independently. The __outbox table is SHARED across all tracked source
+            // tables, so the subject (PK) alone is not unique: two aggregates that share a PK
+            // value (widgets/1 and orders/1 both subject "1") would collapse into one bucket and
+            // head-of-line-block each other. The key is the (aggregate, subject) value tuple —
+            // distinct aggregates never share a bucket, and the tuple compares component-wise
+            // (ordinal string equality) so there is no "a"+"b" == "ab" concat ambiguity between
+            // the two parts. Rows arrive in id order; GroupBy preserves that within a group. A
+            // row whose subject cannot be computed gets a unique key so it fails on its own
+            // without blocking any real key.
+            var keyed = new List<(Dictionary<string, object?> Row, (string Aggregate, string Subject) Key)>(rows.Count);
             foreach (var row in rows)
             {
-                string key;
+                (string Aggregate, string Subject) key;
                 try
                 {
-                    key = "" + ComputeSubject(model, row);
+                    var aggregate = Convert.ToString(row[MetadataKeys.Cdc.ColAggregate], CultureInfo.InvariantCulture) ?? "";
+                    key = (aggregate, ComputeSubject(model, row));
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    // Unparseable subject: unique key (row id) so grouping never lumps two of
-                    // these together and it cannot block a real key. Delivery below re-throws
+                    // Unparseable subject: unique key (row id) under a reserved sentinel aggregate
+                    // (a real aggregate is a table name, never "\0"), so grouping never lumps two
+                    // of these together and it cannot block a real key. Delivery below re-throws
                     // the same error and converts it to a transient failure.
-                    key = " " + Convert.ToString(row[MetadataKeys.Cdc.ColId], CultureInfo.InvariantCulture);
+                    key = ("\0unparseable", Convert.ToString(row[MetadataKeys.Cdc.ColId], CultureInfo.InvariantCulture) ?? "");
                 }
                 keyed.Add((row, key));
             }
@@ -222,7 +230,7 @@ namespace BifrostQL.Core.Modules.Cdc
             var delivered = 0;
             var failedAttemptCounts = new List<int>();
 
-            foreach (var group in keyed.GroupBy(k => k.Key, StringComparer.Ordinal))
+            foreach (var group in keyed.GroupBy(k => k.Key))
             {
                 foreach (var (row, _) in group)
                 {

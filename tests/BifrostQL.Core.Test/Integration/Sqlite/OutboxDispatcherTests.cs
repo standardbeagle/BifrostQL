@@ -34,10 +34,21 @@ public sealed class OutboxDispatcherTests : IAsyncLifetime
         await _keepAlive.OpenAsync();
 
         await Exec("DROP TABLE IF EXISTS widgets");
+        await Exec("DROP TABLE IF EXISTS orders");
         await Exec("DROP TABLE IF EXISTS __outbox");
         await Exec(
             """
             CREATE TABLE widgets (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL
+            )
+            """);
+        // A SECOND tracked aggregate sharing widgets' single-column integer PK shape. Because the
+        // __outbox table is shared across ALL tracked tables, an orders row and a widgets row can
+        // carry the SAME PK value (subject) — the case the per-key grouping must keep isolated.
+        await Exec(
+            """
+            CREATE TABLE orders (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL
             )
@@ -61,6 +72,7 @@ public sealed class OutboxDispatcherTests : IAsyncLifetime
         _model = await new DbModelLoader(_factory, new MetadataLoader(new[]
         {
             "main.widgets { emit-events: insert,update,delete }",
+            "main.orders { emit-events: insert,update,delete }",
             ":root { outbox-table: main.__outbox }",
         })).LoadAsync();
     }
@@ -76,15 +88,22 @@ public sealed class OutboxDispatcherTests : IAsyncLifetime
     // Seeds one undelivered outbox row for widget <paramref name="widgetId"/> and returns its outbox id.
     // The widget id becomes the CloudEvents subject (row PK), so two rows sharing widgetId share a key.
     private async Task<long> SeedRowAsync(long widgetId, string op = "insert", int attempts = 0, int dead = 0)
+        => await SeedRowForAsync("main.widgets", widgetId, op, attempts, dead);
+
+    // Seeds one undelivered outbox row for an arbitrary tracked <paramref name="aggregate"/> whose PK
+    // value is <paramref name="pk"/>. Two aggregates may share a PK value; the grouping key must keep
+    // them in separate buckets so one cannot head-of-line-block the other.
+    private async Task<long> SeedRowForAsync(string aggregate, long pk, string op = "insert", int attempts = 0, int dead = 0)
     {
         await using var cmd = new SqliteCommand(
             """
             INSERT INTO __outbox(aggregate, op, payload, created_at, attempts, dead)
-            VALUES ('main.widgets', @op, @payload, '2026-07-15T10:00:00.0000000', @attempts, @dead);
+            VALUES (@aggregate, @op, @payload, '2026-07-15T10:00:00.0000000', @attempts, @dead);
             SELECT last_insert_rowid();
             """, _keepAlive);
+        cmd.Parameters.AddWithValue("@aggregate", aggregate);
         cmd.Parameters.AddWithValue("@op", op);
-        cmd.Parameters.AddWithValue("@payload", $$"""{"id":{{widgetId}},"name":"widget-{{widgetId}}"}""");
+        cmd.Parameters.AddWithValue("@payload", $$"""{"id":{{pk}},"name":"row-{{pk}}"}""");
         cmd.Parameters.AddWithValue("@attempts", attempts);
         cmd.Parameters.AddWithValue("@dead", dead);
         return Convert.ToInt64(await cmd.ExecuteScalarAsync());
@@ -257,6 +276,40 @@ public sealed class OutboxDispatcherTests : IAsyncLifetime
         (await ReadRowAsync(oneUpdate)).dispatched.Should().BeTrue();
         // id order within the key: the insert (lower id) is delivered before the update.
         deliverAll.ReceivedIds.Should().Equal(oneInsert.ToString(), oneUpdate.ToString());
+    }
+
+    [Fact]
+    public async Task PerKeyOrdering_StuckAggregateDoesNotBlockOtherAggregateSharingPk()
+    {
+        // The __outbox is shared across ALL tracked tables, so two DIFFERENT aggregates can carry
+        // the SAME PK value: widgets/1 and orders/1 both produce subject "1". If the grouping key
+        // were the subject alone they would collapse into one bucket and a stuck widgets/1 would
+        // head-of-line-block orders/1. The key is (aggregate, subject), so they are distinct keys:
+        // widgets/1 backing off must NOT stop orders/1 from delivering this same pass.
+        var widgetOne = await SeedRowForAsync("main.widgets", 1, op: "insert");
+        var orderOne = await SeedRowForAsync("main.orders", 1, op: "insert");
+
+        // Fail only the widgets aggregate; deliver everything else. Both rows share subject "1",
+        // so the sink MUST discriminate on the envelope source (the aggregate), not the subject.
+        var failWidgets = new ScriptedSink(env =>
+            env["source"]!.ToString() == "main.widgets"
+                ? EventDeliveryResult.TransientFailure
+                : EventDeliveryResult.Delivered);
+
+        var outcome = await DrainAsync(failWidgets);
+
+        outcome.Delivered.Should().Be(1, "orders/1 delivered even though widgets/1 shares its subject and is stuck");
+        outcome.FailedAttempts.Should().Be(1, "only widgets/1 failed");
+
+        (await ReadRowAsync(widgetOne)).attempts.Should().Be(1, "the stuck widgets/1 was attempted and backed off");
+        (await ReadRowAsync(widgetOne)).dispatched.Should().BeFalse("widgets/1 must stay pending for retry");
+        (await ReadRowAsync(orderOne)).dispatched.Should().BeTrue(
+            "orders/1 drained despite sharing PK value with the stuck widgets/1 — cross-aggregate isolation holds");
+
+        // Both rows (same subject "1") were handed to the sink; the failing aggregate did not
+        // block the healthy one.
+        failWidgets.ReceivedSubjects.Should().Equal("1", "1");
+        failWidgets.ReceivedSubjects.Should().OnlyContain(s => s == "1", "both aggregates share the PK subject");
     }
 
     [Fact]

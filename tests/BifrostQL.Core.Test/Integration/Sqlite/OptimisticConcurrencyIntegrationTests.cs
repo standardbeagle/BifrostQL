@@ -27,9 +27,12 @@ public sealed class OptimisticConcurrencyIntegrationTests : IAsyncLifetime
     private SqliteConnection _keepAlive = null!;
     private IDbModel _model = null!;
 
+    private const string SeedTimestamp = "2020-01-01T00:00:00Z";
+
     private static readonly string[] Rules =
     {
         "*.widgets { concurrency-token: version }",
+        "*.events { concurrency-token: updated_at }",
     };
 
     public async Task InitializeAsync()
@@ -47,6 +50,19 @@ public sealed class OptimisticConcurrencyIntegrationTests : IAsyncLifetime
             )
             """);
         await Exec("INSERT INTO widgets(id, name, version) VALUES (7, 'original', 1)");
+
+        // A datetime-token table exercises the restamp branch (token type DateTime)
+        // against the same race the numeric table exercises against increment.
+        await Exec("DROP TABLE IF EXISTS events");
+        await Exec(
+            """
+            CREATE TABLE events (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                updated_at DATETIME NOT NULL
+            )
+            """);
+        await Exec($"INSERT INTO events(id, name, updated_at) VALUES (3, 'original', '{SeedTimestamp}')");
 
         var factory = new SqliteDbConnFactory(ConnString);
         _model = await new DbModelLoader(factory, new MetadataLoader(Rules)).LoadAsync();
@@ -131,5 +147,114 @@ public sealed class OptimisticConcurrencyIntegrationTests : IAsyncLifetime
         result.Errors.Should().BeNullOrEmpty();
         (await ScalarAsync("SELECT name FROM widgets WHERE id = 7")).Should().Be("v3");
         (await ScalarAsync("SELECT version FROM widgets WHERE id = 7")).Should().Be("3");
+    }
+
+    /// <summary>
+    /// The stale-token failure must surface a stable, branchable shape — a
+    /// <see cref="BifrostExecutionError"/> carrying <c>ErrorCode == "CONFLICT"</c> —
+    /// not a generic error and not a silent zero-row success. This pins the
+    /// ErrorCode string as the caller's contract for detecting a lost-update reject.
+    /// </summary>
+    [Fact]
+    public async Task StaleVersion_ConflictShape_IsErrorCodeConflict()
+    {
+        (await UpdateAsync("mutation { widgets(update: { id: 7, name: \"v2\", version: 1 }) }"))
+            .Errors.Should().BeNullOrEmpty();
+
+        var stale = await UpdateAsync("mutation { widgets(update: { id: 7, name: \"stomp\", version: 1 }) }");
+
+        stale.Errors.Should().NotBeNullOrEmpty();
+        stale.Errors!
+            .Select(e => e.InnerException as BifrostExecutionError)
+            .Where(e => e != null)
+            .Should().Contain(e => e!.ErrorCode == "CONFLICT",
+                "a lost-update reject must be a CONFLICT the caller can branch on, not a generic error");
+    }
+
+    /// <summary>
+    /// The conflict error must leak nothing the caller could not otherwise read: the
+    /// generic message is the contract. Here writer A stamps a value the losing writer B
+    /// never read; the CONFLICT surfaced to B must not echo that current value.
+    /// </summary>
+    [Fact]
+    public async Task Conflict_Message_LeaksNoCurrentRowValues()
+    {
+        const string secret = "VALUE_B_NEVER_READ";
+        (await UpdateAsync($"mutation {{ widgets(update: {{ id: 7, name: \"{secret}\", version: 1 }}) }}"))
+            .Errors.Should().BeNullOrEmpty();
+
+        var stale = await UpdateAsync("mutation { widgets(update: { id: 7, name: \"stomp\", version: 1 }) }");
+
+        var conflict = stale.Errors!
+            .Select(e => e.InnerException as BifrostExecutionError)
+            .First(e => e?.ErrorCode == "CONFLICT")!;
+        // The current stored name and the advanced token value are NOT disclosed.
+        conflict.Message.Should().NotContain(secret);
+        conflict.Message.Should().NotContain("version = 2");
+        conflict.Message.Should().Contain("concurrency token no longer matches");
+    }
+
+    // ---- datetime token: single-row race --------------------------------
+
+    [Fact]
+    public async Task DatetimeToken_ConcurrentWriters_StaleConflicts_NoClobber()
+    {
+        // Writer A holds the seed timestamp and wins; the token restamps to now.
+        var winner = await UpdateAsync($"mutation {{ events(update: {{ id: 3, name: \"A\", updated_at: \"{SeedTimestamp}\" }}) }}");
+        winner.Errors.Should().BeNullOrEmpty();
+        (await ScalarAsync("SELECT name FROM events WHERE id = 3")).Should().Be("A");
+        (await ScalarAsync("SELECT updated_at FROM events WHERE id = 3")).Should().NotBe(SeedTimestamp,
+            "a datetime token restamps on every successful write");
+
+        // Writer B still holds the seed timestamp — now stale — and must be rejected.
+        var stale = await UpdateAsync($"mutation {{ events(update: {{ id: 3, name: \"B\", updated_at: \"{SeedTimestamp}\" }}) }}");
+        stale.Errors!
+            .Select(e => e.InnerException as BifrostExecutionError)
+            .Should().Contain(e => e!.ErrorCode == "CONFLICT");
+        // Writer A's value survives — no lost update.
+        (await ScalarAsync("SELECT name FROM events WHERE id = 3")).Should().Be("A");
+    }
+
+    // ---- batch update path race -----------------------------------------
+
+    [Fact]
+    public async Task Batch_StaleVersion_Conflicts_And_DoesNotClobber()
+    {
+        // Writer A advances the token through the batch update path.
+        (await UpdateAsync("mutation { widgets_batch(actions: [{ update: { id: 7, name: \"A\", version: 1 } }]) }"))
+            .Errors.Should().BeNullOrEmpty();
+        (await ScalarAsync("SELECT version FROM widgets WHERE id = 7")).Should().Be("2");
+
+        // Writer B, still on the stale version, is rejected as CONFLICT and rolls back.
+        var stale = await UpdateAsync("mutation { widgets_batch(actions: [{ update: { id: 7, name: \"B\", version: 1 } }]) }");
+        stale.Errors.Should().NotBeNullOrEmpty();
+        stale.Errors!
+            .Select(e => e.InnerException as BifrostExecutionError)
+            .Should().Contain(e => e!.ErrorCode == "CONFLICT");
+
+        // A's write is intact — the batch path enforces the same no-clobber guarantee.
+        (await ScalarAsync("SELECT name FROM widgets WHERE id = 7")).Should().Be("A");
+        (await ScalarAsync("SELECT version FROM widgets WHERE id = 7")).Should().Be("2");
+    }
+
+    // ---- batch single-statement upsert path refuses token tables --------
+
+    [Fact]
+    public async Task Batch_Upsert_OnTokenTable_IsRefused_And_CannotResurrect()
+    {
+        // The row is gone; a naive upsert would INSERT it back. On a token table the
+        // single-statement upsert path (SQLite ON CONFLICT DO UPDATE) cannot render the
+        // token WHERE, so it must refuse rather than silently resurrect the row.
+        await Exec("DELETE FROM widgets WHERE id = 7");
+
+        var result = await UpdateAsync("mutation { widgets_batch(actions: [{ upsert: { id: 7, name: \"ghost\", version: 5 } }]) }");
+
+        result.Errors.Should().NotBeNullOrEmpty();
+        result.Errors!
+            .Select(e => e.InnerException as BifrostExecutionError)
+            .Should().Contain(e => e!.ErrorCode == "CONFLICT");
+        // The refusal rolled back — no row was resurrected.
+        (await ScalarAsync("SELECT COUNT(*) FROM widgets WHERE id = 7")).Should().Be("0",
+            "a refused upsert must not degrade into an INSERT that resurrects the row");
     }
 }

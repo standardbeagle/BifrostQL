@@ -72,6 +72,32 @@ public class DurableKeyStoreTests
         loserDek.Should().Equal(winnerDek);
     }
 
+    /// <summary>
+    /// A store that accepts Store but persists NOTHING (Load always returns null) models a
+    /// genuine persistence failure — disk full, permission denied, a broken durable backend.
+    /// The manager must FAIL FAST rather than fall back to its own freshly generated,
+    /// unpersisted DEK: caching that key would encrypt data under a key no store holds, which
+    /// becomes unrecoverable the moment the in-memory cache is gone (restart). This pins the
+    /// "never fallback data" invariant against the exact silent-orphan bug review caught.
+    /// </summary>
+    private sealed class NonPersistingStore : IDataEncryptionKeyStore
+    {
+        public byte[]? Load(string keyRef) => null;   // never persists, never returns anything
+        public void Store(string keyRef, byte[] wrappedDek) { }
+    }
+
+    [Fact]
+    public void GetDataKey_StoreSilentlyPersistsNothing_FailsFast_NoUnpersistedDek()
+    {
+        var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new NonPersistingStore());
+
+        // Must throw — never return a DEK the store did not persist.
+        var act = () => manager.GetDataKey("config:pii");
+
+        act.Should().Throw<System.Security.Cryptography.CryptographicException>(
+            "a DEK the store failed to persist would orphan all data encrypted under it on restart");
+    }
+
     [Fact]
     public void FileStore_PersistsWrappedBytesVerbatim_PlaintextDekNeverAtRest()
     {

@@ -141,9 +141,16 @@ namespace BifrostQL.Core.Crypto
                 }
                 catch (IOException)
                 {
-                    // Another writer/process won the race and created the destination first.
-                    // Leave the existing value intact and clean up our temp file.
+                    // File.Move(overwrite:false) throws IOException BOTH when another writer
+                    // won the race (destination already exists — a benign no-op) AND on a
+                    // genuine move failure (disk full, permissions, IO error) that persisted
+                    // nothing. Distinguish them: only a destination that now EXISTS confirms a
+                    // lost race we may swallow. If nothing is there, persistence genuinely
+                    // failed — rethrow so the caller does not proceed to cache an unpersisted
+                    // DEK (which would make encrypted data unrecoverable on restart).
                     TryDelete(temp);
+                    if (!File.Exists(path))
+                        throw;
                 }
                 catch
                 {
@@ -221,7 +228,17 @@ namespace BifrostQL.Core.Crypto
                     // what we just stored, so behavior is identical and no test regresses.
                     var justWrapped = Wrap(rootKey, RandomNumberGenerator.GetBytes(FieldCipher.KeySize), keyRef);
                     _store.Store(keyRef, justWrapped);
-                    var authoritative = _store.Load(keyRef) ?? justWrapped;
+                    // After a successful Store (or a lost race the store swallowed only because
+                    // the winner's value is now persisted), Load MUST return the authoritative
+                    // bytes. A null here means the store failed to persist AND holds nothing —
+                    // fail fast rather than fall back to our own un-persisted DEK, which would
+                    // cache a key no writer stored and orphan everything encrypted under it on
+                    // restart. (No silent fallback data — the durable store's contract is that
+                    // a returned DEK is a persisted DEK.)
+                    var authoritative = _store.Load(keyRef)
+                        ?? throw new CryptographicException(
+                            $"Data-encryption key for '{keyRef}' was not persisted by the key store; " +
+                            "refusing to use an unpersisted key that would make encrypted data unrecoverable.");
                     dek = Unwrap(rootKey, authoritative, keyRef);
                 }
                 else

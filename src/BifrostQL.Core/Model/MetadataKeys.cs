@@ -811,10 +811,29 @@ namespace BifrostQL.Core.Model
             ///   <item><c>dead</c> — dead-letter flag once attempts exhaust.</item>
             /// </list>
             /// </summary>
+            /// <summary>Surrogate PK, monotonic — drain order and CloudEvents <c>id</c>.</summary>
+            public const string ColId = "id";
+            /// <summary>Qualified source table (e.g. <c>dbo.orders</c>) — CloudEvents <c>source</c>/<c>type</c> stem.</summary>
+            public const string ColAggregate = "aggregate";
+            /// <summary><c>insert</c>/<c>update</c>/<c>delete</c> — CloudEvents <c>type</c> suffix.</summary>
+            public const string ColOp = "op";
+            /// <summary>JSON event body per the payload mode — CloudEvents <c>data</c>.</summary>
+            public const string ColPayload = "payload";
+            /// <summary>Tenant id captured from user context (nullable) — CloudEvents <c>tenant</c> extension.</summary>
+            public const string ColTenant = "tenant";
+            /// <summary>Write timestamp — CloudEvents <c>time</c>.</summary>
+            public const string ColCreatedAt = "created_at";
+            /// <summary>Set by the dispatcher on success (nullable = undelivered).</summary>
+            public const string ColDispatchedAt = "dispatched_at";
+            /// <summary>Delivery attempt counter.</summary>
+            public const string ColAttempts = "attempts";
+            /// <summary>Dead-letter flag once attempts exhaust.</summary>
+            public const string ColDead = "dead";
+
             public static readonly IReadOnlyList<string> OutboxColumns = new[]
             {
-                "id", "aggregate", "op", "payload", "tenant",
-                "created_at", "dispatched_at", "attempts", "dead",
+                ColId, ColAggregate, ColOp, ColPayload, ColTenant,
+                ColCreatedAt, ColDispatchedAt, ColAttempts, ColDead,
             };
         }
 

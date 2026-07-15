@@ -227,6 +227,41 @@ keyless table, and any unrecognized `chat-connector-*`/`chat-media-*`/`chat-plan
 key are all rejected before the first chat request. An `explore` connector needs no
 extra columns — any published table qualifies.
 
+### CDC / outbound-events metadata
+
+Opts tables into emitting insert/update/delete domain events through a
+transactional outbox, and (optionally) filters what a delivery sink receives. See
+[Change Data Capture & Outbound Events](/concepts/cdc-outbound-events) for the
+concept and [Emitting Change Events](/guides/cdc-events) for the walkthrough. Every
+key below is defined in `MetadataKeys.Cdc`.
+
+| Property | Values | Applies to | Description |
+|----------|--------|-----------|-------------|
+| `emit-events` | comma list of `insert`/`update`/`delete` | table | Operations that emit an event. Presence of this key opts the table in; a subset is allowed |
+| `event-sink` | `outbox` | table | Durable sink. Only `outbox` is recognized; defaults to `outbox` when omitted |
+| `event-payload` | `full`/`changed`/`keys` | table | How much of the row is captured in `payload`. Defaults to `full` |
+| `outbox-table` | qualified table name | model | The transactional outbox table events are written to. **Required** once any table sets `emit-events`; the table must exist and carry the outbox column contract |
+| `webhook-secret` | comma list of secrets | model | HMAC signing secret(s) for the webhook sink. Multiple values enable zero-downtime secret rotation |
+| `subscription-tables` | comma list of qualified tables | model | Fail-closed delivery allow-list: an event delivers only if its `aggregate` is listed. Presence of any `subscription-*` key activates the subscription; an empty allow-list delivers nothing |
+| `subscription-tenant` | tenant id | model | Binds the subscription to one tenant — only outbox rows whose `tenant` equals it are delivered; null/unknown-tenant rows never are |
+| `subscription-redact` | comma list of column names | model | Columns stripped from the payload before any sink sees it. Primary-key columns are never stripped |
+
+With **no** `subscription-*` key every event is delivered (deliver-all). Unknown
+`subscription-*` keys and a `subscription-tables` entry naming a non-existent
+table fail at model load. The delivery-sink host settings (`Cdc:WebhookUrl`,
+`Cdc:NatsUrl`) live in application configuration, not metadata — see the
+[guide](/guides/cdc-events#delivery).
+
+```json
+{
+  "Metadata": [
+    "dbo.orders { emit-events: insert,update,delete; event-payload: changed }",
+    "dbo.widgets { emit-events: insert,update }",
+    ":root { outbox-table: dbo.__outbox; webhook-secret: old-secret,new-secret; subscription-tables: dbo.orders, dbo.widgets; subscription-tenant: acme; subscription-redact: ssn,card_number }"
+  ]
+}
+```
+
 ### Populate values
 
 | Value | Description |

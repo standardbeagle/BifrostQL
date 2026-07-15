@@ -13,11 +13,31 @@ neither does, so an event can never be lost or fabricated relative to the write
 it describes (the correct pattern versus lossy triggers or app-level dual-writes).
 
 :::note
-The **metadata contract, the outbox table, and the transactional writer** are
-implemented across **all** write paths — single-row, batch, and nested TreeSync
-mutations each write an event row into the outbox **in the same transaction** as
-the data change. The background **dispatcher** that drains the outbox to
-webhooks/queues (and honors `webhook-secret`) is a later slice.
+The full pipeline ships: the **metadata contract**, the **transactional writer**
+(across all write paths — single-row, batch, and nested TreeSync mutations each
+write an event row **in the same transaction** as the data change), the
+background **dispatcher** that drains the outbox, and two delivery **sinks**
+(HTTP webhook and NATS). Each drained row is emitted as a
+[CloudEvents 1.0](https://cloudevents.io/) envelope. See
+[Emitting Change Events](/guides/cdc-events) for the sink configuration and the
+envelope shape.
+:::
+
+:::caution[Only mutations through the Bifrost pipeline are captured]
+Events are emitted **only** for writes that flow through Bifrost's mutation
+pipeline — GraphQL mutations and protocol adapters routed through the mutation
+executor. Bifrost is **not** log-based CDC:
+
+- **Out-of-band SQL writes emit nothing.** Direct database writes from other
+  applications, bulk loads, and manual SQL do **not** produce events — they never
+  touch the pipeline that writes the outbox row.
+- **DB-native triggers and log-based replication are out of scope.** Bifrost does
+  not read the transaction log (SQL Server CDC, Postgres logical replication / WAL)
+  and does not install database triggers.
+
+A consumer that assumes *every* row change produces an event will silently miss
+every change made outside Bifrost. If a table is written both through Bifrost and
+out-of-band, only the Bifrost writes are captured.
 :::
 
 ## Metadata
@@ -53,8 +73,9 @@ dbo.orders {
 - **`outbox-table`** — qualified name of the transactional outbox table (e.g.
   `dbo.__outbox`). **Required** once any table sets `emit-events`. The table must
   already exist in the database and carry the [outbox column contract](#outbox-table-schema).
-- **`webhook-secret`** — shared secret the dispatcher uses to sign webhook
-  deliveries. Consumed by a later slice; allow-listed so configs may set it now.
+- **`webhook-secret`** — comma-separated signing secret(s) the webhook sink uses
+  to HMAC-sign deliveries. Multiple values enable zero-downtime
+  [secret rotation](/guides/cdc-events#secret-rotation).
 
 ### Payload modes
 
@@ -154,6 +175,48 @@ holds the row body; the surrounding columns are the envelope):
 
 The example uses `event-payload: changed`, so `payload` carries only the changed
 column (`status`) plus the key (`id`).
+
+## Delivery guarantees
+
+The dispatcher drains undelivered, non-dead outbox rows in `id` order and stamps
+`dispatched_at` on success. Its contract:
+
+- **At-least-once.** A crash after a sink accepts an event but before
+  `dispatched_at` is stamped causes that event to be redelivered on the next pass.
+  Consumers **dedupe on the CloudEvents `id`** (the outbox row `id`), which is
+  stable across redeliveries.
+- **Per-key ordering.** Events for the same `(aggregate, primary key)` are
+  delivered in `id` order. A transient failure head-of-line-blocks **only that
+  key** — other keys keep flowing, so one slow row never stalls the whole stream.
+- **Dead-letter.** After the delivery-attempt budget (default **5**) a row is
+  flagged `dead`: never re-dispatched, never deleted. It stays in the outbox for
+  operator inspection. `aggregate`, `op`, and attempt count are logged; the
+  payload and secrets never are.
+- **Backoff.** Between retry passes the dispatcher waits a bounded exponential
+  backoff with equal jitter (floor 1s, ceiling 5m).
+
+## Subscription routing
+
+A model-level **subscription** filters what the sink receives. Filtering happens
+in routing, **before** any sink sees the event.
+
+- **Opt-in.** With **no** `subscription-*` key, every event is delivered
+  (deliver-all — the default, unchanged). Declaring any `subscription-*` key
+  activates the subscription.
+- **Fail-closed table allow-list.** When a subscription is active, an event is
+  delivered only if its `aggregate` is listed in `subscription-tables`. An
+  **empty** allow-list (with a subscription otherwise active) delivers
+  **nothing** — never everything.
+- **Tenant scoping.** A subscription bound with `subscription-tenant` receives
+  only rows whose outbox `tenant` equals that id. A null- or unknown-tenant row is
+  **never** delivered to a tenant-bound subscription.
+- **Redaction.** Columns named in `subscription-redact` are stripped from the
+  payload before the sink sees them. A **primary-key column is never stripped**,
+  even if listed — removing it would corrupt the CloudEvents `subject` and
+  consumer identity.
+
+Unknown `subscription-*` keys and a `subscription-tables` entry naming a
+non-existent table fail at **model load**, not at delivery time.
 
 ## Validation
 

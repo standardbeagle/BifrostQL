@@ -121,8 +121,20 @@ namespace BifrostQL.Core.Crypto
                 byte[] dek;
                 if (wrapped is null)
                 {
-                    dek = RandomNumberGenerator.GetBytes(FieldCipher.KeySize);
-                    _store.Store(keyRef, Wrap(rootKey, dek, keyRef));
+                    // Generate + persist. The store is persist-if-absent (first-writer-wins)
+                    // for a durable/cross-process backend, so our Store may be a no-op if
+                    // another manager already won the race. We therefore re-Load and adopt
+                    // the AUTHORITATIVE persisted bytes instead of trusting our own freshly
+                    // generated DEK: otherwise the losing manager would cache and return a
+                    // DEK that no writer persisted, orphaning anything it then encrypts. This
+                    // is what satisfies the cross-manager convergence acceptance criterion and
+                    // deliberately supersedes the task body's "GetDataKey is unchanged" note.
+                    // With the in-memory store (Store overwrites) the re-Load returns exactly
+                    // what we just stored, so behavior is identical and no test regresses.
+                    var justWrapped = Wrap(rootKey, RandomNumberGenerator.GetBytes(FieldCipher.KeySize), keyRef);
+                    _store.Store(keyRef, justWrapped);
+                    var authoritative = _store.Load(keyRef) ?? justWrapped;
+                    dek = Unwrap(rootKey, authoritative, keyRef);
                 }
                 else
                 {

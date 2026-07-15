@@ -17,3 +17,8 @@ export type {
   SavedObjectType,
   SavedObjectsClient,
 } from './common/saved-objects';
+export { FormRunner, FormRunnerView, resolveDefinitionTable } from './components/form-runner';
+export { FormRunnerHost } from './components/form-runner-host';
+export { parseFormDefinition, visibleFields } from './lib/form-definition';
+export type { FormDefinition, FormField, FormControlType } from './lib/form-definition';
+export type { FieldWidgetHint } from './lib/form-widget';

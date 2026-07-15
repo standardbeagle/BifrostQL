@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  FormRunnerHost,
+  parseFormDefinition,
+  type GraphQLFetcher,
+} from "@standardbeagle/edit-db";
+import {
   getBuilderSchema,
   isBuilderBridgeAvailable,
   type BuilderSchema,
@@ -41,16 +46,20 @@ const CONTROL_OPTIONS: { value: FormControlType; label: string }[] = [
  * Definitions persist to localStorage. Photino-only; in a browser the schema
  * bridge is absent and a notice is shown.
  *
- * The record runtime (load/save an actual row through GraphQL) is a later slice;
- * the preview here renders the controls disabled.
+ * The design preview renders controls disabled. "Run form" opens the live
+ * record runtime (task 2.2) over the same transport fetcher the editor uses, so
+ * a designed or saved form can be exercised against real data without leaving
+ * the pane.
  */
-export function FormBuilderPane() {
+export function FormBuilderPane({ fetcher }: { fetcher?: GraphQLFetcher }) {
   const [schema, setSchema] = useState<BuilderSchema | null>(null);
   const [schemaError, setSchemaError] = useState<string | null>(null);
   const [def, setDef] = useState<FormDefinition | null>(null);
   const [forms, setForms] = useState<SavedForm[]>(() => loadForms());
   const [activeId, setActiveId] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  // The form currently open in the live runtime overlay, or null when designing.
+  const [runningDef, setRunningDef] = useState<FormDefinition | null>(null);
 
   const available = isBuilderBridgeAvailable();
 
@@ -107,6 +116,13 @@ export function FormBuilderPane() {
     setStatus("Deleted");
   }, [forms, activeId]);
 
+  // Launch the live runtime for a definition — from the builder (current def) or
+  // from the saved-object list (a saved form's stored definition). Routed through
+  // the runner's tolerant parser so a stale/partial definition fails safe.
+  const onRun = useCallback((definition: FormDefinition) => {
+    setRunningDef(definition);
+  }, []);
+
   if (!available) {
     return <div style={styles.unavailable}>The form builder is only available in the BifrostQL desktop app.</div>;
   }
@@ -152,6 +168,7 @@ export function FormBuilderPane() {
 
         <div style={styles.spacer} />
         {def && <button type="button" style={styles.btn} onClick={onSave}>Save</button>}
+        {def && fetcher && <button type="button" style={styles.btn} onClick={() => onRun(def)}>Run form</button>}
         {activeId && <button type="button" style={styles.btn} onClick={onDelete}>Delete</button>}
         {status && <span style={styles.status}>{status}</span>}
       </div>
@@ -162,6 +179,16 @@ export function FormBuilderPane() {
         <div style={styles.split}>
           <FieldEditor def={def} setDef={setDef} />
           <FormPreview def={def} />
+        </div>
+      )}
+
+      {runningDef && fetcher && (
+        <div style={styles.runnerOverlay}>
+          <FormRunnerHost
+            fetcher={fetcher}
+            definition={parseFormDefinition(runningDef) ?? runningDef}
+            onClose={() => setRunningDef(null)}
+          />
         </div>
       )}
     </div>
@@ -303,7 +330,7 @@ function renderControl(control: FormControlType, readOnly: boolean): React.React
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  root: { display: "flex", flexDirection: "column", height: "100%", minHeight: 0 },
+  root: { display: "flex", flexDirection: "column", height: "100%", minHeight: 0, position: "relative" },
   toolbar: { display: "flex", alignItems: "flex-end", gap: 12, padding: "8px 12px", borderBottom: "1px solid var(--border, #d1d5db)", flexWrap: "wrap" },
   toolLabel: { display: "flex", flexDirection: "column", gap: 2, fontSize: 12, color: "#6b7280" },
   spacer: { flex: 1 },
@@ -329,4 +356,5 @@ const styles: Record<string, React.CSSProperties> = {
   req: { color: "#dc2626" },
   muted: { color: "#9ca3af", fontSize: 13 },
   unavailable: { padding: 24, color: "#6b7280" },
+  runnerOverlay: { position: "absolute", inset: 0, background: "#fff", zIndex: 20, display: "flex", flexDirection: "column" },
 };

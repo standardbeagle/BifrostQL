@@ -311,7 +311,7 @@ export default function App() {
             />
           </div>
         ) : editorPane === 'forms' ? (
-          <FormBuilderPane />
+          <FormBuilderPane fetcher={editorFetcher ?? undefined} />
         ) : editorFetcher && transport && transport.mode === transportMode ? (
           // Only mount the editor once the effect has published a transport
           // whose mode matches the current selection. During a mode toggle the

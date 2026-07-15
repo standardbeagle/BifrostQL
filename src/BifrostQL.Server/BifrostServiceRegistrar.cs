@@ -278,57 +278,57 @@ namespace BifrostQL.Server
         /// </summary>
         public static void RegisterCdcDispatcherServices(IServiceCollection services)
         {
-            // Opt-in NATS sink: registered BEFORE the webhook sink so that when a NATS URL is
-            // configured it wins (TryAdd = first registration wins). The NatsConnection is built
-            // LAZILY inside the factory, so a host that configures NO NATS URL opens no connection
-            // at startup — the factory returns null! (like the webhook one) and the next
-            // TryAddSingleton (webhook) applies. A host configuring NEITHER opens nothing.
+            // Opt-in sink selection: exactly ONE IEventSink, chosen at runtime from the configured
+            // sink URLs with NATS-then-webhook-then-none precedence (see CdcSinkSelector). This is a
+            // SINGLE TryAddSingleton, NOT one per sink: TryAdd keys on descriptor presence at
+            // registration time, not on a factory's runtime return, so two TryAdds ("NATS then
+            // webhook") would make the second a dead no-op and a webhook-only host would resolve the
+            // NATS factory, get null, and silently get no sink. The selector builds ONLY the chosen
+            // sink, so the loser opens no connection / no HttpClient; a host configuring neither
+            // builds nothing and the dispatcher idles (non-CDC host pays nothing). Webhook signing
+            // secrets are resolved LAZILY from the model's `webhook-secret` metadata each delivery
+            // (via the same PathCache the dispatcher uses), so rotating the comma-separated value
+            // takes effect on the next delivery with no restart. Core stays hosting-free: this is
+            // pure DI wiring in Server, mirroring the slice-4a dispatcher/hosted-service split.
             services.TryAddSingleton<BifrostQL.Core.Modules.Cdc.IEventSink>(sp =>
             {
-                var url = sp.GetRequiredService<IConfiguration>()[
-                    BifrostQL.Core.Modules.Cdc.NatsEventSink.UrlConfigKey];
-                if (string.IsNullOrWhiteSpace(url))
-                    return null!; // No NATS URL configured: fall through to the webhook registration.
+                var config = sp.GetRequiredService<IConfiguration>();
+                var natsUrl = config[BifrostQL.Core.Modules.Cdc.NatsEventSink.UrlConfigKey];
+                var webhookUrl = config[BifrostQL.Core.Modules.Cdc.WebhookEventSink.EndpointConfigKey];
 
-                var connection = new NATS.Client.Core.NatsConnection(
-                    new NATS.Client.Core.NatsOpts { Url = url });
-                var publisher = new BifrostQL.Core.Modules.Cdc.NatsConnectionPublisher(connection);
-                return new BifrostQL.Core.Modules.Cdc.NatsEventSink(
-                    publisher,
-                    logger: sp.GetService<ILogger<BifrostQL.Core.Modules.Cdc.NatsEventSink>>());
-            });
-
-            // Opt-in HTTP webhook sink: registered only when a webhook URL is configured, and
-            // TryAdd so a host that registers its OWN IEventSink first always wins. Signing
-            // secrets are resolved LAZILY from the model's `webhook-secret` metadata each
-            // delivery (via the same PathCache the dispatcher uses), so rotating the
-            // comma-separated value takes effect on the next delivery with no restart. Core
-            // stays hosting-free: this is pure DI wiring in Server, mirroring the slice-4a
-            // dispatcher/hosted-service split.
-            services.TryAddSingleton<BifrostQL.Core.Modules.Cdc.IEventSink>(sp =>
-            {
-                var url = sp.GetRequiredService<IConfiguration>()[
-                    BifrostQL.Core.Modules.Cdc.WebhookEventSink.EndpointConfigKey];
-                if (string.IsNullOrWhiteSpace(url))
-                    return null!; // No endpoint configured: the dispatcher idles (non-CDC host pays nothing).
-                if (!Uri.TryCreate(url, UriKind.Absolute, out var endpoint))
-                    throw new InvalidOperationException(
-                        $"'{BifrostQL.Core.Modules.Cdc.WebhookEventSink.EndpointConfigKey}' is not an absolute URL: '{url}'.");
-
-                var pathCache = sp.GetRequiredService<Core.Schema.PathCache<GraphQL.Inputs>>();
-                return new BifrostQL.Core.Modules.Cdc.WebhookEventSink(
-                    new System.Net.Http.HttpClient(),
-                    endpoint,
-                    activeSecrets: () =>
+                return BifrostQL.Core.Modules.Cdc.CdcSinkSelector.Select(
+                    natsUrl,
+                    buildNats: () =>
                     {
-                        var inputs = pathCache.GetFirstValueAsync().GetAwaiter().GetResult();
-                        var model = inputs is not null && inputs.TryGetValue("model", out var m)
-                            ? m as BifrostQL.Core.Model.IDbModel
-                            : null;
-                        return BifrostQL.Core.Modules.Cdc.WebhookEventSink.ParseSecrets(
-                            model?.GetMetadataValue(BifrostQL.Core.Model.MetadataKeys.Cdc.WebhookSecret));
+                        var connection = new NATS.Client.Core.NatsConnection(
+                            new NATS.Client.Core.NatsOpts { Url = natsUrl! });
+                        var publisher = new BifrostQL.Core.Modules.Cdc.NatsConnectionPublisher(connection);
+                        return new BifrostQL.Core.Modules.Cdc.NatsEventSink(
+                            publisher,
+                            logger: sp.GetService<ILogger<BifrostQL.Core.Modules.Cdc.NatsEventSink>>());
                     },
-                    logger: sp.GetService<ILogger<BifrostQL.Core.Modules.Cdc.WebhookEventSink>>());
+                    webhookUrl,
+                    buildWebhook: () =>
+                    {
+                        if (!Uri.TryCreate(webhookUrl, UriKind.Absolute, out var endpoint))
+                            throw new InvalidOperationException(
+                                $"'{BifrostQL.Core.Modules.Cdc.WebhookEventSink.EndpointConfigKey}' is not an absolute URL: '{webhookUrl}'.");
+
+                        var pathCache = sp.GetRequiredService<Core.Schema.PathCache<GraphQL.Inputs>>();
+                        return new BifrostQL.Core.Modules.Cdc.WebhookEventSink(
+                            new System.Net.Http.HttpClient(),
+                            endpoint,
+                            activeSecrets: () =>
+                            {
+                                var inputs = pathCache.GetFirstValueAsync().GetAwaiter().GetResult();
+                                var model = inputs is not null && inputs.TryGetValue("model", out var m)
+                                    ? m as BifrostQL.Core.Model.IDbModel
+                                    : null;
+                                return BifrostQL.Core.Modules.Cdc.WebhookEventSink.ParseSecrets(
+                                    model?.GetMetadataValue(BifrostQL.Core.Model.MetadataKeys.Cdc.WebhookSecret));
+                            },
+                            logger: sp.GetService<ILogger<BifrostQL.Core.Modules.Cdc.WebhookEventSink>>());
+                    })!; // null when neither URL is set — the dispatcher tolerates a null sink and idles.
             });
 
             services.TryAddSingleton(sp => new BifrostQL.Core.Modules.Cdc.OutboxDispatcher(

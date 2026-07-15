@@ -10,16 +10,16 @@ using Xunit;
 namespace BifrostQL.Core.Test.Sqlite;
 
 /// <summary>
-/// End-to-end proof of the CDC outbox dispatcher drain pass (slice 4a). Outbox rows
-/// are seeded directly; a fake <see cref="IEventSink"/> drives the two branches the
+/// End-to-end proof of the CDC outbox dispatcher drain pass (slices 4a + 4b). Outbox rows
+/// are seeded directly; a scripted fake <see cref="IEventSink"/> drives the branches the
 /// drain must get right:
 /// <list type="bullet">
 ///   <item>Delivered → the row is stamped <c>dispatched_at</c> and its <c>attempts</c> is left alone.</item>
 ///   <item>TransientFailure → <c>attempts</c> is incremented and <c>dispatched_at</c> stays null.</item>
+///   <item>Per-PK ordering: same-key events deliver in id order; a stuck key never blocks a healthy one.</item>
+///   <item>Dead-letter: a row that exhausts its attempt budget flips <c>dead</c> and is never re-dispatched.</item>
+///   <item>The CloudEvents id is passed as the delivery idempotency key on every call.</item>
 /// </list>
-/// The drain also selects only undelivered, non-dead rows in monotonic id order and
-/// stops the pass at the first transient failure so a later row is not delivered ahead
-/// of a still-pending earlier one.
 /// </summary>
 public sealed class OutboxDispatcherTests : IAsyncLifetime
 {
@@ -73,8 +73,9 @@ public sealed class OutboxDispatcherTests : IAsyncLifetime
         await cmd.ExecuteNonQueryAsync();
     }
 
-    // Seeds one undelivered outbox row for widget <paramref name="id"/> and returns its outbox id.
-    private async Task<long> SeedRowAsync(long id, string op = "insert", int attempts = 0, int dead = 0)
+    // Seeds one undelivered outbox row for widget <paramref name="widgetId"/> and returns its outbox id.
+    // The widget id becomes the CloudEvents subject (row PK), so two rows sharing widgetId share a key.
+    private async Task<long> SeedRowAsync(long widgetId, string op = "insert", int attempts = 0, int dead = 0)
     {
         await using var cmd = new SqliteCommand(
             """
@@ -83,92 +84,212 @@ public sealed class OutboxDispatcherTests : IAsyncLifetime
             SELECT last_insert_rowid();
             """, _keepAlive);
         cmd.Parameters.AddWithValue("@op", op);
-        cmd.Parameters.AddWithValue("@payload", $$"""{"id":{{id}},"name":"widget-{{id}}"}""");
+        cmd.Parameters.AddWithValue("@payload", $$"""{"id":{{widgetId}},"name":"widget-{{widgetId}}"}""");
         cmd.Parameters.AddWithValue("@attempts", attempts);
         cmd.Parameters.AddWithValue("@dead", dead);
         return Convert.ToInt64(await cmd.ExecuteScalarAsync());
     }
 
-    private async Task<(bool dispatched, long attempts)> ReadRowAsync(long outboxId)
+    private async Task<(bool dispatched, long attempts, bool dead)> ReadRowAsync(long outboxId)
     {
         await using var cmd = new SqliteCommand(
-            "SELECT dispatched_at, attempts FROM __outbox WHERE id = @id", _keepAlive);
+            "SELECT dispatched_at, attempts, dead FROM __outbox WHERE id = @id", _keepAlive);
         cmd.Parameters.AddWithValue("@id", outboxId);
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
-        return (!reader.IsDBNull(0), reader.GetInt64(1));
+        return (!reader.IsDBNull(0), reader.GetInt64(1), reader.GetInt64(2) != 0);
     }
 
-    private sealed class FakeSink : IEventSink
+    // A scripted sink: the delivery body is supplied per test (it may return a result, throw,
+    // or cancel). It records the id, subject, and the idempotency key it was handed.
+    private sealed class ScriptedSink : IEventSink
     {
-        private readonly EventDeliveryResult _result;
-        public List<JsonObject> Received { get; } = new();
-        public FakeSink(EventDeliveryResult result) => _result = result;
+        private readonly Func<JsonObject, EventDeliveryResult> _decide;
+        public List<string> ReceivedSubjects { get; } = new();
+        public List<string> ReceivedIds { get; } = new();
+        public List<string> IdempotencyKeys { get; } = new();
 
-        public ValueTask<EventDeliveryResult> DeliverAsync(JsonObject envelope, CancellationToken cancellationToken)
+        public ScriptedSink(EventDeliveryResult result) => _decide = _ => result;
+        public ScriptedSink(Func<JsonObject, EventDeliveryResult> decide) => _decide = decide;
+
+        public ValueTask<EventDeliveryResult> DeliverAsync(
+            JsonObject envelope, string idempotencyKey, CancellationToken cancellationToken)
         {
-            Received.Add(envelope);
-            return ValueTask.FromResult(_result);
+            ReceivedSubjects.Add(envelope["subject"]!.ToString());
+            ReceivedIds.Add(envelope["id"]!.ToString());
+            IdempotencyKeys.Add(idempotencyKey);
+            return ValueTask.FromResult(_decide(envelope));
         }
     }
 
-    private Task<DrainOutcome> DrainAsync(IEventSink sink) =>
-        OutboxDispatcher.DrainOnceAsync(_model, _factory, sink, logger: null, batchSize: 100, CancellationToken.None);
+    private Task<DrainOutcome> DrainAsync(IEventSink sink, int maxAttempts = 5) =>
+        OutboxDispatcher.DrainOnceAsync(
+            _model, _factory, sink, logger: null, batchSize: 100, maxAttempts, CancellationToken.None);
 
     [Fact]
     public async Task Delivered_StampsDispatchedAt_AndLeavesAttempts()
     {
         var outboxId = await SeedRowAsync(1);
-        var sink = new FakeSink(EventDeliveryResult.Delivered);
+        var sink = new ScriptedSink(EventDeliveryResult.Delivered);
 
         var outcome = await DrainAsync(sink);
 
         outcome.Delivered.Should().Be(1);
         outcome.FailedAttempts.Should().BeNull("a delivered pass has no failure");
 
-        var (dispatched, attempts) = await ReadRowAsync(outboxId);
+        var (dispatched, attempts, dead) = await ReadRowAsync(outboxId);
         dispatched.Should().BeTrue("a delivered event is stamped dispatched_at");
         attempts.Should().Be(0, "a successful delivery does not touch the attempt counter");
+        dead.Should().BeFalse();
 
-        sink.Received.Should().ContainSingle();
-        var envelope = sink.Received[0];
-        envelope["specversion"]!.ToString().Should().Be("1.0");
-        envelope["source"]!.ToString().Should().Be("main.widgets");
-        envelope["subject"]!.ToString().Should().Be("1", "the subject is the row primary key");
+        sink.ReceivedSubjects.Should().ContainSingle().Which.Should().Be("1", "the subject is the row primary key");
+        // The idempotency key handed to the sink is exactly the CloudEvents id (the outbox row id).
+        sink.IdempotencyKeys.Should().ContainSingle().Which.Should().Be(sink.ReceivedIds[0]);
+        sink.IdempotencyKeys[0].Should().Be(outboxId.ToString());
     }
 
     [Fact]
     public async Task TransientFailure_IncrementsAttempts_AndLeavesDispatchedAtNull()
     {
         var outboxId = await SeedRowAsync(1);
-        var sink = new FakeSink(EventDeliveryResult.TransientFailure);
+        var sink = new ScriptedSink(EventDeliveryResult.TransientFailure);
 
         var outcome = await DrainAsync(sink);
 
         outcome.Delivered.Should().Be(0);
         outcome.FailedAttempts.Should().Be(1, "the post-increment attempt count feeds the backoff");
 
-        var (dispatched, attempts) = await ReadRowAsync(outboxId);
+        var (dispatched, attempts, dead) = await ReadRowAsync(outboxId);
         dispatched.Should().BeFalse("a transient failure must NOT stamp dispatched_at");
         attempts.Should().Be(1, "a transient failure increments the attempt counter");
+        dead.Should().BeFalse("one failure is far below the attempt budget");
     }
 
     [Fact]
-    public async Task StopsAtFirstTransientFailure_PreservingOrder()
+    public async Task SinkThrow_IsConvertedToTransientFailure()
     {
-        // Two pending rows in id order; the sink fails every delivery. The pass must
-        // stop after the FIRST row so the second is never delivered out of order.
-        var first = await SeedRowAsync(1);
-        var second = await SeedRowAsync(2);
-        var sink = new FakeSink(EventDeliveryResult.TransientFailure);
+        // A sink that throws must be caught and treated as a transient failure — never leaked
+        // to the host — with the attempt counter advanced just like a returned TransientFailure.
+        var outboxId = await SeedRowAsync(1);
+        var sink = new ScriptedSink(_ => throw new InvalidOperationException("sink is down"));
 
         var outcome = await DrainAsync(sink);
 
         outcome.Delivered.Should().Be(0);
-        sink.Received.Should().ContainSingle("the pass stops at the first failure");
+        outcome.FailedAttempts.Should().Be(1, "an escaped exception is a transient failure");
 
-        (await ReadRowAsync(first)).attempts.Should().Be(1);
-        (await ReadRowAsync(second)).attempts.Should().Be(0, "the second row was never attempted");
+        var (dispatched, attempts, _) = await ReadRowAsync(outboxId);
+        dispatched.Should().BeFalse();
+        attempts.Should().Be(1, "a throwing sink advances the attempt counter");
+    }
+
+    [Fact]
+    public async Task Cancellation_MidDrain_PropagatesAndStopsWork()
+    {
+        // Two eligible rows for DIFFERENT keys. The sink cancels while delivering the first,
+        // so the drain must observe the token and abort the second — not swallow the cancel.
+        await SeedRowAsync(1);
+        await SeedRowAsync(2);
+        using var cts = new CancellationTokenSource();
+        var sink = new ScriptedSink(_ =>
+        {
+            cts.Cancel();
+            return EventDeliveryResult.Delivered;
+        });
+
+        var act = () => OutboxDispatcher.DrainOnceAsync(
+            _model, _factory, sink, logger: null, batchSize: 100, maxAttempts: 5, cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>("a cancelled drain must not be swallowed");
+        sink.ReceivedSubjects.Should().ContainSingle("the drain aborts after the cancellation is observed");
+    }
+
+    [Fact]
+    public async Task NoOutboxConfigured_IsANoOp()
+    {
+        // A host with no outbox-table metadata must read nothing and call nothing.
+        var noCdcModel = await new DbModelLoader(_factory, new MetadataLoader(Array.Empty<string>())).LoadAsync();
+        var sink = new ScriptedSink(EventDeliveryResult.Delivered);
+
+        var outcome = await OutboxDispatcher.DrainOnceAsync(
+            noCdcModel, _factory, sink, logger: null, batchSize: 100, maxAttempts: 5, CancellationToken.None);
+
+        outcome.Should().Be(DrainOutcome.Idle);
+        sink.ReceivedSubjects.Should().BeEmpty("a non-CDC host never touches the sink");
+    }
+
+    [Fact]
+    public async Task PerKeyOrdering_StuckKeyDoesNotBlockHealthyKey()
+    {
+        // Key "1": two events in id order (insert then update). Key "2": one event.
+        // The sink fails key "1" but delivers key "2" — proving key "2" drains PAST the
+        // stuck key "1" (no global head-of-line stall) while key "1"'s second event stays
+        // blocked behind its still-pending first event (same-key order preserved).
+        var oneInsert = await SeedRowAsync(1, op: "insert");
+        var oneUpdate = await SeedRowAsync(1, op: "update");
+        var twoInsert = await SeedRowAsync(2, op: "insert");
+
+        var failKeyOne = new ScriptedSink(env =>
+            env["subject"]!.ToString() == "1"
+                ? EventDeliveryResult.TransientFailure
+                : EventDeliveryResult.Delivered);
+
+        var outcome = await DrainAsync(failKeyOne);
+
+        outcome.Delivered.Should().Be(1, "only key \"2\" delivered");
+        outcome.FailedAttempts.Should().Be(1);
+
+        (await ReadRowAsync(oneInsert)).attempts.Should().Be(1, "key \"1\" head failed once");
+        (await ReadRowAsync(oneInsert)).dispatched.Should().BeFalse();
+        (await ReadRowAsync(oneUpdate)).attempts.Should().Be(0, "key \"1\" second event is blocked, never attempted");
+        (await ReadRowAsync(oneUpdate)).dispatched.Should().BeFalse();
+        (await ReadRowAsync(twoInsert)).dispatched.Should().BeTrue("key \"2\" drained past the stuck key \"1\"");
+
+        // The stuck key's second event was never handed to the sink this pass.
+        failKeyOne.ReceivedSubjects.Should().Equal("1", "2");
+
+        // Recover: the sink now delivers everything. Key "1"'s two events must arrive in id order.
+        var deliverAll = new ScriptedSink(EventDeliveryResult.Delivered);
+        var recovery = await DrainAsync(deliverAll);
+
+        recovery.Delivered.Should().Be(2, "both of key \"1\"'s events deliver now");
+        (await ReadRowAsync(oneInsert)).dispatched.Should().BeTrue();
+        (await ReadRowAsync(oneUpdate)).dispatched.Should().BeTrue();
+        // id order within the key: the insert (lower id) is delivered before the update.
+        deliverAll.ReceivedIds.Should().Equal(oneInsert.ToString(), oneUpdate.ToString());
+    }
+
+    [Fact]
+    public async Task DeadLetter_AfterExactlyMaxAttempts_AndNeverReDispatched()
+    {
+        // An always-failing sink must dead-letter the row after EXACTLY maxAttempts attempts,
+        // then never hand it to the sink again (the eligible read excludes dead rows).
+        const int maxAttempts = 3;
+        var outboxId = await SeedRowAsync(1);
+        var alwaysFail = new ScriptedSink(EventDeliveryResult.TransientFailure);
+
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            await DrainAsync(alwaysFail, maxAttempts);
+            var (_, attempts, dead) = await ReadRowAsync(outboxId);
+            attempts.Should().Be(attempt, "each pass makes exactly one more attempt on the key head");
+            if (attempt < maxAttempts)
+                dead.Should().BeFalse("still within the attempt budget");
+            else
+                dead.Should().BeTrue("the budget is exhausted at exactly maxAttempts");
+        }
+
+        alwaysFail.ReceivedSubjects.Should().HaveCount(maxAttempts, "the sink was tried exactly maxAttempts times");
+
+        // A further pass must not re-dispatch the dead-lettered row.
+        await DrainAsync(alwaysFail, maxAttempts);
+        alwaysFail.ReceivedSubjects.Should().HaveCount(maxAttempts, "a dead-lettered row is never re-dispatched");
+
+        // The row is left in place for operator inspection — never deleted.
+        var (dispatched, finalAttempts, finalDead) = await ReadRowAsync(outboxId);
+        dispatched.Should().BeFalse("a dead-lettered row was never delivered");
+        finalDead.Should().BeTrue();
+        finalAttempts.Should().Be(maxAttempts);
     }
 
     [Fact]
@@ -186,12 +307,12 @@ public sealed class OutboxDispatcherTests : IAsyncLifetime
             VALUES ('main.widgets', 'insert', '{"id":8,"name":"done"}', '2026-07-15T10:00:00.0000000', '2026-07-15T10:05:00.0000000')
             """);
         var pending = await SeedRowAsync(1);
-        var sink = new FakeSink(EventDeliveryResult.Delivered);
+        var sink = new ScriptedSink(EventDeliveryResult.Delivered);
 
         var outcome = await DrainAsync(sink);
 
         outcome.Delivered.Should().Be(1, "only the pending, non-dead row is eligible");
-        sink.Received.Should().ContainSingle();
+        sink.ReceivedSubjects.Should().ContainSingle();
         (await ReadRowAsync(pending)).dispatched.Should().BeTrue();
     }
 }

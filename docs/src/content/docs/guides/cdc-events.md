@@ -84,3 +84,48 @@ Draining the outbox to webhooks/queues — retries, dead-lettering, and the
 `webhook-secret` signature — is handled by the dispatcher, a separate component.
 Until it runs, events accumulate durably in the outbox table (that is the point
 of the outbox: the write path never blocks on delivery).
+
+The dispatcher resolves a single `IEventSink`. Two are built in: the HTTP
+**webhook** sink (`Cdc:WebhookUrl`) and the **NATS** sink (`Cdc:NatsUrl`). When a
+NATS URL is configured it wins; otherwise the webhook registration applies. A
+host that configures neither opens no connection and idles. The NATS sink
+publishes each envelope to a subject equal to its CloudEvents `type` verbatim
+(`bifrostql.<schema>.<table>.<op>`) and carries the CloudEvents `id` as the
+`Nats-Msg-Id` header, so at-least-once redelivery de-dupes at a JetStream
+consumer.
+
+## Kafka sink (follow-up, not yet implemented)
+
+A Kafka `IEventSink` is planned as a further delivery target. It is **not
+implemented in this slice** — this section records the mapping the eventual
+implementation must follow so it stays consistent with the dispatcher's
+per-key ordering guarantee (see the per-key isolation captured in slice 4b).
+
+- **Topic mapping** — one topic per source table:
+  `bifrostql.<schema>.<table>` (e.g. `bifrostql.dbo.orders`). The operation
+  (`insert`/`update`/`delete`) is **not** part of the topic name (unlike the
+  NATS subject, which appends `.<op>`); it travels in the CloudEvents `type`
+  header on the message. This keeps every change to a given row on the same
+  topic so a single partition can preserve their relative order.
+- **Partition key** — the aggregate primary key, i.e. the CloudEvents
+  `subject` (the row primary key the envelope builder already carries). Using
+  the key as the Kafka partition key routes every event for one row to the
+  same partition, which is what preserves per-key order. This matches the
+  dispatcher's per-key ordering guarantee from slice 4b — the same key that
+  isolates cross-table PK collisions on the drain side is the partition key on
+  the wire.
+- **Ordering guarantee** — **per-partition FIFO**: all events sharing a
+  partition key are delivered to consumers in the order the outbox produced
+  them. Events with **different** keys may land on different partitions and are
+  therefore **unordered relative to each other** (cross-partition). This is the
+  same guarantee the outbox drain provides: order is promised per key, never
+  globally.
+- **Dedupe** — the CloudEvents `id` carries the de-duplication token, the exact
+  counterpart of the webhook `Idempotency-Key` header and the NATS
+  `Nats-Msg-Id` header. Because the Kafka **record key** is already the
+  partition key (the aggregate PK / CloudEvents `subject`, above), the `id`
+  travels as a **message header** rather than the record key — the two roles
+  are distinct in Kafka. Delivery is at-least-once; a consumer uses this stable
+  `id` to collapse redeliveries of the same event.
+
+No Kafka code ships in this slice; the above is the contract for the follow-up.

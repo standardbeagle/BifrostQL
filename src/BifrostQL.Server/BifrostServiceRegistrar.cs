@@ -278,6 +278,39 @@ namespace BifrostQL.Server
         /// </summary>
         public static void RegisterCdcDispatcherServices(IServiceCollection services)
         {
+            // Opt-in HTTP webhook sink: registered only when a webhook URL is configured, and
+            // TryAdd so a host that registers its OWN IEventSink first always wins. Signing
+            // secrets are resolved LAZILY from the model's `webhook-secret` metadata each
+            // delivery (via the same PathCache the dispatcher uses), so rotating the
+            // comma-separated value takes effect on the next delivery with no restart. Core
+            // stays hosting-free: this is pure DI wiring in Server, mirroring the slice-4a
+            // dispatcher/hosted-service split.
+            services.TryAddSingleton<BifrostQL.Core.Modules.Cdc.IEventSink>(sp =>
+            {
+                var url = sp.GetRequiredService<IConfiguration>()[
+                    BifrostQL.Core.Modules.Cdc.WebhookEventSink.EndpointConfigKey];
+                if (string.IsNullOrWhiteSpace(url))
+                    return null!; // No endpoint configured: the dispatcher idles (non-CDC host pays nothing).
+                if (!Uri.TryCreate(url, UriKind.Absolute, out var endpoint))
+                    throw new InvalidOperationException(
+                        $"'{BifrostQL.Core.Modules.Cdc.WebhookEventSink.EndpointConfigKey}' is not an absolute URL: '{url}'.");
+
+                var pathCache = sp.GetRequiredService<Core.Schema.PathCache<GraphQL.Inputs>>();
+                return new BifrostQL.Core.Modules.Cdc.WebhookEventSink(
+                    new System.Net.Http.HttpClient(),
+                    endpoint,
+                    activeSecrets: () =>
+                    {
+                        var inputs = pathCache.GetFirstValueAsync().GetAwaiter().GetResult();
+                        var model = inputs is not null && inputs.TryGetValue("model", out var m)
+                            ? m as BifrostQL.Core.Model.IDbModel
+                            : null;
+                        return BifrostQL.Core.Modules.Cdc.WebhookEventSink.ParseSecrets(
+                            model?.GetMetadataValue(BifrostQL.Core.Model.MetadataKeys.Cdc.WebhookSecret));
+                    },
+                    logger: sp.GetService<ILogger<BifrostQL.Core.Modules.Cdc.WebhookEventSink>>());
+            });
+
             services.TryAddSingleton(sp => new BifrostQL.Core.Modules.Cdc.OutboxDispatcher(
                 sp.GetRequiredService<Core.Schema.PathCache<GraphQL.Inputs>>(),
                 sp.GetService<BifrostQL.Core.Modules.Cdc.IEventSink>(),

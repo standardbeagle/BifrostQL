@@ -162,7 +162,7 @@ namespace BifrostQL.Core.Modules.Cdc
         /// active secret list (rotation: sign with ALL of them). Trims whitespace and drops empty
         /// entries so a trailing/duplicate comma never produces a blank secret.
         /// </summary>
-        internal static IReadOnlyList<string> ParseSecrets(string? raw) =>
+        public static IReadOnlyList<string> ParseSecrets(string? raw) =>
             string.IsNullOrWhiteSpace(raw)
                 ? Array.Empty<string>()
                 : raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);

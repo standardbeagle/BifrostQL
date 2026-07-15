@@ -761,6 +761,36 @@ namespace BifrostQL.Core.Model
             /// </summary>
             public const string WebhookSecret = "webhook-secret";
 
+            /// <summary>
+            /// Model-level comma-separated allow-list of qualified source-table names
+            /// (e.g. <c>dbo.orders, dbo.widgets</c>) a subscription delivers events for.
+            /// Presence of any <c>subscription-*</c> key ACTIVATES the subscription, and
+            /// an active subscription routes FAIL-CLOSED: a drained outbox row is delivered
+            /// only when its <c>aggregate</c> is on this list, so an empty allow-list (while
+            /// a subscription is active) delivers NOTHING — never everything. A host that
+            /// declares no <c>subscription-*</c> key is unaffected (deliver-all preserved).
+            /// Every entry must name a table that exists in the model; an unknown table is
+            /// a model-load error (<see cref="ModelConfigValidator"/>).
+            /// </summary>
+            public const string SubscriptionTables = "subscription-tables";
+
+            /// <summary>
+            /// Model-level single tenant id the subscription is bound to. When set, only
+            /// outbox rows whose <see cref="ColTenant"/> ordinally equals this value are
+            /// delivered; a row with a null/unknown tenant is NEVER delivered to a
+            /// tenant-bound subscription. Omitted ⇒ no tenant restriction.
+            /// </summary>
+            public const string SubscriptionTenant = "subscription-tenant";
+
+            /// <summary>
+            /// Model-level comma-separated list of column names stripped from every event
+            /// <see cref="ColPayload"/> BEFORE it reaches any <c>IEventSink</c> (redaction
+            /// happens in routing, not in the sink). A primary-key column is never stripped
+            /// even if listed — removing it would corrupt the CloudEvents subject and
+            /// consumer identity.
+            /// </summary>
+            public const string SubscriptionRedact = "subscription-redact";
+
             /// <summary>The only recognized <see cref="EventSink"/> value in this slice.</summary>
             public const string SinkOutbox = "outbox";
 

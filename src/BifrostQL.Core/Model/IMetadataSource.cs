@@ -262,6 +262,11 @@ namespace BifrostQL.Core.Model
             // the transactional outbox; webhook-secret signs drained deliveries.
             MetadataKeys.Cdc.OutboxTable,
             MetadataKeys.Cdc.WebhookSecret,
+            // CDC subscription (model-level): allow-list of source tables, tenant binding,
+            // and payload column redaction applied while routing outbox rows to the sink.
+            MetadataKeys.Cdc.SubscriptionTables,
+            MetadataKeys.Cdc.SubscriptionTenant,
+            MetadataKeys.Cdc.SubscriptionRedact,
             // Temporal change history (model-level). Shared default history table for
             // every history-enabled table that does not override it.
             MetadataKeys.History.Table,

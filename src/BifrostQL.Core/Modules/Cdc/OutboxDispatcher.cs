@@ -197,6 +197,32 @@ namespace BifrostQL.Core.Modules.Cdc
 
             var rows = await ReadEligibleAsync(conn, dialect, outbox, batchSize, cancellationToken);
 
+            // Route through the model-level subscription BEFORE grouping/delivery. A host
+            // that declares no subscription-* key gets Unrestricted (Active=false): every
+            // row passes and nothing below changes. When Active, a row the subscription
+            // does not deliver (aggregate off the allow-list, or wrong/absent tenant) is
+            // routed to NOBODY — it is stamped dispatched_at so it is CONSUMED and never
+            // recirculates on the next poll, then dropped from this pass. Redaction of the
+            // delivered rows' payloads happens per-row in the delivery loop below.
+            var subscription = CdcSubscription.FromModel(model);
+            if (subscription.Active)
+            {
+                var routable = new List<Dictionary<string, object?>>(rows.Count);
+                foreach (var row in rows)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var aggregate = Convert.ToString(row[MetadataKeys.Cdc.ColAggregate], CultureInfo.InvariantCulture) ?? "";
+                    var rowTenant = Convert.ToString(row[MetadataKeys.Cdc.ColTenant], CultureInfo.InvariantCulture);
+                    if (!subscription.Delivers(aggregate, rowTenant))
+                    {
+                        await StampDispatchedAsync(conn, dialect, outbox, row[MetadataKeys.Cdc.ColId], cancellationToken);
+                        continue;
+                    }
+                    routable.Add(row);
+                }
+                rows = routable;
+            }
+
             // Group by aggregate + subject (composite PK honoured by ComputeSubject) so each
             // key drains independently. The __outbox table is SHARED across all tracked source
             // tables, so the subject (PK) alone is not unique: two aggregates that share a PK
@@ -241,6 +267,13 @@ namespace BifrostQL.Core.Modules.Cdc
                     try
                     {
                         var subject = ComputeSubject(model, row);
+                        // Strip redacted columns from the payload BEFORE the envelope is
+                        // built, so redaction happens in routing and never reaches the sink.
+                        // Redact preserves key columns, so the subject computed above stays
+                        // correct; the outbox 'tenant' column is not a payload column and is
+                        // untouched (the CloudEvents tenant extension still emits).
+                        if (subscription.Active)
+                            RedactPayload(model, subscription, row);
                         var envelope = CloudEventEnvelope.Build(row, subject);
                         // The CloudEvents id is the at-least-once delivery idempotency key.
                         var idempotencyKey = envelope[MetadataKeys.Cdc.ColId]!.ToString();
@@ -426,6 +459,31 @@ namespace BifrostQL.Core.Modules.Cdc
                 parts.Add(value.ToString());
             }
             return string.Join(":", parts);
+        }
+
+        // Applies the subscription's payload redaction in place: parses the row's payload
+        // JSON, strips the redacted (non-key) columns, and writes the redacted JSON string
+        // back onto the row so the envelope built from it carries no redacted column. The
+        // key columns are the same source ComputeSubject reads, so the subject is preserved.
+        // A blank/unknown aggregate or a non-object payload is left untouched — the delivery
+        // loop's ComputeSubject/envelope build re-detects and reports it as a real failure.
+        private static void RedactPayload(IDbModel model, CdcSubscription subscription, IDictionary<string, object?> row)
+        {
+            var aggregate = Convert.ToString(row[MetadataKeys.Cdc.ColAggregate], CultureInfo.InvariantCulture);
+            if (string.IsNullOrWhiteSpace(aggregate))
+                return;
+
+            var table = ModelTableReference.Find(model, aggregate);
+            if (table is null)
+                return;
+
+            var keyColumns = table.KeyColumns.Select(k => k.ColumnName);
+            var payloadText = Convert.ToString(row[MetadataKeys.Cdc.ColPayload], CultureInfo.InvariantCulture);
+            if (JsonNode.Parse(payloadText ?? "null") is not JsonObject payload)
+                return;
+
+            subscription.Redact(payload, keyColumns);
+            row[MetadataKeys.Cdc.ColPayload] = payload.ToJsonString();
         }
 
         // The outbox created_at reads back as a provider-native DateTime on SQL Server but as

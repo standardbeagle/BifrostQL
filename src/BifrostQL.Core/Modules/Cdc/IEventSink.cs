@@ -41,7 +41,18 @@ namespace BifrostQL.Core.Modules.Cdc
         /// retried later. Throwing is tolerated (the dispatcher treats an escaped
         /// exception as a transient failure and logs it server-side), but returning a
         /// result is preferred.
+        ///
+        /// <para><paramref name="idempotencyKey"/> is the CloudEvents <c>id</c> of the
+        /// envelope (the stable, monotonic outbox row id). Delivery is <b>at-least-once</b>:
+        /// the dispatcher can deliver a row and then crash before stamping
+        /// <c>dispatched_at</c>, so the SAME event may be delivered again on a later pass.
+        /// A sink (and its downstream consumer) MUST use this key to de-duplicate — the
+        /// key is byte-for-byte identical across every redelivery of one event. Passing it
+        /// through as the wire-level idempotency key (e.g. an HTTP <c>Idempotency-Key</c>
+        /// header, or a message dedupe id) is how at-least-once becomes effectively
+        /// exactly-once at the consumer.</para>
         /// </summary>
-        ValueTask<EventDeliveryResult> DeliverAsync(JsonObject envelope, CancellationToken cancellationToken);
+        ValueTask<EventDeliveryResult> DeliverAsync(
+            JsonObject envelope, string idempotencyKey, CancellationToken cancellationToken);
     }
 }

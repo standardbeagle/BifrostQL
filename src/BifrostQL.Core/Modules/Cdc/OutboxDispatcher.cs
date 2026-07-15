@@ -43,11 +43,16 @@ namespace BifrostQL.Core.Modules.Cdc
         private static readonly TimeSpan MaxBackoff = TimeSpan.FromMinutes(5);
         // Rows read per pass: bounds memory and keeps a stuck row from starving shutdown.
         private const int BatchSize = 100;
+        // Default delivery-attempt budget before a row is dead-lettered. This is a
+        // delivery-POLICY knob (like the backoff constants above), not a per-table schema
+        // concern, so it lives here as a dispatcher option rather than a metadata key.
+        internal const int DefaultMaxAttempts = 5;
 
         private readonly PathCache<Inputs> _pathCache;
         private readonly IEventSink? _sink;
         private readonly Func<double> _jitter;
         private readonly ILogger? _logger;
+        private readonly int _maxAttempts;
 
         /// <param name="pathCache">The endpoint cache the GraphQL middleware populates; its
         /// first value carries the resolved <c>model</c> and <c>connFactory</c>.</param>
@@ -55,16 +60,21 @@ namespace BifrostQL.Core.Modules.Cdc
         /// dispatcher then idles rather than busy-looping over undeliverable rows.</param>
         /// <param name="jitter">Injected randomness in [0,1) for deterministic backoff under
         /// test; defaults to <see cref="Random.Shared"/>.</param>
+        /// <param name="maxAttempts">The delivery-attempt budget: once a row has failed this
+        /// many times it is dead-lettered (never re-dispatched, never deleted). Defaults to
+        /// <see cref="DefaultMaxAttempts"/>.</param>
         public OutboxDispatcher(
             PathCache<Inputs> pathCache,
             IEventSink? sink = null,
             Func<double>? jitter = null,
-            ILogger? logger = null)
+            ILogger? logger = null,
+            int maxAttempts = DefaultMaxAttempts)
         {
             _pathCache = pathCache ?? throw new ArgumentNullException(nameof(pathCache));
             _sink = sink;
             _jitter = jitter ?? Random.Shared.NextDouble;
             _logger = logger;
+            _maxAttempts = maxAttempts < 1 ? DefaultMaxAttempts : maxAttempts;
         }
 
         /// <summary>
@@ -102,7 +112,7 @@ namespace BifrostQL.Core.Modules.Cdc
                             return;
                         }
 
-                        var outcome = await DrainOnceAsync(model, connFactory, _sink, _logger, BatchSize, cancellationToken);
+                        var outcome = await DrainOnceAsync(model, connFactory, _sink, _logger, BatchSize, _maxAttempts, cancellationToken);
                         delay = outcome.FailedAttempts is int attempts
                             ? ComputeBackoff(attempts, _jitter(), BaseBackoff, MaxBackoff)
                             : PollInterval;
@@ -142,13 +152,24 @@ namespace BifrostQL.Core.Modules.Cdc
 
         /// <summary>
         /// One drain pass: reads a batch of undelivered, non-dead outbox rows in monotonic
-        /// <see cref="MetadataKeys.Cdc.ColId"/> order and delivers each to the sink. On
-        /// success the row is stamped <see cref="MetadataKeys.Cdc.ColDispatchedAt"/>; on the
-        /// first transient failure the row's <see cref="MetadataKeys.Cdc.ColAttempts"/> is
-        /// incremented, <c>dispatched_at</c> is left null, and the pass STOPS (a later,
-        /// higher-id row must not be delivered ahead of a still-pending earlier one). A
-        /// per-row exception from the sink or envelope build is caught, logged, and treated
-        /// as a transient failure. No-ops when no outbox is configured.
+        /// <see cref="MetadataKeys.Cdc.ColId"/> order, groups them by aggregate + primary key
+        /// (the CloudEvents <c>subject</c>), and delivers each key's rows in id order. On
+        /// success the row is stamped <see cref="MetadataKeys.Cdc.ColDispatchedAt"/>.
+        ///
+        /// <para><b>Per-key ordering, no global head-of-line stall.</b> When a row's delivery
+        /// fails transiently, only THAT key stops for the pass (its later rows stay pending so
+        /// same-key events never deliver out of id order) — every OTHER key keeps draining. A
+        /// stuck or backing-off key never blocks healthy keys.</para>
+        ///
+        /// <para><b>Dead-letter.</b> Once a row's attempt count reaches
+        /// <paramref name="maxAttempts"/> after a transient failure, its
+        /// <see cref="MetadataKeys.Cdc.ColDead"/> flag is set (and <c>attempts</c> incremented):
+        /// it is never re-dispatched (the eligible read excludes dead rows) and never deleted —
+        /// it stays operator-inspectable. A dead-letter is logged with aggregate + op + attempts
+        /// only; the payload and any secret are never logged.</para>
+        ///
+        /// <para>A per-row exception from the sink or envelope build is caught, logged, and
+        /// treated as a transient failure. No-ops when no outbox is configured.</para>
         /// </summary>
         internal static async Task<DrainOutcome> DrainOnceAsync(
             IDbModel model,
@@ -156,6 +177,7 @@ namespace BifrostQL.Core.Modules.Cdc
             IEventSink sink,
             ILogger? logger,
             int batchSize,
+            int maxAttempts,
             CancellationToken cancellationToken)
         {
             var outboxName = model.GetMetadataValue(MetadataKeys.Cdc.OutboxTable);
@@ -175,45 +197,95 @@ namespace BifrostQL.Core.Modules.Cdc
 
             var rows = await ReadEligibleAsync(conn, dialect, outbox, batchSize, cancellationToken);
 
-            var delivered = 0;
+            // Group by aggregate + subject (composite PK honoured by ComputeSubject) so each
+            // key drains independently. Rows arrive in id order; GroupBy preserves that within
+            // a group. A row whose subject cannot be computed gets a unique key so it fails on
+            // its own without blocking any real key.
+            var keyed = new List<(Dictionary<string, object?> Row, string Key)>(rows.Count);
             foreach (var row in rows)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var currentAttempts = ToInt(row[MetadataKeys.Cdc.ColAttempts]);
-                EventDeliveryResult result;
+                string key;
                 try
                 {
-                    var subject = ComputeSubject(model, row);
-                    var envelope = CloudEventEnvelope.Build(row, subject);
-                    result = await sink.DeliverAsync(envelope, cancellationToken);
+                    key = "" + ComputeSubject(model, row);
                 }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    throw;
+                    // Unparseable subject: unique key (row id) so grouping never lumps two of
+                    // these together and it cannot block a real key. Delivery below re-throws
+                    // the same error and converts it to a transient failure.
+                    key = " " + Convert.ToString(row[MetadataKeys.Cdc.ColId], CultureInfo.InvariantCulture);
                 }
-                catch (Exception ex)
-                {
-                    // Never leak payload/exception detail onto a wire; log server-side only.
-                    logger?.LogError(ex, "CDC event delivery failed for outbox row id {Id}; will retry.",
-                        row[MetadataKeys.Cdc.ColId]);
-                    result = EventDeliveryResult.TransientFailure;
-                }
-
-                if (result == EventDeliveryResult.Delivered)
-                {
-                    await StampDispatchedAsync(conn, dialect, outbox, row[MetadataKeys.Cdc.ColId], cancellationToken);
-                    delivered++;
-                    continue;
-                }
-
-                // Transient failure: bump attempts, leave dispatched_at null, stop the pass
-                // so ordering holds and the loop backs off before the next attempt.
-                await IncrementAttemptsAsync(conn, dialect, outbox, row[MetadataKeys.Cdc.ColId], cancellationToken);
-                return new DrainOutcome(delivered, currentAttempts + 1);
+                keyed.Add((row, key));
             }
 
-            return new DrainOutcome(delivered, null);
+            var delivered = 0;
+            var failedAttemptCounts = new List<int>();
+
+            foreach (var group in keyed.GroupBy(k => k.Key, StringComparer.Ordinal))
+            {
+                foreach (var (row, _) in group)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    var currentAttempts = ToInt(row[MetadataKeys.Cdc.ColAttempts]);
+                    EventDeliveryResult result;
+                    try
+                    {
+                        var subject = ComputeSubject(model, row);
+                        var envelope = CloudEventEnvelope.Build(row, subject);
+                        // The CloudEvents id is the at-least-once delivery idempotency key.
+                        var idempotencyKey = envelope[MetadataKeys.Cdc.ColId]!.ToString();
+                        result = await sink.DeliverAsync(envelope, idempotencyKey, cancellationToken);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        // Never leak payload/exception detail onto a wire; log server-side only.
+                        logger?.LogError(ex, "CDC event delivery failed for outbox row id {Id}; will retry.",
+                            row[MetadataKeys.Cdc.ColId]);
+                        result = EventDeliveryResult.TransientFailure;
+                    }
+
+                    if (result == EventDeliveryResult.Delivered)
+                    {
+                        await StampDispatchedAsync(conn, dialect, outbox, row[MetadataKeys.Cdc.ColId], cancellationToken);
+                        delivered++;
+                        continue; // Same key may have a later row; deliver it next, still in id order.
+                    }
+
+                    // Transient failure: bump attempts, leave dispatched_at null. Dead-letter
+                    // once the budget is exhausted; either way STOP this key (so same-key order
+                    // holds) but let the outer loop keep draining OTHER keys.
+                    var newAttempts = currentAttempts + 1;
+                    if (newAttempts >= maxAttempts)
+                    {
+                        await MarkDeadAsync(conn, dialect, outbox, row[MetadataKeys.Cdc.ColId], cancellationToken);
+                        // aggregate + op + attempts ONLY — never the payload, never a secret.
+                        logger?.LogWarning(
+                            "CDC event dead-lettered after {Attempts} attempts: aggregate={Aggregate} op={Op} id={Id}.",
+                            newAttempts,
+                            row[MetadataKeys.Cdc.ColAggregate],
+                            row[MetadataKeys.Cdc.ColOp],
+                            row[MetadataKeys.Cdc.ColId]);
+                    }
+                    else
+                    {
+                        await IncrementAttemptsAsync(conn, dialect, outbox, row[MetadataKeys.Cdc.ColId], cancellationToken);
+                    }
+
+                    failedAttemptCounts.Add(newAttempts);
+                    break; // Head-of-line for THIS key only; other keys continue.
+                }
+            }
+
+            // Feed the SOONEST-eligible failing key into the backoff so the loop retries as
+            // soon as the least-delayed key is due; null when the pass had no failures.
+            var failedAttempts = failedAttemptCounts.Count == 0 ? (int?)null : failedAttemptCounts.Min();
+            return new DrainOutcome(delivered, failedAttempts);
         }
 
         /// <summary>
@@ -292,6 +364,25 @@ namespace BifrostQL.Core.Modules.Cdc
                 $"WHERE {dialect.EscapeIdentifier(MetadataKeys.Cdc.ColId)} = @id;";
             await MutationCommandExecutor.ExecuteNonQuery(conn, null, sql, new Dictionary<string, object?>
             {
+                ["id"] = id,
+            }, cancellationToken: ct);
+        }
+
+        // Dead-letter: increment the attempt counter AND raise the dead flag in one write, so
+        // the eligible read excludes the row from every future pass. The row is left in place
+        // (never deleted) for operator inspection.
+        private static async Task MarkDeadAsync(
+            DbConnection conn, ISqlDialect dialect, IDbTable outbox, object? id, CancellationToken ct)
+        {
+            var attemptsCol = dialect.EscapeIdentifier(MetadataKeys.Cdc.ColAttempts);
+            var deadCol = dialect.EscapeIdentifier(MetadataKeys.Cdc.ColDead);
+            var tableRef = dialect.TableReference(outbox.TableSchema, outbox.DbName);
+            var sql =
+                $"UPDATE {tableRef} SET {attemptsCol} = {attemptsCol} + 1, {deadCol} = @dead " +
+                $"WHERE {dialect.EscapeIdentifier(MetadataKeys.Cdc.ColId)} = @id;";
+            await MutationCommandExecutor.ExecuteNonQuery(conn, null, sql, new Dictionary<string, object?>
+            {
+                ["dead"] = true,
                 ["id"] = id,
             }, cancellationToken: ct);
         }

@@ -22,3 +22,24 @@ export { FormRunnerHost } from './components/form-runner-host';
 export { parseFormDefinition, visibleFields } from './lib/form-definition';
 export type { FormDefinition, FormField, FormControlType } from './lib/form-definition';
 export type { FieldWidgetHint } from './lib/form-widget';
+export {
+  buildCsv,
+  buildJson,
+  formatCsvCell,
+  exportAllRows,
+  downloadTextFile,
+  filenameFor,
+  mimeFor,
+  UTF8_BOM,
+  DEFAULT_ROW_CAP,
+} from './lib/export';
+export type {
+  ExportFormat,
+  JsonMode,
+  CsvOptions,
+  JsonOptions,
+  ExportPage,
+  ExportResult,
+  ExportRunner,
+  RunExportOptions,
+} from './lib/export';

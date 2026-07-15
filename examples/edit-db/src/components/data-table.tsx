@@ -46,6 +46,8 @@ import {
     Trash2,
 } from 'lucide-react';
 import { RowActions } from './row-actions';
+import { ExportButton } from './export-button';
+import type { ExportRunner } from '@/lib/export';
 import { rowIdOf, pkFilterFor, type PkFilter } from '@/lib/row-id';
 import {
     useColumnSizingPersistence,
@@ -116,6 +118,13 @@ interface DataTableProps<TData> {
     stackingEnabled?: boolean;
     /** Toggle stacking mode on/off. When omitted, the toggle is not rendered. */
     onToggleStacking?: (next: boolean) => void;
+    /**
+     * Full-result-set export runner (pages every matching row for the current
+     * filters/sort). When supplied, an Export control renders in the toolbar.
+     */
+    exportRows?: ExportRunner;
+    /** Total matching rows — drives the export's above-cap confirmation. */
+    totalRows?: number;
 }
 
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100];
@@ -171,6 +180,8 @@ export function DataTable<TData>({
     onDeleteSelected,
     stackingEnabled,
     onToggleStacking,
+    exportRows,
+    totalRows,
 }: DataTableProps<TData>) {
     const {
         hoveredRow,
@@ -375,6 +386,13 @@ export function DataTable<TData>({
                     )}
                 </div>
                 <div className="flex items-center gap-2">
+                {exportRows && (
+                    <ExportButton
+                        exportRows={exportRows}
+                        total={totalRows ?? 0}
+                        tableName={tableName ?? 'export'}
+                    />
+                )}
                 {onToggleStacking && (
                     <Button
                         variant={stackingEnabled ? 'secondary' : 'outline'}

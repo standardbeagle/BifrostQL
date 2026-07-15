@@ -99,6 +99,8 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
         pageSize,
         pageCount,
         rows,
+        totalRows,
+        exportRows,
         loading,
         error,
         onSortingChange,
@@ -300,6 +302,8 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
                 onDeleteSelected={isEditable ? handleDeleteSelected : undefined}
                 stackingEnabled={stackingEnabled}
                 onToggleStacking={onToggleStacking}
+                exportRows={exportRows}
+                totalRows={totalRows}
             />
             <ConfirmDialog
                 open={deleteTarget !== null}

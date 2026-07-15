@@ -11,10 +11,23 @@
  * hand-rolled fixed-row-height window rather than e.g. @tanstack/react-virtual.
  */
 import { useRef, useState, useCallback, useLayoutEffect } from "react";
+import {
+  buildCsv,
+  buildJson,
+  downloadTextFile,
+  filenameFor,
+  mimeFor,
+  type ExportFormat,
+} from "@standardbeagle/edit-db";
 
 export interface ResultColumn {
   name: string;
   type: string;
+}
+
+/** Header text per column, naming unnamed columns positionally (col1, col2, …). */
+function exportHeaders(columns: ResultColumn[]): string[] {
+  return columns.map((col, i) => col.name || `col${i + 1}`);
 }
 
 // Matches the padding/font-size in `styles.td` below closely enough for a
@@ -35,6 +48,22 @@ export function ResultGrid({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [viewportHeight, setViewportHeight] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
+
+  // Export the whole in-memory result (already fully materialized here — no
+  // paging) through the shared edit-db util, so the console reuses the one
+  // serializer rather than carrying a second CSV/JSON implementation.
+  const handleExport = useCallback(
+    (format: ExportFormat) => {
+      const headers = exportHeaders(columns);
+      const content =
+        format === "csv"
+          ? buildCsv(headers, rows, { bom: true })
+          : buildJson(headers, rows);
+      downloadTextFile(content, filenameFor("query-result", format), mimeFor(format));
+    },
+    [columns, rows],
+  );
+  const hasRows = rows.length > 0;
 
   const handleScroll = useCallback(() => {
     if (scrollRef.current) setScrollTop(scrollRef.current.scrollTop);
@@ -75,12 +104,31 @@ export function ResultGrid({
   const visibleRows = rows.slice(firstVisible, lastVisible);
 
   return (
-    <div
-      className="result-grid"
-      style={styles.gridWrap}
-      ref={scrollRef}
-      onScroll={handleScroll}
-    >
+    <div style={styles.wrap}>
+      <div style={styles.toolbar}>
+        <button
+          type="button"
+          style={styles.exportBtn}
+          onClick={() => handleExport("csv")}
+          disabled={!hasRows}
+        >
+          Export CSV
+        </button>
+        <button
+          type="button"
+          style={styles.exportBtn}
+          onClick={() => handleExport("json")}
+          disabled={!hasRows}
+        >
+          Export JSON
+        </button>
+      </div>
+      <div
+        className="result-grid"
+        style={styles.gridWrap}
+        ref={scrollRef}
+        onScroll={handleScroll}
+      >
       <table style={styles.table}>
         <thead>
           <tr>
@@ -116,6 +164,7 @@ export function ResultGrid({
           )}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -127,6 +176,17 @@ export function renderCell(value: unknown): string {
 }
 
 const styles: Record<string, React.CSSProperties> = {
+  wrap: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
+  toolbar: { display: "flex", gap: 6, justifyContent: "flex-end", padding: "4px 0" },
+  exportBtn: {
+    fontSize: 12,
+    padding: "3px 10px",
+    borderRadius: 4,
+    border: "1px solid var(--void-border, #d1d5db)",
+    background: "var(--void-surface, transparent)",
+    color: "var(--text-primary, inherit)",
+    cursor: "pointer",
+  },
   gridWrap: { flex: 1, minHeight: 0, overflow: "auto", border: "1px solid var(--border, #d1d5db)", borderRadius: 6 },
   table: { borderCollapse: "collapse", width: "100%", fontSize: 13 },
   th: {

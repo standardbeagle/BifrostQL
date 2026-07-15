@@ -111,6 +111,49 @@ With this configured, `orders(delete: ...)` becomes an UPDATE that sets `deleted
 
 These columns are populated automatically during insert and update. The `update: none` setting makes them read-only in the GraphQL input types.
 
+## Optimistic concurrency
+
+Optimistic concurrency prevents *lost updates* — two clients read the same row, both edit it, and the second write silently overwrites the first. Opt in per table with the `concurrency-token` metadata, naming a column that versions the row:
+
+```
+"dbo.orders { concurrency-token: row_version }"
+```
+
+With this configured, every `update` **must carry the token value the row was read at**. BifrostQL ANDs `row_version = <the value you sent>` into the UPDATE's WHERE clause and, on success, advances the token in the same statement. Omitting the token (or sending `null`) is rejected — you cannot update a token-guarded row without declaring which version you are editing.
+
+```graphql
+mutation {
+  orders(update: {
+    id: 42,
+    status: "shipped",
+    row_version: 7   # the value you last read
+  })
+}
+```
+
+If nobody else has written the row, the token still matches, the row updates, and `row_version` advances (to `8`, or to a fresh timestamp for a datetime token). If another writer got there first, the stored token has already moved, the guarded WHERE matches **zero rows**, and the write is rejected rather than silently lost — the row keeps the other writer's value.
+
+### The conflict shape
+
+A stale-token write does not silently no-op and does not surface a generic error. It fails with a stable, branchable shape: a `BifrostExecutionError` whose **`ErrorCode` is `CONFLICT`**. Detect it and prompt the user to reload and retry:
+
+> Update of 'dbo.orders' was rejected: the concurrency token no longer matches — the row was modified or removed since it was read. Reload and retry.
+
+The message is deliberately generic: it discloses no current column values, so a losing writer learns only *that* it lost, never *what* the winning value was.
+
+### Supported token types
+
+| Token type | On each write |
+|------------|---------------|
+| Numeric (`int`, `bigint`, `decimal`, …) | Incremented by 1 (checked arithmetic — an at-max token fails cleanly rather than wrapping) |
+| Datetime (`datetime`, `datetimeoffset`) | Restamped to the current UTC time |
+
+Database-managed version columns (SQL Server `rowversion`, PostgreSQL `xmin`) are **not yet supported** — they are rejected with a clear error rather than silently left un-bumped. Supporting them is a documented follow-up.
+
+### Batch upsert refuses token tables
+
+The single-statement batch upsert path (`ON CONFLICT DO UPDATE` / `MERGE`) always writes — it cannot express a "fail if the token moved" WHERE. Rather than silently bypass the guard, BifrostQL **refuses** to write a concurrency-token table through that path (also a `CONFLICT`). A stale token can therefore never degrade into an INSERT that resurrects a row you believed you were updating. Use a plain `update` (or a batch `update` action) for token-guarded tables.
+
 ## Return values
 
 Table mutation fields return scalar values, not row objects:

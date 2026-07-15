@@ -71,4 +71,167 @@ public class DurableKeyStoreTests
 
         loserDek.Should().Equal(winnerDek);
     }
+
+    [Fact]
+    public void FileStore_PersistsWrappedBytesVerbatim_PlaintextDekNeverAtRest()
+    {
+        var dir = TempDir();
+        try
+        {
+            var root = Key(3);
+            const string keyRef = "config:pii";
+
+            // Wrap a known plaintext DEK using a manager over an in-memory store, then
+            // persist those exact wrapped bytes via the file store.
+            var stage = new InMemoryDataEncryptionKeyStore();
+            var plaintextDek = new EnvelopeKeyManager(new ConfigRootKeyProvider(root), stage).GetDataKey(keyRef);
+            var wrapped = stage.Load(keyRef)!;
+
+            var store = new FileDataEncryptionKeyStore(dir);
+            store.Store(keyRef, wrapped);
+
+            // Exactly one file was written and it holds the wrapped bytes verbatim.
+            var files = Directory.GetFiles(dir);
+            files.Should().HaveCount(1);
+            var atRest = File.ReadAllBytes(files[0]);
+            atRest.Should().Equal(wrapped);
+
+            // The plaintext DEK must never appear at rest.
+            Contains(atRest, plaintextDek).Should().BeFalse("the plaintext DEK must not exist at rest");
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Fact]
+    public void FileStore_SurvivesRestart_FreshInstanceLoadsAndUnwraps()
+    {
+        var dir = TempDir();
+        try
+        {
+            var root = Key(4);
+            const string keyRef = "config:pii";
+
+            var stage = new InMemoryDataEncryptionKeyStore();
+            var originalDek = new EnvelopeKeyManager(new ConfigRootKeyProvider(root), stage).GetDataKey(keyRef);
+            var wrapped = stage.Load(keyRef)!;
+
+            new FileDataEncryptionKeyStore(dir).Store(keyRef, wrapped);
+
+            // A FRESH store over the SAME directory (simulated restart) returns the same bytes.
+            var reopened = new FileDataEncryptionKeyStore(dir);
+            reopened.Load(keyRef).Should().Equal(wrapped);
+
+            // And a manager over the reopened store unwraps to the original plaintext DEK.
+            var dek = new EnvelopeKeyManager(new ConfigRootKeyProvider(root), reopened).GetDataKey(keyRef);
+            dek.Should().Equal(originalDek);
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Fact]
+    public void FileStore_Load_ReturnsNull_WhenAbsent()
+    {
+        var dir = TempDir();
+        try
+        {
+            new FileDataEncryptionKeyStore(dir).Load("config:missing").Should().BeNull();
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Fact]
+    public void FileStore_Store_IsFirstWriterWins_DoesNotClobber()
+    {
+        var dir = TempDir();
+        try
+        {
+            const string keyRef = "config:pii";
+            var wrappedA = MakeWrappedBytes(0xA1);
+            var wrappedB = MakeWrappedBytes(0xB2);
+
+            var store = new FileDataEncryptionKeyStore(dir);
+            store.Store(keyRef, wrappedA);
+            store.Store(keyRef, wrappedB); // must NOT replace wrappedA
+
+            store.Load(keyRef).Should().Equal(wrappedA);
+            Directory.GetFiles(dir).Should().HaveCount(1, "no temp file should be left behind");
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Fact]
+    public void FileStore_ArbitraryKeyRef_CannotEscapeDirectory_OrCollide()
+    {
+        var dir = TempDir();
+        try
+        {
+            var store = new FileDataEncryptionKeyStore(dir);
+            var a = MakeWrappedBytes(0x11);
+            var b = MakeWrappedBytes(0x22);
+
+            // Path-hostile key-refs with dots/slashes must stay inside the directory and
+            // must not collide with each other.
+            store.Store("../escape:pii", a);
+            store.Store("config:../../etc/passwd", b);
+
+            Directory.GetFiles(dir).Should().HaveCount(2);
+            store.Load("../escape:pii").Should().Equal(a);
+            store.Load("config:../../etc/passwd").Should().Equal(b);
+            // Nothing was written outside the directory.
+            Directory.GetFiles(dir).All(f => Path.GetDirectoryName(f) == dir.TrimEnd(Path.DirectorySeparatorChar)
+                                             || Path.GetFullPath(Path.GetDirectoryName(f)!) == Path.GetFullPath(dir))
+                     .Should().BeTrue();
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Fact]
+    public async Task ConcurrentGetDataKey_AcrossManagers_OneStore_ConvergeOnOneDek()
+    {
+        var dir = TempDir();
+        try
+        {
+            var root = Key(5);
+            const string keyRef = "config:pii";
+            const int n = 16;
+
+            // ONE durable store shared by N independent managers (each its own cache + lock).
+            var store = new FileDataEncryptionKeyStore(dir);
+
+            var tasks = Enumerable.Range(0, n).Select(_ => Task.Run(() =>
+                new EnvelopeKeyManager(new ConfigRootKeyProvider(root), store).GetDataKey(keyRef))).ToArray();
+            var deks = await Task.WhenAll(tasks);
+
+            // Every returned DEK is byte-identical: the persist-if-absent store picks one
+            // winner and the manager re-Load fix makes every loser adopt it.
+            foreach (var dek in deks)
+                dek.Should().Equal(deks[0]);
+
+            // Exactly one wrapped DEK is persisted.
+            Directory.GetFiles(dir).Should().HaveCount(1);
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    // A well-formed wrapped-DEK-shaped byte blob ([nonce:12][tag:16][ciphertext:32]) for
+    // no-clobber / encoding tests that don't need real cryptographic content.
+    private static byte[] MakeWrappedBytes(byte seed)
+    {
+        var b = new byte[FieldCipher.NonceSize + FieldCipher.TagSize + FieldCipher.KeySize];
+        Array.Fill(b, seed);
+        return b;
+    }
+
+    private static bool Contains(byte[] haystack, byte[] needle)
+    {
+        if (needle.Length == 0 || needle.Length > haystack.Length) return false;
+        for (var i = 0; i + needle.Length <= haystack.Length; i++)
+        {
+            var match = true;
+            for (var j = 0; j < needle.Length; j++)
+                if (haystack[i + j] != needle[j]) { match = false; break; }
+            if (match) return true;
+        }
+        return false;
+    }
 }

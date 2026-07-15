@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -73,6 +74,93 @@ namespace BifrostQL.Core.Crypto
 
         public void Store(string keyRef, byte[] wrappedDek)
             => _wrapped[keyRef] = (byte[])wrappedDek.Clone();
+    }
+
+    /// <summary>
+    /// Durable file-backed wrapped-DEK store: one file per key-ref under a root directory,
+    /// holding the root-key-wrapped DEK bytes verbatim (never plaintext). Opt-in — the DI
+    /// wiring never fabricates this; a deployment registers it explicitly.
+    /// <para>
+    /// Filenames are the lowercase-hex encoding of the UTF-8 key-ref, so arbitrary key-ref
+    /// strings (dots, slashes, <c>..</c>) can neither escape the directory nor collide — the
+    /// raw key-ref is never used as a path segment.
+    /// </para>
+    /// <para>
+    /// <see cref="Store"/> is persist-if-absent / first-writer-wins: it writes to a unique
+    /// temp file in the same directory then atomically renames it into place with
+    /// fail-if-exists semantics. If the destination already exists (another writer/process
+    /// won), the temp file is deleted and the existing value is left intact — overwriting
+    /// would orphan every value already encrypted under the persisted DEK. A half-written
+    /// temp file is never the live file, so readers never see a torn DEK.
+    /// </para>
+    /// </summary>
+    public sealed class FileDataEncryptionKeyStore : IDataEncryptionKeyStore
+    {
+        private readonly string _rootDir;
+        private readonly object _sync = new();
+
+        public FileDataEncryptionKeyStore(string rootDirectory)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(rootDirectory);
+            _rootDir = rootDirectory;
+            Directory.CreateDirectory(_rootDir);
+        }
+
+        public byte[]? Load(string keyRef)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
+            var path = PathFor(keyRef);
+            // First-writer-wins means the live file is only ever fully-written wrapped bytes.
+            return File.Exists(path) ? File.ReadAllBytes(path) : null;
+        }
+
+        public void Store(string keyRef, byte[] wrappedDek)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
+            ArgumentNullException.ThrowIfNull(wrappedDek);
+
+            var path = PathFor(keyRef);
+            // Cheap pre-check: if a value already exists, this is a no-op (first-writer-wins).
+            // The authoritative guard is the fail-if-exists rename below (races/other processes).
+            if (File.Exists(path))
+                return;
+
+            // Serialize same-process writers so two threads don't both pass the pre-check and
+            // both attempt the rename; cross-process safety comes from the O_EXCL-style rename.
+            lock (_sync)
+            {
+                if (File.Exists(path))
+                    return;
+
+                var temp = Path.Combine(_rootDir, "." + Guid.NewGuid().ToString("N") + ".tmp");
+                File.WriteAllBytes(temp, wrappedDek);
+                try
+                {
+                    // Atomic, fail-if-destination-exists — the cross-process first-writer-wins gate.
+                    File.Move(temp, path, overwrite: false);
+                }
+                catch (IOException)
+                {
+                    // Another writer/process won the race and created the destination first.
+                    // Leave the existing value intact and clean up our temp file.
+                    TryDelete(temp);
+                }
+                catch
+                {
+                    TryDelete(temp);
+                    throw;
+                }
+            }
+        }
+
+        private string PathFor(string keyRef)
+            => Path.Combine(_rootDir, Convert.ToHexString(Encoding.UTF8.GetBytes(keyRef)).ToLowerInvariant());
+
+        private static void TryDelete(string path)
+        {
+            try { if (File.Exists(path)) File.Delete(path); }
+            catch { /* best-effort cleanup of an orphaned temp file */ }
+        }
     }
 
     /// <summary>

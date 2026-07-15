@@ -127,6 +127,7 @@ public sealed class OutboxDispatcherTests : IAsyncLifetime
         public List<string> ReceivedSubjects { get; } = new();
         public List<string> ReceivedIds { get; } = new();
         public List<string> IdempotencyKeys { get; } = new();
+        public List<JsonObject> ReceivedEnvelopes { get; } = new();
 
         public ScriptedSink(EventDeliveryResult result) => _decide = _ => result;
         public ScriptedSink(Func<JsonObject, EventDeliveryResult> decide) => _decide = decide;
@@ -137,6 +138,7 @@ public sealed class OutboxDispatcherTests : IAsyncLifetime
             ReceivedSubjects.Add(envelope["subject"]!.ToString());
             ReceivedIds.Add(envelope["id"]!.ToString());
             IdempotencyKeys.Add(idempotencyKey);
+            ReceivedEnvelopes.Add(envelope);
             return ValueTask.FromResult(_decide(envelope));
         }
     }
@@ -343,6 +345,74 @@ public sealed class OutboxDispatcherTests : IAsyncLifetime
         dispatched.Should().BeFalse("a dead-lettered row was never delivered");
         finalDead.Should().BeTrue();
         finalAttempts.Should().Be(maxAttempts);
+    }
+
+    // Seeds one undelivered outbox row for widgets with an explicit tenant and a custom
+    // payload (so a redactable non-key column can be asserted on the delivered event).
+    private async Task<long> SeedWidgetWithTenantAsync(long widgetId, string? tenant, string payload)
+    {
+        await using var cmd = new SqliteCommand(
+            """
+            INSERT INTO __outbox(aggregate, op, payload, tenant, created_at, attempts, dead)
+            VALUES ('main.widgets', 'insert', @payload, @tenant, '2026-07-15T10:00:00.0000000', 0, 0);
+            SELECT last_insert_rowid();
+            """, _keepAlive);
+        cmd.Parameters.AddWithValue("@payload", payload);
+        cmd.Parameters.AddWithValue("@tenant", (object?)tenant ?? DBNull.Value);
+        return Convert.ToInt64(await cmd.ExecuteScalarAsync());
+    }
+
+    [Fact]
+    public async Task Subscription_TenantScopesDelivery_AndRedactsPayload()
+    {
+        // A subscription bound to tenant-x with the 'secret' column redacted. widgets is on
+        // the allow-list. Seed a tenant-x row, a tenant-y row, and a null-tenant row — only
+        // the tenant-x event may reach the sink, and its payload must carry 'name' but not
+        // 'secret'. The excluded rows must be consumed (stamped) so they never recirculate.
+        var subscriptionModel = await new DbModelLoader(_factory, new MetadataLoader(new[]
+        {
+            "main.widgets { emit-events: insert,update,delete }",
+            "main.orders { emit-events: insert,update,delete }",
+            ":root { outbox-table: main.__outbox; subscription-tables: main.widgets; " +
+                "subscription-tenant: tenant-x; subscription-redact: secret }",
+        })).LoadAsync();
+
+        var tenantX = await SeedWidgetWithTenantAsync(
+            1, "tenant-x", """{"id":1,"name":"keep-me","secret":"strip-me"}""");
+        var tenantY = await SeedWidgetWithTenantAsync(
+            2, "tenant-y", """{"id":2,"name":"other-tenant","secret":"strip-me"}""");
+        var nullTenant = await SeedWidgetWithTenantAsync(
+            3, null, """{"id":3,"name":"no-tenant","secret":"strip-me"}""");
+
+        var sink = new ScriptedSink(EventDeliveryResult.Delivered);
+        var outcome = await OutboxDispatcher.DrainOnceAsync(
+            subscriptionModel, _factory, sink, logger: null, batchSize: 100, maxAttempts: 5, CancellationToken.None);
+
+        // Exactly the tenant-x event delivered; the tenant-y and null-tenant rows never
+        // reached the sink.
+        outcome.Delivered.Should().Be(1, "only the tenant-x row is in scope");
+        sink.ReceivedSubjects.Should().ContainSingle().Which.Should().Be("1");
+
+        var delivered = sink.ReceivedEnvelopes.Single();
+        var data = delivered["data"]!.AsObject();
+        data.ContainsKey("secret").Should().BeFalse("the redacted column is stripped before the sink");
+        data.ContainsKey("name").Should().BeTrue("a non-redacted column is preserved");
+        data["id"]!.GetValue<int>().Should().Be(1, "the key column is never redacted");
+        delivered["tenant"]!.ToString().Should().Be("tenant-x", "the CloudEvents tenant extension still emits");
+
+        // Delivered tenant-x row is stamped; the out-of-scope rows are ALSO stamped
+        // (consumed) so a subsequent poll does not re-evaluate them forever.
+        (await ReadRowAsync(tenantX)).dispatched.Should().BeTrue("the delivered row is stamped");
+        (await ReadRowAsync(tenantY)).dispatched.Should().BeTrue("an out-of-tenant row is consumed, not recirculated");
+        (await ReadRowAsync(nullTenant)).dispatched.Should().BeTrue("a null-tenant row is consumed, not recirculated");
+        (await ReadRowAsync(tenantY)).attempts.Should().Be(0, "a filtered row is not a delivery failure");
+
+        // A second drain delivers nothing — the filtered rows did not recirculate.
+        var second = new ScriptedSink(EventDeliveryResult.Delivered);
+        var secondOutcome = await OutboxDispatcher.DrainOnceAsync(
+            subscriptionModel, _factory, second, logger: null, batchSize: 100, maxAttempts: 5, CancellationToken.None);
+        secondOutcome.Delivered.Should().Be(0);
+        second.ReceivedSubjects.Should().BeEmpty("every eligible row was consumed on the first pass");
     }
 
     [Fact]

@@ -298,6 +298,7 @@ namespace BifrostQL.Server
 
             BifrostServiceRegistrar.RegisterComputedColumnServices(services);
             BifrostServiceRegistrar.RegisterQueryIntentServices(services);
+            BifrostServiceRegistrar.RegisterCdcDispatcherServices(services);
             BifrostServiceRegistrar.RegisterProtocolAdapterServices(services, _protocolAdapterTypes);
             BifrostServiceRegistrar.RegisterChatConnectorServices(services, _chatConnectorTypes);
 

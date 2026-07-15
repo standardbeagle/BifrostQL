@@ -267,6 +267,28 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
+        /// Registers the CDC outbox dispatcher (<see cref="BifrostQL.Core.Modules.Cdc.OutboxDispatcher"/>)
+        /// and its <see cref="Microsoft.Extensions.Hosting.IHostedService"/> wrapper, so the host
+        /// drains the transactional outbox to a registered
+        /// <see cref="BifrostQL.Core.Modules.Cdc.IEventSink"/> in the background. The dispatcher
+        /// resolves the model/connection from the same <see cref="Core.Schema.PathCache{T}"/> the
+        /// GraphQL middleware uses. The <c>IEventSink</c> is optional: a host without one (or
+        /// without any <c>outbox-table</c> metadata) starts and idles without polling, so a
+        /// non-CDC host pays nothing. TryAdd so a host may register its own dispatcher first.
+        /// </summary>
+        public static void RegisterCdcDispatcherServices(IServiceCollection services)
+        {
+            services.TryAddSingleton(sp => new BifrostQL.Core.Modules.Cdc.OutboxDispatcher(
+                sp.GetRequiredService<Core.Schema.PathCache<GraphQL.Inputs>>(),
+                sp.GetService<BifrostQL.Core.Modules.Cdc.IEventSink>(),
+                jitter: null,
+                logger: sp.GetService<ILogger<BifrostQL.Core.Modules.Cdc.OutboxDispatcher>>()));
+            services.AddSingleton<Microsoft.Extensions.Hosting.IHostedService>(sp =>
+                new CdcOutboxHostedService(
+                    sp.GetRequiredService<BifrostQL.Core.Modules.Cdc.OutboxDispatcher>()));
+        }
+
+        /// <summary>
         /// Registers each protocol adapter type as a singleton plus a dedicated
         /// <see cref="Microsoft.Extensions.Hosting.IHostedService"/> wrapper, so the host
         /// starts/stops every adapter with its own lifecycle. Adapter types resolve their
@@ -353,6 +375,44 @@ namespace BifrostQL.Server
                             NameClaimType = ClaimTypes.NameIdentifier,
                         };
                     });
+            }
+        }
+    }
+
+    /// <summary>
+    /// Ties the CDC <see cref="BifrostQL.Core.Modules.Cdc.OutboxDispatcher"/>'s drain loop to
+    /// the host lifecycle without the Core engine taking a hosting dependency (mirroring
+    /// <see cref="ProtocolAdapterHostedService"/>). The dispatcher's <c>RunAsync</c> is
+    /// launched in the background on start and cancelled on graceful shutdown; the drain loop
+    /// itself is fail-safe and never throws to the host.
+    /// </summary>
+    internal sealed class CdcOutboxHostedService : Microsoft.Extensions.Hosting.IHostedService
+    {
+        private readonly BifrostQL.Core.Modules.Cdc.OutboxDispatcher _dispatcher;
+        private readonly CancellationTokenSource _stopping = new();
+        private Task? _loop;
+
+        public CdcOutboxHostedService(BifrostQL.Core.Modules.Cdc.OutboxDispatcher dispatcher)
+            => _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+
+        public Task StartAsync(CancellationToken cancellationToken)
+        {
+            // Run the drain loop detached from startup so a slow first poll does not block
+            // host start; the loop observes _stopping for graceful shutdown.
+            _loop = _dispatcher.RunAsync(_stopping.Token);
+            return Task.CompletedTask;
+        }
+
+        public async Task StopAsync(CancellationToken cancellationToken)
+        {
+            _stopping.Cancel();
+            if (_loop is not null)
+            {
+                // Await the loop's exit, but do not hang shutdown if it is mid-delay: give up
+                // when the host's own shutdown token trips.
+                var completed = await Task.WhenAny(_loop, Task.Delay(Timeout.Infinite, cancellationToken));
+                if (completed == _loop)
+                    await _loop; // observe any fault (RunAsync is fail-safe, so this is defensive)
             }
         }
     }

@@ -40,6 +40,14 @@ non-deterministic (timestamp + random suffix), so a GET could never re-address t
 object a PUT wrote, and its sanitizer rewrites every invalid character to `_`,
 collapsing the distinct ids `a/b` and `a_b`.
 
+**An object key is an address, not a storage key.** The two are deliberately
+different things: the key deterministically identifies the *row*, and the row's
+pointer binds it to wherever the bytes actually live — a fresh random
+`GenerateFileKey` per write. Writing the bytes *at* the address would make every
+upload an in-place overwrite of the row's current content, i.e. destructive before
+the mutation pipeline has authorized anything. Keeping them separate is what makes
+a denied PUT non-destructive; see **PUT** below.
+
 ### Authorization
 
 Reads go through `IQueryIntentExecutor`; writes go through
@@ -51,11 +59,19 @@ remembered to filter.
 
 A storage path or stream is reachable only from a `ResolvedFileObject`, which has
 no public constructor and can be minted only by `ResolveAsync` — the identity-gated
-read. No adapter-facing API can skip it. (Honest bound: construction is `internal`,
-so first-party code inside Core and its `InternalsVisibleTo` list could fabricate
-one — but that code could call the storage provider directly anyway. The seam
-constrains the adapter's API surface; it is not a sandbox against Bifrost's own
-internals.)
+read. There is no *public* signature that hands out a stream without one, so an
+adapter cannot forget the check.
+
+**The honest bound on that guarantee:** it is enforced against the **public API
+shape**, not against adversarial code in `BifrostQL.Server`. `ResolvedFileObject`
+construction is `internal`, and `InternalsVisibleTo` includes `BifrostQL.Server` —
+which is where slice 2's S3 adapter lives. That assembly *can* forge one. So the
+correct claim is "a caller cannot obtain a stream without resolving a row"
+**only for code outside Core's friend assemblies**; for the adapter itself the seam
+is a well-shaped API, not an enforcement boundary. Server-side code that wanted to
+bypass authorization could call the storage provider directly regardless, so this
+is a statement about what the seam *does* prevent (forgetting the gate), not about
+what it *could* prevent (deliberately evading it).
 
 Only columns configured for file storage are addressable, so the seam cannot be
 turned into a download endpoint for arbitrary columns.
@@ -92,8 +108,23 @@ told nothing about is the one outcome with no owner. If the compensating delete
 *also* fails, both failures are surfaced together — never swallowed — because the
 residue then needs an operator.
 
-Because keys are deterministic, re-putting an object overwrites in place and
-accumulates no orphans.
+The upload targets a **fresh random storage key**, never the caller-supplied
+address. This is load-bearing, not incidental: the read-visibility check is not an
+authorization decision (the mutation pipeline is), so a caller who can merely *see*
+a row can still reach the upload. Writing at the address would let that caller
+overwrite the row's content in place, and the compensating delete would then remove
+it — an unauthorized caller destroying content *and* orphaning the pointer. A fresh
+key makes the compensating path incapable of touching a pre-existing blob, so the
+protection is structural rather than a matter of doing things in the right order.
+
+Once the new pointer has **committed**, the superseded blob is reclaimed, so no
+orphan accumulates across writes. That reclaim is best-effort and logged, never
+thrown: the write already succeeded and the row is correct, so failing the call
+would report a committed write as failed and invite a retry.
+
+A zero-affected-row update is treated as failure, not success — read from
+`MutationIntentResult.AffectedRows`, never from the pipeline's return `Value`,
+which on a single-key table is the primary KEY rather than a count.
 
 **DELETE** — resolve → clear the pointer through the mutation pipeline **first** →
 delete the blob. This is the opposite of `FileDeleteResolver`'s blob-first order,
@@ -113,8 +144,9 @@ audited, soft-deleted, or vetoed remains the pipeline's decision.
 
 - No HTTP/S3 codec, no SigV4, no multipart upload, no bucket administration.
 - No DI registration yet — a host constructs `FileObjectSeam` directly.
-- Objects written before this seam existed carry a random `GenerateFileKey` key.
-  Re-putting one writes the new deterministic key and leaves the old blob behind;
-  reclaiming those is a sweeper's job, not the write path's.
+- Reclaiming a superseded blob is best-effort: if the delete fails after the new
+  pointer committed, the old blob is left unreferenced (logged as a warning) for
+  out-of-band collection. Failing the caller's committed write instead would be a
+  worse trade.
 - A table whose name is not a legal bucket name is unaddressable; an explicit
   bucket-name override would need a new metadata key.

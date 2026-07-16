@@ -69,6 +69,7 @@ public sealed class FileObjectSeam
     private readonly IMutationIntentExecutor _writes;
     private readonly FileStorageService _storage;
     private readonly FileObjectSeamOptions _options;
+    private readonly ILogger<FileObjectSeam>? _logger;
 
     public FileObjectSeam(
         IQueryIntentExecutor reads,
@@ -81,6 +82,7 @@ public sealed class FileObjectSeam
         _writes = writes ?? throw new ArgumentNullException(nameof(writes));
         _storage = storage ?? new FileStorageService();
         _options = options ?? new FileObjectSeamOptions();
+        _logger = logger;
 
         if (_options.EnableWrites)
             logger?.LogWarning(
@@ -202,12 +204,26 @@ public sealed class FileObjectSeam
     /// ALSO fails, both failures are surfaced together — never swallowed — since
     /// the residue then needs an operator.</para>
     ///
-    /// <para>Because the key is deterministic, re-putting the same object
-    /// overwrites in place: no orphan accumulates across writes. (Objects written
-    /// before this seam existed carry a random key from
-    /// <see cref="FileMetadata.GenerateFileKey"/>; re-putting one writes the new
-    /// deterministic key and leaves the old blob behind. Reclaiming those is a
-    /// sweeper's job, not this write path's.)</para>
+    /// <para><b>The object key is an address, not a storage key.</b> The
+    /// caller-supplied <paramref name="key"/> deterministically identifies the ROW
+    /// (see <see cref="S3ObjectKeyMap"/>); the bytes are written to a FRESH random
+    /// storage key from <see cref="FileMetadata.GenerateFileKey"/>, and the row's
+    /// pointer is what binds the two. Writing the bytes AT the address would make
+    /// the upload an in-place overwrite of whatever the row currently holds —
+    /// destructive BEFORE the mutation pipeline (the actual write gate) has
+    /// authorized anything, so a caller who can merely SEE the row could destroy
+    /// its content with a PUT the pipeline then vetoes, and the compensating
+    /// delete would finish the job by orphaning the pointer. A fresh key makes
+    /// that unreachable structurally rather than by ordering: the compensating
+    /// path can only ever delete the blob this call just created, because no
+    /// pre-existing blob shares its key. This is the same protection
+    /// <see cref="FileUploadResolver"/> relies on.</para>
+    ///
+    /// <para>No orphan accumulates across writes: once the new pointer has
+    /// COMMITTED, the superseded blob is reclaimed. That cleanup is best-effort
+    /// (logged, never thrown) — the write already succeeded and the row is
+    /// correct, so failing the call would report a committed write as failed and
+    /// invite a retry.</para>
     /// </summary>
     public async Task<ResolvedFileObject> PutAsync(
         string bucket, string key, byte[] content, string? contentType,
@@ -224,13 +240,16 @@ public sealed class FileObjectSeam
         if (!located.RowVisible)
             throw new BifrostExecutionError($"Object '{bucket}/{key}' does not exist or is not accessible.");
 
+        // fileKey is deliberately NOT supplied: the bytes go to a fresh random
+        // storage key, never to the caller-supplied address. See the remarks above
+        // — this is what keeps an unauthorized PUT from overwriting content in
+        // place before the pipeline has had a chance to veto it.
         var metadata = await _storage.UploadFileAsync(
             located.Table, located.Column, located.Model,
-            recordId: string.Empty,
+            recordId: string.Join("-", located.PrimaryKey),
             content: content,
             originalFileName: null,
             contentType: contentType,
-            fileKey: key,
             customMetadata: customMetadata,
             cancellationToken: cancellationToken);
 
@@ -243,6 +262,11 @@ public sealed class FileObjectSeam
             await CompensateAsync(located, metadata, mutationFailure, cancellationToken);
             throw;
         }
+
+        // The new pointer has committed, so the blob it replaced is now
+        // unreferenced. Reclaim it — best-effort, since the write itself succeeded.
+        if (located.Metadata is not null)
+            await ReclaimSupersededAsync(located, cancellationToken);
 
         return ResolvedFileObject.Create(
             bucket, key, located.Model, located.Table, located.Column, located.PrimaryKey, metadata);
@@ -388,13 +412,41 @@ public sealed class FileObjectSeam
             Endpoint = _options.Endpoint,
         }, cancellationToken);
 
-        // A composite-key update returns affected rows; a single-key update
-        // returns the key. Either way, zero affected means the pipeline scoped
-        // the write away between the read and the write (row deleted, reassigned
-        // or soft-deleted). Reporting that as success would strand a blob.
-        if (result.Value is int affected && affected == 0)
+        // Zero affected rows means the pipeline scoped the write away (row
+        // deleted, reassigned or soft-deleted between the read and the write).
+        // Reporting that as success would strand a blob and lie about the write.
+        //
+        // This reads AffectedRows, never Value: on a single-key table Value is the
+        // KEY, so a `Value is int && == 0` test is inert for every nonzero key and
+        // misfires on key value 0 (rejecting a legitimate write, then destructively
+        // compensating for it). See MutationIntentResult.AffectedRows.
+        if (result.AffectedRows == 0)
             throw new BifrostExecutionError(
                 $"Row of '{located.Table.DbName}' is no longer accessible; the file pointer was not updated.");
+    }
+
+    /// <summary>
+    /// Reclaims the blob a committed PUT superseded. Best-effort by design: the
+    /// pointer already names the new object, so the row is correct and the caller's
+    /// write did succeed — throwing here would report a committed write as failed
+    /// and invite a retry that writes yet another blob. A failure leaves reclaimable
+    /// residue, so it is logged as a warning rather than swallowed silently.
+    /// </summary>
+    private async Task ReclaimSupersededAsync(LocatedObject located, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _storage.DeleteFileAsync(
+                located.Table, located.Column, located.Model, located.Metadata!, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(
+                ex,
+                "The file pointer for {Table}.{Column} was updated, but the superseded object at storage key " +
+                "'{FileKey}' could not be reclaimed. It is unreferenced and must be collected out of band.",
+                located.Table.DbName, located.Column.ColumnName, located.Metadata!.FileKey);
+        }
     }
 
     /// <summary>

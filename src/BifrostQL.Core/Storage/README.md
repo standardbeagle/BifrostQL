@@ -48,6 +48,12 @@ upload an in-place overwrite of the row's current content, i.e. destructive befo
 the mutation pipeline has authorized anything. Keeping them separate is what makes
 a denied PUT non-destructive; see **PUT** below.
 
+`FileStorageService.UploadFileAsync` therefore exposes **no storage-key
+parameter** — the key is always a fresh `GenerateFileKey`. A caller holding a
+deterministic address cannot ask for the bytes to be written at it, so this rule
+is enforced by the signature rather than by every future call site remembering
+it.
+
 ### Authorization
 
 Reads go through `IQueryIntentExecutor`; writes go through
@@ -118,9 +124,18 @@ key makes the compensating path incapable of touching a pre-existing blob, so th
 protection is structural rather than a matter of doing things in the right order.
 
 Once the new pointer has **committed**, the superseded blob is reclaimed, so no
-orphan accumulates across writes. That reclaim is best-effort and logged, never
-thrown: the write already succeeded and the row is correct, so failing the call
-would report a committed write as failed and invite a retry.
+orphan accumulates across **sequential** writes to a row. That reclaim is
+best-effort and logged, never thrown: the write already succeeded and the row is
+correct, so failing the call would report a committed write as failed and invite
+a retry.
+
+Concurrent PUTs to the same row **do** orphan a blob: each uploads to its own
+fresh key before either pointer commits, so the loser's blob is left unreferenced
+— the winner reclaims only the blob its own resolve observed, which is the
+pre-existing one, not its rival's. This is a storage leak, not a correctness or
+authorization defect: the row ends up pointing at exactly one of the two uploads,
+and the orphan is invisible to every Bifrost surface. It is left for the same
+out-of-band collection as the failed-reclaim residue below.
 
 A zero-affected-row update is treated as failure, not success — read from
 `MutationIntentResult.AffectedRows`, never from the pipeline's return `Value`,

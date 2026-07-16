@@ -260,6 +260,16 @@ public sealed class FileObjectSeam
         }
         catch (Exception mutationFailure)
         {
+            // Compensating by deleting the blob is only correct because an
+            // exception here means NOTHING committed. That holds today on a
+            // hidden dependency: MutationObservers.NotifyAsync (Modules/
+            // IMutationObserver.cs) logs and SWALLOWS per-observer failures, so a
+            // post-commit observer cannot surface as an exception on this path.
+            // If observer exception handling ever changes to propagate, an
+            // already-committed write would land here and this delete would
+            // destroy live content — silent data loss, not a rollback. Anything
+            // that lets a post-commit failure reach this catch must revisit the
+            // compensation, not just this comment.
             await CompensateAsync(located, metadata, mutationFailure, cancellationToken);
             throw;
         }
@@ -465,6 +475,12 @@ public sealed class FileObjectSeam
         }
         catch (Exception rollbackFailure)
         {
+            // This message embeds the storage key deliberately: the operator who
+            // must reclaim the orphan needs it, and BifrostExecutionError is
+            // Core-internal. It is NOT safe to forward verbatim onto a client
+            // wire — an adapter mapping this onto a protocol response must emit a
+            // generic sanitized message and log the detail server-side only
+            // (invariant 3, .claude/rules/protocol-adapter-security.md).
             throw new BifrostExecutionError(
                 $"Writing the file pointer for '{located.Table.DbName}.{located.Column.ColumnName}' failed, and " +
                 $"rolling the uploaded object back failed too: an orphaned object remains at storage key " +

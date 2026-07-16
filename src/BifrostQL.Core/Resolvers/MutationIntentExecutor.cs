@@ -71,6 +71,23 @@ public sealed class MutationIntent
 public sealed class MutationIntentResult
 {
     public object? Value { get; init; }
+
+    /// <summary>
+    /// The real number of rows the write affected, or null when the pipeline does
+    /// not report one for this action.
+    ///
+    /// <para>Use this — never <see cref="Value"/> — to decide whether the write
+    /// actually changed a row. On a single-key update <see cref="Value"/> is the
+    /// KEY, not a count, so testing it for zero is inert for every nonzero key and
+    /// misfires on key value 0. Zero here means the write was scoped away by a
+    /// tenant/policy/soft-delete filter, or the row vanished between the read and
+    /// the write; an adapter that reports that as success is lying to its caller.</para>
+    ///
+    /// <para>Populated for Update. Null for Insert (which reports a generated
+    /// identity, not a count) and for Delete (whose <see cref="Value"/> already IS
+    /// the affected count, matching the GraphQL delete field).</para>
+    /// </summary>
+    public int? AffectedRows { get; init; }
 }
 
 /// <summary>
@@ -183,11 +200,19 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
             CancellationToken = cancellationToken,
         };
 
+        // An update carries a real affected-row count out to the adapter: its own
+        // Value is the primary key on a single-key table, which no caller can read
+        // as "did this change a row?".
+        if (intent.Action == MutationIntentAction.Update)
+        {
+            var (updateValue, affectedRows) = await TableMutationPipeline.UpdateWithAffectedRowsAsync(
+                table, MutationArgumentBinder.SplitProperties(table, intent.Data, intent.PrimaryKey), ctx);
+            return new MutationIntentResult { Value = updateValue, AffectedRows = affectedRows };
+        }
+
         var value = intent.Action switch
         {
             MutationIntentAction.Insert => await InsertAsync(table, intent, ctx),
-            MutationIntentAction.Update => await TableMutationPipeline.UpdateAsync(
-                table, MutationArgumentBinder.SplitProperties(table, intent.Data, intent.PrimaryKey), ctx),
             MutationIntentAction.Delete => await TableMutationPipeline.DeleteAsync(
                 table, MergePrimaryKey(table, intent), ctx),
             _ => throw new BifrostExecutionError($"Unsupported mutation intent action '{intent.Action}'."),

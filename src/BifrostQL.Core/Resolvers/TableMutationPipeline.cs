@@ -132,7 +132,33 @@ namespace BifrostQL.Core.Resolvers
             return result;
         }
 
+        /// <summary>
+        /// Executes an update and returns ONLY the mutation field's scalar value.
+        ///
+        /// <para><b>That value is not an affected-row count and must never be read
+        /// as one.</b> The GraphQL update field is typed <c>Int</c> and cannot carry
+        /// a composite key, so this return is a back-compat compromise: a
+        /// single-key table yields the KEY VALUE, a composite-key table yields the
+        /// affected row count. A caller that tests it for <c>== 0</c> is therefore
+        /// inert for every nonzero single-column key and misfires on key value 0.
+        /// Callers that need to know whether a row actually changed — TOCTOU
+        /// guards, blob-compensation paths — must call
+        /// <see cref="UpdateWithAffectedRowsAsync"/> instead.</para>
+        /// </summary>
         public static async Task<object?> UpdateAsync(
+            IDbTable table,
+            (Dictionary<string, object?> data, Dictionary<string, object?> keyData, Dictionary<string, object?> standardData) propertyInfo,
+            MutationPipelineContext ctx) =>
+            (await UpdateWithAffectedRowsAsync(table, propertyInfo, ctx)).Value;
+
+        /// <summary>
+        /// Executes an update, returning both the mutation field's scalar value
+        /// (see <see cref="UpdateAsync"/>) and the REAL number of rows the UPDATE
+        /// statement affected — the only trustworthy "did anything change?" signal.
+        /// Zero means the write was scoped away (tenant/policy/soft-delete filter
+        /// narrowed it to no rows) or the row vanished between read and write.
+        /// </summary>
+        public static async Task<(object? Value, int AffectedRows)> UpdateWithAffectedRowsAsync(
             IDbTable table,
             (Dictionary<string, object?> data, Dictionary<string, object?> keyData, Dictionary<string, object?> standardData) propertyInfo,
             MutationPipelineContext ctx)
@@ -140,13 +166,13 @@ namespace BifrostQL.Core.Resolvers
             GuardNotHistoryTarget(table, ctx.Model);
 
             if (!propertyInfo.data.Any())
-                return 0;
+                return (0, 0);
 
             if (!propertyInfo.keyData.Any())
-                return 0;
+                return (0, 0);
 
             if (!propertyInfo.standardData.Any())
-                return 0;
+                return (0, 0);
 
             var dialect = ctx.ConnFactory.Dialect;
 
@@ -225,9 +251,9 @@ namespace BifrostQL.Core.Resolvers
             // `keyData.Values.First()` would silently surface only the FIRST key
             // component — misleading — so instead return the affected row count
             // (0 or 1), consistent with the delete mutation.
-            return propertyInfo.keyData.Count == 1
+            return (propertyInfo.keyData.Count == 1
                 ? propertyInfo.keyData.Values.First()
-                : result;
+                : result, result);
         }
 
         public static async Task<object?> DeleteAsync(

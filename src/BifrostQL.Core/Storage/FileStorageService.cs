@@ -89,6 +89,13 @@ namespace BifrostQL.Core.Storage
         /// Closing that gap fully would require switching the resolver's "file"
         /// argument to a stream/Content-Length-gated upload path.
         /// </remarks>
+        /// <param name="fileKey">
+        /// Explicit storage key to write to. Supplied by callers that own a
+        /// deterministic key/row mapping (see <see cref="S3ObjectKeyMap"/>), where a
+        /// random key would make the object unaddressable. Defaults to the
+        /// timestamp/random key from <see cref="FileMetadata.GenerateFileKey"/>.
+        /// </param>
+        /// <param name="customMetadata">Caller-supplied metadata persisted alongside the file pointer.</param>
         public async Task<FileMetadata> UploadFileAsync(
             IDbTable table,
             ColumnDto column,
@@ -97,6 +104,8 @@ namespace BifrostQL.Core.Storage
             byte[] content,
             string? originalFileName = null,
             string? contentType = null,
+            string? fileKey = null,
+            IReadOnlyDictionary<string, string>? customMetadata = null,
             CancellationToken cancellationToken = default)
         {
             var bucketConfig = GetBucketConfig(table, column, model)
@@ -127,10 +136,11 @@ namespace BifrostQL.Core.Storage
             ValidateMimeType(columnConfig?.AcceptMimeTypes, contentType, "column");
 
             var provider = _providerFactory.GetProvider(bucketConfig);
-            var fileKey = FileMetadata.GenerateFileKey(table.DbName, column.ColumnName, recordId, originalFileName);
+            var effectiveFileKey = fileKey
+                ?? FileMetadata.GenerateFileKey(table.DbName, column.ColumnName, recordId, originalFileName);
 
             // Upload to storage
-            var accessUrl = await provider.UploadAsync(bucketConfig, fileKey, content, contentType, cancellationToken);
+            var accessUrl = await provider.UploadAsync(bucketConfig, effectiveFileKey, content, contentType, cancellationToken);
 
             // Create and return metadata. BucketName/ProviderType are recorded
             // for informational/audit purposes only — they are never read back
@@ -139,14 +149,21 @@ namespace BifrostQL.Core.Storage
             // column's configuration, not from this row-persisted value).
             var metadata = new FileMetadata
             {
-                FileKey = fileKey,
+                FileKey = effectiveFileKey,
                 OriginalName = originalFileName,
                 ContentType = contentType,
                 Size = content.Length,
                 BucketName = bucketConfig.BucketName,
                 ProviderType = bucketConfig.ProviderType,
                 UploadedAt = DateTime.UtcNow,
-                AccessUrl = accessUrl
+                AccessUrl = accessUrl,
+                // Computed here, once, so every upload path (GraphQL resolver and
+                // protocol adapters alike) persists the same ETag definition.
+                ETag = System.Convert.ToHexString(
+                    System.Security.Cryptography.MD5.HashData(content)).ToLowerInvariant(),
+                CustomMetadata = customMetadata is { Count: > 0 }
+                    ? new Dictionary<string, string>(customMetadata)
+                    : null,
             };
 
             return metadata;

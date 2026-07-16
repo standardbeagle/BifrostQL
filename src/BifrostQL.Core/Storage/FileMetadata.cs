@@ -52,6 +52,17 @@ namespace BifrostQL.Core.Storage
         public Dictionary<string, string>? CustomMetadata { get; set; }
 
         /// <summary>
+        /// Entity tag of the stored content: the lowercase hex MD5 of the bytes,
+        /// computed once at upload and persisted here. MD5 is not used as a
+        /// security primitive — it is the literal definition of an S3 ETag for a
+        /// single-part object, and the S3 front door must be able to serve one.
+        /// It is recorded at write time rather than recomputed per read so that
+        /// serving an ETag never costs a download of the object.
+        /// Null on rows written before this field existed.
+        /// </summary>
+        public string? ETag { get; set; }
+
+        /// <summary>
         /// Serializes the file metadata to a JSON string for database storage
         /// </summary>
         public string ToJson()

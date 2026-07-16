@@ -100,7 +100,8 @@ namespace BifrostQL.Core.Resolvers
 
             // Upload file to storage only after confirming the row is writable.
             var fileMetadata = await _storageService.UploadFileAsync(
-                table, column, model, recordId, fileContent, fileName, contentType, context.CancellationToken);
+                table, column, model, recordId, fileContent, fileName, contentType,
+                cancellationToken: context.CancellationToken);
 
             // Re-run the transformer pipeline with the real column value so
             // policy column-write-deny and any data rewriting (e.g. audit

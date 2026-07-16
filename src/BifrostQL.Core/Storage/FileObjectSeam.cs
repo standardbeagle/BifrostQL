@@ -240,10 +240,11 @@ public sealed class FileObjectSeam
         if (!located.RowVisible)
             throw new BifrostExecutionError($"Object '{bucket}/{key}' does not exist or is not accessible.");
 
-        // fileKey is deliberately NOT supplied: the bytes go to a fresh random
-        // storage key, never to the caller-supplied address. See the remarks above
-        // — this is what keeps an unauthorized PUT from overwriting content in
-        // place before the pipeline has had a chance to veto it.
+        // The bytes go to a fresh random storage key, never to the caller-supplied
+        // address: UploadFileAsync takes no storage-key parameter, so this is
+        // structural rather than a call-site convention. See the remarks above —
+        // this is what keeps an unauthorized PUT from overwriting content in place
+        // before the pipeline has had a chance to veto it.
         var metadata = await _storage.UploadFileAsync(
             located.Table, located.Column, located.Model,
             recordId: string.Join("-", located.PrimaryKey),

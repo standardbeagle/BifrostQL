@@ -89,12 +89,18 @@ namespace BifrostQL.Core.Storage
         /// Closing that gap fully would require switching the resolver's "file"
         /// argument to a stream/Content-Length-gated upload path.
         /// </remarks>
-        /// <param name="fileKey">
-        /// Explicit storage key to write to. Supplied by callers that own a
-        /// deterministic key/row mapping (see <see cref="S3ObjectKeyMap"/>), where a
-        /// random key would make the object unaddressable. Defaults to the
-        /// timestamp/random key from <see cref="FileMetadata.GenerateFileKey"/>.
-        /// </param>
+        /// <remarks>
+        /// The storage key is always a fresh, non-deterministic
+        /// <see cref="FileMetadata.GenerateFileKey"/> and is deliberately NOT
+        /// caller-supplied. A caller that owns a deterministic address/row mapping
+        /// (see <see cref="S3ObjectKeyMap"/>) must keep that address in the row's
+        /// file pointer and let the bytes land on a fresh key: writing at the
+        /// address overwrites the row's current content in place, before the
+        /// mutation pipeline has authorized the write, so a denied write both
+        /// destroys the victim's content and orphans the pointer. There is no
+        /// parameter to reintroduce this — see the "address is not a storage key"
+        /// rule in Storage/README.md.
+        /// </remarks>
         /// <param name="customMetadata">Caller-supplied metadata persisted alongside the file pointer.</param>
         public async Task<FileMetadata> UploadFileAsync(
             IDbTable table,
@@ -104,7 +110,6 @@ namespace BifrostQL.Core.Storage
             byte[] content,
             string? originalFileName = null,
             string? contentType = null,
-            string? fileKey = null,
             IReadOnlyDictionary<string, string>? customMetadata = null,
             CancellationToken cancellationToken = default)
         {
@@ -136,8 +141,7 @@ namespace BifrostQL.Core.Storage
             ValidateMimeType(columnConfig?.AcceptMimeTypes, contentType, "column");
 
             var provider = _providerFactory.GetProvider(bucketConfig);
-            var effectiveFileKey = fileKey
-                ?? FileMetadata.GenerateFileKey(table.DbName, column.ColumnName, recordId, originalFileName);
+            var effectiveFileKey = FileMetadata.GenerateFileKey(table.DbName, column.ColumnName, recordId, originalFileName);
 
             // Upload to storage
             var accessUrl = await provider.UploadAsync(bucketConfig, effectiveFileKey, content, contentType, cancellationToken);

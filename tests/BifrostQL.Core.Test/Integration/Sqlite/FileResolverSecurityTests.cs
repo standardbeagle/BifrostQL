@@ -1,5 +1,6 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
+using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
 using BifrostQL.Core.Storage;
@@ -36,6 +37,7 @@ public sealed class FileResolverSecurityTests : IAsyncLifetime
     private static readonly string[] Rules =
     {
         "*.documents { tenant-filter: tenant_id; soft-delete: deleted_at }",
+        "*.attachments { tenant-filter: tenant_id; soft-delete: deleted_at }",
     };
 
     public async Task InitializeAsync()
@@ -59,6 +61,27 @@ public sealed class FileResolverSecurityTests : IAsyncLifetime
             INSERT INTO documents(id, tenant_id, deleted_at, file_data) VALUES
                 (1, 1, NULL, NULL),
                 (2, 2, NULL, NULL)
+            """);
+
+        // A composite-key file-bearing table. Every seam test before this one
+        // addressed a single-key table with id=1, which is exactly why a guard
+        // that read a PK value as a row count could hide.
+        await Exec(
+            """
+            CREATE TABLE attachments (
+                doc_id INTEGER NOT NULL,
+                part_id INTEGER NOT NULL,
+                tenant_id INTEGER NOT NULL,
+                deleted_at TEXT NULL,
+                file_data TEXT NULL,
+                PRIMARY KEY (doc_id, part_id)
+            )
+            """);
+        await Exec(
+            """
+            INSERT INTO attachments(doc_id, part_id, tenant_id, deleted_at, file_data) VALUES
+                (10, 2, 1, NULL, NULL),
+                (10, 3, 2, NULL, NULL)
             """);
 
         _bucketDir = Path.Combine(Path.GetTempPath(), "bifrost-file-security-" + Guid.NewGuid().ToString("N"));
@@ -461,6 +484,8 @@ public sealed class FileResolverSecurityTests : IAsyncLifetime
             var model = await new DbModelLoader(factory, new MetadataLoader(Rules)).LoadAsync();
             model.GetTableFromDbName("documents").ColumnLookup["file_data"]
                 .Metadata[MetadataKeys.Storage.Config] = $"bucket:{_bucketDir};provider:local";
+            model.GetTableFromDbName("attachments").ColumnLookup["file_data"]
+                .Metadata[MetadataKeys.Storage.Config] = $"bucket:{_bucketDir};provider:local";
             return new Inputs(new Dictionary<string, object?>
             {
                 ["model"] = model,
@@ -529,7 +554,34 @@ public sealed class FileResolverSecurityTests : IAsyncLifetime
             });
     }
 
+    /// <summary>
+    /// Scopes every update away without vetoing it: the pipeline ANDs this
+    /// filter onto the WHERE clause, so the write is authorized but matches zero
+    /// rows — the tenant/policy-scoped-away case (row reassigned, soft-deleted or
+    /// out-of-tenant between the read and the write). Distinct from
+    /// <see cref="VetoMutationTransformer"/>, which raises an error instead.
+    /// </summary>
+    private sealed class ScopeAwayMutationTransformer : IMutationTransformer
+    {
+        public int Priority => 500;
+
+        public bool AppliesTo(IDbTable table, MutationType mutationType, MutationTransformContext context) =>
+            mutationType == MutationType.Update;
+
+        public ValueTask<MutationTransformResult> TransformAsync(
+            IDbTable table, MutationType mutationType, Dictionary<string, object?> data,
+            MutationTransformContext context) =>
+            ValueTask.FromResult(new MutationTransformResult
+            {
+                MutationType = mutationType,
+                Data = data,
+                AdditionalFilter = TableFilterFactory.Equals(table.DbName, "tenant_id", -1),
+            });
+    }
+
     private static string KeyFor(long id) => $"file_data/{id}";
+
+    private static string CompositeKeyFor(long docId, long partId) => $"file_data/{docId}/{partId}";
 
     // ---- reads --------------------------------------------------------------
 
@@ -703,9 +755,14 @@ public sealed class FileResolverSecurityTests : IAsyncLifetime
         put.ETag.Should().Be(System.Convert.ToHexString(System.Security.Cryptography.MD5.HashData(content)).ToLowerInvariant(),
             "the S3 ETag of a single-part object is the MD5 of its content");
 
-        // The blob lands at the deterministic key derived from the row identity,
-        // so a subsequent PUT to the same row overwrites rather than orphaning.
-        File.Exists(Path.Combine(_bucketDir, KeyFor(1))).Should().BeTrue();
+        // The DETERMINISTIC part of the contract is the S3 address: the same
+        // bucket/key resolves back to this object. The underlying STORAGE key is
+        // deliberately NOT the address (see FileObjectSeam.PutAsync) — writing the
+        // address in place would make every PUT destructive before the pipeline
+        // has authorized it.
+        File.Exists(Path.Combine(_bucketDir, KeyFor(1))).Should().BeFalse(
+            "the storage key must not be the caller-supplied address; an in-place write is unauthorized-destructive");
+        CountFilesInBucket().Should().Be(1);
 
         var resolved = await seam.ResolveAsync("documents", KeyFor(1), Tenant(1));
         resolved!.ETag.Should().Be(put.ETag, "the ETag must be persisted on the row, not recomputed per read");
@@ -713,14 +770,17 @@ public sealed class FileResolverSecurityTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Seam_Put_Twice_OverwritesInPlace_LeavingNoOrphan()
+    public async Task Seam_Put_Twice_SupersedesTheOldBlob_LeavingNoOrphan()
     {
         var (seam, _) = await BuildSeamAsync();
 
         await seam.PutAsync("documents", KeyFor(1), new byte[] { 1 }, "text/plain", null, Tenant(1));
         await seam.PutAsync("documents", KeyFor(1), new byte[] { 2, 2 }, "text/plain", null, Tenant(1));
 
-        CountFilesInBucket().Should().Be(1, "a deterministic key makes a re-put an in-place overwrite");
+        // The second PUT writes a fresh storage key (so a veto could never have
+        // destroyed the first), then reclaims the superseded blob once the new
+        // pointer has committed. No orphan accumulates either way.
+        CountFilesInBucket().Should().Be(1, "the superseded blob is reclaimed after the new pointer commits");
         var resolved = await seam.ResolveAsync("documents", KeyFor(1), Tenant(1));
         resolved!.ContentLength.Should().Be(2);
     }
@@ -764,6 +824,112 @@ public sealed class FileResolverSecurityTests : IAsyncLifetime
         await act.Should().ThrowAsync<BifrostExecutionError>();
         CountFilesInBucket().Should().Be(0, "a failed row mutation must roll the uploaded blob back");
         GetFileDataColumn(1).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Seam_Put_VetoedOverAnExistingObject_LeavesTheOriginalContentIntact()
+    {
+        // The blocker this pins: PutAsync gated only on READ visibility before
+        // uploading, and the object key was the storage key, so a caller who could
+        // SEE the row but whose WRITE the pipeline vetoes overwrote the victim's
+        // blob in place — and the compensating delete then removed it, orphaning
+        // the row's pointer. An unauthorized caller destroyed content.
+        var (seed, _) = await BuildSeamAsync();
+        var original = System.Text.Encoding.UTF8.GetBytes("important");
+        await seed.PutAsync("documents", KeyFor(1), original, "text/plain", null, Tenant(1));
+        var pointerBefore = GetFileDataColumn(1);
+
+        var (seam, _) = await BuildSeamAsync(
+            extraMutationTransformers: new IMutationTransformer[] { new VetoMutationTransformer() });
+
+        var act = async () => await seam.PutAsync(
+            "documents", KeyFor(1), System.Text.Encoding.UTF8.GetBytes("junk"), "text/plain", null, Tenant(1));
+
+        await act.Should().ThrowAsync<BifrostExecutionError>();
+
+        GetFileDataColumn(1).Should().Be(pointerBefore, "a denied write must not repoint the row");
+        var resolved = await seam.ResolveAsync("documents", KeyFor(1), Tenant(1));
+        resolved.Should().NotBeNull("a denied write must not orphan the row's pointer");
+        (await seam.GetContentAsync(resolved!)).Should().Equal(
+            original, "a denied write must not destroy the content it was denied permission to replace");
+        CountFilesInBucket().Should().Be(1, "the rejected upload must be rolled back, leaving only the original");
+    }
+
+    [Fact]
+    public async Task Seam_Put_ScopedAwayRow_IsNotReportedAsSuccess_AndStrandsNoBlob()
+    {
+        // Authorized, but the pipeline's AdditionalFilter narrows the write to
+        // zero rows (out-of-tenant / reassigned / soft-deleted between read and
+        // write). The TOCTOU guard must SEE that; reading the returned PK value as
+        // a row count made it inert for every nonzero single-column key.
+        var (seam, _) = await BuildSeamAsync(
+            extraMutationTransformers: new IMutationTransformer[] { new ScopeAwayMutationTransformer() });
+
+        var act = async () => await seam.PutAsync(
+            "documents", KeyFor(1), new byte[] { 1, 2, 3 }, "text/plain", null, Tenant(1));
+
+        await act.Should().ThrowAsync<BifrostExecutionError>(
+            "a write that matched zero rows must not be reported as success");
+        GetFileDataColumn(1).Should().BeNull("the scoped-away write changed no row");
+        CountFilesInBucket().Should().Be(0, "a write that changed no row must not strand its blob");
+    }
+
+    [Fact]
+    public async Task Seam_Put_RowWhosePrimaryKeyIsZero_Succeeds()
+    {
+        // PK value 0 is a real row, not a zero-affected-rows signal. A guard that
+        // conflates the two rejects a legitimate write and then destructively
+        // compensates for it.
+        await Exec("INSERT INTO documents(id, tenant_id, deleted_at, file_data) VALUES (0, 1, NULL, NULL)");
+        var (seam, _) = await BuildSeamAsync();
+
+        var put = await seam.PutAsync("documents", KeyFor(0), new byte[] { 7 }, "text/plain", null, Tenant(1));
+
+        put.ContentLength.Should().Be(1);
+        GetFileDataColumn(0).Should().NotBeNull("the row with key 0 must actually be repointed");
+        var resolved = await seam.ResolveAsync("documents", KeyFor(0), Tenant(1));
+        resolved.Should().NotBeNull();
+        (await seam.GetContentAsync(resolved!)).Should().Equal(new byte[] { 7 });
+    }
+
+    // ---- writes: composite keys ---------------------------------------------
+
+    [Fact]
+    public async Task Seam_Put_CompositeKeyRow_RoundTripsThroughTheAddress()
+    {
+        var (seam, _) = await BuildSeamAsync();
+        var content = System.Text.Encoding.UTF8.GetBytes("composite");
+
+        var put = await seam.PutAsync(
+            "attachments", CompositeKeyFor(10, 2), content, "text/plain", null, Tenant(1));
+
+        put.ContentLength.Should().Be(9);
+        var resolved = await seam.ResolveAsync("attachments", CompositeKeyFor(10, 2), Tenant(1));
+        resolved.Should().NotBeNull("the full composite key addresses the row — never a first-column guess");
+        (await seam.GetContentAsync(resolved!)).Should().Equal(content);
+    }
+
+    [Fact]
+    public async Task Seam_Put_CompositeKeyRow_ScopedAway_IsNotReportedAsSuccess_AndStrandsNoBlob()
+    {
+        var (seam, _) = await BuildSeamAsync(
+            extraMutationTransformers: new IMutationTransformer[] { new ScopeAwayMutationTransformer() });
+
+        var act = async () => await seam.PutAsync(
+            "attachments", CompositeKeyFor(10, 2), new byte[] { 1 }, "text/plain", null, Tenant(1));
+
+        await act.Should().ThrowAsync<BifrostExecutionError>();
+        CountFilesInBucket().Should().Be(0, "a write that changed no row must not strand its blob");
+    }
+
+    [Fact]
+    public async Task Seam_Resolve_CompositeKeyRow_CrossTenant_FailsBeforeAnyStorageAccess()
+    {
+        var (seam, _) = await BuildSeamAsync(storageProvider: new ExplodingStorageProvider());
+
+        var resolved = await seam.ResolveAsync("attachments", CompositeKeyFor(10, 3), Tenant(1));
+
+        resolved.Should().BeNull("row (10,3) belongs to tenant 2 — the read gate denies it before storage is touched");
     }
 
     [Fact]

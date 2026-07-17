@@ -332,7 +332,27 @@ public sealed class FileObjectSeam
             return false;
 
         await UpdatePointerAsync(located, null, cancellationToken);
-        await _storage.DeleteFileAsync(located.Table, located.Column, located.Model, located.Metadata, cancellationToken);
+
+        // The pointer is now cleared (committed). A failing blob delete leaves an
+        // orphaned object no row references any more — real residue an operator must
+        // reclaim. Surface it as the dedicated residue type carrying the storage key,
+        // so the wire logs it at Error/Warning (never Debug) and, since the type
+        // derives from BifrostExecutionError, the connection handler still catches it
+        // (invariant 1). It is NOT a denial and must not be swallowed silently.
+        try
+        {
+            await _storage.DeleteFileAsync(located.Table, located.Column, located.Model, located.Metadata, cancellationToken);
+        }
+        catch (Exception blobFailure) when (blobFailure is not OperationCanceledException)
+        {
+            throw new FileObjectResidueException(
+                located.Metadata.FileKey,
+                $"The file pointer for '{located.Table.DbName}.{located.Column.ColumnName}' was cleared, but the " +
+                $"backing object at storage key '{located.Metadata.FileKey}' could not be deleted: it is now " +
+                "unreferenced residue and must be reclaimed manually.",
+                blobFailure);
+        }
+
         return true;
     }
 
@@ -396,6 +416,13 @@ public sealed class FileObjectSeam
         if (string.IsNullOrWhiteSpace(pointer))
             return new LocatedObject(true, model, table, address.Column, address.PrimaryKey, null, userContext);
 
+        // An unparseable pointer stays a plain BifrostExecutionError → NoSuchKey.
+        // Surfacing it differently (e.g. 500) would let a caller distinguish a
+        // file-holding cell from a non-file cell on a database-default-bucket
+        // deployment (every column is then addressable), i.e. an enumeration oracle.
+        // The one post-authorization failure the wire DOES respond to differently is
+        // residue (FileObjectResidueException), which leaks nothing because it only
+        // arises on the caller's own already-authorized write.
         var metadata = FileMetadata.FromJson(pointer)
             ?? throw new BifrostExecutionError(
                 $"File metadata for '{table.DbName}.{address.Column.ColumnName}' is not parseable; " +
@@ -495,13 +522,19 @@ public sealed class FileObjectSeam
         }
         catch (Exception rollbackFailure)
         {
-            // This message embeds the storage key deliberately: the operator who
-            // must reclaim the orphan needs it, and BifrostExecutionError is
-            // Core-internal. It is NOT safe to forward verbatim onto a client
-            // wire — an adapter mapping this onto a protocol response must emit a
-            // generic sanitized message and log the detail server-side only
+            // This is a post-authorization internal failure that LEFT residue, so it
+            // is raised as the dedicated residue type carrying the storage key — NOT a
+            // bare BifrostExecutionError, which the wire cannot tell apart from a
+            // denial. That distinction is what lets the wire answer 500 and log the
+            // orphan at Error rather than fold it into a Debug-swallowed NoSuchKey.
+            //
+            // The message embeds the storage key deliberately: the operator who must
+            // reclaim the orphan needs it. It is NOT safe to forward verbatim onto a
+            // client wire — an adapter mapping this onto a protocol response must emit
+            // a generic sanitized message and log the detail server-side only
             // (invariant 3, .claude/rules/protocol-adapter-security.md).
-            throw new BifrostExecutionError(
+            throw new FileObjectResidueException(
+                metadata.FileKey,
                 $"Writing the file pointer for '{located.Table.DbName}.{located.Column.ColumnName}' failed, and " +
                 $"rolling the uploaded object back failed too: an orphaned object remains at storage key " +
                 $"'{metadata.FileKey}' and must be reclaimed manually.",

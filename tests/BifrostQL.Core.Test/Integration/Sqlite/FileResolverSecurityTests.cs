@@ -536,6 +536,22 @@ public sealed class FileResolverSecurityTests : IAsyncLifetime
         public Task<string> GetPresignedUrlAsync(StorageBucketConfig c, string k, int e = 15, bool u = false) => throw Boom();
     }
 
+    /// <summary>
+    /// A real local provider for reads/uploads, but every delete throws — the
+    /// injection point that forces the post-commit residue path (a compensating
+    /// rollback or a post-clear blob delete that fails, leaving an orphaned object).
+    /// </summary>
+    private sealed class DeleteFailingStorageProvider : IStorageProvider
+    {
+        private readonly LocalStorageProvider _inner = new();
+        public string ProviderType => "local";
+        public Task<string> UploadAsync(StorageBucketConfig c, string k, byte[] b, string? t = null, CancellationToken ct = default) => _inner.UploadAsync(c, k, b, t, ct);
+        public Task<byte[]> DownloadAsync(StorageBucketConfig c, string k, CancellationToken ct = default) => _inner.DownloadAsync(c, k, ct);
+        public Task DeleteAsync(StorageBucketConfig c, string k, CancellationToken ct = default) => throw new InvalidOperationException("simulated storage delete failure");
+        public Task<bool> ExistsAsync(StorageBucketConfig c, string k, CancellationToken ct = default) => _inner.ExistsAsync(c, k, ct);
+        public Task<string> GetPresignedUrlAsync(StorageBucketConfig c, string k, int e = 15, bool u = false) => _inner.GetPresignedUrlAsync(c, k, e, u);
+    }
+
     /// <summary>Vetoes every write, standing in for any transformer that denies a mutation.</summary>
     private sealed class VetoMutationTransformer : IMutationTransformer
     {
@@ -824,6 +840,45 @@ public sealed class FileResolverSecurityTests : IAsyncLifetime
         await act.Should().ThrowAsync<BifrostExecutionError>();
         CountFilesInBucket().Should().Be(0, "a failed row mutation must roll the uploaded blob back");
         GetFileDataColumn(1).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Seam_Put_CompensationDoubleFault_RaisesResidueWithTheOrphanedStorageKey()
+    {
+        // Blob uploaded, pointer write vetoed, THEN the compensating rollback delete
+        // fails too: the just-uploaded object is orphaned residue. The seam must raise
+        // the dedicated residue type carrying the storage key — NOT a bare
+        // BifrostExecutionError a wire mapper cannot tell apart from a denial — so the
+        // orphan surfaces at Error with its key rather than a Debug-swallowed NoSuchKey.
+        var (seam, _) = await BuildSeamAsync(
+            extraMutationTransformers: new IMutationTransformer[] { new VetoMutationTransformer() },
+            storageProvider: new DeleteFailingStorageProvider());
+
+        var act = async () => await seam.PutAsync(
+            "documents", KeyFor(1), new byte[] { 1, 2, 3 }, "text/plain", null, Tenant(1));
+
+        var residue = (await act.Should().ThrowAsync<FileObjectResidueException>()).Which;
+        residue.StorageKey.Should().NotBeNullOrEmpty(
+            "the orphaned blob's storage key must be surfaced so an operator can reclaim it");
+        CountFilesInBucket().Should().Be(1, "the failed rollback leaves the uploaded blob behind as residue");
+    }
+
+    [Fact]
+    public async Task Seam_Delete_BlobDeleteFailsAfterPointerCleared_RaisesResidueButStillClearsThePointer()
+    {
+        // The pointer is cleared through the pipeline (committed), then the backing
+        // blob delete fails. That residue is real: the seam raises the residue type so
+        // it is heard, and the pointer stays cleared — the worst case is an
+        // unreferenced blob a sweeper can reclaim, never a row advertising gone content.
+        var (seed, _) = await BuildSeamAsync();
+        await seed.PutAsync("documents", KeyFor(1), new byte[] { 9 }, "text/plain", null, Tenant(1));
+
+        var (seam, _) = await BuildSeamAsync(storageProvider: new DeleteFailingStorageProvider());
+        var act = async () => await seam.DeleteAsync("documents", KeyFor(1), Tenant(1));
+
+        var residue = (await act.Should().ThrowAsync<FileObjectResidueException>()).Which;
+        residue.StorageKey.Should().NotBeNullOrEmpty();
+        GetFileDataColumn(1).Should().BeNull("the pointer is cleared even though the blob delete failed");
     }
 
     [Fact]

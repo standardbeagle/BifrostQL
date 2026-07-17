@@ -87,8 +87,12 @@ namespace BifrostQL.Server.Test.S3
         /// needs a real storage backing (GetObject) supplies a <see cref="FileStorageService"/>
         /// bound to a temp directory; the read-only list/routing tests can omit it.
         /// </summary>
-        public FileObjectSeam Seam(FileStorageService? storage = null, S3Options? options = null)
-            => new(Reads, Writes, storage, new FileObjectSeamOptions { Endpoint = (options ?? new S3Options()).Endpoint ?? EndpointPath });
+        public FileObjectSeam Seam(FileStorageService? storage = null, S3Options? options = null, bool enableWrites = false)
+            => new(Reads, Writes, storage, new FileObjectSeamOptions
+            {
+                Endpoint = (options ?? new S3Options()).Endpoint ?? EndpointPath,
+                EnableWrites = enableWrites,
+            });
 
         public async ValueTask DisposeAsync()
         {

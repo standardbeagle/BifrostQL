@@ -52,9 +52,9 @@ namespace BifrostQL.Server.Test.S3
         [Fact]
         public async Task Authenticated_write_request_returns_not_implemented_501()
         {
-            // GetObject/HeadObject are implemented; a write method (the remaining data
-            // path) is still a clean, authenticated 501. The object seam is never
-            // reached for an unimplemented method.
+            // Writes are opt-in (S3Options.EnableWrites, default off). With the default
+            // options a PUT is a clean, authenticated 501 and the write gate short-circuits
+            // before the seam is ever reached — a disabled surface builds no intent.
             var (middleware, nextCalled) = Build();
             var ctx = S3TestSigner.BuildHeaderSigned(method: "PUT", signTime: SignTime);
 

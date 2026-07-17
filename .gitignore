@@ -373,7 +373,7 @@ FodyWeavers.xsd
 # Claude Code — ignore local settings/session state, but track shared steering rules + skills
 .claude/*
 !.claude/rules/
-!.claude/skills/
+!.claude/skills
 
 # DartAI loop runtime state
 .dartai/

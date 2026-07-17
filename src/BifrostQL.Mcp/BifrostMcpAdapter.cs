@@ -1,8 +1,12 @@
+using System.Runtime.CompilerServices;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Server;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol.Server;
+
+[assembly: InternalsVisibleTo("BifrostQL.Mcp.Test")]
 
 namespace BifrostQL.Mcp
 {
@@ -16,13 +20,18 @@ namespace BifrostQL.Mcp
     /// per-request principal: the caller is whoever launched the process, so the
     /// session's effective identity is scoped to the endpoint's connection string
     /// and every request executes with an <b>empty user context</b> — there is no
-    /// tenant id, user id, or role projection. The schema tools this adapter
-    /// exposes only read the cached <see cref="Core.Model.IDbModel"/> (metadata,
-    /// never rows), which requires no tenant. Any future row-reading tool executes
-    /// through <see cref="IQueryIntentExecutor"/>, where a tenant-filtered table
-    /// combined with this empty context fails closed ("Tenant context required")
-    /// exactly like an unauthenticated GraphQL request — never an anonymous
-    /// pass-through.</para>
+    /// tenant id, user id, or role projection. That empty context is produced by
+    /// the SAME shared <see cref="IBifrostAuthContextFactory"/> every other
+    /// transport gate uses (fail-closed), never by bespoke claim parsing here:
+    /// a stdio session has no authenticated principal, so the factory projects an
+    /// empty context. The schema tools this adapter exposes only read the cached
+    /// <see cref="Core.Model.IDbModel"/> (metadata, never rows), which requires no
+    /// tenant. Row-reading tools execute through <see cref="IQueryIntentExecutor"/>,
+    /// where a tenant-filtered table combined with this empty context fails closed
+    /// ("Tenant context required") exactly like an unauthenticated GraphQL request
+    /// — never an anonymous pass-through. The provider is invoked per tool call
+    /// (not captured once), leaving the re-resolution seam a later slice needs to
+    /// attach a per-session principal to the carrier.</para>
     ///
     /// <para>The MCP surface itself is built by
     /// <see cref="BifrostMcpServerFactory.CreateServerOptions"/>; this class owns
@@ -31,16 +40,37 @@ namespace BifrostQL.Mcp
     public sealed class BifrostMcpAdapter : IProtocolAdapter
     {
         private readonly IQueryIntentExecutor _executor;
+        private readonly IBifrostAuthContextFactory _authContextFactory;
+        private readonly IServiceProvider _services;
         private readonly ILoggerFactory _loggerFactory;
         private readonly CancellationTokenSource _stopping = new();
         private McpServer? _server;
         private Task? _runTask;
 
-        public BifrostMcpAdapter(IQueryIntentExecutor executor, ILoggerFactory? loggerFactory = null)
+        public BifrostMcpAdapter(
+            IQueryIntentExecutor executor,
+            IBifrostAuthContextFactory authContextFactory,
+            IServiceProvider services,
+            ILoggerFactory? loggerFactory = null)
         {
             _executor = executor ?? throw new ArgumentNullException(nameof(executor));
+            _authContextFactory = authContextFactory ?? throw new ArgumentNullException(nameof(authContextFactory));
+            _services = services ?? throw new ArgumentNullException(nameof(services));
             _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
         }
+
+        /// <summary>
+        /// Builds the per-call user-context provider from the shared
+        /// <see cref="IBifrostAuthContextFactory"/>. Identity is sourced ONLY through the
+        /// factory — this adapter parses no claims of its own. A stdio session carries no
+        /// authenticated principal, so the factory projects an empty (fail-closed) context;
+        /// the provider is re-invoked on every tool call so a later slice can attach a
+        /// per-session principal to the carrier and have identity re-resolved each call.
+        /// </summary>
+        internal static Func<IDictionary<string, object?>> CreateUserContextProvider(
+            IBifrostAuthContextFactory authContextFactory, IServiceProvider services)
+            => () => authContextFactory.CreateUserContext(
+                new DefaultHttpContext { RequestServices = services });
 
         public Task StartAsync(CancellationToken cancellationToken)
         {
@@ -51,7 +81,9 @@ namespace BifrostQL.Mcp
             // session; once RunAsync starts, only StopAsync (via _stopping) ends it.
             cancellationToken.ThrowIfCancellationRequested();
 
-            var options = BifrostMcpServerFactory.CreateServerOptions(_executor);
+            var options = BifrostMcpServerFactory.CreateServerOptions(
+                _executor,
+                userContextProvider: CreateUserContextProvider(_authContextFactory, _services));
             var transport = new StdioServerTransport(BifrostMcpServerFactory.ServerName, _loggerFactory);
             _server = McpServer.Create(transport, options, _loggerFactory, serviceProvider: null);
 

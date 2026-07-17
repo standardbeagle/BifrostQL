@@ -93,8 +93,10 @@ namespace BifrostQL.Server.Resp
     /// fabricates rows the pipeline's required columns/defaults were not asked to supply. The primary
     /// key comes from the KEY, not the JSON body: a PK column present in the JSON must equal the key
     /// value (a conflict is a clean <c>-ERR</c>) and is not treated as a SET column. The JSON must set
-    /// at least one non-PK column. Reply is always <c>+OK</c> (Redis SET's fire-and-forget status; a
-    /// no-op update still replies OK, exactly as Redis SET does not report prior existence).
+    /// at least one non-PK column. Reply is <c>+OK</c> when the row was actually updated, and RESP nil
+    /// when the write affected ZERO rows — the addressed row is missing OR narrowed out of the caller's
+    /// tenant/policy scope by the pipeline, the two indistinguishable exactly as GET reports a hidden
+    /// row (so a scoped-away write never leaks another tenant's row existence, and never lies with +OK).
     /// </summary>
     internal sealed class RespSetCommandHandler : RespWriteCommandHandler
     {
@@ -120,9 +122,12 @@ namespace BifrostQL.Server.Resp
             if (data.Count == 0)
                 return RespValue.Err($"{RespProtocol.ErrPrefix}SET requires at least one non-primary-key column value");
 
-            await executor.ExecuteAsync(
+            var result = await executor.ExecuteAsync(
                 RespWriteEngine.UpdateIntent(key, data, context.Session.UserContext, context.Endpoint), cancellationToken);
-            return RespValue.Simple(RespProtocol.Ok);
+
+            // Reply from the REAL affected-row count, never the intent's Value (which is the primary KEY
+            // on a single-key table). A zero-affected write — missing row OR scoped away — replies nil.
+            return RespWriteEngine.WroteRow(result) ? RespValue.Simple(RespProtocol.Ok) : RespValue.NullBulk;
         }
     }
 
@@ -133,8 +138,10 @@ namespace BifrostQL.Server.Resp
     /// column → clean <c>-ERR</c>, never executed); a primary-key column cannot be set through HSET (the
     /// PK comes from the key) and is refused. Values arrive as wire strings and bind as mutation
     /// parameters (the pipeline coerces to the column's type). Reply is the integer count of fields
-    /// written (the number of field/value pairs supplied) — for the row model this is what "fields set"
-    /// means, distinct from Redis' "new fields" count since a row's columns pre-exist.
+    /// written (the number of field/value pairs supplied) when the row was actually updated, and <c>0</c>
+    /// when the write affected ZERO rows — the addressed row is missing OR narrowed out of the caller's
+    /// tenant/policy scope, the two indistinguishable so a scoped-away write neither leaks a hidden row's
+    /// existence nor reports a phantom field count.
     /// </summary>
     internal sealed class RespHSetCommandHandler : RespWriteCommandHandler
     {
@@ -161,9 +168,12 @@ namespace BifrostQL.Server.Resp
                 fields[column.GraphQlName] = context.Arguments[i + 1];
             }
 
-            await executor.ExecuteAsync(
+            var result = await executor.ExecuteAsync(
                 RespWriteEngine.UpdateIntent(key, fields, context.Session.UserContext, context.Endpoint), cancellationToken);
-            return RespValue.Int(fields.Count);
+
+            // Report the fields written only when the update actually affected a row; a zero-affected
+            // write (missing OR scoped away) reports 0, never the supplied field count.
+            return RespValue.Int(RespWriteEngine.WroteRow(result) ? fields.Count : 0);
         }
     }
 
@@ -203,7 +213,7 @@ namespace BifrostQL.Server.Resp
             {
                 var result = await executor.ExecuteAsync(
                     RespWriteEngine.DeleteIntent(key, context.Session.UserContext, context.Endpoint), cancellationToken);
-                deleted += RespWriteEngine.AffectedRows(result);
+                deleted += RespWriteEngine.DeletedRowCount(result);
             }
             return RespValue.Int(deleted);
         }
@@ -354,8 +364,22 @@ namespace BifrostQL.Server.Resp
             return column;
         }
 
-        /// <summary>The affected-row count a delete intent reports (0 when tenant/policy scope made it a no-op).</summary>
-        public static int AffectedRows(MutationIntentResult result) =>
+        /// <summary>
+        /// Whether an UPDATE intent actually changed a row, read from the ONLY trustworthy signal —
+        /// <see cref="MutationIntentResult.AffectedRows"/>. The intent's <see cref="MutationIntentResult.Value"/>
+        /// is the primary KEY on a single-key table (not a count), so reading it as a count is inert for
+        /// every nonzero key and misfires on key value 0. A null <see cref="MutationIntentResult.AffectedRows"/>
+        /// is treated as "did not write" (fail-closed): a write is only reported successful on a positive count.
+        /// </summary>
+        public static bool WroteRow(MutationIntentResult result) => result.AffectedRows is > 0;
+
+        /// <summary>
+        /// The affected-row count a DELETE intent reports (0 when tenant/policy scope made it a no-op).
+        /// For a delete the pipeline puts the affected count in <see cref="MutationIntentResult.Value"/>
+        /// itself (matching the GraphQL delete field) and leaves <c>AffectedRows</c> null — the reverse of
+        /// update, so this reads <c>Value</c> deliberately, not by the mistake update must avoid.
+        /// </summary>
+        public static int DeletedRowCount(MutationIntentResult result) =>
             result.Value is null ? 0 : Convert.ToInt32(result.Value, CultureInfo.InvariantCulture);
 
         private static ColumnDto? FindColumn(IDbTable table, string name) =>

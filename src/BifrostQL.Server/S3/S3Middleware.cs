@@ -321,12 +321,28 @@ namespace BifrostQL.Server.S3
                 resolved = await _seam.PutAsync(
                     bucket, key, content, contentType, customMetadata, userContext, context.RequestAborted);
             }
+            catch (FileObjectResidueException ex)
+            {
+                // Post-authorization internal failure that ORPHANED a blob (the pointer write
+                // failed AND the compensating rollback failed too). The operator must reclaim the
+                // orphan, so log at Error WITH the storage key — never Debug, which is invisible at
+                // production levels. The wire gets a sanitized 500: the seam message embeds the
+                // storage key and is not wire-safe (invariant 3). NoSuchKey is wrong here — it
+                // would misreport a broken server as a missing key.
+                _logger.LogError(
+                    ex, "PutObject left orphaned storage residue at key '{StorageKey}' (request {RequestId}).",
+                    ex.StorageKey, requestId);
+                throw S3ProtocolException.InternalError();
+            }
             catch (Exception ex) when (ex is InvalidOperationException or BifrostExecutionError)
             {
-                // Addressing fault (unknown bucket, wrong key arity, non-file column), a row the
-                // caller cannot see or write (cross-tenant / scoped-away), or a corrupt pointer:
-                // all one non-enumerating 404, and — critically — the pipeline vetoed before the
-                // provider was ever asked to store anything (invariant 8a). Detail logged only.
+                // Denial/unaddressable/corrupt-pointer: an addressing fault (unknown bucket, wrong
+                // key arity, non-file column), a row the caller cannot see or write (cross-tenant /
+                // scoped-away), or an unparseable pointer. One non-enumerating 404 — responding
+                // differently to any of these would weaken non-enumeration — and, critically, the
+                // pipeline vetoed before the provider was ever asked to store anything (invariant
+                // 8a). Detail logged only. (The residue type is caught above; it derives from
+                // BifrostExecutionError, so that catch MUST precede this one.)
                 _logger?.LogDebug(ex, "PutObject denied or unaddressable (request {RequestId}).", requestId);
                 throw S3ProtocolException.NoSuchKey();
             }
@@ -361,11 +377,22 @@ namespace BifrostQL.Server.S3
             {
                 await _seam.DeleteAsync(bucket, key, userContext, context.RequestAborted);
             }
+            catch (FileObjectResidueException ex)
+            {
+                // The pointer was cleared (committed) but the blob delete then failed: the object is
+                // now unreferenced residue an operator must reclaim. DELETE is idempotent, so the
+                // wire still answers 204 — but the orphan is NOT swallowed at Debug: log it at Error
+                // WITH the storage key so it can be found and collected.
+                _logger.LogError(
+                    ex, "DeleteObject left orphaned storage residue at key '{StorageKey}' (request {RequestId}).",
+                    ex.StorageKey, requestId);
+            }
             catch (Exception ex) when (ex is InvalidOperationException or BifrostExecutionError)
             {
-                // Unaddressable, cross-tenant/scoped-away, or best-effort blob-reclaim residue
-                // after the pointer was already cleared: none is a client-facing failure. Delete
-                // is idempotent, so the answer is the same 204 either way; detail logged only.
+                // Unaddressable or cross-tenant/scoped-away denial: not a client-facing failure.
+                // Delete is idempotent, so the answer is the same 204; detail logged only. (The
+                // residue type was caught above; it derives from BifrostExecutionError, so its
+                // catch MUST precede this one.)
                 _logger?.LogDebug(ex, "DeleteObject unaddressable or denied (request {RequestId}).", requestId);
             }
 

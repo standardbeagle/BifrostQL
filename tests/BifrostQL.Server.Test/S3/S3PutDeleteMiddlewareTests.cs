@@ -1,9 +1,11 @@
 using System.Security.Cryptography;
 using System.Xml.Linq;
+using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Storage;
 using BifrostQL.Server.S3;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -298,6 +300,55 @@ namespace BifrostQL.Server.Test.S3
             xml.Element("Code")!.Value.Should().Be("NotImplemented");
         }
 
+        // ---- put/delete: post-authorization residue (orphaned blob) --------------
+
+        [Fact]
+        public async Task Put_compensation_double_fault_is_sanitized_500_and_logs_residue_at_error()
+        {
+            // Blob uploaded, the pointer write is scoped away to zero rows (the pipeline
+            // narrowed it), THEN the compensating rollback delete also fails: the just-uploaded
+            // object is orphaned residue. Unlike a clean denial (NoSuchKey), this is a
+            // post-authorization internal failure that left storage behind — the wire answers a
+            // sanitized 500 (no seam detail on the wire, invariant 3) and the orphan is logged at
+            // Error WITH its storage key, never swallowed at Debug.
+            var log = new CapturingLogger<S3Middleware>();
+            var seam = ResidueSeam(new DeleteFailingProvider(), scopeAwayWrites: true);
+            var ctx = PutA("/assets/data/5", "orphaned"u8.ToArray(), "text/plain");
+            var (status, xml) = await RunErrorWithSeam(ctx, seam, log);
+
+            status.Should().Be(500);
+            xml.Element("Code")!.Value.Should().Be("InternalError");
+            xml.ToString().Should().NotContain("orphan", "the seam's internal residue detail must not reach the wire");
+
+            var error = log.Entries.Should().ContainSingle(e => e.Level == LogLevel.Error).Subject;
+            error.Message.Should().Contain("residue");
+            log.Entries.Should().NotContain(
+                e => e.Level == LogLevel.Debug,
+                "the orphan must be operator-visible at Error, not swallowed at Debug");
+        }
+
+        [Fact]
+        public async Task Delete_when_blob_delete_fails_after_pointer_cleared_is_204_and_logs_residue_at_error()
+        {
+            // The pipeline clears the pointer (committed), then the backing blob delete
+            // fails: the object is now unreferenced residue an operator must reclaim. DELETE
+            // stays idempotent (204), but the orphan is surfaced at Error WITH its storage
+            // key — never swallowed at Debug (the exact regression this rework fixes).
+            var log = new CapturingLogger<S3Middleware>();
+            var (status, ctx) = await RunWith(DeleteA("/assets/data/1"), new DeleteFailingProvider(), log);
+
+            status.Should().Be(204);
+            var error = log.Entries.Should().ContainSingle(e => e.Level == LogLevel.Error).Subject;
+            error.Message.Should().Contain("blobs/existing", "the orphaned storage key must be in the operator log");
+            error.Message.Should().Contain("residue");
+            log.Entries.Should().NotContain(
+                e => e.Level == LogLevel.Debug,
+                "the orphan must be operator-visible at Error, not swallowed at Debug");
+
+            // The pointer really was cleared, even though the blob delete failed.
+            (await RunGet(GetA("/assets/data/1"))).Status.Should().Be(404);
+        }
+
         // ---- delete ---------------------------------------------------------------
 
         [Fact]
@@ -355,7 +406,10 @@ namespace BifrostQL.Server.Test.S3
 
         // ---- harness --------------------------------------------------------------
 
-        private S3Middleware Build(bool enableWrites = true, Action<S3Options>? tweak = null)
+        private S3Middleware Build(
+            bool enableWrites = true, Action<S3Options>? tweak = null,
+            IStorageProvider? storageProvider = null, ILogger<S3Middleware>? logger = null,
+            FileObjectSeam? seamOverride = null)
         {
             var opts = new S3Options
             {
@@ -369,11 +423,49 @@ namespace BifrostQL.Server.Test.S3
                 .Add(KeyA, SecretA, S3TestSigner.Principal("user-a", tenant: "tenant-a"))
                 .Add(KeyB, SecretB, S3TestSigner.Principal("user-b", tenant: "tenant-b"));
             var verifier = new S3SigV4Verifier(keyStore, BifrostAuthContextFactory.Instance, opts, new FixedClock(SignTime));
-            var storage = new FileStorageService(
-                databaseDefaultConfig: new StorageBucketConfig { BucketName = _tempDir, ProviderType = "local" });
-            var seam = _harness.Seam(storage, opts, enableWrites: enableWrites);
+            FileObjectSeam seam;
+            if (seamOverride is not null)
+            {
+                seam = seamOverride;
+            }
+            else
+            {
+                var bucketConfig = new StorageBucketConfig { BucketName = _tempDir, ProviderType = "local" };
+                FileStorageService storage;
+                if (storageProvider is not null)
+                {
+                    var providerFactory = new StorageProviderFactory();
+                    providerFactory.RegisterProvider(storageProvider);
+                    storage = new FileStorageService(providerFactory, bucketConfig);
+                }
+                else
+                {
+                    storage = new FileStorageService(databaseDefaultConfig: bucketConfig);
+                }
+                seam = _harness.Seam(storage, opts, enableWrites: enableWrites);
+            }
             RequestDelegate next = _ => Task.CompletedTask;
-            return new S3Middleware(next, opts, verifier, _harness.Listing(opts), seam, NullLogger<S3Middleware>.Instance);
+            return new S3Middleware(
+                next, opts, verifier, _harness.Listing(opts), seam,
+                logger ?? NullLogger<S3Middleware>.Instance);
+        }
+
+        /// <summary>
+        /// A seam over the real read/write pipeline but with a delete-failing storage provider,
+        /// optionally wrapping writes so every update reports zero affected rows — the injection
+        /// point for the post-authorization residue paths (a compensating rollback or a post-clear
+        /// blob delete that fails, orphaning the just-written/cleared object).
+        /// </summary>
+        private FileObjectSeam ResidueSeam(IStorageProvider provider, bool scopeAwayWrites)
+        {
+            var providerFactory = new StorageProviderFactory();
+            providerFactory.RegisterProvider(provider);
+            var storage = new FileStorageService(
+                providerFactory, new StorageBucketConfig { BucketName = _tempDir, ProviderType = "local" });
+            IMutationIntentExecutor writes = scopeAwayWrites ? new ScopeAwayWrites() : _harness.Writes;
+            return new FileObjectSeam(
+                _harness.Reads, writes, storage,
+                new FileObjectSeamOptions { Endpoint = Endpoint, EnableWrites = true });
         }
 
         private DefaultHttpContext PutA(string path, byte[] body, string? contentType, string? declaredHash = null, string? query = null)
@@ -433,6 +525,24 @@ namespace BifrostQL.Server.Test.S3
             return (ctx.Response.StatusCode, ms.ToArray(), ctx);
         }
 
+        private async Task<(int Status, DefaultHttpContext Ctx)> RunWith(
+            DefaultHttpContext ctx, IStorageProvider provider, ILogger<S3Middleware> logger)
+        {
+            ctx.Response.Body = new MemoryStream();
+            await Build(storageProvider: provider, logger: logger).InvokeAsync(ctx);
+            return (ctx.Response.StatusCode, ctx);
+        }
+
+        private async Task<(int Status, XElement Xml)> RunErrorWithSeam(
+            DefaultHttpContext ctx, FileObjectSeam seam, ILogger<S3Middleware> logger)
+        {
+            ctx.Response.Body = new MemoryStream();
+            await Build(logger: logger, seamOverride: seam).InvokeAsync(ctx);
+            ctx.Response.Body.Seek(0, SeekOrigin.Begin);
+            var body = await new StreamReader(ctx.Response.Body).ReadToEndAsync();
+            return (ctx.Response.StatusCode, XElement.Parse(body));
+        }
+
         private async Task WriteBlob(string fileKey, byte[] content)
         {
             var path = Path.Combine(_tempDir, fileKey.Replace('/', Path.DirectorySeparatorChar));
@@ -458,6 +568,47 @@ namespace BifrostQL.Server.Test.S3
         private sealed class FixedClock(DateTimeOffset now) : TimeProvider
         {
             public override DateTimeOffset GetUtcNow() => now;
+        }
+
+        /// <summary>Real local reads/uploads, but every delete throws — forces the post-clear residue path.</summary>
+        private sealed class DeleteFailingProvider : IStorageProvider
+        {
+            private readonly LocalStorageProvider _inner = new();
+            public string ProviderType => "local";
+            public Task<string> UploadAsync(StorageBucketConfig c, string k, byte[] b, string? t = null, CancellationToken ct = default) => _inner.UploadAsync(c, k, b, t, ct);
+            public Task<byte[]> DownloadAsync(StorageBucketConfig c, string k, CancellationToken ct = default) => _inner.DownloadAsync(c, k, ct);
+            public Task DeleteAsync(StorageBucketConfig c, string k, CancellationToken ct = default) => throw new InvalidOperationException("simulated storage delete failure");
+            public Task<bool> ExistsAsync(StorageBucketConfig c, string k, CancellationToken ct = default) => _inner.ExistsAsync(c, k, ct);
+            public Task<string> GetPresignedUrlAsync(StorageBucketConfig c, string k, int e = 15, bool u = false) => _inner.GetPresignedUrlAsync(c, k, e, u);
+        }
+
+        /// <summary>
+        /// Reports every update as matching zero rows — the pipeline-scoped-away case (row
+        /// reassigned/soft-deleted/out-of-tenant between the seam's read and its write) that the
+        /// seam detects via AffectedRows and turns into a compensating rollback.
+        /// </summary>
+        private sealed class ScopeAwayWrites : IMutationIntentExecutor
+        {
+            public Task<MutationIntentResult> ExecuteAsync(MutationIntent intent, CancellationToken cancellationToken = default)
+                => Task.FromResult(new MutationIntentResult { AffectedRows = 0 });
+            public Task<MutationBatchIntentResult> ExecuteBatchAsync(MutationBatchIntent intent, CancellationToken cancellationToken = default)
+                => Task.FromResult(new MutationBatchIntentResult { TotalAffected = 0 });
+        }
+
+        /// <summary>Captures every log entry so a test can assert the operator-visible level (Error/Warning, not Debug).</summary>
+        private sealed class CapturingLogger<T> : ILogger<T>
+        {
+            public readonly record struct Entry(LogLevel Level, string Message, Exception? Exception);
+
+            public List<Entry> Entries { get; } = new();
+
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+                Func<TState, Exception?, string> formatter)
+                => Entries.Add(new Entry(logLevel, formatter(state, exception), exception));
         }
     }
 }

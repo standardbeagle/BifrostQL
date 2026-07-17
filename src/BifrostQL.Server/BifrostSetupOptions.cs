@@ -220,6 +220,15 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
+        /// Adds a named configuration profile that controls which modules are active.
+        /// </summary>
+        public BifrostSetupOptions AddProfile(BifrostProfile profile)
+        {
+            _profileRegistry.Add(profile);
+            return this;
+        }
+
+        /// <summary>
         /// Enables the opt-in S3-compatible HTTP endpoint (disabled by default). The host must
         /// also register an <see cref="S3.IS3AccessKeyStore"/> and call
         /// <c>UseBifrostS3</c> to mount the middleware. Mirrors the opt-in posture of the other

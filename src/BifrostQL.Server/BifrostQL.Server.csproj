@@ -72,6 +72,10 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="BifrostQL.Server.Test" />
+    <!-- The MCP adapter is a first-party protocol front door: it must catch the
+         shared auth factory's UnmappedOidcIssuerException to fail closed and
+         sanitize it on the MCP wire (protocol-adapter-security invariants 1, 3). -->
+    <InternalsVisibleTo Include="BifrostQL.Mcp" />
   </ItemGroup>
 
   <ItemGroup>

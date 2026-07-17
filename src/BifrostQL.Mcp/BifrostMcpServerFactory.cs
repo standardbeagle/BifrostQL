@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.Server;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -164,10 +165,18 @@ namespace BifrostQL.Mcp
         public static McpServerOptions CreateServerOptions(
             IQueryIntentExecutor executor,
             string? endpoint = null,
-            Func<IDictionary<string, object?>>? userContextProvider = null)
+            Func<IDictionary<string, object?>>? userContextProvider = null,
+            IMutationIntentExecutor? mutationExecutor = null,
+            bool enableWrites = false)
         {
             if (executor is null) throw new ArgumentNullException(nameof(executor));
             var contextProvider = userContextProvider ?? (() => new Dictionary<string, object?>());
+
+            // The write surface is OFF by construction: it only lists (and only
+            // dispatches) the write tools when a deployment has both supplied a
+            // mutation executor AND opted in. A disabled surface builds zero intent
+            // and cannot be probed for behavior (protocol-adapter-security invariant 7).
+            var writesActive = enableWrites && mutationExecutor is not null;
 
             return new McpServerOptions
             {
@@ -191,15 +200,24 @@ namespace BifrostQL.Mcp
                 },
                 Handlers = new McpServerHandlers
                 {
-                    ListToolsHandler = (_, _) => ValueTask.FromResult(new ListToolsResult { Tools = BuildTools() }),
-                    CallToolHandler = (request, ct) => CallToolAsync(executor, endpoint, contextProvider, request.Params, ct),
+                    ListToolsHandler = (_, _) => ValueTask.FromResult(new ListToolsResult { Tools = BuildTools(writesActive) }),
+                    CallToolHandler = (request, ct) => CallToolAsync(
+                        executor, mutationExecutor, writesActive, endpoint, contextProvider, request.Params, ct),
                     ListResourcesHandler = (_, ct) => ListResourcesAsync(executor, endpoint, ct),
                     ReadResourceHandler = (request, ct) => ReadResourceAsync(executor, endpoint, request.Params, ct),
                 },
             };
         }
 
-        private static List<Tool> BuildTools() =>
+        private static List<Tool> BuildTools(bool writesActive)
+        {
+            var tools = BuildReadTools();
+            if (writesActive)
+                tools.AddRange(WriteTools.ToolDefinitions());
+            return tools;
+        }
+
+        private static List<Tool> BuildReadTools() =>
         [
             new Tool
             {
@@ -232,20 +250,27 @@ namespace BifrostQL.Mcp
         ];
 
         private static async ValueTask<CallToolResult> CallToolAsync(
-            IQueryIntentExecutor executor, string? endpoint, Func<IDictionary<string, object?>> userContextProvider,
+            IQueryIntentExecutor executor, IMutationIntentExecutor? mutationExecutor, bool writesActive,
+            string? endpoint, Func<IDictionary<string, object?>> userContextProvider,
             CallToolRequestParams? parameters, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (parameters is null)
                 throw new McpProtocolException("Missing tool call parameters.", McpErrorCode.InvalidParams);
 
-            // Row-reading tools: argument mistakes surface as prompt-style tool
+            // Data tools (read + write): argument mistakes surface as prompt-style tool
             // errors (ToolPromptException), and execution-layer rejections
             // (missing tenant context, policy-denied column, unsupported filter
             // shape) surface the same way — both are actionable by the calling
-            // agent, so neither becomes a protocol fault.
-            if (parameters.Name is DataTools.QueryToolName or DataTools.RowContextToolName
-                or AggregateTools.ToolName or SearchTools.ToolName)
+            // agent, so neither becomes a protocol fault. A token from an OIDC
+            // issuer this deployment has not mapped fails closed on identity
+            // projection; its message names the issuer, so it is SANITIZED to a
+            // generic reason here (protocol-adapter-security invariant 3) — the
+            // read still fails (never an empty/anonymous context), and the specific
+            // issuer is left for server-side logs only.
+            var isReadTool = parameters.Name is DataTools.QueryToolName or DataTools.RowContextToolName
+                or AggregateTools.ToolName or SearchTools.ToolName;
+            if (isReadTool || (writesActive && WriteTools.IsWriteTool(parameters.Name)))
             {
                 try
                 {
@@ -254,9 +279,14 @@ namespace BifrostQL.Mcp
                         DataTools.QueryToolName => await DataTools.ExecuteQueryAsync(executor, endpoint, userContextProvider, parameters, cancellationToken),
                         DataTools.RowContextToolName => await DataTools.ExecuteRowContextAsync(executor, endpoint, userContextProvider, parameters, cancellationToken),
                         AggregateTools.ToolName => await AggregateTools.ExecuteAsync(executor, endpoint, userContextProvider, parameters, cancellationToken),
-                        _ => await SearchTools.ExecuteAsync(executor, endpoint, userContextProvider, parameters, cancellationToken),
+                        SearchTools.ToolName => await SearchTools.ExecuteAsync(executor, endpoint, userContextProvider, parameters, cancellationToken),
+                        _ => await WriteTools.ExecuteAsync(mutationExecutor!, endpoint, userContextProvider, parameters, cancellationToken),
                     };
                     return StructuredResult(payload);
+                }
+                catch (UnmappedOidcIssuerException)
+                {
+                    return ErrorResult("Authentication failed: the presented token could not be resolved to an identity.");
                 }
                 catch (ToolPromptException e)
                 {

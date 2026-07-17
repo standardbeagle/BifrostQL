@@ -58,6 +58,17 @@ namespace BifrostQL.Mcp
         public McpAuthMode Mode { get; set; } = McpAuthMode.FailClosed;
 
         /// <summary>
+        /// Whether the MCP write tools (<c>bifrost_insert</c>, <c>bifrost_update</c>,
+        /// <c>bifrost_delete</c>) are exposed. Defaults to <c>false</c> — the dangerous
+        /// write surface is OFF until a deployment explicitly opts in, mirroring the RESP
+        /// <c>EnableWrites</c> posture. When disabled the write tools are never listed, so
+        /// a disabled surface builds zero intent and cannot be probed; enabling it is a
+        /// posture change the adapter logs as a startup warning. Writes route exclusively
+        /// through <see cref="IMutationIntentExecutor"/> (the full mutation pipeline).
+        /// </summary>
+        public bool EnableWrites { get; set; }
+
+        /// <summary>
         /// The bearer token presented for the session (sourced by the host from its environment/
         /// configuration; a stdio session has one caller). Used only in <see cref="McpAuthMode.Bearer"/>
         /// and only when <see cref="CredentialSource"/> is not set. Null or empty presents no
@@ -153,6 +164,7 @@ namespace BifrostQL.Mcp
     public sealed class BifrostMcpAdapter : IProtocolAdapter
     {
         private readonly IQueryIntentExecutor _executor;
+        private readonly IMutationIntentExecutor? _mutationExecutor;
         private readonly IBifrostAuthContextFactory _authContextFactory;
         private readonly IServiceProvider _services;
         private readonly McpAuthOptions _authOptions;
@@ -167,9 +179,11 @@ namespace BifrostQL.Mcp
             IBifrostAuthContextFactory authContextFactory,
             IServiceProvider services,
             ILoggerFactory? loggerFactory = null,
-            McpAuthOptions? authOptions = null)
+            McpAuthOptions? authOptions = null,
+            IMutationIntentExecutor? mutationExecutor = null)
         {
             _executor = executor ?? throw new ArgumentNullException(nameof(executor));
+            _mutationExecutor = mutationExecutor;
             _authContextFactory = authContextFactory ?? throw new ArgumentNullException(nameof(authContextFactory));
             _services = services ?? throw new ArgumentNullException(nameof(services));
             _authOptions = authOptions ?? new McpAuthOptions();
@@ -290,7 +304,15 @@ namespace BifrostQL.Mcp
                     "an established identity (empty user context). This is a deliberate opt-in; leave the " +
                     "default fail-closed auth mode unless anonymous access is intended.");
 
-            logger.LogInformation("MCP front door ready (auth mode: {Mode}).", authOptions.Mode);
+            if (authOptions.EnableWrites)
+                logger.LogWarning(
+                    "MCP front door started with WRITES ENABLED — the bifrost_insert, bifrost_update, and " +
+                    "bifrost_delete tools are exposed. Writes route through the full mutation pipeline (tenant " +
+                    "scoping, soft-delete, audit); this is a deliberate opt-in, off by default.");
+
+            logger.LogInformation(
+                "MCP front door ready (auth mode: {Mode}, writes: {Writes}).",
+                authOptions.Mode, authOptions.EnableWrites ? "enabled" : "disabled");
         }
 
         public Task StartAsync(CancellationToken cancellationToken)
@@ -304,7 +326,9 @@ namespace BifrostQL.Mcp
 
             var options = BifrostMcpServerFactory.CreateServerOptions(
                 _executor,
-                userContextProvider: ConfigureAuth());
+                userContextProvider: ConfigureAuth(),
+                mutationExecutor: _mutationExecutor,
+                enableWrites: _authOptions.EnableWrites);
             var transport = new StdioServerTransport(BifrostMcpServerFactory.ServerName, _loggerFactory);
             _server = McpServer.Create(transport, options, _loggerFactory, serviceProvider: null);
 

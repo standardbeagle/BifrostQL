@@ -116,6 +116,14 @@ namespace BifrostQL.Server.Test.Resp
         public Task<string?> GetAsync(ClaimsPrincipal principal, string key) =>
             RunAsync(principal, client => RespWire.GetAsync(client, key));
 
+        /// <summary>SET a row through the real mutation pipeline; true when a row was actually updated, false when scoped away.</summary>
+        public Task<bool> SetAsync(ClaimsPrincipal principal, string key, string json) =>
+            RunAsync(principal, client => RespWire.SetAsync(client, key, json));
+
+        /// <summary>HSET named columns through the real mutation pipeline; the count of fields written (0 when scoped away).</summary>
+        public Task<long> HSetAsync(ClaimsPrincipal principal, string key, IReadOnlyDictionary<string, object?> fields) =>
+            RunAsync(principal, client => RespWire.HSetAsync(client, key, fields));
+
         /// <summary>All SQL the pipeline generated for a table (parameter placeholders, never inlined values).</summary>
         public string CapturedSql(string table) => string.Join("\n---\n", _sqlCapture.SqlFor(table));
 

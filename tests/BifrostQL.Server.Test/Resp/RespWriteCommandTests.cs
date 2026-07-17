@@ -82,16 +82,58 @@ namespace BifrostQL.Server.Test.Resp
         }
 
         [Fact]
-        public async Task Set_MissingRow_IsNoOp_StillRepliesOk()
+        public async Task Set_MissingRow_IsZeroAffected_RepliesNil_NotOk()
         {
             // SET is an UPDATE, not an insert: an absent PK is narrowed to zero rows and nothing is
-            // created, but Redis SET's fire-and-forget status is still +OK.
+            // created. A zero-affected write must NOT reply +OK (that would report a phantom success);
+            // it replies RESP nil, indistinguishable from a row hidden by tenant/policy scope.
             var (executor, services, session) = Arrange(Tenant1, enableWrites: true);
             var reply = await new RespSetCommandHandler().HandleAsync(
                 Ctx(services, session, "SET", "users:999", "{\"name\":\"ghost\"}"), CancellationToken.None);
 
-            reply.Should().BeOfType<RespSimpleString>().Which.Value.Should().Be(RespProtocol.Ok);
+            reply.Should().BeOfType<RespBulkString>().Which.Value.Should().BeNull("a zero-affected SET replies nil, not +OK");
             executor.Row("users", 999).Should().BeNull("SET must not insert a missing row");
+        }
+
+        [Fact]
+        public async Task Set_OnAnotherTenantsRow_IsZeroAffected_RepliesNil_IndistinguishableFromMissing()
+        {
+            // Tenant 1 targets users:3 (tenant 2). The pipeline narrows it to zero rows: the reply is the
+            // SAME nil a missing row gets, so a hidden row's existence never leaks over the wire.
+            var (executor, services, session) = Arrange(Tenant1, enableWrites: true);
+            var reply = await new RespSetCommandHandler().HandleAsync(
+                Ctx(services, session, "SET", "users:3", "{\"name\":\"hacked\"}"), CancellationToken.None);
+
+            reply.Should().BeOfType<RespBulkString>().Which.Value.Should().BeNull(
+                "a scoped-away SET must reply nil, never +OK — the update Value is the KEY, not a count");
+            executor.Row("users", 3)!["name"].Should().Be("carol", "an out-of-scope row must be untouched");
+        }
+
+        [Fact]
+        public async Task Set_PkValueZero_RealWrite_RepliesOk()
+        {
+            // The PK value 0 case: a genuine write to users:0 affects one row and must reply +OK. Reading
+            // the intent's Value (== 0, the key) as a count would misfire and report a phantom no-op.
+            var (executor, services, session) = Arrange(Tenant1, enableWrites: true);
+            var reply = await new RespSetCommandHandler().HandleAsync(
+                Ctx(services, session, "SET", "users:0", "{\"name\":\"zero2\"}"), CancellationToken.None);
+
+            reply.Should().BeOfType<RespSimpleString>().Which.Value.Should().Be(RespProtocol.Ok);
+            executor.Row("users", 0)!["name"].Should().Be("zero2");
+        }
+
+        [Fact]
+        public async Task Set_NullAffectedRows_DoesNotReplyOk()
+        {
+            // A result whose AffectedRows is null must NEVER read as success (fail-open guard, invariant 8b):
+            // even with a nonzero Value present, the write reports nil, not +OK.
+            var services = ServicesWithFixedResult(new MutationIntentResult { Value = 1L, AffectedRows = null });
+            var session = AuthedSession(Tenant1);
+            var reply = await new RespSetCommandHandler().HandleAsync(
+                Ctx(services, session, "SET", "users:1", "{\"name\":\"x\"}"), CancellationToken.None);
+
+            reply.Should().BeOfType<RespBulkString>().Which.Value.Should().BeNull(
+                "a null AffectedRows must not be treated as a successful write");
         }
 
         [Fact]
@@ -287,13 +329,38 @@ namespace BifrostQL.Server.Test.Resp
         }
 
         [Fact]
-        public async Task HSet_OnAnotherTenantsRow_WritesNothing()
+        public async Task HSet_OnAnotherTenantsRow_WritesNothing_RepliesZero()
         {
             var (executor, services, session) = Arrange(Tenant1, enableWrites: true);
-            await new RespHSetCommandHandler().HandleAsync(
+            var reply = await new RespHSetCommandHandler().HandleAsync(
                 Ctx(services, session, "HSET", "users:3", "name", "hacked"), CancellationToken.None);
 
+            // A scoped-away HSET wrote no field: it reports 0, indistinguishable from a missing row —
+            // never the supplied field count, which would report a phantom success.
+            reply.Should().BeOfType<RespInteger>().Which.Value.Should().Be(0);
             executor.Row("users", 3)!["name"].Should().Be("carol");
+        }
+
+        [Fact]
+        public async Task HSet_MissingRow_IsZeroAffected_RepliesZero()
+        {
+            var (executor, services, session) = Arrange(Tenant1, enableWrites: true);
+            var reply = await new RespHSetCommandHandler().HandleAsync(
+                Ctx(services, session, "HSET", "users:999", "name", "ghost"), CancellationToken.None);
+
+            reply.Should().BeOfType<RespInteger>().Which.Value.Should().Be(0, "a zero-affected HSET reports 0, not the field count");
+        }
+
+        [Fact]
+        public async Task HSet_NullAffectedRows_RepliesZero()
+        {
+            var services = ServicesWithFixedResult(new MutationIntentResult { Value = 1L, AffectedRows = null });
+            var session = AuthedSession(Tenant1);
+            var reply = await new RespHSetCommandHandler().HandleAsync(
+                Ctx(services, session, "HSET", "users:1", "name", "x"), CancellationToken.None);
+
+            reply.Should().BeOfType<RespInteger>().Which.Value.Should().Be(0,
+                "a null AffectedRows must not be treated as a successful write");
         }
 
         // ---- identity fail-closed over the wire (slice-1 fixture) -----------
@@ -340,6 +407,24 @@ namespace BifrostQL.Server.Test.Resp
 
         private static RespCommandContext Ctx(IServiceProvider services, RespSession session, params string[] arguments) =>
             new(arguments, session, services, null);
+
+        private static RespSession AuthedSession(IDictionary<string, object?> tenant)
+        {
+            var session = new RespSession(1);
+            session.Authenticate(new Dictionary<string, object?>(tenant));
+            return session;
+        }
+
+        /// <summary>Wires a writes-enabled handler pipeline over an executor that returns a fixed result — for pinning the AffectedRows contract directly.</summary>
+        private static IServiceProvider ServicesWithFixedResult(MutationIntentResult result)
+        {
+            var model = BuildModel();
+            return new ServiceCollection()
+                .AddSingleton<IQueryIntentExecutor>(new FakeIntentExecutor(model))
+                .AddSingleton<IMutationIntentExecutor>(new FixedResultMutationExecutor(result))
+                .AddSingleton(new RespWireOptions { EnableWrites = true })
+                .BuildServiceProvider();
+        }
 
         private static IDbModel BuildModel()
         {
@@ -396,6 +481,9 @@ namespace BifrostQL.Server.Test.Resp
             {
                 ["users"] = new()
                 {
+                    // id 0 pins the "PK value 0" fixture case: reading the update intent's Value as a
+                    // count would MISFIRE here (Value == 0 reads as "nothing written" for a real write).
+                    Row(("id", 0), ("name", "zero"), ("tenant_id", 1)),
                     Row(("id", 1), ("name", "alice"), ("tenant_id", 1)),
                     Row(("id", 2), ("name", "bob"), ("tenant_id", 1)),
                     Row(("id", 3), ("name", "carol"), ("tenant_id", 2)),
@@ -434,6 +522,16 @@ namespace BifrostQL.Server.Test.Resp
                     rows.Remove(match);
                 affected = 1;
             }
+
+            // Mirror TableMutationPipeline's real return contract (MutationIntentExecutor):
+            //  - Update: Value is the KEY on a single-key table (NOT a count), the real count is AffectedRows.
+            //  - Delete: Value already IS the affected count; AffectedRows is null.
+            // A fake that returned Value=count for updates would hide the very bug these tests pin.
+            if (intent.Action == MutationIntentAction.Update)
+            {
+                var value = keyColumns.Count == 1 ? intent.PrimaryKey![0] : affected;
+                return Task.FromResult(new MutationIntentResult { Value = value, AffectedRows = affected });
+            }
             return Task.FromResult(new MutationIntentResult { Value = affected });
         }
 
@@ -451,5 +549,24 @@ namespace BifrostQL.Server.Test.Resp
 
         private static Dictionary<string, object?> Row(params (string Column, object? Value)[] cells) =>
             cells.ToDictionary(c => c.Column, c => c.Value, StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// A mutation executor that ignores the intent and returns a preset <see cref="MutationIntentResult"/>.
+    /// Lets a test pin the adapter's reading of the AffectedRows contract itself (e.g. a null AffectedRows
+    /// with a nonzero Value must never read as a successful write).
+    /// </summary>
+    internal sealed class FixedResultMutationExecutor : IMutationIntentExecutor
+    {
+        private readonly MutationIntentResult _result;
+
+        public FixedResultMutationExecutor(MutationIntentResult result) => _result = result;
+
+        public Task<MutationIntentResult> ExecuteAsync(MutationIntent intent, CancellationToken cancellationToken = default) =>
+            Task.FromResult(_result);
+
+        public Task<MutationBatchIntentResult> ExecuteBatchAsync(
+            MutationBatchIntent intent, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 }

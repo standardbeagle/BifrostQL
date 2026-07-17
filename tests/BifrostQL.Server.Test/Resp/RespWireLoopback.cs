@@ -113,6 +113,24 @@ namespace BifrostQL.Server.Test.Resp
             return Text(reply);
         }
 
+        /// <summary>
+        /// SET &lt;key&gt; &lt;json&gt; → <c>true</c> when the row was actually updated (+OK), <c>false</c> when the
+        /// write affected zero rows (a RESP nil — the key is missing OR scoped away by tenant/policy, the two
+        /// indistinguishable exactly as GET reports a hidden row). A <c>-ERR</c> (disabled/denied) throws.
+        /// </summary>
+        public static async Task<bool> SetAsync(RespTestClient client, string key, string json)
+        {
+            await client.SendCommandAsync(RespProtocol.SetCommand, key, json);
+            var reply = await ReadOrThrowAsync(client);
+            return reply switch
+            {
+                RespSimpleString { Value: RespProtocol.Ok } => true,
+                RespBulkString { Value: null } => false,
+                RespNull => false,
+                _ => throw new RespWireException($"SET returned an unexpected reply: {Describe(reply)}"),
+            };
+        }
+
         /// <summary>HSET &lt;key&gt; &lt;field&gt; &lt;value&gt;… → the field count; a <c>-ERR</c> (disabled/denied) throws.</summary>
         public static async Task<long> HSetAsync(
             RespTestClient client, string key, IReadOnlyDictionary<string, object?> fields)

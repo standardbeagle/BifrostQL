@@ -80,7 +80,7 @@ namespace BifrostQL.Core.Storage
         /// Uploads a file and returns the file metadata to store in the database.
         /// </summary>
         /// <remarks>
-        /// Residual limitation: <paramref name="content"/> arrives as a fully
+        /// <para>Residual limitation: <paramref name="content"/> arrives as a fully
         /// materialized <c>byte[]</c> because the GraphQL argument binder
         /// deserializes the whole upload before this method is ever called, so a
         /// large payload is already buffered in memory by the time any size check
@@ -88,19 +88,23 @@ namespace BifrostQL.Core.Storage
         /// storage I/O) to avoid compounding that with a second full copy on top
         /// of an oversized buffer, but it cannot prevent the initial buffering.
         /// Closing that gap fully would require switching the resolver's "file"
-        /// argument to a stream/Content-Length-gated upload path.
-        /// </remarks>
-        /// <remarks>
-        /// The storage key is always a fresh, non-deterministic
-        /// <see cref="FileMetadata.GenerateFileKey"/> and is deliberately NOT
-        /// caller-supplied. A caller that owns a deterministic address/row mapping
-        /// (see <see cref="S3ObjectKeyMap"/>) must keep that address in the row's
-        /// file pointer and let the bytes land on a fresh key: writing at the
-        /// address overwrites the row's current content in place, before the
-        /// mutation pipeline has authorized the write, so a denied write both
-        /// destroys the victim's content and orphans the pointer. There is no
-        /// parameter to reintroduce this — see the "address is not a storage key"
-        /// rule in Storage/README.md.
+        /// argument to a stream/Content-Length-gated upload path.</para>
+        ///
+        /// <para><b>The storage key is never caller-supplied</b> (invariant 8a,
+        /// .claude/rules/protocol-adapter-security.md). It is always a fresh,
+        /// non-deterministic <see cref="FileMetadata.GenerateFileKey"/>, and this
+        /// method exposes no storage-key parameter — the rule is enforced by the
+        /// signature, not by every call site remembering it. A caller that owns a
+        /// deterministic address/row mapping (see <see cref="S3ObjectKeyMap"/>) must
+        /// keep that address in the row's file pointer and let the bytes land on a
+        /// fresh key. Writing at the address would make the upload an in-place
+        /// overwrite of the row's current content, BEFORE the mutation pipeline (the
+        /// actual write gate) has authorized anything, so a caller who can merely SEE
+        /// the row could destroy its content with a write the pipeline then vetoes,
+        /// and the compensating delete would finish the job by orphaning the pointer.
+        /// A fresh key makes the compensating path incapable of touching a
+        /// pre-existing blob — structural, not a matter of call ordering. See the
+        /// "address is not a storage key" rule in Storage/README.md.</para>
         /// </remarks>
         /// <param name="customMetadata">Caller-supplied metadata persisted alongside the file pointer.</param>
         public async Task<FileMetadata> UploadFileAsync(

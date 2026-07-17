@@ -142,14 +142,9 @@ namespace BifrostQL.Core.Resolvers
                 var dialect = conFactory.Dialect;
                 var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
 
-                // Build SELECT statement
-                var keyColumns = table.KeyColumns.ToList();
-                if (keyColumns.Count == 0)
-                    throw new BifrostExecutionError($"Table '{table.DbName}' has no primary key");
-
-                var keyData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-                foreach (var keyCol in keyColumns)
-                    keyData[keyCol.ColumnName] = Convert.ChangeType(recordId, GetClrType(keyCol.DataType));
+                // Decode recordId into one value per key column (composite-key safe;
+                // never the same scalar broadcast across every key column).
+                var keyData = FileRecordKey.BuildKeyData(table, recordId);
 
                 var whereClause = string.Join(" AND ", keyData.Keys.Select(k =>
                     $"{dialect.EscapeIdentifier(k)} = @{k}"));
@@ -180,20 +175,6 @@ namespace BifrostQL.Core.Resolvers
             {
                 throw new BifrostExecutionError($"Failed to retrieve file metadata: {ex.Message}", ex);
             }
-        }
-
-        private static Type GetClrType(string dataType)
-        {
-            var normalized = dataType.ToLowerInvariant();
-            return normalized switch
-            {
-                "int" or "integer" => typeof(int),
-                "bigint" => typeof(long),
-                "smallint" => typeof(short),
-                "tinyint" => typeof(byte),
-                "uniqueidentifier" or "uuid" => typeof(Guid),
-                _ => typeof(string)
-            };
         }
     }
 

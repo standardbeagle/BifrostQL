@@ -8,6 +8,7 @@ using BifrostQL.Server;
 using BifrostQL.Sqlite;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
@@ -614,6 +615,105 @@ namespace BifrostQL.Mcp.Test
             text.Should().Contain("primary key of 2 column(s)")
                 .And.Contain("order_id").And.Contain("seq")
                 .And.Contain("array");
+        }
+
+        // ---- adapter identity seam (slice A) ----------------------------------
+
+        /// <summary>
+        /// Runs bifrost_query on the tenant-filtered orders table against a server
+        /// whose user context comes from <paramref name="provider"/> — the exact seam
+        /// <see cref="BifrostMcpAdapter"/> wires from <see cref="IBifrostAuthContextFactory"/>.
+        /// </summary>
+        private async Task<CallToolResult> QueryOrdersWith(Func<IDictionary<string, object?>> provider)
+        {
+            var executor = _host.Services.GetRequiredService<IQueryIntentExecutor>();
+            var options = BifrostMcpServerFactory.CreateServerOptions(executor, userContextProvider: provider);
+
+            var clientToServer = new Pipe();
+            var serverToClient = new Pipe();
+            var transport = new StreamServerTransport(
+                clientToServer.Reader.AsStream(),
+                serverToClient.Writer.AsStream(),
+                serverName: "BifrostQL-adapter-seam-test");
+            await using var server = McpServer.Create(transport, options, loggerFactory: null, serviceProvider: null);
+            using var stop = new CancellationTokenSource();
+            var run = server.RunAsync(stop.Token);
+            var client = await McpClient.CreateAsync(new StreamClientTransport(
+                serverInput: clientToServer.Writer.AsStream(),
+                serverOutput: serverToClient.Reader.AsStream()));
+            try
+            {
+                return await client.CallToolAsync("bifrost_query",
+                    new Dictionary<string, object?> { ["table"] = "orders", ["detail"] = "full" });
+            }
+            finally
+            {
+                await client.DisposeAsync();
+                await stop.CancelAsync();
+                try { await run; } catch (OperationCanceledException) { }
+            }
+        }
+
+        [Fact]
+        public async Task AdapterProvider_StdioSessionNoPrincipal_YieldsEmptyContext_AndTenantReadFailsClosed()
+        {
+            // The adapter derives its provider from the shared auth factory. A stdio
+            // session has no authenticated principal, so the factory projects an empty
+            // (fail-closed) context — the adapter parses no claims of its own.
+            var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
+            var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services);
+
+            provider().Should().BeEmpty(
+                "a stdio session carries no principal, so the shared factory projects an empty default context");
+
+            var result = await QueryOrdersWith(provider);
+
+            // Fail closed: the tenant-filtered table refuses the read — never an
+            // empty/unfiltered success that would leak every tenant's rows.
+            result.IsError.Should().BeTrue();
+            result.Content.OfType<TextContentBlock>().Single().Text
+                .Should().Contain("Tenant context required");
+        }
+
+        [Fact]
+        public async Task AdapterProvider_FactoryProjectsTenant_ScopesReadToThatTenant()
+        {
+            // When the shared factory projects a tenant identity, the adapter passes it
+            // through unchanged to every intent — no bespoke re-derivation of scope.
+            var factory = new StubTenantAuthFactory("A");
+            var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services);
+
+            var ctx = provider();
+            ctx.Should().ContainKey("tenant_id");
+            ctx["tenant_id"].Should().Be("A");
+
+            var result = await QueryOrdersWith(provider);
+            result.IsError.Should().NotBeTrue(
+                result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text);
+
+            var payload = result.StructuredContent!.Value;
+            payload.GetProperty("totalCount").GetInt32().Should().Be(2);
+            payload.GetProperty("rows").EnumerateArray()
+                .Select(row => row.GetProperty("name").GetString())
+                .Should().BeEquivalentTo("order-a1", "order-a3");
+        }
+
+        /// <summary>
+        /// Stand-in <see cref="IBifrostAuthContextFactory"/> that projects a fixed tenant,
+        /// standing for a real authenticated principal a later slice attaches to the carrier.
+        /// Proves the adapter sources identity from the factory and forwards its projection
+        /// unchanged.
+        /// </summary>
+        private sealed class StubTenantAuthFactory : IBifrostAuthContextFactory
+        {
+            private readonly string _tenantId;
+            public StubTenantAuthFactory(string tenantId) => _tenantId = tenantId;
+
+            public IDictionary<string, object?> CreateUserContext(HttpContext context)
+                => new Dictionary<string, object?> { ["tenant_id"] = _tenantId };
+
+            public IDictionary<string, object?> CreateUserContext(HttpContext context, IDictionary<string, object?> existing)
+                => CreateUserContext(context);
         }
     }
 }

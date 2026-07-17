@@ -19,6 +19,10 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  # Epic tier: the fast merge gate. Test projects build their single current
+  # TFM (net10.0) and the Fuzz category is excluded. The full net8/9/10
+  # matrix and the fuzzers run in release-tests below, which gates
+  # pack-publish on version tags and releases.
   build-test:
 
     runs-on: ubuntu-latest
@@ -120,9 +124,8 @@ jobs:
       - name: Build
         run: dotnet build --no-restore --configuration Release
       - name: Test Core
-        # Fuzz tests are excluded from the gating run — they explore a randomized
-        # surface and must never block a merge or deploy. They still run later in
-        # this pipeline as a non-gating step.
+        # Fuzz tests are excluded from the epic-tier merge gate; they run in
+        # the release-tests job that gates pack-publish.
         run: dotnet test tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj --no-build --verbosity normal --configuration Release --filter "Category!=Fuzz" --collect:"XPlat Code Coverage" --results-directory ./coverage/core
       - name: Upload Core coverage
         uses: actions/upload-artifact@v4
@@ -155,15 +158,110 @@ jobs:
           BIFROST_TEST_POSTGRES: "Host=localhost;Port=5432;Database=bifrost_ci;Username=postgres;Password=bifrost_ci_test"
           BIFROST_TEST_MYSQL: "Server=localhost;Port=3306;Database=bifrost_ci;User Id=root;Password=bifrost_ci_test;AllowPublicKeyRetrieval=True;SslMode=Preferred"
         run: dotnet test tests/BifrostQL.Integration.Test/BifrostQL.Integration.Test.csproj --no-build --verbosity normal --configuration Release
-      - name: Fuzz (non-gating)
-        # Randomized SQL/GraphQL fuzzers. Run on every pipeline for visibility but
-        # NEVER gate — continue-on-error keeps a fuzz failure from blocking the
-        # publish/deploy steps. Investigate failures from the run log, not the gate.
-        continue-on-error: true
-        run: dotnet test tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj --no-build --verbosity normal --configuration Release --filter "Category=Fuzz"
+
+  # Release tier: the pre-release gate. Runs only on version tags and
+  # releases, restores the full net8/net9/net10 target matrix
+  # (-p:ReleaseTests=true), and runs the Fuzz category (pinned seeds —
+  # deterministic). pack-publish will not run until this passes.
+  release-tests:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
+
+    runs-on: ubuntu-latest
+
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          MSSQL_SA_PASSWORD: Bifrost!CI!Test1234
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Bifrost!CI!Test1234' -No -Q 'SELECT 1' || /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P 'Bifrost!CI!Test1234' -Q 'SELECT 1' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+          --health-start-period 30s
+
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: bifrost_ci_test
+          POSTGRES_DB: bifrost_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: bifrost_ci_test
+          MYSQL_DATABASE: bifrost_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost -uroot -pbifrost_ci_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+          --health-start-period 20s
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.1
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+      - name: Build SPA workspace dependencies
+        run: pnpm --filter "...@standardbeagle/edit-db" --filter "...@bifrostql/binary-client" build
+      - name: Build desktop UI SPA
+        run: pnpm --dir src/BifrostQL.UI/frontend build
+      - name: Setup .NET 8.0
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Setup .NET 9.0
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+      - name: Setup .NET 10.0
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'global.json') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+      - name: Restore dependencies
+        run: dotnet restore -p:ReleaseTests=true
+      - name: Build (full test matrix)
+        run: dotnet build --no-restore --configuration Release -p:ReleaseTests=true
+      - name: Raise MySQL max_connections
+        run: mysql --protocol=TCP -h 127.0.0.1 -P 3306 -uroot -pbifrost_ci_test -e "SET GLOBAL max_connections=500;"
+      - name: Test (full matrix, all engines, including Fuzz)
+        env:
+          BIFROST_TEST_SQLSERVER: "Server=localhost,1433;Database=master;User Id=sa;Password=Bifrost!CI!Test1234;TrustServerCertificate=True;Encrypt=False"
+          BIFROST_TEST_POSTGRES: "Host=localhost;Port=5432;Database=bifrost_ci;Username=postgres;Password=bifrost_ci_test"
+          BIFROST_TEST_MYSQL: "Server=localhost;Port=3306;Database=bifrost_ci;User Id=root;Password=bifrost_ci_test;AllowPublicKeyRetrieval=True;SslMode=Preferred"
+        run: dotnet test BifrostQL.sln --no-build --verbosity normal --configuration Release -p:ReleaseTests=true
 
   pack-publish:
-    needs: build-test
+    needs: [build-test, release-tests]
     # Only cut/publish packages on a version tag push or a GitHub release —
     # not on every push to main, which build-test already gates.
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'

@@ -69,6 +69,7 @@ export default defineConfig({
 						{ label: 'pgwire BI-Tool Smoke Runbook', slug: 'guides/pgwire-bi-smoke' },
 						{ label: 'Redis Wire Protocol (RESP)', slug: 'guides/resp' },
 						{ label: 'RESP Smoke Runbook', slug: 'guides/resp-smoke' },
+						{ label: 'S3-Compatible Object Endpoint', slug: 'guides/s3' },
 						{ label: 'React Native', slug: 'guides/react-native' },
 						{ label: 'WordPress', slug: 'guides/wordpress' },
 					],

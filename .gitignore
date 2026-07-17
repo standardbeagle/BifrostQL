@@ -370,8 +370,9 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 
-# Claude Code
-.claude/
+# Claude Code — ignore local settings/session state, but track shared steering rules
+.claude/*
+!.claude/rules/
 
 # DartAI loop runtime state
 .dartai/

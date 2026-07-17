@@ -24,17 +24,20 @@ namespace BifrostQL.Server.S3
         private readonly RequestDelegate _next;
         private readonly S3Options _options;
         private readonly S3SigV4Verifier _verifier;
+        private readonly S3Listing _listing;
         private readonly ILogger<S3Middleware> _logger;
 
         public S3Middleware(
             RequestDelegate next,
             S3Options options,
             S3SigV4Verifier verifier,
+            S3Listing listing,
             ILogger<S3Middleware> logger)
         {
             _next = next ?? throw new ArgumentNullException(nameof(next));
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _verifier = verifier ?? throw new ArgumentNullException(nameof(verifier));
+            _listing = listing ?? throw new ArgumentNullException(nameof(listing));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -49,11 +52,9 @@ namespace BifrostQL.Server.S3
                 // the HMAC/PBKDF2 cost.
                 context.RequestAborted.ThrowIfCancellationRequested();
 
-                await _verifier.VerifyAsync(context.Request, context.RequestAborted);
+                var userContext = await _verifier.VerifyAsync(context.Request, context.RequestAborted);
 
-                // Data operations (GetObject/PutObject) arrive in later slices. Authentication
-                // has already succeeded here, so this is a clean, authenticated 501.
-                throw S3ProtocolException.NotImplemented();
+                await DispatchAsync(context, userContext, requestId);
             }
             catch (S3ProtocolException ex)
             {
@@ -71,6 +72,79 @@ namespace BifrostQL.Server.S3
                 var internalError = S3ProtocolException.InternalError();
                 await WriteErrorAsync(context, internalError.HttpStatus, internalError.Code, internalError.Message, requestId);
             }
+        }
+
+        /// <summary>
+        /// Routes an authenticated request to the operation its path/method/query name.
+        /// Only the list operations this slice implements (ListBuckets, ListObjectsV2)
+        /// are handled; every other authenticated request — GetObject/PutObject and the
+        /// legacy ListObjects v1 — is a clean, authenticated 501 until its slice lands.
+        /// </summary>
+        private async Task DispatchAsync(HttpContext context, IDictionary<string, object?> userContext, string requestId)
+        {
+            var request = context.Request;
+            // Inside the mounted branch the path is the remainder after the S3 prefix:
+            // "/" (or empty) is the service root, "/bucket" is a bucket, and anything
+            // with a further segment addresses an object.
+            var resource = (request.Path.Value ?? string.Empty).Trim('/');
+
+            if (!HttpMethods.IsGet(request.Method))
+                throw S3ProtocolException.NotImplemented();
+
+            if (resource.Length == 0)
+            {
+                var buckets = await _listing.ListBucketsAsync(userContext, context.RequestAborted);
+                var ownerId = OwnerId(userContext);
+                await WriteXmlAsync(context, S3ListXml.ListAllMyBuckets(buckets, ownerId, ownerId), requestId);
+                return;
+            }
+
+            // A bucket-level GET carries no object key (no further '/'). An object-level
+            // GET (GetObject) is a later slice.
+            if (resource.Contains('/'))
+                throw S3ProtocolException.NotImplemented();
+
+            // ListObjectsV2 is selected by list-type=2; the legacy v1 listing is a non-goal.
+            if (request.Query["list-type"].ToString() != "2")
+                throw S3ProtocolException.NotImplemented();
+
+            var page = await _listing.ListObjectsV2Async(
+                bucket: resource,
+                prefix: NullIfEmpty(request.Query["prefix"].ToString()),
+                delimiter: NullIfEmpty(request.Query["delimiter"].ToString()),
+                maxKeys: ParseMaxKeys(request.Query["max-keys"].ToString()),
+                continuationToken: NullIfEmpty(request.Query["continuation-token"].ToString()),
+                startAfter: NullIfEmpty(request.Query["start-after"].ToString()),
+                userContext: userContext,
+                cancellationToken: context.RequestAborted);
+
+            await WriteXmlAsync(context, S3ListXml.ListObjectsV2(page), requestId);
+        }
+
+        private static int? ParseMaxKeys(string raw)
+        {
+            if (string.IsNullOrEmpty(raw))
+                return null;
+            // TryParse, never int.Parse: a malformed or out-of-range value maps to a
+            // clean protocol error, never an escaping exception (invariant 5).
+            if (!int.TryParse(raw, out var value))
+                throw S3ProtocolException.InvalidArgument("max-keys is not a valid integer.");
+            return value;
+        }
+
+        private static string? NullIfEmpty(string value) => string.IsNullOrEmpty(value) ? null : value;
+
+        private static string OwnerId(IDictionary<string, object?> userContext)
+            => userContext.TryGetValue("user_id", out var id) && id is not null
+                ? id.ToString() ?? "bifrost"
+                : "bifrost";
+
+        private static async Task WriteXmlAsync(HttpContext context, string xml, string requestId)
+        {
+            context.Response.StatusCode = 200;
+            context.Response.ContentType = "application/xml";
+            context.Response.Headers["x-amz-request-id"] = requestId;
+            await context.Response.WriteAsync(xml, context.RequestAborted);
         }
 
         /// <summary>

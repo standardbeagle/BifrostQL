@@ -42,5 +42,33 @@ namespace BifrostQL.Server.S3
 
         /// <summary>Maximum length of the raw request URL (path + query string).</summary>
         public int MaxUrlLength { get; set; } = 8 * 1024;
+
+        /// <summary>
+        /// The registered GraphQL endpoint whose cached model/connection the list
+        /// operations read against. Null selects the single registered endpoint.
+        /// </summary>
+        public string? Endpoint { get; set; }
+
+        /// <summary>Default number of keys returned per ListObjectsV2 page when the request omits max-keys. S3's own default.</summary>
+        public int DefaultMaxKeys { get; set; } = 1000;
+
+        /// <summary>Hard cap on the per-page key count, applied to any client-requested max-keys. S3's own cap.</summary>
+        public int MaxKeysLimit { get; set; } = 1000;
+
+        /// <summary>
+        /// Maximum number of candidate rows a single ListObjectsV2 scan may materialize.
+        /// A bucket with more addressable objects than this fails fast rather than
+        /// returning a silently truncated (and therefore lying) listing.
+        /// </summary>
+        public int MaxListMaterialize { get; set; } = 10_000;
+
+        /// <summary>
+        /// Optional HMAC secret binding and integrity-protecting continuation tokens.
+        /// When set, tokens survive restarts and resolve across a scaled fleet; when
+        /// unset, a per-instance random key is generated (tokens then live only for the
+        /// process's lifetime — see <see cref="S3Listing"/>). Must not be a value a
+        /// client could learn: it is the only thing preventing a forged resume position.
+        /// </summary>
+        public string? ContinuationTokenSecret { get; set; }
     }
 }

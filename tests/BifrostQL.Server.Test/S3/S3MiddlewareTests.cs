@@ -31,7 +31,10 @@ namespace BifrostQL.Server.Test.S3
                 new TestClock(now ?? SignTime));
             var nextCalled = new[] { false };
             RequestDelegate next = _ => { nextCalled[0] = true; return Task.CompletedTask; };
-            return (new S3Middleware(next, opts, verifier, NullLogger<S3Middleware>.Instance), nextCalled);
+            // These middleware tests exercise auth/limits/501 paths only; none reaches a
+            // list operation, so the lister's read seam is never invoked.
+            var listing = new S3Listing(new UnusedReads(), opts);
+            return (new S3Middleware(next, opts, verifier, listing, NullLogger<S3Middleware>.Instance), nextCalled);
         }
 
         private static async Task<(int Status, string Body, XElement Xml)> Run(
@@ -121,6 +124,17 @@ namespace BifrostQL.Server.Test.S3
             await middleware.InvokeAsync(ctx);
 
             ctx.Response.Body.Length.Should().Be(0, "a client abort short-circuits before any write");
+        }
+
+        /// <summary>A read seam that must never be called on these auth/limit/501 paths.</summary>
+        private sealed class UnusedReads : BifrostQL.Core.Resolvers.IQueryIntentExecutor
+        {
+            public Task<BifrostQL.Core.Model.IDbModel> GetModelAsync(string? endpoint = null)
+                => throw new InvalidOperationException("read seam must not be invoked");
+
+            public Task<BifrostQL.Core.Resolvers.QueryIntentResult> ExecuteAsync(
+                BifrostQL.Core.Resolvers.QueryIntent intent, CancellationToken cancellationToken = default)
+                => throw new InvalidOperationException("read seam must not be invoked");
         }
 
         private sealed class ThrowingStream : Stream

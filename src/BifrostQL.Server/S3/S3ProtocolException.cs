@@ -47,6 +47,9 @@ namespace BifrostQL.Server.S3
         public static S3ProtocolException EntityTooLarge()
             => new("EntityTooLarge", 400, "Your proposed upload exceeds the maximum allowed size.");
 
+        public static S3ProtocolException NoSuchBucket()
+            => new("NoSuchBucket", 404, "The specified bucket does not exist.");
+
         public static S3ProtocolException RequestExpired()
             => new("AccessDenied", 403, "Request has expired.");
 

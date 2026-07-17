@@ -358,6 +358,14 @@ namespace BifrostQL.Server
                 sp.GetRequiredService<BifrostQL.Server.S3.S3Options>(),
                 sp.GetService<TimeProvider>(),
                 sp.GetService<ILogger<BifrostQL.Server.S3.S3SigV4Verifier>>()));
+
+            // The list surface reads through the same IQueryIntentExecutor the GraphQL
+            // and other adapters use, so tenant/soft-delete/policy filters are unskippable.
+            services.AddSingleton(sp => new BifrostQL.Server.S3.S3Listing(
+                sp.GetRequiredService<IQueryIntentExecutor>(),
+                sp.GetRequiredService<BifrostQL.Server.S3.S3Options>(),
+                sp.GetService<BifrostQL.Core.Storage.FileStorageService>(),
+                sp.GetService<ILogger<BifrostQL.Server.S3.S3Listing>>()));
         }
 
         /// <summary>

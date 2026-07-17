@@ -35,6 +35,8 @@
     <ProjectReference Include="..\..\src\BifrostQL.Mcp\BifrostQL.Mcp.csproj" />
     <!-- In-memory SQLite backs the sample schema fixture. -->
     <ProjectReference Include="..\..\src\data\BifrostQL.Sqlite\BifrostQL.Sqlite.csproj" />
+    <!-- Derivable protocol-adapter security-conformance kit. -->
+    <ProjectReference Include="..\BifrostQL.AdapterConformance\BifrostQL.AdapterConformance.csproj" />
   </ItemGroup>
 
 </Project>

@@ -40,7 +40,7 @@ public class DbModelLoaderTests
     public async Task LoadAsync_BackwardCompatibility_UsesStringConstructor()
     {
         // Arrange
-        var connectionString = "Server=localhost;Database=test;";
+        var connectionString = "Server=localhost;Database=test;Connect Timeout=1;";
         var mockMetadataLoader = Substitute.For<IMetadataLoader>();
 
         // The string constructor resolves the factory via the provider registry,

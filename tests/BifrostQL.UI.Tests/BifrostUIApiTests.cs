@@ -77,7 +77,7 @@ public class BifrostUIApiTests
     [Fact]
     public async Task TestConnectionEndpoint_InvalidConnection_ReturnsError()
     {
-        var payload = new { connectionString = "Server=invalid;Database=nonexistent;User Id=test;Password=test" };
+        var payload = new { connectionString = "Server=invalid;Database=nonexistent;User Id=test;Password=test;Connect Timeout=1" };
         var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
 
         var response = await Client.PostAsync("/api/connection/test", content);

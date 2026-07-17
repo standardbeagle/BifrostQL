@@ -1021,6 +1021,215 @@ namespace BifrostQL.Mcp.Test
                 .Should().Contain("Tenant context required");
         }
 
+        // ---- OIDC / token-exchange credential store (slice D) -----------------
+
+        /// <summary>
+        /// A stand-in <see cref="IMcpCredentialStore"/> that plays the role of a real IdP
+        /// token-exchange endpoint WITHOUT calling one: it hands back a fixed candidate principal
+        /// (or <c>null</c> for a failed/unknown exchange), records how many times it was invoked,
+        /// and captures the upstream token it was asked to exchange. The counter proves the store
+        /// is consulted on the per-call seam (not captured once); the null case proves the store
+        /// never synthesizes an ambient identity to stand in for a failure.
+        /// </summary>
+        private sealed class FakeExchangeStore : IMcpCredentialStore
+        {
+            private readonly ClaimsPrincipal? _result;
+            public FakeExchangeStore(ClaimsPrincipal? result) => _result = result;
+            public int Invocations { get; private set; }
+            public string? LastUpstreamToken { get; private set; }
+
+            public Task<ClaimsPrincipal?> ExchangeAsync(string upstreamToken, CancellationToken cancellationToken)
+            {
+                Invocations++;
+                LastUpstreamToken = upstreamToken;
+                return Task.FromResult(_result);
+            }
+        }
+
+        private const string UpstreamIdpToken = "upstream-idp-token";
+
+        private static ClaimsPrincipal TenantAPrincipal() => new(new ClaimsIdentity(
+            new[]
+            {
+                new Claim(ClaimTypes.NameIdentifier, "user-a"),
+                new Claim("bifrost:tenant", "A"),
+            },
+            authenticationType: "TokenExchange"));
+
+        [Fact]
+        public async Task TokenExchange_OptIn_NoStoreConfigured_DoesNotExchange_FailsClosed()
+        {
+            // Criterion 1: token exchange is opt-in. A credential is present on the wire (the
+            // upstream IdP token is extracted by the slice-C source), but NO store is configured,
+            // so no exchange is attempted, no identity is minted, and the tenant-filtered read
+            // fails closed exactly like slice A/B — never a degraded pass-through.
+            var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
+            var options = new McpAuthOptions
+            {
+                Mode = McpAuthMode.Bearer,
+                CredentialSource = () => UpstreamIdpToken,
+                // CredentialStore deliberately unset; ValidateBearerToken unset.
+            };
+
+            var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
+            provider().Should().BeEmpty("no store is configured, so the upstream token is never exchanged");
+
+            var result = await QueryOrdersWith(provider);
+            result.IsError.Should().BeTrue();
+            result.Content.OfType<TextContentBlock>().Single().Text
+                .Should().Contain("Tenant context required");
+        }
+
+        [Fact]
+        public async Task TokenExchange_StoreReturnsNull_MintsNoIdentity_FailsClosed()
+        {
+            // Criterion 2: a store that returns null for an unknown/failed exchange mints NO
+            // identity — the empty context drives the fail-closed rejection, never an
+            // empty-but-permitted read. The store IS consulted (it tried the exchange and refused);
+            // it did not silently synthesize an ambient identity.
+            var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
+            var store = new FakeExchangeStore(result: null);
+            var options = new McpAuthOptions
+            {
+                Mode = McpAuthMode.Bearer,
+                CredentialSource = () => UpstreamIdpToken,
+                CredentialStore = store,
+            };
+
+            var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
+            provider().Should().BeEmpty("a null exchange result mints no identity — never anonymous");
+
+            store.Invocations.Should().BeGreaterThan(0, "the store was consulted, then refused — not skipped");
+            store.LastUpstreamToken.Should().Be(UpstreamIdpToken,
+                "the store exchanges the slice-C extracted upstream credential");
+
+            var result = await QueryOrdersWith(provider);
+            result.IsError.Should().BeTrue();
+            result.Content.OfType<TextContentBlock>().Single().Text
+                .Should().Contain("Tenant context required");
+        }
+
+        [Fact]
+        public async Task TokenExchange_SuccessfulExchange_ProjectsCandidateThroughFactory_ScopesToTenant()
+        {
+            // Criterion 3: a successful exchange returns a CANDIDATE principal that is projected
+            // through the REAL shared IBifrostAuthContextFactory (same call site as slices A-C),
+            // and the exchanged identity returns the caller's tenant-scoped rows.
+            var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
+            var store = new FakeExchangeStore(TenantAPrincipal());
+            var options = new McpAuthOptions
+            {
+                Mode = McpAuthMode.Bearer,
+                CredentialSource = () => UpstreamIdpToken,
+                CredentialStore = store,
+            };
+
+            var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
+            var ctx = provider();
+            ctx.Should().ContainKey("tenant_id");
+            ctx["tenant_id"].Should().Be("A");
+
+            var result = await QueryOrdersWith(provider);
+            result.IsError.Should().NotBeTrue(result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text);
+
+            var payload = result.StructuredContent!.Value;
+            payload.GetProperty("totalCount").GetInt32().Should().Be(2);
+            payload.GetProperty("rows").EnumerateArray()
+                .Select(row => row.GetProperty("name").GetString())
+                .Should().BeEquivalentTo("order-a1", "order-a3");
+        }
+
+        [Fact]
+        public async Task TokenExchange_ReachesUserContext_ThroughPerCallProviderSeam()
+        {
+            // Criterion 5: the exchanged identity reaches QueryIntent.UserContext through the SAME
+            // per-tool userContextProvider seam as slices A-C — no new/parallel write path. The
+            // store is re-consulted on every provider() invocation (the per-call re-resolution
+            // seam), and the resulting identity flows into a real bifrost_query intent.
+            var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
+            var store = new FakeExchangeStore(TenantAPrincipal());
+            var options = new McpAuthOptions
+            {
+                Mode = McpAuthMode.Bearer,
+                CredentialSource = () => UpstreamIdpToken,
+                CredentialStore = store,
+            };
+
+            var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
+
+            provider();
+            provider();
+            store.Invocations.Should().Be(2,
+                "the store is consulted per provider() call — identity is re-resolved each tool call, not captured once");
+
+            // Same seam a tool call drives: the exchanged identity reaches the intent's UserContext.
+            var result = await QueryOrdersWith(provider);
+            result.IsError.Should().NotBeTrue(result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text);
+            result.StructuredContent!.Value.GetProperty("rows").EnumerateArray()
+                .Select(row => row.GetProperty("name").GetString())
+                .Should().BeEquivalentTo("order-a1", "order-a3");
+        }
+
+        [Fact]
+        public void McpCredentialStore_SourceSynthesizesNoAmbientPrincipalAndHasNoDefaultRegistration()
+        {
+            // Criterion 4: the store abstraction mirrors IPgCredentialStore's hard rule — no
+            // default registration, and no ambient/anonymous principal is ever synthesized inside
+            // src/BifrostQL.Mcp. A source scan confirms the adapter only ever RECEIVES a principal
+            // (from the host validator / the exchange store) and never mints one, and that it
+            // registers no default IMcpCredentialStore that could authenticate everyone to nobody.
+            var mcpSrcDir = FindMcpSourceDirectory();
+            var files = Directory.EnumerateFiles(mcpSrcDir, "*.cs", SearchOption.AllDirectories)
+                .Where(p => !p.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                         && !p.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+                .ToList();
+            files.Should().NotBeEmpty("the BifrostQL.Mcp source must be locatable or this guard is vacuous");
+
+            // Tokens that would signal the adapter fabricating an identity (any of these constructs
+            // a principal/identity in-process) or wiring a default store registration.
+            string[] forbidden =
+            {
+                "new ClaimsPrincipal", "new ClaimsIdentity", "new GenericPrincipal", "new GenericIdentity",
+                "AnonymousPrincipal", "AddSingleton<IMcpCredentialStore", "AddScoped<IMcpCredentialStore",
+                "AddTransient<IMcpCredentialStore",
+            };
+
+            var offenders = new List<string>();
+            foreach (var file in files)
+                foreach (var line in File.ReadLines(file))
+                    foreach (var token in forbidden)
+                        if (line.Contains(token, StringComparison.Ordinal))
+                            offenders.Add($"{Path.GetFileName(file)}: '{token}' in: {line.Trim()}");
+
+            offenders.Should().BeEmpty(
+                "the store must never synthesize an ambient/anonymous principal and must have no default registration");
+        }
+
+        [Fact]
+        public async Task TokenExchange_StoreTakesPrecedence_ButAbsentUpstreamCredentialStillFailsClosed()
+        {
+            // The store exchanges the slice-C extracted upstream credential; an absent credential
+            // (unset source) means there is nothing to exchange, so the store is never called and
+            // identity fails closed — the opt-in surface cannot be probed without a credential.
+            var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
+            var store = new FakeExchangeStore(TenantAPrincipal());
+            var options = new McpAuthOptions
+            {
+                Mode = McpAuthMode.Bearer,
+                CredentialSource = () => null, // no upstream token presented
+                CredentialStore = store,
+            };
+
+            var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
+            provider().Should().BeEmpty("no upstream credential is presented, so no exchange is attempted");
+            store.Invocations.Should().Be(0, "an absent credential is never handed to the store");
+
+            var result = await QueryOrdersWith(provider);
+            result.IsError.Should().BeTrue();
+            result.Content.OfType<TextContentBlock>().Single().Text
+                .Should().Contain("Tenant context required");
+        }
+
         [Fact]
         public void McpAdapterSource_ContainsNoManualClaimWalking()
         {

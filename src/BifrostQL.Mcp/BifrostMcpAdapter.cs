@@ -86,6 +86,41 @@ namespace BifrostQL.Mcp
         /// Null validator (or null token) yields no identity.
         /// </summary>
         public Func<string, ClaimsPrincipal?>? ValidateBearerToken { get; set; }
+
+        /// <summary>
+        /// Optional OIDC / token-exchange credential store. When set, the extracted credential
+        /// (the upstream IdP token supplied by <see cref="CredentialSource"/>) is handed to the
+        /// store's <see cref="IMcpCredentialStore.ExchangeAsync"/> instead of
+        /// <see cref="ValidateBearerToken"/> — the store performs a token exchange and returns the
+        /// candidate <see cref="ClaimsPrincipal"/>, which still flows through the identical
+        /// <see cref="IBifrostAuthContextFactory"/> projection. Like
+        /// <see cref="BifrostQL.Server.Pgwire.IPgCredentialStore"/>
+        /// it is OFF unless a deployment configures it: absent a store, the MCP front door attempts
+        /// NO exchange and falls back to slice-A/B fail-closed behavior. A store that returns
+        /// <c>null</c> (unknown/failed exchange) mints no identity — never an ambient/anonymous one.
+        /// </summary>
+        public IMcpCredentialStore? CredentialStore { get; set; }
+    }
+
+    /// <summary>
+    /// Resolves an upstream IdP (OIDC) token into a candidate Bifrost identity by token exchange.
+    /// This is the MCP analogue of <see cref="BifrostQL.Server.Pgwire.IPgCredentialStore"/> and shares its single hard
+    /// rule: a failed/unknown exchange resolves to <c>null</c> (identity fails closed), NEVER to an
+    /// ambient/anonymous principal — the returned principal is the <i>candidate</i> only, still
+    /// projected through <see cref="IBifrostAuthContextFactory"/>, which is where a subject-less or
+    /// unmapped-issuer principal is rejected. There is deliberately no default registration: a
+    /// deployment that wants token exchange must supply one, so the front door can never come up
+    /// exchanging everyone to nobody.
+    /// </summary>
+    public interface IMcpCredentialStore
+    {
+        /// <summary>
+        /// Exchanges <paramref name="upstreamToken"/> (the credential extracted by
+        /// <see cref="McpAuthOptions.CredentialSource"/>) for a candidate <see cref="ClaimsPrincipal"/>,
+        /// or returns <c>null</c> when the token is unknown or the exchange fails. Never returns a
+        /// fallback/ambient identity.
+        /// </summary>
+        Task<ClaimsPrincipal?> ExchangeAsync(string upstreamToken, CancellationToken cancellationToken);
     }
 
     /// <summary>
@@ -185,16 +220,34 @@ namespace BifrostQL.Mcp
             };
 
         /// <summary>
-        /// Validates the presented bearer token via the host-supplied validator, returning its
-        /// principal or <c>null</c>. The token is read through the per-transport
+        /// Resolves the presented credential into a candidate <see cref="ClaimsPrincipal"/>, or
+        /// <c>null</c> when none can be established. The token is read through the per-transport
         /// <see cref="McpAuthOptions.CredentialSource"/> when set (falling back to the static
-        /// <see cref="McpAuthOptions.BearerToken"/>). No token or no validator means no credential
-        /// — no identity. The adapter itself never inspects the token or its claims.
+        /// <see cref="McpAuthOptions.BearerToken"/>). When an
+        /// <see cref="McpAuthOptions.CredentialStore"/> is configured (the OIDC / token-exchange
+        /// opt-in) the extracted credential is an upstream IdP token exchanged by the store;
+        /// otherwise the host-supplied <see cref="McpAuthOptions.ValidateBearerToken"/> validates it.
+        /// No token means no credential (the store/validator is never consulted); an unknown/failed
+        /// exchange or an invalid token means no identity. The adapter itself never inspects the
+        /// token or its claims — it hands the whole candidate principal to the factory.
         /// </summary>
         private static ClaimsPrincipal? ValidateBearer(McpAuthOptions authOptions)
         {
             var token = ResolveCredential(authOptions);
-            if (string.IsNullOrEmpty(token) || authOptions.ValidateBearerToken is null)
+            if (string.IsNullOrEmpty(token))
+                return null;
+
+            // Token-exchange store is the opt-in OIDC path: when configured it, not the static
+            // validator, resolves the candidate principal. It returns null on a failed/unknown
+            // exchange (fail closed), mirroring IPgCredentialStore — never an ambient identity.
+            // The store's exchange is async (real IdP calls are network I/O), but the per-tool-call
+            // userContextProvider seam this runs under is synchronous; bridge at that boundary.
+            if (authOptions.CredentialStore is not null)
+                return authOptions.CredentialStore
+                    .ExchangeAsync(token, CancellationToken.None)
+                    .GetAwaiter().GetResult();
+
+            if (authOptions.ValidateBearerToken is null)
                 return null;
             return authOptions.ValidateBearerToken(token);
         }

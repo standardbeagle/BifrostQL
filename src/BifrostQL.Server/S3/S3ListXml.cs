@@ -100,6 +100,25 @@ namespace BifrostQL.Server.S3
             return sb.ToString();
         }
 
+        /// <summary>
+        /// Renders the <c>CopyObjectResult</c> body S3 returns from a successful
+        /// CopyObject: the destination object's new validators (ETag = the stored
+        /// single-part MD5, and LastModified), under the canonical namespace. The
+        /// ETag lives in the body — never a response header — matching S3, so a
+        /// client does not confuse it with the source's validator.
+        /// </summary>
+        public static string CopyObjectResult(string? etag, DateTime lastModified)
+        {
+            var sb = new StringBuilder();
+            sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+            sb.Append("<CopyObjectResult xmlns=\"").Append(Namespace).Append("\">");
+            sb.Append("<LastModified>").Append(Timestamp(lastModified)).Append("</LastModified>");
+            if (!string.IsNullOrEmpty(etag))
+                sb.Append("<ETag>").Append(Escape(Quote(etag))).Append("</ETag>");
+            sb.Append("</CopyObjectResult>");
+            return sb.ToString();
+        }
+
         private static string Quote(string etag)
             => etag.StartsWith('"') ? etag : $"\"{etag}\"";
 

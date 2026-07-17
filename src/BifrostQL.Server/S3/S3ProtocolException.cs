@@ -44,6 +44,9 @@ namespace BifrostQL.Server.S3
         public static S3ProtocolException InvalidArgument(string message)
             => new("InvalidArgument", 400, message);
 
+        public static S3ProtocolException InvalidRequest(string message)
+            => new("InvalidRequest", 400, message);
+
         public static S3ProtocolException EntityTooLarge()
             => new("EntityTooLarge", 400, "Your proposed upload exceeds the maximum allowed size.");
 

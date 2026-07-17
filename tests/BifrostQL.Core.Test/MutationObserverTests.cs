@@ -33,6 +33,34 @@ public class MutationObserverTests
         trailing.Contexts.Should().ContainSingle();
     }
 
+    // LOAD-BEARING for FileObjectSeam.PutAsync's compensating-delete correctness.
+    //
+    // FileObjectSeam (src/BifrostQL.Core/Storage/FileObjectSeam.cs) uploads a blob,
+    // then writes the row's file pointer through the mutation pipeline inside a
+    // try/catch. Its catch treats ANY exception as "nothing committed" and
+    // compensates by DELETING the just-uploaded blob. That inference is only sound
+    // because a post-commit mutation observer cannot surface as an exception on the
+    // write path: MutationObservers.NotifyAsync swallows a throwing observer (logs
+    // it, does not propagate). If this contract ever flips to propagation, an
+    // already-committed write would throw into FileObjectSeam's catch and the
+    // compensating delete would destroy LIVE, committed content — silent data loss,
+    // not a rollback. This test pins the swallow so that regression is caught here
+    // (and points the reader at FileObjectSeam's dependency) rather than manifesting
+    // as data loss over the S3 write path. If NotifyAsync ever propagates, this test
+    // fails.
+    [Fact]
+    public async Task NotifyAsync_SwallowsThrowingObserver_FileObjectSeamCompensationDependsOnThis()
+    {
+        var failing = new ThrowingObserver();
+        var observers = new MutationObservers(new IMutationObserver[] { failing });
+
+        var act = async () => await observers.NotifyAsync(BuildContext());
+
+        // Must NOT propagate: FileObjectSeam relies on a post-commit observer
+        // failure never reaching its compensating-delete catch as an exception.
+        await act.Should().NotThrowAsync();
+    }
+
     private static MutationObserverContext BuildContext()
     {
         var table = Substitute.For<IDbTable>();

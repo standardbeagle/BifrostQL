@@ -89,6 +89,7 @@ namespace BifrostQL.Server
         private IConfigurationSection? _queryLimitsConfig;
         private readonly BifrostProfileRegistry _profileRegistry = new();
         private S3.S3Options? _s3Options;
+        private OData.ODataOptions? _odataOptions;
 
         /// <summary>
         /// The configured endpoints. Available after configuration is complete.
@@ -259,6 +260,21 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
+        /// Enables the opt-in OData v4 HTTP endpoint (disabled by default). The host mounts the
+        /// middleware with <c>UseBifrostOData</c>; Bearer identity comes from
+        /// <c>HttpContext.User</c> and optional Basic credentials resolve through a host-supplied
+        /// <see cref="OData.IODataBasicCredentialStore"/>. Enabling it does not alter the
+        /// existing GraphQL/binary routes and logs a startup warning (a posture change).
+        /// </summary>
+        public BifrostMultiDbOptions AddODataEndpoint(Action<OData.ODataOptions>? configure = null)
+        {
+            var options = new OData.ODataOptions { Enabled = true };
+            configure?.Invoke(options);
+            _odataOptions = options;
+            return this;
+        }
+
+        /// <summary>
         /// Adds a named configuration profile that controls which modules are active.
         /// </summary>
         public BifrostMultiDbOptions AddProfile(BifrostProfile profile)
@@ -317,6 +333,8 @@ namespace BifrostQL.Server
             BifrostServiceRegistrar.RegisterChatConnectorServices(services, _chatConnectorTypes);
             if (_s3Options is not null)
                 BifrostServiceRegistrar.RegisterS3Services(services, _s3Options);
+            if (_odataOptions is not null)
+                BifrostServiceRegistrar.RegisterODataServices(services, _odataOptions);
 
             // Same bounded depth/complexity guard as the single-database path; applied to
             // every endpoint's shared executor (which the binary transport also uses).

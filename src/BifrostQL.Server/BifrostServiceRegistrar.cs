@@ -386,6 +386,24 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
+        /// Registers the opt-in OData endpoint's options and its authenticator. The
+        /// authenticator resolves the shared <see cref="IBifrostAuthContextFactory"/> and the
+        /// optional host-supplied <see cref="BifrostQL.Server.OData.IODataBasicCredentialStore"/>
+        /// from DI, so OData identity — Bearer or Basic — is projected through the same
+        /// fail-closed seam every other transport gate uses. The Basic credential store is
+        /// deliberately optional: a Bearer-only deployment registers none and Basic requests
+        /// then fail closed with 401 (there is no fallback identity source).
+        /// </summary>
+        public static void RegisterODataServices(IServiceCollection services, BifrostQL.Server.OData.ODataOptions options)
+        {
+            services.AddSingleton(options);
+            services.AddSingleton(sp => new BifrostQL.Server.OData.ODataAuthenticator(
+                sp.GetRequiredService<IBifrostAuthContextFactory>(),
+                sp.GetService<BifrostQL.Server.OData.IODataBasicCredentialStore>(),
+                sp.GetService<ILogger<BifrostQL.Server.OData.ODataAuthenticator>>()));
+        }
+
+        /// <summary>
         /// Registers each protocol adapter type as a singleton plus a dedicated
         /// <see cref="Microsoft.Extensions.Hosting.IHostedService"/> wrapper, so the host
         /// starts/stops every adapter with its own lifecycle. Adapter types resolve their

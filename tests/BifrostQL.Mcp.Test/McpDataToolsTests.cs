@@ -718,6 +718,183 @@ namespace BifrostQL.Mcp.Test
                 => CreateUserContext(context);
         }
 
+        // ---- per-transport credential source (slice C) ------------------------
+
+        private const string TenantAToken = "tenant-a-token";
+
+        /// <summary>
+        /// A bearer options set whose only transport-specific part is
+        /// <paramref name="credentialSource"/>: the SAME validator (token → tenant-A principal)
+        /// and the SAME <see cref="IBifrostAuthContextFactory"/> projection back it, so stdio and
+        /// HTTP differ only in WHERE the credential is read.
+        /// </summary>
+        private static McpAuthOptions BearerOptionsWith(Func<string?> credentialSource)
+        {
+            var principal = new ClaimsPrincipal(new ClaimsIdentity(
+                new[]
+                {
+                    new Claim(ClaimTypes.NameIdentifier, "user-a"),
+                    new Claim("bifrost:tenant", "A"),
+                },
+                authenticationType: "Bearer"));
+
+            return new McpAuthOptions
+            {
+                Mode = McpAuthMode.Bearer,
+                CredentialSource = credentialSource,
+                ValidateBearerToken = token => token == TenantAToken ? principal : null,
+            };
+        }
+
+        [Fact]
+        public async Task CredentialSource_StdioEnv_SuppliesCredential_ScopesReadToTenant()
+        {
+            // Criterion 2: a stdio session reads its credential from the process environment
+            // (no per-request principal on the wire) and the shared projection scopes the read.
+            var envVar = $"BIFROST_MCP_TEST_TOKEN_{Guid.NewGuid():N}";
+            Environment.SetEnvironmentVariable(envVar, TenantAToken);
+            try
+            {
+                var options = BearerOptionsWith(McpCredentialSources.FromEnvironment(envVar));
+                var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
+                var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
+
+                provider().Should().ContainKey("tenant_id").WhoseValue.Should().Be("A");
+
+                var result = await QueryOrdersWith(provider);
+                result.IsError.Should().NotBeTrue(result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text);
+                result.StructuredContent!.Value.GetProperty("rows").EnumerateArray()
+                    .Select(row => row.GetProperty("name").GetString())
+                    .Should().BeEquivalentTo("order-a1", "order-a3");
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(envVar, null);
+            }
+        }
+
+        [Fact]
+        public async Task CredentialSource_HttpBearerHeader_SuppliesCredential_ScopesReadToTenant()
+        {
+            // Criterion 3: an HTTP-shaped session reads its credential from an
+            // Authorization: Bearer header — using the seam only, NOT slice-5 transport wiring —
+            // and the SAME projection yields the SAME tenant-scoped result as the stdio path.
+            var options = BearerOptionsWith(
+                McpCredentialSources.FromAuthorizationHeader(() => $"Bearer {TenantAToken}"));
+            var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
+            var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
+
+            provider().Should().ContainKey("tenant_id").WhoseValue.Should().Be("A");
+
+            var result = await QueryOrdersWith(provider);
+            result.IsError.Should().NotBeTrue(result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text);
+            result.StructuredContent!.Value.GetProperty("rows").EnumerateArray()
+                .Select(row => row.GetProperty("name").GetString())
+                .Should().BeEquivalentTo("order-a1", "order-a3");
+        }
+
+        [Fact]
+        public void CredentialSource_StdioAndHttp_HitIdenticalProjection()
+        {
+            // Criterion 1: the projection call site is IDENTICAL for both transports — swapping the
+            // env credential-read for the header credential-read produces the same projected
+            // context, because only the credential-read step differs.
+            var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
+
+            var envVar = $"BIFROST_MCP_TEST_TOKEN_{Guid.NewGuid():N}";
+            Environment.SetEnvironmentVariable(envVar, TenantAToken);
+            try
+            {
+                var stdio = BifrostMcpAdapter.CreateUserContextProvider(
+                    factory, _host.Services, BearerOptionsWith(McpCredentialSources.FromEnvironment(envVar)))();
+                var http = BifrostMcpAdapter.CreateUserContextProvider(
+                    factory, _host.Services,
+                    BearerOptionsWith(McpCredentialSources.FromAuthorizationHeader(() => $"Bearer {TenantAToken}")))();
+
+                // Same projected identity keys and the same tenant scope from either transport —
+                // the credential-read step is the only difference (deep-comparing the principal
+                // object itself is meaningless: it carries cyclic Claims references).
+                http.Keys.Should().BeEquivalentTo(stdio.Keys,
+                    "identity projection is transport-agnostic — only the credential-read step differs");
+                http["tenant_id"].Should().Be(stdio["tenant_id"]).And.Be("A");
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(envVar, null);
+            }
+        }
+
+        [Fact]
+        public async Task CredentialSource_AbsentOnEitherTransport_MintsNoIdentity_FailsClosed()
+        {
+            // Criterion 5: an absent credential on EITHER transport (unset env var / missing
+            // header) mints no identity, so the empty context drives the fail-closed rejection —
+            // never anonymous.
+            var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
+
+            var absentEnv = BearerOptionsWith(
+                McpCredentialSources.FromEnvironment($"BIFROST_MCP_ABSENT_{Guid.NewGuid():N}"));
+            var absentHeader = BearerOptionsWith(
+                McpCredentialSources.FromAuthorizationHeader(() => null));
+
+            foreach (var options in new[] { absentEnv, absentHeader })
+            {
+                var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
+                provider().Should().BeEmpty("an absent credential mints no identity — never anonymous");
+
+                var result = await QueryOrdersWith(provider);
+                result.IsError.Should().BeTrue();
+                result.Content.OfType<TextContentBlock>().Single().Text
+                    .Should().Contain("Tenant context required");
+            }
+        }
+
+        [Theory]
+        [InlineData("Bearer abc123", "abc123")]
+        [InlineData("bearer abc123", "abc123")]      // scheme is case-insensitive
+        [InlineData("Bearer   spaced  ", "spaced")]  // surrounding whitespace trimmed
+        [InlineData("abc123", null)]                 // no scheme → no credential
+        [InlineData("Basic abc123", null)]           // wrong scheme → no credential
+        [InlineData("Bearer ", null)]                // empty token → no credential
+        [InlineData("", null)]
+        [InlineData(null, null)]
+        public void ExtractBearerToken_ParsesOnlyAWellFormedBearerHeader(string? header, string? expected)
+        {
+            // The HTTP credential-read step is a pure parse of the Authorization header value;
+            // anything that is not a well-formed Bearer header presents no credential.
+            McpCredentialSources.ExtractBearerToken(header).Should().Be(expected);
+        }
+
+        [Fact]
+        public void McpSource_AddsNoHttpTransportHosting()
+        {
+            // Criterion 4: this slice defines ONLY the credential-extraction seam; the HTTP
+            // transport hosting (MapMcp/Kestrel/routing) is slice 5's job. A source scan confirms
+            // src/BifrostQL.Mcp mounts no HTTP endpoint.
+            var mcpSrcDir = FindMcpSourceDirectory();
+            var files = Directory.EnumerateFiles(mcpSrcDir, "*.cs", SearchOption.AllDirectories)
+                .Where(p => !p.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                         && !p.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+                .ToList();
+            files.Should().NotBeEmpty("the BifrostQL.Mcp source must be locatable or this guard is vacuous");
+
+            string[] httpHostingTokens =
+            {
+                "MapMcp", "WithHttpTransport", "StreamableHttp", "UseRouting", "UseEndpoints",
+                "MapPost", "MapGet", "ConfigureKestrel", "AddRouting", "ListenLocalhost",
+            };
+
+            var offenders = new List<string>();
+            foreach (var file in files)
+                foreach (var line in File.ReadLines(file))
+                    foreach (var token in httpHostingTokens)
+                        if (line.Contains(token, StringComparison.Ordinal))
+                            offenders.Add($"{Path.GetFileName(file)}: '{token}' in: {line.Trim()}");
+
+            offenders.Should().BeEmpty(
+                "slice C defines only the credential-extraction seam — HTTP transport hosting is slice 5");
+        }
+
         // ---- configurable auth modes (slice B) --------------------------------
 
         [Fact]

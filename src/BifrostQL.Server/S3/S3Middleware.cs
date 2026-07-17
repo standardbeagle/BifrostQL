@@ -253,7 +253,15 @@ namespace BifrostQL.Server.S3
             var key = resource[(slash + 1)..];
 
             if (isPut)
-                await PutObjectAsync(context, userContext, requestId, bucket, key);
+            {
+                // A PUT carrying x-amz-copy-source is CopyObject (server-side copy), not a
+                // body upload; it is dispatched separately so the source is read through the
+                // authorized read seam before the destination is written.
+                if (context.Request.Headers.ContainsKey("x-amz-copy-source"))
+                    await CopyObjectAsync(context, userContext, requestId, bucket, key);
+                else
+                    await PutObjectAsync(context, userContext, requestId, bucket, key);
+            }
             else
                 await DeleteObjectAsync(context, userContext, requestId, bucket, key);
         }
@@ -285,8 +293,6 @@ namespace BifrostQL.Server.S3
             if (request.Query.ContainsKey("uploads") || request.Query.ContainsKey("uploadId")
                 || request.Query.ContainsKey("partNumber"))
                 throw S3ProtocolException.NotImplemented("Multipart upload is not supported.");
-            if (request.Headers.ContainsKey("x-amz-copy-source"))
-                throw S3ProtocolException.NotImplemented("Server-side copy is not supported.");
 
             // A non-chunked PutObject must declare its length; without it there is no
             // completeness check and no signed-length invariant to hold to.
@@ -355,6 +361,133 @@ namespace BifrostQL.Server.S3
             if (!string.IsNullOrEmpty(resolved.ETag))
                 response.Headers.ETag = $"\"{resolved.ETag}\"";
             response.ContentLength = 0;
+        }
+
+        /// <summary>
+        /// Serves CopyObject (same-service): reads the source through the authorized read
+        /// seam and writes the destination through the full put/mutation path, with the two
+        /// authorizations independent and BOTH required before any destination write.
+        ///
+        /// <para>Order is deliberate. The source is resolved FIRST under the caller's identity
+        /// (<see cref="FileObjectSeam.ResolveAsync"/>) — a source the caller cannot see,
+        /// that does not exist, or that holds no object is a single non-enumerating
+        /// <c>NoSuchKey</c>, exactly as GetObject answers, and the destination is never
+        /// touched. Only once the source read has passed is the destination written via
+        /// <see cref="FileObjectSeam.PutAsync"/>, which runs the destination's OWN
+        /// tenant/permission gate and the full mutation pipeline, stores the bytes on a fresh
+        /// random storage key, and compensates on veto (invariant 8a) — so a caller who can
+        /// read the source but not write the destination (or vice versa) copies nothing.</para>
+        ///
+        /// <para>Metadata directive: <c>COPY</c> (default) inherits the source's content type
+        /// and user metadata; <c>REPLACE</c> takes them from this request. A self-copy
+        /// (source == destination) is only legal under <c>REPLACE</c> — a <c>COPY</c>
+        /// self-copy is the S3 <c>InvalidRequest</c> no-op. Multipart copy, versioned
+        /// sources, and cross-deployment/external URLs are non-goals.</para>
+        /// </summary>
+        private async Task CopyObjectAsync(
+            HttpContext context, IDictionary<string, object?> userContext, string requestId,
+            string destBucket, string destKey)
+        {
+            var request = context.Request;
+
+            // UploadPartCopy (multipart) is a non-goal.
+            if (request.Query.ContainsKey("uploadId") || request.Query.ContainsKey("partNumber"))
+                throw S3ProtocolException.NotImplemented("Multipart copy is not supported.");
+
+            var (srcBucket, srcKey) = S3CopySource.Parse(request.Headers["x-amz-copy-source"].ToString());
+
+            // --- source-read authorization (independent of the destination) ---
+            // Resolve the source under the caller's identity through the authorized read seam
+            // FIRST, and fully, before the destination is touched at all. A missing,
+            // unauthorized (cross-tenant), or object-less source is one non-enumerating
+            // NoSuchKey — the same answer GetObject gives, so the copy is not an existence
+            // oracle for objects the caller cannot read.
+            FileObjectSeam.ResolvedFileObject source;
+            try
+            {
+                var resolved = await _seam.ResolveAsync(srcBucket, srcKey, userContext, context.RequestAborted);
+                if (resolved is null)
+                    throw S3ProtocolException.NoSuchKey();
+                source = resolved;
+            }
+            catch (InvalidOperationException)
+            {
+                // Addressing fault on the source (unknown bucket, wrong key arity, non-file
+                // column): indistinguishable from a missing key by design.
+                throw S3ProtocolException.NoSuchKey();
+            }
+
+            // The source is materialized in memory before being handed to the destination
+            // write, so an object larger than the body cap is rejected rather than buffered.
+            if (source.ContentLength > _options.MaxBodyBytes)
+                throw S3ProtocolException.EntityTooLarge();
+
+            // Metadata directive: COPY (default) inherits from the source; REPLACE takes the
+            // content type and user metadata from this request. An unknown value is a client error.
+            var directive = NullIfEmpty(request.Headers["x-amz-metadata-directive"].ToString());
+            bool replace;
+            if (directive is null || directive.Equals("COPY", StringComparison.OrdinalIgnoreCase))
+                replace = false;
+            else if (directive.Equals("REPLACE", StringComparison.OrdinalIgnoreCase))
+                replace = true;
+            else
+                throw S3ProtocolException.InvalidArgument("x-amz-metadata-directive must be COPY or REPLACE.");
+
+            // Self-copy is only legal when it changes metadata (REPLACE). A COPY self-copy is
+            // a no-op S3 rejects as InvalidRequest.
+            if (!replace && string.Equals(srcBucket, destBucket, StringComparison.Ordinal)
+                && string.Equals(srcKey, destKey, StringComparison.Ordinal))
+                throw S3ProtocolException.InvalidRequest(
+                    "This copy request is illegal because it is trying to copy an object to itself " +
+                    "without changing the object's metadata.");
+
+            var contentType = replace ? NullIfEmpty(request.Headers.ContentType.ToString()) : source.ContentType;
+            IReadOnlyDictionary<string, string>? customMetadata = replace
+                ? ReadUserMetadata(request)
+                : source.CustomMetadata.Count == 0 ? null : source.CustomMetadata;
+
+            var content = await _seam.GetContentAsync(source, context.RequestAborted);
+
+            // --- destination-write authorization + write ---
+            // PutAsync applies the destination's own tenant/permission gate and the full
+            // mutation pipeline, writes the bytes to a FRESH random storage key, compensates
+            // on veto (invariant 8a), and detects a scoped-away write via AffectedRows (8b).
+            // Source read has already passed, so BOTH checks hold before the destination
+            // pointer commits.
+            FileObjectSeam.ResolvedFileObject stored;
+            try
+            {
+                stored = await _seam.PutAsync(
+                    destBucket, destKey, content, contentType, customMetadata, userContext, context.RequestAborted);
+            }
+            catch (FileObjectResidueException ex)
+            {
+                // Post-authorization internal failure that ORPHANED a blob: log at Error WITH
+                // the storage key and return a sanitized 500 (the seam message embeds the key
+                // and is not wire-safe, invariant 3). Same contract as PutObject. The residue
+                // type derives from BifrostExecutionError, so this catch MUST precede the one below.
+                _logger.LogError(
+                    ex, "CopyObject left orphaned storage residue at key '{StorageKey}' (request {RequestId}).",
+                    ex.StorageKey, requestId);
+                throw S3ProtocolException.InternalError();
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or BifrostExecutionError)
+            {
+                // Destination denial/unaddressable/scoped-away: one non-enumerating NoSuchKey,
+                // and the pipeline vetoed before the provider stored the destination pointer
+                // (invariant 8a). Detail logged only.
+                _logger?.LogDebug(ex, "CopyObject destination denied or unaddressable (request {RequestId}).", requestId);
+                throw S3ProtocolException.NoSuchKey();
+            }
+
+            var response = context.Response;
+            response.StatusCode = 200;
+            response.ContentType = "application/xml";
+            response.Headers["x-amz-request-id"] = requestId;
+            // The ETag lives in the CopyObjectResult body (not a response header), matching S3:
+            // it is the destination's newly persisted single-part MD5, read back from the store.
+            await response.WriteAsync(
+                S3ListXml.CopyObjectResult(stored.ETag, stored.LastModified), context.RequestAborted);
         }
 
         /// <summary>

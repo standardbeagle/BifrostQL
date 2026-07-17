@@ -73,6 +73,7 @@ namespace BifrostQL.Server.Test.S3
                 $"(1, 'tenant-a', '{Pointer("blobs/existing", Existing, "text/plain")}')", // overwrite / cross-tenant target
                 $"(0, 'tenant-a', NULL)",  // PK value 0, no object
                 $"(5, 'tenant-a', NULL)",  // fresh single-PK target, no object
+                $"(7, 'tenant-b', NULL)",  // cross-tenant destination: owned by tenant-b
             }),
             "CREATE TABLE parts (region TEXT, sku TEXT, image TEXT, PRIMARY KEY(region, sku))",
             "INSERT INTO parts(region, sku, image) VALUES ('us', 'widget', NULL)", // composite-PK target
@@ -404,6 +405,227 @@ namespace BifrostQL.Server.Test.S3
             xml.Element("Code")!.Value.Should().Be("NotImplemented");
         }
 
+        // ---- copy: happy paths ----------------------------------------------------
+
+        [Fact]
+        public async Task Copy_stores_destination_and_returns_source_md5_in_result()
+        {
+            // Copy tenant-a's existing object at data/1 onto the empty data/5.
+            var (status, body) = await RunCopy(CopyA("/assets/data/5", "/assets/data/1"));
+
+            status.Should().Be(200);
+            body.Should().Contain("<CopyObjectResult");
+            body.Should().Contain(Md5(Existing), "the result ETag is the destination's stored MD5");
+
+            // The destination now serves the source bytes; the source is untouched.
+            var (destStatus, dest, _) = await RunGet(GetA("/assets/data/5"));
+            destStatus.Should().Be(200);
+            dest.Should().Equal(Existing);
+            (await RunGet(GetA("/assets/data/1"))).Body.Should().Equal(Existing);
+        }
+
+        [Fact]
+        public async Task Copy_to_pk_value_zero_destination_stores()
+        {
+            var (status, _) = await RunCopy(CopyA("/assets/data/0", "/assets/data/1"));
+            status.Should().Be(200);
+            (await RunGet(GetA("/assets/data/0"))).Body.Should().Equal(Existing);
+        }
+
+        [Fact]
+        public async Task Copy_to_composite_pk_destination_stores()
+        {
+            var (status, _) = await RunCopy(CopyA("/parts/image/us/widget", "/assets/data/1"));
+            status.Should().Be(200);
+            (await RunGet(GetA("/parts/image/us/widget"))).Body.Should().Equal(Existing);
+        }
+
+        [Fact]
+        public async Task Copy_over_pre_existing_destination_reclaims_old_blob()
+        {
+            // Seed a fresh source object, then copy it over data/1 which already holds an object.
+            var src = "fresh source bytes"u8.ToArray();
+            (await Run(PutA("/assets/data/5", src, "text/plain"))).Status.Should().Be(200);
+
+            var (status, _) = await RunCopy(CopyA("/assets/data/1", "/assets/data/5"));
+            status.Should().Be(200);
+
+            var (destStatus, dest, _) = await RunGet(GetA("/assets/data/1"));
+            destStatus.Should().Be(200);
+            dest.Should().Equal(src);
+            // The superseded blob landed on a fresh key, so the old one is collected.
+            File.Exists(Path.Combine(_tempDir, "blobs", "existing")).Should().BeFalse();
+        }
+
+        // ---- copy: metadata directive ---------------------------------------------
+
+        [Fact]
+        public async Task Copy_default_directive_inherits_source_content_type_and_metadata()
+        {
+            // Source carries a content type and user metadata; a default (COPY) copy inherits both.
+            var src = PutA("/assets/data/5", "payload"u8.ToArray(), "application/json");
+            src.Request.Headers["x-amz-meta-purpose"] = "demo";
+            (await Run(src)).Status.Should().Be(200);
+
+            var (status, _) = await RunCopy(CopyA("/assets/data/0", "/assets/data/5"));
+            status.Should().Be(200);
+
+            var (_, _, getCtx) = await RunGet(GetA("/assets/data/0"));
+            getCtx.Response.ContentType.Should().Be("application/json");
+            getCtx.Response.Headers["x-amz-meta-purpose"].ToString().Should().Be("demo");
+        }
+
+        [Fact]
+        public async Task Copy_replace_directive_uses_request_content_type_and_metadata()
+        {
+            var src = PutA("/assets/data/5", "payload"u8.ToArray(), "application/json");
+            src.Request.Headers["x-amz-meta-purpose"] = "demo";
+            (await Run(src)).Status.Should().Be(200);
+
+            var copy = CopyA("/assets/data/0", "/assets/data/5", directive: "REPLACE", contentType: "text/csv");
+            copy.Request.Headers["x-amz-meta-stage"] = "final";
+            var (status, _) = await RunCopy(copy);
+            status.Should().Be(200);
+
+            var (_, body, getCtx) = await RunGet(GetA("/assets/data/0"));
+            body.Should().Equal("payload"u8.ToArray(), "content is copied even when metadata is replaced");
+            getCtx.Response.ContentType.Should().Be("text/csv");
+            getCtx.Response.Headers["x-amz-meta-stage"].ToString().Should().Be("final");
+            getCtx.Response.Headers.ContainsKey("x-amz-meta-purpose").Should().BeFalse("REPLACE drops the source metadata");
+        }
+
+        [Fact]
+        public async Task Copy_with_unknown_metadata_directive_is_invalid_argument()
+        {
+            var (status, xml) = await RunError(CopyA("/assets/data/5", "/assets/data/1", directive: "MERGE"));
+            status.Should().Be(400);
+            xml.Element("Code")!.Value.Should().Be("InvalidArgument");
+        }
+
+        // ---- copy: self-copy ------------------------------------------------------
+
+        [Fact]
+        public async Task Self_copy_without_replace_is_invalid_request()
+        {
+            var (status, xml) = await RunError(CopyA("/assets/data/1", "/assets/data/1"));
+            status.Should().Be(400);
+            xml.Element("Code")!.Value.Should().Be("InvalidRequest");
+            // The object is untouched.
+            (await RunGet(GetA("/assets/data/1"))).Body.Should().Equal(Existing);
+        }
+
+        [Fact]
+        public async Task Self_copy_with_replace_rewrites_metadata()
+        {
+            var src = PutA("/assets/data/5", "keep bytes"u8.ToArray(), "application/json");
+            src.Request.Headers["x-amz-meta-old"] = "1";
+            (await Run(src)).Status.Should().Be(200);
+
+            var (status, _) = await RunCopy(
+                CopyA("/assets/data/5", "/assets/data/5", directive: "REPLACE", contentType: "text/plain"));
+            status.Should().Be(200);
+
+            var (_, body, getCtx) = await RunGet(GetA("/assets/data/5"));
+            body.Should().Equal("keep bytes"u8.ToArray());
+            getCtx.Response.ContentType.Should().Be("text/plain");
+            getCtx.Response.Headers.ContainsKey("x-amz-meta-old").Should().BeFalse();
+        }
+
+        // ---- copy: authorization / addressing -------------------------------------
+
+        [Fact]
+        public async Task Cross_tenant_source_is_NoSuchKey_and_writes_nothing()
+        {
+            // tenant-b reads tenant-a's source. The source read is scoped away, so the copy is
+            // a non-enumerating NoSuchKey and tenant-b's own destination is never written.
+            var (status, xml) = await RunError(CopyBTo("/assets/data/7", "/assets/data/1"));
+            status.Should().Be(404);
+            xml.Element("Code")!.Value.Should().Be("NoSuchKey");
+
+            (await RunGet(GetB("/assets/data/7"))).Status.Should().Be(404, "the destination was never written");
+        }
+
+        [Fact]
+        public async Task Cross_tenant_destination_is_NoSuchKey_and_leaves_source_intact()
+        {
+            // tenant-a reads its OWN source (data/1) but targets data/7, owned by tenant-b. The
+            // source read passes; the destination write is scoped away by the pipeline, so the
+            // copy is NoSuchKey and neither the source nor the cross-tenant destination changes.
+            var (status, xml) = await RunError(CopyA("/assets/data/7", "/assets/data/1"));
+            status.Should().Be(404);
+            xml.Element("Code")!.Value.Should().Be("NoSuchKey");
+
+            (await RunGet(GetA("/assets/data/1"))).Body.Should().Equal(Existing, "the source is intact");
+            (await RunGet(GetB("/assets/data/7"))).Status.Should().Be(404, "the destination was never written");
+        }
+
+        [Fact]
+        public async Task Copy_from_missing_source_is_NoSuchKey()
+        {
+            var (status, xml) = await RunError(CopyA("/assets/data/5", "/assets/data/999"));
+            status.Should().Be(404);
+            xml.Element("Code")!.Value.Should().Be("NoSuchKey");
+        }
+
+        [Theory]
+        [InlineData("/assets/data/..")]         // literal traversal in the source key
+        [InlineData("/assets/data/%252E%252E")] // double-encoded traversal
+        [InlineData("//assets/data/1")]         // rooted source reference
+        public async Task Copy_with_malformed_source_is_invalid_argument(string copySource)
+        {
+            var (status, xml) = await RunError(CopyA("/assets/data/5", copySource));
+            status.Should().Be(400);
+            xml.Element("Code")!.Value.Should().Be("InvalidArgument");
+        }
+
+        [Fact]
+        public async Task Copy_is_not_implemented_when_writes_disabled()
+        {
+            var (status, xml) = await RunError(CopyA("/assets/data/5", "/assets/data/1"), enableWrites: false);
+            status.Should().Be(501);
+            xml.Element("Code")!.Value.Should().Be("NotImplemented");
+        }
+
+        [Fact]
+        public async Task Copy_honors_cancellation_and_writes_nothing()
+        {
+            using var cts = new CancellationTokenSource();
+            cts.Cancel();
+            var ctx = CopyA("/assets/data/5", "/assets/data/1");
+            ctx.RequestAborted = cts.Token;
+            ctx.Response.Body = new MemoryStream();
+
+            await Build().InvokeAsync(ctx);
+
+            // A cancelled copy stored nothing at the destination.
+            (await RunGet(GetA("/assets/data/5"))).Status.Should().Be(404);
+        }
+
+        // ---- copy: post-authorization residue -------------------------------------
+
+        [Fact]
+        public async Task Copy_compensation_double_fault_is_sanitized_500_and_logs_residue_at_error()
+        {
+            // Source resolves, its bytes are read, the destination blob is uploaded to a fresh
+            // key, the pointer write is scoped away to zero rows, THEN the compensating rollback
+            // delete also fails: the just-uploaded object is orphaned residue. As with PutObject,
+            // the wire answers a sanitized 500 (no seam detail, invariant 3) and the orphan is
+            // logged at Error WITH its storage key — never swallowed at Debug.
+            var log = new CapturingLogger<S3Middleware>();
+            var seam = ResidueSeam(new DeleteFailingProvider(), scopeAwayWrites: true);
+            var (status, xml) = await RunErrorWithSeam(CopyA("/assets/data/5", "/assets/data/1"), seam, log);
+
+            status.Should().Be(500);
+            xml.Element("Code")!.Value.Should().Be("InternalError");
+            xml.ToString().Should().NotContain("orphan", "the seam's internal residue detail must not reach the wire");
+
+            var error = log.Entries.Should().ContainSingle(e => e.Level == LogLevel.Error).Subject;
+            error.Message.Should().Contain("residue");
+            log.Entries.Should().NotContain(
+                e => e.Level == LogLevel.Debug,
+                "the orphan must be operator-visible at Error, not swallowed at Debug");
+        }
+
         // ---- harness --------------------------------------------------------------
 
         private S3Middleware Build(
@@ -497,6 +719,45 @@ namespace BifrostQL.Server.Test.S3
 
         private DefaultHttpContext GetA(string path)
             => S3TestSigner.BuildHeaderSigned(method: "GET", path: path, signTime: SignTime, secret: SecretA, accessKeyId: KeyA);
+
+        private DefaultHttpContext GetB(string path)
+            => S3TestSigner.BuildHeaderSigned(method: "GET", path: path, signTime: SignTime, secret: SecretB, accessKeyId: KeyB);
+
+        private DefaultHttpContext CopyA(string destPath, string copySource, string? directive = null, string? contentType = null)
+            => SignedCopy(destPath, copySource, directive, contentType, SecretA, KeyA);
+
+        private DefaultHttpContext CopyBTo(string destPath, string copySource)
+            => SignedCopy(destPath, copySource, directive: null, contentType: null, SecretB, KeyB);
+
+        /// <summary>
+        /// A copy is a PUT to the destination carrying x-amz-copy-source and an empty body (the
+        /// bytes come from the source). The copy-source and directive headers ride unsigned —
+        /// the signed subset still authenticates the request, exactly as the metadata headers do
+        /// on a normal put.
+        /// </summary>
+        private static DefaultHttpContext SignedCopy(
+            string destPath, string copySource, string? directive, string? contentType, string secret, string accessKeyId)
+        {
+            var ctx = S3TestSigner.BuildHeaderSigned(
+                method: "PUT", path: destPath, signTime: SignTime,
+                secret: secret, accessKeyId: accessKeyId, payloadHash: S3TestSigner.EmptyPayloadHash);
+            ctx.Request.Body = new MemoryStream(Array.Empty<byte>());
+            ctx.Request.ContentLength = 0;
+            ctx.Request.Headers["x-amz-copy-source"] = copySource;
+            if (directive is not null)
+                ctx.Request.Headers["x-amz-metadata-directive"] = directive;
+            if (contentType is not null)
+                ctx.Request.Headers.ContentType = contentType;
+            return ctx;
+        }
+
+        private async Task<(int Status, string Body)> RunCopy(DefaultHttpContext ctx)
+        {
+            ctx.Response.Body = new MemoryStream();
+            await Build().InvokeAsync(ctx);
+            ctx.Response.Body.Seek(0, SeekOrigin.Begin);
+            return (ctx.Response.StatusCode, await new StreamReader(ctx.Response.Body).ReadToEndAsync());
+        }
 
         private async Task<(int Status, DefaultHttpContext Ctx)> Run(DefaultHttpContext ctx)
         {

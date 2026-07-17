@@ -165,7 +165,6 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine(generator.GetBatchMutationParameterType());
 
                 builder.AppendLine(generator.GetTableFilterDefinition());
-                builder.AppendLine(generator.GetJoinDefinitions(model));
                 builder.AppendLine(generator.GetTableJoinType());
                 builder.AppendLine(generator.GetAggregateLinkDefinitions());
 

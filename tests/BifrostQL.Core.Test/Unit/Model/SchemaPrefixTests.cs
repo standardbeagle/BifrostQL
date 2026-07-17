@@ -311,19 +311,6 @@ public class SchemaPrefixTests
     }
 
     [Fact]
-    public void Enabled_GetJoinTypeName_UsesPrefixedNames()
-    {
-        var model = CreateModelWithSchemaPrefix("dbo", SchemaPrefixFormat.Underscore,
-            ("Users", "dbo"), ("Orders", "sales"));
-
-        var users = model.GetTableFromDbName("Users");
-        var orders = model.GetTableFromDbName("Orders");
-
-        users.GetJoinTypeName(orders).Should().Be("TableOnUserssales_Orders");
-        orders.GetJoinTypeName(users).Should().Be("TableOnsales_OrdersUsers");
-    }
-
-    [Fact]
     public void Enabled_MetadataPreserved_AfterPrefixing()
     {
         var model = CreateModelWithSchemaPrefix("dbo", SchemaPrefixFormat.Underscore,

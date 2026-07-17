@@ -219,16 +219,8 @@ namespace BifrostQL.Core.Schema
                 // field's forced predicates entirely).
                 if (historyTargets.Contains(joinTable))
                     continue;
-                //if (single)
-                //{
                 builder.AppendLine(
                     $"\t{joinTable.GraphQlName}(on: [String!]) : {joinTable.GraphQlName}");
-                //}
-                //else
-                //{
-                //    builder.AppendLine(
-                //        $"\t{joinTable.GraphQlName}(on: TableOn{_table.GraphQlName}{joinTable.GraphQlName}, filter: {joinTable.TableFilterTypeName}, sort: [{joinTable.TableColumnSortEnumName}!]) : [{joinTable.GraphQlName}!]!");
-                //}
             }
             builder.AppendLine("}");
             return builder.ToString();
@@ -287,13 +279,6 @@ namespace BifrostQL.Core.Schema
             {
                 builder.AppendLine($"\t_single : {_table.GraphQlName}_single");
                 builder.AppendLine($"\t_join : {_table.GraphQlName}_join");
-                //foreach (var joinTable in model.Tables)
-                //{
-                //    builder.AppendLine(
-                //        $"\t_join_{joinTable.GraphQlName}(on: TableOn{_table.GraphQlName}{joinTable.GraphQlName}, filter: {joinTable.TableFilterTypeName}, sort: [{joinTable.TableColumnSortEnumName}!]) : [{joinTable.GraphQlName}!]!");
-                //    builder.AppendLine(
-                //        $"\t_single_{joinTable.GraphQlName}(on: [String!]) : {joinTable.GraphQlName}");
-                //}
             }
 
             builder.AppendLine("}");
@@ -433,30 +418,6 @@ namespace BifrostQL.Core.Schema
             return result.ToString();
         }
 
-        public string GetJoinDefinitions(IDbModel model)
-        {
-            var builder = new StringBuilder();
-            foreach (var joinTable in model.Tables)
-            {
-                builder.AppendLine($"input {_table.GetJoinTypeName(joinTable)} {{");
-                foreach (var column in VisibleColumns)
-                {
-                    builder.AppendLine($"\t{column.GraphQlName} : {joinTable.ColumnFilterTypeName}");
-                }
-
-                builder.AppendLine($"and: [{_table.GetJoinTypeName(joinTable)}!]");
-                builder.AppendLine($"or: [{_table.GetJoinTypeName(joinTable)}!]");
-
-                foreach (var link in _table.SingleLinks)
-                {
-                    if (IsEnumColumnLink(link.Value)) continue;
-                    builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : {_table.GetJoinTypeName(link.Value.ParentTable)}");
-                }
-                builder.AppendLine("}");
-            }
-
-            return builder.ToString();
-        }
         public string GetAggregateLinkDefinitions()
         {
             var builder = new StringBuilder();

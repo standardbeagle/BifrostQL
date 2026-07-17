@@ -46,7 +46,6 @@ namespace BifrostQL.Core.Model
         public string TableColumnSortEnumName => $"{GraphQlName}SortEnum";
         public string JoinFieldName => $"_join_{GraphQlName}";
         public string SingleFieldName => $"_single_{GraphQlName}";
-        public string GetJoinTypeName(IDbTable joinTable) => $"TableOn{GraphQlName}{joinTable.GraphQlName}";
         public string AggregateValueTypeName => $"{GraphQlName}_AggregateValue";
         public bool MatchName(string fullName) =>
             string.Equals(FullName, fullName, StringComparison.InvariantCultureIgnoreCase)

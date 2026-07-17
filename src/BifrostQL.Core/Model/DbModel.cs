@@ -539,7 +539,6 @@ namespace BifrostQL.Core.Model
         string TableColumnSortEnumName { get; }
         string JoinFieldName { get; }
         string SingleFieldName { get; }
-        string GetJoinTypeName(IDbTable joinTable);
         string AggregateValueTypeName { get; }
 
         string GetActionTypeName(MutateActions action);

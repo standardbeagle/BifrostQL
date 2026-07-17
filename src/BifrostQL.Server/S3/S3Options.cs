@@ -11,6 +11,24 @@ namespace BifrostQL.Server.S3
         /// <summary>Whether the S3 endpoint is enabled. Default: false (opt-in).</summary>
         public bool Enabled { get; set; }
 
+        /// <summary>
+        /// Whether PutObject/DeleteObject are served. Default: false. A write surface over
+        /// file objects is a dangerous opt-in capability, so it is fail-closed by construction:
+        /// with this off every PUT/DELETE is a clean, authenticated 501 that builds no intent
+        /// and cannot be probed for behaviour. Enabling it also enables the underlying
+        /// <see cref="BifrostQL.Core.Storage.FileObjectSeamOptions.EnableWrites"/>, whose
+        /// constructor logs the startup warning (see .claude/rules/protocol-adapter-security.md
+        /// invariant 7).
+        /// </summary>
+        public bool EnableWrites { get; set; }
+
+        /// <summary>
+        /// Maximum total size, in bytes, of all <c>x-amz-meta-*</c> user metadata on a
+        /// PutObject request (summed key + value lengths). S3's own limit is 2 KB. A request
+        /// exceeding it is rejected before any storage write.
+        /// </summary>
+        public int MaxMetadataBytes { get; set; } = 2 * 1024;
+
         /// <summary>Path prefix the endpoint listens under. Default: "/s3".</summary>
         public string PathPrefix { get; set; } = "/s3";
 

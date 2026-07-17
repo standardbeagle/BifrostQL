@@ -1,4 +1,7 @@
+using System.Buffers;
 using System.Globalization;
+using System.Security.Cryptography;
+using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Storage;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
@@ -82,8 +85,10 @@ namespace BifrostQL.Server.S3
         /// <summary>
         /// Routes an authenticated request to the operation its path/method/query name.
         /// The service root and bucket level serve the list operations (GET only);
-        /// an object-level path serves GetObject (GET) and HeadObject (HEAD). Every
-        /// other authenticated request — writes, and the legacy ListObjects v1 — is a
+        /// an object-level path serves GetObject (GET), HeadObject (HEAD), and — when
+        /// <see cref="S3Options.EnableWrites"/> is on — PutObject (PUT) and DeleteObject
+        /// (DELETE). Every other authenticated request — bucket/service-level writes, the
+        /// legacy ListObjects v1, multipart, and (when writes are off) every mutation — is a
         /// clean, authenticated 501.
         /// </summary>
         private async Task DispatchAsync(HttpContext context, IDictionary<string, object?> userContext, string requestId)
@@ -96,6 +101,15 @@ namespace BifrostQL.Server.S3
 
             var isGet = HttpMethods.IsGet(request.Method);
             var isHead = HttpMethods.IsHead(request.Method);
+            var isPut = HttpMethods.IsPut(request.Method);
+            var isDelete = HttpMethods.IsDelete(request.Method);
+
+            if (isPut || isDelete)
+            {
+                await DispatchWriteAsync(context, userContext, requestId, resource, isPut);
+                return;
+            }
+
             if (!isGet && !isHead)
                 throw S3ProtocolException.NotImplemented();
 
@@ -212,6 +226,227 @@ namespace BifrostQL.Server.S3
                 return;
 
             await _seam.CopyContentToAsync(resolved, context.Response.Body, start, count, context.RequestAborted);
+        }
+
+        /// <summary>
+        /// Routes a write verb (PUT/DELETE). The write gate is the FIRST thing checked —
+        /// before the body is read, the address is parsed, or any mutation intent is built —
+        /// so a disabled write surface does nothing at all and cannot be probed for behaviour
+        /// (fail-closed by construction; .claude/rules/protocol-adapter-security.md invariant 7).
+        /// Only object-level writes are served; bucket/service-level writes (CreateBucket,
+        /// DeleteBucket) are a non-goal and answer 501.
+        /// </summary>
+        private async Task DispatchWriteAsync(
+            HttpContext context, IDictionary<string, object?> userContext, string requestId,
+            string resource, bool isPut)
+        {
+            // GATE — off by default. No body read, no address parse, no intent.
+            if (!_options.EnableWrites)
+                throw S3ProtocolException.NotImplemented();
+
+            var slash = resource.IndexOf('/');
+            if (slash < 0)
+                // A write with no object key addresses a bucket/the service; not a goal.
+                throw S3ProtocolException.NotImplemented();
+
+            var bucket = resource[..slash];
+            var key = resource[(slash + 1)..];
+
+            if (isPut)
+                await PutObjectAsync(context, userContext, requestId, bucket, key);
+            else
+                await DeleteObjectAsync(context, userContext, requestId, bucket, key);
+        }
+
+        /// <summary>
+        /// Serves PutObject: validates the payload (length, single-part SHA-256, user-metadata
+        /// limits), then writes through the authorized <see cref="FileObjectSeam"/> — hence the
+        /// full mutation pipeline (tenant scoping, audit, soft-delete, encryption-on-write,
+        /// CDC/history), with the seam supplying only the positional PK and the caller's
+        /// identity and building no predicate of its own. The body is bounded to
+        /// <see cref="S3Options.MaxBodyBytes"/> as it is read, so an undeclared or lying
+        /// Content-Length cannot make the endpoint buffer without limit.
+        ///
+        /// <para>Chunked/streaming SigV4, multipart, and server-side copy are non-goals and
+        /// answer 501. A row the caller cannot see or write is indistinguishable from a missing
+        /// key (NoSuchKey), so a cross-tenant or forged address is a non-enumerating 404 and
+        /// never reaches the storage provider — the seam vetoes before any blob is touched.</para>
+        /// </summary>
+        private async Task PutObjectAsync(
+            HttpContext context, IDictionary<string, object?> userContext, string requestId,
+            string bucket, string key)
+        {
+            var request = context.Request;
+
+            // Non-goals rejected before the body is read.
+            var declaredHash = request.Headers["x-amz-content-sha256"].ToString();
+            if (declaredHash.StartsWith("STREAMING-", StringComparison.OrdinalIgnoreCase))
+                throw S3ProtocolException.NotImplemented("Chunked/streaming uploads are not supported.");
+            if (request.Query.ContainsKey("uploads") || request.Query.ContainsKey("uploadId")
+                || request.Query.ContainsKey("partNumber"))
+                throw S3ProtocolException.NotImplemented("Multipart upload is not supported.");
+            if (request.Headers.ContainsKey("x-amz-copy-source"))
+                throw S3ProtocolException.NotImplemented("Server-side copy is not supported.");
+
+            // A non-chunked PutObject must declare its length; without it there is no
+            // completeness check and no signed-length invariant to hold to.
+            if (request.ContentLength is not { } declaredLength)
+                throw S3ProtocolException.MissingContentLength();
+
+            var contentType = NullIfEmpty(request.Headers.ContentType.ToString());
+            var customMetadata = ReadUserMetadata(request);
+
+            var content = await ReadBoundedBodyAsync(request.Body, context.RequestAborted);
+
+            // The bytes actually received must match the declared (and signed) length: a
+            // truncated or over-long body is an IncompleteBody, never a silently stored
+            // partial object.
+            if (content.LongLength != declaredLength)
+                throw S3ProtocolException.IncompleteBody();
+
+            // Single-part integrity: when the client declares a concrete payload hash it must
+            // match the bytes. UNSIGNED-PAYLOAD opts out of the check (the signature still
+            // authenticated the request); a streaming marker was already rejected above.
+            if (!string.IsNullOrEmpty(declaredHash)
+                && !declaredHash.Equals(S3SigV4.UnsignedPayload, StringComparison.OrdinalIgnoreCase))
+            {
+                var actualHash = Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant();
+                if (!actualHash.Equals(declaredHash, StringComparison.OrdinalIgnoreCase))
+                    throw S3ProtocolException.ContentSha256Mismatch();
+            }
+
+            FileObjectSeam.ResolvedFileObject resolved;
+            try
+            {
+                resolved = await _seam.PutAsync(
+                    bucket, key, content, contentType, customMetadata, userContext, context.RequestAborted);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or BifrostExecutionError)
+            {
+                // Addressing fault (unknown bucket, wrong key arity, non-file column), a row the
+                // caller cannot see or write (cross-tenant / scoped-away), or a corrupt pointer:
+                // all one non-enumerating 404, and — critically — the pipeline vetoed before the
+                // provider was ever asked to store anything (invariant 8a). Detail logged only.
+                _logger?.LogDebug(ex, "PutObject denied or unaddressable (request {RequestId}).", requestId);
+                throw S3ProtocolException.NoSuchKey();
+            }
+
+            var response = context.Response;
+            response.StatusCode = 200;
+            response.Headers["x-amz-request-id"] = requestId;
+            // The ETag is the single-part rule: the MD5 the pipeline persisted at write time,
+            // read straight back from the stored object rather than recomputed.
+            if (!string.IsNullOrEmpty(resolved.ETag))
+                response.Headers.ETag = $"\"{resolved.ETag}\"";
+            response.ContentLength = 0;
+        }
+
+        /// <summary>
+        /// Serves DeleteObject: routes the removal through the authorized seam (which clears
+        /// the row's file pointer via the mutation pipeline first, then reclaims the blob —
+        /// never a direct provider delete, never a predicate built here). S3 delete is
+        /// idempotent, so a missing object, a cross-tenant/forged address (vetoed by the
+        /// pipeline before the provider is touched), or a malformed key all answer the same
+        /// 204 No Content — non-enumerating, and destroying nothing the caller was not
+        /// authorized to remove.
+        /// </summary>
+        private async Task DeleteObjectAsync(
+            HttpContext context, IDictionary<string, object?> userContext, string requestId,
+            string bucket, string key)
+        {
+            if (context.Request.Query.ContainsKey("uploadId"))
+                throw S3ProtocolException.NotImplemented("Multipart upload is not supported.");
+
+            try
+            {
+                await _seam.DeleteAsync(bucket, key, userContext, context.RequestAborted);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or BifrostExecutionError)
+            {
+                // Unaddressable, cross-tenant/scoped-away, or best-effort blob-reclaim residue
+                // after the pointer was already cleared: none is a client-facing failure. Delete
+                // is idempotent, so the answer is the same 204 either way; detail logged only.
+                _logger?.LogDebug(ex, "DeleteObject unaddressable or denied (request {RequestId}).", requestId);
+            }
+
+            context.Response.StatusCode = 204;
+            context.Response.Headers["x-amz-request-id"] = requestId;
+        }
+
+        /// <summary>
+        /// Reads the request body into a buffer, bounded to <see cref="S3Options.MaxBodyBytes"/>
+        /// as it streams so an undeclared/oversized/lying Content-Length can never make the
+        /// endpoint buffer past the cap. (The seam takes a materialized byte[]; this bounds the
+        /// materialization rather than eliminating it — see FileStorageService's remarks.)
+        /// </summary>
+        private async Task<byte[]> ReadBoundedBodyAsync(Stream body, CancellationToken cancellationToken)
+        {
+            var cap = _options.MaxBodyBytes;
+            using var buffer = new MemoryStream();
+            var rented = ArrayPool<byte>.Shared.Rent(64 * 1024);
+            try
+            {
+                long total = 0;
+                int read;
+                while ((read = await body.ReadAsync(rented.AsMemory(), cancellationToken)) > 0)
+                {
+                    total += read;
+                    if (total > cap)
+                        throw S3ProtocolException.EntityTooLarge();
+                    buffer.Write(rented, 0, read);
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(rented);
+            }
+            return buffer.ToArray();
+        }
+
+        /// <summary>
+        /// Collects the request's <c>x-amz-meta-*</c> headers into the user-metadata dictionary
+        /// persisted with the object. Every key and value must be printable US-ASCII (so it can
+        /// round-trip as a response header without a 500 or a header-injection risk) and the
+        /// summed size is capped at <see cref="S3Options.MaxMetadataBytes"/>. Returns null when
+        /// the request carries no user metadata.
+        /// </summary>
+        private IReadOnlyDictionary<string, string>? ReadUserMetadata(HttpRequest request)
+        {
+            Dictionary<string, string>? metadata = null;
+            long totalBytes = 0;
+            const string prefix = "x-amz-meta-";
+
+            foreach (var header in request.Headers)
+            {
+                if (!header.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var name = header.Key[prefix.Length..];
+                var value = header.Value.ToString();
+                if (name.Length == 0)
+                    throw S3ProtocolException.InvalidArgument("A user-metadata header name is empty.");
+                if (!IsHeaderSafeAscii(name) || !IsHeaderSafeAscii(value))
+                    throw S3ProtocolException.InvalidArgument("User metadata must be printable US-ASCII.");
+
+                totalBytes += name.Length + value.Length;
+                if (totalBytes > _options.MaxMetadataBytes)
+                    throw S3ProtocolException.InvalidArgument("Your metadata headers exceed the maximum allowed metadata size.");
+
+                metadata ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                metadata[name] = value;
+            }
+
+            return metadata;
+        }
+
+        // Printable ASCII only (0x20..0x7E): no control chars (CR/LF injection) and no
+        // non-ASCII that cannot survive the response-header round trip.
+        private static bool IsHeaderSafeAscii(string value)
+        {
+            foreach (var c in value)
+                if (c is < ' ' or > '~')
+                    return false;
+            return true;
         }
 
         /// <summary>

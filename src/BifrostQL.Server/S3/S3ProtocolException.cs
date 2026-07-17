@@ -47,6 +47,13 @@ namespace BifrostQL.Server.S3
         public static S3ProtocolException EntityTooLarge()
             => new("EntityTooLarge", 400, "Your proposed upload exceeds the maximum allowed size.");
 
+        public static S3ProtocolException IncompleteBody()
+            => new("IncompleteBody", 400,
+                "The number of bytes specified by the Content-Length header does not match the number provided.");
+
+        public static S3ProtocolException MissingContentLength()
+            => new("MissingContentLength", 411, "You must provide the Content-Length HTTP header.");
+
         public static S3ProtocolException NoSuchBucket()
             => new("NoSuchBucket", 404, "The specified bucket does not exist.");
 

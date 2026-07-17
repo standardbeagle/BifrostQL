@@ -231,6 +231,36 @@ namespace BifrostQL.Server.Test.S3
                 .Where(e => e.Code == "SignatureDoesNotMatch");
         }
 
+        [Theory]
+        [InlineData("PUT")]
+        [InlineData("POST")]
+        [InlineData("DELETE")]
+        public async Task Presigned_write_method_is_rejected_before_signature(string method)
+        {
+            // A presigned URL binds its method into the signature, so this request carries a
+            // VALID signature for the write method — the only thing stopping it is the method
+            // gate. Presigned writes are a non-goal; a valid signature must not authenticate one.
+            var ctx = S3TestSigner.BuildPresigned(method: method, signTime: SignTime, expires: 3600);
+            var verifier = Verifier(StoreWith());
+
+            await verifier.Invoking(v => v.VerifyAsync(ctx.Request, CancellationToken.None))
+                .Should().ThrowAsync<S3ProtocolException>("a presigned {0} must never authenticate", method)
+                .Where(e => e.Code == "AccessDenied" && e.HttpStatus == 403);
+        }
+
+        [Fact]
+        public async Task Presigned_head_valid_signature_is_accepted()
+        {
+            // HEAD is a read verb (HeadObject, slice 4); it must pass the method gate and
+            // authenticate like GET.
+            var ctx = S3TestSigner.BuildPresigned(method: "HEAD", signTime: SignTime, expires: 3600);
+            var verifier = Verifier(StoreWith());
+
+            var userContext = await verifier.VerifyAsync(ctx.Request, CancellationToken.None);
+
+            userContext.Should().NotBeEmpty();
+        }
+
         private Func<Task> Verify(DefaultHttpContext ctx)
         {
             var verifier = Verifier(StoreWith());

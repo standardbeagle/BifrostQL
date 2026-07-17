@@ -37,6 +37,13 @@ namespace BifrostQL.Server.S3
 
         private static readonly string[] RequiredHeaderAuthSignedHeaders = { "host", "x-amz-date" };
 
+        // A presigned URL binds its HTTP method into the signature, so a signed PUT/POST/DELETE
+        // would authenticate cleanly on its own. Presigned writes are an explicit non-goal for
+        // this epic (they would go live inert the moment a data slice lands), so only read verbs
+        // are ever accepted on the presigned path: GET, and HEAD (HeadObject arrives in slice 4).
+        private static readonly HashSet<string> AllowedPresignedMethods =
+            new(StringComparer.OrdinalIgnoreCase) { "GET", "HEAD" };
+
         private readonly IS3AccessKeyStore _store;
         private readonly IBifrostAuthContextFactory _authFactory;
         private readonly S3Options _options;
@@ -180,6 +187,13 @@ namespace BifrostQL.Server.S3
 
         private ParsedAuth ParsePresigned(HttpRequest request)
         {
+            // Reject a non-read method BEFORE any signature is validated, so a validly-signed
+            // presigned write (PUT/POST/DELETE) never authenticates — the fail-open the epic's
+            // non-goal forbids. Placed here on the presigned parse path, ahead of scope/clock
+            // and signature checks in VerifyAsync.
+            if (!AllowedPresignedMethods.Contains(request.Method))
+                throw S3ProtocolException.AccessDenied("Presigned requests support only GET and HEAD.");
+
             var q = request.Query;
             if (q["X-Amz-Algorithm"].ToString() != S3SigV4.Algorithm)
                 throw S3ProtocolException.AuthorizationQueryParametersError("Unsupported X-Amz-Algorithm.");

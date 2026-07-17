@@ -29,7 +29,7 @@ namespace BifrostQL.Server.Test
 
             restored.RequestId.Should().Be(10);
             restored.Type.Should().Be(BifrostMessageType.Chunk);
-            restored.Payload.Should().BeEquivalentTo(payload);
+            restored.Payload.Should().Equal(payload);
             restored.ChunkSequence.Should().Be(2);
             restored.ChunkTotal.Should().Be(5);
             restored.ChunkOffset.Should().Be(200);
@@ -112,7 +112,7 @@ namespace BifrostQL.Server.Test
 
             restored.RequestId.Should().Be(99);
             restored.Type.Should().Be(BifrostMessageType.Result);
-            restored.Payload.Should().BeEquivalentTo(new byte[] { 10, 20, 30 });
+            restored.Payload.Should().Equal(new byte[] { 10, 20, 30 });
             restored.ChunkSequence.Should().Be(0);
             restored.ChunkTotal.Should().Be(0);
         }
@@ -299,7 +299,7 @@ namespace BifrostQL.Server.Test
             var result = receiver.AddChunk(chunk);
 
             result.Should().NotBeNull();
-            result.Should().BeEquivalentTo(payload);
+            result.Should().Equal(payload);
         }
 
         [Fact]
@@ -326,7 +326,7 @@ namespace BifrostQL.Server.Test
 
             var result2 = receiver.AddChunk(MakeChunk(1, chunk2Data, 2, 3, 100, 150));
             result2.Should().NotBeNull();
-            result2.Should().BeEquivalentTo(fullPayload);
+            result2.Should().Equal(fullPayload);
             receiver.PendingCount.Should().Be(0);
         }
 
@@ -351,7 +351,7 @@ namespace BifrostQL.Server.Test
             var result = receiver.AddChunk(MakeChunk(1, chunk1Data, 1, 3, 30, 90));
 
             result.Should().NotBeNull();
-            result.Should().BeEquivalentTo(fullPayload);
+            result.Should().Equal(fullPayload);
         }
 
         [Fact]
@@ -367,7 +367,7 @@ namespace BifrostQL.Server.Test
 
             var result = receiver.AddChunk(MakeChunk(1, chunk1Data, 1, 2, 3, 6));
             result.Should().NotBeNull();
-            result.Should().BeEquivalentTo(new byte[] { 1, 2, 3, 4, 5, 6 });
+            result.Should().Equal(new byte[] { 1, 2, 3, 4, 5, 6 });
         }
 
         [Fact]
@@ -438,13 +438,13 @@ namespace BifrostQL.Server.Test
             // Complete request 2
             var result2 = receiver.AddChunk(MakeChunk(2, new byte[] { 40 }, 1, 2, 1, 2));
             result2.Should().NotBeNull();
-            result2.Should().BeEquivalentTo(data2);
+            result2.Should().Equal(data2);
             receiver.PendingCount.Should().Be(1);
 
             // Complete request 1
             var result1 = receiver.AddChunk(MakeChunk(1, new byte[] { 20 }, 1, 2, 1, 2));
             result1.Should().NotBeNull();
-            result1.Should().BeEquivalentTo(data1);
+            result1.Should().Equal(data1);
             receiver.PendingCount.Should().Be(0);
         }
 
@@ -512,7 +512,7 @@ namespace BifrostQL.Server.Test
             var result = BifrostMessage.FromBytes(assembledBytes!);
             result.RequestId.Should().Be(42);
             result.Type.Should().Be(BifrostMessageType.Result);
-            result.Payload.Should().BeEquivalentTo(originalPayload);
+            result.Payload.Should().Equal(originalPayload);
         }
 
         [Fact]
@@ -547,7 +547,7 @@ namespace BifrostQL.Server.Test
 
             assembledBytes.Should().NotBeNull();
             var result = BifrostMessage.FromBytes(assembledBytes!);
-            result.Payload.Should().BeEquivalentTo(originalPayload);
+            result.Payload.Should().Equal(originalPayload);
         }
 
         [Fact]
@@ -582,7 +582,7 @@ namespace BifrostQL.Server.Test
 
             assembledBytes.Should().NotBeNull();
             var result = BifrostMessage.FromBytes(assembledBytes!);
-            result.Payload.Should().BeEquivalentTo(originalPayload);
+            result.Payload.Should().Equal(originalPayload);
         }
 
         [Fact]

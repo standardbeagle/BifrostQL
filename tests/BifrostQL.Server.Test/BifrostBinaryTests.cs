@@ -81,7 +81,7 @@ namespace BifrostQL.Server.Test
 
             restored.RequestId.Should().Be(42);
             restored.Type.Should().Be(BifrostMessageType.Result);
-            restored.Payload.Should().BeEquivalentTo(payloadData);
+            restored.Payload.Should().Equal(payloadData);
             restored.Errors.Should().BeEmpty();
         }
 
@@ -122,7 +122,7 @@ namespace BifrostQL.Server.Test
 
             restored.RequestId.Should().Be(55);
             restored.Type.Should().Be(BifrostMessageType.Result);
-            restored.Payload.Should().BeEquivalentTo(payload);
+            restored.Payload.Should().Equal(payload);
             restored.Errors.Should().ContainSingle().Which.Should().Contain("Partial results");
         }
 

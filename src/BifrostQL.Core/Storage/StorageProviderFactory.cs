@@ -26,9 +26,21 @@ namespace BifrostQL.Core.Storage
         }
 
         /// <summary>
-        /// Gets a storage provider by type
+        /// Gets a storage provider by type.
         /// </summary>
-        public IStorageProvider GetProvider(string providerType)
+        /// <remarks>
+        /// Deliberately <c>internal</c>, not public: a raw <see cref="IStorageProvider"/>
+        /// exposes <c>UploadAsync(config, anyKey, ...)</c>, which writes bytes at a
+        /// caller-chosen storage key and bypasses <see cref="FileStorageService"/> — the
+        /// only sanctioned upload path, and the one that guarantees a fresh random
+        /// storage key decoupled from the caller-derived address (invariant 8a,
+        /// .claude/rules/protocol-adapter-security.md). Keeping provider resolution
+        /// assembly-scoped means no code outside Core and its friend assemblies can
+        /// discover a provider through this factory and write around that guarantee.
+        /// Every production caller lives in Core (<see cref="FileStorageService"/>,
+        /// the file-folder computed columns), so no public surface is lost.
+        /// </remarks>
+        internal IStorageProvider GetProvider(string providerType)
         {
             if (_providers.TryGetValue(providerType, out var provider))
             {
@@ -40,9 +52,10 @@ namespace BifrostQL.Core.Storage
         }
 
         /// <summary>
-        /// Gets a storage provider for the specified bucket configuration
+        /// Gets a storage provider for the specified bucket configuration.
+        /// Internal for the same reason as <see cref="GetProvider(string)"/>.
         /// </summary>
-        public IStorageProvider GetProvider(StorageBucketConfig config)
+        internal IStorageProvider GetProvider(StorageBucketConfig config)
         {
             return GetProvider(config.ProviderType);
         }

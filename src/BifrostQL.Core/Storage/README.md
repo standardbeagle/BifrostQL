@@ -54,6 +54,21 @@ deterministic address cannot ask for the bytes to be written at it, so this rule
 is enforced by the signature rather than by every future call site remembering
 it.
 
+**`FileStorageService` is the only sanctioned upload path.** A raw
+`IStorageProvider.UploadAsync(config, anyKey, …)` writes bytes at a caller-chosen
+storage key and so drops the address/storage-key decoupling above (invariant 8a).
+To keep that path from being discoverable, `StorageProviderFactory.GetProvider`
+is `internal`, not public: no code outside Core and its friend assemblies can
+resolve a provider through the factory and write around the guarantee. Every
+production caller of `GetProvider` already lives in Core (`FileStorageService`
+and the file-folder computed columns), so nothing public is lost. The **honest
+bound** is the same one the seam carries elsewhere: `InternalsVisibleTo` includes
+`BifrostQL.Server` (where the S3 adapter lives), so first-party code in a friend
+assembly *can* still reach a provider directly — it could equally forge a
+`ResolvedFileObject`. The narrowing constrains the public API surface (an
+external adapter cannot bypass the sanctioned path), it is not a sandbox against
+Bifrost's own internals.
+
 ### Authorization
 
 Reads go through `IQueryIntentExecutor`; writes go through

@@ -65,6 +65,7 @@ Fuzz tests 標 `[Trait("Category", "Fuzz")]`；新 fuzz-style tests 必同標，
 | `MetadataKeys` | `Model/MetadataKeys.cs` | Constants for metadata keys |
 | `AppMetadataModel` | `AppMetadata/` | App-metadata overlay — client presentation layer (labels, forms, grids, relationships) |
 | `IProtocolAdapter` | `BifrostQL.Server/ProtocolAdapter.cs` | Non-GraphQL front-door hosting contract; register via `AddProtocolAdapter<T>` |
+| `BifrostMcpAdapter` | `BifrostQL.Mcp/` | MCP-server protocol adapter — DB as agent tools (schema/query/aggregate/search + opt-in writes); stdio via `AddProtocolAdapter<BifrostMcpAdapter>`, HTTP+bearer via `AddBifrostMcpHttp`/`MapBifrostMcp`; reads via `IQueryIntentExecutor`, writes via `IMutationIntentExecutor` (`EnableWrites` off by default), identity via `IBifrostAuthContextFactory` |
 | `IQueryIntentExecutor` | `Resolvers/QueryIntentExecutor.cs` | Adapter read seam — programmatic `GqlObjectQuery`, transformers unskippable |
 | `IMutationIntentExecutor` | `Resolvers/MutationIntentExecutor.cs` | Adapter write seam — full mutation transformer chain via `TableMutationPipeline` |
 | `IBifrostAuthContextFactory` | `BifrostQL.Server/BifrostAuthContextFactory.cs` | Shared identity projection for all transport gates, fail-closed |

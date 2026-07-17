@@ -5,7 +5,7 @@ description: "Why BifrostQL protocol adapters own only the wire and its codec, w
 
 BifrostQL can expose the same database through front doors other than GraphQL-over-HTTP: OData, gRPC, a custom binary framing, an in-process pipe — anything that can be decoded into a read or write request. Each front door is a **protocol adapter**. This page explains the architectural rule that makes adapters safe: *there is exactly one query pipeline, and no adapter is ever allowed to own a second one*.
 
-If you want to build an adapter, see the [Protocol Adapter Authoring guide](/BifrostQL/guides/protocol-adapters/). This page covers why the seam is shaped the way it is. For the shipped adapters, see the [pgwire](/BifrostQL/guides/pgwire/), [RESP](/BifrostQL/guides/resp/), and [S3 object endpoint](/BifrostQL/guides/s3/) guides.
+If you want to build an adapter, see the [Protocol Adapter Authoring guide](/BifrostQL/guides/protocol-adapters/). This page covers why the seam is shaped the way it is. For the shipped adapters, see the [pgwire](/BifrostQL/guides/pgwire/), [RESP](/BifrostQL/guides/resp/), [S3 object endpoint](/BifrostQL/guides/s3/), and [MCP server](/BifrostQL/guides/mcp-server/) guides.
 
 ## The problem with a second data path
 

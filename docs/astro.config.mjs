@@ -61,6 +61,7 @@ export default defineConfig({
 						{ label: 'Recording Change History', slug: 'guides/change-history' },
 						{ label: 'LLM Chat Endpoints', slug: 'guides/llm-chat' },
 						{ label: 'Chat Connectors', slug: 'guides/chat-connectors' },
+						{ label: 'MCP Server (Agent Tools)', slug: 'guides/mcp-server' },
 						{ label: 'React Hooks & Components', slug: 'guides/react-hooks' },
 						{ label: 'Embeddable Data Editor', slug: 'guides/embedded-editor' },
 						{ label: 'Binary Transport', slug: 'guides/binary-transport' },

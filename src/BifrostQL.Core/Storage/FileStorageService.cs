@@ -1,3 +1,4 @@
+using System.Buffers;
 using BifrostQL.Core.Model;
 
 namespace BifrostQL.Core.Storage
@@ -222,6 +223,105 @@ namespace BifrostQL.Core.Storage
 
             var provider = _providerFactory.GetProvider(bucketConfig);
             return await provider.DownloadAsync(bucketConfig, metadata.FileKey, cancellationToken);
+        }
+
+        /// <summary>
+        /// Streams <paramref name="count"/> bytes starting at <paramref name="offset"/>
+        /// from the stored object into <paramref name="destination"/>, without
+        /// materializing the whole object in memory. This is the range/partial read
+        /// path the S3 front door serves GetObject through: a full read is just
+        /// <c>offset=0, count=Size</c>, still streamed rather than buffered.
+        ///
+        /// <para>The storage target (bucket/provider) is resolved from the column's
+        /// configuration exactly as <see cref="DownloadFileAsync"/> does — never from
+        /// the row-persisted <c>BucketName</c>/<c>ProviderType</c>, which an attacker
+        /// could repoint. A seekable provider stream is positioned with a seek; a
+        /// forward-only one is advanced by reading and discarding the prefix. Neither
+        /// over-reads past <paramref name="offset"/> + <paramref name="count"/>.</para>
+        /// </summary>
+        public async Task CopyRangeToAsync(
+            IDbTable table,
+            ColumnDto column,
+            IDbModel model,
+            FileMetadata metadata,
+            Stream destination,
+            long offset,
+            long count,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(destination);
+            ArgumentOutOfRangeException.ThrowIfNegative(offset);
+            ArgumentOutOfRangeException.ThrowIfNegative(count);
+
+            var bucketConfig = GetBucketConfig(table, column, model)
+                ?? throw new InvalidOperationException($"No storage configuration found for {table.DbName}.{column.ColumnName}");
+
+            var provider = _providerFactory.GetProvider(bucketConfig);
+
+            await using var source = await provider.OpenReadAsync(bucketConfig, metadata.FileKey, cancellationToken);
+            await AdvanceToOffsetAsync(source, offset, cancellationToken);
+            await CopyExactAsync(source, destination, count, cancellationToken);
+        }
+
+        // Positions a source stream at 'offset'. A seekable stream seeks; a
+        // forward-only one reads and discards exactly 'offset' bytes so it never
+        // relies on a seek the stream cannot honor, and never reads past the offset.
+        private static async Task AdvanceToOffsetAsync(Stream source, long offset, CancellationToken cancellationToken)
+        {
+            if (offset == 0)
+                return;
+
+            if (source.CanSeek)
+            {
+                source.Seek(offset, SeekOrigin.Begin);
+                return;
+            }
+
+            var buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
+            try
+            {
+                var remaining = offset;
+                while (remaining > 0)
+                {
+                    var toRead = (int)Math.Min(buffer.Length, remaining);
+                    var read = await source.ReadAsync(buffer.AsMemory(0, toRead), cancellationToken);
+                    if (read == 0)
+                        break; // source shorter than the offset: nothing left to skip
+                    remaining -= read;
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+        }
+
+        // Copies at most 'count' bytes and never one more, so a range read cannot
+        // over-read into the rest of the object. Stops early if the source ends
+        // (a truncated blob) rather than spinning.
+        private static async Task CopyExactAsync(Stream source, Stream destination, long count, CancellationToken cancellationToken)
+        {
+            if (count == 0)
+                return;
+
+            var buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
+            try
+            {
+                var remaining = count;
+                while (remaining > 0)
+                {
+                    var toRead = (int)Math.Min(buffer.Length, remaining);
+                    var read = await source.ReadAsync(buffer.AsMemory(0, toRead), cancellationToken);
+                    if (read == 0)
+                        break; // source ended early; copy what exists, never over-read
+                    await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                    remaining -= read;
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
         }
 
         /// <summary>

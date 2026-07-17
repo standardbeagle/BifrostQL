@@ -42,6 +42,28 @@ namespace BifrostQL.Core.Storage
             return await File.ReadAllBytesAsync(fullPath, cancellationToken);
         }
 
+        public Task<Stream> OpenReadAsync(
+            StorageBucketConfig bucketConfig,
+            string fileKey,
+            CancellationToken cancellationToken = default)
+        {
+            var fullPath = GetFullFilePath(bucketConfig, fileKey);
+
+            if (!File.Exists(fullPath))
+            {
+                throw new FileNotFoundException($"File not found: {fileKey}", fullPath);
+            }
+
+            // A seekable, async read stream: a byte-range read seeks straight to the
+            // offset rather than reading (and discarding) the skipped prefix, so a
+            // partial read touches only the requested bytes and never buffers the
+            // whole object in memory. FileShare.Read allows concurrent readers.
+            Stream stream = new FileStream(
+                fullPath, FileMode.Open, FileAccess.Read, FileShare.Read,
+                bufferSize: 64 * 1024, useAsync: true);
+            return Task.FromResult(stream);
+        }
+
         public Task DeleteAsync(
             StorageBucketConfig bucketConfig,
             string fileKey,

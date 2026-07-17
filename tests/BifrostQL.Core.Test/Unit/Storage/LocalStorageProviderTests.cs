@@ -211,6 +211,85 @@ public class LocalStorageProviderTests : IDisposable
 
     #endregion
 
+    #region OpenReadAsync
+
+    [Fact]
+    public async Task OpenReadAsync_ReturnsSeekableStreamOverFullContent()
+    {
+        var config = new StorageBucketConfig { BucketName = _tempDir };
+        var content = new byte[] { 10, 20, 30, 40, 50 };
+        await File.WriteAllBytesAsync(Path.Combine(_tempDir, "blob.bin"), content);
+
+        await using var stream = await _provider.OpenReadAsync(config, "blob.bin");
+
+        // A seekable stream is what lets a range read skip to the offset instead of
+        // buffering the whole object — the property the S3 range path depends on.
+        stream.CanSeek.Should().BeTrue();
+        using var ms = new MemoryStream();
+        await stream.CopyToAsync(ms);
+        ms.ToArray().Should().Equal(content);
+    }
+
+    [Fact]
+    public async Task OpenReadAsync_SeekReadsOnlyTheRequestedSlice()
+    {
+        var config = new StorageBucketConfig { BucketName = _tempDir };
+        var content = Enumerable.Range(0, 100).Select(i => (byte)i).ToArray();
+        await File.WriteAllBytesAsync(Path.Combine(_tempDir, "blob.bin"), content);
+
+        await using var stream = await _provider.OpenReadAsync(config, "blob.bin");
+        stream.Seek(40, SeekOrigin.Begin);
+        var slice = new byte[10];
+        var read = await stream.ReadAsync(slice);
+
+        read.Should().Be(10);
+        slice.Should().Equal(content[40..50]);
+    }
+
+    [Fact]
+    public async Task OpenReadAsync_ZeroByteFile_YieldsEmptyStream()
+    {
+        var config = new StorageBucketConfig { BucketName = _tempDir };
+        await File.WriteAllBytesAsync(Path.Combine(_tempDir, "empty.bin"), Array.Empty<byte>());
+
+        await using var stream = await _provider.OpenReadAsync(config, "empty.bin");
+
+        stream.Length.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task OpenReadAsync_NonExistentFile_ThrowsFileNotFound()
+    {
+        var config = new StorageBucketConfig { BucketName = _tempDir };
+
+        await Assert.ThrowsAsync<FileNotFoundException>(() => _provider.OpenReadAsync(config, "nope.bin"));
+    }
+
+    [Theory]
+    [InlineData("../outside.bin")]
+    [InlineData("nested/../../outside.bin")]
+    [InlineData("/tmp/outside.bin")]
+    public async Task OpenReadAsync_TraversalOrEscapeKey_Throws(string fileKey)
+    {
+        // A row-persisted FileKey is untrusted: a '..' or rooted key must be rejected
+        // by the same guard the write/download paths use, before any file is opened.
+        var config = new StorageBucketConfig { BucketName = _tempDir };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _provider.OpenReadAsync(config, fileKey));
+    }
+
+    [Fact]
+    public async Task OpenReadAsync_FileKeyEscapingPrefix_Throws()
+    {
+        // A '..' that cancels the tenant prefix but stays under the bucket root would
+        // read a sibling tenant's object; the prefix-aware guard must reject it.
+        var config = new StorageBucketConfig { BucketName = _tempDir, PathPrefix = "tenant-a" };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _provider.OpenReadAsync(config, "../other/x"));
+    }
+
+    #endregion
+
     #region DeleteAsync
 
     [Fact]

@@ -40,6 +40,26 @@ namespace BifrostQL.Core.Storage
             CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Opens a readable stream over a stored file. The returned stream is the
+        /// caller's to dispose.
+        ///
+        /// <para>A byte-range read seeks this stream to the requested offset instead
+        /// of materializing the whole object, so a partial read never buffers the
+        /// entire file. The default implementation buffers via
+        /// <see cref="DownloadAsync"/> — an honest fallback for providers that do not
+        /// yet offer native streaming; a provider over a seekable backing store (e.g.
+        /// the local filesystem) overrides this to read only what is requested.</para>
+        /// </summary>
+        async Task<Stream> OpenReadAsync(
+            StorageBucketConfig bucketConfig,
+            string fileKey,
+            CancellationToken cancellationToken = default)
+        {
+            var bytes = await DownloadAsync(bucketConfig, fileKey, cancellationToken);
+            return new MemoryStream(bytes, writable: false);
+        }
+
+        /// <summary>
         /// Deletes a file from storage
         /// </summary>
         /// <param name="bucketConfig">The bucket configuration</param>

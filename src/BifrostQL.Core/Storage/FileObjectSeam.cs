@@ -193,6 +193,26 @@ public sealed class FileObjectSeam
     }
 
     /// <summary>
+    /// Streams a byte range of the object's content into <paramref name="destination"/>.
+    /// Takes a <see cref="ResolvedFileObject"/> — which only <see cref="ResolveAsync"/>
+    /// can mint — so, like <see cref="GetContentAsync"/>, there is no path to a
+    /// stream that skips the identity-gated row read. The copy is bounded to
+    /// [<paramref name="offset"/>, offset+count) and never buffers the whole object,
+    /// which is what lets the S3 front door serve a single range (or a full GET) of
+    /// a large object without a full-file copy in memory.
+    /// </summary>
+    public async Task CopyContentToAsync(
+        ResolvedFileObject fileObject, Stream destination, long offset, long count,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(fileObject);
+        ArgumentNullException.ThrowIfNull(destination);
+
+        var (model, table, column, _, metadata) = fileObject.Unpack();
+        await _storage.CopyRangeToAsync(table, column, model, metadata, destination, offset, count, cancellationToken);
+    }
+
+    /// <summary>
     /// Writes an object's content and repoints its row at it.
     ///
     /// <para>Ordering: the row is resolved (proving it exists and is writable by

@@ -22,6 +22,21 @@ namespace BifrostQL.Server.Test
     /// </summary>
     public sealed class LocalAuthTests : IDisposable
     {
+        /// <summary>
+        /// Low-iteration hasher for test fixtures. The V3 hash format embeds its
+        /// iteration count, so verification honors it regardless of the verifier's
+        /// own settings — the product path stays on its production default.
+        /// Seed hashes are computed once per process, not per test instance.
+        /// </summary>
+        private static readonly PasswordHasher<string> TestHasher = new(
+            Microsoft.Extensions.Options.Options.Create(
+                new PasswordHasherOptions { IterationCount = 1_000 }));
+
+        private static readonly string AliceHash =
+            TestHasher.HashPassword("alice@club.test", "correct horse battery");
+        private static readonly string BobHash =
+            TestHasher.HashPassword("bob@club.test", "another good password");
+
         private readonly string _dbPath;
         private readonly string _connectionString;
         private readonly LocalAuthOptions _options = new();
@@ -57,9 +72,8 @@ namespace BifrostQL.Server.Test
             }
 
             // The stored value is a real ASP.NET Core PasswordHasher hash — never plaintext.
-            var hasher = new PasswordHasher<string>();
-            var storedHash = hasher.HashPassword("alice@club.test", "correct horse battery");
-            var bobHash = hasher.HashPassword("bob@club.test", "another good password");
+            var storedHash = AliceHash;
+            var bobHash = BobHash;
 
             using (var insert = conn.CreateCommand())
             {
@@ -105,7 +119,7 @@ namespace BifrostQL.Server.Test
         }
 
         private LocalUserStore CreateStore()
-            => new(new SqliteDbConnFactory(_connectionString), _options);
+            => new(new SqliteDbConnFactory(_connectionString), _options, TestHasher);
 
         [Fact]
         public async Task VerifyCredentials_ValidPassword_SucceedsWithAppIdentity()
@@ -342,7 +356,7 @@ namespace BifrostQL.Server.Test
                 MemberTable = "members",
                 MemberUserIdColumn = "user_id",
                 MemberHouseholdColumn = "household_id",
-            });
+            }, TestHasher);
 
         [Fact]
         public async Task VerifyCredentials_WithHouseholdEnrichment_SurfacesHouseholdClaim()

@@ -342,6 +342,25 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
+        /// Registers the opt-in S3 endpoint's options and its SigV4 verifier. The verifier
+        /// resolves the host-supplied <see cref="BifrostQL.Server.S3.IS3AccessKeyStore"/> and
+        /// the shared <see cref="IBifrostAuthContextFactory"/> from DI, so S3 identity is
+        /// projected through the same fail-closed seam every other transport gate uses. The
+        /// access-key store is deliberately NOT registered here — a deployment enabling the
+        /// endpoint must supply one (there is no fallback identity source).
+        /// </summary>
+        public static void RegisterS3Services(IServiceCollection services, BifrostQL.Server.S3.S3Options options)
+        {
+            services.AddSingleton(options);
+            services.AddSingleton(sp => new BifrostQL.Server.S3.S3SigV4Verifier(
+                sp.GetRequiredService<BifrostQL.Server.S3.IS3AccessKeyStore>(),
+                sp.GetRequiredService<IBifrostAuthContextFactory>(),
+                sp.GetRequiredService<BifrostQL.Server.S3.S3Options>(),
+                sp.GetService<TimeProvider>(),
+                sp.GetService<ILogger<BifrostQL.Server.S3.S3SigV4Verifier>>()));
+        }
+
+        /// <summary>
         /// Registers each protocol adapter type as a singleton plus a dedicated
         /// <see cref="Microsoft.Extensions.Hosting.IHostedService"/> wrapper, so the host
         /// starts/stops every adapter with its own lifecycle. Adapter types resolve their

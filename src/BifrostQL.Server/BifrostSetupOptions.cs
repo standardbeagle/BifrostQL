@@ -45,6 +45,7 @@ namespace BifrostQL.Server
         private readonly List<Type> _chatConnectorTypes = new();
         private IReadOnlyList<IMetadataSource> _metadataSources = Array.Empty<IMetadataSource>();
         private readonly BifrostProfileRegistry _profileRegistry = new();
+        private S3.S3Options? _s3Options;
 
         /// <summary>
         /// Adds additional metadata sources that are merged in priority order on top of file-based metadata.
@@ -219,11 +220,16 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
-        /// Adds a named configuration profile that controls which modules are active.
+        /// Enables the opt-in S3-compatible HTTP endpoint (disabled by default). The host must
+        /// also register an <see cref="S3.IS3AccessKeyStore"/> and call
+        /// <c>UseBifrostS3</c> to mount the middleware. Mirrors the opt-in posture of the other
+        /// protocol adapters; enabling it logs a startup warning (a posture change).
         /// </summary>
-        public BifrostSetupOptions AddProfile(BifrostProfile profile)
+        public BifrostSetupOptions AddS3Endpoint(Action<S3.S3Options>? configure = null)
         {
-            _profileRegistry.Add(profile);
+            var options = new S3.S3Options { Enabled = true };
+            configure?.Invoke(options);
+            _s3Options = options;
             return this;
         }
 
@@ -333,6 +339,8 @@ namespace BifrostQL.Server
             BifrostServiceRegistrar.RegisterCdcDispatcherServices(services);
             BifrostServiceRegistrar.RegisterProtocolAdapterServices(services, _protocolAdapterTypes);
             BifrostServiceRegistrar.RegisterChatConnectorServices(services, _chatConnectorTypes);
+            if (_s3Options is not null)
+                BifrostServiceRegistrar.RegisterS3Services(services, _s3Options);
 
             // Fail-secure default: missing DisableAuth means auth ON, consistent with
             // IsUsingAuth and the BindStandardConfig startup guard.

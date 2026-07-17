@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.Server.S3;
 
 namespace BifrostQL.Server
 {
@@ -105,6 +107,40 @@ namespace BifrostQL.Server
                     ackWindow,
                     ChunkSender.DefaultAckTimeout,
                     origins));
+            return app;
+        }
+
+        /// <summary>
+        /// Mounts the opt-in S3-compatible HTTP endpoint when it has been enabled via
+        /// <see cref="BifrostSetupOptions.AddS3Endpoint"/> /
+        /// <see cref="BifrostMultiDbOptions.AddS3Endpoint"/>. A no-op when the endpoint was not
+        /// enabled, so a host can call it unconditionally.
+        ///
+        /// <para>Fail-fast: an enabled endpoint requires a host-supplied
+        /// <see cref="IS3AccessKeyStore"/> (there is no fallback identity source) — its absence
+        /// throws here at pipeline build, never at first request. Enabling the endpoint logs a
+        /// startup warning, since exposing an S3 front door is a posture change worth
+        /// surfacing.</para>
+        /// </summary>
+        public static IApplicationBuilder UseBifrostS3(this IApplicationBuilder app)
+        {
+            var options = app.ApplicationServices.GetService<S3Options>();
+            if (options is null || !options.Enabled)
+                return app;
+
+            if (app.ApplicationServices.GetService<IS3AccessKeyStore>() is null)
+                throw new InvalidOperationException(
+                    "The S3 endpoint is enabled but no IS3AccessKeyStore is registered. " +
+                    "Register one (there is no fallback identity source) before UseBifrostS3.");
+
+            app.ApplicationServices.GetService<ILoggerFactory>()
+                ?.CreateLogger("BifrostQL.Server.S3")
+                .LogWarning("S3-compatible HTTP endpoint is ENABLED at prefix '{Prefix}' (region '{Region}'). " +
+                    "This exposes an SigV4-authenticated front door; ensure the access-key store is trusted.",
+                    options.PathPrefix, options.Region);
+
+            app.Map(options.PathPrefix, branch =>
+                branch.UseMiddleware<S3Middleware>(options));
             return app;
         }
     }

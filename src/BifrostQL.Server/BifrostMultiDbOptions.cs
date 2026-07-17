@@ -88,6 +88,7 @@ namespace BifrostQL.Server
         private IConfigurationSection? _loggingConfig;
         private IConfigurationSection? _queryLimitsConfig;
         private readonly BifrostProfileRegistry _profileRegistry = new();
+        private S3.S3Options? _s3Options;
 
         /// <summary>
         /// The configured endpoints. Available after configuration is complete.
@@ -245,6 +246,19 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
+        /// Enables the opt-in S3-compatible HTTP endpoint (disabled by default). The host must
+        /// also register an <see cref="S3.IS3AccessKeyStore"/> and call <c>UseBifrostS3</c> to
+        /// mount the middleware. Enabling it logs a startup warning (a posture change).
+        /// </summary>
+        public BifrostMultiDbOptions AddS3Endpoint(Action<S3.S3Options>? configure = null)
+        {
+            var options = new S3.S3Options { Enabled = true };
+            configure?.Invoke(options);
+            _s3Options = options;
+            return this;
+        }
+
+        /// <summary>
         /// Adds a named configuration profile that controls which modules are active.
         /// </summary>
         public BifrostMultiDbOptions AddProfile(BifrostProfile profile)
@@ -301,6 +315,8 @@ namespace BifrostQL.Server
             BifrostServiceRegistrar.RegisterCdcDispatcherServices(services);
             BifrostServiceRegistrar.RegisterProtocolAdapterServices(services, _protocolAdapterTypes);
             BifrostServiceRegistrar.RegisterChatConnectorServices(services, _chatConnectorTypes);
+            if (_s3Options is not null)
+                BifrostServiceRegistrar.RegisterS3Services(services, _s3Options);
 
             // Same bounded depth/complexity guard as the single-database path; applied to
             // every endpoint's shared executor (which the binary transport also uses).

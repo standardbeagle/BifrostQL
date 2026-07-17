@@ -1,4 +1,5 @@
 using System.IO.Pipelines;
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -13,6 +14,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -714,6 +716,210 @@ namespace BifrostQL.Mcp.Test
 
             public IDictionary<string, object?> CreateUserContext(HttpContext context, IDictionary<string, object?> existing)
                 => CreateUserContext(context);
+        }
+
+        // ---- configurable auth modes (slice B) --------------------------------
+
+        [Fact]
+        public async Task DefaultOptions_AnonymousNotGranted_TenantReadFailsClosed()
+        {
+            // Criterion 1: the dangerous opt-ins default OFF, so default options mint no
+            // anonymous identity and a tenant-filtered read fails closed.
+            var options = new McpAuthOptions();
+            options.Mode.Should().Be(McpAuthMode.FailClosed, "the dangerous anonymous/bearer surfaces default OFF");
+
+            var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
+            var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
+
+            provider().Should().BeEmpty("no identity source is configured, so no anonymous identity is minted");
+
+            var result = await QueryOrdersWith(provider);
+            result.IsError.Should().BeTrue();
+            result.Content.OfType<TextContentBlock>().Single().Text
+                .Should().Contain("Tenant context required");
+        }
+
+        [Fact]
+        public void AnonymousDevMode_LogsDeliberateOptInWarningAtStartup()
+        {
+            // Criterion 2: enabling the anonymous/dev opt-in logs a startup warning mirroring
+            // RespWireAdapter's EnableWrites posture warning.
+            var captured = new CapturingLoggerFactory();
+            var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
+            var executor = _host.Services.GetRequiredService<IQueryIntentExecutor>();
+            var adapter = new BifrostMcpAdapter(executor, factory, _host.Services, captured,
+                new McpAuthOptions { Mode = McpAuthMode.AnonymousDev });
+
+            adapter.ConfigureAuth();
+
+            captured.Entries.Should().ContainSingle(e => e.Level == LogLevel.Warning)
+                .Which.Message.Should().Contain("ANONYMOUS/DEV").And.Contain("deliberate opt-in");
+        }
+
+        [Fact]
+        public void DefaultFailClosedMode_LogsNoStartupWarning()
+        {
+            // The safe default is silent — only the deliberate opt-in warns.
+            var captured = new CapturingLoggerFactory();
+            var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
+            var executor = _host.Services.GetRequiredService<IQueryIntentExecutor>();
+            var adapter = new BifrostMcpAdapter(executor, factory, _host.Services, captured, new McpAuthOptions());
+
+            adapter.ConfigureAuth();
+
+            captured.Entries.Should().NotContain(e => e.Level == LogLevel.Warning);
+        }
+
+        [Fact]
+        public async Task BearerMode_ValidToken_ProjectsPrincipalThroughFactory_ScopesToTenant()
+        {
+            // Criterion 3: a valid bearer token is validated BEFORE identity is minted; its
+            // principal reaches the pipeline ONLY through the shared factory's projection.
+            var principal = new ClaimsPrincipal(new ClaimsIdentity(
+                new[]
+                {
+                    new Claim(ClaimTypes.NameIdentifier, "user-a"),
+                    new Claim("bifrost:tenant", "A"),
+                },
+                authenticationType: "Bearer"));
+
+            var options = new McpAuthOptions
+            {
+                Mode = McpAuthMode.Bearer,
+                BearerToken = "valid-token",
+                ValidateBearerToken = token => token == "valid-token" ? principal : null,
+            };
+
+            // Real shared factory (not a stub): proves the ClaimsPrincipal is projected only by
+            // IBifrostAuthContextFactory, with no bespoke claim reading in the adapter.
+            var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
+            var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
+
+            var ctx = provider();
+            ctx.Should().ContainKey("tenant_id");
+            ctx["tenant_id"].Should().Be("A");
+
+            var result = await QueryOrdersWith(provider);
+            result.IsError.Should().NotBeTrue(result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text);
+
+            var payload = result.StructuredContent!.Value;
+            payload.GetProperty("totalCount").GetInt32().Should().Be(2);
+            payload.GetProperty("rows").EnumerateArray()
+                .Select(row => row.GetProperty("name").GetString())
+                .Should().BeEquivalentTo("order-a1", "order-a3");
+        }
+
+        [Theory]
+        [InlineData("wrong-token")] // presented but invalid
+        [InlineData(null)]          // absent
+        public async Task BearerMode_InvalidOrAbsentToken_MintsNoIdentity_FailsClosed(string? presentedToken)
+        {
+            // Criterion 4: on a bearer (non-dev) server an absent or invalid token mints NO
+            // identity, so the empty context drives the existing fail-closed rejection — never
+            // a degraded/empty-but-permitted read.
+            var principal = new ClaimsPrincipal(new ClaimsIdentity(
+                new[]
+                {
+                    new Claim(ClaimTypes.NameIdentifier, "user-a"),
+                    new Claim("bifrost:tenant", "A"),
+                },
+                authenticationType: "Bearer"));
+
+            var options = new McpAuthOptions
+            {
+                Mode = McpAuthMode.Bearer,
+                BearerToken = presentedToken,
+                ValidateBearerToken = token => token == "valid-token" ? principal : null,
+            };
+
+            var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
+            var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
+
+            provider().Should().BeEmpty(
+                "an absent or invalid bearer token mints no identity — never a degraded pass-through");
+
+            var result = await QueryOrdersWith(provider);
+            result.IsError.Should().BeTrue();
+            result.Content.OfType<TextContentBlock>().Single().Text
+                .Should().Contain("Tenant context required");
+        }
+
+        [Fact]
+        public void McpAdapterSource_ContainsNoManualClaimWalking()
+        {
+            // Criterion 5: identity projection is delegated entirely to
+            // IBifrostAuthContextFactory — src/BifrostQL.Mcp must not read claims/issuer itself.
+            var mcpSrcDir = FindMcpSourceDirectory();
+            var files = Directory.EnumerateFiles(mcpSrcDir, "*.cs", SearchOption.AllDirectories)
+                .Where(p => !p.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                         && !p.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+                .ToList();
+            files.Should().NotBeEmpty("the BifrostQL.Mcp source must be locatable or this guard is vacuous");
+
+            // Tokens that signal the adapter reading claims/issuer itself rather than handing the
+            // whole principal to the factory. 'using' directives (e.g. System.Security.Claims)
+            // are not claim walking, so they are skipped.
+            string[] forbidden = { ".FindFirst", ".FindAll", ".FindFirstValue", "ClaimTypes.", ".HasClaim", ".Claims" };
+
+            var offenders = new List<string>();
+            foreach (var file in files)
+            {
+                foreach (var line in File.ReadLines(file))
+                {
+                    if (line.TrimStart().StartsWith("using ", StringComparison.Ordinal))
+                        continue;
+                    foreach (var token in forbidden)
+                        if (line.Contains(token, StringComparison.Ordinal))
+                            offenders.Add($"{Path.GetFileName(file)}: '{token}' in: {line.Trim()}");
+                }
+            }
+
+            offenders.Should().BeEmpty(
+                "identity projection must be delegated entirely to IBifrostAuthContextFactory");
+        }
+
+        /// <summary>
+        /// Walks up from the test assembly location to the repository root (the directory holding
+        /// BifrostQL.sln) and returns its <c>src/BifrostQL.Mcp</c> directory. Throws if it cannot
+        /// be found so the source-scan guard fails loudly rather than passing vacuously.
+        /// </summary>
+        private static string FindMcpSourceDirectory()
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (dir is not null)
+            {
+                var candidate = Path.Combine(dir.FullName, "src", "BifrostQL.Mcp");
+                if (File.Exists(Path.Combine(dir.FullName, "BifrostQL.sln")) && Directory.Exists(candidate))
+                    return candidate;
+                dir = dir.Parent;
+            }
+            throw new DirectoryNotFoundException(
+                $"Could not locate src/BifrostQL.Mcp from {AppContext.BaseDirectory}");
+        }
+
+        private sealed record LogEntry(LogLevel Level, string Message);
+
+        /// <summary>
+        /// Minimal <see cref="ILoggerFactory"/> that records every log entry so a test can assert
+        /// on the startup posture warning without engaging the stdio transport.
+        /// </summary>
+        private sealed class CapturingLoggerFactory : ILoggerFactory
+        {
+            public List<LogEntry> Entries { get; } = new();
+            public ILogger CreateLogger(string categoryName) => new CapturingLogger(Entries);
+            public void AddProvider(ILoggerProvider provider) { }
+            public void Dispose() { }
+
+            private sealed class CapturingLogger : ILogger
+            {
+                private readonly List<LogEntry> _entries;
+                public CapturingLogger(List<LogEntry> entries) => _entries = entries;
+                public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+                public bool IsEnabled(LogLevel logLevel) => true;
+                public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+                    Exception? exception, Func<TState, Exception?, string> formatter)
+                    => _entries.Add(new LogEntry(logLevel, formatter(state, exception)));
+            }
         }
     }
 }

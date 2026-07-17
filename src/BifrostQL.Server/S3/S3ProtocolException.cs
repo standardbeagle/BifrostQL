@@ -50,6 +50,12 @@ namespace BifrostQL.Server.S3
         public static S3ProtocolException NoSuchBucket()
             => new("NoSuchBucket", 404, "The specified bucket does not exist.");
 
+        public static S3ProtocolException NoSuchKey()
+            => new("NoSuchKey", 404, "The specified key does not exist.");
+
+        public static S3ProtocolException PreconditionFailed()
+            => new("PreconditionFailed", 412, "At least one of the preconditions you specified did not hold.");
+
         public static S3ProtocolException RequestExpired()
             => new("AccessDenied", 403, "Request has expired.");
 

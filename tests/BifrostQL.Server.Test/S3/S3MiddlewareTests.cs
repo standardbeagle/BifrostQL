@@ -32,9 +32,11 @@ namespace BifrostQL.Server.Test.S3
             var nextCalled = new[] { false };
             RequestDelegate next = _ => { nextCalled[0] = true; return Task.CompletedTask; };
             // These middleware tests exercise auth/limits/501 paths only; none reaches a
-            // list operation, so the lister's read seam is never invoked.
+            // list or object operation, so neither the lister nor the object seam's read
+            // path is ever invoked.
             var listing = new S3Listing(new UnusedReads(), opts);
-            return (new S3Middleware(next, opts, verifier, listing, NullLogger<S3Middleware>.Instance), nextCalled);
+            var seam = new BifrostQL.Core.Storage.FileObjectSeam(new UnusedReads(), new UnusedWrites());
+            return (new S3Middleware(next, opts, verifier, listing, seam, NullLogger<S3Middleware>.Instance), nextCalled);
         }
 
         private static async Task<(int Status, string Body, XElement Xml)> Run(
@@ -48,10 +50,13 @@ namespace BifrostQL.Server.Test.S3
         }
 
         [Fact]
-        public async Task Authenticated_data_request_returns_not_implemented_501()
+        public async Task Authenticated_write_request_returns_not_implemented_501()
         {
+            // GetObject/HeadObject are implemented; a write method (the remaining data
+            // path) is still a clean, authenticated 501. The object seam is never
+            // reached for an unimplemented method.
             var (middleware, nextCalled) = Build();
-            var ctx = S3TestSigner.BuildHeaderSigned(signTime: SignTime);
+            var ctx = S3TestSigner.BuildHeaderSigned(method: "PUT", signTime: SignTime);
 
             var (status, _, xml) = await Run(middleware, ctx);
 
@@ -135,6 +140,18 @@ namespace BifrostQL.Server.Test.S3
             public Task<BifrostQL.Core.Resolvers.QueryIntentResult> ExecuteAsync(
                 BifrostQL.Core.Resolvers.QueryIntent intent, CancellationToken cancellationToken = default)
                 => throw new InvalidOperationException("read seam must not be invoked");
+        }
+
+        /// <summary>A write seam that must never be called on these auth/limit/501 paths.</summary>
+        private sealed class UnusedWrites : BifrostQL.Core.Resolvers.IMutationIntentExecutor
+        {
+            public Task<BifrostQL.Core.Resolvers.MutationIntentResult> ExecuteAsync(
+                BifrostQL.Core.Resolvers.MutationIntent intent, CancellationToken cancellationToken = default)
+                => throw new InvalidOperationException("write seam must not be invoked");
+
+            public Task<BifrostQL.Core.Resolvers.MutationBatchIntentResult> ExecuteBatchAsync(
+                BifrostQL.Core.Resolvers.MutationBatchIntent intent, CancellationToken cancellationToken = default)
+                => throw new InvalidOperationException("write seam must not be invoked");
         }
 
         private sealed class ThrowingStream : Stream

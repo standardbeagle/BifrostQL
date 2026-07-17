@@ -366,6 +366,17 @@ namespace BifrostQL.Server
                 sp.GetRequiredService<BifrostQL.Server.S3.S3Options>(),
                 sp.GetService<BifrostQL.Core.Storage.FileStorageService>(),
                 sp.GetService<ILogger<BifrostQL.Server.S3.S3Listing>>()));
+
+            // GetObject/HeadObject resolve the row through the same authorized read seam
+            // (the FileObjectSeam) before touching storage, so visibility is decided by
+            // the transformer pipeline, never by the adapter. Writes stay disabled: the
+            // S3 read surface never constructs a mutation intent.
+            services.AddSingleton(sp => new BifrostQL.Core.Storage.FileObjectSeam(
+                sp.GetRequiredService<IQueryIntentExecutor>(),
+                sp.GetRequiredService<IMutationIntentExecutor>(),
+                sp.GetService<BifrostQL.Core.Storage.FileStorageService>(),
+                new BifrostQL.Core.Storage.FileObjectSeamOptions { Endpoint = options.Endpoint },
+                sp.GetService<ILogger<BifrostQL.Core.Storage.FileObjectSeam>>()));
         }
 
         /// <summary>

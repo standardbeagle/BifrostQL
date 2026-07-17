@@ -61,8 +61,9 @@ namespace BifrostQL.Server.Test.S3
                 S3TestSigner.AccessKeyId, S3TestSigner.Secret, S3TestSigner.Principal());
             var verifier = new S3SigV4Verifier(keyStore, BifrostAuthContextFactory.Instance, opts, new FixedClock(SignTime));
             var listing = _harness.Listing(opts);
+            var seam = _harness.Seam(options: opts);
             RequestDelegate next = _ => Task.CompletedTask;
-            return new S3Middleware(next, opts, verifier, listing, NullLogger<S3Middleware>.Instance);
+            return new S3Middleware(next, opts, verifier, listing, seam, NullLogger<S3Middleware>.Instance);
         }
 
         private static async Task<(int Status, XElement Xml)> Run(S3Middleware middleware, DefaultHttpContext ctx)

@@ -76,9 +76,19 @@ namespace BifrostQL.Server.Test.S3
 
         public IQueryIntentExecutor Reads => _host.Services.GetRequiredService<IQueryIntentExecutor>();
 
+        public IMutationIntentExecutor Writes => _host.Services.GetRequiredService<IMutationIntentExecutor>();
+
         /// <summary>Builds a lister over the real executor with the given options (default options when null).</summary>
         public S3Listing Listing(S3Options? options = null)
             => new(Reads, options ?? new S3Options { Endpoint = EndpointPath });
+
+        /// <summary>
+        /// Builds a file-object seam over the real read/write pipeline. A caller that
+        /// needs a real storage backing (GetObject) supplies a <see cref="FileStorageService"/>
+        /// bound to a temp directory; the read-only list/routing tests can omit it.
+        /// </summary>
+        public FileObjectSeam Seam(FileStorageService? storage = null, S3Options? options = null)
+            => new(Reads, Writes, storage, new FileObjectSeamOptions { Endpoint = (options ?? new S3Options()).Endpoint ?? EndpointPath });
 
         public async ValueTask DisposeAsync()
         {

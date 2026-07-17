@@ -267,6 +267,70 @@ namespace BifrostQL.Mcp
         }
 
         /// <summary>
+        /// Resolves the HTTP transport's per-session principal by extracting the bearer from the
+        /// session-initiating request's <c>Authorization</c> header (slice C's
+        /// <see cref="McpCredentialSources.ExtractBearerToken"/> seam) and running the async
+        /// credential exchange / validation. Unlike <see cref="ValidateBearer"/> — the synchronous
+        /// stdio path — this is <b>awaited end to end</b>: the token-exchange I/O never crosses a
+        /// <c>GetAwaiter().GetResult()</c> bridge on the context-bearing ASP.NET path (see
+        /// docs/solutions/bifrostql/mcp-slice-d-oidc-credential-store-async-bridge). An absent header,
+        /// a non-bearer mode, or a failed/unknown exchange yields <c>null</c> — no identity, never an
+        /// anonymous one. The resolved principal is still projected through
+        /// <see cref="IBifrostAuthContextFactory"/> (which rejects an unmapped issuer, fail closed).
+        /// </summary>
+        internal static async Task<ClaimsPrincipal?> ResolveBearerPrincipalAsync(
+            McpAuthOptions authOptions, string? authorizationHeaderValue, CancellationToken cancellationToken)
+        {
+            if (authOptions.Mode != McpAuthMode.Bearer)
+                return null;
+
+            var token = McpCredentialSources.ExtractBearerToken(authorizationHeaderValue);
+            if (string.IsNullOrEmpty(token))
+                return null;
+
+            if (authOptions.CredentialStore is not null)
+                return await authOptions.CredentialStore.ExchangeAsync(token, cancellationToken).ConfigureAwait(false);
+
+            return authOptions.ValidateBearerToken?.Invoke(token);
+        }
+
+        /// <summary>
+        /// Builds a projection-ONLY user-context provider for one HTTP session from an
+        /// already-resolved principal (no credential exchange runs inside it). HTTP identity is
+        /// fixed for the session by the bearer presented at the initialize request, so the
+        /// principal is projected through <paramref name="authContextFactory"/> ONCE here — while
+        /// <paramref name="services"/> is a LIVE scope — and each tool call returns a fresh copy of
+        /// that snapshot. Snapshotting is essential: the MCP session outlives the initiating request
+        /// whose scope this projection reads (the OIDC claim-mapper registry), so deferring the
+        /// projection to tool-call time would touch a disposed scope on later requests. A null
+        /// principal snapshots an empty (fail-closed) context; an unmapped issuer throws here and the
+        /// throw is deferred to each tool call so the handler sanitizes it onto the wire — never an
+        /// empty/anonymous context.
+        /// </summary>
+        internal static Func<IDictionary<string, object?>> CreateProjectionProvider(
+            IBifrostAuthContextFactory authContextFactory, IServiceProvider services, ClaimsPrincipal? principal)
+        {
+            var carrier = new DefaultHttpContext { RequestServices = services };
+            if (principal is not null)
+                carrier.User = principal;
+
+            IDictionary<string, object?> projected;
+            try
+            {
+                projected = authContextFactory.CreateUserContext(carrier);
+            }
+            catch (UnmappedOidcIssuerException ex)
+            {
+                // Fail closed, sanitized: rethrow on every tool call so the handler maps it to a
+                // generic MCP error (invariant 3) instead of ever yielding an anonymous context.
+                return () => throw ex;
+            }
+
+            var frozen = new Dictionary<string, object?>(projected);
+            return () => new Dictionary<string, object?>(frozen);
+        }
+
+        /// <summary>
         /// Reads the raw credential for the session/request. The per-transport
         /// <see cref="McpAuthOptions.CredentialSource"/> is authoritative when configured — it
         /// alone knows WHERE the credential lives (stdio env/handshake vs HTTP Authorization

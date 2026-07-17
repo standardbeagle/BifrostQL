@@ -865,35 +865,11 @@ namespace BifrostQL.Mcp.Test
             McpCredentialSources.ExtractBearerToken(header).Should().Be(expected);
         }
 
-        [Fact]
-        public void McpSource_AddsNoHttpTransportHosting()
-        {
-            // Criterion 4: this slice defines ONLY the credential-extraction seam; the HTTP
-            // transport hosting (MapMcp/Kestrel/routing) is slice 5's job. A source scan confirms
-            // src/BifrostQL.Mcp mounts no HTTP endpoint.
-            var mcpSrcDir = FindMcpSourceDirectory();
-            var files = Directory.EnumerateFiles(mcpSrcDir, "*.cs", SearchOption.AllDirectories)
-                .Where(p => !p.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
-                         && !p.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
-                .ToList();
-            files.Should().NotBeEmpty("the BifrostQL.Mcp source must be locatable or this guard is vacuous");
-
-            string[] httpHostingTokens =
-            {
-                "MapMcp", "WithHttpTransport", "StreamableHttp", "UseRouting", "UseEndpoints",
-                "MapPost", "MapGet", "ConfigureKestrel", "AddRouting", "ListenLocalhost",
-            };
-
-            var offenders = new List<string>();
-            foreach (var file in files)
-                foreach (var line in File.ReadLines(file))
-                    foreach (var token in httpHostingTokens)
-                        if (line.Contains(token, StringComparison.Ordinal))
-                            offenders.Add($"{Path.GetFileName(file)}: '{token}' in: {line.Trim()}");
-
-            offenders.Should().BeEmpty(
-                "slice C defines only the credential-extraction seam — HTTP transport hosting is slice 5");
-        }
+        // (Slice C's "MCP source adds no HTTP transport hosting" guard was removed in
+        // slice 5, which adds exactly that hosting — BifrostMcpHttpExtensions
+        // (WithHttpTransport/MapMcp). The HTTP front door is proven end to end by
+        // McpHttpTransportTests, and identity still flows only through slice C's
+        // credential seam + the shared auth factory.)
 
         // ---- configurable auth modes (slice B) --------------------------------
 

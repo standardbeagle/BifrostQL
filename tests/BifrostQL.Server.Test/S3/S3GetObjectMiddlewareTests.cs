@@ -4,7 +4,7 @@ using BifrostQL.Core.Storage;
 using BifrostQL.Server.S3;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace BifrostQL.Server.Test.S3
@@ -35,6 +35,7 @@ namespace BifrostQL.Server.Test.S3
 
         private string _tempDir = null!;
         private S3ListingRealDbHarness _harness = null!;
+        private readonly CapturingLoggerSink _logSink = new();
 
         // Two principals bound to two tenants, to prove the tenant boundary end to end.
         private const string KeyA = "AKIATENANTA";
@@ -67,6 +68,11 @@ namespace BifrostQL.Server.Test.S3
             "main.assets { tenant-filter: tenant_id }",
             "main.assets.data { file: json }",
             "main.parts.image { file: json }",
+            // A table the caller may not READ (policy grants create only). Addressing a
+            // file object on it must answer the same non-enumerating NoSuchKey the write
+            // paths give, never leaking a 500 that distinguishes read-denied from missing.
+            "main.vault { policy-actions: create }",
+            "main.vault.blob { file: json }",
         };
 
         private string[] SeedSql() => new[]
@@ -81,10 +87,14 @@ namespace BifrostQL.Server.Test.S3
                 $"(3, 'tenant-a', NULL)",                                 // row visible, no object
                 $"(0, 'tenant-a', '{Pointer("blobs/single", Single, "application/octet-stream")}')", // PK value 0
                 $"(9, 'tenant-a', '{Pointer("blobs/empty", Empty, "text/plain")}')",  // zero-byte object
+                $"(7, 'tenant-a', 'corrupt-not-valid-json')",             // unparseable pointer
             }),
             // Composite-PK table: object key is image/{region}/{sku}.
             "CREATE TABLE parts (region TEXT, sku TEXT, image TEXT, PRIMARY KEY(region, sku))",
             $"INSERT INTO parts(region, sku, image) VALUES ('us', 'widget', '{Pointer("blobs/composite", Composite, "image/png")}')",
+            // A readable-addressable but READ-DENIED table (policy-actions: create).
+            "CREATE TABLE vault (id INTEGER PRIMARY KEY, blob TEXT)",
+            $"INSERT INTO vault(id, blob) VALUES (1, '{Pointer("blobs/full", Full, "text/plain")}')",
         };
 
         // ---- full read ------------------------------------------------------------
@@ -285,6 +295,40 @@ namespace BifrostQL.Server.Test.S3
             XElement.Parse(bodyText).Element("Code")!.Value.Should().Be("NoSuchKey");
         }
 
+        [Fact]
+        public async Task Corrupt_pointer_read_is_NoSuchKey_not_500_or_error_log()
+        {
+            // Row 7 holds an unparseable pointer: FileObjectSeam.LocateAsync throws a
+            // BifrostExecutionError the seam documents as "→ NoSuchKey". Before the fix
+            // that exception escaped the read-path catch (which caught only
+            // InvalidOperationException) to the generic handler — a 500 InternalError +
+            // Error log, diverging from the write paths that already answer NoSuchKey.
+            var (status, bodyText, _) = await RunText(SignedA("/assets/data/7"));
+
+            status.Should().Be(404);
+            status.Should().NotBe(500);
+            XElement.Parse(bodyText).Element("Code")!.Value.Should().Be("NoSuchKey");
+            // Non-enumeration: a corrupt pointer is a routine addressing outcome, not a
+            // server fault — it must not surface at Error level (which a 500 would).
+            _logSink.Entries.Should().NotContain(e => e.Level == LogLevel.Error);
+        }
+
+        [Fact]
+        public async Task Policy_read_denied_get_is_NoSuchKey_not_500_or_error_log()
+        {
+            // The vault table grants create only, so PolicyFilterTransformer throws a
+            // BifrostExecutionError on the read. GetObject must answer the same
+            // non-enumerating 404 that ListObjects and the write paths give a
+            // read-denied caller — a 500 here would make the op class an
+            // existence/authorization oracle (the epic-wide blocker this closes).
+            var (status, bodyText, _) = await RunText(SignedA("/vault/blob/1"));
+
+            status.Should().Be(404);
+            status.Should().NotBe(500);
+            XElement.Parse(bodyText).Element("Code")!.Value.Should().Be("NoSuchKey");
+            _logSink.Entries.Should().NotContain(e => e.Level == LogLevel.Error);
+        }
+
         // ---- cancellation ---------------------------------------------------------
 
         [Fact]
@@ -317,7 +361,7 @@ namespace BifrostQL.Server.Test.S3
                 databaseDefaultConfig: new StorageBucketConfig { BucketName = _tempDir, ProviderType = "local" });
             var seam = _harness.Seam(storage, opts);
             RequestDelegate next = _ => Task.CompletedTask;
-            return new S3Middleware(next, opts, verifier, _harness.Listing(opts), seam, NullLogger<S3Middleware>.Instance);
+            return new S3Middleware(next, opts, verifier, _harness.Listing(opts), seam, _logSink.Logger<S3Middleware>());
         }
 
         private DefaultHttpContext SignedA(string path, string method = "GET", string? range = null)
@@ -376,6 +420,31 @@ namespace BifrostQL.Server.Test.S3
         private sealed class FixedClock(DateTimeOffset now) : TimeProvider
         {
             public override DateTimeOffset GetUtcNow() => now;
+        }
+
+        /// <summary>
+        /// Captures every log entry the middleware emits so a test can assert that a
+        /// routine non-enumerating outcome (corrupt pointer, policy read-deny) is NOT
+        /// surfaced at Error level — the signal a leaked 500 would produce.
+        /// </summary>
+        private sealed class CapturingLoggerSink
+        {
+            public readonly record struct Entry(LogLevel Level);
+
+            public List<Entry> Entries { get; } = new();
+
+            public ILogger<T> Logger<T>() => new Sink<T>(this);
+
+            private sealed class Sink<T>(CapturingLoggerSink owner) : ILogger<T>, IDisposable
+            {
+                public IDisposable BeginScope<TState>(TState state) where TState : notnull => this;
+                public bool IsEnabled(LogLevel logLevel) => true;
+                public void Log<TState>(
+                    LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+                    Func<TState, Exception?, string> formatter)
+                    => owner.Entries.Add(new Entry(logLevel));
+                public void Dispose() { }
+            }
         }
     }
 }

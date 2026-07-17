@@ -174,11 +174,21 @@ namespace BifrostQL.Server.S3
             {
                 resolved = await _seam.ResolveAsync(bucket, key, userContext, context.RequestAborted);
             }
-            catch (InvalidOperationException)
+            catch (Exception ex) when (ex is InvalidOperationException or BifrostExecutionError)
             {
-                // Addressing fault: unknown bucket, malformed/wrong-arity key, or a
-                // column that is not a file object. Indistinguishable from a missing
-                // key by design, so the endpoint is not an existence oracle.
+                // Addressing fault, corrupt pointer, or a policy read-deny: an unknown
+                // bucket / malformed-or-wrong-arity key / non-file column
+                // (InvalidOperationException), an unparseable stored pointer, or a
+                // table the caller may not read (both BifrostExecutionError — see
+                // FileObjectSeam.LocateAsync and PolicyFilterTransformer). All map to
+                // one non-enumerating NoSuchKey, matching the write paths: answering a
+                // read-denied caller with 500 while writes answer 404 would make the
+                // op class an existence/authorization oracle (the exact epic-wide
+                // divergence this catch closes). The seam's ResolveAsync never touches
+                // storage compensation, so FileObjectResidueException (which derives
+                // from BifrostExecutionError and MUST map to 500, not NoSuchKey) cannot
+                // reach here — the read path builds no blob to orphan. Detail logged only.
+                _logger?.LogDebug(ex, "GetObject/HeadObject unaddressable, corrupt, or denied (request {RequestId}).", requestId);
                 throw S3ProtocolException.NoSuchKey();
             }
 
@@ -410,10 +420,16 @@ namespace BifrostQL.Server.S3
                     throw S3ProtocolException.NoSuchKey();
                 source = resolved;
             }
-            catch (InvalidOperationException)
+            catch (Exception ex) when (ex is InvalidOperationException or BifrostExecutionError)
             {
-                // Addressing fault on the source (unknown bucket, wrong key arity, non-file
-                // column): indistinguishable from a missing key by design.
+                // Source addressing fault, corrupt pointer, or policy read-deny — the same
+                // read-seam failure family GetObject handles, mapped to the same
+                // non-enumerating NoSuchKey so a copy is not an existence/authorization
+                // oracle for a source the caller cannot read. ResolveAsync builds no blob,
+                // so FileObjectResidueException (→ 500) cannot arise on this read; only the
+                // destination write below (PutAsync) can, and it is caught there. Detail
+                // logged only.
+                _logger?.LogDebug(ex, "CopyObject source unaddressable, corrupt, or denied (request {RequestId}).", requestId);
                 throw S3ProtocolException.NoSuchKey();
             }
 

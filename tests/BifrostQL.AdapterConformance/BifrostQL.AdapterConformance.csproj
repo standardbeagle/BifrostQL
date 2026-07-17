@@ -1,10 +1,13 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <!-- Multi-target to match the test projects that derive suites from this kit
          (BifrostQL.Server.Test runs net8/net9/net10). -->
-    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <!-- Epic tier: single current TFM for the dev/PR loop. Release tier
+         (-p:ReleaseTests=true) restores the full support matrix. -->
+    <TargetFrameworks Condition="'$(ReleaseTests)'=='true'">net8.0;net9.0;net10.0</TargetFrameworks>
+    <TargetFramework Condition="'$(ReleaseTests)'!='true'">net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>

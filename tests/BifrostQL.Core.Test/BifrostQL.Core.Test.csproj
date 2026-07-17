@@ -1,7 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+		<!-- Epic tier: single current TFM for the dev/PR loop. Release tier
+		     (-p:ReleaseTests=true) restores the full support matrix. -->
+		<TargetFrameworks Condition="'$(ReleaseTests)'=='true'">net8.0;net9.0;net10.0</TargetFrameworks>
+		<TargetFramework Condition="'$(ReleaseTests)'!='true'">net10.0</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 

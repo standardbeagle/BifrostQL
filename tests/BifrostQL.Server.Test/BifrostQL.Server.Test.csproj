@@ -5,7 +5,10 @@
     <!-- Multi-target so the Server project's per-TFM JwtBearer/OpenIdConnect pins
          (8.0.x on net8, 9.0.x on net9, 10.0.x on net10) are actually exercised for
          every framework shipped consumers build against, not just net10. -->
-    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <!-- Epic tier: single current TFM for the dev/PR loop. Release tier
+         (-p:ReleaseTests=true) restores the full support matrix. -->
+    <TargetFrameworks Condition="'$(ReleaseTests)'=='true'">net8.0;net9.0;net10.0</TargetFrameworks>
+    <TargetFramework Condition="'$(ReleaseTests)'!='true'">net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>

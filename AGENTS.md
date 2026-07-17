@@ -16,6 +16,15 @@ dotnet test --filter "FullyQualifiedName=TestName"
 dotnet run --project src/BifrostQL.Host  # Web server
 ```
 
+### Test tiers: epic vs release
+
+試分二層：
+
+- **Epic tier**（默認，slice/epic loop 與 PR/main CI 用）：test projects 只建當前 TFM（net10.0），Fuzz category 除外。`dotnet test` 素行即此層；`scripts/test-epic.sh` 同，且加 `--filter "Category!=Fuzz"`。
+- **Release tier**（release 前 gate，version tag / GitHub release 觸發）：`-p:ReleaseTests=true` 復全 TFM matrix（net8.0/9.0/10.0），且行 Fuzz tests（seeds 皆 pinned `InlineData`，deterministic）。`scripts/test-release.sh` 行之；CI 之 `release-tests` job gate `pack-publish`。
+
+Fuzz tests 標 `[Trait("Category", "Fuzz")]`；新 fuzz-style tests 必同標，否則誤入 epic gate。多 TFM 相容問題（新 BCL API、TFM-conditioned packages）epic 層不見，release 層乃見——release-tests 失敗多屬此類。
+
 ## Edit Source, Not Generated Output
 
 - Desktop UI 前端源在 `src/BifrostQL.UI/frontend`。

@@ -59,10 +59,24 @@ namespace BifrostQL.Mcp
 
         /// <summary>
         /// The bearer token presented for the session (sourced by the host from its environment/
-        /// configuration; a stdio session has one caller). Used only in <see cref="McpAuthMode.Bearer"/>.
-        /// Null or empty presents no credential, so identity fails closed.
+        /// configuration; a stdio session has one caller). Used only in <see cref="McpAuthMode.Bearer"/>
+        /// and only when <see cref="CredentialSource"/> is not set. Null or empty presents no
+        /// credential, so identity fails closed.
         /// </summary>
         public string? BearerToken { get; set; }
+
+        /// <summary>
+        /// Per-transport credential-extraction seam. When set, this delegate — not
+        /// <see cref="BearerToken"/> — supplies the raw credential for the session/request in
+        /// <see cref="McpAuthMode.Bearer"/>. It knows only WHERE the credential is read (a stdio
+        /// process env var / initialize-handshake value, or an HTTP <c>Authorization: Bearer</c>
+        /// header), never HOW identity is projected: the extracted credential still flows through
+        /// the identical <see cref="ValidateBearerToken"/> + <see cref="IBifrostAuthContextFactory"/>
+        /// projection, so swapping stdio for HTTP changes only the read step. Build one with
+        /// <see cref="McpCredentialSources"/>. A source that returns null (unset env var, missing
+        /// header) presents no credential, so identity fails closed — never anonymous.
+        /// </summary>
+        public Func<string?>? CredentialSource { get; set; }
 
         /// <summary>
         /// Validates a presented bearer token, returning the authenticated
@@ -172,16 +186,30 @@ namespace BifrostQL.Mcp
 
         /// <summary>
         /// Validates the presented bearer token via the host-supplied validator, returning its
-        /// principal or <c>null</c>. No token or no validator means no credential — no identity.
-        /// The adapter itself never inspects the token or its claims.
+        /// principal or <c>null</c>. The token is read through the per-transport
+        /// <see cref="McpAuthOptions.CredentialSource"/> when set (falling back to the static
+        /// <see cref="McpAuthOptions.BearerToken"/>). No token or no validator means no credential
+        /// — no identity. The adapter itself never inspects the token or its claims.
         /// </summary>
         private static ClaimsPrincipal? ValidateBearer(McpAuthOptions authOptions)
         {
-            var token = authOptions.BearerToken;
+            var token = ResolveCredential(authOptions);
             if (string.IsNullOrEmpty(token) || authOptions.ValidateBearerToken is null)
                 return null;
             return authOptions.ValidateBearerToken(token);
         }
+
+        /// <summary>
+        /// Reads the raw credential for the session/request. The per-transport
+        /// <see cref="McpAuthOptions.CredentialSource"/> is authoritative when configured — it
+        /// alone knows WHERE the credential lives (stdio env/handshake vs HTTP Authorization
+        /// header); the static <see cref="McpAuthOptions.BearerToken"/> is the fallback for a host
+        /// that presents one token directly.
+        /// </summary>
+        private static string? ResolveCredential(McpAuthOptions authOptions)
+            => authOptions.CredentialSource is not null
+                ? authOptions.CredentialSource()
+                : authOptions.BearerToken;
 
         /// <summary>
         /// Applies the configured auth mode at startup: logs the deliberate-opt-in warning when
@@ -255,6 +283,58 @@ namespace BifrostQL.Mcp
                 _runTask = null;
                 _stopping.Dispose();
             }
+        }
+    }
+
+    /// <summary>
+    /// Per-transport credential-read steps for <see cref="McpAuthOptions.CredentialSource"/>. Each
+    /// factory returns a <see cref="Func{TResult}"/> that reads the raw credential from ONE
+    /// transport's carrier and nothing else — it never validates the token, reads a claim, or
+    /// projects identity (that stays with <see cref="McpAuthOptions.ValidateBearerToken"/> and the
+    /// shared <see cref="IBifrostAuthContextFactory"/>). Swapping stdio for HTTP swaps only which
+    /// factory built the source; the projection downstream is identical.
+    /// </summary>
+    public static class McpCredentialSources
+    {
+        /// <summary>
+        /// stdio credential-read: a process-scoped bearer token carried in an environment variable
+        /// (a stdio session has no per-request principal — the caller is whoever launched the
+        /// process). Re-read on each invocation. An unset variable presents no credential.
+        /// </summary>
+        public static Func<string?> FromEnvironment(string variableName)
+        {
+            ArgumentException.ThrowIfNullOrEmpty(variableName);
+            return () => Environment.GetEnvironmentVariable(variableName);
+        }
+
+        /// <summary>
+        /// HTTP credential-read (consumed by the HTTP transport slice, not wired here): extracts the
+        /// bearer token from the value produced by <paramref name="authorizationHeaderAccessor"/>
+        /// (the request's <c>Authorization</c> header). The accessor is the ONLY HTTP-specific
+        /// coupling; the extracted token flows through the same projection as every other transport.
+        /// </summary>
+        public static Func<string?> FromAuthorizationHeader(Func<string?> authorizationHeaderAccessor)
+        {
+            ArgumentNullException.ThrowIfNull(authorizationHeaderAccessor);
+            return () => ExtractBearerToken(authorizationHeaderAccessor());
+        }
+
+        /// <summary>
+        /// Parses the token out of an <c>Authorization: Bearer &lt;token&gt;</c> header value. The
+        /// scheme is matched case-insensitively and the token is trimmed; anything that is not a
+        /// well-formed non-empty Bearer credential returns <c>null</c> (no credential → fail closed).
+        /// </summary>
+        public static string? ExtractBearerToken(string? authorizationHeaderValue)
+        {
+            if (string.IsNullOrWhiteSpace(authorizationHeaderValue))
+                return null;
+
+            const string scheme = "Bearer ";
+            if (!authorizationHeaderValue.StartsWith(scheme, StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            var token = authorizationHeaderValue.Substring(scheme.Length).Trim();
+            return token.Length == 0 ? null : token;
         }
     }
 }

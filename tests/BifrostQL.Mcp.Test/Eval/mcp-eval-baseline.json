@@ -1,0 +1,27 @@
+{
+  "Scenarios": [
+    {
+      "Name": "schema-orientation",
+      "Calls": 2,
+      "Errors": 0,
+      "ResponseChars": 956,
+      "ResponseBytes": 956,
+      "Passed": true
+    },
+    {
+      "Name": "customer-open-orders-and-total",
+      "Calls": 2,
+      "Errors": 0,
+      "ResponseChars": 244,
+      "ResponseBytes": 244,
+      "Passed": true
+    }
+  ],
+  "Totals": {
+    "Calls": 4,
+    "Errors": 0,
+    "ResponseChars": 1200,
+    "ResponseBytes": 1200,
+    "ErrorRate": 0
+  }
+}

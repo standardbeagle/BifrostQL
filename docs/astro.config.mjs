@@ -74,6 +74,7 @@ export default defineConfig({
 						{ label: 'RESP Smoke Runbook', slug: 'guides/resp-smoke' },
 						{ label: 'S3-Compatible Object Endpoint', slug: 'guides/s3' },
 						{ label: 'gRPC Endpoint', slug: 'guides/grpc' },
+						{ label: 'Prometheus Metrics Endpoint', slug: 'guides/prometheus' },
 						{ label: 'React Native', slug: 'guides/react-native' },
 						{ label: 'WordPress', slug: 'guides/wordpress' },
 					],

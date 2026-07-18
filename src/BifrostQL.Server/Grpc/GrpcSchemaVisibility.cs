@@ -64,6 +64,23 @@ namespace BifrostQL.Server.Grpc
                 .ToList();
         }
 
+        /// <summary>
+        /// The columns of a SINGLE table the identity may READ — the same authoritative check
+        /// <see cref="Project"/> applies, without projecting the whole model. Used by the read
+        /// compiler to validate filter/sort field names against what the caller can actually see, so
+        /// filtering on a hidden column is rejected rather than becoming an existence oracle
+        /// (invariant 4). A table the caller cannot read yields no columns (fail closed).
+        /// </summary>
+        public static IReadOnlyList<ColumnDto> VisibleReadColumns(
+            IDbTable table, IDictionary<string, object?> userContext)
+        {
+            if (table is null) throw new ArgumentNullException(nameof(table));
+            if (userContext is null) throw new ArgumentNullException(nameof(userContext));
+
+            var identity = PolicyIdentity.FromUserContext(userContext);
+            return CanRead(table, identity) ? VisibleColumns(table, identity) : Array.Empty<ColumnDto>();
+        }
+
         private static bool CanRead(IDbTable table, AppIdentity identity)
         {
             try

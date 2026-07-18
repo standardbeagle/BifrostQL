@@ -68,6 +68,66 @@ namespace BifrostQL.Mcp.Test
             executor.LastModel.Should().BeSameAs(model);
         }
 
+        [Fact]
+        public void Validate_AcceptsCompositePkRootAndCompositeFkInclude()
+        {
+            // A composite-PK root table with a composite-FK include is now a valid
+            // v2 document — startup must not fail it (criterion 3).
+            var errors = DeclarativeToolDocumentValidator.Validate(
+                CompositeDocument(relation: "inventory"), CompositeModel());
+
+            errors.Should().BeEmpty();
+        }
+
+        [Fact]
+        public void Validate_CompositeDocumentStillFailsOnUnknownRelation()
+        {
+            var errors = DeclarativeToolDocumentValidator.Validate(
+                CompositeDocument(relation: "missing_relation"), CompositeModel());
+
+            errors.Should().ContainSingle()
+                .Which.Should().Contain("include[0].relation").And.Contain("missing_relation");
+        }
+
+        private static DeclarativeToolDocument CompositeDocument(string relation)
+        {
+            var json = $$"""
+                {
+                  "version": 1,
+                  "tools": [{
+                    "name": "get_location",
+                    "description": "Return a tenant location with inventory.",
+                    "params": { "locationKey": { "type": "id", "table": "dbo.tenant_locations" } },
+                    "root": { "table": "dbo.tenant_locations", "byId": "locationKey", "fields": ["tenant_id", "location_id", "name"] },
+                    "include": [{ "relation": "{{relation}}", "as": "inventory", "fields": ["id", "stock"] }]
+                  }]
+                }
+                """;
+            using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
+            return new DeclarativeToolDocumentLoader(
+                new StreamDeclarativeToolDocumentSource(stream, "composite validator test")).Load();
+        }
+
+        private static IDbModel CompositeModel()
+        {
+            // Composite PK on tenant_locations (tenant_id + location_id).
+            var locations = Table("tenant_locations", pk: ["tenant_id", "location_id"], "tenant_id", "location_id", "name");
+            var inventory = Table("tenant_inventory", pk: ["id"], "id", "tenant_id", "location_id", "stock");
+            var parentIds = new[] { locations.ColumnLookup["tenant_id"], locations.ColumnLookup["location_id"] };
+            var childIds = new[] { inventory.ColumnLookup["tenant_id"], inventory.ColumnLookup["location_id"] };
+            locations.MultiLinks["inventory"] = new TableLinkDto
+            {
+                Name = "inventory", ParentTable = locations, ChildTable = inventory,
+                ParentId = parentIds[0], ParentIds = parentIds,
+                ChildId = childIds[0], ChildIds = childIds,
+            };
+            return new DbModel
+            {
+                Tables = [locations, inventory],
+                Metadata = new Dictionary<string, object?>(),
+            };
+        }
+
         private static DeclarativeToolDocument ToolDocument(
             string rootTable = "dbo.customers",
             string idTable = "dbo.customers",
@@ -118,14 +178,19 @@ namespace BifrostQL.Mcp.Test
             };
         }
 
-        private static DbTable Table(string name, params string[] columnNames)
+        private static DbTable Table(string name, params string[] columnNames) =>
+            Table(name, pk: null, columnNames);
+
+        private static DbTable Table(string name, string[]? pk, params string[] columnNames)
         {
+            var keySet = pk is null ? null : new HashSet<string>(pk, StringComparer.OrdinalIgnoreCase);
             var columns = columnNames.Select((column, index) => new ColumnDto
             {
                 TableCatalog = "test", TableSchema = "dbo", TableName = name,
                 ColumnName = column, GraphQlName = column, NormalizedName = column,
                 ColumnRef = new ColumnRef("test", "dbo", name, column), DataType = "text",
-                OrdinalPosition = index + 1, IsPrimaryKey = column == "id",
+                OrdinalPosition = index + 1,
+                IsPrimaryKey = keySet is null ? column == "id" : keySet.Contains(column),
             }).ToArray();
             return new DbTable
             {

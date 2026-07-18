@@ -33,8 +33,10 @@ namespace BifrostQL.Server.Grpc
             for (var i = 0; i < keyColumns.Count; i++)
             {
                 if (!requestValues.TryGetValue(keyColumns[i].GraphQlName, out var value))
-                    throw GrpcRequestException.InvalidArgument(
-                        $"Get request is missing primary-key field '{keyColumns[i].GraphQlName}'.");
+                    // The violation names ONLY the request field (its proto/GraphQL name) — never the
+                    // underlying column/table/SQL (invariant 3 / criterion 4).
+                    throw GrpcRequestException.InvalidField(
+                        keyColumns[i].GraphQlName, "Required primary-key field is missing.");
                 keyValues[i] = value;
             }
 

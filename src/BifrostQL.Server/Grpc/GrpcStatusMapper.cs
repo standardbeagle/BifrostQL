@@ -24,12 +24,21 @@ namespace BifrostQL.Server.Grpc
     {
         private const string GenericMessage = "The gRPC request could not be completed.";
 
+        /// <summary>Message used for BOTH a genuinely-missing row and an authorization-denied row on a
+        /// Get, so the two are byte-identical on the wire (criterion 3 anti-oracle).</summary>
+        internal const string RowNotFoundMessage = "No row matches the supplied key.";
+
         /// <summary>
         /// Maps <paramref name="ex"/> to the gRPC status to fault the call with. A caller
         /// cancellation/deadline is distinguished from an internal failure; everything that is not
         /// a curated adapter fault is sanitized to INTERNAL with detail logged.
+        ///
+        /// <para>When <paramref name="denialIsNotFound"/> is set (a row-addressed Get), an
+        /// authorization denial is mapped to NOT_FOUND with the same message a missing row uses, so a
+        /// caller cannot distinguish "row exists but is denied to me" from "row does not exist" — no
+        /// NOT_FOUND-vs-PERMISSION_DENIED existence oracle (criterion 3).</para>
         /// </summary>
-        public static Status Map(Exception ex, ServerCallContext context, ILogger logger)
+        public static Status Map(Exception ex, ServerCallContext context, ILogger logger, bool denialIsNotFound = false)
         {
             switch (ex)
             {
@@ -51,9 +60,12 @@ namespace BifrostQL.Server.Grpc
 
                 case BifrostExecutionError denied when denied.ErrorCode == BifrostExecutionError.AccessDeniedCode:
                     // A fail-closed authorization denial (missing tenant context, row/column policy).
-                    // Surface as PERMISSION_DENIED but with a GENERIC message — the exception text names
+                    // On a Get this must be INDISTINGUISHABLE from a missing row; elsewhere it surfaces
+                    // as PERMISSION_DENIED. Either way the message is GENERIC — the exception text names
                     // the table/tenant key and must not reach the wire (invariant 3).
-                    return new Status(StatusCode.PermissionDenied, "The request was denied by policy.");
+                    return denialIsNotFound
+                        ? new Status(StatusCode.NotFound, RowNotFoundMessage)
+                        : new Status(StatusCode.PermissionDenied, "The request was denied by policy.");
 
                 default:
                     // BifrostExecutionError and everything else: treat as untrusted on the wire.
@@ -64,12 +76,32 @@ namespace BifrostQL.Server.Grpc
         }
 
         /// <summary>
+        /// Maps <paramref name="ex"/> and wraps it as the <see cref="RpcException"/> to throw,
+        /// attaching a google.rpc.BadRequest status-details trailer when (and only when) the fault is
+        /// an adapter-owned validation exception carrying request-field violations.
+        /// </summary>
+        private static RpcException ToRpcException(
+            Exception ex, ServerCallContext context, ILogger logger, bool denialIsNotFound)
+        {
+            var status = Map(ex, context, logger, denialIsNotFound);
+            if (ex is GrpcRequestException req)
+            {
+                var trailers = GrpcRichError.TrailersFor(req, status.StatusCode, status.Detail);
+                if (trailers is not null)
+                    return new RpcException(status, trailers);
+            }
+            return new RpcException(status);
+        }
+
+        /// <summary>
         /// Runs <paramref name="handler"/> and, on any exception, throws the single-funnel-mapped
         /// <see cref="RpcException"/>. Every op-class handler wraps its body in this so no op class
-        /// can diverge from the shared mapping or leak an unhandled exception to Kestrel.
+        /// can diverge from the shared mapping or leak an unhandled exception to Kestrel. A
+        /// row-addressed Get passes <paramref name="denialIsNotFound"/> so an authorization denial is
+        /// hidden as NOT_FOUND (criterion 3).
         /// </summary>
         public static async Task<T> GuardAsync<T>(
-            ServerCallContext context, ILogger logger, Func<Task<T>> handler)
+            ServerCallContext context, ILogger logger, Func<Task<T>> handler, bool denialIsNotFound = false)
         {
             try
             {
@@ -77,7 +109,7 @@ namespace BifrostQL.Server.Grpc
             }
             catch (Exception ex)
             {
-                throw new RpcException(Map(ex, context, logger));
+                throw ToRpcException(ex, context, logger, denialIsNotFound);
             }
         }
 
@@ -91,7 +123,7 @@ namespace BifrostQL.Server.Grpc
             }
             catch (Exception ex)
             {
-                throw new RpcException(Map(ex, context, logger));
+                throw ToRpcException(ex, context, logger, denialIsNotFound: false);
             }
         }
     }

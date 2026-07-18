@@ -90,8 +90,10 @@ namespace BifrostQL.Server.Grpc
                 }
                 catch (Exception ex) when (ex is not GrpcRequestException)
                 {
-                    throw GrpcRequestException.InvalidArgument(
-                        $"Field '{field.Name}' could not be decoded from the request.");
+                    // Surface only the request field name — the declared-type/decode detail is generic
+                    // and carries no internal column/table/SQL text (invariant 3 / criterion 4).
+                    throw GrpcRequestException.InvalidField(
+                        field.Name, "Value could not be decoded for its declared type.");
                 }
             }
 

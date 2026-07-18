@@ -95,14 +95,20 @@ public sealed class TenantMutationTransformer : MetadataMutationTransformerBase
         var tenantContextKey = GetTenantContextKey(context.Model);
         var fullTableName = $"{table.TableSchema}.{table.DbName}";
 
+        // Tag the fail-closed denial with AccessDeniedCode so every transport gate maps it to the SAME
+        // status as the read-side counterpart (TenantFilterTransformer). Without the code a missing-tenant
+        // WRITE surfaced as a generic INTERNAL where the identical missing-tenant READ surfaced as a
+        // denial — a cross-op-class status divergence for one condition (anti-oracle/single-funnel class).
         if (!context.UserContext.TryGetValue(tenantContextKey, out var tenantId))
             throw new BifrostExecutionError(
                 $"Tenant context required but not found. " +
-                $"Expected '{tenantContextKey}' in user context for table '{fullTableName}'.");
+                $"Expected '{tenantContextKey}' in user context for table '{fullTableName}'.")
+            { ErrorCode = BifrostExecutionError.AccessDeniedCode };
 
         if (tenantId == null)
             throw new BifrostExecutionError(
-                $"Tenant ID cannot be null for table '{fullTableName}'.");
+                $"Tenant ID cannot be null for table '{fullTableName}'.")
+            { ErrorCode = BifrostExecutionError.AccessDeniedCode };
 
         return tenantId;
     }

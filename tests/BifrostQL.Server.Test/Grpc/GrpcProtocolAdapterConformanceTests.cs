@@ -13,6 +13,8 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using FluentAssertions;
+using Xunit;
 
 namespace BifrostQL.Server.Test.Grpc
 {
@@ -88,13 +90,16 @@ namespace BifrostQL.Server.Test.Grpc
         protected override string ExpectedFilterRejectionFragment(string canonicalServerFragment)
             => "Unknown or unreadable field.";
 
-        // The gRPC WRITE path sanitizes a missing-tenant fail-closed fault to the single generic
-        // INTERNAL message (invariant 3), where the READ path surfaces PERMISSION_DENIED. Both fail
-        // closed (nothing is written); only the sanitized status/text differs across the op classes.
-        // (Flagged: this read-vs-write status divergence for the identical missing-tenant condition is
-        // a cross-op-class inconsistency worth reconciling in the mutation/status-mapper source.)
+        // RECONCILED (was a cross-op divergence): a missing-tenant fail-closed fault now surfaces the
+        // SAME sanitized denial status on the WRITE path as on the READ path — PERMISSION_DENIED with the
+        // generic "denied by policy" text. The write-side TenantMutationTransformer now tags its
+        // fail-closed throw with AccessDeniedCode (matching the read-side TenantFilterTransformer), so the
+        // single GrpcStatusMapper funnel maps it to PERMISSION_DENIED instead of a generic INTERNAL. Both
+        // still fail closed (nothing is written); only the surfaced status/text is reconciled, and it
+        // stays generic (invariant 3 — no tenant/column/SQL text on the wire). See the cross-op parity
+        // fact MissingTenant_ReadAndWrite_SurfaceTheSameDeniedStatus.
         protected override string ExpectedWriteRejectionFragment(string canonicalServerFragment)
-            => "The gRPC request could not be completed.";
+            => "The request was denied by policy.";
 
         public override async Task InitializeAsync()
         {
@@ -243,6 +248,38 @@ namespace BifrostQL.Server.Test.Grpc
                 if (row.TryGetValue(column, out var value))
                     record[column] = value;
             return record;
+        }
+
+        /// <summary>
+        /// Cross-op-class denial parity (slice-7 conformance derivation gap): the IDENTICAL
+        /// missing-tenant fail-closed condition must surface the SAME sanitized gRPC status on a READ
+        /// (List) and a WRITE (Insert) — not PERMISSION_DENIED on the read and a generic INTERNAL on the
+        /// write. A differential status for one underlying condition is the anti-oracle/single-funnel
+        /// class the S3 epic-close and OData single-funnel lessons warn against. Both still fail closed
+        /// (the write lands nothing); this asserts only that the surfaced STATUS is reconciled, and that
+        /// the reconciled write status stays generic (invariant 3 — no tenant/column/SQL text on the wire).
+        /// </summary>
+        [Fact]
+        public async Task MissingTenant_ReadAndWrite_SurfaceTheSameDeniedStatus()
+        {
+            // Same "no tenant identity" condition on both op classes.
+            var headers = GrpcRealDbHarness.Identity("user-no-tenant");
+
+            var readFault = await Assert.ThrowsAsync<RpcException>(
+                () => _client.ListAsync("orders", headers));
+
+            var writeFault = await Assert.ThrowsAsync<RpcException>(
+                () => _client.InsertAsync("orders", new Dictionary<string, object?> { ["name"] = "no-identity" }, headers));
+
+            // Parity: the read denial and the write denial map to the SAME status through the single funnel.
+            readFault.StatusCode.Should().Be(StatusCode.PermissionDenied);
+            writeFault.StatusCode.Should().Be(
+                readFault.StatusCode,
+                "the identical missing-tenant condition must surface the same status on a write as on a read");
+            writeFault.Status.Detail.Should().Be(readFault.Status.Detail);
+
+            // The reconciled write status stays sanitized: the internal reason must not reach the wire.
+            writeFault.Status.Detail.Should().NotContainAny("tenant_id", "Tenant context", "orders", "SQL");
         }
     }
 }

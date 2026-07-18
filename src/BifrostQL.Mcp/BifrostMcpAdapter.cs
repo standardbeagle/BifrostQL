@@ -111,6 +111,13 @@ namespace BifrostQL.Mcp
         /// <c>null</c> (unknown/failed exchange) mints no identity — never an ambient/anonymous one.
         /// </summary>
         public IMcpCredentialStore? CredentialStore { get; set; }
+
+        /// <summary>
+        /// Governs the exposed tool surface: the declared-tool-count budget guardrail and the optional
+        /// per-identity role→tool allow-list. Defaults to the standard budget with no role gating (the
+        /// full surface is visible). Applied by <see cref="BifrostMcpServerFactory.CreateServerOptions"/>.
+        /// </summary>
+        public McpToolPolicyOptions ToolPolicy { get; set; } = new();
     }
 
     /// <summary>
@@ -392,7 +399,9 @@ namespace BifrostQL.Mcp
                 _executor,
                 userContextProvider: ConfigureAuth(),
                 mutationExecutor: _mutationExecutor,
-                enableWrites: _authOptions.EnableWrites);
+                enableWrites: _authOptions.EnableWrites,
+                toolPolicy: _authOptions.ToolPolicy,
+                logger: _logger);
             var transport = new StdioServerTransport(BifrostMcpServerFactory.ServerName, _loggerFactory);
             _server = McpServer.Create(transport, options, _loggerFactory, serviceProvider: null);
 

@@ -100,12 +100,15 @@ namespace BifrostQL.Mcp
                 authOptions, authorizationHeader, cancellationToken).ConfigureAwait(false);
 
             var provider = BifrostMcpAdapter.CreateProjectionProvider(factory, requestServices, principal);
+            var logger = requestServices.GetRequiredService<ILoggerFactory>().CreateLogger<BifrostMcpAdapter>();
             var sessionScoped = BifrostMcpServerFactory.CreateServerOptions(
                 executor,
                 endpoint,
                 userContextProvider: provider,
                 mutationExecutor: mutationExecutor,
-                enableWrites: authOptions.EnableWrites);
+                enableWrites: authOptions.EnableWrites,
+                toolPolicy: authOptions.ToolPolicy,
+                logger: logger);
 
             sessionOptions.ServerInfo = sessionScoped.ServerInfo;
             sessionOptions.ServerInstructions = sessionScoped.ServerInstructions;

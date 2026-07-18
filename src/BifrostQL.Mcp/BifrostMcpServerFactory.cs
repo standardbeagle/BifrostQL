@@ -1,7 +1,9 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Server;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -167,16 +169,29 @@ namespace BifrostQL.Mcp
             string? endpoint = null,
             Func<IDictionary<string, object?>>? userContextProvider = null,
             IMutationIntentExecutor? mutationExecutor = null,
-            bool enableWrites = false)
+            bool enableWrites = false,
+            McpToolPolicyOptions? toolPolicy = null,
+            ILogger? logger = null)
         {
             if (executor is null) throw new ArgumentNullException(nameof(executor));
             var contextProvider = userContextProvider ?? (() => new Dictionary<string, object?>());
+            var policy = toolPolicy ?? new McpToolPolicyOptions();
 
             // The write surface is OFF by construction: it only lists (and only
             // dispatches) the write tools when a deployment has both supplied a
             // mutation executor AND opted in. A disabled surface builds zero intent
             // and cannot be probed for behavior (protocol-adapter-security invariant 7).
             var writesActive = enableWrites && mutationExecutor is not null;
+
+            // Enforce the tool-budget guardrail against the FULL declared surface (before any
+            // per-identity filtering narrows it): warn past the configured threshold, fail load
+            // past the hard cap. Both thresholds are options, not constants baked in here.
+            var declaredTools = BuildTools(writesActive);
+            EnforceToolBudget(declaredTools.Count, policy.Budget, logger);
+
+            // Per-identity tool filtering (fail-closed). Built once from the policy so tools/list and
+            // tools/call agree: a role-gated tool hidden from a caller's list is also refused by name.
+            var gate = McpToolAccessGate.From(policy);
 
             return new McpServerOptions
             {
@@ -200,9 +215,14 @@ namespace BifrostQL.Mcp
                 },
                 Handlers = new McpServerHandlers
                 {
-                    ListToolsHandler = (_, _) => ValueTask.FromResult(new ListToolsResult { Tools = BuildTools(writesActive) }),
+                    ListToolsHandler = (_, _) => ValueTask.FromResult(new ListToolsResult
+                    {
+                        Tools = gate.GatesAnything
+                            ? gate.Filter(declaredTools, ResolveRoles(contextProvider))
+                            : declaredTools,
+                    }),
                     CallToolHandler = (request, ct) => CallToolAsync(
-                        executor, mutationExecutor, writesActive, endpoint, contextProvider, request.Params, ct),
+                        executor, mutationExecutor, writesActive, gate, endpoint, contextProvider, request.Params, ct),
                     ListResourcesHandler = (_, ct) => ListResourcesAsync(executor, endpoint, ct),
                     ReadResourceHandler = (request, ct) => ReadResourceAsync(executor, endpoint, request.Params, ct),
                 },
@@ -215,6 +235,45 @@ namespace BifrostQL.Mcp
             if (writesActive)
                 tools.AddRange(WriteTools.ToolDefinitions());
             return tools;
+        }
+
+        /// <summary>
+        /// Applies the tool-budget guardrail to <paramref name="declaredCount"/>: throws a precise
+        /// load-time error past the hard cap (naming the count, cap, and warn threshold) and logs a
+        /// consolidation warning past the warn threshold. Neither threshold is a baked-in constant —
+        /// both come from <paramref name="budget"/>.
+        /// </summary>
+        private static void EnforceToolBudget(int declaredCount, McpToolBudgetOptions budget, ILogger? logger)
+        {
+            if (declaredCount > budget.HardCap)
+                throw new InvalidOperationException(
+                    $"MCP tool surface declares {declaredCount} tools, exceeding the hard cap of {budget.HardCap} " +
+                    $"(warn threshold {budget.WarnThreshold}). Consolidate related operations into fewer, richer " +
+                    "tools, or raise McpToolBudgetOptions.HardCap deliberately.");
+
+            if (declaredCount > budget.WarnThreshold)
+                logger?.LogWarning(
+                    "MCP tool surface declares {DeclaredToolCount} tools, over the warn threshold of {WarnThreshold} " +
+                    "(hard cap {HardCap}). Prefer consolidating related operations into fewer, richer tools.",
+                    declaredCount, budget.WarnThreshold, budget.HardCap);
+        }
+
+        /// <summary>
+        /// Resolves the caller's roles for tool gating from the SAME user context every data path uses —
+        /// projected by <see cref="IBifrostAuthContextFactory"/> and read through
+        /// <see cref="PolicyIdentity.ExtractRoles"/> (no bespoke claim reading here). A token from an
+        /// unmapped OIDC issuer fails closed to no roles, so every role-gated tool stays hidden.
+        /// </summary>
+        private static IReadOnlyCollection<string> ResolveRoles(Func<IDictionary<string, object?>> userContextProvider)
+        {
+            try
+            {
+                return PolicyIdentity.ExtractRoles(userContextProvider());
+            }
+            catch (UnmappedOidcIssuerException)
+            {
+                return Array.Empty<string>();
+            }
         }
 
         private static List<Tool> BuildReadTools() =>
@@ -251,12 +310,22 @@ namespace BifrostQL.Mcp
 
         private static async ValueTask<CallToolResult> CallToolAsync(
             IQueryIntentExecutor executor, IMutationIntentExecutor? mutationExecutor, bool writesActive,
-            string? endpoint, Func<IDictionary<string, object?>> userContextProvider,
+            McpToolAccessGate gate, string? endpoint, Func<IDictionary<string, object?>> userContextProvider,
             CallToolRequestParams? parameters, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (parameters is null)
                 throw new McpProtocolException("Missing tool call parameters.", McpErrorCode.InvalidParams);
+
+            // Fail-closed tool gating: refuse a role-gated tool the caller may not see BEFORE building any
+            // intent, so a hidden tool cannot be invoked by name even though it was excluded from the list.
+            // Roles come only from the shared factory's user context (ResolveRoles); an unresolved identity
+            // has no roles and is refused.
+            if (gate.GatesAnything && gate.IsGated(parameters.Name)
+                && !gate.IsVisible(parameters.Name, ResolveRoles(userContextProvider)))
+            {
+                return ErrorResult($"Tool '{parameters.Name}' is not available for the current identity.");
+            }
 
             // Data tools (read + write): argument mistakes surface as prompt-style tool
             // errors (ToolPromptException), and execution-layer rejections

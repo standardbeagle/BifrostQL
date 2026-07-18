@@ -37,7 +37,8 @@ namespace BifrostQL.Server.Prometheus
             IDbTable table,
             string? endpoint,
             IDictionary<string, object?> userContext,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            int? maxCardinalityOverride = null)
         {
             var plan = PrometheusMetricPlanner.Plan(config, table, endpoint, userContext);
 
@@ -46,8 +47,10 @@ namespace BifrostQL.Server.Prometheus
             // Cardinality bound (maximum returned groups) — reject deterministically before
             // materializing any series so a misconfigured high-cardinality label can never
             // emit an unbounded series set. (A count over the flat result is O(groups), and
-            // rejection short-circuits the sort/emit below entirely.)
-            if (config.MaxCardinality is { } bound && result.Rows.Count > bound)
+            // rejection short-circuits the sort/emit below entirely.) The effective bound is the
+            // caller-supplied override (the exposition service passes the metric's per-metric
+            // cap OR the global backstop) falling back to the metric's own declared cap.
+            if ((maxCardinalityOverride ?? config.MaxCardinality) is { } bound && result.Rows.Count > bound)
                 throw new PrometheusCardinalityExceededException(config.MetricName, bound, result.Rows.Count);
 
             var samples = new List<PrometheusMetricSample>(result.Rows.Count);

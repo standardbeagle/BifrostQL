@@ -83,6 +83,7 @@ namespace BifrostQL.Core.Model
             ValidateHistoryTargets(model, errors);
             ValidateChat(model, errors);
             ValidateChatConnectors(model, errors);
+            ValidatePrometheusMetrics(model, errors);
 
             if (errors.Count > 0)
             {
@@ -1199,6 +1200,125 @@ namespace BifrostQL.Core.Model
             if (!string.IsNullOrWhiteSpace(blindIndex) && !DbColumnExists(table, blindIndex))
                 errors.Add(Problem(table, MetadataKeys.Crypto.BlindIndex, blindIndex,
                     "blind-index names a column that does not exist on the table"));
+        }
+
+        /// <summary>
+        /// Fail-fast validation for the Prometheus business-metric contract
+        /// (<c>metric-*</c>). A metric is exported over an operational wire, so every
+        /// structural assumption the later collection query and exposition endpoint will
+        /// make must hold at model load: a valid metric name, count/sum sources that name
+        /// existing (and, for sum, numeric) columns, label columns that exist and are NOT
+        /// field-encrypted (labels are cleartext exposition — an encrypted label would
+        /// leak the very value encryption protects), a tenant-scoped table that has
+        /// explicitly chosen a scrape-security mode rather than exporting an ambient
+        /// cross-tenant aggregate, and no two metrics colliding on the same exported
+        /// series (name + label set). Reuses <see cref="PrometheusMetricConfig.FromTable"/>
+        /// so validation cannot drift from the runtime parse.
+        /// </summary>
+        private static void ValidatePrometheusMetrics(IDbModel model, List<string> errors)
+        {
+            var configs = new List<(IDbTable Table, PrometheusMetricConfig Config)>();
+
+            foreach (var table in model.Tables)
+            {
+                PrometheusMetricConfig config;
+                try
+                {
+                    config = PrometheusMetricConfig.FromTable(table);
+                }
+                catch (Exception ex)
+                {
+                    // Structural parse error (empty/invalid name, empty source, bad token,
+                    // label normalization collision), attributed to the metric-name key.
+                    errors.Add(Problem(table, MetadataKeys.Metrics.Name,
+                        table.GetMetadataValue(MetadataKeys.Metrics.Name), ex.Message));
+                    continue;
+                }
+
+                if (!config.DeclaresMetric)
+                {
+                    // metric-help/count/sum/labels/... without metric-name declare nothing:
+                    // the author believes a metric is exported and none is.
+                    foreach (var key in new[]
+                    {
+                        MetadataKeys.Metrics.Help, MetadataKeys.Metrics.Count, MetadataKeys.Metrics.Sum,
+                        MetadataKeys.Metrics.Labels, MetadataKeys.Metrics.MaxCardinality,
+                        MetadataKeys.Metrics.SecurityMode,
+                    })
+                    {
+                        var value = table.GetMetadataValue(key);
+                        if (!string.IsNullOrWhiteSpace(value))
+                            errors.Add(Problem(table, key, value,
+                                $"set without '{MetadataKeys.Metrics.Name}'; the table declares no metric, " +
+                                "so this key has no effect."));
+                    }
+                    continue;
+                }
+
+                configs.Add((table, config));
+
+                // metric-count naming a column (not COUNT(*)) must exist.
+                if (config.CountColumn != null && !DbColumnExists(table, config.CountColumn))
+                    errors.Add(Problem(table, MetadataKeys.Metrics.Count, config.CountColumn,
+                        "metric-count names a column that does not exist; there is nothing to count"));
+
+                // metric-sum must name an existing, numeric column.
+                if (config.SumColumn != null)
+                {
+                    if (!table.ColumnLookup.TryGetValue(config.SumColumn, out var sumColumn))
+                        errors.Add(Problem(table, MetadataKeys.Metrics.Sum, config.SumColumn,
+                            "metric-sum names a column that does not exist; there is nothing to sum"));
+                    else if (!MetadataKeys.Metrics.NumericColumnTypes.Contains(
+                                 Utils.StringNormalizer.NormalizeType(sumColumn.DataType)))
+                        errors.Add(Problem(table, MetadataKeys.Metrics.Sum, config.SumColumn,
+                            $"column '{sumColumn.ColumnName}' has type '{sumColumn.DataType}'; a " +
+                            $"'{MetadataKeys.Metrics.Sum}' source must be numeric."));
+                }
+
+                // Each label column must exist and must NOT be field-encrypted — a metric
+                // label is cleartext exposition, so labeling by an encrypted column would
+                // publish the plaintext the encryption exists to protect.
+                foreach (var label in config.Labels)
+                {
+                    if (!table.ColumnLookup.TryGetValue(label, out var labelColumn))
+                    {
+                        errors.Add(Problem(table, MetadataKeys.Metrics.Labels, label,
+                            "metric-labels names a column that does not exist"));
+                        continue;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(labelColumn.GetMetadataValue(MetadataKeys.Crypto.Encrypt)))
+                        errors.Add(Problem(table, MetadataKeys.Metrics.Labels, label,
+                            $"column '{labelColumn.ColumnName}' is field-encrypted " +
+                            $"('{MetadataKeys.Crypto.Encrypt}'); a metric label is cleartext exposition and " +
+                            "must not expose an encrypted column. Remove the label or use an unencrypted column."));
+                }
+
+                // A tenant-filtered table must EXPLICITLY choose a scrape-security mode: a
+                // metric that aggregates across tenants without a chosen mode would export
+                // an ambient cross-tenant total (slice 3 enforces the mode at scrape time).
+                var tenantColumn = table.GetMetadataValue(MetadataKeys.Security.TenantFilter);
+                if (!string.IsNullOrWhiteSpace(tenantColumn) && config.SecurityMode is null)
+                    errors.Add(Problem(table, MetadataKeys.Metrics.Name, config.MetricName,
+                        $"table is tenant-filtered ('{MetadataKeys.Security.TenantFilter}') but declares a metric " +
+                        $"without an explicit '{MetadataKeys.Metrics.SecurityMode}' " +
+                        $"({string.Join(", ", MetadataKeys.Metrics.SecurityModes)}); a tenant-scoped metric with " +
+                        "no chosen mode would export an ambient cross-tenant aggregate."));
+            }
+
+            // Two metrics that produce the same exported series (name + label set) would
+            // clobber each other on the exposition wire — a duplicate-series collision.
+            foreach (var group in configs.GroupBy(c => c.Config.SeriesKey, StringComparer.Ordinal))
+            {
+                var members = group.ToArray();
+                if (members.Length < 2)
+                    continue;
+
+                var names = string.Join(", ", members.Select(m => $"{m.Table.TableSchema}.{m.Table.DbName}"));
+                errors.Add(Problem(members[0].Table, MetadataKeys.Metrics.Name, members[0].Config.MetricName,
+                    $"produces the same metric series (name + label set) as {names}; duplicate series would " +
+                    "collide on the exposition wire. Rename one metric or give it a distinct label set."));
+            }
         }
 
         private static void ValidateStateMachine(IDbTable table, List<string> errors)

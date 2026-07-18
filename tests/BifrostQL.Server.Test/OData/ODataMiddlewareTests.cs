@@ -86,12 +86,27 @@ namespace BifrostQL.Server.Test.OData
         }
 
         [Fact]
-        public async Task Non_discovery_path_returns_not_implemented_501()
+        public async Task Unknown_entity_set_path_returns_not_found_404()
         {
-            // Entity reads/query options are later slices; an authenticated request to a data path
-            // (not the service document or $metadata) is a clean 501.
+            // Entity-set reads are implemented (slice 3); a request to a set the model does not expose
+            // (the stub model has no tables) is a clean 404 — indistinguishable from an unauthorized
+            // set, so the endpoint is never an existence oracle.
             var ctx = new DefaultHttpContext { User = ODataTestAuth.Principal() };
             ctx.Request.Path = "/Orders";
+
+            var (status, _, body) = await Run(Build(), ctx);
+
+            status.Should().Be(404);
+            ErrorOf(body).GetProperty("code").GetString().Should().Be("NotFound");
+        }
+
+        [Fact]
+        public async Task Key_predicate_path_returns_not_implemented_501()
+        {
+            // Single-entity-by-key and navigation paths are later slices; only the collection read is
+            // implemented here, so a key predicate is a clean 501 (not an unhandled route).
+            var ctx = new DefaultHttpContext { User = ODataTestAuth.Principal() };
+            ctx.Request.Path = "/Orders(1)";
 
             var (status, _, body) = await Run(Build(), ctx);
 

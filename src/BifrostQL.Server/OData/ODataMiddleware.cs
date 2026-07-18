@@ -100,7 +100,64 @@ namespace BifrostQL.Server.OData
                 return;
             }
 
-            throw ODataProtocolException.NotImplemented();
+            await WriteEntityCollectionAsync(context, userContext, path);
+        }
+
+        /// <summary>
+        /// Serves an entity-set collection read. The path's single segment names the entity set; a
+        /// key predicate (<c>Orders(1)</c>) or a navigation segment is a later slice and answers a
+        /// clean 501. The entity set is resolved against the identity-filtered projection, so an
+        /// unknown OR unauthorized set is a 404 alike (no existence oracle). The read crosses
+        /// <see cref="IQueryIntentExecutor"/> with NO adapter-built predicate — tenant/soft-delete
+        /// scope is ANDed on by the pipeline — and the resolved rows are serialized as the OData v4
+        /// collection payload.
+        /// </summary>
+        private async Task WriteEntityCollectionAsync(
+            HttpContext context, IDictionary<string, object?> userContext, string path)
+        {
+            var name = path.Trim('/');
+            if (name.Length == 0 || name.Contains('/') || name.Contains('('))
+                throw ODataProtocolException.NotImplemented();
+
+            var entities = await ProjectAsync(userContext);
+            var entity = ResolveEntitySet(entities, name);
+
+            var options = ODataReadOptions.FromQuery(context.Request.Query);
+            var read = ODataEntityReadTranslator.Translate(
+                entity, options, _options.DefaultPageSize, _options.MaxPageSize);
+
+            var result = await _reads.ExecuteAsync(
+                new QueryIntent
+                {
+                    Query = read.Query,
+                    UserContext = userContext,
+                    Endpoint = _options.Endpoint,
+                },
+                context.RequestAborted);
+
+            var json = ODataDocumentWriter.WriteEntityCollection(
+                ServiceRoot(context), entity.Table.GraphQlName, read.ProjectedColumns,
+                result.Rows, projected: options.Select is not null);
+
+            await WriteBodyAsync(context, "application/json; charset=utf-8", json);
+        }
+
+        /// <summary>
+        /// Resolves the entity-set path segment against the caller's visible entities by EDM name
+        /// (case-insensitively). Absent (unknown or unauthorized) → 404; a name matching more than
+        /// one visible set → a clean ambiguity 400 rather than an arbitrary pick.
+        /// </summary>
+        private static ODataEntity ResolveEntitySet(IReadOnlyList<ODataEntity> entities, string name)
+        {
+            var matches = entities
+                .Where(e => string.Equals(e.Table.GraphQlName, name, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (matches.Count == 0)
+                throw ODataProtocolException.NotFound();
+            if (matches.Count > 1)
+                throw ODataProtocolException.BadRequest($"The entity set name '{name}' is ambiguous.");
+            return matches[0];
         }
 
         private static bool IsRoot(string path)

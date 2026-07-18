@@ -50,8 +50,16 @@ namespace BifrostQL.Server
                 sp.GetRequiredService<IWorkflowDataExecutor>()));
             services.AddSingleton<WorkflowTriggerHost>();
             services.AddSingleton<WorkflowScheduler>();
-            services.AddSingleton<MutationObservers>(sp => new MutationObservers(
-                new IMutationObserver[] { sp.GetRequiredService<WorkflowTriggerHost>() }));
+            services.AddSingleton<MutationObservers>(sp =>
+            {
+                // The workflow trigger host is registered as a concrete type; DI-registered
+                // IMutationObserver singletons (e.g. the Prometheus slice-5 engine self-metrics
+                // observer, added by AddBifrostPrometheus regardless of call order) are composed in
+                // additively so a host opting into a scrape surface measures its write path too.
+                var observers = new List<IMutationObserver> { sp.GetRequiredService<WorkflowTriggerHost>() };
+                observers.AddRange(sp.GetServices<IMutationObserver>());
+                return new MutationObservers(observers);
+            });
             // The change-history writer spans BOTH in-transaction phases: it reads the
             // before-image in the before-commit phase and writes the history row in the
             // after-write phase, where the write's result is known. One registration,
@@ -150,6 +158,11 @@ namespace BifrostQL.Server
                     allObservers.Insert(0, new QueryLoggingObserver(
                         sp.GetRequiredService<ILogger<QueryLoggingObserver>>(), loggingConfig));
                 }
+                // DI-registered IQueryObserver singletons (e.g. the Prometheus slice-5 engine
+                // self-metrics observer, added by AddBifrostPrometheus regardless of call order) are
+                // composed in additively; the user-observer types above are registered as concrete
+                // types, not as IQueryObserver, so there is no double-count.
+                allObservers.AddRange(sp.GetServices<IQueryObserver>());
                 return new QueryObserversWrap
                 {
                     Observers = allObservers,

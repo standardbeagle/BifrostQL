@@ -195,7 +195,8 @@ namespace BifrostQL.Server
                     new Dictionary<string, object?>
                     {
                         { "model", model },
-                        { "tableReaderFactory", new SqlExecutionManager(model, schema, transformerService, observers) }
+                        { "tableReaderFactory", new SqlExecutionManager(model, schema, transformerService, observers,
+                            services?.GetService<BifrostQL.Core.Observers.EngineMetrics>()) }
                     }),
             };
 

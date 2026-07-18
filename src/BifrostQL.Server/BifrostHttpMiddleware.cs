@@ -223,7 +223,8 @@ namespace BifrostQL.Server
                 new Dictionary<string, object?>
                 {
                     { "model", model },
-                    { "tableReaderFactory", new SqlExecutionManager(model, options.Schema, transformerService, observers) },
+                    { "tableReaderFactory", new SqlExecutionManager(model, options.Schema, transformerService, observers,
+                        options.RequestServices!.GetService<BifrostQL.Core.Observers.EngineMetrics>()) },
                 }
             );
             return await _documentExecutor.ExecuteAsync(options);

@@ -171,9 +171,13 @@ namespace BifrostQL.Mcp
             IMutationIntentExecutor? mutationExecutor = null,
             bool enableWrites = false,
             McpToolPolicyOptions? toolPolicy = null,
-            ILogger? logger = null)
+            ILogger? logger = null,
+            DeclarativeToolDocument? declarativeTools = null)
         {
             if (executor is null) throw new ArgumentNullException(nameof(executor));
+            // Reject name collisions/duplicates before publishing any surface so a
+            // declarative tool can never shadow a built-in or another declarative tool.
+            ValidateDeclarativeToolNames(declarativeTools);
             var contextProvider = userContextProvider ?? (() => new Dictionary<string, object?>());
             var policy = toolPolicy ?? new McpToolPolicyOptions();
 
@@ -185,9 +189,11 @@ namespace BifrostQL.Mcp
 
             // Enforce the tool-budget guardrail against the FULL declared surface (before any
             // per-identity filtering narrows it): warn past the configured threshold, fail load
-            // past the hard cap. Both thresholds are options, not constants baked in here.
+            // past the hard cap. Declarative tools count against the same budget as built-ins.
+            // Both thresholds are options, not constants baked in here.
             var declaredTools = BuildTools(writesActive);
-            EnforceToolBudget(declaredTools.Count, policy.Budget, logger);
+            var declarativeCount = declarativeTools?.Tools.Count ?? 0;
+            EnforceToolBudget(declaredTools.Count + declarativeCount, policy.Budget, logger);
 
             // Per-identity tool filtering (fail-closed). Built once from the policy so tools/list and
             // tools/call agree: a role-gated tool hidden from a caller's list is also refused by name.
@@ -215,14 +221,18 @@ namespace BifrostQL.Mcp
                 },
                 Handlers = new McpServerHandlers
                 {
-                    ListToolsHandler = (_, _) => ValueTask.FromResult(new ListToolsResult
+                    ListToolsHandler = async (_, ct) =>
                     {
-                        Tools = gate.GatesAnything
-                            ? gate.Filter(declaredTools, ResolveRoles(contextProvider))
-                            : declaredTools,
-                    }),
+                        var tools = await BuildListedToolsAsync(executor, endpoint, declaredTools, declarativeTools, ct);
+                        return new ListToolsResult
+                        {
+                            Tools = gate.GatesAnything
+                                ? gate.Filter(tools, ResolveRoles(contextProvider))
+                                : tools,
+                        };
+                    },
                     CallToolHandler = (request, ct) => CallToolAsync(
-                        executor, mutationExecutor, writesActive, gate, endpoint, contextProvider, request.Params, ct),
+                        executor, mutationExecutor, writesActive, gate, endpoint, contextProvider, declarativeTools, request.Params, ct),
                     ListResourcesHandler = (_, ct) => ListResourcesAsync(executor, endpoint, ct),
                     ReadResourceHandler = (request, ct) => ReadResourceAsync(executor, endpoint, request.Params, ct),
                 },
@@ -234,6 +244,57 @@ namespace BifrostQL.Mcp
             var tools = BuildReadTools();
             if (writesActive)
                 tools.AddRange(WriteTools.ToolDefinitions());
+            return tools;
+        }
+
+        /// <summary>
+        /// Rejects a declarative document whose tool names collide with a built-in
+        /// (read or write) tool or with each other. Runs before any surface is
+        /// published so tools/list and tools/call can never be ambiguous.
+        /// </summary>
+        private static void ValidateDeclarativeToolNames(DeclarativeToolDocument? document)
+        {
+            if (document is null) return;
+            var reserved = new HashSet<string>(StringComparer.Ordinal)
+            {
+                SchemaOverviewToolName, DescribeTableToolName,
+                DataTools.QueryToolName, DataTools.RowContextToolName,
+                AggregateTools.ToolName, SearchTools.ToolName,
+                WriteTools.InsertToolName, WriteTools.UpdateToolName, WriteTools.DeleteToolName,
+            };
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var tool in document.Tools)
+            {
+                if (reserved.Contains(tool.Name))
+                    throw new InvalidOperationException($"Declarative MCP tool '{tool.Name}' conflicts with a built-in tool name.");
+                if (!seen.Add(tool.Name))
+                    throw new InvalidOperationException($"Declarative MCP tool name '{tool.Name}' is declared more than once.");
+            }
+        }
+
+        /// <summary>
+        /// Builds the full listed tool surface: the always-declared built-in tools
+        /// plus any declarative tools, whose surfaces are compiled against the
+        /// endpoint's cached model (compilation fails the list before publishing an
+        /// invalid tool). Per-identity gating is applied by the caller.
+        /// </summary>
+        private static async ValueTask<List<Tool>> BuildListedToolsAsync(
+            IQueryIntentExecutor executor, string? endpoint,
+            List<Tool> declaredTools, DeclarativeToolDocument? declarativeTools, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (declarativeTools is null || declarativeTools.Tools.Count == 0)
+                return declaredTools;
+
+            var tools = new List<Tool>(declaredTools);
+            var model = await executor.GetModelAsync(endpoint);
+            foreach (var definition in declarativeTools.Tools)
+            {
+                // Compile eagerly so an invalid declarative tool fails the list rather than
+                // publishing a surface that would only fault on call.
+                _ = DeclarativeQueryToolCompiler.Compile(definition, model, executor, endpoint);
+                tools.Add(DeclarativeToolSurface.BuildTool(definition, model));
+            }
             return tools;
         }
 
@@ -311,6 +372,7 @@ namespace BifrostQL.Mcp
         private static async ValueTask<CallToolResult> CallToolAsync(
             IQueryIntentExecutor executor, IMutationIntentExecutor? mutationExecutor, bool writesActive,
             McpToolAccessGate gate, string? endpoint, Func<IDictionary<string, object?>> userContextProvider,
+            DeclarativeToolDocument? declarativeTools,
             CallToolRequestParams? parameters, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -351,6 +413,37 @@ namespace BifrostQL.Mcp
                         SearchTools.ToolName => await SearchTools.ExecuteAsync(executor, endpoint, userContextProvider, parameters, cancellationToken),
                         _ => await WriteTools.ExecuteAsync(mutationExecutor!, endpoint, userContextProvider, parameters, cancellationToken),
                     };
+                    return StructuredResult(payload);
+                }
+                catch (UnmappedOidcIssuerException)
+                {
+                    return ErrorResult("Authentication failed: the presented token could not be resolved to an identity.");
+                }
+                catch (ToolPromptException e)
+                {
+                    return ErrorResult(e.Message);
+                }
+                catch (BifrostExecutionError e)
+                {
+                    return ErrorResult(e.Message);
+                }
+            }
+
+            // Declarative tools: same unskippable intent path (transformers apply) and the
+            // same sanitized error funnel as the built-in read tools. The gate check above
+            // already refused any role-gated declarative tool the caller may not see.
+            var declarative = declarativeTools?.Tools.FirstOrDefault(tool => tool.Name == parameters.Name);
+            if (declarative is not null)
+            {
+                try
+                {
+                    var declarativeModel = await executor.GetModelAsync(endpoint);
+                    IReadOnlyDictionary<string, JsonElement> arguments = parameters.Arguments is null
+                        ? new Dictionary<string, JsonElement>()
+                        : new Dictionary<string, JsonElement>(parameters.Arguments);
+                    var payload = await DeclarativeToolSurface.ExecuteAsync(
+                        declarative, declarativeModel, executor, endpoint,
+                        arguments, userContextProvider(), cancellationToken);
                     return StructuredResult(payload);
                 }
                 catch (UnmappedOidcIssuerException)

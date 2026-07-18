@@ -395,13 +395,17 @@ namespace BifrostQL.Mcp
             // session; once RunAsync starts, only StopAsync (via _stopping) ends it.
             cancellationToken.ThrowIfCancellationRequested();
 
+            // Declarative tools are opt-in: present only when AddBifrostMcpTools registered a
+            // document. Absent, the factory publishes only the built-in surface (inert).
+            var declarativeTools = _services.GetService(typeof(DeclarativeToolDocument)) as DeclarativeToolDocument;
             var options = BifrostMcpServerFactory.CreateServerOptions(
                 _executor,
                 userContextProvider: ConfigureAuth(),
                 mutationExecutor: _mutationExecutor,
                 enableWrites: _authOptions.EnableWrites,
                 toolPolicy: _authOptions.ToolPolicy,
-                logger: _logger);
+                logger: _logger,
+                declarativeTools: declarativeTools);
             var transport = new StdioServerTransport(BifrostMcpServerFactory.ServerName, _loggerFactory);
             _server = McpServer.Create(transport, options, _loggerFactory, serviceProvider: null);
 

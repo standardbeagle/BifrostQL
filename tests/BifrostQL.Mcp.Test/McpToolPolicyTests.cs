@@ -193,6 +193,114 @@ namespace BifrostQL.Mcp.Test
                     "the gate lets a permitted role through to the handler");
         }
 
+        // ---- Declarative tools compose with the budget and the gate ----------------------------
+
+        [Fact]
+        public void DeclarativeTools_CountAgainstTheSameToolBudget_AndTipLoadPastHardCap()
+        {
+            // Criterion 3 (compose with slice-6 budget): three declarative tools plus the six built-in
+            // read tools exceed a hard cap of 8, so load fails — proving declarative tools count against
+            // the SAME budget. The same cap without the declarative tools does not fail (they are what
+            // tipped it), so the guardrail is not a constant that always fires.
+            var declarative = DeclarativeToolCount(3);
+            var budget = new McpToolBudgetOptions { WarnThreshold = 1, HardCap = 8 };
+
+            var overCap = () => BifrostMcpServerFactory.CreateServerOptions(
+                _executor, EndpointPath,
+                toolPolicy: new McpToolPolicyOptions { Budget = budget }, declarativeTools: declarative);
+            overCap.Should().Throw<InvalidOperationException>()
+                .Which.Message.Should().Contain("hard cap of 8");
+
+            var builtInsOnly = () => BifrostMcpServerFactory.CreateServerOptions(
+                _executor, EndpointPath, toolPolicy: new McpToolPolicyOptions { Budget = budget });
+            builtInsOnly.Should().NotThrow();
+        }
+
+        [Fact]
+        public async Task DeclarativeTool_HonorsTheGate_HiddenAndRefused_ForIdentityLackingRole()
+        {
+            // Criterion 3 (compose with slice-6 gate): a declarative tool gated to "analyst" is hidden
+            // from a "reader" in tools/list and a direct call by name is refused fail-closed — the same
+            // gate the built-in tools honor, agreeing across list and call.
+            var declarative = await DeclarativeWidgetLookupDocAsync("widget_lookup");
+            var policy = GateToolToRole("widget_lookup", "analyst");
+            await using var session = await StartSessionAsync(ProviderForRoles("reader"), policy, declarative);
+
+            var listed = await session.Client.ListToolsAsync();
+            listed.Select(t => t.Name).Should()
+                .NotContain("widget_lookup", "a role-gated declarative tool is hidden from an identity lacking the role")
+                .And.Contain(DataTools.QueryToolName);
+
+            var result = await session.Client.CallToolAsync(
+                "widget_lookup", new Dictionary<string, object?> { ["widgetId"] = "1" });
+            result.IsError.Should().BeTrue();
+            result.Content.OfType<TextContentBlock>().Single().Text
+                .Should().Contain("not available for the current identity");
+        }
+
+        [Fact]
+        public async Task DeclarativeTool_VisibleAndReachesHandler_ForMatchingRole()
+        {
+            // Criterion 3 (allowed path): the "analyst" identity sees the gated declarative tool and its
+            // call is NOT refused by the gate — it reaches the handler and executes through the intent
+            // path, returning the stable found/data envelope.
+            var declarative = await DeclarativeWidgetLookupDocAsync("widget_lookup");
+            var policy = GateToolToRole("widget_lookup", "analyst");
+            await using var session = await StartSessionAsync(ProviderForRoles("analyst"), policy, declarative);
+
+            var listed = await session.Client.ListToolsAsync();
+            listed.Select(t => t.Name).Should().Contain("widget_lookup");
+
+            var result = await session.Client.CallToolAsync(
+                "widget_lookup", new Dictionary<string, object?> { ["widgetId"] = "1" });
+            result.IsError.Should().NotBe(true,
+                "a permitted role reaches the declarative handler: " +
+                result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text);
+            result.StructuredContent!.Value.GetProperty("found").GetBoolean().Should().BeFalse(
+                "no widget row exists, but the tool executed and returned the stable envelope");
+        }
+
+        private static McpToolPolicyOptions GateToolToRole(string toolName, string role) => new()
+        {
+            RoleToolAllowList = new Dictionary<string, IReadOnlyList<string>>
+            {
+                [role] = new[] { toolName },
+            },
+        };
+
+        private static DeclarativeToolDocument DeclarativeToolCount(int count) => new()
+        {
+            Version = 1,
+            Tools = Enumerable.Range(0, count).Select(i => new DeclarativeToolDefinition
+            {
+                Name = $"decl_tool_{i}",
+                Description = "Budget-composition probe tool.",
+                Params = new Dictionary<string, DeclarativeToolParameter> { ["p"] = new() { Type = "id" } },
+                Root = new DeclarativeToolRoot { Table = "dbo.unused", ById = "p", Fields = [] },
+            }).ToList(),
+        };
+
+        private async Task<DeclarativeToolDocument> DeclarativeWidgetLookupDocAsync(string toolName)
+        {
+            var model = await _executor.GetModelAsync(EndpointPath);
+            var widgets = model.Tables.Single(t => string.Equals(t.DbName, "widgets", StringComparison.OrdinalIgnoreCase));
+            var qualified = $"{widgets.TableSchema}.{widgets.DbName}";
+            var json = $$"""
+                {
+                  "version": 1,
+                  "tools": [{
+                    "name": "{{toolName}}",
+                    "description": "Look up one widget by its primary key.",
+                    "params": { "widgetId": { "type": "id", "table": "{{qualified}}", "description": "Widget id." } },
+                    "root": { "table": "{{qualified}}", "byId": "widgetId", "fields": ["id", "name", "qty"] }
+                  }]
+                }
+                """;
+            using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+            return new DeclarativeToolDocumentLoader(
+                new StreamDeclarativeToolDocumentSource(stream, "widget-lookup test")).Load();
+        }
+
         private static McpToolPolicyOptions GateAggregateToAnalyst() => new()
         {
             RoleToolAllowList = new Dictionary<string, IReadOnlyList<string>>
@@ -210,10 +318,12 @@ namespace BifrostQL.Mcp.Test
         }
 
         private async Task<McpSession> StartSessionAsync(
-            Func<IDictionary<string, object?>> provider, McpToolPolicyOptions policy)
+            Func<IDictionary<string, object?>> provider, McpToolPolicyOptions policy,
+            DeclarativeToolDocument? declarativeTools = null)
         {
             var options = BifrostMcpServerFactory.CreateServerOptions(
-                _executor, EndpointPath, userContextProvider: provider, toolPolicy: policy);
+                _executor, EndpointPath, userContextProvider: provider, toolPolicy: policy,
+                declarativeTools: declarativeTools);
             return await McpSession.StartAsync(options);
         }
 

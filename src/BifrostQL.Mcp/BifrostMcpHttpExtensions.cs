@@ -101,6 +101,9 @@ namespace BifrostQL.Mcp
 
             var provider = BifrostMcpAdapter.CreateProjectionProvider(factory, requestServices, principal);
             var logger = requestServices.GetRequiredService<ILoggerFactory>().CreateLogger<BifrostMcpAdapter>();
+            // Opt-in declarative tools, resolved from the configured document (null when
+            // AddBifrostMcpTools was never called — the built-in surface only).
+            var declarativeTools = requestServices.GetService<DeclarativeToolDocument>();
             var sessionScoped = BifrostMcpServerFactory.CreateServerOptions(
                 executor,
                 endpoint,
@@ -108,7 +111,8 @@ namespace BifrostQL.Mcp
                 mutationExecutor: mutationExecutor,
                 enableWrites: authOptions.EnableWrites,
                 toolPolicy: authOptions.ToolPolicy,
-                logger: logger);
+                logger: logger,
+                declarativeTools: declarativeTools);
 
             sessionOptions.ServerInfo = sessionScoped.ServerInfo;
             sessionOptions.ServerInstructions = sessionScoped.ServerInstructions;

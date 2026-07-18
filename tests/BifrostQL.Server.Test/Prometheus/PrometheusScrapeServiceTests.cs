@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Observers;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Server.Prometheus;
 using BifrostQL.Server.Test.OData;
@@ -178,6 +179,87 @@ namespace BifrostQL.Server.Test.Prometheus
             text.Should().Contain("bifrostql_prometheus_scrape_error{metric=\"sales_total\"} 1\n");
             text.Should().Contain("bifrostql_prometheus_scrape_success{metric=\"sales_total\"} 0\n");
             text.Should().NotContain("sales_total{region"); // unbounded metric never emitted
+        }
+
+        // ---- slice 5: engine self-metrics rendered SEPARATELY from the business series ------
+
+        private static PrometheusScrapeService ServiceWithEngine(
+            IQueryIntentExecutor reads, PrometheusExpositionOptions options, EngineMetrics engine)
+        {
+            var security = new PrometheusScrapeSecurityOptions { BusinessMetricsEnabled = true, ScrapeCredential = "t" };
+            return new PrometheusScrapeService(
+                reads,
+                new PrometheusScrapeScopeResolver(security),
+                new PrometheusSeriesCollector(reads),
+                options,
+                clock: null,
+                logger: null,
+                engineMetrics: engine);
+        }
+
+        [Fact]
+        public async Task Engine_self_metrics_appended_separately_when_enabled()
+        {
+            await using var harness = await ODataRealDbHarness.StartAsync("svc-engine-on", new[] { SalesMetric }, Seed);
+            var engine = new EngineMetrics(enabled: true);
+            engine.RecordRequest(EngineOperation.Read, EngineRequestOutcome.Success);
+            engine.RecordSqlDuration(EngineOperation.Read, 0.02);
+
+            var text = await ServiceWithEngine(harness.Reads, Opts(), engine).ScrapeAsync();
+
+            // business series still present …
+            text.Should().Contain("sales_total{region=\"west\"} 3\n");
+            // … and the engine self-metrics are appended in their OWN namespace.
+            text.Should().Contain("# TYPE bifrostql_engine_requests_total counter");
+            text.Should().Contain("bifrostql_engine_requests_total{operation=\"read\",outcome=\"success\"} 1");
+            text.Should().Contain("# TYPE bifrostql_engine_sql_duration_seconds histogram");
+        }
+
+        [Fact]
+        public async Task Engine_self_metrics_absent_when_disabled()
+        {
+            await using var harness = await ODataRealDbHarness.StartAsync("svc-engine-off", new[] { SalesMetric }, Seed);
+            var engine = new EngineMetrics(enabled: false);
+            engine.RecordRequest(EngineOperation.Read, EngineRequestOutcome.Success);
+
+            var text = await ServiceWithEngine(harness.Reads, Opts(), engine).ScrapeAsync();
+
+            text.Should().Contain("sales_total{region=\"west\"} 3\n");
+            text.Should().NotContain("bifrostql_engine_");
+        }
+
+        [Fact]
+        public async Task Scrape_marks_collector_context_internal_so_no_recursive_measurement()
+        {
+            await using var harness = await ODataRealDbHarness.StartAsync("svc-engine-guard", new[] { SalesMetric }, Seed);
+            var spy = new ContextCapturingReads(harness.Reads);
+            var engine = new EngineMetrics(enabled: true);
+
+            await ServiceWithEngine(spy, Opts(), engine).ScrapeAsync();
+
+            // The scrape's own aggregate intent carries the scrape-internal marker, so the engine
+            // observer excludes it — a scrape can never measure its own collection queries.
+            spy.CapturedContexts.Should().NotBeEmpty();
+            spy.CapturedContexts.Should().OnlyContain(
+                ctx => ctx.ContainsKey(EngineMetricsQueryObserver.ScrapeInternalContextKey));
+        }
+
+        /// <summary>Captures the user context of every executed intent, to assert the scrape marks its
+        /// own collection queries scrape-internal (recursion guard).</summary>
+        private sealed class ContextCapturingReads : IQueryIntentExecutor
+        {
+            private readonly IQueryIntentExecutor _inner;
+            public List<IDictionary<string, object?>> CapturedContexts { get; } = new();
+
+            public ContextCapturingReads(IQueryIntentExecutor inner) => _inner = inner;
+
+            public Task<IDbModel> GetModelAsync(string? endpoint = null) => _inner.GetModelAsync(endpoint);
+
+            public Task<QueryIntentResult> ExecuteAsync(QueryIntent intent, CancellationToken cancellationToken = default)
+            {
+                CapturedContexts.Add(intent.UserContext);
+                return _inner.ExecuteAsync(intent, cancellationToken);
+            }
         }
 
         /// <summary>An <see cref="IQueryIntentExecutor"/> decorator that counts executions, can hold

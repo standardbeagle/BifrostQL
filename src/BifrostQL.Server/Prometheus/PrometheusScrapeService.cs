@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Observers;
 using BifrostQL.Core.Resolvers;
 using Microsoft.Extensions.Logging;
 
@@ -44,6 +45,7 @@ namespace BifrostQL.Server.Prometheus
         private readonly PrometheusSingleFlightSeriesCache _cache;
         private readonly Func<DateTimeOffset> _clock;
         private readonly ILogger<PrometheusScrapeService>? _logger;
+        private readonly EngineMetrics? _engineMetrics;
 
         public PrometheusScrapeService(
             IQueryIntentExecutor reads,
@@ -51,7 +53,8 @@ namespace BifrostQL.Server.Prometheus
             PrometheusSeriesCollector collector,
             PrometheusExpositionOptions options,
             Func<DateTimeOffset>? clock = null,
-            ILogger<PrometheusScrapeService>? logger = null)
+            ILogger<PrometheusScrapeService>? logger = null,
+            EngineMetrics? engineMetrics = null)
         {
             _reads = reads ?? throw new ArgumentNullException(nameof(reads));
             _scopeResolver = scopeResolver ?? throw new ArgumentNullException(nameof(scopeResolver));
@@ -59,6 +62,7 @@ namespace BifrostQL.Server.Prometheus
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _clock = clock ?? (() => DateTimeOffset.UtcNow);
             _logger = logger;
+            _engineMetrics = engineMetrics;
             _cache = new PrometheusSingleFlightSeriesCache(_options.CacheTtl, _clock);
         }
 
@@ -116,11 +120,17 @@ namespace BifrostQL.Server.Prometheus
                 }
 
                 var key = CacheKey(modelToken, config, scope.UserContext);
+                // The collector executes its aggregate through the same query path the engine
+                // self-metrics observer watches; mark this context scrape-internal so that observer
+                // excludes it — serving a scrape must never measure its own collection queries
+                // (criterion 3, no recursive measurement). The marker is added to a COPY so it never
+                // perturbs the identity partition of the cache key computed above.
+                var collectContext = ScrapeInternalContext(scope.UserContext!);
                 try
                 {
                     var series = await _cache.GetOrCollectAsync(
                         key,
-                        ct => _collector.CollectAsync(config, table, _options.Endpoint, scope.UserContext!, ct, effectiveCap),
+                        ct => _collector.CollectAsync(config, table, _options.Endpoint, collectContext, ct, effectiveCap),
                         cancellationToken);
 
                     businessFamilies.AddRange(ToFamilies(series));
@@ -173,7 +183,28 @@ namespace BifrostQL.Server.Prometheus
             AddHealthFamily(families, LastSuccessMetric,
                 "Unix timestamp (seconds) of the metric's most recent successful collection.", lastSuccess);
 
-            return PrometheusExpositionWriter.Write(families);
+            var body = PrometheusExpositionWriter.Write(families);
+
+            // Engine self-metrics (request outcome/count, SQL + transformer duration, active
+            // connections) are the engine's OWN health — rendered SEPARATELY from the business +
+            // health series above and appended only when the registry is enabled. Their bounded-enum
+            // labels can never collide with the business namespace (bifrostql_engine_ prefix).
+            if (_engineMetrics is { Enabled: true })
+                body += EngineMetricsExposition.Render(_engineMetrics.Snapshot());
+
+            return body;
+        }
+
+        // A copy of the scope's user context marked so the engine self-metrics observer skips the
+        // scrape's own collection queries (no recursive measurement). A copy — never a mutation of the
+        // caller's context — so nothing else that reads the context observes the marker.
+        private static IDictionary<string, object?> ScrapeInternalContext(IDictionary<string, object?> userContext)
+        {
+            var copy = new Dictionary<string, object?>(userContext)
+            {
+                [EngineMetricsQueryObserver.ScrapeInternalContextKey] = true,
+            };
+            return copy;
         }
 
         // A series carries COUNT and/or SUM per sample; emit the count under the metric name and the

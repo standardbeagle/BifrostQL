@@ -3,6 +3,7 @@ using System.Diagnostics;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.ComputedColumns;
+using BifrostQL.Core.Observers;
 using BifrostQL.Core.QueryModel;
 using GraphQL.Types;
 using GraphQL.Validation;
@@ -73,20 +74,77 @@ namespace BifrostQL.Core.Resolvers
         private readonly ISchema _schema;
         private readonly IQueryTransformerService _transformerService;
         private readonly IQueryObservers? _observers;
+        private readonly EngineMetrics? _engineMetrics;
 
         public SqlExecutionManager(IDbModel dbModel, ISchema schema)
             : this(dbModel, schema, NullQueryTransformerService.Instance)
         {
         }
 
-        public SqlExecutionManager(IDbModel dbModel, ISchema schema, IQueryTransformerService transformerService, IQueryObservers? observers = null)
+        public SqlExecutionManager(
+            IDbModel dbModel,
+            ISchema schema,
+            IQueryTransformerService transformerService,
+            IQueryObservers? observers = null,
+            EngineMetrics? engineMetrics = null)
         {
             _dbModel = dbModel;
             _schema = schema;
             _transformerService = transformerService;
             _observers = observers;
+            _engineMetrics = engineMetrics;
         }
+
+        // Engine self-metric wiring (Prometheus slice-5). The read-success + SQL-duration
+        // instruments are fed by EngineMetricsQueryObserver on the AfterExecute phase; what the
+        // observer seam cannot express — a request's error/denied OUTCOME (no error phase) and the
+        // transformer-pipeline DURATION — is recorded directly here on the read execution path.
+        // The scrape marks its own collection queries with ScrapeInternalContextKey; skipping them
+        // keeps a scrape from measuring itself (criterion 3, no recursive measurement). Every record
+        // method also gates on EngineMetrics.Enabled, so a host with no scrape surface pays nothing.
+        private bool ShouldRecordEngineMetric(IDictionary<string, object?> userContext)
+            => _engineMetrics is { Enabled: true }
+               && !userContext.ContainsKey(EngineMetricsQueryObserver.ScrapeInternalContextKey);
+
+        private void RecordReadOutcome(IDictionary<string, object?> userContext, EngineRequestOutcome outcome)
+        {
+            if (ShouldRecordEngineMetric(userContext))
+                _engineMetrics!.RecordRequest(EngineOperation.Read, outcome);
+        }
+
+        private void RecordReadTransformerDuration(IDictionary<string, object?> userContext, long startTimestamp)
+        {
+            if (ShouldRecordEngineMetric(userContext))
+                _engineMetrics!.RecordTransformerDuration(
+                    EngineOperation.Read, Stopwatch.GetElapsedTime(startTimestamp).TotalSeconds);
+        }
+
         public async ValueTask<object?> ResolveAsync(IBifrostFieldContext context, IDbTable dbTable)
+        {
+            // Record the request OUTCOME on the way out: read-success is the observer's (AfterExecute),
+            // but error/denied never reach that phase, so they are recorded here. A cancelled request
+            // is neither — the caller went away, not a failed request.
+            try
+            {
+                return await ResolveCoreAsync(context, dbTable);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (BifrostExecutionError bex) when (bex.ErrorCode == BifrostExecutionError.AccessDeniedCode)
+            {
+                RecordReadOutcome(context.UserContext, EngineRequestOutcome.Denied);
+                throw;
+            }
+            catch
+            {
+                RecordReadOutcome(context.UserContext, EngineRequestOutcome.Error);
+                throw;
+            }
+        }
+
+        private async ValueTask<object?> ResolveCoreAsync(IBifrostFieldContext context, IDbTable dbTable)
         {
             if (!context.HasSubFields)
                 throw new ArgumentNullException(nameof(context) + ".SubFields");
@@ -128,7 +186,9 @@ namespace BifrostQL.Core.Resolvers
             var scopedContext = new Dictionary<string, object?>(userContext);
             Modules.ModuleApiRegistry.CaptureQueryArguments(context, dbTable, scopedContext);
 
+            var transformStart = Stopwatch.GetTimestamp();
             _transformerService.ApplyTransformers(table, _dbModel, scopedContext);
+            RecordReadTransformerDuration(userContext, transformStart);
 
             // Rewrite enum-name filter operands to their stored DB values before
             // SQL is generated, for the root table and every nested join.
@@ -591,6 +651,35 @@ namespace BifrostQL.Core.Resolvers
             CancellationToken cancellationToken = default,
             BifrostQL.Core.Crypto.EnvelopeKeyManager? keyManager = null)
         {
+            // Same outcome recording as the GraphQL read path so adapter (intent) traffic is measured
+            // too; scrape-internal collection queries carry the recursion marker and are skipped.
+            try
+            {
+                return await ExecuteIntentCoreAsync(query, userContext, connFactory, cancellationToken, keyManager);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (BifrostExecutionError bex) when (bex.ErrorCode == BifrostExecutionError.AccessDeniedCode)
+            {
+                RecordReadOutcome(userContext, EngineRequestOutcome.Denied);
+                throw;
+            }
+            catch
+            {
+                RecordReadOutcome(userContext, EngineRequestOutcome.Error);
+                throw;
+            }
+        }
+
+        private async ValueTask<QueryIntentResult> ExecuteIntentCoreAsync(
+            GqlObjectQuery query,
+            IDictionary<string, object?> userContext,
+            IDbConnFactory connFactory,
+            CancellationToken cancellationToken = default,
+            BifrostQL.Core.Crypto.EnvelopeKeyManager? keyManager = null)
+        {
             if (query.DbTable is null)
                 throw new BifrostExecutionError(
                     "Query intent has no table: GqlObjectQuery.DbTable must be set.");
@@ -621,7 +710,9 @@ namespace BifrostQL.Core.Resolvers
             // Same fail-closed transformer pass as GraphQL row queries, into a
             // per-call overlay so a shared caller context is never mutated.
             var scopedContext = new Dictionary<string, object?>(userContext);
+            var transformStart = Stopwatch.GetTimestamp();
             _transformerService.ApplyTransformers(query, _dbModel, scopedContext);
+            RecordReadTransformerDuration(userContext, transformStart);
             ApplyEnumFilterRewrite(query);
 
             // Same lifecycle notifications as the GraphQL path (minus Parsed — an

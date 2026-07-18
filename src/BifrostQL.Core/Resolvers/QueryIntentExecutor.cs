@@ -138,7 +138,12 @@ public sealed class QueryIntentExecutor : IQueryIntentExecutor
         // with the table name — no fallback.
         model.GetTableFromDbName(query.DbTable.DbName);
 
-        var manager = new SqlExecutionManager(model, schema, _transformerService, _observers);
+        // Engine self-metrics (Prometheus slice-5): resolve the singleton when a scrape surface is
+        // registered so intent (adapter) reads record their outcome + transformer duration; null
+        // otherwise (no scrape surface configured) and the manager records nothing.
+        var engineMetrics = _services?.GetService(typeof(BifrostQL.Core.Observers.EngineMetrics))
+            as BifrostQL.Core.Observers.EngineMetrics;
+        var manager = new SqlExecutionManager(model, schema, _transformerService, _observers, engineMetrics);
         // The key manager (when registered) lets the seam's decrypt/mask projector
         // resolve encrypted columns per the caller's roles — same policy as GraphQL
         // reads. Absent, encrypted values redact; ciphertext never leaves the seam.

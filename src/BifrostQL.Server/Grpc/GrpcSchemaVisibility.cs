@@ -48,6 +48,22 @@ namespace BifrostQL.Server.Grpc
             return result;
         }
 
+        /// <summary>
+        /// Every table with all its columns, with NO policy filtering. This is used ONLY to build
+        /// the runtime DISPATCH method/routing table (which method names exist) and the shared field
+        /// numbering, never to decide what a caller may read — authorization is enforced per call by
+        /// the transformer pipeline, and per-identity REFLECTION uses <see cref="Project"/>. So a
+        /// table nobody may read still gets a route, but every call to it is scoped away and the
+        /// route is never advertised in reflection.
+        /// </summary>
+        public static IReadOnlyList<GrpcVisibleTable> ProjectAll(IDbModel model)
+        {
+            if (model is null) throw new ArgumentNullException(nameof(model));
+            return model.Tables
+                .Select(t => new GrpcVisibleTable(t, t.Columns.ToList()))
+                .ToList();
+        }
+
         private static bool CanRead(IDbTable table, AppIdentity identity)
         {
             try

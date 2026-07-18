@@ -61,6 +61,13 @@
          the GraphQL engine only. -->
     <PackageReference Include="GraphQL.Server.All" Version="8.3.3" />
     <PackageReference Include="Google.Protobuf" Version="3.33.5" />
+    <!-- gRPC HTTP/2 hosting for the opt-in gRPC protocol adapter (slice 3). The
+         service/method set is generated from DbModel at runtime and dispatched
+         dynamically (byte[] marshallers + a contract-driven protobuf codec), so no
+         compiled .proto stubs are needed. Server.Reflection carries the
+         Grpc.Reflection message types the identity-filtered reflection service reuses. -->
+    <PackageReference Include="Grpc.AspNetCore" Version="2.71.0" />
+    <PackageReference Include="Grpc.AspNetCore.Server.Reflection" Version="2.71.0" />
     <PackageReference Include="System.IO.Hashing" Version="9.0.5" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.2" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.2" />

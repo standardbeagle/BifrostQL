@@ -33,7 +33,8 @@ namespace BifrostQL.Server.OData
     internal static class ODataEntityReadTranslator
     {
         public static ODataEntityRead Translate(
-            ODataEntity entity, ODataReadOptions options, int defaultPageSize, int maxPageSize)
+            ODataEntity entity, ODataReadOptions options, int defaultPageSize, int maxPageSize,
+            TableFilter? filter = null)
         {
             if (entity is null) throw new ArgumentNullException(nameof(entity));
             if (options is null) throw new ArgumentNullException(nameof(options));
@@ -53,6 +54,10 @@ namespace BifrostQL.Server.OData
                 Path = table.GraphQlName,
                 Sort = sort,
                 Limit = limit,
+                // The $filter predicate, already translated to the SAME parameterized TableFilter the
+                // GraphQL path uses. It is AND-composed with the pipeline's tenant/soft-delete/policy
+                // filters downstream — it never replaces or bypasses them (the adapter cannot).
+                Filter = filter,
             };
             foreach (var column in projected)
                 query.ScalarColumns.Add(new GqlObjectColumn(column.DbName));
@@ -171,24 +176,11 @@ namespace BifrostQL.Server.OData
         }
 
         /// <summary>
-        /// Resolves a caller-supplied property name against the entity's VISIBLE columns by EDM
-        /// property name (case-insensitively). An unknown name — or one that resolves to no visible
-        /// column because it is read-denied — is a 400; a name matching more than one visible column
-        /// is reported as ambiguous rather than silently picking one.
+        /// Resolves a caller-supplied property name against the entity's VISIBLE columns via the
+        /// shared <see cref="ODataProperty.Resolve"/> rule (case-insensitive; unknown/read-denied →
+        /// 400, ambiguous → 400) so $select/$orderby and $filter resolve names identically.
         /// </summary>
         private static ColumnDto ResolveProperty(ODataEntity entity, string name, string option)
-        {
-            var matches = entity.Columns
-                .Where(c => string.Equals(c.GraphQlName, name, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-            if (matches.Count == 0)
-                throw ODataProtocolException.BadRequest(
-                    $"{option} references unknown property '{name}' on entity '{entity.Table.GraphQlName}'.");
-            if (matches.Count > 1)
-                throw ODataProtocolException.BadRequest(
-                    $"{option} references ambiguous property '{name}' on entity '{entity.Table.GraphQlName}'.");
-            return matches[0];
-        }
+            => ODataProperty.Resolve(entity, name, option);
     }
 }

@@ -48,10 +48,13 @@ namespace BifrostQL.Server.Grpc
 
                 // A missing row and an out-of-scope row are indistinguishable — no existence oracle.
                 if (row is null)
-                    throw new RpcException(new Status(StatusCode.NotFound, "No row matches the supplied key."));
+                    throw new RpcException(new Status(StatusCode.NotFound, GrpcStatusMapper.RowNotFoundMessage));
 
                 return GrpcMessageCodec.EncodeGetResponse(rowMessage, row);
-            });
+            },
+            // A row-addressed Get hides an authorization denial as NOT_FOUND so it is indistinguishable
+            // from a missing row — see GrpcStatusMapper (criterion 3).
+            denialIsNotFound: true);
 
         public Task<byte[]> ListAsync(
             IDbTable table, GrpcMessage rowMessage, byte[] request, ServerCallContext context)
@@ -87,14 +90,59 @@ namespace BifrostQL.Server.Grpc
             });
 
         /// <summary>
-        /// Projects the caller's identity through the shared fail-closed factory. An RpcException
-        /// (e.g. our own NotFound) is deliberately allowed to propagate to the funnel unchanged; the
-        /// factory throwing on an unmapped issuer is a fail-closed condition the funnel sanitizes.
+        /// The largest <c>authorization</c> credential the adapter will look at. A real bearer/JWT is
+        /// well under this; the cap exists only to reject an abusive/oversized metadata value cleanly
+        /// (a fixed-work fail-closed) before any projection, never an unbounded parse/alloc
+        /// (criterion 5). It sits below Kestrel's own header-size limit so the adapter — not the host
+        /// — returns the clean UNAUTHENTICATED.
+        /// </summary>
+        private const int MaxAuthorizationChars = 8 * 1024;
+
+        /// <summary>
+        /// Extracts the caller's bearer credential and projects it into a Bifrost user context through
+        /// the SHARED <see cref="IBifrostAuthContextFactory"/> — the same seam OData/MCP/S3 use. The
+        /// adapter does NOT decide claims/identity mapping itself; it only (a) enforces a size cap on
+        /// the raw <c>authorization</c> credential and (b) FAILS CLOSED before any intent is built when
+        /// the projection is empty (missing/anonymous), throws (unmapped issuer, subject-less), or the
+        /// credential is abusive. There is NO branch that reaches the executor with a permissive or
+        /// anonymous identity (criterion 1 / invariant 2). Every failure surfaces the SAME sanitized
+        /// UNAUTHENTICATED — the real cause is logged server-side only (invariants 2, 3).
         /// </summary>
         private IDictionary<string, object?> ResolveIdentity(ServerCallContext context)
         {
             var http = context.GetHttpContext();
-            return _authFactory.CreateUserContext(http);
+
+            var authorizationLength = 0;
+            foreach (var value in http.Request.Headers.Authorization)
+                authorizationLength += value?.Length ?? 0;
+            if (authorizationLength > MaxAuthorizationChars)
+            {
+                _logger.LogWarning(
+                    "gRPC authorization credential exceeded {Cap} chars ({Actual}); failing closed.",
+                    MaxAuthorizationChars, authorizationLength);
+                throw GrpcRequestException.Unauthenticated();
+            }
+
+            IDictionary<string, object?> projected;
+            try
+            {
+                projected = _authFactory.CreateUserContext(http);
+            }
+            catch (Exception ex)
+            {
+                // Unmapped OIDC issuer, subject-less principal, or any projection fault — fail closed.
+                // The detail (issuer name, claim shape) is logged server-side only, never on the wire.
+                _logger.LogWarning(ex, "gRPC identity projection failed; failing closed.");
+                throw GrpcRequestException.Unauthenticated();
+            }
+
+            // An empty context is the shared factory's fail-closed signal for a missing/anonymous
+            // credential. Reject BEFORE building any intent so a credential-less call can never reach
+            // the executor with a permissive identity.
+            if (projected.Count == 0)
+                throw GrpcRequestException.Unauthenticated();
+
+            return projected;
         }
     }
 }

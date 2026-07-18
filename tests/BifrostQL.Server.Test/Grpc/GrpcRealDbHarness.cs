@@ -184,14 +184,29 @@ namespace BifrostQL.Server.Test.Grpc
     /// </summary>
     internal sealed class HeaderTestAuthContextFactory : IBifrostAuthContextFactory
     {
+        /// <summary>Identity value that simulates a bearer from an OIDC issuer with no registered claim
+        /// mapper — the production factory throws <c>UnmappedOidcIssuerException</c> here.</summary>
+        public const string UnmappedIssuerSentinel = "__unmapped_issuer__";
+
         public IDictionary<string, object?> CreateUserContext(HttpContext context)
         {
             var raw = context.Request.Headers[GrpcRealDbHarness.IdentityHeader].ToString();
             if (string.IsNullOrEmpty(raw))
-                return new Dictionary<string, object?>(); // fail-closed: no identity
+                return new Dictionary<string, object?>(); // fail-closed: no/malformed identity → empty
+
+            if (raw == UnmappedIssuerSentinel)
+                // Mirror the shared factory: an unmapped OIDC issuer fails closed by THROWING, never
+                // degrading to an anonymous identity.
+                throw new InvalidOperationException("Simulated unmapped OIDC issuer; rejecting.");
 
             var parts = raw.Split('|');
-            var ctx = new Dictionary<string, object?> { ["user_id"] = parts[0] };
+            var subject = parts[0];
+            if (string.IsNullOrEmpty(subject))
+                // Mirror BifrostContext.BuildAppIdentity: an authenticated principal with no subject
+                // claim throws rather than collapse to anonymous.
+                throw new InvalidOperationException("Authenticated principal has no subject claim.");
+
+            var ctx = new Dictionary<string, object?> { ["user_id"] = subject };
             if (parts.Length > 1 && parts[1].Length > 0)
                 ctx["tenant_id"] = parts[1];
             if (parts.Length > 2 && parts[2].Length > 0)

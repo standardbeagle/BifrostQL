@@ -47,14 +47,16 @@ namespace BifrostQL.Server.Test.Grpc
         [Fact]
         public async Task Anonymous_list_on_a_tenant_table_is_denied_not_open()
         {
-            // No identity → empty user context → the tenant filter fails closed. Crucially it does NOT
-            // return the unfiltered table.
+            // No identity → fail closed BEFORE any intent is built (slice 4). Crucially it does NOT
+            // return the unfiltered table, and never reaches the executor with a permissive identity.
             var act = () => _client.ListAsync("orders", Anonymous());
 
             var ex = (await act.Should().ThrowAsync<RpcException>()).Which;
-            ex.StatusCode.Should().Be(StatusCode.PermissionDenied);
+            ex.StatusCode.Should().Be(StatusCode.Unauthenticated);
             // The sanitized status must not leak the table/tenant-key detail (invariant 3).
             ex.Status.Detail.Should().NotContain("orders").And.NotContain("tenant_id");
+            // Fail-closed-before-intent: no SQL was ever generated for the table (criterion 1).
+            _harness.CapturedSql("orders").Should().BeEmpty();
         }
 
         [Fact]
@@ -63,7 +65,8 @@ namespace BifrostQL.Server.Test.Grpc
             var act = () => _client.GetAsync("orders", new Dictionary<string, object?> { ["id"] = 1 }, Anonymous());
 
             (await act.Should().ThrowAsync<RpcException>())
-                .Which.StatusCode.Should().Be(StatusCode.PermissionDenied);
+                .Which.StatusCode.Should().Be(StatusCode.Unauthenticated);
+            _harness.CapturedSql("orders").Should().BeEmpty();
         }
 
         [Fact]

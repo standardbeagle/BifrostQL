@@ -73,6 +73,23 @@ namespace BifrostQL.Server.Grpc
         }
 
         /// <summary>
+        /// Encodes a mutation RPC's result message (<c>Insert/Update/Delete&lt;Table&gt;Response</c>):
+        /// field 1 (<c>affected_rows</c>) is always written — including an explicit 0, so a scoped-away
+        /// write is byte-identical to a genuinely-absent one — and field 2 (<c>returned_key</c>) only
+        /// when the write produced a generated identity (insert).
+        /// </summary>
+        public static byte[] EncodeMutationResponse(GrpcMessage responseMessage, GrpcMutationOutcome outcome)
+        {
+            var values = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["affected_rows"] = outcome.AffectedRows,
+            };
+            if (outcome.ReturnedKey is not null)
+                values["returned_key"] = outcome.ReturnedKey;
+            return EncodeRow(responseMessage, values);
+        }
+
+        /// <summary>
         /// Decodes a <c>Get&lt;Table&gt;Request</c> to a field-name → value map. Only fields declared
         /// on <paramref name="requestMessage"/> are read (each by its pinned number/type); an unknown
         /// field is skipped, never interpreted. A wire value that does not match its declared type

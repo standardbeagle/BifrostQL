@@ -50,7 +50,9 @@ namespace BifrostQL.Server.Grpc
                 var model = _executor.GetModelAsync(_options.Endpoint).GetAwaiter().GetResult();
                 var fullVisible = GrpcSchemaVisibility.ProjectAll(model);
                 var fullManifest = _options.Manifest.Reconcile(fullVisible);
-                var fullContract = GrpcSchemaGenerator.BuildContract(fullVisible, fullManifest);
+                // Include the write RPCs (for allow-listed tables) in the full dispatch contract only
+                // when writes are globally enabled — otherwise the mutation surface is absent entirely.
+                var fullContract = GrpcSchemaGenerator.BuildContract(fullVisible, fullManifest, _options.EnableWrites);
                 _built = new Built(model, fullManifest, fullContract);
             }
         }
@@ -72,7 +74,9 @@ namespace BifrostQL.Server.Grpc
         public GrpcSchemaArtifacts Generate(IDictionary<string, object?> userContext)
         {
             EnsureBuilt();
-            return GrpcSchemaGenerator.Generate(_built!.Model, _built!.FullManifest, userContext);
+            // Reflection mirrors dispatch: the mutation RPCs appear in a caller's reflected surface
+            // only when writes are globally enabled and the table is allow-listed (and visible).
+            return GrpcSchemaGenerator.Generate(_built!.Model, _built!.FullManifest, userContext, _options.EnableWrites);
         }
     }
 }

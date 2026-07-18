@@ -91,6 +91,46 @@ namespace BifrostQL.Server.Test.Grpc
             return rows;
         }
 
+        /// <summary>The decoded mutation result: the affected row count and (insert only) the generated identity.</summary>
+        public sealed record MutationResult(long AffectedRows, string? ReturnedKey);
+
+        public Task<MutationResult> InsertAsync(
+            string table, IReadOnlyDictionary<string, object?> columns, Metadata? headers = null)
+            => MutateAsync($"Insert{table}", $"Insert{table}Request", $"Insert{table}Response", columns, headers);
+
+        public Task<MutationResult> UpdateAsync(
+            string table, IReadOnlyDictionary<string, object?> keyAndColumns, Metadata? headers = null)
+            => MutateAsync($"Update{table}", $"Update{table}Request", $"Update{table}Response", keyAndColumns, headers);
+
+        public Task<MutationResult> DeleteAsync(
+            string table, IReadOnlyDictionary<string, object?> key, Metadata? headers = null)
+            => MutateAsync($"Delete{table}", $"Delete{table}Request", $"Delete{table}Response", key, headers);
+
+        private async Task<MutationResult> MutateAsync(
+            string methodName, string requestType, string responseType,
+            IReadOnlyDictionary<string, object?> values, Metadata? headers)
+        {
+            var request = EncodeMessage(Message(requestType), values);
+            var method = new Method<byte[], byte[]>(MethodType.Unary, ServiceName, methodName, Bytes, Bytes);
+            var response = await _invoker.AsyncUnaryCall(method, null, new CallOptions(headers), request);
+            var decoded = DecodeRow(Message(responseType), response);
+            var affected = decoded.TryGetValue("affected_rows", out var a) && a is not null
+                ? Convert.ToInt64(a, CultureInfo.InvariantCulture) : 0L;
+            var key = decoded.TryGetValue("returned_key", out var k) ? k?.ToString() : null;
+            return new MutationResult(affected, key);
+        }
+
+        /// <summary>
+        /// Invokes a unary method by NAME with a raw payload, bypassing the contract's message lookup —
+        /// used to probe a method that may not exist (a disabled or non-allow-listed write RPC), which
+        /// must surface as UNIMPLEMENTED, indistinguishable from a genuinely unknown method.
+        /// </summary>
+        public async Task RawUnaryAsync(string methodName, byte[] payload, Metadata? headers = null)
+        {
+            var method = new Method<byte[], byte[]>(MethodType.Unary, ServiceName, methodName, Bytes, Bytes);
+            await _invoker.AsyncUnaryCall(method, null, new CallOptions(headers), payload);
+        }
+
         private byte[] EncodeReadRequest(
             string messageName, string? filter, string? orderBy, int? pageSize, string? pageToken)
         {

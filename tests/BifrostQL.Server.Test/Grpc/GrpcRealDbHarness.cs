@@ -98,6 +98,7 @@ namespace BifrostQL.Server.Test.Grpc
                         o.ListPageSize = _grpcOptions.ListPageSize;
                         o.RequireTls = _grpcOptions.RequireTls;
                         o.TlsCertificatePath = _grpcOptions.TlsCertificatePath;
+                        o.EnableWrites = _grpcOptions.EnableWrites;
                     });
                 });
                 web.Configure(app =>
@@ -117,7 +118,9 @@ namespace BifrostQL.Server.Test.Grpc
             var model = await executor.GetModelAsync(EndpointPath);
             var visible = GrpcSchemaVisibility.ProjectAll(model);
             var manifest = GrpcFieldNumberManifest.Empty().Reconcile(visible);
-            Contract = GrpcSchemaGenerator.BuildContract(visible, manifest);
+            // Match the server's write posture so the client contract carries the mutation messages
+            // (and their pinned field numbers) exactly when the server exposes them.
+            Contract = GrpcSchemaGenerator.BuildContract(visible, manifest, _grpcOptions.EnableWrites);
         }
 
         public CallInvoker Invoker => _channel.CreateCallInvoker();

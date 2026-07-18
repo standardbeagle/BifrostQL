@@ -20,6 +20,7 @@ namespace BifrostQL.Server.Grpc
     internal sealed class BifrostDynamicGrpcService
     {
         private readonly IQueryIntentExecutor _executor;
+        private readonly IMutationIntentExecutor _mutations;
         private readonly IBifrostAuthContextFactory _authFactory;
         private readonly GrpcWireOptions _options;
         private readonly GrpcPageTokenKey _pageTokenKey;
@@ -27,12 +28,14 @@ namespace BifrostQL.Server.Grpc
 
         public BifrostDynamicGrpcService(
             IQueryIntentExecutor executor,
+            IMutationIntentExecutor mutations,
             IBifrostAuthContextFactory authFactory,
             GrpcWireOptions options,
             GrpcPageTokenKey pageTokenKey,
             ILogger<BifrostDynamicGrpcService> logger)
         {
             _executor = executor ?? throw new ArgumentNullException(nameof(executor));
+            _mutations = mutations ?? throw new ArgumentNullException(nameof(mutations));
             _authFactory = authFactory ?? throw new ArgumentNullException(nameof(authFactory));
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _pageTokenKey = pageTokenKey ?? throw new ArgumentNullException(nameof(pageTokenKey));
@@ -91,6 +94,49 @@ namespace BifrostQL.Server.Grpc
                     context.CancellationToken.ThrowIfCancellationRequested();
                     await responseStream.WriteAsync(GrpcMessageCodec.EncodeRow(rowMessage, row));
                 }
+            });
+
+        /// <summary>
+        /// Insert/Update/Delete share this spine: resolve identity FIRST (fail-closed before any intent —
+        /// an anonymous/invalid credential never reaches the executor), decode the request, route the
+        /// write through <see cref="IMutationIntentExecutor"/>, and encode the uniform result. The
+        /// method is only registered at all when writes are globally enabled AND the table is
+        /// allow-listed, so a disabled or non-allow-listed surface builds ZERO intent by construction —
+        /// this handler cannot even be reached (criterion 1/3). Faults funnel through
+        /// <see cref="GrpcStatusMapper"/> exactly like reads, so a concurrency/validation/policy fault
+        /// is sanitized (invariant 3) and a scoped-away write reports the same as an absent row.
+        /// </summary>
+        public Task<byte[]> InsertAsync(
+            IDbTable table, GrpcMessage requestMessage, GrpcMessage responseMessage,
+            byte[] request, ServerCallContext context)
+            => WriteAsync(table, requestMessage, responseMessage, request, context, GrpcMutationDispatcher.InsertAsync);
+
+        public Task<byte[]> UpdateAsync(
+            IDbTable table, GrpcMessage requestMessage, GrpcMessage responseMessage,
+            byte[] request, ServerCallContext context)
+            => WriteAsync(table, requestMessage, responseMessage, request, context, GrpcMutationDispatcher.UpdateAsync);
+
+        public Task<byte[]> DeleteAsync(
+            IDbTable table, GrpcMessage requestMessage, GrpcMessage responseMessage,
+            byte[] request, ServerCallContext context)
+            => WriteAsync(table, requestMessage, responseMessage, request, context, GrpcMutationDispatcher.DeleteAsync);
+
+        private delegate Task<GrpcMutationOutcome> MutationOp(
+            IMutationIntentExecutor executor, IDbTable table,
+            IReadOnlyDictionary<string, object?> requestValues, IDictionary<string, object?> userContext,
+            string? endpoint, CancellationToken cancellationToken);
+
+        private Task<byte[]> WriteAsync(
+            IDbTable table, GrpcMessage requestMessage, GrpcMessage responseMessage,
+            byte[] request, ServerCallContext context, MutationOp op)
+            => GrpcStatusMapper.GuardAsync(context, _logger, async () =>
+            {
+                // Identity is the FIRST check — an unauthenticated write fails closed before any intent.
+                var userContext = ResolveIdentity(context);
+                var values = GrpcMessageCodec.DecodeRequest(requestMessage, request);
+                var outcome = await op(
+                    _mutations, table, values, userContext, _options.Endpoint, context.CancellationToken);
+                return GrpcMessageCodec.EncodeMutationResponse(responseMessage, outcome);
             });
 
         /// <summary>

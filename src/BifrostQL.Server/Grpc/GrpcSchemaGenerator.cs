@@ -32,14 +32,15 @@ namespace BifrostQL.Server.Grpc
         public static GrpcSchemaArtifacts Generate(
             IDbModel model,
             GrpcFieldNumberManifest manifest,
-            IDictionary<string, object?> userContext)
+            IDictionary<string, object?> userContext,
+            bool includeWrites = false)
         {
             if (model is null) throw new ArgumentNullException(nameof(model));
             if (manifest is null) throw new ArgumentNullException(nameof(manifest));
 
             var visible = GrpcSchemaVisibility.Project(model, userContext);
             var reconciled = manifest.Reconcile(visible);
-            var contract = BuildContract(visible, reconciled);
+            var contract = BuildContract(visible, reconciled, includeWrites);
 
             return new GrpcSchemaArtifacts(
                 contract,
@@ -56,7 +57,8 @@ namespace BifrostQL.Server.Grpc
         /// </summary>
         public static GrpcContract BuildContract(
             IReadOnlyList<GrpcVisibleTable> visible,
-            GrpcFieldNumberManifest manifest)
+            GrpcFieldNumberManifest manifest,
+            bool includeWrites = false)
         {
             var messages = new List<GrpcMessage>();
             var methods = new List<GrpcMethod>();
@@ -134,6 +136,13 @@ namespace BifrostQL.Server.Grpc
                 methods.Add(new GrpcMethod($"Get{table.GraphQlName}", getRequest, getResponse, ServerStreaming: false));
                 methods.Add(new GrpcMethod($"List{table.GraphQlName}", listRequest, listResponse, ServerStreaming: false));
                 methods.Add(new GrpcMethod($"Stream{table.GraphQlName}", streamRequest, rowName, ServerStreaming: true));
+
+                // Write surface (Insert/Update/Delete) — generated ONLY when the global switch is on
+                // AND the table carries the per-table 'grpc-write: enabled' allow-list metadata. A
+                // table failing EITHER gate emits no mutation message or method, so its Insert/Update/
+                // Delete are absent from dispatch AND reflection: unprobeable, no oracle (criterion 3).
+                if (includeWrites && GrpcWriteEnabled(table))
+                    usesTimestamp |= AddMutationSurface(v, keyColumns, manifest, messages, methods);
             }
 
             return new GrpcContract(
@@ -142,6 +151,94 @@ namespace BifrostQL.Server.Grpc
                 new GrpcService(ServiceName, methods.OrderBy(m => m.Name, StringComparer.Ordinal).ToList()),
                 usesTimestamp);
         }
+
+        /// <summary>Whether a table opts into the gRPC write RPCs via the per-table allow-list metadata.</summary>
+        private static bool GrpcWriteEnabled(IDbTable table)
+            => table.CompareMetadata(MetadataKeys.Grpc.WriteEnabled, MetadataKeys.Grpc.Enabled);
+
+        /// <summary>
+        /// Emits the Insert/Update/Delete messages and methods for one write-enabled table. Request
+        /// fields are numbered LOCALLY (like the Get request's key fields), not from the manifest — the
+        /// manifest pins only Row columns. Every request field carries a column's proto type; a key
+        /// column is required, a non-key column is proto3-optional (explicit presence) so the client
+        /// sends only what it sets and the pipeline supplies defaults/required-column enforcement.
+        /// Composite keys emit ALL key columns in stable manifest order — never index-zero-reduced
+        /// (composite-PK compliance). Every response is a small result message carrying the affected
+        /// row count (and, for insert, the generated identity).
+        /// </summary>
+        private static bool AddMutationSurface(
+            GrpcVisibleTable v,
+            IReadOnlyList<ColumnDto> keyColumns,
+            GrpcFieldNumberManifest manifest,
+            List<GrpcMessage> messages,
+            List<GrpcMethod> methods)
+        {
+            var table = v.Table;
+            var rowName = $"{table.GraphQlName}Row";
+            var usesTimestamp = false;
+
+            int NumberOf(ColumnDto c) => manifest.NumberOf(rowName, c.GraphQlName) ?? int.MaxValue;
+            GrpcField Field(ColumnDto c, int number, bool optional)
+            {
+                var kind = GrpcProtoTypeMapper.Map(c.EffectiveDataType);
+                if (kind == GrpcScalarKind.Timestamp) usesTimestamp = true;
+                return new GrpcField(c.GraphQlName, number, kind, null, Optional: optional, Repeated: false);
+            }
+
+            var orderedKeys = keyColumns.OrderBy(NumberOf).ToList();
+            var nonKeyColumns = v.Columns.Where(c => !c.IsPrimaryKey).OrderBy(NumberOf).ToList();
+
+            // Insert request: every column, all optional (explicit presence) — client sends what it sets.
+            var insertRequest = $"Insert{table.GraphQlName}Request";
+            var insertFields = new List<GrpcField>();
+            var next = 1;
+            foreach (var column in v.Columns.OrderBy(NumberOf))
+                insertFields.Add(Field(column, next++, optional: true));
+            messages.Add(new GrpcMessage(insertRequest, insertFields));
+            messages.Add(new GrpcMessage($"Insert{table.GraphQlName}Response", MutationResultFields()));
+
+            // Update request: required key columns, then optional SET columns.
+            var updateRequest = $"Update{table.GraphQlName}Request";
+            var updateFields = new List<GrpcField>();
+            next = 1;
+            foreach (var key in orderedKeys)
+                updateFields.Add(Field(key, next++, optional: false));
+            foreach (var column in nonKeyColumns)
+                updateFields.Add(Field(column, next++, optional: true));
+            messages.Add(new GrpcMessage(updateRequest, updateFields));
+            messages.Add(new GrpcMessage($"Update{table.GraphQlName}Response", MutationResultFields()));
+
+            // Delete request: required key columns only. The adapter builds no predicate — the
+            // positional PK plus the caller's identity is all it supplies (invariant 7b).
+            var deleteRequest = $"Delete{table.GraphQlName}Request";
+            var deleteFields = new List<GrpcField>();
+            next = 1;
+            foreach (var key in orderedKeys)
+                deleteFields.Add(Field(key, next++, optional: false));
+            messages.Add(new GrpcMessage(deleteRequest, deleteFields));
+            messages.Add(new GrpcMessage($"Delete{table.GraphQlName}Response", MutationResultFields()));
+
+            methods.Add(new GrpcMethod(
+                $"Insert{table.GraphQlName}", insertRequest, $"Insert{table.GraphQlName}Response", ServerStreaming: false));
+            methods.Add(new GrpcMethod(
+                $"Update{table.GraphQlName}", updateRequest, $"Update{table.GraphQlName}Response", ServerStreaming: false));
+            methods.Add(new GrpcMethod(
+                $"Delete{table.GraphQlName}", deleteRequest, $"Delete{table.GraphQlName}Response", ServerStreaming: false));
+
+            return usesTimestamp;
+        }
+
+        /// <summary>
+        /// The uniform result shape every mutation RPC returns: <c>affected_rows</c> is the REAL row
+        /// count the pipeline reported (0 when a tenant/policy scope narrowed the write away — the same
+        /// wire answer as a genuinely-absent row, so a scoped-away write is no existence oracle);
+        /// <c>returned_key</c> carries an insert's generated identity (absent on update/delete).
+        /// </summary>
+        private static IReadOnlyList<GrpcField> MutationResultFields() => new[]
+        {
+            new GrpcField("affected_rows", 1, GrpcScalarKind.Int64, null, Optional: false, Repeated: false),
+            new GrpcField("returned_key", 2, GrpcScalarKind.String, null, Optional: false, Repeated: false),
+        };
 
         /// <summary>
         /// The read options every List/Stream request carries: a JSON <c>filter</c> (the GraphQL-shaped

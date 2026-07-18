@@ -66,6 +66,19 @@ namespace BifrostQL.Server.Grpc
         public TimeSpan PageTokenTtl { get; set; } = TimeSpan.FromMinutes(15);
 
         /// <summary>
+        /// The GLOBAL opt-in for the gRPC write surface — Insert/Update/Delete RPCs. OFF by default
+        /// (a read-only front door): the whole mutation surface is absent from dynamic dispatch and
+        /// from reflection, so with writes disabled no mutation intent is ever built and the RPCs
+        /// cannot even be probed for behavior (fail-closed by construction — protocol-adapter-security
+        /// invariant 7). Turning it on exposes the mutation RPCs ONLY for tables that also carry the
+        /// per-table <c>grpc-write: enabled</c> allow-list metadata, and logs a startup WARNING (a
+        /// posture change worth surfacing). Enabling it never widens what a single call may write:
+        /// every write still routes through the full <c>TableMutationPipeline</c> under the caller's
+        /// identity, so tenant/policy scope is enforced structurally.
+        /// </summary>
+        public bool EnableWrites { get; set; }
+
+        /// <summary>
         /// The field-number manifest pinning each column's wire number (gRPC Schema Contract ADR).
         /// Defaults to an empty manifest, which allocates deterministic numbers from the live
         /// schema. A checked-in manifest keeps numbers stable across schema drift. The full model

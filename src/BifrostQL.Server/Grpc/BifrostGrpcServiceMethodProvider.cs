@@ -62,7 +62,7 @@ namespace BifrostQL.Server.Grpc
                         (service, request, callContext) =>
                             service.GetAsync(table, requestMessage, rowMessage, request, callContext));
                 }
-                else // List
+                else if (rpc.Name.StartsWith("List", StringComparison.Ordinal))
                 {
                     var requestMessage = messages[rpc.InputType];
                     var rowMessage = messages[$"{table.GraphQlName}Row"];
@@ -73,13 +73,32 @@ namespace BifrostQL.Server.Grpc
                         (service, request, callContext) =>
                             service.ListAsync(table, requestMessage, rowMessage, request, callContext));
                 }
+                else // Insert / Update / Delete — the write surface, present only for allow-listed
+                {    // tables when writes are globally enabled (contract-driven; unregistered otherwise).
+                    var requestMessage = messages[rpc.InputType];
+                    var responseMessage = messages[rpc.OutputType];
+                    var method = new Method<byte[], byte[]>(
+                        MethodType.Unary, serviceName, rpc.Name, BytesMarshaller, BytesMarshaller);
+                    if (rpc.Name.StartsWith("Insert", StringComparison.Ordinal))
+                        context.AddUnaryMethod(method, Array.Empty<object>(),
+                            (service, request, callContext) =>
+                                service.InsertAsync(table, requestMessage, responseMessage, request, callContext));
+                    else if (rpc.Name.StartsWith("Update", StringComparison.Ordinal))
+                        context.AddUnaryMethod(method, Array.Empty<object>(),
+                            (service, request, callContext) =>
+                                service.UpdateAsync(table, requestMessage, responseMessage, request, callContext));
+                    else // Delete
+                        context.AddUnaryMethod(method, Array.Empty<object>(),
+                            (service, request, callContext) =>
+                                service.DeleteAsync(table, requestMessage, responseMessage, request, callContext));
+                }
             }
         }
 
-        /// <summary>The table's GraphQL name is the method name minus its Get/List/Stream verb.</summary>
+        /// <summary>The table's GraphQL name is the method name minus its Get/List/Stream/Insert/Update/Delete verb.</summary>
         private static string TableNameOf(GrpcMethod rpc)
         {
-            foreach (var verb in new[] { "Get", "List", "Stream" })
+            foreach (var verb in new[] { "Get", "List", "Stream", "Insert", "Update", "Delete" })
                 if (rpc.Name.StartsWith(verb, StringComparison.Ordinal))
                     return rpc.Name[verb.Length..];
             return rpc.Name;

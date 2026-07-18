@@ -1,0 +1,25 @@
+# PINNED example — a Prometheus scrape config for a BifrostQL /metrics front door.
+#
+# This is a documentation/example fixture, NOT a live test dependency: the normal
+# test suite never stands up a real Prometheus. It is pinned here (and embedded in
+# guides/prometheus.md) so the wire contract a real scraper expects — bearer-token
+# auth, the /metrics path, the 0.0.4 text format — stays visible and reviewable.
+#
+# The exposition output the endpoint actually produces is validated in-suite by
+# PrometheusExpositionConformanceTests against a from-scratch 0.0.4 grammar check.
+global:
+  scrape_interval: 30s
+  scrape_timeout: 10s          # keep <= the endpoint's Collection.QueryTimeout (default 10s)
+
+scrape_configs:
+  - job_name: bifrostql
+    metrics_path: /metrics
+    scheme: https
+    # The scrape credential is the shared secret configured as
+    # PrometheusScrapeSecurityOptions.ScrapeCredential; presented as a bearer token.
+    authorization:
+      type: Bearer
+      credentials: "REPLACE_WITH_SCRAPE_CREDENTIAL"
+    static_configs:
+      - targets:
+          - bifrostql.internal:443

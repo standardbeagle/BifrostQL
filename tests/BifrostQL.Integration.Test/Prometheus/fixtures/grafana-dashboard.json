@@ -1,0 +1,50 @@
+{
+  "__comment": "PINNED example Grafana dashboard charting a BifrostQL metadata-marked business metric (sales_total) plus an engine self-metric. Documentation/example fixture only — the normal test suite never queries a live Grafana or Prometheus. Import into Grafana with a Prometheus data source that scrapes the BifrostQL /metrics endpoint (see prometheus-scrape-config.yml).",
+  "title": "BifrostQL Overview",
+  "schemaVersion": 39,
+  "editable": true,
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Sales total (business metric)",
+      "description": "The sales_total series exported from the main.Sales table's metric-name metadata.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sales_total",
+          "legendFormat": "{{region}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Engine request rate by outcome",
+      "description": "bifrostql_engine_requests_total is the engine self-metric namespace, separate from business series.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(bifrostql_engine_requests_total[5m])",
+          "legendFormat": "{{operation}} {{outcome}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Scrape health",
+      "description": "bifrostql_prometheus_scrape_success is 1 when the metric collected on the last scrape.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "bifrostql_prometheus_scrape_success",
+          "legendFormat": "{{metric}}"
+        }
+      ]
+    }
+  ]
+}

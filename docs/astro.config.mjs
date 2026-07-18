@@ -38,6 +38,7 @@ export default defineConfig({
 						{ label: 'App Schema Detection', slug: 'concepts/app-schema-detection' },
 						{ label: 'App Metadata Overlay', slug: 'concepts/app-metadata-overlay' },
 						{ label: 'Protocol Adapters', slug: 'concepts/protocol-adapters' },
+						{ label: 'gRPC Schema Contract', slug: 'concepts/grpc-schema-contract' },
 						{ label: 'Change Data Capture & Events', slug: 'concepts/cdc-outbound-events' },
 						{ label: 'Field Encryption & Masking', slug: 'concepts/field-encryption' },
 						{ label: 'Temporal Change History', slug: 'concepts/temporal-history' },

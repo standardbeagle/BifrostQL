@@ -144,6 +144,43 @@ public class UnknownMetadataKeyGateTests
     }
 
     [Fact]
+    public void Validate_GrpcWriteTableKey_PassesTheGate()
+    {
+        // The gRPC write allow-list opt-in is a recognized table key — a config that opts a
+        // table into the gRPC mutation RPCs must load, not hard-fail as an unknown key.
+        var model = DbModelTestFixture.Create()
+            .WithTable("Users", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Email", "nvarchar")
+                .WithMetadata(MetadataKeys.Grpc.WriteEnabled, MetadataKeys.Grpc.Enabled))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().NotThrow($"'{MetadataKeys.Grpc.WriteEnabled}' is a recognized table metadata key");
+    }
+
+    [Fact]
+    public void Validate_MiscasedGrpcWriteKey_IsFlagged()
+    {
+        // A miscased security-relevant key must fail fast, not silently leave the write surface
+        // unexposed (the case-sensitive metadata dictionary would never match it).
+        var model = DbModelTestFixture.Create()
+            .WithTable("Users", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Email", "nvarchar")
+                .WithMetadata("Grpc-Write", MetadataKeys.Grpc.Enabled))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("Grpc-Write").And.Contain("incorrect casing");
+    }
+
+    [Fact]
     public void Validate_RecognizedKeys_DoNotTripTheGate()
     {
         // A model using only built-in keys (with valid column references) passes the gate

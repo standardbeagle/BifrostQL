@@ -517,6 +517,34 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
+        /// Metadata keys for the opt-in gRPC front door's WRITE surface. A table opts into
+        /// the Insert/Update/Delete RPCs by setting <see cref="WriteEnabled"/> to
+        /// <see cref="Enabled"/>. This per-table allow-list is the SECOND, narrower gate behind
+        /// the global <c>GrpcWireOptions.EnableWrites</c> switch: a table WITHOUT this key
+        /// generates no mutation RPCs at all — they are absent from dynamic dispatch AND from
+        /// per-identity reflection, so a non-writable table is UNPROBEABLE (its Insert/Update/
+        /// Delete are indistinguishable from an unknown method) and can never become an oracle
+        /// for which tables could be written. Reads are unaffected; this key gates writes only.
+        /// </summary>
+        public static class Grpc
+        {
+            /// <summary>
+            /// Table-level opt-in marking a table writable through the gRPC Insert/Update/Delete
+            /// RPCs. The value must be <see cref="Enabled"/>. Presence-with-that-value is what
+            /// exposes the mutation RPCs for the table (and only when the global
+            /// <c>GrpcWireOptions.EnableWrites</c> switch is also on).
+            /// </summary>
+            public const string WriteEnabled = "grpc-write";
+
+            /// <summary>
+            /// The only valid value of <see cref="WriteEnabled"/>. Spelled <c>enabled</c> so the
+            /// opt-in reads as a plain switch, matching <c>raw-sql: enabled</c> and
+            /// <c>history: enabled</c>.
+            /// </summary>
+            public const string Enabled = "enabled";
+        }
+
+        /// <summary>
         /// Metadata keys for the raw SQL query feature.
         /// </summary>
         public static class RawSql

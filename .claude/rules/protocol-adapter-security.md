@@ -263,3 +263,69 @@ code, not just re-checks of pgwire.
 
    Full write-up:
    `docs/solutions/bifrostql/s3-epic-close-crosscutting-error-mapping-2026-07-17.md`.
+
+10. **Route every op class through ONE error-mapping funnel — AND ensure
+    upstream throw sites tag the same condition with the same signal.** This
+    is the prevention counterpart to invariant 9's detection lesson. The S3
+    epic drifted because it had N per-op-class catches kept in sync by review;
+    the fix generalized (OData v4 epic) to a single top-level try/catch at the
+    request-dispatch boundary so cross-op divergence is impossible *by
+    construction* — there is no second catch to drift
+    (`ODataMiddleware.InvokeAsync` wraps service-doc/`$metadata`/entity-read/
+    `$filter`/`$skiptoken`/`$expand` in one funnel; the S3 differential-oracle
+    class is structurally unreachable). BUT a single funnel is NECESSARY, NOT
+    SUFFICIENT: the funnel maps by a CONDITION SIGNAL (an exception type or
+    code), so parity ALSO requires every op class's upstream throw sites to
+    tag the same underlying condition with the same signal. The gRPC epic
+    proved this the hard way — reads and writes both routed through one
+    `GrpcStatusMapper` funnel, yet a missing-tenant denial mapped to
+    `PERMISSION_DENIED` on read but generic `INTERNAL` on write, because the
+    read-side `TenantFilterTransformer` tagged its throw with
+    `BifrostExecutionError.AccessDeniedCode` while the write-side
+    `TenantMutationTransformer` threw a CODELESS `BifrostExecutionError` that
+    fell through to the funnel's default. Same funnel, divergent statuses.
+    The fix was to tag the write throw with the same code (map by CONDITION,
+    never by op class — an "if write -> PERMISSION_DENIED" special-case would
+    mask a genuine INTERNAL). Checklist for any adapter mapping internal
+    errors onto a client wire: (a) one funnel, not per-op-class catches;
+    (b) audit that shared Core/transformer throw sites tag a given condition
+    (policy-deny, tenant-deny, not-found) with a consistent, funnel-matchable
+    signal across the read AND write paths; (c) a conformance/parity fact that
+    asserts the SAME condition -> the SAME wire status across op classes — the
+    gRPC divergence was invisible to every per-slice review and surfaced only
+    when the conformance kit ran read AND write facts side by side. Full
+    write-ups:
+    `docs/solutions/bifrostql/odata-epic-close-single-funnel-error-mapping-2026-07-18.md`,
+    `docs/solutions/bifrostql/grpc-epic-close-single-funnel-needs-condition-tagging-2026-07-18.md`.
+
+11. **An identity-less front door (a caller with NO per-request identity)
+    that serves data aggregated over tenant/row-scoped data must make
+    cross-tenant exposure an EXPLICIT DEPLOYMENT DECISION — never an ambient
+    default.** Every other adapter carries a per-request caller identity
+    (bearer/Basic/session) projected through `IBifrostAuthContextFactory`, so
+    the pipeline narrows scope from it automatically. A PULL/PUSH surface with
+    no such identity — a Prometheus scrape, and by generalization any webhook
+    emitter, scheduled export, OTLP/OpenMetrics endpoint, or data-warehouse
+    sync — has no ambient identity to narrow from, so an aggregate would
+    silently span all tenants unless the operator explicitly chose the scope.
+    The required shape (Prometheus exporter epic): the surface is opt-in and
+    default OFF; enabling it requires BOTH a configured scrape credential AND
+    an explicit MODE per emitted aggregate — either (a) a configured FIXED
+    SERVICE identity projected through the SAME `IBifrostAuthContextFactory`
+    (the aggregate runs through `IQueryIntentExecutor` under that identity, so
+    tenant/soft-delete/policy apply), or (b) declared TENANT-LABEL
+    PARTITIONING (group-by the table's declared tenant column, exposed as a
+    label). Any misconfiguration — credential without mode, mode without
+    credential, service-identity mode with no configured identity,
+    tenant-label mode on a non-partitionable table — FAILS CLOSED to NO output
+    for that series, NEVER to an unscoped/global run. Two corollaries that
+    bite on these surfaces specifically: (i) **a cached/coalesced aggregate's
+    cache key MUST include the security mode + identity partition** — a key
+    that omits it serves partition A's cached series to partition B (a
+    cross-tenant CACHE leak even when the query path is correct); (ii) **any
+    self/operational metric labels must be structurally bounded** — enforce
+    finite label domains with an enum-only record API so a tenant id / user id
+    / table name / raw SQL / exception string is UNREPRESENTABLE as a label at
+    compile time (unbounded labels are both a cardinality-DoS and an
+    info-disclosure channel; convention is not enough). Full write-up:
+    `docs/solutions/bifrostql/prometheus-epic-identity-less-scrape-exposure-2026-07-18.md`.

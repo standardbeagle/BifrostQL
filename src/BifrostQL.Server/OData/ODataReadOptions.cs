@@ -3,15 +3,16 @@ using Microsoft.AspNetCore.Http;
 namespace BifrostQL.Server.OData
 {
     /// <summary>
-    /// The four OData v4 system query options this slice honors, parsed out of the request query
+    /// The OData v4 system query options this endpoint honors, parsed out of the request query
     /// string. Parsing enforces the wire-level rules that are independent of the schema: a system
     /// query option may appear at most once (a duplicate is a client error, not a
-    /// last-write-wins), the deferred options (<c>$filter</c>/<c>$expand</c>) are cleanly reported
-    /// as unimplemented, and any other <c>$</c>-prefixed option is rejected. Non-<c>$</c> custom
+    /// last-write-wins), the still-deferred option (<c>$expand</c>) is cleanly reported as
+    /// unimplemented, and any other <c>$</c>-prefixed option is rejected. Non-<c>$</c> custom
     /// query options are ignored, as OData permits. The captured values are still untrusted text —
-    /// their schema/number validation happens in <see cref="ODataEntityReadTranslator"/>.
+    /// their schema/number validation happens in <see cref="ODataEntityReadTranslator"/> and
+    /// <see cref="ODataFilterTranslator"/>.
     /// </summary>
-    internal sealed record ODataReadOptions(string? Select, string? OrderBy, string? Top, string? Skip)
+    internal sealed record ODataReadOptions(string? Select, string? OrderBy, string? Top, string? Skip, string? Filter = null)
     {
         /// <summary>
         /// Extracts the supported options from <paramref name="query"/>. Throws
@@ -21,7 +22,7 @@ namespace BifrostQL.Server.OData
         /// </summary>
         public static ODataReadOptions FromQuery(IQueryCollection query)
         {
-            string? select = null, orderBy = null, top = null, skip = null;
+            string? select = null, orderBy = null, top = null, skip = null, filter = null;
 
             foreach (var key in query.Keys)
             {
@@ -35,9 +36,9 @@ namespace BifrostQL.Server.OData
                     case "$orderby": orderBy = Single(query, key); break;
                     case "$top": top = Single(query, key); break;
                     case "$skip": skip = Single(query, key); break;
+                    case "$filter": filter = Single(query, key); break;
 
-                    // Deferred to later slices — reported distinctly from an unknown option.
-                    case "$filter":
+                    // Still deferred — reported distinctly from an unknown option.
                     case "$expand":
                         throw ODataProtocolException.NotImplemented(
                             $"The '{key}' query option is not implemented.");
@@ -48,7 +49,7 @@ namespace BifrostQL.Server.OData
                 }
             }
 
-            return new ODataReadOptions(select, orderBy, top, skip);
+            return new ODataReadOptions(select, orderBy, top, skip, filter);
         }
 
         /// <summary>

@@ -119,12 +119,17 @@ namespace BifrostQL.Server.OData
             if (name.Length == 0 || name.Contains('/') || name.Contains('('))
                 throw ODataProtocolException.NotImplemented();
 
-            var entities = await ProjectAsync(userContext);
+            var model = await _reads.GetModelAsync(_options.Endpoint);
+            var entities = ODataModelVisibility.Project(model, userContext);
             var entity = ResolveEntitySet(entities, name);
 
             var options = ODataReadOptions.FromQuery(context.Request.Query);
+            // Translate $filter against the SAME identity-filtered projection: an unknown/read-denied
+            // property is a 400 and never interpolated; literals become bound parameters. The result
+            // is a TableFilter the pipeline AND-composes with tenant/soft-delete scope.
+            var filter = ODataFilterTranslator.Translate(entity, options.Filter, model.TypeMapper);
             var read = ODataEntityReadTranslator.Translate(
-                entity, options, _options.DefaultPageSize, _options.MaxPageSize);
+                entity, options, _options.DefaultPageSize, _options.MaxPageSize, filter);
 
             var result = await _reads.ExecuteAsync(
                 new QueryIntent

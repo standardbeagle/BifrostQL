@@ -176,11 +176,11 @@ namespace BifrostQL.Server.Test.OData
         }
 
         [Fact]
-        public async Task Deferred_filter_option_is_a_clean_501()
+        public async Task Deferred_expand_option_is_a_clean_501()
         {
-            await using var harness = await ODataRealDbHarness.StartAsync("read-filter", Metadata, Seed);
+            await using var harness = await ODataRealDbHarness.StartAsync("read-expand", Metadata, Seed);
 
-            var (status, _, body) = await Run(harness, "/widgets", "?$filter=id eq 1");
+            var (status, _, body) = await Run(harness, "/widgets", "?$expand=whatever");
 
             status.Should().Be(501);
             ErrorCode(body).Should().Be("NotImplemented");

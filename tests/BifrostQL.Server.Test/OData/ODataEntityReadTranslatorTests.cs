@@ -194,13 +194,20 @@ namespace BifrostQL.Server.Test.OData
             act.Should().Throw<ODataProtocolException>().Which.HttpStatus.Should().Be(400);
         }
 
-        [Theory]
-        [InlineData("$filter")]
-        [InlineData("$expand")]
-        public void FromQuery_reports_deferred_options_as_not_implemented(string option)
+        [Fact]
+        public void FromQuery_reports_the_still_deferred_expand_option_as_not_implemented()
         {
-            var act = () => ODataReadOptions.FromQuery(Query((option, "x")));
+            var act = () => ODataReadOptions.FromQuery(Query(("$expand", "x")));
             act.Should().Throw<ODataProtocolException>().Which.HttpStatus.Should().Be(501);
+        }
+
+        [Fact]
+        public void FromQuery_captures_the_filter_option_as_untrusted_text()
+        {
+            // $filter is now supported: FromQuery captures the raw text (parsed/validated later),
+            // it is no longer a 501.
+            var options = ODataReadOptions.FromQuery(Query(("$filter", "id eq 1")));
+            options.Filter.Should().Be("id eq 1");
         }
 
         [Fact]

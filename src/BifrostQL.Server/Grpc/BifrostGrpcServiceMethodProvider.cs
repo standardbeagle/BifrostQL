@@ -40,14 +40,16 @@ namespace BifrostQL.Server.Grpc
                 var table = tables[TableNameOf(rpc)];
                 if (rpc.ServerStreaming)
                 {
-                    // Streaming output type is the row message itself.
+                    // Streaming output type is the row message itself; the input type carries the
+                    // shared filter/sort/page request shape the compiler consumes.
+                    var requestMessage = messages[rpc.InputType];
                     var rowMessage = messages[rpc.OutputType];
                     var method = new Method<byte[], byte[]>(
                         MethodType.ServerStreaming, serviceName, rpc.Name, BytesMarshaller, BytesMarshaller);
                     context.AddServerStreamingMethod(
                         method, Array.Empty<object>(),
                         (service, request, responseStream, callContext) =>
-                            service.StreamAsync(table, rowMessage, responseStream, callContext));
+                            service.StreamAsync(table, requestMessage, rowMessage, request, responseStream, callContext));
                 }
                 else if (rpc.Name.StartsWith("Get", StringComparison.Ordinal))
                 {
@@ -62,13 +64,14 @@ namespace BifrostQL.Server.Grpc
                 }
                 else // List
                 {
+                    var requestMessage = messages[rpc.InputType];
                     var rowMessage = messages[$"{table.GraphQlName}Row"];
                     var method = new Method<byte[], byte[]>(
                         MethodType.Unary, serviceName, rpc.Name, BytesMarshaller, BytesMarshaller);
                     context.AddUnaryMethod(
                         method, Array.Empty<object>(),
                         (service, request, callContext) =>
-                            service.ListAsync(table, rowMessage, request, callContext));
+                            service.ListAsync(table, requestMessage, rowMessage, request, callContext));
                 }
             }
         }

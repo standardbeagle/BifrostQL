@@ -53,6 +53,19 @@ namespace BifrostQL.Server.Grpc
         public int ListPageSize { get; set; } = 1_000;
 
         /// <summary>
+        /// The secret keying the HMAC on List page tokens. A configured secret keeps continuation
+        /// tokens valid across restarts and across a horizontally-scaled fleet; absent one, a
+        /// per-instance random key is generated (integrity-protected but not portable across
+        /// restarts/instances) and the trade-off is logged, never silent. The token is position-only,
+        /// so the MAC is a tamper/replay guard — the live read pipeline, not the token, is the
+        /// authorization boundary (criterion 3).
+        /// </summary>
+        public string? PageTokenSecret { get; set; }
+
+        /// <summary>How long a List page token stays valid before it fails closed exactly like a forged one.</summary>
+        public TimeSpan PageTokenTtl { get; set; } = TimeSpan.FromMinutes(15);
+
+        /// <summary>
         /// The field-number manifest pinning each column's wire number (gRPC Schema Contract ADR).
         /// Defaults to an empty manifest, which allocates deterministic numbers from the live
         /// schema. A checked-in manifest keeps numbers stable across schema drift. The full model

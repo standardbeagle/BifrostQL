@@ -49,22 +49,21 @@ namespace BifrostQL.Server.Grpc
         }
 
         /// <summary>
-        /// Resolves up to <paramref name="limit"/> rows of a table with NO adapter predicate. The
-        /// limit is the caller-independent bound the pipeline applies after its tenant/soft-delete
-        /// scope — a streaming List is therefore never unbounded (invariant 6).
+        /// Executes an ALREADY-COMPILED List/Stream query (built by
+        /// <see cref="GrpcReadRequestCompiler"/> — the ONE compiler both RPCs share) through the read
+        /// pipeline and returns its rows. The adapter never builds scope here: the compiled filter is
+        /// AND-composed by the pipeline with tenant/soft-delete/policy, and the query's Limit bounds
+        /// the row count so neither a unary List nor a server-streaming Stream is ever unbounded
+        /// (invariant 6). The RPC's <see cref="CancellationToken"/> (deadline/cancel) threads straight
+        /// into the executor.
         /// </summary>
-        public static async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ListAsync(
+        public static async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> RunAsync(
             IQueryIntentExecutor executor,
-            IDbTable table,
-            int limit,
+            GqlObjectQuery query,
             IDictionary<string, object?> userContext,
             string? endpoint,
             CancellationToken cancellationToken)
         {
-            var query = BuildRowQuery(table);
-            query.Sort = table.KeyColumns.Select(k => $"{k.GraphQlName}_asc").ToList();
-            query.Limit = limit;
-
             var result = await executor.ExecuteAsync(NewIntent(query, userContext, endpoint), cancellationToken);
             return result.Rows;
         }

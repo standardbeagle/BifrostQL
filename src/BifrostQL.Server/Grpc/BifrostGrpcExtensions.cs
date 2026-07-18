@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Server.Grpc
 {
@@ -35,6 +36,12 @@ namespace BifrostQL.Server.Grpc
 
             services.TryAddSingleton<GrpcContractProvider>();
             services.TryAddSingleton<IBifrostAuthContextFactory>(BifrostAuthContextFactory.Instance);
+
+            // The List page-token HMAC key is resolved ONCE (a per-call random key would make every
+            // issued token fail its own validation). Configured secret → portable; absent → per-instance
+            // random key with a logged trade-off, mirroring the OData continuation-token key.
+            services.TryAddSingleton(sp => GrpcPageTokenKey.Resolve(
+                options, sp.GetRequiredService<ILoggerFactory>().CreateLogger<GrpcPageTokenKey>()));
 
             services.TryAddEnumerable(ServiceDescriptor.Singleton<
                 IServiceMethodProvider<BifrostDynamicGrpcService>, BifrostGrpcServiceMethodProvider>());

@@ -48,15 +48,26 @@ namespace BifrostQL.Server.Grpc
             return buffer.ToArray();
         }
 
-        /// <summary>Encodes a <c>List&lt;Table&gt;Response</c>: field 1 (<c>rows</c>) repeated nested row messages.</summary>
+        /// <summary>
+        /// Encodes a <c>List&lt;Table&gt;Response</c>: field 1 (<c>rows</c>) repeated nested row
+        /// messages, then field 2 (<c>next_page_token</c>) when another page may follow. An absent
+        /// token (proto3 default) means "no more pages" — the last page carries none.
+        /// </summary>
         public static byte[] EncodeListResponse(
-            GrpcMessage rowMessage, IReadOnlyList<IReadOnlyDictionary<string, object?>> rows)
+            GrpcMessage rowMessage,
+            IReadOnlyList<IReadOnlyDictionary<string, object?>> rows,
+            string? nextPageToken = null)
         {
             using var buffer = new MemoryStream();
             using (var output = new CodedOutputStream(buffer, leaveOpen: true))
             {
                 foreach (var row in rows)
                     WriteLengthDelimited(output, fieldNumber: 1, EncodeRow(rowMessage, row));
+                if (!string.IsNullOrEmpty(nextPageToken))
+                {
+                    WriteTag(output, fieldNumber: 2, WireLengthDelimited);
+                    output.WriteString(nextPageToken);
+                }
             }
             return buffer.ToArray();
         }

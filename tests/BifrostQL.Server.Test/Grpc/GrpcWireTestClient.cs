@@ -54,27 +54,52 @@ namespace BifrostQL.Server.Test.Grpc
             }
         }
 
+        /// <summary>A List page: the decoded rows plus the opaque continuation token (null on the last page).</summary>
+        public sealed record ListPage(
+            IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows, string? NextPageToken);
+
         public async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ListAsync(
-            string table, Metadata? headers = null)
+            string table, Metadata? headers = null,
+            string? filter = null, string? orderBy = null, int? pageSize = null, string? pageToken = null)
+            => (await ListPageAsync(table, headers, filter, orderBy, pageSize, pageToken)).Rows;
+
+        public async Task<ListPage> ListPageAsync(
+            string table, Metadata? headers = null,
+            string? filter = null, string? orderBy = null, int? pageSize = null, string? pageToken = null)
         {
+            var request = EncodeReadRequest($"List{table}Request", filter, orderBy, pageSize, pageToken);
             var method = new Method<byte[], byte[]>(MethodType.Unary, ServiceName, $"List{table}", Bytes, Bytes);
             var options = new CallOptions(headers);
-            var response = await _invoker.AsyncUnaryCall(method, null, options, Array.Empty<byte>());
+            var response = await _invoker.AsyncUnaryCall(method, null, options, request);
             var rowMessage = Message($"{table}Row");
-            return ReadNestedMessages(response, fieldNumber: 1).Select(b => DecodeRow(rowMessage, b)).ToList();
+            var rows = ReadNestedMessages(response, fieldNumber: 1).Select(b => DecodeRow(rowMessage, b)).ToList();
+            return new ListPage(rows, ReadStringField(response, fieldNumber: 2));
         }
 
         public async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> StreamAsync(
-            string table, Metadata? headers = null, CancellationToken cancellationToken = default)
+            string table, Metadata? headers = null, CancellationToken cancellationToken = default,
+            string? filter = null, string? orderBy = null, int? pageSize = null, string? pageToken = null)
         {
+            var request = EncodeReadRequest($"Stream{table}Request", filter, orderBy, pageSize, pageToken);
             var method = new Method<byte[], byte[]>(MethodType.ServerStreaming, ServiceName, $"Stream{table}", Bytes, Bytes);
             var options = new CallOptions(headers, cancellationToken: cancellationToken);
-            using var call = _invoker.AsyncServerStreamingCall(method, null, options, Array.Empty<byte>());
+            using var call = _invoker.AsyncServerStreamingCall(method, null, options, request);
             var rowMessage = Message($"{table}Row");
             var rows = new List<IReadOnlyDictionary<string, object?>>();
             await foreach (var msg in call.ResponseStream.ReadAllAsync(cancellationToken))
                 rows.Add(DecodeRow(rowMessage, msg));
             return rows;
+        }
+
+        private byte[] EncodeReadRequest(
+            string messageName, string? filter, string? orderBy, int? pageSize, string? pageToken)
+        {
+            var values = new Dictionary<string, object?>(StringComparer.Ordinal);
+            if (filter is not null) values["filter"] = filter;
+            if (orderBy is not null) values["order_by"] = orderBy;
+            if (pageSize is not null) values["page_size"] = pageSize;
+            if (pageToken is not null) values["page_token"] = pageToken;
+            return EncodeMessage(Message(messageName), values);
         }
 
         // ---- encode ----
@@ -129,6 +154,19 @@ namespace BifrostQL.Server.Test.Grpc
                 values[field.Name] = ReadScalar(input, field.Scalar!.Value);
             }
             return values;
+        }
+
+        private static string? ReadStringField(byte[] bytes, int fieldNumber)
+        {
+            var input = new CodedInputStream(bytes);
+            uint tag;
+            while ((tag = input.ReadTag()) != 0)
+            {
+                if ((int)(tag >> 3) == fieldNumber && (tag & 7) == WireLengthDelimited)
+                    return input.ReadString();
+                input.SkipLastField();
+            }
+            return null;
         }
 
         private static List<byte[]> ReadNestedMessages(byte[] bytes, int fieldNumber)

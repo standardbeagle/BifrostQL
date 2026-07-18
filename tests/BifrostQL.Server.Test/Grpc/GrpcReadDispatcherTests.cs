@@ -18,13 +18,13 @@ namespace BifrostQL.Server.Test.Grpc
     public class GrpcReadDispatcherTests
     {
         [Fact]
-        public async Task List_forwards_the_cancellation_token_to_the_executor()
+        public async Task Run_forwards_the_cancellation_token_to_the_executor()
         {
             var (executor, captured) = CapturingExecutor();
             using var cts = new CancellationTokenSource();
 
-            await GrpcReadDispatcher.ListAsync(
-                executor, Table("Widgets"), limit: 10, Ctx(), endpoint: "/graphql", cts.Token);
+            await GrpcReadDispatcher.RunAsync(
+                executor, SimpleQuery(Table("Widgets")), Ctx(), endpoint: "/graphql", cts.Token);
 
             captured.Value.Should().Be(cts.Token);
         }
@@ -43,15 +43,17 @@ namespace BifrostQL.Server.Test.Grpc
         }
 
         [Fact]
-        public async Task List_sets_the_limit_and_no_filter()
+        public async Task Run_passes_the_compiled_query_through_untouched()
         {
             var (executor, _) = CapturingExecutor(out var intents);
+            var query = SimpleQuery(Table("Widgets"));
+            query.Limit = 42;
 
-            await GrpcReadDispatcher.ListAsync(executor, Table("Widgets"), limit: 42, Ctx(), null, default);
+            await GrpcReadDispatcher.RunAsync(executor, query, Ctx(), null, default);
 
-            var query = intents.Single().Query;
-            query.Limit.Should().Be(42);
-            query.Filter.Should().BeNull("List must carry no adapter predicate — tenant scope is the pipeline's job");
+            var seen = intents.Single().Query;
+            seen.Limit.Should().Be(42);
+            seen.Filter.Should().BeNull("the compiler — not the dispatcher — owns predicate construction");
         }
 
         [Fact]
@@ -68,6 +70,15 @@ namespace BifrostQL.Server.Test.Grpc
         // ---- helpers ----
 
         private static IDictionary<string, object?> Ctx() => new Dictionary<string, object?>();
+
+        private static GqlObjectQuery SimpleQuery(IDbTable table) => new()
+        {
+            DbTable = table,
+            SchemaName = table.TableSchema,
+            TableName = table.DbName,
+            GraphQlName = table.GraphQlName,
+            Path = table.GraphQlName,
+        };
 
         private sealed class Box<T> { public T Value = default!; }
 

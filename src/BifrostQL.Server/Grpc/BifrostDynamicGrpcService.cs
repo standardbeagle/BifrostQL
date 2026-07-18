@@ -22,17 +22,20 @@ namespace BifrostQL.Server.Grpc
         private readonly IQueryIntentExecutor _executor;
         private readonly IBifrostAuthContextFactory _authFactory;
         private readonly GrpcWireOptions _options;
+        private readonly GrpcPageTokenKey _pageTokenKey;
         private readonly ILogger<BifrostDynamicGrpcService> _logger;
 
         public BifrostDynamicGrpcService(
             IQueryIntentExecutor executor,
             IBifrostAuthContextFactory authFactory,
             GrpcWireOptions options,
+            GrpcPageTokenKey pageTokenKey,
             ILogger<BifrostDynamicGrpcService> logger)
         {
             _executor = executor ?? throw new ArgumentNullException(nameof(executor));
             _authFactory = authFactory ?? throw new ArgumentNullException(nameof(authFactory));
             _options = options ?? throw new ArgumentNullException(nameof(options));
+            _pageTokenKey = pageTokenKey ?? throw new ArgumentNullException(nameof(pageTokenKey));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -57,30 +60,31 @@ namespace BifrostQL.Server.Grpc
             denialIsNotFound: true);
 
         public Task<byte[]> ListAsync(
-            IDbTable table, GrpcMessage rowMessage, byte[] request, ServerCallContext context)
+            IDbTable table, GrpcMessage requestMessage, GrpcMessage rowMessage, byte[] request, ServerCallContext context)
             => GrpcStatusMapper.GuardAsync(context, _logger, async () =>
             {
                 var userContext = ResolveIdentity(context);
-                var limit = Math.Min(_options.ListPageSize, _options.MaxStreamRows);
-                var rows = await GrpcReadDispatcher.ListAsync(
-                    _executor, table, limit, userContext, _options.Endpoint, context.CancellationToken);
+                var compiled = Compile(table, requestMessage, request, userContext);
+                var rows = await GrpcReadDispatcher.RunAsync(
+                    _executor, compiled.Query, userContext, _options.Endpoint, context.CancellationToken);
 
-                return GrpcMessageCodec.EncodeListResponse(rowMessage, rows);
+                return GrpcMessageCodec.EncodeListResponse(rowMessage, rows, NextPageToken(rows.Count, compiled));
             });
 
         public Task StreamAsync(
-            IDbTable table, GrpcMessage rowMessage,
+            IDbTable table, GrpcMessage requestMessage, GrpcMessage rowMessage, byte[] request,
             IServerStreamWriter<byte[]> responseStream, ServerCallContext context)
             => GrpcStatusMapper.GuardAsync(context, _logger, async () =>
             {
                 var userContext = ResolveIdentity(context);
 
-                // The stream is HARD-BOUNDED by config: the read intent caps rows at MaxStreamRows, so a
-                // full-table stream can never emit unbounded rows (invariant 6). WriteAsync provides
-                // HTTP/2 flow-control backpressure — the server does not push faster than the client reads.
-                var rows = await GrpcReadDispatcher.ListAsync(
-                    _executor, table, _options.MaxStreamRows, userContext, _options.Endpoint,
-                    context.CancellationToken);
+                // Stream shares the SAME compiler as List, so the same filter/sort/page yields the same
+                // ordered rows (criterion 4). The compiled query's Limit (page size, itself clamped to
+                // MaxStreamRows) hard-bounds the stream, so a full-table stream can never emit unbounded
+                // rows (invariant 6). WriteAsync provides HTTP/2 flow-control backpressure.
+                var compiled = Compile(table, requestMessage, request, userContext);
+                var rows = await GrpcReadDispatcher.RunAsync(
+                    _executor, compiled.Query, userContext, _options.Endpoint, context.CancellationToken);
 
                 foreach (var row in rows)
                 {
@@ -88,6 +92,42 @@ namespace BifrostQL.Server.Grpc
                     await responseStream.WriteAsync(GrpcMessageCodec.EncodeRow(rowMessage, row));
                 }
             });
+
+        /// <summary>
+        /// Compiles a decoded List/Stream request into a programmatic read through the ONE shared
+        /// <see cref="GrpcReadRequestCompiler"/>. Field/sort names are validated against the caller's
+        /// identity-VISIBLE columns (a hidden column is rejected, not an oracle — invariant 4); every
+        /// depth/count/size cap is enforced before the query is built (invariant 6). Both the default
+        /// and maximum page size are the endpoint's own bounds, so a caller can never widen the cap and
+        /// a Stream stays bounded by MaxStreamRows.
+        /// </summary>
+        private GrpcCompiledRead Compile(
+            IDbTable table, GrpcMessage requestMessage, byte[] request, IDictionary<string, object?> userContext)
+        {
+            var values = GrpcMessageCodec.DecodeRequest(requestMessage, request);
+            var visibleColumns = GrpcSchemaVisibility.VisibleReadColumns(table, userContext);
+            return GrpcReadRequestCompiler.Compile(
+                table, visibleColumns, values,
+                defaultPageSize: _options.ListPageSize,
+                maxPageSize: _options.MaxStreamRows,
+                identity: userContext,
+                tokenSecret: _pageTokenKey.Secret,
+                now: DateTimeOffset.UtcNow,
+                ttl: _pageTokenKey.Ttl);
+        }
+
+        /// <summary>
+        /// Mints the next-page cursor ONLY when the page came back full (another page may follow); a
+        /// short page is the last page and carries no token. The token encodes POSITION only
+        /// (offset + page size) bound to this table/query/identity — a forged or replayed token still
+        /// re-runs through the live pipeline, so it can at most reposition within the caller's own
+        /// visible rows (criterion 3).
+        /// </summary>
+        private string? NextPageToken(int rowCount, GrpcCompiledRead compiled)
+            => rowCount < compiled.PageSize
+                ? null
+                : GrpcPageCursor.Issue(
+                    compiled.Offset + compiled.PageSize, DateTimeOffset.UtcNow, compiled.Binding, _pageTokenKey.Secret);
 
         /// <summary>
         /// The largest <c>authorization</c> credential the adapter will look at. A real bearer/JWT is

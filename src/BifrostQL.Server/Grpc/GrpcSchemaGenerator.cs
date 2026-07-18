@@ -115,17 +115,21 @@ namespace BifrostQL.Server.Grpc
                     new GrpcField("row", 1, null, rowName, Optional: false, Repeated: false),
                 }));
 
+                // List and Stream carry the SAME filter/sort/page request shape — one compiler
+                // (GrpcReadRequestCompiler) consumes both, so the surfaces cannot diverge (criterion 4).
                 var listRequest = $"List{table.GraphQlName}Request";
-                messages.Add(new GrpcMessage(listRequest, Array.Empty<GrpcField>()));
+                messages.Add(new GrpcMessage(listRequest, ReadRequestFields()));
 
                 var listResponse = $"List{table.GraphQlName}Response";
                 messages.Add(new GrpcMessage(listResponse, new[]
                 {
                     new GrpcField("rows", 1, null, rowName, Optional: false, Repeated: true),
+                    // Opaque, position-only continuation token; absent on the last page (criterion 3).
+                    new GrpcField("next_page_token", 2, GrpcScalarKind.String, null, Optional: false, Repeated: false),
                 }));
 
                 var streamRequest = $"Stream{table.GraphQlName}Request";
-                messages.Add(new GrpcMessage(streamRequest, Array.Empty<GrpcField>()));
+                messages.Add(new GrpcMessage(streamRequest, ReadRequestFields()));
 
                 methods.Add(new GrpcMethod($"Get{table.GraphQlName}", getRequest, getResponse, ServerStreaming: false));
                 methods.Add(new GrpcMethod($"List{table.GraphQlName}", listRequest, listResponse, ServerStreaming: false));
@@ -138,5 +142,20 @@ namespace BifrostQL.Server.Grpc
                 new GrpcService(ServiceName, methods.OrderBy(m => m.Name, StringComparer.Ordinal).ToList()),
                 usesTimestamp);
         }
+
+        /// <summary>
+        /// The read options every List/Stream request carries: a JSON <c>filter</c> (the GraphQL-shaped
+        /// parameterized predicate the compiler validates against the schema), an <c>order_by</c>
+        /// clause, a <c>page_size</c>, and the opaque <c>page_token</c>. Field numbers are the fixed
+        /// small constants of a hand-authored request message — not manifest-managed (the manifest
+        /// pins only Row columns), matching how Get request key fields are numbered.
+        /// </summary>
+        private static IReadOnlyList<GrpcField> ReadRequestFields() => new[]
+        {
+            new GrpcField("filter", 1, GrpcScalarKind.String, null, Optional: false, Repeated: false),
+            new GrpcField("order_by", 2, GrpcScalarKind.String, null, Optional: false, Repeated: false),
+            new GrpcField("page_size", 3, GrpcScalarKind.Int32, null, Optional: false, Repeated: false),
+            new GrpcField("page_token", 4, GrpcScalarKind.String, null, Optional: false, Repeated: false),
+        };
     }
 }

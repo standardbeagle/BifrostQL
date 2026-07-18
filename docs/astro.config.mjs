@@ -67,6 +67,7 @@ export default defineConfig({
 						{ label: 'Embeddable Data Editor', slug: 'guides/embedded-editor' },
 						{ label: 'Binary Transport', slug: 'guides/binary-transport' },
 						{ label: 'Authoring a Protocol Adapter', slug: 'guides/protocol-adapters' },
+						{ label: 'OData v4 Endpoint', slug: 'guides/odata' },
 						{ label: 'PostgreSQL Wire Protocol (pgwire)', slug: 'guides/pgwire' },
 						{ label: 'pgwire BI-Tool Smoke Runbook', slug: 'guides/pgwire-bi-smoke' },
 						{ label: 'Redis Wire Protocol (RESP)', slug: 'guides/resp' },

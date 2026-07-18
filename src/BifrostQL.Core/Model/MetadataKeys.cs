@@ -1126,5 +1126,112 @@ namespace BifrostQL.Core.Model
                     TypeExplore, TypeMedia, TypePlan,
                 };
         }
+
+        /// <summary>
+        /// Metadata keys for the Prometheus business-metric contract. A table opts in
+        /// by declaring a metric — a name/help, a count and/or sum source over the
+        /// table's rows, an optional label set drawn from the table's columns, and an
+        /// optional bounded cardinality override. Nothing is exported unless a table
+        /// carries <see cref="Name"/>. Configured like the tenant-filter convention:
+        ///   "dbo.orders { metric-name: orders_total; metric-help: Orders placed;
+        ///                 metric-count: enabled; metric-sum: Total; metric-labels: Status;
+        ///                 metric-security-mode: per-tenant }"
+        /// This slice establishes the metadata contract, the typed collector
+        /// (<c>PrometheusMetricConfig</c>), and fail-fast validation; the exposition
+        /// endpoint and the SQL collection query are later Prometheus sub-tasks.
+        /// </summary>
+        public static class Metrics
+        {
+            /// <summary>
+            /// Table-level Prometheus metric name (the exposition series name). Presence of
+            /// this key is what opts a table into the metric surface. Must match the
+            /// Prometheus metric-name grammar (<c>[a-zA-Z_:][a-zA-Z0-9_:]*</c>); it is
+            /// normalized deterministically to the exported name.
+            /// </summary>
+            public const string Name = "metric-name";
+
+            /// <summary>
+            /// Table-level human-readable HELP text emitted alongside the metric. Optional,
+            /// but a present-but-empty value is rejected (a blank HELP is worse than none).
+            /// </summary>
+            public const string Help = "metric-help";
+
+            /// <summary>
+            /// Table-level count source. The token <see cref="CountAll"/> counts every row
+            /// (<c>COUNT(*)</c>); any other value names a column whose non-null values are
+            /// counted (<c>COUNT(column)</c>). A metric must declare a count and/or a
+            /// <see cref="Sum"/> source.
+            /// </summary>
+            public const string Count = "metric-count";
+
+            /// <summary>
+            /// Table-level sum source: names a numeric column summed into the metric
+            /// (<c>SUM(column)</c>). The column must exist and be numeric. A metric must
+            /// declare a <see cref="Count"/> and/or a sum source.
+            /// </summary>
+            public const string Sum = "metric-sum";
+
+            /// <summary>
+            /// Table-level comma-separated list of label columns. Each names a column that
+            /// must exist and must not be field-encrypted — metric labels are cleartext
+            /// exposition, so exposing an encrypted column as a label would leak it. Label
+            /// names are normalized deterministically; two labels that normalize to the
+            /// same exported name are a rejected collision.
+            /// </summary>
+            public const string Labels = "metric-labels";
+
+            /// <summary>
+            /// Optional table-level bounded cardinality override — the maximum number of
+            /// distinct label-value series this metric may produce before collection caps
+            /// it. Must be a positive integer.
+            /// </summary>
+            public const string MaxCardinality = "metric-max-cardinality";
+
+            /// <summary>
+            /// Table-level explicit scrape-security mode, REQUIRED when the table also
+            /// carries <see cref="Security.TenantFilter"/>: a tenant-scoped table cannot
+            /// declare a metric without explicitly choosing how the tenant dimension is
+            /// handled, or an ambient cross-tenant aggregate would be exported silently.
+            /// One of <see cref="SecurityModes"/>. The runtime enforcement of the chosen
+            /// mode is a later Prometheus sub-task (scrape security); this slice requires
+            /// only that the choice be made explicitly.
+            /// </summary>
+            public const string SecurityMode = "metric-security-mode";
+
+            /// <summary>The <see cref="Count"/> token meaning <c>COUNT(*)</c> over all rows.</summary>
+            public const string CountAll = "enabled";
+
+            /// <summary>Explicitly export a cross-tenant aggregate (operator acknowledges the exposure).</summary>
+            public const string SecurityModeAggregate = "aggregate";
+
+            /// <summary>Emit the tenant scope as a label dimension — one series per tenant.</summary>
+            public const string SecurityModePerTenant = "per-tenant";
+
+            /// <summary>
+            /// The recognized <see cref="SecurityMode"/> values. A tenant-scoped table
+            /// declaring a metric must name one of these; an unrecognized value would
+            /// otherwise read as "no explicit mode" and expose an ambient aggregate.
+            /// </summary>
+            public static readonly IReadOnlySet<string> SecurityModes =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    SecurityModeAggregate, SecurityModePerTenant,
+                };
+
+            /// <summary>
+            /// Database types accepted for a <see cref="Sum"/> source column across the
+            /// supported dialects. Summing a non-numeric column is a configuration error
+            /// the validator rejects at model load.
+            /// </summary>
+            public static readonly IReadOnlySet<string> NumericColumnTypes =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "int", "integer", "bigint", "smallint", "tinyint", "mediumint",
+                    "int2", "int4", "int8",
+                    "serial", "bigserial", "smallserial",
+                    "decimal", "numeric", "dec", "fixed", "money", "smallmoney",
+                    "float", "real", "double", "double precision",
+                };
+        }
     }
 }

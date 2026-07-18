@@ -166,6 +166,16 @@ namespace BifrostQL.Core.Model
             MetadataKeys.ChatConnector.MediaCaption,
             MetadataKeys.ChatConnector.PlanOperations,
             MetadataKeys.ChatConnector.ToolDescription,
+            // Prometheus business-metric contract (table-level opt-in). A miscased or
+            // typo'd key must be flagged, not silently drop the table from the metric
+            // surface or leave a declared metric half-configured.
+            MetadataKeys.Metrics.Name,
+            MetadataKeys.Metrics.Help,
+            MetadataKeys.Metrics.Count,
+            MetadataKeys.Metrics.Sum,
+            MetadataKeys.Metrics.Labels,
+            MetadataKeys.Metrics.MaxCardinality,
+            MetadataKeys.Metrics.SecurityMode,
         };
 
         // Internal for the same reason as KnownTableKeys above (case-casing

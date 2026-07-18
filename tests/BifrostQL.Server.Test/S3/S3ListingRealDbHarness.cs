@@ -31,7 +31,12 @@ namespace BifrostQL.Server.Test.S3
 
         private S3ListingRealDbHarness(string connName, string[] metadataRules, string[] seedSql)
         {
-            _connString = $"Data Source=s3list_{connName};Mode=Memory;Cache=Shared";
+            // Unique per harness instance: Cache=Shared keys the in-memory DB on the Data Source
+            // name process-wide, so reusing a name across instances (every test method rebuilds the
+            // harness with the same connName) leaks a seeded DB when the host's connection pool
+            // outlives DisposeAsync — the next re-seed then hits "table already exists". A per-instance
+            // token isolates each harness while keepAlive + host still share this instance's DB.
+            _connString = $"Data Source=s3list_{connName}_{Guid.NewGuid():N};Mode=Memory;Cache=Shared";
             _metadataRules = metadataRules;
             _seedSql = seedSql;
         }

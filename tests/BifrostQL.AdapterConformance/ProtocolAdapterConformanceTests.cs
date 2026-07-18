@@ -181,13 +181,23 @@ namespace BifrostQL.AdapterConformance
             => throw new NotSupportedException(
                 $"{GetType().Name} sets {nameof(AdapterSupportsMutations)} but does not override {nameof(ExecuteMutationAsync)}.");
 
-        private static readonly string[] MetadataRules =
+        private static readonly string[] DefaultMetadataRules =
         {
             "*.orders { tenant-filter: tenant_id; soft-delete: deleted_at }",
             "*.documents { policy-read-deny: body }",
         };
 
-        public async Task InitializeAsync()
+        /// <summary>
+        /// The schema-metadata rules the fixture's tables carry. Defaults to the shared security
+        /// fixture (orders tenant-filter + soft-delete, documents policy-read-deny). A derived suite
+        /// whose adapter gates a surface by a per-table metadata opt-in (e.g. the gRPC front door's
+        /// <c>grpc-write</c> write allow-list) overrides this to add that opt-in to the SAME tables —
+        /// the tenant/soft-delete/policy semantics the kit asserts are unchanged, only an
+        /// adapter-specific opt-in is added. Every other adapter inherits the default untouched.
+        /// </summary>
+        protected virtual IReadOnlyList<string> MetadataRules => DefaultMetadataRules;
+
+        public virtual async Task InitializeAsync()
         {
             _keepAlive = new SqliteConnection(_connString);
             await _keepAlive.OpenAsync();
@@ -223,7 +233,7 @@ namespace BifrostQL.AdapterConformance
             Host = await BuildHostAsync();
         }
 
-        public async Task DisposeAsync()
+        public virtual async Task DisposeAsync()
         {
             if (Host is not null)
             {
@@ -254,7 +264,7 @@ namespace BifrostQL.AdapterConformance
                             e.ConnectionString = _connString;
                             e.Provider = "sqlite";
                             e.Path = EndpointPath;
-                            e.Metadata = MetadataRules;
+                            e.Metadata = MetadataRules.ToArray();
                             e.DisableAuth = true;
                         });
                         o.AddQueryObservers(new IQueryObserver[] { _sqlCapture });
@@ -313,6 +323,30 @@ namespace BifrostQL.AdapterConformance
         /// still required; it only relaxes which text the surfaced rejection must carry.
         /// </summary>
         protected virtual string ExpectedRejectionFragment(string canonicalServerFragment) => canonicalServerFragment;
+
+        /// <summary>
+        /// The expected rejection text for the FILTER-on-a-policy-denied-column fact specifically.
+        /// Defaults to <see cref="ExpectedRejectionFragment"/> (most adapters surface a denied column
+        /// the same whether it is selected or filtered). A per-column-validating wire — e.g. gRPC's
+        /// read compiler, which rejects a filter on a hidden column as an "unknown/unreadable field"
+        /// (invariant 4: a hidden column is indistinguishable from a nonexistent one, a DIFFERENT
+        /// sanitized signal than a table-level read denial) — overrides this to that field-validation
+        /// text. The ASSERT is unchanged (the read is rejected, zero rows); only the EXPECTED text is
+        /// adapter-relative, and only for the filter scenario.
+        /// </summary>
+        protected virtual string ExpectedFilterRejectionFragment(string canonicalServerFragment)
+            => ExpectedRejectionFragment(canonicalServerFragment);
+
+        /// <summary>
+        /// The expected rejection text for a fail-closed WRITE specifically. Defaults to
+        /// <see cref="ExpectedRejectionFragment"/>. A write-capable adapter whose write path sanitizes
+        /// a fail-closed fault to a different generic status than its read path (e.g. gRPC maps a
+        /// missing-tenant write to a generic INTERNAL while a missing-tenant read maps to
+        /// PERMISSION_DENIED) overrides this. The ASSERT is unchanged (the write is rejected AND
+        /// nothing is written); only the EXPECTED text is adapter-relative.
+        /// </summary>
+        protected virtual string ExpectedWriteRejectionFragment(string canonicalServerFragment)
+            => ExpectedRejectionFragment(canonicalServerFragment);
 
         private async Task AssertReadRejectedAsync(ConformanceReadRequest request, string expectedErrorFragment)
         {
@@ -407,7 +441,7 @@ namespace BifrostQL.AdapterConformance
         {
             // Filtering (not selecting) a denied column would otherwise leak the
             // value through a boolean oracle; the read guard must reject it too.
-            await AssertReadRejectedAsync(new ConformanceReadRequest
+            var request = new ConformanceReadRequest
             {
                 Table = "documents",
                 Columns = new[] { "id" },
@@ -417,7 +451,11 @@ namespace BifrostQL.AdapterConformance
                 },
                 Principal = TenantPrincipal("user-a", "tenant-a"),
                 Endpoint = EndpointPath,
-            }, "not permitted by authorization policy");
+            };
+            var ex = await Assert.ThrowsAnyAsync<Exception>(() => ExecuteReadAsync(request));
+            FlattenMessages(ex).Should().Contain(
+                ExpectedFilterRejectionFragment("not permitted by authorization policy"),
+                "the adapter must surface the server-side rejection, not swallow or replace it");
         }
 
         [Fact]
@@ -479,7 +517,13 @@ namespace BifrostQL.AdapterConformance
                 Principal = null,
                 Endpoint = EndpointPath,
             }));
-            FlattenMessages(ex).Should().Contain("Tenant context required",
+            // The read fail-closed fact routes its expected wire text through ExpectedRejectionFragment
+            // (a sanitizing adapter surfaces a generic message, not the internal reason); the write
+            // fail-closed fact must do the SAME so a write-capable sanitizing adapter (e.g. gRPC) is
+            // not forced to leak the internal cause. The ASSERT is unchanged — the write is rejected
+            // AND nothing is written; only the EXPECTED text is adapter-relative (Lesson 1: adapt what
+            // you EXPECT, never what you ASSERT).
+            FlattenMessages(ex).Should().Contain(ExpectedWriteRejectionFragment("Tenant context required"),
                 "the adapter must surface the server-side rejection, not swallow or replace it");
 
             (await DbScalarAsync("SELECT COUNT(*) FROM orders WHERE name = 'no-identity'"))

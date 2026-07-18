@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
@@ -146,8 +147,16 @@ namespace BifrostQL.Server.OData
             // property is a 400 and never interpolated; literals become bound parameters. The result
             // is a TableFilter the pipeline AND-composes with tenant/soft-delete scope.
             var filter = ODataFilterTranslator.Translate(entity, options.Filter, model.TypeMapper);
+            // Plan any $expand against the SAME identity-filtered projection: one level only, known
+            // navigations only, composite/cyclic/nested-option shapes rejected as clean 400s. The
+            // plan carries only schema-derived, visibility-checked key columns.
+            var expandPlan = ODataExpand.Plan(entity, ODataExpand.Parse(options.Expand), entities);
             var read = ODataEntityReadTranslator.Translate(
                 entity, options, _options.DefaultPageSize, _options.MaxPageSize, filter);
+            // Ensure each expand's root-side binding key is materialized on the root rows even when a
+            // $select omitted it. It is added to the query projection only (never to the OData output
+            // columns), so the response shape a $select requested is unchanged.
+            EnsureExpandKeysSelected(read.Query, expandPlan);
 
             // The effective (clamped) page size is what the translator resolved onto Limit; the
             // continuation token binds THIS value, so a caller replaying a token with a different
@@ -193,6 +202,13 @@ namespace BifrostQL.Server.OData
                 ? (IReadOnlyList<IReadOnlyDictionary<string, object?>>)result.Rows.Take(pageSize).ToList()
                 : result.Rows;
 
+            // Expand runs AFTER the page is trimmed so the child fetch only ever binds the keys of
+            // the rows actually returned. Each expansion is an independent, fully-scoped intent, so
+            // the expanded entity gets its own tenant/soft-delete/policy pass (criterion 2).
+            var expansions = await ODataExpandExecutor.ExpandAsync(
+                expandPlan, pageRows, _reads, userContext, _options.Endpoint,
+                _options.MaxExpandFanout, context.RequestAborted);
+
             string? nextLink = null;
             if (hasMore)
             {
@@ -204,7 +220,8 @@ namespace BifrostQL.Server.OData
                 ServiceRoot(context), entity.Table.GraphQlName, read.ProjectedColumns,
                 pageRows, projected: options.Select is not null,
                 count: options.Count ? result.TotalCount : null,
-                nextLink: nextLink);
+                nextLink: nextLink,
+                expansions: expansions.Count > 0 ? expansions : null);
 
             await WriteBodyAsync(context, "application/json; charset=utf-8", json);
         }
@@ -231,12 +248,34 @@ namespace BifrostQL.Server.OData
             Add("$filter", options.Filter);
             Add("$select", options.Select);
             Add("$orderby", options.OrderBy);
+            Add("$expand", options.Expand);
             Add("$top", options.Top);
             if (options.Count)
                 Add("$count", "true");
             Add("$skiptoken", token);
 
             return $"{serviceRoot}/{entitySetName}?{string.Join("&", parts)}";
+        }
+
+        /// <summary>
+        /// Adds each expand's root-side binding key column to the root query's scalar projection when
+        /// a <c>$select</c> would otherwise have omitted it, so the values needed to correlate parents
+        /// with their expanded children are present on the returned rows. The OData output columns
+        /// (<see cref="ODataEntityRead.ProjectedColumns"/>) are untouched — an added key is fetched
+        /// but never emitted unless the caller's $select already named it.
+        /// </summary>
+        private static void EnsureExpandKeysSelected(GqlObjectQuery query, IReadOnlyList<ODataExpandItem> plan)
+        {
+            if (plan.Count == 0)
+                return;
+
+            var present = new HashSet<string>(
+                query.ScalarColumns.Select(c => c.DbDbName), StringComparer.OrdinalIgnoreCase);
+            foreach (var item in plan)
+            {
+                if (present.Add(item.RootKeyColumn.DbName))
+                    query.ScalarColumns.Add(new GqlObjectColumn(item.RootKeyColumn.DbName));
+            }
         }
 
         /// <summary>

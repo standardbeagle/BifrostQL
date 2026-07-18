@@ -124,7 +124,8 @@ namespace BifrostQL.Server.OData
             IReadOnlyList<IReadOnlyDictionary<string, object?>> rows,
             bool projected,
             long? count = null,
-            string? nextLink = null)
+            string? nextLink = null,
+            IReadOnlyList<ODataExpansion>? expansions = null)
         {
             if (columns is null) throw new ArgumentNullException(nameof(columns));
             if (rows is null) throw new ArgumentNullException(nameof(rows));
@@ -141,8 +142,9 @@ namespace BifrostQL.Server.OData
                 if (count is not null)
                     writer.WriteNumber("@odata.count", count.Value);
                 writer.WriteStartArray("value");
-                foreach (var row in rows)
+                for (var i = 0; i < rows.Count; i++)
                 {
+                    var row = rows[i];
                     writer.WriteStartObject();
                     foreach (var column in columns)
                     {
@@ -150,6 +152,11 @@ namespace BifrostQL.Server.OData
                         var value = row.TryGetValue(column.DbName, out var v) ? v : null;
                         JsonSerializer.Serialize(writer, value, ValueJsonOptions);
                     }
+                    // Expanded navigations follow the scalar properties. Each expansion is aligned to
+                    // the page rows by index: a to-one renders as a nested object or JSON null, a
+                    // to-many as an array (empty when the parent has no related rows).
+                    if (expansions is not null)
+                        WriteExpansions(writer, expansions, i);
                     writer.WriteEndObject();
                 }
                 writer.WriteEndArray();
@@ -159,6 +166,43 @@ namespace BifrostQL.Server.OData
             }
 
             return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
+        }
+
+        private static void WriteExpansions(Utf8JsonWriter writer, IReadOnlyList<ODataExpansion> expansions, int rowIndex)
+        {
+            foreach (var expansion in expansions)
+            {
+                var targets = expansion.RowValues[rowIndex];
+                writer.WritePropertyName(expansion.Name);
+                if (expansion.IsCollection)
+                {
+                    writer.WriteStartArray();
+                    foreach (var target in targets)
+                        WriteEntityObject(writer, expansion.Columns, target);
+                    writer.WriteEndArray();
+                }
+                else if (targets.Count == 0)
+                {
+                    writer.WriteNullValue();
+                }
+                else
+                {
+                    WriteEntityObject(writer, expansion.Columns, targets[0]);
+                }
+            }
+        }
+
+        private static void WriteEntityObject(
+            Utf8JsonWriter writer, IReadOnlyList<ColumnDto> columns, IReadOnlyDictionary<string, object?> row)
+        {
+            writer.WriteStartObject();
+            foreach (var column in columns)
+            {
+                writer.WritePropertyName(column.GraphQlName);
+                var value = row.TryGetValue(column.DbName, out var v) ? v : null;
+                JsonSerializer.Serialize(writer, value, ValueJsonOptions);
+            }
+            writer.WriteEndObject();
         }
 
         private static void WriteEntityType(XmlWriter writer, ODataEntity entity, ITypeMapper typeMapper)

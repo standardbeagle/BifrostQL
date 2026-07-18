@@ -6,15 +6,14 @@ namespace BifrostQL.Server.OData
     /// The OData v4 system query options this endpoint honors, parsed out of the request query
     /// string. Parsing enforces the wire-level rules that are independent of the schema: a system
     /// query option may appear at most once (a duplicate is a client error, not a
-    /// last-write-wins), the still-deferred option (<c>$expand</c>) is cleanly reported as
-    /// unimplemented, and any other <c>$</c>-prefixed option is rejected. Non-<c>$</c> custom
+    /// last-write-wins), and any other <c>$</c>-prefixed option is rejected. Non-<c>$</c> custom
     /// query options are ignored, as OData permits. The captured values are still untrusted text —
-    /// their schema/number validation happens in <see cref="ODataEntityReadTranslator"/> and
-    /// <see cref="ODataFilterTranslator"/>.
+    /// their schema/number validation happens in <see cref="ODataEntityReadTranslator"/>,
+    /// <see cref="ODataFilterTranslator"/>, and (for <c>$expand</c>) <see cref="ODataExpand"/>.
     /// </summary>
     internal sealed record ODataReadOptions(
         string? Select, string? OrderBy, string? Top, string? Skip, string? Filter = null,
-        bool Count = false, string? SkipToken = null)
+        bool Count = false, string? SkipToken = null, string? Expand = null)
     {
         /// <summary>
         /// Extracts the supported options from <paramref name="query"/>. Throws
@@ -27,7 +26,7 @@ namespace BifrostQL.Server.OData
         /// </summary>
         public static ODataReadOptions FromQuery(IQueryCollection query)
         {
-            string? select = null, orderBy = null, top = null, skip = null, filter = null, skipToken = null;
+            string? select = null, orderBy = null, top = null, skip = null, filter = null, skipToken = null, expand = null;
             bool count = false;
 
             foreach (var key in query.Keys)
@@ -45,11 +44,9 @@ namespace BifrostQL.Server.OData
                     case "$filter": filter = Single(query, key); break;
                     case "$count": count = ParseBool(Single(query, key)); break;
                     case "$skiptoken": skipToken = Single(query, key); break;
-
-                    // Still deferred — reported distinctly from an unknown option.
-                    case "$expand":
-                        throw ODataProtocolException.NotImplemented(
-                            $"The '{key}' query option is not implemented.");
+                    // Untrusted text — the schema/shape validation (one-level, known navigation,
+                    // no composite/cyclic/nested-option) happens in ODataExpand, not here.
+                    case "$expand": expand = Single(query, key); break;
 
                     default:
                         throw ODataProtocolException.BadRequest(
@@ -61,7 +58,7 @@ namespace BifrostQL.Server.OData
                 throw ODataProtocolException.BadRequest(
                     "The '$skip' and '$skiptoken' query options cannot be combined.");
 
-            return new ODataReadOptions(select, orderBy, top, skip, filter, count, skipToken);
+            return new ODataReadOptions(select, orderBy, top, skip, filter, count, skipToken, expand);
         }
 
         /// <summary>

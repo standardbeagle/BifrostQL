@@ -195,10 +195,12 @@ namespace BifrostQL.Server.Test.OData
         }
 
         [Fact]
-        public void FromQuery_reports_the_still_deferred_expand_option_as_not_implemented()
+        public void FromQuery_captures_the_expand_option_as_untrusted_text()
         {
-            var act = () => ODataReadOptions.FromQuery(Query(("$expand", "x")));
-            act.Should().Throw<ODataProtocolException>().Which.HttpStatus.Should().Be(501);
+            // $expand is now supported: FromQuery captures the raw text; the one-level/known-
+            // navigation/no-composite validation happens later in ODataExpand, not here.
+            var options = ODataReadOptions.FromQuery(Query(("$expand", "orders")));
+            options.Expand.Should().Be("orders");
         }
 
         [Fact]

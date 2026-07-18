@@ -57,5 +57,14 @@ namespace BifrostQL.Server.OData
         /// silently serve a wrong page. Default: 15 minutes.
         /// </summary>
         public TimeSpan ContinuationTokenTtl { get; set; } = TimeSpan.FromMinutes(15);
+
+        /// <summary>
+        /// The upper bound on the number of related rows a single <c>$expand</c> navigation may
+        /// return across the whole page. A request whose expansion would exceed this fails closed as
+        /// a clean OData 400 rather than materializing an unbounded fan-out — the row-count ceiling
+        /// on one level of expansion (.claude/rules/protocol-adapter-security.md invariant 6).
+        /// Default: 1000.
+        /// </summary>
+        public int MaxExpandFanout { get; set; } = 1000;
     }
 }

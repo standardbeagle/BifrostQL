@@ -176,14 +176,16 @@ namespace BifrostQL.Server.Test.OData
         }
 
         [Fact]
-        public async Task Deferred_expand_option_is_a_clean_501()
+        public async Task Expand_of_an_unknown_navigation_is_a_clean_400()
         {
             await using var harness = await ODataRealDbHarness.StartAsync("read-expand", Metadata, Seed);
 
+            // Widgets declares no navigations, so any $expand target is unknown → a clean 400
+            // (never a 501 now that one-level $expand is supported).
             var (status, _, body) = await Run(harness, "/widgets", "?$expand=whatever");
 
-            status.Should().Be(501);
-            ErrorCode(body).Should().Be("NotImplemented");
+            status.Should().Be(400);
+            ErrorCode(body).Should().Be("BadRequest");
         }
 
         // ---- harness plumbing ---------------------------------------------------------------

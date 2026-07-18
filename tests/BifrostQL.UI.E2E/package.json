@@ -8,6 +8,6 @@
     "install:browsers": "pnpm exec playwright install chromium"
   },
   "devDependencies": {
-    "@playwright/test": "^1.60.0"
+    "@playwright/test": "^1.61.1"
   }
 }

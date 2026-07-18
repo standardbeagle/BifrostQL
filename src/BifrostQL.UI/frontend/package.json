@@ -12,7 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@apollo/client": "^3.14.1",
+    "@apollo/client": "^4.2.7",
     "@bifrostql/binary-client": "workspace:*",
     "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.10.4",
@@ -21,21 +21,21 @@
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.6",
     "@standardbeagle/edit-db": "workspace:*",
-    "@tanstack/react-query": "^5.100.10",
+    "@tanstack/react-query": "^5.101.2",
     "@uiw/react-codemirror": "^4.25.11",
-    "graphql": "^16.14.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "graphql": "^17.0.2",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",
-    "@types/react": "^18.3.28",
-    "@types/react-dom": "^18.3.7",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react-swc": "^4.3.1",
-    "jsdom": "^25.0.1",
-    "typescript": "^5.9.3",
-    "vite": "^7.3.5",
-    "vitest": "^4.1.8"
+    "jsdom": "^29.1.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5",
+    "vitest": "^4.1.10"
   }
 }

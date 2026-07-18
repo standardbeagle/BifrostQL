@@ -35,9 +35,10 @@ public static class DeclarativeQueryToolCompiler
         if (!string.Equals(idParameter.Type, "id", StringComparison.Ordinal))
             throw new InvalidOperationException(
                 $"Tool '{definition.Name}' root.byId parameter '{definition.Root.ById}' must have type 'id'.");
-        if (table.KeyColumns.Count() != 1)
+        var keyColumns = table.KeyColumns.ToArray();
+        if (keyColumns.Length == 0)
             throw new InvalidOperationException(
-                $"Tool '{definition.Name}' root.byId requires exactly one primary-key column on '{definition.Root.Table}'.");
+                $"Tool '{definition.Name}' root.byId requires a primary key on '{definition.Root.Table}', which has none.");
         if (idParameter.Table is not null &&
             !string.Equals(idParameter.Table, definition.Root.Table, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException(
@@ -46,7 +47,7 @@ public static class DeclarativeQueryToolCompiler
         var columns = definition.Root.Fields.Select(field => ResolveColumn(table, field, definition.Name)).ToArray();
         var includes = definition.Include.Select(include => CompileInclude(definition.Name, table, include)).ToArray();
         return new CompiledDeclarativeQueryTool(
-            definition.Name, definition.Root.ById, DetailDefault(definition), table, table.KeyColumns.Single(), columns, includes, model, executor, endpoint);
+            definition.Name, definition.Root.ById, DetailDefault(definition), table, keyColumns, columns, includes, model, executor, endpoint);
     }
 
     private static string DetailDefault(DeclarativeToolDefinition definition) =>
@@ -61,8 +62,6 @@ public static class DeclarativeQueryToolCompiler
         var manyToMany = root.ManyToManyLinks.TryGetValue(include.Relation, out var many) ? many : null;
         if (link is null && manyToMany is null)
             throw new InvalidOperationException($"Tool '{toolName}' include relation '{include.Relation}' is not a model relationship on '{root.TableSchema}.{root.DbName}'.");
-        if (link?.IsComposite == true)
-            throw new InvalidOperationException($"Tool '{toolName}' include relation '{include.Relation}' uses a multi-column foreign key; declarative tool document version 1 supports only single-column relationships.");
 
         var related = manyToMany?.TargetTable
             ?? (ReferenceEquals(link!.ParentTable, root) ? link.ChildTable : link.ParentTable);
@@ -92,7 +91,7 @@ public static class DeclarativeQueryToolCompiler
 public sealed class CompiledDeclarativeQueryTool
 {
     private readonly IDbTable _table;
-    private readonly ColumnDto _keyColumn;
+    private readonly IReadOnlyList<ColumnDto> _keyColumns;
     private readonly IReadOnlyList<ColumnDto> _columns;
     private readonly IReadOnlyList<CompiledInclude> _includes;
     private readonly IDbModel _model;
@@ -105,7 +104,7 @@ public sealed class CompiledDeclarativeQueryTool
         string idParameterName,
         string defaultDetail,
         IDbTable table,
-        ColumnDto keyColumn,
+        IReadOnlyList<ColumnDto> keyColumns,
         IReadOnlyList<ColumnDto> columns,
         IReadOnlyList<CompiledInclude> includes,
         IDbModel model,
@@ -116,7 +115,7 @@ public sealed class CompiledDeclarativeQueryTool
         IdParameterName = idParameterName;
         _defaultDetail = defaultDetail;
         _table = table;
-        _keyColumn = keyColumn;
+        _keyColumns = keyColumns;
         _columns = columns;
         _includes = includes;
         _model = model;
@@ -132,10 +131,10 @@ public sealed class CompiledDeclarativeQueryTool
         if (!arguments.TryGetValue(IdParameterName, out var id))
             throw new ToolPromptException($"Missing required parameter '{IdParameterName}' for tool '{Name}'.");
 
-        var value = QueryToolCompiler.CoerceKeyValue(_keyColumn, QueryToolCompiler.ToClrValue(id));
+        var keyValues = ParseKeyValues(id);
         var query = QueryToolCompiler.BuildQuery(_table, _columns);
         query.QueryType = QueryType.Single;
-        query.Filter = TableFilter.FromPrimaryKey([value], [_keyColumn], _table.DbName);
+        query.Filter = TableFilter.FromPrimaryKey(keyValues, _keyColumns, _table.DbName);
         var detail = arguments.TryGetValue("detail", out var detailArgument) && detailArgument.ValueKind == JsonValueKind.String
             ? detailArgument.GetString() : _defaultDetail;
         if (detail is not ("summary" or "full"))
@@ -173,55 +172,175 @@ public sealed class CompiledDeclarativeQueryTool
     {
         if (!arguments.TryGetValue(IdParameterName, out var id))
             throw new ToolPromptException($"Missing required parameter '{IdParameterName}' for tool '{Name}'.");
-        var rootId = QueryToolCompiler.CoerceKeyValue(_keyColumn, QueryToolCompiler.ToClrValue(id));
+        var rootKeyValues = ParseKeyValues(id);
+        var rootKeyByDbName = BuildKeyMap(rootKeyValues);
         var detail = arguments.TryGetValue("detail", out var detailArgument) && detailArgument.ValueKind == JsonValueKind.String
             ? detailArgument.GetString() : _defaultDetail;
         var output = new Dictionary<string, IReadOnlyList<IReadOnlyDictionary<string, object?>>>(StringComparer.Ordinal);
         foreach (var include in _includes.Where(item => item.Definition.Fields is not null &&
                      (item.Definition.DetailGate != "full" || detail == "full")))
         {
-            output[include.Definition.As] = await ExecuteCollectionAsync(include, rootId, userContext, cancellationToken);
+            output[include.Definition.As] = await ExecuteCollectionAsync(
+                include, rootKeyByDbName, rootKeyValues, userContext, cancellationToken);
         }
         return output;
     }
 
     private async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ExecuteCollectionAsync(
-        CompiledInclude include, object? rootId, IDictionary<string, object?> userContext, CancellationToken cancellationToken)
+        CompiledInclude include,
+        IReadOnlyDictionary<string, object?> rootKeyByDbName,
+        IReadOnlyList<object?> rootKeyValues,
+        IDictionary<string, object?> userContext,
+        CancellationToken cancellationToken)
     {
-        IReadOnlyList<object?> relatedIds;
-        ColumnDto relatedKey;
-        if (include.ManyToMany is { } many)
-        {
-            var junction = QueryToolCompiler.BuildQuery(many.JunctionTable, [many.JunctionTargetColumn]);
-            junction.Filter = EqualityFilter(many.JunctionTable, many.JunctionSourceColumn, rootId, null);
-            var junctionRows = await ExecuteQueryAsync(junction, userContext, cancellationToken);
-            relatedIds = junctionRows.Select(row => row[many.JunctionTargetColumn.DbName]).ToArray();
-            relatedKey = many.TargetColumn;
-        }
-        else if (include.Link is { } link && ReferenceEquals(link.ParentTable, _table))
-        {
-            relatedIds = [rootId];
-            relatedKey = link.ChildId;
-        }
-        else
-        {
-            var parentLink = include.Link!;
-            var rootLookup = QueryToolCompiler.BuildQuery(_table, [parentLink.ChildId]);
-            rootLookup.QueryType = QueryType.Single;
-            rootLookup.Filter = TableFilter.FromPrimaryKey([rootId], [_keyColumn], _table.DbName);
-            var rootRows = await ExecuteQueryAsync(rootLookup, userContext, cancellationToken);
-            if (rootRows.Count == 0 || !rootRows[0].TryGetValue(parentLink.ChildId.DbName, out var foreignKey))
-                return [];
-            relatedIds = [foreignKey];
-            relatedKey = parentLink.ParentId;
-        }
-
-        if (relatedIds.Count == 0) return [];
         var query = QueryToolCompiler.BuildQuery(include.RelatedTable, include.Fields);
         query.Limit = include.Definition.Limit;
         if (include.Sort is not null) query.Sort.Add(include.Sort);
-        query.Filter = RelationFilter(include.RelatedTable, relatedKey, relatedIds, include.Definition.Filter);
+
+        if (include.ManyToMany is { } many)
+        {
+            // Junction bridge is single-column by model design (ManyToManyLink
+            // carries scalar source/target columns). A composite-PK root still
+            // works: resolve the one junction-source value from the root key.
+            var sourceValue = rootKeyByDbName[many.SourceColumn.DbName];
+            var junction = QueryToolCompiler.BuildQuery(many.JunctionTable, [many.JunctionTargetColumn]);
+            junction.Filter = RelationFilter(many.JunctionTable, many.JunctionSourceColumn, [sourceValue], null);
+            var junctionRows = await ExecuteQueryAsync(junction, userContext, cancellationToken);
+            var targetIds = junctionRows.Select(row => row[many.JunctionTargetColumn.DbName]).ToArray();
+            if (targetIds.Length == 0) return [];
+            query.Filter = RelationFilter(include.RelatedTable, many.TargetColumn, targetIds, include.Definition.Filter);
+            return await ExecuteQueryAsync(query, userContext, cancellationToken);
+        }
+
+        var link = include.Link!;
+        // ParentIds/ChildIds are index-aligned column pairs. When the root is the
+        // parent (one → many), match children by ALL child FK columns against the
+        // root's parent-key values; when the root is the child (many → one), match
+        // the parent by ALL parent-key columns against the root's FK values. Every
+        // pair is ANDed — never index-zero a composite FK.
+        var (fromColumns, matchColumns) = ReferenceEquals(link.ParentTable, _table)
+            ? (link.ParentIds, link.ChildIds)
+            : (link.ChildIds, link.ParentIds);
+
+        var fromValues = await ResolveRootValuesAsync(
+            fromColumns, rootKeyByDbName, rootKeyValues, userContext, cancellationToken);
+        if (fromValues is null || fromValues.Any(value => value is null))
+            return [];
+
+        query.Filter = CompositeMatchFilter(include.RelatedTable, matchColumns, fromValues, include.Definition.Filter);
         return await ExecuteQueryAsync(query, userContext, cancellationToken);
+    }
+
+    /// <summary>
+    /// Resolves the root row's values for <paramref name="fromColumns"/>. Columns
+    /// that are part of the primary key come straight from the parsed key (no
+    /// query — single-column child collections stay a single round-trip); any
+    /// remaining columns (FK columns in the many → one direction) are read off the
+    /// root row within the caller's access scope. Returns null when the root row
+    /// is out of scope, so the include yields no children rather than leaking.
+    /// </summary>
+    private async Task<IReadOnlyList<object?>?> ResolveRootValuesAsync(
+        IReadOnlyList<ColumnDto> fromColumns,
+        IReadOnlyDictionary<string, object?> rootKeyByDbName,
+        IReadOnlyList<object?> rootKeyValues,
+        IDictionary<string, object?> userContext,
+        CancellationToken cancellationToken)
+    {
+        var missing = fromColumns.Where(column => !rootKeyByDbName.ContainsKey(column.DbName)).ToArray();
+        IReadOnlyDictionary<string, object?>? rootRow = null;
+        if (missing.Length > 0)
+        {
+            var lookup = QueryToolCompiler.BuildQuery(_table, missing);
+            lookup.QueryType = QueryType.Single;
+            lookup.Filter = TableFilter.FromPrimaryKey(rootKeyValues, _keyColumns, _table.DbName);
+            var rows = await ExecuteQueryAsync(lookup, userContext, cancellationToken);
+            if (rows.Count == 0) return null;
+            rootRow = rows[0];
+        }
+
+        var values = new List<object?>(fromColumns.Count);
+        foreach (var column in fromColumns)
+        {
+            if (rootKeyByDbName.TryGetValue(column.DbName, out var keyValue))
+                values.Add(keyValue);
+            else if (rootRow is not null && rootRow.TryGetValue(column.DbName, out var rowValue))
+                values.Add(rowValue);
+            else
+                return null;
+        }
+        return values;
+    }
+
+    private IReadOnlyDictionary<string, object?> BuildKeyMap(IReadOnlyList<object?> keyValues)
+    {
+        var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < _keyColumns.Count; i++)
+            map[_keyColumns[i].DbName] = keyValues[i];
+        return map;
+    }
+
+    /// <summary>
+    /// Parses the id argument into the full ordered primary-key value list — an
+    /// array in key order, a 'v1|v2' delimited string, or a single scalar for a
+    /// single-column key — reusing the shared <see cref="QueryToolCompiler"/>
+    /// coercion primitive (no bespoke key parser). Arity mismatches name the key
+    /// columns and both accepted forms, mirroring bifrost_row_context.
+    /// </summary>
+    private IReadOnlyList<object?> ParseKeyValues(JsonElement idElement)
+    {
+        List<object?> raw = idElement.ValueKind switch
+        {
+            JsonValueKind.Array => idElement.EnumerateArray().Select(QueryToolCompiler.ToClrValue).ToList(),
+            JsonValueKind.String when _keyColumns.Count > 1 =>
+                idElement.GetString()!.Split('|').Select(s => (object?)s).ToList(),
+            JsonValueKind.String or JsonValueKind.Number =>
+                new List<object?> { QueryToolCompiler.ToClrValue(idElement) },
+            _ => throw new ToolPromptException(
+                $"Parameter '{IdParameterName}' must be a primary-key value: a scalar, an array in " +
+                "key-column order, or a 'v1|v2' delimited string."),
+        };
+
+        if (raw.Count != _keyColumns.Count)
+            throw new ToolPromptException(
+                $"Table '{_table.DbName}' has a primary key of {_keyColumns.Count} column(s) " +
+                $"({string.Join(", ", _keyColumns.Select(column => column.ColumnName))}) but '{IdParameterName}' " +
+                $"supplied {raw.Count} value(s). Pass an array in that column order, or a '|'-delimited string.");
+
+        return raw.Select((value, i) => QueryToolCompiler.CoerceKeyValue(_keyColumns[i], value)).ToList();
+    }
+
+    /// <summary>
+    /// Builds an AND-of-equalities predicate matching <paramref name="columns"/>
+    /// (a single- or multi-column FK) against <paramref name="values"/>, combined
+    /// with any declared include filter. All values bind as SQL parameters through
+    /// <see cref="QueryToolCompiler.CompileFilter"/>.
+    /// </summary>
+    private static TableFilter CompositeMatchFilter(
+        IDbTable table, IReadOnlyList<ColumnDto> columns, IReadOnlyList<object?> values, JsonElement? declaredFilter)
+    {
+        JsonNode match;
+        if (columns.Count == 1)
+        {
+            match = new JsonObject
+            {
+                [columns[0].GraphQlName] = new JsonObject { ["_eq"] = JsonSerializer.SerializeToNode(values[0]) },
+            };
+        }
+        else
+        {
+            var pairs = new JsonArray();
+            for (var i = 0; i < columns.Count; i++)
+                pairs.Add(new JsonObject
+                {
+                    [columns[i].GraphQlName] = new JsonObject { ["_eq"] = JsonSerializer.SerializeToNode(values[i]) },
+                });
+            match = new JsonObject { ["and"] = pairs };
+        }
+
+        JsonNode filter = declaredFilter is { } declared
+            ? new JsonObject { ["and"] = new JsonArray(JsonNode.Parse(declared.GetRawText()), match) }
+            : match;
+        return QueryToolCompiler.CompileFilter(table, JsonSerializer.SerializeToElement(filter));
     }
 
     private async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ExecuteQueryAsync(
@@ -233,10 +352,6 @@ public sealed class CompiledDeclarativeQueryTool
         }, cancellationToken);
         return result.Rows;
     }
-
-    private static TableFilter EqualityFilter(
-        IDbTable table, ColumnDto column, object? value, JsonElement? Filter) =>
-        RelationFilter(table, column, [value], Filter);
 
     private static TableFilter RelationFilter(
         IDbTable table, ColumnDto column, IReadOnlyList<object?> values, JsonElement? declaredFilter)

@@ -1,4 +1,6 @@
+using System.Text;
 using System.Text.Json;
+using BifrostQL.Core.Resolvers;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 
@@ -9,13 +11,15 @@ namespace BifrostQL.Server.OData
     /// <see cref="ODataAuthenticator"/> (Bearer principal or configured Basic credentials) and
     /// maps every failure to a deterministic OData JSON error envelope.
     ///
-    /// <para>This slice is routing + auth + errors only: the service document, metadata (EDMX),
-    /// and entity reads are deferred to later slices, so an authenticated request answers
-    /// <c>501 NotImplemented</c>. Auth is still fully enforced first, so the negative-path
-    /// contract (anonymous, bad Basic credentials, subject-less identity, unmapped issuer) is
-    /// exercised without any data path existing yet. The adapter owns only HTTP/OData
-    /// parsing + encoding; identity comes from the shared factory and future reads will come
-    /// from <c>IQueryIntentExecutor</c>, both injected from DI.</para>
+    /// <para>This slice serves the two discovery documents: the service document (OData JSON, at
+    /// the endpoint root) and <c>$metadata</c> (CSDL/EDMX XML). Both are generated from the cached
+    /// <see cref="Core.Model.IDbModel"/> resolved through <see cref="IQueryIntentExecutor"/> and
+    /// filtered to only the tables/columns/navigations the authenticated caller may READ, using
+    /// the same policy gate the query path enforces (fail-closed;
+    /// .claude/rules/protocol-adapter-security.md invariant 4). Entity reads and query options are
+    /// deferred to later slices, so any other authenticated path answers <c>501 NotImplemented</c>.
+    /// The adapter owns only HTTP/OData parsing + encoding; identity comes from the shared factory
+    /// and the model from <c>IQueryIntentExecutor</c>, both injected from DI.</para>
     ///
     /// <para>Only <see cref="ODataProtocolException"/> — a deliberately user-facing type with a
     /// curated message — is mapped onto the wire verbatim; every other exception maps to a
@@ -27,17 +31,20 @@ namespace BifrostQL.Server.OData
         private readonly RequestDelegate _next;
         private readonly ODataOptions _options;
         private readonly ODataAuthenticator _authenticator;
+        private readonly IQueryIntentExecutor _reads;
         private readonly ILogger<ODataMiddleware> _logger;
 
         public ODataMiddleware(
             RequestDelegate next,
             ODataOptions options,
             ODataAuthenticator authenticator,
+            IQueryIntentExecutor reads,
             ILogger<ODataMiddleware> logger)
         {
             _next = next ?? throw new ArgumentNullException(nameof(next));
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _authenticator = authenticator ?? throw new ArgumentNullException(nameof(authenticator));
+            _reads = reads ?? throw new ArgumentNullException(nameof(reads));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -50,10 +57,9 @@ namespace BifrostQL.Server.OData
                 context.RequestAborted.ThrowIfCancellationRequested();
 
                 // Authenticate first — every request is gated before any operation is dispatched.
-                _ = await _authenticator.AuthenticateAsync(context, context.RequestAborted);
+                var userContext = await _authenticator.AuthenticateAsync(context, context.RequestAborted);
 
-                // Slice 1 has no data/metadata path: an authenticated request is a clean 501.
-                throw ODataProtocolException.NotImplemented();
+                await DispatchAsync(context, userContext);
             }
             catch (ODataProtocolException ex)
             {
@@ -70,6 +76,82 @@ namespace BifrostQL.Server.OData
                 _logger.LogError(ex, "Unhandled error in OData endpoint.");
                 await WriteErrorAsync(context, ODataProtocolException.InternalError());
             }
+        }
+
+        /// <summary>
+        /// Routes an authenticated request to the discovery document it asks for. The endpoint
+        /// root serves the service document; <c>$metadata</c> serves the EDMX; anything else is a
+        /// clean 501 (entity reads/query options are later slices). The path is relative to the
+        /// mounted route prefix (the prefix lives on <see cref="HttpRequest.PathBase"/>).
+        /// </summary>
+        private async Task DispatchAsync(HttpContext context, IDictionary<string, object?> userContext)
+        {
+            var path = context.Request.Path.Value ?? string.Empty;
+
+            if (IsRoot(path))
+            {
+                await WriteServiceDocumentAsync(context, userContext);
+                return;
+            }
+
+            if (string.Equals(path.TrimStart('/'), "$metadata", StringComparison.Ordinal))
+            {
+                await WriteMetadataAsync(context, userContext);
+                return;
+            }
+
+            throw ODataProtocolException.NotImplemented();
+        }
+
+        private static bool IsRoot(string path)
+            => path.Length == 0 || path == "/";
+
+        private async Task WriteServiceDocumentAsync(HttpContext context, IDictionary<string, object?> userContext)
+        {
+            var entities = await ProjectAsync(userContext);
+            var serviceRoot = ServiceRoot(context);
+            var json = ODataDocumentWriter.WriteServiceDocument(entities, serviceRoot);
+
+            await WriteBodyAsync(context, "application/json; charset=utf-8", json);
+        }
+
+        private async Task WriteMetadataAsync(HttpContext context, IDictionary<string, object?> userContext)
+        {
+            var entities = await ProjectAsync(userContext);
+            var model = await _reads.GetModelAsync(_options.Endpoint);
+            var xml = ODataDocumentWriter.WriteMetadata(entities, model.TypeMapper);
+
+            await WriteBodyAsync(context, "application/xml; charset=utf-8", xml);
+        }
+
+        private async Task<IReadOnlyList<ODataEntity>> ProjectAsync(IDictionary<string, object?> userContext)
+        {
+            var model = await _reads.GetModelAsync(_options.Endpoint);
+            return ODataModelVisibility.Project(model, userContext);
+        }
+
+        /// <summary>
+        /// The service root the <c>@odata.context</c> pointer is built from: scheme + host + the
+        /// mounted route prefix (carried on <see cref="HttpRequest.PathBase"/>), with no trailing
+        /// slash.
+        /// </summary>
+        private static string ServiceRoot(HttpContext context)
+        {
+            var request = context.Request;
+            var prefix = request.PathBase.HasValue ? request.PathBase.Value : string.Empty;
+            return $"{request.Scheme}://{request.Host}{prefix}".TrimEnd('/');
+        }
+
+        private static async Task WriteBodyAsync(HttpContext context, string contentType, string body)
+        {
+            var response = context.Response;
+            if (response.HasStarted)
+                return;
+
+            response.StatusCode = 200;
+            response.ContentType = contentType;
+            var bytes = Encoding.UTF8.GetBytes(body);
+            await response.Body.WriteAsync(bytes.AsMemory(), context.RequestAborted);
         }
 
         private async Task WriteErrorAsync(HttpContext context, ODataProtocolException ex)

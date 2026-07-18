@@ -1,8 +1,11 @@
+using BifrostQL.Core.Model;
+using BifrostQL.Core.Resolvers;
 using BifrostQL.Server.OData;
 using FluentAssertions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using NSubstitute;
 using Xunit;
 
 namespace BifrostQL.Server.Test.OData
@@ -75,6 +78,9 @@ namespace BifrostQL.Server.Test.OData
             var services = new ServiceCollection();
             services.AddLogging();
             services.AddSingleton<IBifrostAuthContextFactory>(BifrostAuthContextFactory.Instance);
+            // The middleware resolves the read seam from DI to serve discovery documents; the
+            // registration/mounting tests never reach the model, so a stub suffices.
+            services.AddSingleton(StubReads());
             if (withBasicStore)
                 services.AddSingleton<IODataBasicCredentialStore>(new FakeODataBasicCredentialStore());
             BifrostServiceRegistrar.RegisterODataServices(services, options);
@@ -88,6 +94,15 @@ namespace BifrostQL.Server.Test.OData
             app.UseBifrostOData();
             app.Run(ctx => { ctx.Response.StatusCode = 200; return Task.CompletedTask; });
             return app.Build();
+        }
+
+        private static IQueryIntentExecutor StubReads()
+        {
+            var reads = Substitute.For<IQueryIntentExecutor>();
+            var model = Substitute.For<IDbModel>();
+            model.Tables.Returns(Array.Empty<IDbTable>());
+            reads.GetModelAsync(Arg.Any<string?>()).Returns(Task.FromResult(model));
+            return reads;
         }
 
         private static DefaultHttpContext RequestFor(string path)

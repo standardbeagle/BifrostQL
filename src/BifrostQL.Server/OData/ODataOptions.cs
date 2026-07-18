@@ -40,5 +40,22 @@ namespace BifrostQL.Server.OData
         /// this receives at most this many — the server-side ceiling on a single read. Default: 1000.
         /// </summary>
         public int MaxPageSize { get; set; } = 1000;
+
+        /// <summary>
+        /// The HMAC key the opaque server-driven-paging continuation token (<c>$skiptoken</c>) is
+        /// signed with. A configured secret keeps continuation tokens valid across restarts and
+        /// across a horizontally-scaled fleet; without one a per-instance random key is generated
+        /// (a startup warning is logged) — tokens then resolve only within this process's lifetime.
+        /// The token carries position only; the key is the tamper/replay guard, never the
+        /// authorization boundary (tenant/policy scope is re-applied per request by the pipeline).
+        /// </summary>
+        public string? ContinuationTokenSecret { get; set; }
+
+        /// <summary>
+        /// How long a continuation token stays valid after it is minted. An expired token fails
+        /// closed as a clean OData 400, exactly like a tampered one, so a stale nextLink can never
+        /// silently serve a wrong page. Default: 15 minutes.
+        /// </summary>
+        public TimeSpan ContinuationTokenTtl { get; set; } = TimeSpan.FromMinutes(15);
     }
 }

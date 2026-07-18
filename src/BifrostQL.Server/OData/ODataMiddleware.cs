@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using BifrostQL.Core.Resolvers;
@@ -33,6 +34,7 @@ namespace BifrostQL.Server.OData
         private readonly ODataAuthenticator _authenticator;
         private readonly IQueryIntentExecutor _reads;
         private readonly ILogger<ODataMiddleware> _logger;
+        private readonly byte[] _tokenSecret;
 
         public ODataMiddleware(
             RequestDelegate next,
@@ -46,6 +48,22 @@ namespace BifrostQL.Server.OData
             _authenticator = authenticator ?? throw new ArgumentNullException(nameof(authenticator));
             _reads = reads ?? throw new ArgumentNullException(nameof(reads));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+
+            // A configured secret keeps continuation tokens valid across restarts and across a
+            // horizontally-scaled fleet; absent one we generate a per-instance random key so tokens
+            // are still integrity-protected — they simply do not survive a restart or resolve on
+            // another instance. The trade-off is logged, never silent (mirrors the S3 adapter).
+            if (!string.IsNullOrEmpty(_options.ContinuationTokenSecret))
+            {
+                _tokenSecret = Encoding.UTF8.GetBytes(_options.ContinuationTokenSecret);
+            }
+            else
+            {
+                _tokenSecret = RandomNumberGenerator.GetBytes(32);
+                _logger.LogWarning(
+                    "No OData ContinuationTokenSecret configured; using a per-instance random key. " +
+                    "In-flight continuation tokens will not survive a restart or resolve on another instance.");
+            }
         }
 
         public async Task InvokeAsync(HttpContext context)
@@ -131,6 +149,36 @@ namespace BifrostQL.Server.OData
             var read = ODataEntityReadTranslator.Translate(
                 entity, options, _options.DefaultPageSize, _options.MaxPageSize, filter);
 
+            // The effective (clamped) page size is what the translator resolved onto Limit; the
+            // continuation token binds THIS value, so a caller replaying a token with a different
+            // $top re-derives a different binding and is rejected.
+            var pageSize = read.Query.Limit ?? _options.DefaultPageSize;
+
+            // Bind the token to the caller-visible query shape and identity re-derived from THIS
+            // request — never trusting a persisted fingerprint. A token minted for another set,
+            // filter, order, page size, or identity fails the MAC check on replay.
+            var binding = new ODataPageBinding(
+                entity.Table.GraphQlName,
+                ODataContinuationToken.QueryShapeHash(options.Filter, options.Select, options.OrderBy),
+                pageSize,
+                ODataContinuationToken.FingerprintIdentity(userContext));
+
+            // The resume offset: from the server-signed $skiptoken when present (re-validated against
+            // the live binding), otherwise the $skip the translator resolved. A tampered/expired/
+            // cross-context token throws a clean OData 400 here — never a silent wrong page.
+            var offset = options.SkipToken is not null
+                ? ODataContinuationToken.Decode(
+                    options.SkipToken, binding, _tokenSecret, DateTimeOffset.UtcNow, _options.ContinuationTokenTtl)
+                : (read.Query.Offset ?? 0);
+
+            // Over-fetch one row past the page to detect whether a next page exists without a
+            // second round-trip; the extra row is trimmed from the response.
+            read.Query.Offset = offset > 0 ? offset : null;
+            read.Query.Limit = pageSize + 1;
+            // $count reports the pipeline-filtered total through the SAME intent (COUNT(*) with the
+            // same tenant/soft-delete/$filter predicate) — never a side-channel query.
+            read.Query.IncludeResult = options.Count;
+
             var result = await _reads.ExecuteAsync(
                 new QueryIntent
                 {
@@ -140,11 +188,55 @@ namespace BifrostQL.Server.OData
                 },
                 context.RequestAborted);
 
+            var hasMore = result.Rows.Count > pageSize;
+            var pageRows = hasMore
+                ? (IReadOnlyList<IReadOnlyDictionary<string, object?>>)result.Rows.Take(pageSize).ToList()
+                : result.Rows;
+
+            string? nextLink = null;
+            if (hasMore)
+            {
+                var token = ODataContinuationToken.Issue(offset + pageSize, DateTimeOffset.UtcNow, binding, _tokenSecret);
+                nextLink = BuildNextLink(ServiceRoot(context), entity.Table.GraphQlName, options, token);
+            }
+
             var json = ODataDocumentWriter.WriteEntityCollection(
                 ServiceRoot(context), entity.Table.GraphQlName, read.ProjectedColumns,
-                result.Rows, projected: options.Select is not null);
+                pageRows, projected: options.Select is not null,
+                count: options.Count ? result.TotalCount : null,
+                nextLink: nextLink);
 
             await WriteBodyAsync(context, "application/json; charset=utf-8", json);
+        }
+
+        /// <summary>
+        /// Builds the <c>@odata.nextLink</c>: the entity-set URL with the caller's valid query
+        /// options preserved (so the continuation request re-derives the identical binding) and the
+        /// server-signed <c>$skiptoken</c> appended. The prior <c>$skip</c>/<c>$skiptoken</c> are
+        /// dropped — the token is now the sole, validated offset source. Every value is
+        /// percent-encoded; no request text is interpolated unescaped.
+        /// </summary>
+        private static string BuildNextLink(
+            string serviceRoot, string entitySetName, ODataReadOptions options, string token)
+        {
+            var parts = new List<string>();
+            void Add(string key, string? value)
+            {
+                // The keys are fixed OData literals ($filter, $skiptoken, …) — left verbatim per the
+                // OData URL convention; only the (untrusted) values are percent-encoded.
+                if (value is not null)
+                    parts.Add(key + "=" + Uri.EscapeDataString(value));
+            }
+
+            Add("$filter", options.Filter);
+            Add("$select", options.Select);
+            Add("$orderby", options.OrderBy);
+            Add("$top", options.Top);
+            if (options.Count)
+                Add("$count", "true");
+            Add("$skiptoken", token);
+
+            return $"{serviceRoot}/{entitySetName}?{string.Join("&", parts)}";
         }
 
         /// <summary>

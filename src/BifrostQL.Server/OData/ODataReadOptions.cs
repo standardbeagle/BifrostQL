@@ -12,17 +12,23 @@ namespace BifrostQL.Server.OData
     /// their schema/number validation happens in <see cref="ODataEntityReadTranslator"/> and
     /// <see cref="ODataFilterTranslator"/>.
     /// </summary>
-    internal sealed record ODataReadOptions(string? Select, string? OrderBy, string? Top, string? Skip, string? Filter = null)
+    internal sealed record ODataReadOptions(
+        string? Select, string? OrderBy, string? Top, string? Skip, string? Filter = null,
+        bool Count = false, string? SkipToken = null)
     {
         /// <summary>
         /// Extracts the supported options from <paramref name="query"/>. Throws
         /// <see cref="ODataProtocolException.BadRequest"/> for a duplicated or unknown system query
         /// option and <see cref="ODataProtocolException.NotImplemented"/> for a recognized but
         /// deferred one, so an unsupported request never silently degrades to a full-table read.
+        /// <c>$skiptoken</c> (server-driven paging continuation) and <c>$skip</c> are mutually
+        /// exclusive — the token is authoritative over the offset, so accepting a client
+        /// <c>$skip</c> alongside it would be an ambiguous, un-validated offset source.
         /// </summary>
         public static ODataReadOptions FromQuery(IQueryCollection query)
         {
-            string? select = null, orderBy = null, top = null, skip = null, filter = null;
+            string? select = null, orderBy = null, top = null, skip = null, filter = null, skipToken = null;
+            bool count = false;
 
             foreach (var key in query.Keys)
             {
@@ -37,6 +43,8 @@ namespace BifrostQL.Server.OData
                     case "$top": top = Single(query, key); break;
                     case "$skip": skip = Single(query, key); break;
                     case "$filter": filter = Single(query, key); break;
+                    case "$count": count = ParseBool(Single(query, key)); break;
+                    case "$skiptoken": skipToken = Single(query, key); break;
 
                     // Still deferred — reported distinctly from an unknown option.
                     case "$expand":
@@ -49,8 +57,24 @@ namespace BifrostQL.Server.OData
                 }
             }
 
-            return new ODataReadOptions(select, orderBy, top, skip, filter);
+            if (skipToken is not null && skip is not null)
+                throw ODataProtocolException.BadRequest(
+                    "The '$skip' and '$skiptoken' query options cannot be combined.");
+
+            return new ODataReadOptions(select, orderBy, top, skip, filter, count, skipToken);
         }
+
+        /// <summary>
+        /// Parses the boolean literal <c>$count</c> carries. Only the OData v4 literals
+        /// <c>true</c>/<c>false</c> are accepted; anything else is a clean 400 rather than a
+        /// silent "treat as false".
+        /// </summary>
+        private static bool ParseBool(string value) => value.Trim() switch
+        {
+            "true" => true,
+            "false" => false,
+            _ => throw ODataProtocolException.BadRequest("$count must be 'true' or 'false'."),
+        };
 
         /// <summary>
         /// Reads a single-valued system query option; a repeated option (<c>?$top=1&amp;$top=2</c>)

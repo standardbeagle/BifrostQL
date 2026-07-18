@@ -111,14 +111,20 @@ namespace BifrostQL.Server.OData
         /// row is read positionally by database column name from the resolved dictionary, so a value
         /// the pipeline masked/omitted surfaces as JSON null rather than leaking. When
         /// <paramref name="projected"/> is set (a <c>$select</c> was applied) the context annotation
-        /// carries the projection list, per the OData v4 context-URL rules.
+        /// carries the projection list, per the OData v4 context-URL rules. <paramref name="count"/>
+        /// (when a <c>$count=true</c> was requested) is emitted as <c>@odata.count</c> — the
+        /// pipeline-filtered total computed through the same intent as the returned rows;
+        /// <paramref name="nextLink"/> (when the page was bounded and more rows remain) is emitted
+        /// as the <c>@odata.nextLink</c> whose <c>$skiptoken</c> is opaque and integrity-protected.
         /// </summary>
         public static string WriteEntityCollection(
             string serviceRoot,
             string entitySetName,
             IReadOnlyList<ColumnDto> columns,
             IReadOnlyList<IReadOnlyDictionary<string, object?>> rows,
-            bool projected)
+            bool projected,
+            long? count = null,
+            string? nextLink = null)
         {
             if (columns is null) throw new ArgumentNullException(nameof(columns));
             if (rows is null) throw new ArgumentNullException(nameof(rows));
@@ -132,6 +138,8 @@ namespace BifrostQL.Server.OData
             {
                 writer.WriteStartObject();
                 writer.WriteString("@odata.context", context);
+                if (count is not null)
+                    writer.WriteNumber("@odata.count", count.Value);
                 writer.WriteStartArray("value");
                 foreach (var row in rows)
                 {
@@ -145,6 +153,8 @@ namespace BifrostQL.Server.OData
                     writer.WriteEndObject();
                 }
                 writer.WriteEndArray();
+                if (nextLink is not null)
+                    writer.WriteString("@odata.nextLink", nextLink);
                 writer.WriteEndObject();
             }
 

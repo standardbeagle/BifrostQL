@@ -62,6 +62,13 @@ namespace BifrostQL.Core.QueryModel
         /// </summary>
         public List<TableFilter?> LinkFilters { get; } = new();
 
+        /// <summary>
+        /// Caller-declared filters for each linked destination table. These are
+        /// kept separate from transformer filters so the per-request transformer
+        /// pass cannot replace a declarative include's narrowing predicate.
+        /// </summary>
+        public List<TableFilter?> DeclaredLinkFilters { get; } = new();
+
         public AggregateOperationType? AggregateType { get; init; }
 
         public ParameterizedSql ToSqlParameterized(IDbModel model, ISqlDialect dialect, SqlParameterCollection parameters, ParameterizedSql filterSql)

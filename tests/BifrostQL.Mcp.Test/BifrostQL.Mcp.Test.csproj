@@ -16,6 +16,7 @@
   <ItemGroup>
     <PackageReference Include="FluentAssertions" Version="8.8.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" />
+    <PackageReference Include="Microsoft.SqlServer.TransactSql.ScriptDom" Version="170.157.0" />
     <!-- TestHost must track the ASP.NET Core shared framework of each TFM. -->
     <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="8.0.22" Condition="'$(TargetFramework)'=='net8.0'" />
     <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="9.0.12" Condition="'$(TargetFramework)'=='net9.0'" />
@@ -33,6 +34,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\BifrostQL.Mcp\BifrostQL.Mcp.csproj" />
+    <!-- SqlServer dialect drives ScriptDom SQL-shape validation of compiled queries. -->
+    <ProjectReference Include="..\..\src\data\BifrostQL.SqlServer\BifrostQL.SqlServer.csproj" />
     <!-- In-memory SQLite backs the sample schema fixture. -->
     <ProjectReference Include="..\..\src\data\BifrostQL.Sqlite\BifrostQL.Sqlite.csproj" />
     <!-- Derivable protocol-adapter security-conformance kit. -->

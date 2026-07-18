@@ -122,8 +122,9 @@ public sealed class QueryTransformerService : IQueryTransformerService
         foreach (var aggregate in query.AggregateColumns)
         {
             aggregate.LinkFilters.Clear();
-            foreach (var (direction, link) in aggregate.Links)
+            for (var i = 0; i < aggregate.Links.Count; ++i)
             {
+                var (direction, link) = aggregate.Links[i];
                 var destinationTable = direction == LinkDirection.ManyToOne ? link.ParentTable : link.ChildTable;
                 var destinationContext = new QueryTransformContext
                 {
@@ -133,7 +134,15 @@ public sealed class QueryTransformerService : IQueryTransformerService
                     Path = query.Path,
                     IsNestedQuery = true,
                 };
-                aggregate.LinkFilters.Add(_filterTransformers.GetCombinedFilter(destinationTable, destinationContext));
+                var transformed = _filterTransformers.GetCombinedFilter(destinationTable, destinationContext);
+                var declared = i < aggregate.DeclaredLinkFilters.Count
+                    ? aggregate.DeclaredLinkFilters[i]
+                    : null;
+                aggregate.LinkFilters.Add(declared is null
+                    ? transformed
+                    : transformed is null
+                        ? declared
+                        : CombineFilters(declared, transformed));
             }
         }
 
@@ -209,6 +218,18 @@ public sealed class QueryTransformerService : IQueryTransformerService
         {
             if (aggregate.Links.Count == 0)
                 continue;
+
+            for (var i = 0; i < aggregate.Links.Count; ++i)
+            {
+                var (filterDirection, filterLink) = aggregate.Links[i];
+                var filterTable = filterDirection == LinkDirection.ManyToOne
+                    ? filterLink.ParentTable
+                    : filterLink.ChildTable;
+                var declaredFilter = i < aggregate.DeclaredLinkFilters.Count
+                    ? aggregate.DeclaredLinkFilters[i]
+                    : null;
+                CollectFilterColumns(declaredFilter, filterTable, AddFiltered);
+            }
 
             var (direction, link) = aggregate.Links[^1];
             var targetTable = direction == LinkDirection.ManyToOne ? link.ParentTable : link.ChildTable;

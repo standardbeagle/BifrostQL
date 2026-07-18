@@ -27,5 +27,18 @@ namespace BifrostQL.Server.OData
         /// (no reads yet); carried so the read seam lands without a config change.
         /// </summary>
         public string? Endpoint { get; set; }
+
+        /// <summary>
+        /// The page size applied to an entity-set read when the request supplies no <c>$top</c>.
+        /// Every collection response is bounded so a caller can never pull an unbounded result set
+        /// with a single request. Default: 100.
+        /// </summary>
+        public int DefaultPageSize { get; set; } = 100;
+
+        /// <summary>
+        /// The upper bound a requested <c>$top</c> is clamped to. A caller asking for more rows than
+        /// this receives at most this many — the server-side ceiling on a single read. Default: 1000.
+        /// </summary>
+        public int MaxPageSize { get; set; } = 1000;
     }
 }

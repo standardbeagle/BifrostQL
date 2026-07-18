@@ -40,6 +40,24 @@ namespace BifrostQL.Server.OData
         public static ODataProtocolException NotImplemented(string message = "The requested OData operation is not implemented.")
             => new("NotImplemented", 501, message);
 
+        /// <summary>
+        /// A malformed request the caller can correct — an unknown/ambiguous property name, a
+        /// non-integer or out-of-range <c>$top</c>/<c>$skip</c>, a duplicated system query option,
+        /// or an unsupported one. The message is curated to describe only the shape of the fault,
+        /// never request or tenant data.
+        /// </summary>
+        public static ODataProtocolException BadRequest(string message)
+            => new("BadRequest", 400, message);
+
+        /// <summary>
+        /// The addressed entity set does not exist — or is not visible to this identity, which is
+        /// deliberately indistinguishable from "does not exist" so the endpoint never becomes an
+        /// existence oracle for tables the caller may not read (fail-closed;
+        /// .claude/rules/protocol-adapter-security.md invariant 4).
+        /// </summary>
+        public static ODataProtocolException NotFound(string message = "The requested entity set was not found.")
+            => new("NotFound", 404, message);
+
         /// <summary>A sanitized envelope for an unexpected internal error; detail is logged server-side only.</summary>
         public static ODataProtocolException InternalError()
             => new("InternalError", 500, "An internal error occurred.");

@@ -1156,6 +1156,36 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
+        /// Metadata keys for the cross-dialect full-text search contract. A table opts in
+        /// by listing the columns the <c>_search</c> operator matches against; nothing is
+        /// searchable unless a table carries <see cref="Search"/>. Configured like the
+        /// tenant-filter convention:
+        ///   "dbo.articles { search: title,body; search-language: english }"
+        /// This slice establishes the metadata contract, the typed collector
+        /// (<c>FtsConfig</c>), fail-fast validation, and the schema surface (the
+        /// <c>_search</c> table-filter argument); the per-dialect SQL lowering is a later
+        /// FTS sub-task.
+        /// </summary>
+        public static class Fts
+        {
+            /// <summary>
+            /// Table-level comma-separated list of columns the <c>_search</c> operator
+            /// matches against. Presence of this key is what opts a table into full-text
+            /// search. Every named column must exist on the table and be a string type
+            /// (a search over a non-text column is meaningless), and a duplicate is
+            /// rejected rather than silently deduped.
+            /// </summary>
+            public const string Search = "search";
+
+            /// <summary>
+            /// Optional table-level language/configuration hint passed to the dialect's
+            /// full-text engine (e.g. Postgres <c>to_tsvector('english', …)</c>). Advisory
+            /// in this slice; consumed by the per-dialect lowering sub-task.
+            /// </summary>
+            public const string SearchLanguage = "search-language";
+        }
+
+        /// <summary>
         /// Metadata keys for the Prometheus business-metric contract. A table opts in
         /// by declaring a metric — a name/help, a count and/or sum source over the
         /// table's rows, an optional label set drawn from the table's columns, and an

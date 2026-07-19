@@ -180,6 +180,11 @@ namespace BifrostQL.Core.Model
             // flagged, not silently leave a table's mutation RPCs unexposed (or, worse, read
             // as an unrelated custom key) — the write allow-list is a security surface.
             MetadataKeys.Grpc.WriteEnabled,
+            // Cross-dialect full-text search (table-level opt-in). A miscased or typo'd key
+            // must be flagged, not silently leave a table non-searchable (the _search
+            // operator would simply never surface, with no error).
+            MetadataKeys.Fts.Search,
+            MetadataKeys.Fts.SearchLanguage,
         };
 
         // Internal for the same reason as KnownTableKeys above (case-casing

@@ -132,9 +132,13 @@ public sealed class BifrostProfileRegistry
 
     /// <summary>
     /// Registers a profile. Overwrites any existing profile with the same name.
+    /// Fails fast if the profile name lies in the system-reserved namespace
+    /// (see <see cref="RejectSystemReserved"/>) — the '.'-prefixed namespace is
+    /// host-synthesized and never client-registrable.
     /// </summary>
     public void Add(BifrostProfile profile)
     {
+        RejectSystemReserved(profile.Name);
         lock (_writeLock)
         {
             var next = new Dictionary<string, BifrostProfile>(_profiles, StringComparer.OrdinalIgnoreCase)
@@ -154,12 +158,31 @@ public sealed class BifrostProfileRegistry
     {
         var next = new Dictionary<string, BifrostProfile>(StringComparer.OrdinalIgnoreCase);
         foreach (var profile in profiles)
+        {
+            RejectSystemReserved(profile.Name);
             next[profile.Name] = profile;
+        }
 
         lock (_writeLock)
         {
             _profiles = next;
         }
+    }
+
+    /// <summary>
+    /// Fails fast when a profile name lies in the system-reserved namespace
+    /// (see <see cref="ProfileNames.IsSystemReserved"/>). The '.'-prefixed namespace
+    /// is owned by the host (e.g. <see cref="ProfileNames.System.Default"/>); allowing a
+    /// client to register such a name would silently shadow the synthetic profile the
+    /// host resolves for unspecified requests. No fallback, no silent drop — registration
+    /// throws with the offending name named.
+    /// </summary>
+    private static void RejectSystemReserved(string name)
+    {
+        if (ProfileNames.IsSystemReserved(name))
+            throw new ArgumentException(
+                $"'{name}' is system-reserved; '{ProfileNames.SystemPrefix}'-prefixed profile names are not registrable.",
+                nameof(name));
     }
 
     /// <summary>

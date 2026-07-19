@@ -85,7 +85,12 @@ namespace BifrostQL.Core.Modules.Crypto
                 return null;
             try
             {
-                var dek = _keyManager.GetDataKey(keyRef);
+                // Version-directed: resolve the EXACT DEK version stamped in the envelope so a
+                // value written under an old key still decrypts after rotation. A legacy
+                // (unversioned-format) envelope has no version and uses the original DEK. We
+                // never trial-decrypt across candidate keys.
+                var version = FieldCipher.PeekKeyVersion(envelope);
+                var dek = version is null ? _keyManager.GetDataKey(keyRef) : _keyManager.GetDataKey(keyRef, version.Value);
                 var aad = CryptoAad.Build(table.TableSchema, table.DbName, column.ColumnName);
                 return FieldCipher.Decrypt(dek, envelope, aad);
             }

@@ -175,4 +175,115 @@ public class CryptoPrimitivesTests
         var act = () => new ConfigRootKeyProvider(new byte[16]);
         act.Should().Throw<ArgumentException>();
     }
+
+    // ---- Key rotation: version-in-ciphertext + version-directed decrypt ----
+
+    [Fact]
+    public void FieldCipher_Versioned_CarriesKeyVersion_AndRoundTrips()
+    {
+        var dek = Key(1);
+        var aad = CryptoAad.Build("dbo", "customers", "ssn");
+
+        var envelope = FieldCipher.Encrypt(dek, "123-45-6789", aad, keyVersion: 7);
+
+        FieldCipher.PeekKeyVersion(envelope).Should().Be(7, "the key version travels with the ciphertext");
+        FieldCipher.Decrypt(dek, envelope, aad).Should().Be("123-45-6789");
+    }
+
+    [Fact]
+    public void FieldCipher_LegacyEnvelope_HasNoKeyVersion_AndStillDecrypts()
+    {
+        // A value written by the pre-rotation (legacy-format) code path must still decrypt.
+        var dek = Key(1);
+        var aad = CryptoAad.Build("dbo", "customers", "ssn");
+
+        var legacy = FieldCipher.Encrypt(dek, "legacy-secret", aad); // 3-arg = legacy format
+
+        FieldCipher.PeekKeyVersion(legacy).Should().BeNull("legacy envelopes carry no embedded key version");
+        FieldCipher.Decrypt(dek, legacy, aad).Should().Be("legacy-secret");
+    }
+
+    [Fact]
+    public void FieldCipher_Versioned_RejectsZeroKeyVersion()
+    {
+        var act = () => FieldCipher.Encrypt(Key(1), "x", Aad("a"), keyVersion: 0);
+        act.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public void EnvelopeKeyManager_FreshKeyRef_IsVersionOne()
+    {
+        var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new InMemoryDataEncryptionKeyStore());
+        manager.GetCurrentVersion("config:pii").Should().Be(1, "a never-rotated key-ref is version 1");
+    }
+
+    [Fact]
+    public void EnvelopeKeyManager_Rotate_MintsHigherVersion_KeepingOldResolvable()
+    {
+        var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new InMemoryDataEncryptionKeyStore());
+        var v1Dek = manager.GetDataKey("config:pii", 1);
+
+        var newVersion = manager.Rotate("config:pii");
+
+        newVersion.Should().Be(2);
+        manager.GetCurrentVersion("config:pii").Should().Be(2, "rotation makes the new version current for writes");
+        manager.GetDataKey("config:pii", 1).Should().Equal(v1Dek, "the old DEK stays durably resolvable for reads");
+        manager.GetDataKey("config:pii", 2).Should().NotEqual(v1Dek, "the new version is a fresh, distinct DEK");
+    }
+
+    [Fact]
+    public void EnvelopeKeyManager_Version1_EqualsUnversionedSlot_ForBackwardCompat()
+    {
+        // Legacy stored ciphertext resolves via the unversioned slot; version 1 must be that
+        // same DEK so pre-rotation data still decrypts.
+        var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new InMemoryDataEncryptionKeyStore());
+        manager.GetDataKey("config:pii", 1).Should().Equal(manager.GetDataKey("config:pii"));
+    }
+
+    [Fact]
+    public void EnvelopeKeyManager_ValueWrittenUnderOldVersion_DecryptsAfterRotation()
+    {
+        var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new InMemoryDataEncryptionKeyStore());
+        var aad = CryptoAad.Build("dbo", "customers", "ssn");
+
+        // Write under the current (v1) DEK, stamping v1 into the envelope.
+        var v1 = manager.GetCurrentVersion("config:pii");
+        var envelope = FieldCipher.Encrypt(manager.GetDataKey("config:pii", v1), "old-value", aad, v1);
+
+        // Rotate: current becomes v2, but the envelope still names v1.
+        manager.Rotate("config:pii").Should().Be(2);
+
+        // Version-directed read: resolve the version named in the envelope, not the current one.
+        var version = FieldCipher.PeekKeyVersion(envelope)!.Value;
+        FieldCipher.Decrypt(manager.GetDataKey("config:pii", version), envelope, aad)
+            .Should().Be("old-value", "an old-DEK value stays decryptable after rotation");
+    }
+
+    [Fact]
+    public void EnvelopeKeyManager_Rotation_PersistsAcrossManagerInstances_SameStore()
+    {
+        var store = new InMemoryDataEncryptionKeyStore();
+        var root = Key(9);
+        var m1 = new EnvelopeKeyManager(new ConfigRootKeyProvider(root), store);
+        m1.Rotate("config:pii"); // -> v2
+
+        // A fresh manager over the same durable store must see the rotated version and resolve
+        // the same v2 DEK — versions are durably resolvable across the sweep / restarts.
+        var m2 = new EnvelopeKeyManager(new ConfigRootKeyProvider(root), store);
+        m2.GetCurrentVersion("config:pii").Should().Be(2);
+        m2.GetDataKey("config:pii", 2).Should().Equal(m1.GetDataKey("config:pii", 2));
+        m2.GetDataKey("config:pii", 1).Should().Equal(m1.GetDataKey("config:pii", 1));
+    }
+
+    [Fact]
+    public void EnvelopeKeyManager_BlindIndexKey_IsStableAcrossRotation()
+    {
+        // Blind-index hashes must keep matching across rotation, so the index key must NOT
+        // change when the DEK rotates (it is bound to version 1).
+        var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new InMemoryDataEncryptionKeyStore());
+        var before = manager.GetBlindIndexKey("config:pii");
+        manager.Rotate("config:pii");
+        manager.GetBlindIndexKey("config:pii").Should().Equal(before, "the blind-index key survives rotation");
+    }
+
 }

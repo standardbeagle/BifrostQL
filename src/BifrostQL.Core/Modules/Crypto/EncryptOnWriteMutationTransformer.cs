@@ -70,9 +70,12 @@ namespace BifrostQL.Core.Modules.Crypto
                 // plaintext (and therefore the SAME deterministic blind-index hash) on
                 // every host, regardless of the server/thread culture.
                 var plaintext = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
-                var dek = keyManager.GetDataKey(keyRef);
+                // Encrypt under the key-ref's CURRENT DEK version and stamp that version into
+                // the envelope, so the value stays decryptable after the key-ref is rotated.
+                var version = keyManager.GetCurrentVersion(keyRef);
+                var dek = keyManager.GetDataKey(keyRef, version);
                 var aad = CryptoAad.Build(table.TableSchema, table.DbName, column.ColumnName);
-                result[key] = FieldCipher.Encrypt(dek, plaintext, aad);
+                result[key] = FieldCipher.Encrypt(dek, plaintext, aad, version);
 
                 // Populate the blind-index sibling column (if configured) with the keyed
                 // deterministic hash of the plaintext, so equality search still works.

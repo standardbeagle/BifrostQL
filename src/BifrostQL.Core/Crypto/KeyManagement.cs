@@ -192,27 +192,101 @@ namespace BifrostQL.Core.Crypto
         }
 
         /// <summary>
-        /// Returns the 32-byte plaintext DEK for <paramref name="keyRef"/>, unwrapping
-        /// (or generating + wrapping on first use) as needed. The returned array is a
-        /// copy the caller may use freely.
+        /// The DEK-version separator embedded in a store key. Version 1 uses the bare key-ref
+        /// (backward compatible with pre-rotation stored DEKs); version N&gt;1 appends this
+        /// unit-separator + <c>v</c> + N, so versioned slots never collide with the base slot
+        /// and the durable file store hex-encodes the whole thing safely.
+        /// </summary>
+        private const string VersionSeparator = "v";
+
+        /// <summary>
+        /// Returns the 32-byte plaintext DEK for <paramref name="keyRef"/>'s ORIGINAL
+        /// (version 1 / unversioned) slot, unwrapping — or generating + wrapping on first
+        /// use — as needed. This is the DEK legacy (unversioned-format) ciphertext was
+        /// written under. The returned array is a copy the caller may use freely.
         /// </summary>
         public byte[] GetDataKey(string keyRef)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
+            return ResolveDek(keyRef);
+        }
 
-            if (_dekCache.TryGetValue(keyRef, out var cached))
+        /// <summary>
+        /// Returns the 32-byte plaintext DEK for a SPECIFIC <paramref name="version"/> of
+        /// <paramref name="keyRef"/> — the version-directed resolution the read path uses so
+        /// a value written under an old DEK still decrypts after rotation. Version 1 is the
+        /// original/unversioned slot; higher versions are created by <see cref="Rotate"/>.
+        /// </summary>
+        public byte[] GetDataKey(string keyRef, int version)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
+            if (version < 1)
+                throw new ArgumentOutOfRangeException(nameof(version), version, "DEK version must be >= 1.");
+            return ResolveDek(StoreKeyFor(keyRef, version));
+        }
+
+        /// <summary>
+        /// Returns the current (highest) DEK version for <paramref name="keyRef"/> — the
+        /// version new writes must encrypt under. Ensures version 1 exists (generating it on
+        /// first use), then probes contiguous higher versions created by <see cref="Rotate"/>.
+        /// </summary>
+        public int GetCurrentVersion(string keyRef)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
+            // Ensure the base (v1) slot exists so a fresh key-ref reports version 1.
+            ResolveDek(keyRef);
+            var version = 1;
+            // Rotation always mints current+1, so persisted versions are contiguous: probe
+            // upward until a slot is absent. Versions are few (one per rotation), so this is cheap.
+            while (_store.Load(StoreKeyFor(keyRef, version + 1)) is not null)
+                version++;
+            return version;
+        }
+
+        /// <summary>
+        /// Rotates <paramref name="keyRef"/>: generates a fresh DEK as a NEW higher version and
+        /// makes it the current version for writes, WITHOUT touching any prior version — every
+        /// old DEK stays durably resolvable so values already written under it still decrypt.
+        /// Returns the new current version. Idempotent under a concurrent race: two rotations
+        /// computing the same next version converge on one persisted DEK (first-writer-wins).
+        /// </summary>
+        public int Rotate(string keyRef)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
+            lock (_generateLock)
+            {
+                var next = GetCurrentVersion(keyRef) + 1;
+                // Materialize (generate + persist) the new version's slot so GetCurrentVersion
+                // sees it as the new highest. ResolveDek is first-writer-wins, so a lost race
+                // adopts the winner's DEK rather than orphaning data.
+                ResolveDek(StoreKeyFor(keyRef, next));
+                return next;
+            }
+        }
+
+        private static string StoreKeyFor(string keyRef, int version)
+            => version <= 1 ? keyRef : keyRef + VersionSeparator + version.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        /// <summary>
+        /// Resolves (unwrapping, or generating + wrapping + persisting on first use) the DEK for
+        /// a store key. The store key doubles as the wrap AAD, so a wrapped DEK cannot be
+        /// relocated to another key-ref OR another version. Cached in memory per store key.
+        /// </summary>
+        private byte[] ResolveDek(string storeKey)
+        {
+            if (_dekCache.TryGetValue(storeKey, out var cached))
                 return (byte[])cached.Clone();
 
             // Serialize the load-or-generate so two concurrent first-uses of the same
-            // key-ref cannot each generate (and store) a different DEK — that would
+            // store key cannot each generate (and store) a different DEK — that would
             // orphan data encrypted under the loser's key.
             lock (_generateLock)
             {
-                if (_dekCache.TryGetValue(keyRef, out cached))
+                if (_dekCache.TryGetValue(storeKey, out cached))
                     return (byte[])cached.Clone();
 
                 var rootKey = _rootKeys.GetRootKey();
-                var wrapped = _store.Load(keyRef);
+                var wrapped = _store.Load(storeKey);
                 byte[] dek;
                 if (wrapped is null)
                 {
@@ -221,13 +295,11 @@ namespace BifrostQL.Core.Crypto
                     // another manager already won the race. We therefore re-Load and adopt
                     // the AUTHORITATIVE persisted bytes instead of trusting our own freshly
                     // generated DEK: otherwise the losing manager would cache and return a
-                    // DEK that no writer persisted, orphaning anything it then encrypts. This
-                    // is what satisfies the cross-manager convergence acceptance criterion and
-                    // deliberately supersedes the task body's "GetDataKey is unchanged" note.
+                    // DEK that no writer persisted, orphaning anything it then encrypts.
                     // With the in-memory store (Store overwrites) the re-Load returns exactly
                     // what we just stored, so behavior is identical and no test regresses.
-                    var justWrapped = Wrap(rootKey, RandomNumberGenerator.GetBytes(FieldCipher.KeySize), keyRef);
-                    _store.Store(keyRef, justWrapped);
+                    var justWrapped = Wrap(rootKey, RandomNumberGenerator.GetBytes(FieldCipher.KeySize), storeKey);
+                    _store.Store(storeKey, justWrapped);
                     // After a successful Store (or a lost race the store swallowed only because
                     // the winner's value is now persisted), Load MUST return the authoritative
                     // bytes. A null here means the store failed to persist AND holds nothing —
@@ -235,26 +307,28 @@ namespace BifrostQL.Core.Crypto
                     // cache a key no writer stored and orphan everything encrypted under it on
                     // restart. (No silent fallback data — the durable store's contract is that
                     // a returned DEK is a persisted DEK.)
-                    var authoritative = _store.Load(keyRef)
+                    var authoritative = _store.Load(storeKey)
                         ?? throw new CryptographicException(
-                            $"Data-encryption key for '{keyRef}' was not persisted by the key store; " +
+                            $"Data-encryption key for '{storeKey}' was not persisted by the key store; " +
                             "refusing to use an unpersisted key that would make encrypted data unrecoverable.");
-                    dek = Unwrap(rootKey, authoritative, keyRef);
+                    dek = Unwrap(rootKey, authoritative, storeKey);
                 }
                 else
                 {
-                    dek = Unwrap(rootKey, wrapped, keyRef);
+                    dek = Unwrap(rootKey, wrapped, storeKey);
                 }
 
-                _dekCache[keyRef] = dek;
+                _dekCache[storeKey] = dek;
                 return (byte[])dek.Clone();
             }
         }
 
         /// <summary>
-        /// Derives the per-column blind-index key from the DEK for <paramref name="keyRef"/>
-        /// via HKDF-SHA-256, so the deterministic index key is distinct from the DEK that
-        /// encrypts the data (compromising one does not reveal the other).
+        /// Derives the per-column blind-index key from the ORIGINAL (version 1) DEK for
+        /// <paramref name="keyRef"/> via HKDF-SHA-256, so the deterministic index key is distinct
+        /// from the DEK that encrypts the data (compromising one does not reveal the other). Bound
+        /// to version 1 deliberately: the blind-index hash must stay STABLE across key rotation so
+        /// equality search still matches rows written under different DEK versions.
         /// </summary>
         public byte[] GetBlindIndexKey(string keyRef)
         {

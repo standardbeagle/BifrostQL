@@ -237,12 +237,24 @@ public static class ComputedColumnConfigCollector
     /// </summary>
     private static class ComputedExpressionParser
     {
+        /// <summary>
+        /// Maximum parenthesis/function-call nesting the recursive-descent parser will follow.
+        /// This config is admin-authored at schema-build time (not attacker-reachable over the
+        /// wire), but a pathologically deep expression would still recurse one physical stack
+        /// frame per level and StackOverflow at startup — uncatchable in .NET. Bounding the
+        /// depth BEFORE each descent turns that into a clean, actionable config error. Mirrors
+        /// the RESP protocol-adapter aggregate-decoder cap (see protocol-adapter invariant 6).
+        /// </summary>
+        private const int MaxNestingDepth = 32;
+
         public static (SqlExpr Expression, IReadOnlyList<string> Dependencies) Parse(string text)
         {
             var tokens = Tokenize(text);
             var position = 0;
             var dependencies = new List<string>();
-            var expression = ParseConcat(tokens, ref position, dependencies);
+            // Depth starts at the top-level frame and is threaded (never reset) through the
+            // recursive descent below.
+            var expression = ParseConcat(tokens, ref position, dependencies, depth: 1);
             if (position != tokens.Count)
                 throw new BifrostExecutionError(
                     $"Computed expression '{text}' has unexpected trailing input near token '{tokens[position].Text}'.");
@@ -251,18 +263,26 @@ public static class ComputedColumnConfigCollector
             return (expression, distinct);
         }
 
-        private static SqlExpr ParseConcat(IReadOnlyList<Token> tokens, ref int position, List<string> dependencies)
+        private static SqlExpr ParseConcat(IReadOnlyList<Token> tokens, ref int position, List<string> dependencies, int depth)
         {
-            var parts = new List<SqlExpr> { ParsePrimary(tokens, ref position, dependencies) };
+            // Checked at the recursive entry (each parenthesis/function-arg descent lands here one
+            // level deeper) BEFORE any further descent, so an over-nested expression is rejected
+            // instead of overflowing the stack.
+            if (depth > MaxNestingDepth)
+                throw new BifrostExecutionError(
+                    $"Computed expression exceeds the maximum nesting depth of {MaxNestingDepth}; " +
+                    "flatten the parentheses/function nesting in the 'computed-expr' configuration.");
+
+            var parts = new List<SqlExpr> { ParsePrimary(tokens, ref position, dependencies, depth) };
             while (position < tokens.Count && tokens[position].Kind == TokenKind.Concat)
             {
                 position++;
-                parts.Add(ParsePrimary(tokens, ref position, dependencies));
+                parts.Add(ParsePrimary(tokens, ref position, dependencies, depth));
             }
             return parts.Count == 1 ? parts[0] : new SqlExpr.Concat(parts);
         }
 
-        private static SqlExpr ParsePrimary(IReadOnlyList<Token> tokens, ref int position, List<string> dependencies)
+        private static SqlExpr ParsePrimary(IReadOnlyList<Token> tokens, ref int position, List<string> dependencies, int depth)
         {
             if (position >= tokens.Count)
                 throw new BifrostExecutionError("Computed expression ended unexpectedly; an operand was required.");
@@ -280,7 +300,7 @@ public static class ComputedColumnConfigCollector
 
                 case TokenKind.LParen:
                     position++;
-                    var inner = ParseConcat(tokens, ref position, dependencies);
+                    var inner = ParseConcat(tokens, ref position, dependencies, depth + 1);
                     Expect(tokens, ref position, TokenKind.RParen);
                     return inner;
 
@@ -294,11 +314,11 @@ public static class ComputedColumnConfigCollector
                         var args = new List<SqlExpr>();
                         if (position < tokens.Count && tokens[position].Kind != TokenKind.RParen)
                         {
-                            args.Add(ParseConcat(tokens, ref position, dependencies));
+                            args.Add(ParseConcat(tokens, ref position, dependencies, depth + 1));
                             while (position < tokens.Count && tokens[position].Kind == TokenKind.Comma)
                             {
                                 position++;
-                                args.Add(ParseConcat(tokens, ref position, dependencies));
+                                args.Add(ParseConcat(tokens, ref position, dependencies, depth + 1));
                             }
                         }
                         Expect(tokens, ref position, TokenKind.RParen);

@@ -199,6 +199,36 @@ public sealed class ComputedColumnExpressionTests
         act.Should().Throw<BifrostExecutionError>();
     }
 
+    // --- MaxNestingDepth guard: an admin-authored expression nested past the cap must fail fast
+    // with a clean, actionable config error rather than recursing into an (uncatchable) stack
+    // overflow at schema-build time. The two facts straddle the cap so the guard is non-vacuous.
+    private static string NestParens(int depth) => new string('(', depth) + "firstName" + new string(')', depth);
+
+    [Fact]
+    public void Collector_ExpressionMetadata_ExceedingMaxNestingDepth_FailsWithActionableError()
+    {
+        var model = BuildModelWithExprMetadata($"deep:String:{NestParens(64)}");
+        var table = model.GetTableFromDbName("People");
+
+        var act = () => ComputedColumnConfigCollector.FromTable(table);
+
+        // The error must name the limit so the config author knows what to change.
+        act.Should().Throw<BifrostExecutionError>()
+            .WithMessage("*nesting depth*32*");
+    }
+
+    [Fact]
+    public void Collector_ExpressionMetadata_JustUnderMaxNestingDepth_StillParses()
+    {
+        var model = BuildModelWithExprMetadata($"deep:String:{NestParens(30)}");
+        var table = model.GetTableFromDbName("People");
+
+        var computed = ComputedColumnConfigCollector.Find(table, "deep")!;
+
+        computed.Kind.Should().Be(ComputedColumnKind.Expression);
+        computed.Dependencies.Should().BeEquivalentTo("firstName");
+    }
+
     // --- Criterion 3: raw-SQL kind is admin-gated, rejected at config-collection time ---------
     private static IDbModel BuildModelWithRawSql(bool rawSqlEnabled)
     {

@@ -111,6 +111,10 @@ namespace BifrostQL.Core.Model
             MetadataKeys.StateMachine.Transitions,
             MetadataKeys.Computed.Sql,
             MetadataKeys.Computed.Provider,
+            // Structured-expression computed columns (safe successor to computed-sql).
+            // Must be allow-listed or the unknown-key gate rejects a live model that uses
+            // it, even though the collector parses it into an Expression-kind definition.
+            MetadataKeys.Computed.Expression,
             MetadataKeys.Validation.Server,
             MetadataKeys.Validation.Plugin,
             // Server-side authorization policy (security — miscased keys must be

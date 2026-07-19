@@ -234,4 +234,43 @@ public sealed class ComputedColumnExpressionTests
         definitions.Should().ContainSingle(d => d.Kind == ComputedColumnKind.Sql)
             .Which.Name.Should().Be("raw");
     }
+
+    // --- Criterion 5: computed-expr is in the metadata validation allow-list ------------------
+    // Non-vacuous: the unknown-key gate still rejects a genuinely-unknown table key, and
+    // accepts computed-expr — so the allow-list addition is doing real work.
+    [Fact]
+    public void ModelValidation_AcceptsComputedExprMetadataKey()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("People", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("first_name", "varchar", graphQlName: "firstName")
+                .WithColumn("last_name", "varchar", graphQlName: "lastName")
+                .WithMetadata(MetadataKeys.Computed.Expression,
+                    "fullName:String:UPPER(firstName) || ' ' || lastName"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        // computed-expr must NOT be flagged as an unrecognized metadata key.
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void ModelValidation_RejectsGenuinelyUnknownTableKey()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("People", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("first_name", "varchar")
+                .WithMetadata("computed-xpr", "fullName:String:first_name"))  // typo of computed-expr
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("computed-xpr").And.Contain("unrecognized");
+    }
 }

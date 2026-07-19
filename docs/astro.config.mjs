@@ -63,6 +63,7 @@ export default defineConfig({
 						{ label: 'LLM Chat Endpoints', slug: 'guides/llm-chat' },
 						{ label: 'Chat Connectors', slug: 'guides/chat-connectors' },
 						{ label: 'MCP Server (Agent Tools)', slug: 'guides/mcp-server' },
+						{ label: 'Authoring MCP Tools', slug: 'guides/mcp-tool-authoring' },
 						{ label: 'React Hooks & Components', slug: 'guides/react-hooks' },
 						{ label: 'Embeddable Data Editor', slug: 'guides/embedded-editor' },
 						{ label: 'Binary Transport', slug: 'guides/binary-transport' },
@@ -101,6 +102,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Configuration', slug: 'reference/configuration' },
 						{ label: 'SQL Dialects', slug: 'reference/dialects' },
+						{ label: 'Declarative MCP Tool Document', slug: 'reference/mcp-declarative-tools' },
 					],
 				},
 			],

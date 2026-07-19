@@ -61,6 +61,7 @@ export default defineConfig({
 						{ label: 'Workflow Mutations & Audit Trail', slug: 'guides/workflow-mutations' },
 						{ label: 'Emitting Change Events (CDC)', slug: 'guides/cdc-events' },
 						{ label: 'Recording Change History', slug: 'guides/change-history' },
+						{ label: 'Rotating Field-Encryption Keys', slug: 'guides/field-encryption' },
 						{ label: 'LLM Chat Endpoints', slug: 'guides/llm-chat' },
 						{ label: 'Chat Connectors', slug: 'guides/chat-connectors' },
 						{ label: 'MCP Server (Agent Tools)', slug: 'guides/mcp-server' },

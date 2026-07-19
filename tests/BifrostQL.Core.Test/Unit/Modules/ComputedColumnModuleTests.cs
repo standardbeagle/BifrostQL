@@ -28,7 +28,7 @@ public sealed class ComputedColumnModuleTests
         var computed = ComputedColumnConfigCollector.Find(table, "totalWithTax")!;
         var column = new GqlObjectColumn(computed, "totalWithTax");
 
-        var sql = column.ToSelectSql(model, table, SqlServerDialect.Instance);
+        var sql = column.ToSelectSql(model, table, SqlServerDialect.Instance, new SqlParameterCollection());
 
         sql.Should().Be("([subtotal] + [tax]) [totalWithTax]");
     }

@@ -61,7 +61,7 @@ public sealed class ComputedExpressionSelectEmissionTests
         var sql = sqls.Values.Single().Sql;
         // The lowered expression is projected under its GraphQL alias, with the dependency
         // columns resolved to their DB names and the separator lowered to a bound parameter.
-        sql.Should().Contain("upper(\"first_name\")").And.Contain("\"last_name\"");
+        sql.Should().Contain("UPPER(\"first_name\")").And.Contain("\"last_name\"");
         sql.Should().Contain("@p").And.Contain("\"fullName\"");
         // The literal separator text must NOT appear inline in the SQL — it is a parameter.
         sql.Should().NotContain("' '");

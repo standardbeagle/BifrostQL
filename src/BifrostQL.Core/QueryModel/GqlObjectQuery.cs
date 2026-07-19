@@ -241,7 +241,7 @@ namespace BifrostQL.Core.QueryModel
 
             if (fullColumns.Count > 0)
             {
-                var columnSql = string.Join(",", fullColumns.Select(n => n.ToSelectSql(dbModel, DbTable, dialect)));
+                var columnSql = string.Join(",", fullColumns.Select(n => n.ToSelectSql(dbModel, DbTable, dialect, parameters)));
                 var cmdText = $"SELECT {columnSql} FROM {tableRef}";
 
                 var sortCols = RenderPagedSortColumns(dialect, DbTable, Sort);
@@ -299,7 +299,7 @@ namespace BifrostQL.Core.QueryModel
             var ctx = new SqlBuildContext(dbModel, dialect, parameters);
             var connectedDbTable = dbModel.GetTableFromDbName(tableJoin.ConnectedTable.TableName);
             var joinColumnSql = string.Join(",",
-                tableJoin.ConnectedTable.FullColumnNames.Select(c => c.ToSelectSql(dbModel, connectedDbTable, dialect, "b", useAsKeyword: true)));
+                tableJoin.ConnectedTable.FullColumnNames.Select(c => c.ToSelectSql(dbModel, connectedDbTable, dialect, parameters, "b", useAsKeyword: true)));
 
             var srcProjection = tableJoin.EmitSrcProjection(dialect, "a");
             // The connected table may contribute no columns of its own (e.g. a

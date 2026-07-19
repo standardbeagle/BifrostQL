@@ -42,11 +42,16 @@ namespace BifrostQL.Core.QueryModel
         public bool IsProviderComputed => ComputedColumn?.Kind == ComputedColumnKind.Provider;
         public bool IsSqlComputed => ComputedColumn?.Kind == ComputedColumnKind.Sql;
 
-        public string ToSelectSql(IDbModel model, IDbTable table, ISqlDialect dialect, string? tableAlias = null, bool useAsKeyword = false)
+        public string ToSelectSql(IDbModel model, IDbTable table, ISqlDialect dialect, SqlParameterCollection parameters, string? tableAlias = null, bool useAsKeyword = false)
         {
             var aliasSeparator = useAsKeyword ? " AS " : " ";
             if (ComputedColumn is { Kind: ComputedColumnKind.Sql } sqlComputed)
                 return $"{sqlComputed.RenderSqlExpression(table, dialect, tableAlias)}{aliasSeparator}{dialect.EscapeIdentifier(GraphQlDbName)}";
+
+            // Expression kind lowers to PARAMETERIZED SQL: every Lit/Param binds onto the live
+            // query's parameter collection (threaded from AddSqlParameterized), never inline.
+            if (ComputedColumn is { Kind: ComputedColumnKind.Expression } exprComputed)
+                return $"{exprComputed.RenderExpression(table, dialect, parameters)}{aliasSeparator}{dialect.EscapeIdentifier(GraphQlDbName)}";
 
             if (ComputedColumn is { Kind: ComputedColumnKind.Provider })
                 throw new InvalidOperationException("Provider computed columns are populated after SQL execution.");

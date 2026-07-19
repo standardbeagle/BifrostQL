@@ -193,4 +193,45 @@ public sealed class ComputedColumnExpressionTests
 
         act.Should().Throw<BifrostExecutionError>();
     }
+
+    // --- Criterion 3: raw-SQL kind is admin-gated, rejected at config-collection time ---------
+    private static IDbModel BuildModelWithRawSql(bool rawSqlEnabled)
+    {
+        var fixture = DbModelTestFixture.Create();
+        if (rawSqlEnabled)
+            fixture = fixture.WithModelMetadata(MetadataKeys.RawSql.Enabled, "enabled");
+        return fixture
+            .WithTable("People", t => t
+                .WithPrimaryKey("Id")
+                .WithColumn("first_name", "varchar", graphQlName: "firstName")
+                .WithColumn("last_name", "varchar", graphQlName: "lastName")
+                .WithMetadata(MetadataKeys.Computed.Sql, "raw:String:{firstName}"))
+            .Build();
+    }
+
+    [Fact]
+    public void RawSqlComputedColumn_NonAdminModel_RejectedAtCollectionTime()
+    {
+        var model = BuildModelWithRawSql(rawSqlEnabled: false);
+        var table = model.GetTableFromDbName("People");
+
+        // The rejection happens at config-collection (the model-aware collector), NOT at query
+        // time: no SQL is ever rendered for this column.
+        var act = () => ComputedColumnConfigCollector.FromTable(table, model);
+
+        act.Should().Throw<BifrostExecutionError>()
+            .WithMessage("*raw-SQL computed column*admin-gated*");
+    }
+
+    [Fact]
+    public void RawSqlComputedColumn_AdminModel_IsCollected()
+    {
+        var model = BuildModelWithRawSql(rawSqlEnabled: true);
+        var table = model.GetTableFromDbName("People");
+
+        var definitions = ComputedColumnConfigCollector.FromTable(table, model);
+
+        definitions.Should().ContainSingle(d => d.Kind == ComputedColumnKind.Sql)
+            .Which.Name.Should().Be("raw");
+    }
 }

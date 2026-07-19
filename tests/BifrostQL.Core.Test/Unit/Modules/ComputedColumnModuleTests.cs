@@ -53,6 +53,10 @@ public sealed class ComputedColumnModuleTests
 
     private static IDbModel BuildModel()
         => DbModelTestFixture.Create()
+            // Raw-SQL computed columns are admin-gated at config-collection time; the
+            // model-aware schema-build path (GetTableTypeDefinition) rejects them unless raw
+            // SQL is enabled on the model.
+            .WithModelMetadata(MetadataKeys.RawSql.Enabled, "enabled")
             .WithTable("Orders", t => t
                 .WithPrimaryKey("Id")
                 .WithColumn("subtotal", "decimal")

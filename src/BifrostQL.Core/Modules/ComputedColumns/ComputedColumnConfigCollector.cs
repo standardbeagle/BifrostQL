@@ -27,7 +27,45 @@ public static class ComputedColumnConfigCollector
         result.AddRange(FileFolderComputedColumnCollector.FromTable(table));
         AddStateMachineTransitions(table, result);
         AddEavMeta(table, model, result);
+        GuardRawSql(table, model, result);
         return result;
+    }
+
+    /// <summary>
+    /// Admin-gates the deprecated raw-SQL (<see cref="ComputedColumnKind.Sql"/>) kind at
+    /// config-collection time: a table carrying a raw-SQL computed column is REJECTED unless
+    /// the model turns on raw SQL (<c>raw-sql: enabled</c>) — the same model-level privilege
+    /// signal <see cref="Schema.SchemaGenerator.IsRawSqlEnabled"/> reads for the raw-query
+    /// feature. Enabling raw SQL is a deliberate operator/admin decision, so a config assembled
+    /// without it can never smuggle a verbatim-SQL computed column onto a table; the failure
+    /// surfaces here (schema build / dispatch collection), not at query time.
+    ///
+    /// The model-LESS overload skips the check: it has no privilege signal to read and is a
+    /// lower-level parsing primitive (used by <see cref="Model.ModelConfigValidator"/> and the
+    /// metadata-grammar path). The runtime paths that turn metadata into a live schema
+    /// (<see cref="Schema.TableSchemaGenerator"/>, <see cref="Resolvers.BifrostDispatcher"/>)
+    /// all pass the model, so the gate holds where it matters.
+    /// </summary>
+    private static void GuardRawSql(IDbTable table, IDbModel? model, List<ComputedColumnDefinition> result)
+    {
+        if (model is null)
+            return;
+
+        // Check for a raw-SQL column BEFORE reading model metadata: the vast majority of tables
+        // carry none, and the model's metadata is only relevant when one is present.
+        var rawColumn = result.FirstOrDefault(d => d.Kind == ComputedColumnKind.Sql);
+        if (rawColumn is null)
+            return;
+
+        if (Utils.MetadataSwitch.Parse(model.GetMetadataValue(MetadataKeys.RawSql.Enabled), defaultValue: false))
+            return;
+
+        throw new BifrostExecutionError(
+            $"Table '{table.GraphQlName}' declares a raw-SQL computed column '{rawColumn.Name}' via the " +
+            $"deprecated '{MetadataKeys.Computed.Sql}' metadata, but raw SQL is not enabled on this model. " +
+            $"Raw-SQL computed columns are an injection surface and are admin-gated: enable " +
+            $"'{MetadataKeys.RawSql.Enabled}' at the model level, or migrate the column to the structured " +
+            $"'{MetadataKeys.Computed.Expression}' kind, which has no verbatim-SQL path.");
     }
 
     /// <summary>

@@ -236,11 +236,44 @@ public sealed class PerProfileSchemaResolutionTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task DefaultProfile_DoesNotExposeNotesJoinOnCompanies()
+    public async Task ExplicitUnregisteredDefaultProfile_IsRejectedAsUnknown()
     {
-        var fields = await CompaniesFieldsAsync(profile: "default");
+        // The literal "default" is no longer a special-cased alias for the raw schema:
+        // it resolves through the registry like any name. With nothing registered under
+        // "default", an explicit ?profile=default is an unknown profile — the raw default
+        // is reached by requesting NO profile (see NoProfile_DoesNotExposeNotesJoinOnCompanies).
+        const string introspection =
+            "query { __type(name: \"companies\") { fields { name } } }";
 
-        fields.Should().NotContain("notes",
-            "an explicit default profile is also raw and exposes no polymorphic join");
+        var serializer = new GraphQLSerializer();
+        var middleware = new BifrostHttpMiddleware(
+            next: _ => Task.CompletedTask,
+            serializer: serializer,
+            documentExecutor: new DocumentExecuter(),
+            logger: NullLogger<BifrostHttpMiddleware>.Instance);
+
+        await using var provider = BuildRequestServices();
+        var context = new DefaultHttpContext { RequestServices = provider };
+        context.RequestServices.GetRequiredService<IHttpContextAccessor>().HttpContext = context;
+
+        context.Request.Method = HttpMethods.Post;
+        context.Request.PathBase = GraphQlPath;
+        context.Request.Path = PathString.Empty;
+        context.Request.QueryString = new QueryString("?profile=default");
+        context.Request.ContentType = "application/json";
+        context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(
+            JsonSerializer.Serialize(new { query = introspection })));
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context);
+
+        context.Response.Body.Seek(0, SeekOrigin.Begin);
+        var json = await new StreamReader(context.Response.Body).ReadToEndAsync();
+        using var doc = JsonDocument.Parse(json);
+        doc.RootElement.TryGetProperty("errors", out var errors).Should().BeTrue(
+            "an unregistered 'default' profile must no longer be silently accepted");
+        errors.EnumerateArray()
+            .Select(e => e.GetProperty("message").GetString())
+            .Should().Contain("Unknown profile 'default'.");
     }
 }

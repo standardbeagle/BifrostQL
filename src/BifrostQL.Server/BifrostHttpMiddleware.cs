@@ -133,10 +133,11 @@ namespace BifrostQL.Server
             if (setupOptions != null && !setupOptions.HasConnectionString)
                 return new ExecutionResult { Errors = new ExecutionErrors { new ExecutionError("No database connection configured. Set a connection string first.") } };
 
-            // Resolve the active profile. A null/empty/"default" name resolves to the empty
-            // default profile (raw base schema, no opt-in modules). A named profile that is
-            // non-null, non-"default", and absent from the registry is an error. Auth/role
-            // requirements on a named profile are enforced here.
+            // Resolve the active profile. An unspecified profile resolves to the system
+            // default profile (raw base schema, no opt-in modules). Every named profile —
+            // including a registered "default" — resolves through the registry; a named
+            // profile absent from the registry is an error. Auth/role requirements on a named
+            // profile are enforced here.
             var profileRegistry = options.RequestServices!.GetService<BifrostProfileRegistry>();
             var profileResult = BifrostProfileResolver.Resolve(profileRegistry, context);
             if (profileResult.HasError)

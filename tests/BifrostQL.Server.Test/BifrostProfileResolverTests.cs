@@ -69,5 +69,68 @@ namespace BifrostQL.Server.Test
             result.HasError.Should().BeTrue();
             result.ErrorMessage.Should().Be("Unknown profile 'reporting'.");
         }
+
+        /// <summary>
+        /// Criterion 2: the literal name "default" is no longer special-cased. A profile
+        /// registered under the name "default" must resolve THROUGH the registry so its
+        /// curated module list is applied — proving the synthetic fallback no longer shadows
+        /// a registry-registered "default".
+        /// </summary>
+        [Fact]
+        public void RegisteredDefaultProfile_ResolvesThroughRegistry_WithCuratedModules()
+        {
+            var registry = new BifrostProfileRegistry();
+            var registered = new BifrostProfile { Name = "default", Modules = new[] { "app-report" } };
+            registry.Add(registered);
+
+            var context = new DefaultHttpContext();
+            context.Request.QueryString = new QueryString("?profile=default");
+
+            var result = BifrostProfileResolver.Resolve(registry, context);
+
+            result.HasError.Should().BeFalse();
+            result.Profile.Should().BeSameAs(registered,
+                "a registered 'default' must resolve through the registry, not the synthetic fallback");
+            result.ActiveProfile.Modules.Should().BeEquivalentTo(new[] { "app-report" },
+                "the registered profile's curated module list must be applied");
+        }
+
+        /// <summary>
+        /// Criterion 5: an explicit request for the reserved <see cref="ProfileNames.System.Default"/>
+        /// (".default") is rejected as an unknown profile (fail-closed) — it is never in the
+        /// registry because the reserved namespace is not registrable, so the lookup misses.
+        /// </summary>
+        [Fact]
+        public void SystemDefaultProfile_RequestedExplicitly_RejectedAsUnknown()
+        {
+            var registry = new BifrostProfileRegistry();
+            var context = new DefaultHttpContext();
+            context.Request.QueryString = new QueryString($"?profile={ProfileNames.System.Default}");
+
+            var result = BifrostProfileResolver.Resolve(registry, context);
+
+            result.HasError.Should().BeTrue("the reserved system profile cannot be selected by a request");
+            result.Profile.Should().BeNull();
+            result.ErrorMessage.Should().Be($"Unknown profile '{ProfileNames.System.Default}'.");
+        }
+
+        /// <summary>
+        /// An unspecified profile resolves to the system default, which carries an explicit
+        /// EMPTY (non-null) module list — the fail-closed shape, not the looser null.
+        /// </summary>
+        [Fact]
+        public void NoProfileRequested_ResolvesToSystemDefault_WithEmptyModules()
+        {
+            var registry = new BifrostProfileRegistry();
+            var context = new DefaultHttpContext();
+
+            var result = BifrostProfileResolver.Resolve(registry, context);
+
+            result.HasError.Should().BeFalse();
+            result.ProfileName.Should().BeNull();
+            result.ActiveProfile.Name.Should().Be(ProfileNames.System.Default);
+            result.ActiveProfile.Modules.Should().NotBeNull("empty-array, not null, drives the fail-closed filter");
+            result.ActiveProfile.Modules.Should().BeEmpty();
+        }
     }
 }

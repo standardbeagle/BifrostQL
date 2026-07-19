@@ -40,26 +40,34 @@ namespace BifrostQL.Server
     internal static class BifrostProfileResolver
     {
         /// <summary>
-        /// The empty default profile: raw base schema, an explicit empty (non-null) module
-        /// list so <see cref="BifrostProfileRegistry.FilterBy(IFilterTransformers, BifrostProfile)"/>
+        /// The system default profile (<see cref="ProfileNames.System.Default"/>): raw base
+        /// schema, an explicit empty (non-null) module list so
+        /// <see cref="BifrostProfileRegistry.FilterBy(IFilterTransformers, BifrostProfile)"/>
         /// runs the fail-closed filter (security/data-integrity modules stay active, opt-in
-        /// application modules are stripped).
+        /// application modules are stripped). The empty array is deliberate — a null module
+        /// list would short-circuit the filter and activate every application-band opt-in.
         /// </summary>
         public static readonly BifrostProfile DefaultProfile =
-            new() { Name = "default", Modules = Array.Empty<string>() };
+            new() { Name = ProfileNames.System.Default, Modules = Array.Empty<string>() };
 
         /// <summary>
         /// Resolves the active profile for a request, enforcing any <see cref="BifrostProfile.RequireRole"/>.
-        /// A null/empty/"default" name resolves to the empty default profile. A named profile
-        /// that is absent from the registry, or whose role requirement the caller does not
-        /// satisfy, produces an error (fail-closed).
+        /// A request that names no profile resolves to the system <see cref="DefaultProfile"/>.
+        /// Every named profile — including one registered under the literal name
+        /// <c>default</c> — resolves through the <see cref="BifrostProfileRegistry"/>, so a
+        /// registered <c>default</c> is honored rather than shadowed by the synthetic fallback.
+        /// A named profile absent from the registry (including an explicit
+        /// <see cref="ProfileNames.System.Default"/>, which is never registrable) or whose role
+        /// requirement the caller does not satisfy produces an error (fail-closed).
         /// </summary>
         public static BifrostProfileResolution Resolve(BifrostProfileRegistry? registry, HttpContext? context)
         {
             var profileName = context != null ? ResolveProfileName(context) : null;
 
-            // No name, or the explicit "default" → empty default profile (raw schema).
-            if (profileName == null || string.Equals(profileName, "default", StringComparison.OrdinalIgnoreCase))
+            // No requested name → the system default profile (raw schema). Note: the literal
+            // "default" is NO LONGER special-cased — it resolves through the registry like any
+            // name, and an explicit reserved ".default" simply misses the registry (unknown).
+            if (profileName == null)
                 return new BifrostProfileResolution { ProfileName = profileName };
 
             // A named profile requires a registry that knows it.

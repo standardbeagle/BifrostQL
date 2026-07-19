@@ -101,7 +101,7 @@ namespace BifrostQL.Core.Schema
             }
 
             // Empty modules = nothing opt-in active (no "no-profile = all-on" path).
-            return new BifrostProfile { Name = "default", Modules = Array.Empty<string>() };
+            return new BifrostProfile { Name = ProfileNames.System.Default, Modules = Array.Empty<string>() };
         }
 
         private (IDbModel Model, ISchema Schema) Build(BifrostProfile profile)

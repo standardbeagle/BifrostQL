@@ -16,6 +16,7 @@ public enum ComputedColumnKind
     /// This kind is admin-gated: <see cref="ComputedColumnConfigCollector"/> rejects a table
     /// carrying it unless the model enables raw SQL (<c>raw-sql: enabled</c>).
     /// </summary>
+    [Obsolete(ComputedColumnDefinition.RawSqlDeprecationMessage, error: false)]
     Sql,
     Provider,
 
@@ -37,6 +38,17 @@ public sealed record ComputedColumnDefinition(
     IReadOnlyList<string> Dependencies,
     IReadOnlyDictionary<string, string>? Options = null)
 {
+    /// <summary>
+    /// Deprecation notice shared by the raw-SQL <see cref="ComputedColumnKind.Sql"/> enum member
+    /// and <see cref="RenderSqlExpression"/>, so the runtime <c>[Obsolete]</c> warning matches the
+    /// XML-doc deprecation wording. Points authors at the structured
+    /// <see cref="ComputedColumnKind.Expression"/> kind, which has no verbatim-SQL path.
+    /// </summary>
+    internal const string RawSqlDeprecationMessage =
+        "Raw-SQL computed columns (ComputedColumnKind.Sql / RenderSqlExpression) are deprecated and " +
+        "admin-gated; migrate to ComputedColumnKind.Expression (computed-expr), which parameterizes " +
+        "every value and has no verbatim-SQL path.";
+
     private static readonly Regex PlaceholderPattern = new(@"\{(?<name>[A-Za-z_][A-Za-z0-9_]*)\}", RegexOptions.Compiled);
     private static readonly Regex GraphQlNamePattern = new(@"^[_A-Za-z][_0-9A-Za-z]*$", RegexOptions.Compiled);
 
@@ -101,6 +113,7 @@ public sealed record ComputedColumnDefinition(
     /// which parameterizes every value and has no verbatim path. Retained (admin-gated at
     /// config-collection) for backward compatibility only.
     /// </summary>
+    [Obsolete(RawSqlDeprecationMessage, error: false)]
     public string RenderSqlExpression(IDbTable table, ISqlDialect dialect, string? tableAlias = null)
     {
         if (Kind != ComputedColumnKind.Sql)

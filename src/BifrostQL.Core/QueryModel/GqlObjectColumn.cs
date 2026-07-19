@@ -40,13 +40,21 @@ namespace BifrostQL.Core.QueryModel
         public AggregateOperationType? AggregateType { get; init; }
         public ComputedColumnDefinition? ComputedColumn { get; init; }
         public bool IsProviderComputed => ComputedColumn?.Kind == ComputedColumnKind.Provider;
+
+        // CS0618: the deprecated raw-SQL kind stays functional (admin-gated); this predicate and
+        // the ToSelectSql branch below drive that still-supported path, so their references to the
+        // [Obsolete] Sql member / RenderSqlExpression are intentional.
+#pragma warning disable CS0618
         public bool IsSqlComputed => ComputedColumn?.Kind == ComputedColumnKind.Sql;
+#pragma warning restore CS0618
 
         public string ToSelectSql(IDbModel model, IDbTable table, ISqlDialect dialect, SqlParameterCollection parameters, string? tableAlias = null, bool useAsKeyword = false)
         {
             var aliasSeparator = useAsKeyword ? " AS " : " ";
+#pragma warning disable CS0618 // deprecated raw-SQL kind stays functional (admin-gated at config-collection)
             if (ComputedColumn is { Kind: ComputedColumnKind.Sql } sqlComputed)
                 return $"{sqlComputed.RenderSqlExpression(table, dialect, tableAlias)}{aliasSeparator}{dialect.EscapeIdentifier(GraphQlDbName)}";
+#pragma warning restore CS0618
 
             // Expression kind lowers to PARAMETERIZED SQL: every Lit/Param binds onto the live
             // query's parameter collection (threaded from AddSqlParameterized), never inline.

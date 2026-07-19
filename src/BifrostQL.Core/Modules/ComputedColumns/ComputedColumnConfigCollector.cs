@@ -53,7 +53,11 @@ public static class ComputedColumnConfigCollector
 
         // Check for a raw-SQL column BEFORE reading model metadata: the vast majority of tables
         // carry none, and the model's metadata is only relevant when one is present.
+        // CS0618: the deprecated raw-SQL kind stays admin-gated and functional; this gate is the
+        // very code that admin-gates it, so its reference to the [Obsolete] member is intentional.
+#pragma warning disable CS0618
         var rawColumn = result.FirstOrDefault(d => d.Kind == ComputedColumnKind.Sql);
+#pragma warning restore CS0618
         if (rawColumn is null)
             return;
 
@@ -136,12 +140,17 @@ public static class ComputedColumnConfigCollector
             if (!ComputedColumnDefinition.IsValidGraphQlName(name) || string.IsNullOrWhiteSpace(type) || string.IsNullOrWhiteSpace(expression))
                 continue;
 
+            // CS0618: parsing the deprecated 'computed-sql' metadata into its Sql-kind definition
+            // is the legitimate producer of the admin-gated raw-SQL path; suppress the deprecation
+            // warning at this intentional reference.
+#pragma warning disable CS0618
             yield return new ComputedColumnDefinition(
                 name,
                 type,
                 ComputedColumnKind.Sql,
                 expression,
                 ExtractPlaceholders(expression));
+#pragma warning restore CS0618
         }
     }
 

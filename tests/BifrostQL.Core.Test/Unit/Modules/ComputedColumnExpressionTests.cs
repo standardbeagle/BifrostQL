@@ -11,6 +11,11 @@ using BifrostQL.Testing;
 using FluentAssertions;
 using Xunit;
 
+// A few facts here deliberately construct the deprecated raw-SQL kind (ComputedColumnKind.Sql) to
+// assert Expression-vs-Sql behavior and the admin gate, so the CS0618 obsolete-usage warnings are
+// expected file-wide.
+#pragma warning disable CS0618
+
 namespace BifrostQL.Core.Test.Modules;
 
 /// <summary>

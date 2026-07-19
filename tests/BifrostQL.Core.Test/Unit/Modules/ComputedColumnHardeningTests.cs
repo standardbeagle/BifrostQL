@@ -6,6 +6,11 @@ using BifrostQL.Core.Resolvers;
 using FluentAssertions;
 using Xunit;
 
+// This suite deliberately exercises the deprecated, admin-gated raw-SQL computed-column path
+// (ComputedColumnKind.Sql / RenderSqlExpression) to prove its hardening still holds, so the
+// CS0618 obsolete-usage warnings are expected file-wide.
+#pragma warning disable CS0618
+
 namespace BifrostQL.Core.Test.Modules;
 
 /// <summary>

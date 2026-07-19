@@ -116,11 +116,15 @@ namespace BifrostQL.Core.Model
                 // Attribute the problem to the metadata key that produced the definition.
                 // computed-sql carries placeholders in Dependencies; computed-plugin carries
                 // depends= columns; file-folder (Provider + Options) carries depends= columns too.
+                // CS0618: validating the deprecated-but-functional raw-SQL kind still requires
+                // naming it here.
+#pragma warning disable CS0618
                 var key = definition.Kind == ComputedColumnKind.Sql
                     ? MetadataKeys.Computed.Sql
                     : definition.Options != null
                         ? MetadataKeys.FileStorage.Folder
                         : MetadataKeys.Computed.Provider;
+#pragma warning restore CS0618
 
                 if (definition.Kind == ComputedColumnKind.Provider
                     && string.IsNullOrWhiteSpace(definition.ExpressionOrProvider))

@@ -134,9 +134,14 @@ keyed by `as`.
 | `count` | `true` to emit a correlated row count. |
 | `sum` / `avg` / `min` / `max` | The related column to aggregate; validated against the related table. |
 
-Each measure contributes an `<as>_<measure>` field (e.g. `orderStats_count`) to
-the tool's output schema. Declared aggregate filters compose with the relation
+Each measure declares an `<as>_<measure>` field (e.g. `orderStats_count`) on the
+tool's output schema. Declared aggregate filters compose with the relation
 predicate in SQL, and every value binds as a parameter.
+
+> **Note:** aggregate-measure values are declared on the output schema but are
+> not yet populated at runtime — the current execution path surfaces only
+> `fields`-based includes. Use a `fields` include when you need the value in the
+> response today. Tracked for a follow-up.
 
 #### Detail gating
 

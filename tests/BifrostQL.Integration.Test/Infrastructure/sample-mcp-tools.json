@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "tools": [
+    {
+      "name": "get_customer_context",
+      "description": "Fetch one customer with their recent orders and an order-count / spend summary in a single call. Prefer this over separate customer + order-list tools (consolidation over proliferation).",
+      "params": {
+        "customerId": {
+          "type": "id",
+          "table": ".Customers",
+          "description": "Primary-key value of the customer to load."
+        }
+      },
+      "root": {
+        "table": ".Customers",
+        "byId": "customerId",
+        "fields": ["Id", "Name", "Email", "City"]
+      },
+      "include": [
+        {
+          "relation": "orders",
+          "as": "recentOrders",
+          "fields": ["Id", "OrderDate", "Total", "Status"],
+          "sort": "-Id",
+          "limit": 5
+        },
+        {
+          "relation": "orders",
+          "as": "orderStats",
+          "aggregate": { "count": true, "sum": "Total" }
+        }
+      ]
+    },
+    {
+      "name": "get_order_detail",
+      "description": "Fetch one order with its customer and its line items in a single call, so an agent does not fan out three separate lookups to understand one order.",
+      "params": {
+        "orderId": {
+          "type": "id",
+          "table": ".Orders",
+          "description": "Primary-key value of the order to load."
+        }
+      },
+      "root": {
+        "table": ".Orders",
+        "byId": "orderId",
+        "fields": ["Id", "CustomerId", "OrderDate", "Total", "Status"]
+      },
+      "include": [
+        {
+          "relation": "customer",
+          "as": "customer",
+          "fields": ["Id", "Name", "Email"]
+        },
+        {
+          "relation": "items",
+          "as": "lineItems",
+          "fields": ["Id", "ProductId", "Quantity", "UnitPrice"],
+          "sort": "Id",
+          "limit": 50
+        }
+      ]
+    },
+    {
+      "name": "get_product_overview",
+      "description": "Fetch one product with the category it belongs to, so catalog questions resolve in one call rather than a product read followed by a category read.",
+      "params": {
+        "productId": {
+          "type": "id",
+          "table": ".Products",
+          "description": "Primary-key value of the product to load."
+        }
+      },
+      "root": {
+        "table": ".Products",
+        "byId": "productId",
+        "fields": ["Id", "Name", "Price", "Stock"]
+      },
+      "include": [
+        {
+          "relation": "category",
+          "as": "category",
+          "fields": ["Id", "Name", "Description"]
+        }
+      ]
+    },
+    {
+      "name": "get_category_catalog",
+      "description": "Fetch one category with its products and a product-count summary, consolidating the common 'what is in this category' question into a single tool call.",
+      "params": {
+        "categoryId": {
+          "type": "id",
+          "table": ".Categories",
+          "description": "Primary-key value of the category to load."
+        }
+      },
+      "root": {
+        "table": ".Categories",
+        "byId": "categoryId",
+        "fields": ["Id", "Name", "Description"]
+      },
+      "include": [
+        {
+          "relation": "products",
+          "as": "products",
+          "fields": ["Id", "Name", "Price"],
+          "sort": "Name",
+          "limit": 25
+        },
+        {
+          "relation": "products",
+          "as": "productStats",
+          "aggregate": { "count": true }
+        }
+      ]
+    }
+  ]
+}

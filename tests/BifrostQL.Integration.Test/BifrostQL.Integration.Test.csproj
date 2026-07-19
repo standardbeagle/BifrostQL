@@ -43,6 +43,9 @@
 		<!-- The assembled gRPC front door under test (AddBifrostGrpc / MapBifrostGrpc), plus the
 		     Grpc.AspNetCore + Grpc.Reflection + Google.Protobuf stack it carries transitively. -->
 		<ProjectReference Include="..\..\src\BifrostQL.Server\BifrostQL.Server.csproj" />
+		<!-- Declarative MCP tool document loader/validator (AddBifrostMcpTools) exercised by
+		     the sample-tool-document startup-validation integration test (mcp-tools slice 7). -->
+		<ProjectReference Include="..\..\src\BifrostQL.Mcp\BifrostQL.Mcp.csproj" />
 		<ProjectReference Include="..\..\src\data\BifrostQL.Sqlite\BifrostQL.Sqlite.csproj" />
 		<ProjectReference Include="..\..\src\data\BifrostQL.Ngsql\BifrostQL.Ngsql.csproj" />
 		<ProjectReference Include="..\..\src\data\BifrostQL.MySql\BifrostQL.MySql.csproj" />
@@ -51,6 +54,12 @@
 
 	<ItemGroup>
 		<Using Include="BifrostQL.SqlServer" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- Sample declarative MCP tool document loaded at startup by the DSL-loading
+		     integration test; ships as a living authoring example. -->
+		<None Include="Infrastructure\sample-mcp-tools.json" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
 
 </Project>

@@ -34,7 +34,6 @@ namespace BifrostQL.Mcp
 
         private const int DefaultPageLimit = 25;
         private const int MaxPageLimit = 200;
-        private const int ChildSummaryRowCount = 5;
 
         private static readonly JsonElement QueryInputSchema = ParseSchema(
             """
@@ -402,36 +401,41 @@ namespace BifrostQL.Mcp
 
             var idValues = ParseIdValues(table, keyColumns, idElement);
 
-            async Task<QueryIntentResult> RunAsync(GqlObjectQuery query) =>
-                await executor.ExecuteAsync(new QueryIntent
-                {
-                    Query = query,
-                    UserContext = new Dictionary<string, object?>(userContextProvider()),
-                    Endpoint = endpoint,
-                }, cancellationToken);
+            // Dogfooding: the row, its parents, and its child summaries are all
+            // compiled by the SAME declarative pipeline that compiles author-declared
+            // tools (a per-table definition synthesized from the schema → the
+            // declarative compiler → GqlObjectQuery). There is no hand-written query
+            // builder here anymore, so the generic tool and declared tools cannot
+            // drift. This tool only reshapes the compiled results into its envelope.
+            var synthesized = RowContextDefinitionFactory.Build(table);
+            var compiled = DeclarativeQueryToolCompiler.Compile(synthesized.Definition, model, executor, endpoint);
+            var idArgument = new Dictionary<string, JsonElement>
+            {
+                [RowContextDefinitionFactory.IdParameterName] = JsonSerializer.SerializeToElement((IReadOnlyList<object?>)idValues),
+            };
+            var userContext = new Dictionary<string, object?>(userContextProvider());
 
-            // The row itself: every column, addressed by the full ordered key.
-            var rowQuery = QueryToolCompiler.BuildQuery(table, table.Columns.OrderBy(c => c.OrdinalPosition));
-            rowQuery.Filter = TableFilter.FromPrimaryKey(idValues, keyColumns, table.DbName);
-            var rowResult = await RunAsync(rowQuery);
-            var row = rowResult.Rows.FirstOrDefault()
+            var rootResult = await compiled.ExecuteAsync(idArgument, userContext, cancellationToken);
+            var row = rootResult.Rows.FirstOrDefault()
                 ?? throw new ToolPromptException(
                     $"No row found in '{table.DbName}' with id [{string.Join(", ", idValues)}]. " +
                     "It may not exist, or it may be outside your access scope (tenant and soft-delete rules apply). " +
                     "Use bifrost_query to search for candidate rows.");
 
-            // Parents: one summary lookup per outgoing FK, so tenant/soft-delete
-            // scope applies to each parent independently (an out-of-scope parent
-            // reports found=false rather than leaking data).
-            var parents = new JsonArray();
-            foreach (var link in SchemaDescriber.OutgoingLinks(table))
-                parents.Add(await BuildParentEntryAsync(link, row, RunAsync));
+            // Parents (outgoing FKs) and child summaries (incoming FKs) both come back
+            // as scope-applied collections; each was executed through the intent seam,
+            // so an out-of-scope parent reports found=false and child counts carry the
+            // caller's tenant/soft-delete scope rather than leaking a wider total.
+            var collections = await compiled.ExecuteCollectionIncludesWithCountsAsync(
+                idArgument, userContext, cancellationToken);
 
-            // Children: count + first rows per incoming FK, ordered by the child
-            // primary key for a deterministic top-N.
+            var parents = new JsonArray();
+            foreach (var parent in synthesized.Parents)
+                parents.Add(BuildParentEntry(parent, row, collections));
+
             var children = new JsonArray();
-            foreach (var link in SchemaDescriber.IncomingLinks(table))
-                children.Add(await BuildChildEntryAsync(link, row, RunAsync));
+            foreach (var child in synthesized.Children)
+                children.Add(BuildChildEntry(child, collections));
 
             return new JsonObject
             {
@@ -443,79 +447,50 @@ namespace BifrostQL.Mcp
             };
         }
 
-        private static async Task<JsonNode> BuildParentEntryAsync(
-            TableLinkDto link,
+        private static JsonNode BuildParentEntry(
+            RowContextDefinitionFactory.ParentRelation parent,
             IReadOnlyDictionary<string, object?> row,
-            Func<GqlObjectQuery, Task<QueryIntentResult>> runAsync)
+            IReadOnlyDictionary<string, DeclarativeCollectionResult> collections)
         {
-            var parentTable = link.ParentTable;
-            var fkValues = link.ChildIds.Select(c => row.GetValueOrDefault(c.DbName)).ToList();
+            var parentTable = parent.Table;
+            // found=false default carries the row's FK values (null when the FK is null),
+            // exactly as before; a resolved parent overwrites id with its own key.
+            var fkValues = parent.ForeignKeyColumns.Select(c => row.GetValueOrDefault(c.DbName)).ToList();
             var entry = new JsonObject
             {
-                ["relationship"] = link.Name,
+                ["relationship"] = parent.RelationName,
                 ["table"] = parentTable.DbName,
                 ["id"] = new JsonArray(fkValues.Select(ToJsonNode).ToArray()),
                 ["displayName"] = null,
                 ["found"] = false,
             };
-            if (fkValues.Any(v => v is null))
-                return entry;
 
-            var displayColumn = SchemaDescriber.DisplayColumn(parentTable);
-            var columns = parentTable.KeyColumns.ToList();
-            if (displayColumn is not null && !columns.Contains(displayColumn))
-                columns.Add(displayColumn);
-
-            var parentQuery = QueryToolCompiler.BuildQuery(parentTable, columns);
-            // Address the parent by the FULL ordered FK column list (composite FKs
-            // AND every column pair; ParentIds/ChildIds are index-aligned).
-            var filter = new Dictionary<string, object?>();
-            for (var i = 0; i < link.ParentIds.Count; i++)
-                filter[link.ParentIds[i].GraphQlName] = new Dictionary<string, object?> { ["_eq"] = fkValues[i] };
-            parentQuery.Filter = TableFilter.FromObject(filter, parentTable.DbName);
-
-            var parentRow = (await runAsync(parentQuery)).Rows.FirstOrDefault();
+            var parentRow = collections.TryGetValue(parent.As, out var result)
+                ? result.Rows.FirstOrDefault()
+                : null;
             if (parentRow is null)
-                return entry; // FK points somewhere, but the row is outside the caller's scope.
+                return entry; // null FK, or the parent row is outside the caller's scope.
 
             entry["found"] = true;
             entry["id"] = new JsonArray(parentTable.KeyColumns
                 .Select(c => ToJsonNode(parentRow.GetValueOrDefault(c.DbName)))
                 .ToArray());
-            if (displayColumn is not null)
-                entry["displayName"] = ToJsonNode(parentRow.GetValueOrDefault(displayColumn.DbName));
+            if (parent.DisplayColumn is not null)
+                entry["displayName"] = ToJsonNode(parentRow.GetValueOrDefault(parent.DisplayColumn.DbName));
             return entry;
         }
 
-        private static async Task<JsonNode> BuildChildEntryAsync(
-            TableLinkDto link,
-            IReadOnlyDictionary<string, object?> row,
-            Func<GqlObjectQuery, Task<QueryIntentResult>> runAsync)
+        private static JsonNode BuildChildEntry(
+            RowContextDefinitionFactory.ChildRelation child,
+            IReadOnlyDictionary<string, DeclarativeCollectionResult> collections)
         {
-            var childTable = link.ChildTable;
-            var childQuery = QueryToolCompiler.BuildQuery(childTable, QueryToolCompiler.SummaryColumns(childTable));
-            childQuery.Limit = ChildSummaryRowCount;
-            childQuery.IncludeResult = true;
-            childQuery.Sort = QueryToolCompiler.DefaultSort(childTable);
-
-            // Match the FULL ordered FK column list, plus the polymorphic
-            // discriminator when the link carries one (otherwise a shared child
-            // table would count other parents' rows).
-            var filter = new Dictionary<string, object?>();
-            for (var i = 0; i < link.ChildIds.Count; i++)
-                filter[link.ChildIds[i].GraphQlName] = new Dictionary<string, object?>
-                {
-                    ["_eq"] = row.GetValueOrDefault(link.ParentIds[i].DbName),
-                };
-            if (link.TypePredicate is { } predicate)
-                filter[predicate.Column.GraphQlName] = new Dictionary<string, object?> { ["_eq"] = predicate.Value };
-            childQuery.Filter = TableFilter.FromObject(filter, childTable.DbName);
-
-            var result = await runAsync(childQuery);
+            var result = collections.TryGetValue(child.As, out var value)
+                ? value
+                : DeclarativeCollectionResult.Empty;
             return new JsonObject
             {
-                ["relationship"] = link.Name,
-                ["table"] = childTable.DbName,
+                ["relationship"] = child.RelationName,
+                ["table"] = child.Table.DbName,
                 ["totalCount"] = result.TotalCount ?? result.Rows.Count,
                 ["rows"] = ToJsonRows(result.Rows),
             };

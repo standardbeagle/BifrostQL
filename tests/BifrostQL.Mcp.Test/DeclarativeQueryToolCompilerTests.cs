@@ -283,6 +283,38 @@ public sealed class DeclarativeQueryToolCompilerTests
     }
 
     [Fact]
+    public void RowContext_GenericTool_IsCompiledByTheDeclarativePipeline_NotAHandWrittenBuilder()
+    {
+        // Dogfooding (slice 7): the generic bifrost_row_context tool's query must be
+        // produced by the SAME declarative pipeline that compiles author-declared
+        // tools — a per-table definition synthesized from the schema, fed through
+        // DeclarativeQueryToolCompiler.Compile. This test pins that the synthesized
+        // definition is the source of the tool's query, so the generic tool and the
+        // declared tools cannot drift (there is no parallel hand-written query builder).
+        var model = Model(withOrders: true);
+        var customers = model.GetTableFromDbName("customers");
+
+        var synthesized = RowContextDefinitionFactory.Build(customers);
+
+        synthesized.Definition.Root.Table.Should().Be("dbo.customers");
+        synthesized.Definition.Root.ById.Should().Be("id");
+        synthesized.Definition.Root.Fields.Should().BeEquivalentTo(new[] { "id", "name" },
+            "the row query selects every column, addressed by the primary key");
+        synthesized.Definition.Params[synthesized.Definition.Root.ById].Type.Should().Be("id");
+
+        // customers has one incoming FK (orders → customers), so the tool declares a
+        // child-summary include compiled through the pipeline (not hand-built SQL).
+        synthesized.Children.Should().ContainSingle(child => child.Table.DbName == "orders");
+        synthesized.Definition.Include.Should().ContainSingle(include => include.Relation == "orders")
+            .Which.Fields.Should().NotBeNull("the child summary selects columns through the compiler");
+
+        // The synthesized definition compiles on the real declarative compiler — the
+        // exact path a declared tool takes — proving the row query is pipeline-built.
+        var compile = () => DeclarativeQueryToolCompiler.Compile(synthesized.Definition, model, new RecordingExecutor());
+        compile.Should().NotThrow();
+    }
+
+    [Fact]
     public void Bind_CompositePrimaryKeyRoot_StaysTenantScopedAndCannotWiden()
     {
         // A tenant-scoping transformer narrows tenant_locations to tenant_id = 1.

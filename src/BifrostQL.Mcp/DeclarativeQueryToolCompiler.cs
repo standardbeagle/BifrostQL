@@ -170,31 +170,56 @@ public sealed class CompiledDeclarativeQueryTool
         IDictionary<string, object?> userContext,
         CancellationToken cancellationToken = default)
     {
+        var withCounts = await RunCollectionsAsync(arguments, userContext, includeTotalCount: false, cancellationToken);
+        return withCounts.ToDictionary(entry => entry.Key, entry => entry.Value.Rows, StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// Same as <see cref="ExecuteCollectionIncludesAsync"/> but also reports each
+    /// collection's total match count (before the include's row limit), computed on
+    /// the SAME transformer-applied query as the rows — so the count carries the
+    /// identical tenant/soft-delete/policy scope as the rows it summarizes, never a
+    /// wider one. Used by the generic row-context tool for its child summaries.
+    /// </summary>
+    public Task<IReadOnlyDictionary<string, DeclarativeCollectionResult>> ExecuteCollectionIncludesWithCountsAsync(
+        IReadOnlyDictionary<string, JsonElement> arguments,
+        IDictionary<string, object?> userContext,
+        CancellationToken cancellationToken = default)
+        => RunCollectionsAsync(arguments, userContext, includeTotalCount: true, cancellationToken);
+
+    private async Task<IReadOnlyDictionary<string, DeclarativeCollectionResult>> RunCollectionsAsync(
+        IReadOnlyDictionary<string, JsonElement> arguments,
+        IDictionary<string, object?> userContext,
+        bool includeTotalCount,
+        CancellationToken cancellationToken)
+    {
         if (!arguments.TryGetValue(IdParameterName, out var id))
             throw new ToolPromptException($"Missing required parameter '{IdParameterName}' for tool '{Name}'.");
         var rootKeyValues = ParseKeyValues(id);
         var rootKeyByDbName = BuildKeyMap(rootKeyValues);
         var detail = arguments.TryGetValue("detail", out var detailArgument) && detailArgument.ValueKind == JsonValueKind.String
             ? detailArgument.GetString() : _defaultDetail;
-        var output = new Dictionary<string, IReadOnlyList<IReadOnlyDictionary<string, object?>>>(StringComparer.Ordinal);
+        var output = new Dictionary<string, DeclarativeCollectionResult>(StringComparer.Ordinal);
         foreach (var include in _includes.Where(item => item.Definition.Fields is not null &&
                      (item.Definition.DetailGate != "full" || detail == "full")))
         {
             output[include.Definition.As] = await ExecuteCollectionAsync(
-                include, rootKeyByDbName, rootKeyValues, userContext, cancellationToken);
+                include, rootKeyByDbName, rootKeyValues, userContext, includeTotalCount, cancellationToken);
         }
         return output;
     }
 
-    private async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ExecuteCollectionAsync(
+    private async Task<DeclarativeCollectionResult> ExecuteCollectionAsync(
         CompiledInclude include,
         IReadOnlyDictionary<string, object?> rootKeyByDbName,
         IReadOnlyList<object?> rootKeyValues,
         IDictionary<string, object?> userContext,
+        bool includeTotalCount,
         CancellationToken cancellationToken)
     {
         var query = QueryToolCompiler.BuildQuery(include.RelatedTable, include.Fields);
         query.Limit = include.Definition.Limit;
+        query.IncludeResult = includeTotalCount;
         if (include.Sort is not null) query.Sort.Add(include.Sort);
 
         if (include.ManyToMany is { } many)
@@ -207,9 +232,9 @@ public sealed class CompiledDeclarativeQueryTool
             junction.Filter = RelationFilter(many.JunctionTable, many.JunctionSourceColumn, [sourceValue], null);
             var junctionRows = await ExecuteQueryAsync(junction, userContext, cancellationToken);
             var targetIds = junctionRows.Select(row => row[many.JunctionTargetColumn.DbName]).ToArray();
-            if (targetIds.Length == 0) return [];
+            if (targetIds.Length == 0) return DeclarativeCollectionResult.Empty;
             query.Filter = RelationFilter(include.RelatedTable, many.TargetColumn, targetIds, include.Definition.Filter);
-            return await ExecuteQueryAsync(query, userContext, cancellationToken);
+            return await ExecuteCollectionResultAsync(query, userContext, cancellationToken);
         }
 
         var link = include.Link!;
@@ -225,10 +250,20 @@ public sealed class CompiledDeclarativeQueryTool
         var fromValues = await ResolveRootValuesAsync(
             fromColumns, rootKeyByDbName, rootKeyValues, userContext, cancellationToken);
         if (fromValues is null || fromValues.Any(value => value is null))
-            return [];
+            return DeclarativeCollectionResult.Empty;
 
         query.Filter = CompositeMatchFilter(include.RelatedTable, matchColumns, fromValues, include.Definition.Filter);
-        return await ExecuteQueryAsync(query, userContext, cancellationToken);
+        return await ExecuteCollectionResultAsync(query, userContext, cancellationToken);
+    }
+
+    private async Task<DeclarativeCollectionResult> ExecuteCollectionResultAsync(
+        GqlObjectQuery query, IDictionary<string, object?> userContext, CancellationToken cancellationToken)
+    {
+        var result = await _executor.ExecuteAsync(new QueryIntent
+        {
+            Query = query, UserContext = userContext, Endpoint = _endpoint,
+        }, cancellationToken);
+        return new DeclarativeCollectionResult(result.Rows, result.TotalCount);
     }
 
     /// <summary>
@@ -370,6 +405,18 @@ public sealed class CompiledDeclarativeQueryTool
             : relation;
         return QueryToolCompiler.CompileFilter(table, JsonSerializer.SerializeToElement(filter));
     }
+}
+
+/// <summary>
+/// One declared collection include's execution result: the (limited) rows plus the
+/// total number of matches within the caller's access scope, both from the same
+/// transformer-applied query so the count can never report a wider scope than the rows.
+/// </summary>
+public sealed record DeclarativeCollectionResult(
+    IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows,
+    int? TotalCount)
+{
+    public static DeclarativeCollectionResult Empty { get; } = new([], 0);
 }
 
 internal sealed record CompiledInclude(

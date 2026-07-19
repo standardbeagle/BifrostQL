@@ -39,6 +39,7 @@
 
 	<ItemGroup>
 	<ProjectReference Include="..\..\src\BifrostQL.Core\BifrostQL.Core.csproj" />
+	<ProjectReference Include="..\BifrostQL.Testing\BifrostQL.Testing.csproj" />
 	<ProjectReference Include="..\..\src\BifrostQL.Server\BifrostQL.Server.csproj" />
 	<ProjectReference Include="..\..\src\data\BifrostQL.Ngsql\BifrostQL.Ngsql.csproj" />
 	<ProjectReference Include="..\..\src\data\BifrostQL.Sqlite\BifrostQL.Sqlite.csproj" />

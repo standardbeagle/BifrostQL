@@ -13,16 +13,13 @@ namespace BifrostQL.Core.QueryModel;
 /// </summary>
 public sealed class CrossDialectTest
 {
-    public static readonly ISqlDialect[] AllDialects =
-    {
-        SqlServerDialect.Instance,
-        PostgresDialect.Instance,
-        MySqlDialect.Instance,
-        SqliteDialect.Instance,
-    };
+    // The dialect list + its MemberData projection now live in the BifrostQL.Testing
+    // package (DialectFixtures), not a copy here. These re-export the package fixture
+    // so this class's [MemberData(nameof(AllDialectData))] theories and the external
+    // consumers of CrossDialectTest.AllDialects keep binding unchanged.
+    public static ISqlDialect[] AllDialects => DialectFixtures.AllDialects;
 
-    public static IEnumerable<object[]> AllDialectData =>
-        AllDialects.Select(d => new object[] { d });
+    public static IEnumerable<object[]> AllDialectData => DialectFixtures.AllDialectData;
 
     #region Identifier Escaping
 

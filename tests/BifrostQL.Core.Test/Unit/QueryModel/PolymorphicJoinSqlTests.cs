@@ -2,7 +2,6 @@ using BifrostQL.Core.Model;
 using BifrostQL.Core.Model.Relationships;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.QueryModel.TestFixtures;
-using BifrostQL.Core.Test.TestSupport;
 using FluentAssertions;
 
 namespace BifrostQL.Core.Test.QueryModel;

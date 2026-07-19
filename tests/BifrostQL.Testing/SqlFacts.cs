@@ -1,7 +1,7 @@
 using Microsoft.SqlServer.TransactSql.ScriptDom;
 using Xunit.Sdk;
 
-namespace BifrostQL.Core.Test.TestSupport;
+namespace BifrostQL.Testing;
 
 /// <summary>
 /// Semantic facts extracted from generated T-SQL by walking the ScriptDom AST —

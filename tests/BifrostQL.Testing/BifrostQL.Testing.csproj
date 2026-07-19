@@ -1,0 +1,44 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<!-- Multi-targeted so both the epic tier (net10.0) and the release tier
+		     (net8.0;net9.0;net10.0) test projects that consume this harness can
+		     reference it on their own TFM. -->
+		<TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+
+		<!-- Reusable cross-dialect SQL test harness: the SqlSyntax/SqlFacts real-parser
+		     assertions and the AllDialects MemberData fixture, packaged so downstream
+		     module/dialect authors validate their generated SQL the same way Core does. -->
+		<PackageId>BifrostQL.Testing</PackageId>
+		<Version>1.0.0</Version>
+		<PackageVersion>1.0.0</PackageVersion>
+		<Authors>Andy Brummer</Authors>
+		<Company>StandardBeagle</Company>
+		<Title>BifrostQL Testing</Title>
+		<Description>Cross-dialect SQL test harness for BifrostQL: real-parser validity assertions (SqlSyntax/SqlFacts) and the AllDialects xUnit MemberData fixture over the four shipped dialects.</Description>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<PackageTags>GraphQL SQL testing xunit dialect</PackageTags>
+		<Copyright>Copyright © Standard Beagle Studio LLC.</Copyright>
+		<IsPackable>true</IsPackable>
+		<IsPublishable>false</IsPublishable>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="FluentAssertions" Version="8.8.0" />
+		<PackageReference Include="Microsoft.SqlServer.TransactSql.ScriptDom" Version="170.157.0" />
+		<PackageReference Include="SqlParserCS" Version="0.6.5" />
+		<PackageReference Include="xunit" Version="2.9.3" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- AllDialects instantiates every shipped dialect, so the fixture references
+		     all four dialect packages (and, transitively, ISqlDialect from Core). -->
+		<ProjectReference Include="..\..\src\data\BifrostQL.SqlServer\BifrostQL.SqlServer.csproj" />
+		<ProjectReference Include="..\..\src\data\BifrostQL.Ngsql\BifrostQL.Ngsql.csproj" />
+		<ProjectReference Include="..\..\src\data\BifrostQL.MySql\BifrostQL.MySql.csproj" />
+		<ProjectReference Include="..\..\src\data\BifrostQL.Sqlite\BifrostQL.Sqlite.csproj" />
+	</ItemGroup>
+
+</Project>

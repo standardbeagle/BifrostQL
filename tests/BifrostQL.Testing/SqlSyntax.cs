@@ -2,7 +2,7 @@ using FluentAssertions;
 using Microsoft.SqlServer.TransactSql.ScriptDom;
 using SqlParser.Dialects;
 
-namespace BifrostQL.Core.Test.TestSupport;
+namespace BifrostQL.Testing;
 
 /// <summary>Which engine's grammar to validate generated SQL against.</summary>
 public enum SqlFlavor { SqlServer, Postgres, MySql, Sqlite }

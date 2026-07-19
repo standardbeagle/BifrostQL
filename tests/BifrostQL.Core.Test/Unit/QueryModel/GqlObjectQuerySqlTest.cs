@@ -967,7 +967,7 @@ public sealed class GqlObjectQuerySqlTest
         main.Should().NotContain("WHERE INNER JOIN");
         // The generated SQL must actually parse — the old "WHERE INNER JOIN"
         // output failed the grammar; a Contains check alone missed it.
-        BifrostQL.Core.Test.TestSupport.SqlSyntax.AssertValid(main, "relationship filter emits a valid join");
+        SqlSyntax.AssertValid(main, "relationship filter emits a valid join");
     }
 
     #endregion

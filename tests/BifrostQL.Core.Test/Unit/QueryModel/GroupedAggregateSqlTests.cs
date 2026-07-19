@@ -3,7 +3,6 @@ using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.QueryModel.TestFixtures;
 using BifrostQL.Core.Schema;
-using BifrostQL.Core.Test.TestSupport;
 using BifrostQL.MySql;
 using BifrostQL.Ngsql;
 using BifrostQL.Sqlite;

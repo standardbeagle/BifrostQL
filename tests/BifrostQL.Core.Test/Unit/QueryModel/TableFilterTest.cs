@@ -231,7 +231,7 @@ namespace BifrostQL.Core.QueryModel
             sut.Sql.Should().Contain("[j1]");
             // A "SELECT * FROM [t] {joins}" wrapper must parse — the duplicate-alias
             // bug produced two "[j]" and failed the grammar.
-            BifrostQL.Core.Test.TestSupport.SqlSyntax.AssertValid($"SELECT * FROM [table]{sut.Sql}", "two relationship filters use distinct aliases");
+            SqlSyntax.AssertValid($"SELECT * FROM [table]{sut.Sql}", "two relationship filters use distinct aliases");
         }
 
         [Fact]
@@ -434,7 +434,7 @@ namespace BifrostQL.Core.QueryModel
             sut.Parameters.Should().HaveCount(2);
             sut.Parameters[0].Value.Should().Be(1);
             sut.Parameters[1].Value.Should().Be(2);
-            BifrostQL.Core.Test.TestSupport.SqlSyntax.AssertValid(
+            SqlSyntax.AssertValid(
                 $"SELECT * FROM [table]{sut.Sql}", "multi-predicate relationship filter renders valid SQL");
         }
 
@@ -465,7 +465,7 @@ namespace BifrostQL.Core.QueryModel
             sut.Sql.Should().Contain("[Sessions].[id] = @p0");
             sut.Sql.Should().Contain("[Sessions].[workshopId] = @p1");
             sut.Parameters.Should().HaveCount(2);
-            BifrostQL.Core.Test.TestSupport.SqlSyntax.AssertValid(
+            SqlSyntax.AssertValid(
                 $"SELECT * FROM [table]{sut.Sql}", "explicit-and relationship filter renders valid SQL");
         }
 
@@ -621,7 +621,7 @@ namespace BifrostQL.Core.QueryModel
                 sut.Sql.Should().NotContain(literal, "every value must be a bound parameter");
             sut.Sql.Should().Contain("@p0");
             sut.Parameters.Should().HaveCount(6); // eq(1) + between(2) + related(1) + or(2)
-            BifrostQL.Core.Test.TestSupport.SqlSyntax.AssertValid(
+            SqlSyntax.AssertValid(
                 $"SELECT * FROM [table]{sut.Sql}", "builder mixed tree renders valid SQL");
         }
 

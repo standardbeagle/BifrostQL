@@ -491,6 +491,178 @@ namespace BifrostQL.Core.QueryModel
             sut.Parameters.Should().ContainSingle().Which.Value.Should().Be(42);
         }
 
+        #region TableFilterBuilder (public fluent builder)
+
+        // A model whose GetTableFromDbName("tableName1") resolves the builder's TableName
+        // (TableFilterBuilder stamps _table.DbName, which is "tableName1" here).
+        private static IDbModel BuilderModel()
+        {
+            var dbModel = Substitute.For<IDbModel>();
+            var tables = GetTableModel();
+            dbModel.GetTableFromDbName("tableName1").Returns(tables["tableName1"]);
+            return dbModel;
+        }
+
+        private static IDbTable BuilderTable() => GetTableModel()["tableName1"];
+
+        [Fact]
+        public void Builder_Comparison_RendersParameterized()
+        {
+            var filter = TableFilterBuilder.For(BuilderTable())
+                .Compare("id", "_gt", "AAA")
+                .Build();
+            var parameters = new SqlParameterCollection();
+
+            var sut = filter.ToSqlParameterized(BuilderModel(), Dialect, parameters, "table");
+
+            sut.Sql.Should().Be("[table].[id_db] > @p0");
+            sut.Sql.Should().NotContain("AAA", "the value must be bound as a parameter, never a literal");
+            sut.Parameters.Should().ContainSingle().Which.Value.Should().Be("AAA");
+        }
+
+        [Fact]
+        public void Builder_In_RendersParameterizedList()
+        {
+            var filter = TableFilterBuilder.For(BuilderTable())
+                .In("id", new object?[] { "AAA", "BBB" })
+                .Build();
+            var parameters = new SqlParameterCollection();
+
+            var sut = filter.ToSqlParameterized(BuilderModel(), Dialect, parameters, "table");
+
+            sut.Sql.Should().Contain("[table].[id_db] IN (");
+            sut.Sql.Should().Contain("@p0");
+            sut.Sql.Should().Contain("@p1");
+            sut.Sql.Should().NotContain("AAA");
+            sut.Sql.Should().NotContain("BBB");
+            sut.Parameters.Should().HaveCount(2);
+        }
+
+        [Fact]
+        public void Builder_IsNull_RendersIsNullWithoutParameter()
+        {
+            var filter = TableFilterBuilder.For(BuilderTable())
+                .IsNull("id")
+                .Build();
+            var parameters = new SqlParameterCollection();
+
+            var sut = filter.ToSqlParameterized(BuilderModel(), Dialect, parameters, "table");
+
+            sut.Sql.Should().Be("[table].[id_db] IS NULL");
+            sut.Parameters.Should().BeEmpty();
+        }
+
+        [Fact]
+        public void Builder_Between_RendersRangeParameterized()
+        {
+            var filter = TableFilterBuilder.For(BuilderTable())
+                .Between("sessionId", "AAA", "BBB")
+                .Build();
+            var parameters = new SqlParameterCollection();
+
+            var sut = filter.ToSqlParameterized(BuilderModel(), Dialect, parameters, "table");
+
+            sut.Sql.Should().Contain("[table].[sessionId_db] BETWEEN @p0 AND @p1");
+            sut.Sql.Should().NotContain("AAA");
+            sut.Sql.Should().NotContain("BBB");
+            sut.Parameters.Should().HaveCount(2);
+        }
+
+        [Fact]
+        public void Builder_Or_RendersParameterizedOr()
+        {
+            var filter = TableFilterBuilder.For(BuilderTable())
+                .Or(
+                    b => b.Equal("id", "AAA"),
+                    b => b.Equal("sessionId", "BBB"))
+                .Build();
+            var parameters = new SqlParameterCollection();
+
+            var sut = filter.ToSqlParameterized(BuilderModel(), Dialect, parameters, "table");
+
+            sut.Sql.Should().Be("(([table].[id_db] = @p0) OR ([table].[sessionId_db] = @p1))");
+            sut.Sql.Should().NotContain("AAA");
+            sut.Sql.Should().NotContain("BBB");
+            sut.Parameters.Should().HaveCount(2);
+        }
+
+        [Fact]
+        public void Builder_Relationship_RendersParameterizedJoin()
+        {
+            var filter = TableFilterBuilder.For(BuilderTable())
+                .Related("sessions", "id", "_eq", "AAA")
+                .Build();
+            var parameters = new SqlParameterCollection();
+
+            var sut = filter.ToSqlParameterized(BuilderModel(), Dialect, parameters, "table");
+
+            sut.Sql.Should().Contain("INNER JOIN");
+            sut.Sql.Should().Contain("[Sessions].[id] = @p0");
+            sut.Sql.Should().NotContain("AAA");
+            sut.Parameters.Should().ContainSingle().Which.Value.Should().Be("AAA");
+        }
+
+        [Fact]
+        public void Builder_MixedTree_RendersValidParameterizedSql()
+        {
+            var filter = TableFilterBuilder.For(BuilderTable())
+                .Equal("id", "AAA")
+                .Between("sessionId", "BBB", "CCC")
+                .Related("sessions", "id", "_eq", "DDD")
+                .Or(
+                    b => b.Equal("id", "EEE"),
+                    b => b.Equal("sessionId", "FFF"))
+                .Build();
+            var parameters = new SqlParameterCollection();
+
+            var sut = filter.ToSqlParameterized(BuilderModel(), Dialect, parameters, "table");
+
+            foreach (var literal in new[] { "AAA", "BBB", "CCC", "DDD", "EEE", "FFF" })
+                sut.Sql.Should().NotContain(literal, "every value must be a bound parameter");
+            sut.Sql.Should().Contain("@p0");
+            sut.Parameters.Should().HaveCount(6); // eq(1) + between(2) + related(1) + or(2)
+            BifrostQL.Core.Test.TestSupport.SqlSyntax.AssertValid(
+                $"SELECT * FROM [table]{sut.Sql}", "builder mixed tree renders valid SQL");
+        }
+
+        [Fact]
+        public void Builder_UnknownColumn_ThrowsAtBuildTime()
+        {
+            var act = () => TableFilterBuilder.For(BuilderTable()).Equal("does_not_exist", 1);
+
+            act.Should().Throw<ArgumentException>()
+                .WithMessage("*unknown column 'does_not_exist'*");
+        }
+
+        [Fact]
+        public void Builder_UnknownOperator_ThrowsAtBuildTime()
+        {
+            var act = () => TableFilterBuilder.For(BuilderTable()).Compare("id", "_bogus", 1);
+
+            act.Should().Throw<ArgumentException>()
+                .WithMessage("*Unknown filter operator '_bogus'*");
+        }
+
+        [Fact]
+        public void Builder_UnknownRelationship_ThrowsAtBuildTime()
+        {
+            var act = () => TableFilterBuilder.For(BuilderTable()).Related("nope", "id", "_eq", 1);
+
+            act.Should().Throw<ArgumentException>()
+                .WithMessage("*unknown single-link relationship 'nope'*");
+        }
+
+        [Fact]
+        public void Builder_EmptyBuild_Throws()
+        {
+            var act = () => TableFilterBuilder.For(BuilderTable()).Build();
+
+            act.Should().Throw<ArgumentException>()
+                .WithMessage("*at least one predicate*");
+        }
+
+        #endregion
+
         private static Dictionary<string, DbTable> GetTableModel()
         {
             var table1Columns = new Dictionary<string, ColumnDto>

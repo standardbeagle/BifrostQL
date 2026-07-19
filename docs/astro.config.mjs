@@ -50,6 +50,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Queries', slug: 'guides/queries' },
 						{ label: 'Joins', slug: 'guides/joins' },
+						{ label: 'Full-Text Search', slug: 'guides/full-text-search' },
 						{ label: 'Mutations', slug: 'guides/mutations' },
 						{ label: 'Module System', slug: 'guides/modules' },
 						{ label: 'Extending BifrostQL (Hooks & Providers)', slug: 'guides/extensibility' },

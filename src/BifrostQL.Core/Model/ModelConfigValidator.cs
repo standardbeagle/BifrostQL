@@ -60,6 +60,7 @@ namespace BifrostQL.Core.Model
                 ValidatePolicy(table, errors);
                 ValidateCdcTokens(table, errors);
                 ValidateHistoryTokens(table, errors);
+                ValidateFtsColumns(table, errors);
 
                 var tableRef = $"{table.TableSchema}.{table.DbName}";
                 ValidateMetadataKeyCasing(table.Metadata, MetadataValidator.KnownTableKeys, "table", tableRef, errors);
@@ -308,6 +309,27 @@ namespace BifrostQL.Core.Model
                     $"fixed name, so this is treated as a typo that would silently do nothing. If it is a " +
                     $"deliberate custom key, prefix it with '{MetadataValidator.ConsumerExtensionPrefix}' " +
                     $"(e.g. '{MetadataValidator.ConsumerExtensionPrefix}{key}').");
+            }
+        }
+
+        /// <summary>
+        /// Fail-fast validation for a table's full-text search opt-in (<c>search</c> /
+        /// <c>search-language</c>). A <c>search</c> list naming a missing or non-string
+        /// column would surface the <c>_search</c> operator on a table whose match target
+        /// is meaningless (or empty), with no error until the per-dialect lowering ran on
+        /// the first query. Reuses <see cref="Modules.Fts.FtsConfig.FromTable"/> so
+        /// validation cannot drift from the runtime parse.
+        /// </summary>
+        private static void ValidateFtsColumns(IDbTable table, List<string> errors)
+        {
+            try
+            {
+                Modules.Fts.FtsConfig.FromTable(table);
+            }
+            catch (Exception ex)
+            {
+                errors.Add(Problem(table, MetadataKeys.Fts.Search,
+                    table.GetMetadataValue(MetadataKeys.Fts.Search), ex.Message));
             }
         }
 

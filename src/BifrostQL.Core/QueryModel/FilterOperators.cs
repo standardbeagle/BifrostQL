@@ -35,5 +35,34 @@ namespace BifrostQL.Core.QueryModel
         public const string NBetween = "_nbetween";
 
         public const string Null = "_null";
+
+        /// <summary>
+        /// Cross-dialect full-text search operator. Unlike every operator above — each of
+        /// which is COLUMN-scoped (it appears on a column's <c>FilterType…Input</c>) —
+        /// <c>_search</c> is TABLE-scoped: it matches a single query string against the set
+        /// of columns a table declares searchable via the <c>search</c> table metadata
+        /// (see <see cref="BifrostQL.Core.Modules.Fts.FtsConfig"/>). It is therefore surfaced
+        /// on the table's filter input, not on any per-column filter type, and only for
+        /// tables that declare searchable columns.
+        ///
+        /// SEMANTIC CONTRACT (pinned here; the per-dialect lowering slice must implement this
+        /// ONE behavior across SqlServer / Postgres / MySQL / SQLite whose native full-text
+        /// defaults differ, rather than each engine's default):
+        ///
+        ///   • The query string is tokenized on unquoted whitespace into TERMS.
+        ///   • A double-quoted run (<c>"foo bar"</c>) is a single PHRASE term matched as a
+        ///     contiguous substring (spaces inside the quotes are literal, not separators).
+        ///   • MULTI-TERM is AND-of-terms: a row matches only when EVERY term matches at
+        ///     least one of the table's searchable columns (conjunctive — the intuitive
+        ///     "narrow as I type" behavior, and the safe default because widening the
+        ///     semantic later is non-breaking whereas narrowing it is). A single term
+        ///     matches if it is a substring of any searchable column.
+        ///   • Matching is case-insensitive.
+        ///
+        /// Example: <c>_search: "quick brown \"lazy dog\""</c> matches rows where SOME
+        /// searchable column contains "quick", AND some contains "brown", AND some contains
+        /// the exact phrase "lazy dog".
+        /// </summary>
+        public const string Search = "_search";
     }
 }

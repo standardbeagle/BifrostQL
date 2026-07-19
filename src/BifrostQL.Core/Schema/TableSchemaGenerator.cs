@@ -7,6 +7,8 @@ using System.Text;
 using System.Threading.Tasks;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules.ComputedColumns;
+using BifrostQL.Core.Modules.Fts;
+using BifrostQL.Core.QueryModel;
 
 namespace BifrostQL.Core.Schema
 {
@@ -460,6 +462,12 @@ namespace BifrostQL.Core.Schema
                 if (IsEnumColumnLink(link.Value)) continue;
                 builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : {link.Value.ParentTable.TableFilterTypeName}");
             }
+            // Full-text search is TABLE-scoped (it spans several columns), so it belongs on
+            // the table's filter input — NOT on any per-column FilterType…Input — and only
+            // for tables that declare searchable columns (`search` metadata). A
+            // non-searchable table's filter input is unchanged.
+            if (FtsConfig.FromTable(_table).IsSearchable)
+                builder.AppendLine($"\t{FilterOperators.Search} : String");
             builder.AppendLine($"and: [{_table.TableFilterTypeName}!]");
             builder.AppendLine($"or: [{_table.TableFilterTypeName}!]");
             builder.AppendLine("}");

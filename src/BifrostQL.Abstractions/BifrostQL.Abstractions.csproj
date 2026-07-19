@@ -1,0 +1,42 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+
+		<!-- BifrostQL.Abstractions carries the stable, dependency-light contracts a
+		     third-party module or dialect author compiles against: the metadata-key
+		     vocabulary, the Bifrost error type, the resolver/type-mapper seams, and the
+		     ScriptDom-free SQL-generation primitives. It deliberately references NO
+		     ASP.NET Core, GraphQL, or database packages so it can commit to Semantic
+		     Versioning independently of the pre-1.0 BifrostQL.Core it was carved out of.
+		     See README.md in this folder for the SemVer policy. -->
+		<PackageId>BifrostQL.Abstractions</PackageId>
+		<Version>1.0.0</Version>
+		<PackageVersion>1.0.0</PackageVersion>
+		<AssemblyVersion>1.0.0.0</AssemblyVersion>
+		<FileVersion>1.0.0.0</FileVersion>
+		<Authors>Andy Brummer</Authors>
+		<Company>StandardBeagle</Company>
+		<Title>BifrostQL Abstractions</Title>
+		<Description>Stable, SemVer-committed contracts for authoring BifrostQL modules and SQL dialects: metadata keys, the Bifrost error type, resolver/type-mapper seams, and ScriptDom-free SQL-generation primitives. Referenced by BifrostQL.Core; carries no ASP.NET Core or GraphQL dependency.</Description>
+		<PackageProjectUrl>https://github.com/standardbeagle/BifrostQL</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/standardbeagle/BifrostQL</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+		<PackageTags>GraphQL SQL abstractions contracts dialect module</PackageTags>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<Copyright>Copyright © Standard Beagle Studio LLC.</Copyright>
+		<IncludeSymbols>True</IncludeSymbols>
+		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
+		<IsPackable>true</IsPackable>
+		<PackAsTool>False</PackAsTool>
+		<EnablePackageValidation>true</EnablePackageValidation>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<None Include="README.md" Pack="true" PackagePath="/" />
+	</ItemGroup>
+
+</Project>

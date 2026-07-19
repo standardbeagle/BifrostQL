@@ -47,6 +47,14 @@
 	  <DebugType>embedded</DebugType>
 	</PropertyGroup>
 	<ItemGroup>
+		<!-- The module/dialect authoring contracts and SQL-generation primitives were
+		     carved out into BifrostQL.Abstractions so they can commit to SemVer
+		     independently of pre-1.0 Core. Core references them back and re-exports
+		     every moved type via [assembly: TypeForwardedTo] (see
+		     Properties/TypeForwards.cs) so existing consumers bind unchanged. -->
+		<ProjectReference Include="..\BifrostQL.Abstractions\BifrostQL.Abstractions.csproj" />
+	</ItemGroup>
+	<ItemGroup>
 		<InternalsVisibleTo Include="BifrostQL.Core.Test" />
 		<!-- Server wires the CDC NATS sink, whose INatsPublisher seam + sink ctor
 		     are internal (broker-free testability) — the DI factory in

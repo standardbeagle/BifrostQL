@@ -333,4 +333,35 @@ public interface ISqlDialect
 
     /// <summary>The statement that rolls back the current transaction.</summary>
     string RollbackTransactionSql => "ROLLBACK;";
+
+    /// <summary>
+    /// Lowers a <c>_search</c> (full-text) operator into this engine's native full-text
+    /// predicate. Deliberately has NO default implementation — unlike
+    /// <see cref="ConnectedPaging"/> (whose default is legitimate precisely because all
+    /// four engines implement SQL:2003 window functions identically), the four engines'
+    /// full-text facilities disagree completely (SQL Server <c>CONTAINS</c>, PostgreSQL
+    /// <c>to_tsvector @@ tsquery</c>, MySQL <c>MATCH … AGAINST</c>, SQLite FTS5
+    /// <c>MATCH</c>). A shared default would either pick one engine's syntax (broken on
+    /// the other three) or silently emit a non-searching predicate; forcing every dialect
+    /// to override makes "a new dialect forgot to implement search" a compile error rather
+    /// than a runtime data-leak or a silent no-op.
+    ///
+    /// Contract for implementers:
+    /// <list type="bullet">
+    ///   <item>Reference ONLY <see cref="FtsPredicateRequest.ColumnNames"/> (schema-derived,
+    ///     validated) in the emitted SQL — never client-supplied identifiers.</item>
+    ///   <item>Bind every term's VALUE through <see cref="FtsPredicateRequest.Parameters"/>;
+    ///     emit only parameter placeholders in the SQL text. The engines' query grammars
+    ///     (tsquery, FTS5 MATCH, CONTAINS conditions, boolean-mode AGAINST) are injectable
+    ///     even as text, so a term is neutralized at the VALUE level (e.g. wrapped as a
+    ///     quoted phrase, or fed through a plain-text query builder such as
+    ///     <c>plainto_tsquery</c>) — never by concatenating it into SQL.</item>
+    ///   <item>Honor the ONE pinned semantic (see <see cref="FilterOperators.Search"/>):
+    ///     AND across terms, contiguous match for phrase terms, case-insensitive — rather
+    ///     than falling through to the engine's native default (which differs per engine).</item>
+    ///   <item>Throw <see cref="BifrostExecutionError"/> with an actionable message naming
+    ///     the required full-text index/prerequisite when the predicate cannot be formed.</item>
+    /// </list>
+    /// </summary>
+    ParameterizedSql SearchPredicate(FtsPredicateRequest request);
 }

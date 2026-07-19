@@ -126,4 +126,33 @@ public sealed class SqlServerDialect : SqlDialectBase
     /// </remarks>
     public override string EscapeLikeValue(string value) =>
         base.EscapeLikeValue(value).Replace("[", "\\[");
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// SQL Server full-text search uses <c>CONTAINS((col1, col2), '&lt;condition&gt;')</c>
+    /// against a full-text index/catalog on the searchable columns (the prerequisite the
+    /// FTS guide documents). Each parsed term is bound as a quoted phrase — the CONTAINS
+    /// search-condition grammar (AND/OR/NEAR/quotes) is injectable, so binding the term as
+    /// a <c>"…"</c> phrase (internal quotes doubled) neutralizes it; a single word inside
+    /// the quotes matches that word. Terms are ANDed at the SQL level to honor the pinned
+    /// multi-term AND semantic uniformly rather than relying on CONTAINS's own operators.
+    /// CONTAINS is case-insensitive.
+    /// </remarks>
+    public override ParameterizedSql SearchPredicate(FtsPredicateRequest request)
+    {
+        RequireSearchable(request);
+        var start = request.Parameters.Parameters.Count();
+        var columnList = string.Join(", ", request.ColumnNames.Select(EscapeIdentifier));
+
+        var predicates = request.Terms.Select(term =>
+        {
+            var phrase = "\"" + term.Text.Replace("\"", "\"\"") + "\"";
+            var p = request.Parameters.AddParameter(phrase);
+            return $"CONTAINS(({columnList}), {p})";
+        }).ToList();
+
+        return new ParameterizedSql(
+            string.Join(" AND ", predicates),
+            request.Parameters.Parameters.Skip(start).ToList());
+    }
 }

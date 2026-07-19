@@ -8,7 +8,14 @@ namespace BifrostQL.Core.QueryModel
         And,
         Or,
         Relation,
-        Join
+        Join,
+        /// <summary>
+        /// The table-scoped <c>_search</c> full-text operator. Unlike every other node
+        /// (which targets a single column), a Search node carries the raw query string in
+        /// <see cref="TableFilter.Value"/> and lowers to the dialect's full-text predicate
+        /// over the table's validated searchable columns (see <c>FtsConfig</c>).
+        /// </summary>
+        Search
     }
     public sealed class TableFilter
     {
@@ -57,7 +64,11 @@ namespace BifrostQL.Core.QueryModel
             var dictValue = value as Dictionary<string, object?> ?? throw new BifrostExecutionError($"Error filtering {tableName}, null filter value");
 
             var filter = StackFilters(dictValue, tableName);
-            if (filter.And.Count == 0 && filter.Or.Count == 0 && filter.Next == null)
+            // A lone table-scoped _search node has no And/Or/Next but is still a valid
+            // filter (it lowers to the dialect full-text predicate), so it is exempt from
+            // the empty-shape guard.
+            if (filter.And.Count == 0 && filter.Or.Count == 0 && filter.Next == null
+                && filter.FilterType != FilterType.Search)
                 throw new ArgumentException("Invalid filter object", nameof(value));
             return filter;
         }
@@ -88,6 +99,17 @@ namespace BifrostQL.Core.QueryModel
             if (string.IsNullOrWhiteSpace(kv.Key)) throw new BifrostExecutionError($"Filter on {tableName} has empty property name");
             return kv switch
             {
+                // The table-scoped full-text operator. Its value is the raw query STRING
+                // (not a nested `{ _op: value }` object like a column predicate), so it is
+                // captured verbatim here and lowered to the dialect's full-text predicate
+                // over the table's searchable columns at render time.
+                { Key: FilterOperators.Search } => new TableFilter
+                {
+                    FilterType = FilterType.Search,
+                    TableName = tableName,
+                    RelationName = FilterOperators.Search,
+                    Value = kv.Value,
+                },
                 { Key: "and" } => new TableFilter
                 {
                     And = ((IEnumerable<object>)kv.Value!).Select(v => StackFilters((IDictionary<string, object?>)v, tableName)).ToList(),
@@ -350,6 +372,12 @@ namespace BifrostQL.Core.QueryModel
         {
             var dialect = ctx.Dialect;
             var parameters = ctx.Parameters;
+
+            // The table-scoped _search operator lowers to a dialect full-text predicate
+            // over the table's validated searchable columns — not a per-column leaf.
+            if (FilterType == FilterType.Search)
+                return RenderSearchParts(ctx, alias);
+
             if (Next == null)
             {
                 if (And.Count > 0) return CombineParts(And, "AND", ctx, alias, aliases);
@@ -400,6 +428,48 @@ namespace BifrostQL.Core.QueryModel
             var ej = dialect.EscapeIdentifier(aliases.Next());
             var fullJoin = $" INNER JOIN ({joinSql}) {ej} ON {ej}.{dialect.EscapeIdentifier("joinid")} = {dialect.EscapeIdentifier(alias ?? table.DbName)}.{dialect.EscapeIdentifier(link.ChildId.ColumnName)}";
             return new FilterParts(fullJoin, "", joinParams.ToList());
+        }
+
+        /// <summary>
+        /// Lowers a <see cref="FilterType.Search"/> node to its dialect full-text predicate.
+        /// Columns come only from the table's validated <c>FtsConfig</c> (schema-derived,
+        /// never client input); the query string is tokenized and each term's value is
+        /// bound as a parameter by the dialect. The predicate is wrapped in parentheses so
+        /// that when it is ANDed with the security filters (tenant/policy in band 0-99,
+        /// soft-delete in band 100-199) it can never bind more loosely than they do — an
+        /// unwrapped <c>a MATCH x OR b MATCH y</c> ANDed with <c>tenant = @t</c> would leak
+        /// across tenants.
+        /// </summary>
+        private FilterParts RenderSearchParts(SqlBuildContext ctx, string? alias)
+        {
+            var dialect = ctx.Dialect;
+            var table = ctx.Model.GetTableFromDbName(
+                TableName ?? throw new BifrostExecutionError("Search filter with undefined TableName"));
+
+            var fts = Modules.Fts.FtsConfig.FromTable(table);
+            if (!fts.IsSearchable)
+                throw new BifrostExecutionError(
+                    $"Table '{table.DbName}' declares no searchable columns ('search' metadata); " +
+                    "the _search operator is not available on it.");
+
+            var terms = FtsQueryParser.Parse(Value as string);
+            // An empty/whitespace search contributes no predicate, so it composes
+            // harmlessly with the security filters rather than matching all-or-nothing.
+            if (terms.Count == 0)
+                return new FilterParts("", "", new List<SqlParameterInfo>());
+
+            var request = new FtsPredicateRequest(
+                TableAlias: alias ?? table.DbName,
+                TableSchema: table.TableSchema,
+                TableName: table.DbName,
+                ColumnNames: fts.SearchColumns,
+                KeyColumnNames: table.KeyColumns.Select(c => c.ColumnName).ToList(),
+                Terms: terms,
+                Language: fts.Language,
+                Parameters: ctx.Parameters);
+
+            var predicate = dialect.SearchPredicate(request);
+            return new FilterParts("", $"({predicate.Sql})", predicate.Parameters.ToList());
         }
 
         private FilterParts CombineParts(List<TableFilter> children, string op, SqlBuildContext ctx, string? alias, JoinAliasAllocator aliases)

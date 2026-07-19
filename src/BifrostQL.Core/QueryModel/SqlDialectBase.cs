@@ -1,3 +1,5 @@
+using BifrostQL.Core.Resolvers;
+
 namespace BifrostQL.Core.QueryModel;
 
 /// <summary>
@@ -234,6 +236,33 @@ public abstract class SqlDialectBase : ISqlDialect
 
     /// <inheritdoc />
     public virtual string RollbackTransactionSql => "ROLLBACK;";
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Abstract on purpose: there is no safe cross-engine default for full-text search
+    /// (see <see cref="ISqlDialect.SearchPredicate"/>). Every concrete dialect MUST supply
+    /// its engine's predicate, so a dialect that forgets fails to compile rather than
+    /// silently emitting a non-searching or wrong predicate.
+    /// </remarks>
+    public abstract ParameterizedSql SearchPredicate(FtsPredicateRequest request);
+
+    /// <summary>
+    /// Shared guard every <see cref="SearchPredicate"/> override calls first: a
+    /// <c>_search</c> lowering must have at least one parsed term and at least one
+    /// searchable column, or the emitted predicate would be malformed. Throws a clean
+    /// <see cref="BifrostExecutionError"/> rather than letting an empty column list splice
+    /// into invalid SQL.
+    /// </summary>
+    protected static void RequireSearchable(FtsPredicateRequest request)
+    {
+        if (request.Terms.Count == 0)
+            throw new BifrostExecutionError(
+                "A _search predicate was requested with no query terms; provide at least one search term.");
+        if (request.ColumnNames.Count == 0)
+            throw new BifrostExecutionError(
+                $"Table '{request.TableName}' declares no searchable columns; configure the 'search' metadata " +
+                "with a comma-separated list of string columns before using _search.");
+    }
 }
 
 /// <summary>

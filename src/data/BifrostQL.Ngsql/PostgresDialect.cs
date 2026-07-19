@@ -155,4 +155,45 @@ public sealed class PostgresDialect : StandardConcatDialectBase
             or "character" or "char"
             or "text";
     }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// PostgreSQL full-text search matches <c>to_tsvector(cfg, doc) @@ tsquery</c> against a
+    /// GIN index on the tsvector of the concatenated searchable columns (the prerequisite
+    /// the FTS guide documents). The term VALUES are fed through <c>plainto_tsquery</c> /
+    /// <c>phraseto_tsquery</c>, which take PLAIN TEXT and normalize it into a tsquery
+    /// safely — they are NOT injectable (unlike raw <c>to_tsquery</c>), so a bound term can
+    /// carry any characters without breaking out. Terms are ANDed at the SQL level to honor
+    /// the pinned multi-term AND semantic (rather than <c>websearch_to_tsquery</c>, whose
+    /// operator handling differs); a phrase term uses <c>phraseto_tsquery</c> so its words
+    /// must be adjacent. The optional language is bound and cast to <c>regconfig</c>; when
+    /// absent the server's default text-search config applies. to_tsvector lower-cases via
+    /// the config, so matching is case-insensitive.
+    /// </remarks>
+    public override ParameterizedSql SearchPredicate(FtsPredicateRequest request)
+    {
+        RequireSearchable(request);
+        var start = request.Parameters.Parameters.Count();
+
+        var doc = string.Join(" || ' ' || ",
+            request.ColumnNames.Select(c => $"coalesce({EscapeIdentifier(c)}, '')"));
+
+        string? langRef = null;
+        if (!string.IsNullOrWhiteSpace(request.Language))
+            langRef = $"{request.Parameters.AddParameter(request.Language)}::regconfig";
+
+        var tsvector = langRef == null ? $"to_tsvector({doc})" : $"to_tsvector({langRef}, {doc})";
+
+        var predicates = request.Terms.Select(term =>
+        {
+            var p = request.Parameters.AddParameter(term.Text);
+            var fn = term.IsPhrase ? "phraseto_tsquery" : "plainto_tsquery";
+            var tsquery = langRef == null ? $"{fn}({p})" : $"{fn}({langRef}, {p})";
+            return $"({tsvector}) @@ {tsquery}";
+        }).ToList();
+
+        return new ParameterizedSql(
+            string.Join(" AND ", predicates),
+            request.Parameters.Parameters.Skip(start).ToList());
+    }
 }

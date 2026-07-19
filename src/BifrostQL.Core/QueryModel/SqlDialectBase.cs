@@ -1,3 +1,5 @@
+using System.Text;
+using BifrostQL.Core.Model;
 using BifrostQL.Core.Resolvers;
 
 namespace BifrostQL.Core.QueryModel;
@@ -291,6 +293,119 @@ public abstract class SqlDialectBase : ISqlDialect
                 $"Table '{request.TableName}' declares no searchable columns; configure the 'search' metadata " +
                 "with a comma-separated list of string columns before using _search.");
     }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The Template-Method core: an exhaustive switch over the closed <see cref="SqlExpr"/>
+    /// hierarchy. Value nodes bind into <paramref name="parameters"/> and emit only the
+    /// placeholder; identifier/function symbols are validated. The dialect-specific spelling
+    /// of concat, function names, and cast types is delegated to the overridable hooks
+    /// <see cref="LowerConcat"/>, <see cref="MapFunctionName"/>, and <see cref="RenderCastType"/>,
+    /// so no per-dialect branching lives in this method or in the node types.
+    /// </remarks>
+    public virtual string LowerExpression(SqlExpr expr, IDbTable table, SqlParameterCollection parameters)
+    {
+        ArgumentNullException.ThrowIfNull(expr);
+        ArgumentNullException.ThrowIfNull(table);
+        ArgumentNullException.ThrowIfNull(parameters);
+
+        return expr switch
+        {
+            SqlExpr.Col col => LowerColumn(col, table),
+            SqlExpr.Param p => parameters.AddParameter(p.Value, p.DbType),
+            SqlExpr.Lit lit => parameters.AddParameter(lit.Value),
+            SqlExpr.Fn fn => LowerFunction(fn, table, parameters),
+            SqlExpr.Cast cast =>
+                $"CAST({LowerExpression(cast.Operand, table, parameters)} AS {RenderCastType(cast.TargetType)})",
+            SqlExpr.Concat concat =>
+                LowerConcat(concat.Parts.Select(part => LowerExpression(part, table, parameters)).ToList()),
+            SqlExpr.Case @case => LowerCase(@case, table, parameters),
+            _ => throw new BifrostExecutionError(
+                $"Unsupported SqlExpr node type '{expr.GetType().Name}' in expression lowering.")
+        };
+    }
+
+    private string LowerColumn(SqlExpr.Col col, IDbTable table)
+    {
+        if (!table.ColumnLookup.TryGetValue(col.Name, out var column))
+            throw new BifrostExecutionError(
+                $"Unknown column '{col.Name}' referenced in a SQL expression on table '{table.DbName}'. " +
+                "An expression column reference must name a real schema column of the table.");
+        return EscapeIdentifier(column.DbName);
+    }
+
+    private string LowerFunction(SqlExpr.Fn fn, IDbTable table, SqlParameterCollection parameters)
+    {
+        // Resolve the dialect name FIRST so an unknown function fails fast (naming the
+        // symbol) before any argument is lowered — there is no pass-through path.
+        var name = MapFunctionName(fn.Name);
+        var args = fn.Args.Select(a => LowerExpression(a, table, parameters));
+        return $"{name}({string.Join(", ", args)})";
+    }
+
+    private string LowerCase(SqlExpr.Case node, IDbTable table, SqlParameterCollection parameters)
+    {
+        if (node.Branches.Count == 0)
+            throw new BifrostExecutionError(
+                "A CASE expression must have at least one WHEN branch; an empty CASE is not valid SQL.");
+
+        var sb = new StringBuilder("CASE ");
+        sb.Append(LowerExpression(node.Operand, table, parameters));
+        foreach (var branch in node.Branches)
+        {
+            sb.Append(" WHEN ").Append(LowerExpression(branch.When, table, parameters));
+            sb.Append(" THEN ").Append(LowerExpression(branch.Then, table, parameters));
+        }
+        if (node.Else is not null)
+            sb.Append(" ELSE ").Append(LowerExpression(node.Else, table, parameters));
+        sb.Append(" END");
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Renders a <see cref="SqlExpr.Concat"/> from its already-lowered parts using this
+    /// dialect's string-concatenation form. The default joins with the infix operator the
+    /// dialect was constructed with (<c>+</c> for SQL Server, <c>||</c> for the
+    /// standard-concat dialects); MySQL overrides it with <c>CONCAT(...)</c>. This is the
+    /// same per-dialect concat distinction <see cref="LikePattern"/> already relies on.
+    /// </summary>
+    protected virtual string LowerConcat(IReadOnlyList<string> loweredParts)
+        => string.Join($" {_stringConcatOperator} ", loweredParts);
+
+    /// <summary>
+    /// Maps a canonical allow-listed function name to this dialect's spelling. The allow-list
+    /// (UPPER/LOWER/LEN/COALESCE/ABS/ROUND) is closed: an unrecognized name throws a
+    /// <see cref="BifrostExecutionError"/> naming the symbol rather than passing arbitrary
+    /// text through as a function call. Most names are identical across engines; only
+    /// LEN differs (SQL Server overrides it), so the default maps LEN to the ANSI
+    /// <c>LENGTH</c> used by PostgreSQL, MySQL, and SQLite.
+    /// </summary>
+    protected virtual string MapFunctionName(string name) => name switch
+    {
+        "UPPER" => "UPPER",
+        "LOWER" => "LOWER",
+        "LEN" => "LENGTH",
+        "COALESCE" => "COALESCE",
+        "ABS" => "ABS",
+        "ROUND" => "ROUND",
+        _ => throw new BifrostExecutionError(
+            $"Unknown SQL function '{name}' in expression tree. Allowed functions: " +
+            "UPPER, LOWER, LEN, COALESCE, ABS, ROUND.")
+    };
+
+    /// <summary>
+    /// Renders a portable <see cref="SqlExprType"/> as this dialect's concrete CAST target
+    /// type. Deliberately distinct from <see cref="RenderColumnType"/> (which produces DDL
+    /// storage types): a CAST target has different valid spellings — MySQL's CAST accepts
+    /// <c>CHAR</c>/<c>SIGNED</c> but not <c>TEXT</c>/<c>INTEGER</c>. The default covers the
+    /// ANSI-ish dialects (PostgreSQL, SQLite); SQL Server and MySQL override it.
+    /// </summary>
+    protected virtual string RenderCastType(SqlExprType type) => type switch
+    {
+        SqlExprType.Text => "TEXT",
+        SqlExprType.Int => "INTEGER",
+        _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
+    };
 }
 
 /// <summary>

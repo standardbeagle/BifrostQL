@@ -47,6 +47,28 @@ public sealed class MySqlDialect : LimitOffsetDialectBase
 
     /// <inheritdoc />
     /// <remarks>
+    /// MySQL has no infix string-concatenation operator (<c>||</c> is logical-OR there), so a
+    /// <see cref="SqlExpr.Concat"/> must render as the <c>CONCAT(...)</c> function — the same
+    /// per-dialect concat distinction <see cref="LikePattern"/> already makes.
+    /// </remarks>
+    protected override string LowerConcat(IReadOnlyList<string> loweredParts)
+        => $"CONCAT({string.Join(", ", loweredParts)})";
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// MySQL's CAST accepts only its own target types: <c>CHAR</c> for text and <c>SIGNED</c>
+    /// for integers (the ANSI <c>TEXT</c>/<c>INTEGER</c> the base emits are rejected by MySQL's
+    /// CAST grammar).
+    /// </remarks>
+    protected override string RenderCastType(SqlExprType type) => type switch
+    {
+        SqlExprType.Text => "CHAR",
+        SqlExprType.Int => "SIGNED",
+        _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
+    };
+
+    /// <inheritdoc />
+    /// <remarks>
     /// MySQL full-text search uses <c>MATCH(col1, col2) AGAINST(… IN BOOLEAN MODE)</c>
     /// against a FULLTEXT index on the searchable columns (the prerequisite the FTS guide
     /// documents). Boolean mode is chosen so the pinned AND semantic can be honored: each

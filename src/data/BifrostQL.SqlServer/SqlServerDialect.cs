@@ -40,6 +40,22 @@ public sealed class SqlServerDialect : SqlDialectBase
     };
 
     /// <inheritdoc />
+    /// <remarks>T-SQL spells string length <c>LEN</c>; the ANSI <c>LENGTH</c> the base uses
+    /// does not exist in SQL Server. All other allow-listed functions match the base.</remarks>
+    protected override string MapFunctionName(string name) =>
+        name == "LEN" ? "LEN" : base.MapFunctionName(name);
+
+    /// <inheritdoc />
+    /// <remarks>SQL Server CAST targets: <c>NVARCHAR(MAX)</c> for text, <c>INT</c> for integer
+    /// (the ANSI <c>TEXT</c>/<c>INTEGER</c> the base emits are not T-SQL CAST types).</remarks>
+    protected override string RenderCastType(SqlExprType type) => type switch
+    {
+        SqlExprType.Text => "NVARCHAR(MAX)",
+        SqlExprType.Int => "INT",
+        _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
+    };
+
+    /// <inheritdoc />
     /// <remarks>
     /// SQL Server lacks <c>CREATE TABLE IF NOT EXISTS</c>, so guard with an OBJECT_ID
     /// existence check. The table reference is already bracket-escaped, so it embeds

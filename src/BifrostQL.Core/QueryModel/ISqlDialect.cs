@@ -1,3 +1,5 @@
+using BifrostQL.Core.Model;
+
 namespace BifrostQL.Core.QueryModel;
 
 /// <summary>
@@ -377,4 +379,26 @@ public interface ISqlDialect
     /// </list>
     /// </summary>
     ParameterizedSql SearchPredicate(FtsPredicateRequest request);
+
+    /// <summary>
+    /// Lowers a dialect-agnostic <see cref="SqlExpr"/> tree into this dialect's concrete,
+    /// PARAMETERIZED SQL fragment, binding every literal/parameter value into
+    /// <paramref name="parameters"/> and returning only the SQL text (with parameter
+    /// placeholders). The concrete Template-Method implementation lives on
+    /// <see cref="SqlDialectBase"/> so all four shipped dialects inherit Fn/Case/Cast/Concat
+    /// lowering for free; this interface default guards a hand-rolled dialect (mirroring
+    /// <see cref="CreateTableIfNotExistsSql"/>).
+    ///
+    /// Trust boundary: a <see cref="SqlExpr.Col"/> is validated against
+    /// <paramref name="table"/>'s real columns, and a <see cref="SqlExpr.Fn"/> against the
+    /// closed function allow-list; an unknown column or function fails fast with an
+    /// actionable <see cref="Resolvers.BifrostExecutionError"/> naming the offending symbol.
+    /// No client-supplied identifier or literal ever reaches the SQL string as raw text.
+    /// </summary>
+    /// <param name="expr">The expression tree to lower.</param>
+    /// <param name="table">The table whose columns a <see cref="SqlExpr.Col"/> must reference.</param>
+    /// <param name="parameters">The parameter collection every literal/param value binds into.</param>
+    /// <returns>The parameterized SQL fragment (e.g. <c>CASE UPPER("Name") WHEN @p0 THEN ... END</c>).</returns>
+    string LowerExpression(SqlExpr expr, IDbTable table, SqlParameterCollection parameters)
+        => throw new NotSupportedException("This dialect does not support SqlExpr lowering.");
 }

@@ -18,6 +18,47 @@ namespace BifrostQL.Mcp
         public DeclarativeToolRoot Root { get; init; } = new();
         public IReadOnlyList<DeclarativeToolInclude> Include { get; init; } = [];
         public DeclarativeToolPolicy Policy { get; init; } = new();
+
+        /// <summary>
+        /// When set, this is a declared WRITE tool (off by default, gated by
+        /// EnableWrites) rather than a read tool. A tool declares EITHER
+        /// <see cref="Root"/> (read) OR <see cref="Mutation"/> (write), never both.
+        /// </summary>
+        public DeclarativeToolMutation? Mutation { get; init; }
+
+        public bool IsMutation => Mutation is not null;
+    }
+
+    /// <summary>
+    /// A declared write tool: maps the tool's parameters (and fixed/default literals)
+    /// onto a single <c>MutationIntent</c> — insert values, an update SET, or a
+    /// delete addressed by a positional primary key. The tool builds NO predicate of
+    /// its own; scope narrowing comes from the pipeline via the caller's identity.
+    /// </summary>
+    public sealed record DeclarativeToolMutation
+    {
+        /// <summary>Schema-qualified target table, e.g. <c>.Tickets</c> / <c>dbo.orders</c>.</summary>
+        public string Table { get; init; } = string.Empty;
+
+        /// <summary><c>insert</c>, <c>update</c>, or <c>delete</c>.</summary>
+        public string Action { get; init; } = string.Empty;
+
+        /// <summary>
+        /// Column-value map for insert/update. A string value of the form
+        /// <c>$paramName</c> binds the named parameter's call-time value; any other
+        /// JSON value is a FIXED literal. A fixed literal for a security-pinned column
+        /// (e.g. a tenant id) is still overridden by the pipeline's transformer — it
+        /// can never widen scope.
+        /// </summary>
+        public IReadOnlyDictionary<string, JsonElement> Values { get; init; }
+            = new Dictionary<string, JsonElement>();
+
+        /// <summary>
+        /// For update/delete: the parameter (type <c>id</c>) carrying the positional
+        /// primary key of the row to write. The pipeline ANDs the caller's scope onto
+        /// it, so an out-of-scope key affects zero rows.
+        /// </summary>
+        public string? ById { get; init; }
     }
 
     public sealed record DeclarativeToolParameter

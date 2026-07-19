@@ -192,7 +192,11 @@ namespace BifrostQL.Mcp
             // past the hard cap. Declarative tools count against the same budget as built-ins.
             // Both thresholds are options, not constants baked in here.
             var declaredTools = BuildTools(writesActive);
-            var declarativeCount = declarativeTools?.Tools.Count ?? 0;
+            // Declared read tools always count; declared write tools only count against
+            // the budget when the write surface is active (otherwise they are not listed).
+            var declarativeCount = declarativeTools is null ? 0
+                : declarativeTools.Tools.Count(tool => !tool.IsMutation)
+                  + (writesActive ? declarativeTools.Tools.Count(tool => tool.IsMutation) : 0);
             EnforceToolBudget(declaredTools.Count + declarativeCount, policy.Budget, logger);
 
             // Per-identity tool filtering (fail-closed). Built once from the policy so tools/list and
@@ -223,7 +227,7 @@ namespace BifrostQL.Mcp
                 {
                     ListToolsHandler = async (_, ct) =>
                     {
-                        var tools = await BuildListedToolsAsync(executor, endpoint, declaredTools, declarativeTools, ct);
+                        var tools = await BuildListedToolsAsync(executor, endpoint, declaredTools, declarativeTools, writesActive, ct);
                         return new ListToolsResult
                         {
                             Tools = gate.GatesAnything
@@ -280,7 +284,8 @@ namespace BifrostQL.Mcp
         /// </summary>
         private static async ValueTask<List<Tool>> BuildListedToolsAsync(
             IQueryIntentExecutor executor, string? endpoint,
-            List<Tool> declaredTools, DeclarativeToolDocument? declarativeTools, CancellationToken cancellationToken)
+            List<Tool> declaredTools, DeclarativeToolDocument? declarativeTools, bool writesActive,
+            CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (declarativeTools is null || declarativeTools.Tools.Count == 0)
@@ -290,6 +295,14 @@ namespace BifrostQL.Mcp
             var model = await executor.GetModelAsync(endpoint);
             foreach (var definition in declarativeTools.Tools)
             {
+                if (definition.IsMutation)
+                {
+                    // Declared write tools are listed ONLY when the write surface is active,
+                    // so a disabled deployment never advertises a write tool at all.
+                    if (writesActive)
+                        tools.Add(DeclarativeMutationTool.BuildTool(definition));
+                    continue;
+                }
                 // Compile eagerly so an invalid declarative tool fails the list rather than
                 // publishing a surface that would only fault on call.
                 _ = DeclarativeQueryToolCompiler.Compile(definition, model, executor, endpoint);
@@ -433,6 +446,38 @@ namespace BifrostQL.Mcp
             // same sanitized error funnel as the built-in read tools. The gate check above
             // already refused any role-gated declarative tool the caller may not see.
             var declarative = declarativeTools?.Tools.FirstOrDefault(tool => tool.Name == parameters.Name);
+            if (declarative is { IsMutation: true })
+            {
+                // ENABLE GATE FIRST — before any param validation, model lookup, or intent
+                // construction. A disabled write surface builds zero intent and cannot be
+                // probed for behavior (protocol-adapter-security invariant 7). writesActive
+                // implies a non-null mutationExecutor by construction.
+                if (!writesActive)
+                    return ErrorResult(
+                        $"Tool '{parameters.Name}' is a write tool and the MCP write surface is disabled. " +
+                        "Enable writes on the server to use it.");
+                try
+                {
+                    IReadOnlyDictionary<string, JsonElement> mutationArgs = parameters.Arguments is null
+                        ? new Dictionary<string, JsonElement>()
+                        : new Dictionary<string, JsonElement>(parameters.Arguments);
+                    var payload = await DeclarativeMutationTool.ExecuteAsync(
+                        mutationExecutor!, declarative, endpoint, mutationArgs, userContextProvider(), cancellationToken);
+                    return StructuredResult(payload);
+                }
+                catch (UnmappedOidcIssuerException)
+                {
+                    return ErrorResult("Authentication failed: the presented token could not be resolved to an identity.");
+                }
+                catch (ToolPromptException e)
+                {
+                    return ErrorResult(e.Message);
+                }
+                catch (BifrostExecutionError e)
+                {
+                    return ErrorResult(e.Message);
+                }
+            }
             if (declarative is not null)
             {
                 try

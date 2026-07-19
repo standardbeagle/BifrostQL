@@ -8,12 +8,14 @@ namespace BifrostQL.Mcp
         Action<string>? warningLogger = null)
     {
         private static readonly HashSet<string> DocumentKeys = ["version", "tools"];
-        private static readonly HashSet<string> ToolKeys = ["name", "description", "params", "root", "include", "policy"];
+        private static readonly HashSet<string> ToolKeys = ["name", "description", "params", "root", "include", "policy", "mutation"];
         private static readonly HashSet<string> ParameterKeys = ["type", "table", "description", "values", "default"];
         private static readonly HashSet<string> RootKeys = ["table", "byId", "fields"];
         private static readonly HashSet<string> IncludeKeys = ["relation", "as", "filter", "fields", "sort", "limit", "aggregate", "detailGate"];
         private static readonly HashSet<string> AggregateKeys = ["count", "sum", "avg", "min", "max"];
         private static readonly HashSet<string> PolicyKeys = ["hiddenFieldBehavior", "allowedRoles"];
+        private static readonly HashSet<string> MutationKeys = ["table", "action", "values", "byId"];
+        private static readonly HashSet<string> MutationActions = ["insert", "update", "delete"];
 
         public DeclarativeToolDocument Load()
         {
@@ -84,6 +86,22 @@ namespace BifrostQL.Mcp
                 }
             }
 
+            // A tool declares EITHER a read root OR a write mutation, never both.
+            var hasMutation = tool.TryGetProperty("mutation", out var mutation);
+            if (hasMutation)
+            {
+                if (tool.TryGetProperty("root", out _) || tool.TryGetProperty("include", out _))
+                    throw new JsonException($"Tool '{label}' declares 'mutation'; it must not also declare 'root' or 'include'.");
+                ValidateMutation(mutation, label);
+                if (tool.TryGetProperty("policy", out var mutationPolicy))
+                {
+                    if (mutationPolicy.ValueKind != JsonValueKind.Object)
+                        throw new JsonException($"Tool '{label}' property 'policy' must be an object.");
+                    RejectUnknown(mutationPolicy, PolicyKeys, $"tool '{label}' policy");
+                }
+                return;
+            }
+
             RequireObject(tool, "root", $"tool '{label}'", required: true, out var root);
             RejectUnknown(root!.Value, RootKeys, $"tool '{label}' root");
             RequireString(root.Value, "table", $"tool '{label}' root");
@@ -125,6 +143,42 @@ namespace BifrostQL.Mcp
                 if (policy.ValueKind != JsonValueKind.Object)
                     throw new JsonException($"Tool '{label}' property 'policy' must be an object.");
                 RejectUnknown(policy, PolicyKeys, $"tool '{label}' policy");
+            }
+        }
+
+        private void ValidateMutation(JsonElement mutation, string label)
+        {
+            if (mutation.ValueKind != JsonValueKind.Object)
+                throw new JsonException($"Tool '{label}' property 'mutation' must be an object.");
+            RejectUnknown(mutation, MutationKeys, $"tool '{label}' mutation");
+            RequireString(mutation, "table", $"tool '{label}' mutation");
+            RequireString(mutation, "action", $"tool '{label}' mutation");
+            var action = mutation.GetProperty("action").GetString()!;
+            if (!MutationActions.Contains(action))
+                throw new JsonException($"Tool '{label}' mutation action '{action}' must be one of insert, update, delete.");
+
+            var hasValues = mutation.TryGetProperty("values", out var values);
+            if (action is "insert" or "update")
+            {
+                if (!hasValues || values.ValueKind != JsonValueKind.Object)
+                    throw new JsonException($"Tool '{label}' {action} mutation requires an object 'values' map.");
+                if (!values.EnumerateObject().Any())
+                    throw new JsonException($"Tool '{label}' {action} mutation 'values' must map at least one column.");
+            }
+            else if (hasValues)
+            {
+                throw new JsonException($"Tool '{label}' delete mutation must not declare 'values'.");
+            }
+
+            var hasById = mutation.TryGetProperty("byId", out var byId);
+            if (action is "update" or "delete")
+            {
+                if (!hasById || byId.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(byId.GetString()))
+                    throw new JsonException($"Tool '{label}' {action} mutation requires a string 'byId' parameter reference.");
+            }
+            else if (hasById)
+            {
+                throw new JsonException($"Tool '{label}' insert mutation must not declare 'byId' (a new row has no addressed identity).");
             }
         }
 

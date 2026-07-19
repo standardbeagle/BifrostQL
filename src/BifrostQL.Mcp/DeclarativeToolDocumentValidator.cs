@@ -42,6 +42,12 @@ namespace BifrostQL.Mcp
                     errors.Add($"{prefix} at params.{name}.default references value '{defaultValue}' outside enum values.");
             }
 
+            if (tool.Mutation is { } mutation)
+            {
+                ValidateMutationTool(tool, mutation, model, errors);
+                return;
+            }
+
             if (!tool.Params.ContainsKey(tool.Root.ById))
                 errors.Add($"{prefix} at root.byId references undeclared parameter '{tool.Root.ById}'.");
 
@@ -84,6 +90,44 @@ namespace BifrostQL.Mcp
                 }
             }
         }
+
+        private static void ValidateMutationTool(
+            DeclarativeToolDefinition tool, DeclarativeToolMutation mutation, IDbModel model, List<string> errors)
+        {
+            var prefix = $"Tool '{tool.Name}'";
+            var table = FindTable(model, mutation.Table);
+            if (table is null)
+            {
+                errors.Add($"{prefix} at mutation.table references unknown table '{mutation.Table}'.");
+                return;
+            }
+
+            // Column-value targets must be real columns; a $param reference must name a
+            // declared parameter (a fixed literal is any other JSON value).
+            foreach (var (column, value) in mutation.Values)
+            {
+                CheckColumn(table, column, $"{prefix} at mutation.values", errors);
+                if (TryParameterReference(value) is { } parameterName && !tool.Params.ContainsKey(parameterName))
+                    errors.Add($"{prefix} at mutation.values.{column} references undeclared parameter '${parameterName}'.");
+            }
+
+            // Update/delete address a row by a declared id parameter.
+            if (mutation.ById is { } byId)
+            {
+                if (!tool.Params.TryGetValue(byId, out var parameter))
+                    errors.Add($"{prefix} at mutation.byId references undeclared parameter '{byId}'.");
+                else if (!string.Equals(parameter.Type, "id", StringComparison.Ordinal))
+                    errors.Add($"{prefix} at mutation.byId parameter '{byId}' must have type 'id'.");
+                else if (!table.KeyColumns.Any())
+                    errors.Add($"{prefix} at mutation.byId requires a primary key on '{mutation.Table}', which has none.");
+            }
+        }
+
+        /// <summary>A JSON string of the form <c>$name</c> is a parameter reference; returns the name (or null).</summary>
+        internal static string? TryParameterReference(JsonElement value) =>
+            value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 1 } text && text[0] == '$'
+                ? text[1..]
+                : null;
 
         private static IDbTable? FindTable(IDbModel model, string qualifiedName) =>
             model.Tables.FirstOrDefault(candidate =>

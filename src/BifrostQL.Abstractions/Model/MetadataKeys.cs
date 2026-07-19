@@ -207,6 +207,18 @@ namespace BifrostQL.Core.Model
             /// <c>name:GraphQlType:provider:depends=id,email</c>.
             /// </summary>
             public const string Provider = "computed-plugin";
+
+            /// <summary>
+            /// Table-level structured-expression computed columns — the safe successor to the
+            /// deprecated raw-SQL <see cref="Sql"/> kind. Format:
+            /// <c>name:GraphQlType:expr</c> where <c>expr</c> is a small, parameterizing
+            /// grammar: column references (bare identifiers, resolved as dependencies), string
+            /// literals (<c>'...'</c>), numeric literals, allow-listed function calls
+            /// (<c>UPPER(x)</c>, <c>COALESCE(a, b)</c>, …), and <c>||</c> concatenation.
+            /// Lowered to parameterized, dialect-specific SQL — no verbatim-SQL path, no
+            /// lexical blocklist.
+            /// </summary>
+            public const string Expression = "computed-expr";
         }
 
         /// <summary>

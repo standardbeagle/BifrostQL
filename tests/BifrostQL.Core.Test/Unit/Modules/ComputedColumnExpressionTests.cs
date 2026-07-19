@@ -131,4 +131,66 @@ public sealed class ComputedColumnExpressionTests
 
         act.Should().Throw<InvalidOperationException>();
     }
+
+    // --- Criterion 5: the collector parses computed-expr metadata into an Expression kind -----
+    private static IDbModel BuildModelWithExprMetadata(string exprMetadata)
+        => DbModelTestFixture.Create()
+            .WithTable("People", t => t
+                .WithPrimaryKey("Id")
+                .WithColumn("first_name", "varchar", graphQlName: "firstName")
+                .WithColumn("last_name", "varchar", graphQlName: "lastName")
+                .WithMetadata(MetadataKeys.Computed.Expression, exprMetadata))
+            .Build();
+
+    [Fact]
+    public void Collector_ParsesExpressionMetadata_IntoExpressionKind_ThatLowers()
+    {
+        var model = BuildModelWithExprMetadata("fullName:String:UPPER(firstName) || ' ' || lastName");
+        var table = model.GetTableFromDbName("People");
+
+        var computed = ComputedColumnConfigCollector.Find(table, "fullName")!;
+
+        computed.Kind.Should().Be(ComputedColumnKind.Expression);
+        computed.Dependencies.Should().BeEquivalentTo("firstName", "lastName");
+        computed.Expression.Should().NotBeNull();
+
+        var sql = computed.RenderExpression(table, PostgresDialect.Instance, new SqlParameterCollection());
+        sql.Should().Contain("UPPER(\"first_name\")").And.Contain("\"last_name\"");
+    }
+
+    [Fact]
+    public void Collector_ExpressionMetadata_ParsesNumericLiteralAsParameter()
+    {
+        var model = BuildModelWithExprMetadata("bumped:Float:ROUND(firstName)");
+        var table = model.GetTableFromDbName("People");
+        var computed = ComputedColumnConfigCollector.Find(table, "bumped")!;
+
+        var parameters = new SqlParameterCollection();
+        var sql = computed.RenderExpression(table, SqlServerDialect.Instance, parameters);
+
+        sql.Should().Be("ROUND([first_name])");
+    }
+
+    [Fact]
+    public void Collector_ExpressionMetadata_UnknownFunction_FailsFastNamingSymbol()
+    {
+        var model = BuildModelWithExprMetadata("bad:String:NOTAFUNCTION(firstName)");
+        var table = model.GetTableFromDbName("People");
+        var computed = ComputedColumnConfigCollector.Find(table, "bad")!;
+
+        var act = () => computed.RenderExpression(table, SqlServerDialect.Instance, new SqlParameterCollection());
+
+        act.Should().Throw<BifrostExecutionError>().WithMessage("*NOTAFUNCTION*");
+    }
+
+    [Fact]
+    public void Collector_ExpressionMetadata_SyntaxError_FailsAtCollectionTime()
+    {
+        var model = BuildModelWithExprMetadata("bad:String:UPPER(firstName");
+        var table = model.GetTableFromDbName("People");
+
+        var act = () => ComputedColumnConfigCollector.FromTable(table);
+
+        act.Should().Throw<BifrostExecutionError>();
+    }
 }

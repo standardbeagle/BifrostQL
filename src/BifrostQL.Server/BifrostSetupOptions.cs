@@ -41,6 +41,7 @@ namespace BifrostQL.Server
         private readonly List<Type> _filterTransformerTypes = new();
         private readonly List<Type> _mutationTransformerTypes = new();
         private readonly List<Type> _queryObserverTypes = new();
+        private readonly List<Type> _moduleApiTypes = new();
         private readonly List<Type> _protocolAdapterTypes = new();
         private readonly List<Type> _chatConnectorTypes = new();
         private IReadOnlyList<IMetadataSource> _metadataSources = Array.Empty<IMetadataSource>();
@@ -191,6 +192,22 @@ namespace BifrostQL.Server
         {
             if (!_queryObserverTypes.Contains(typeof(T)))
                 _queryObserverTypes.Add(typeof(T));
+            return this;
+        }
+
+        /// <summary>
+        /// Registers a consumer module API surface of type <typeparamref name="T"/> (see
+        /// <see cref="IModuleApi"/>), so its per-table GraphQL arguments are both emitted on
+        /// the schema and captured back into the request context by every
+        /// <see cref="ModuleApiRegistry"/> path — mirroring the built-in
+        /// <c>SoftDeleteModuleApi</c>. Additive: the built-ins are never dropped. Module API
+        /// surfaces are stateless argument declarers, so <typeparamref name="T"/> is
+        /// activated directly (<c>new()</c>) rather than resolved from DI.
+        /// </summary>
+        public BifrostSetupOptions AddModuleApi<T>() where T : class, IModuleApi, new()
+        {
+            if (!_moduleApiTypes.Contains(typeof(T)))
+                _moduleApiTypes.Add(typeof(T));
             return this;
         }
 
@@ -359,6 +376,12 @@ namespace BifrostQL.Server
                 _filterTransformers, _filterTransformerLoader, _filterTransformerTypes,
                 _mutationTransformers, _mutationTransformerLoader, _mutationTransformerTypes,
                 _queryObservers, _queryObserverLoader, _queryObserverTypes);
+
+            // Consumer module API surfaces (AddModuleApi<T>()) register into the static
+            // ModuleApiRegistry here, at container-configuration time — deterministically
+            // before the schema is first built on the initial request, so their arguments
+            // are emitted and captured on every table.
+            BifrostServiceCollectionExtensions.RegisterModuleApis(_moduleApiTypes);
 
             BifrostServiceRegistrar.RegisterComputedColumnServices(services);
             BifrostServiceRegistrar.RegisterQueryIntentServices(services);

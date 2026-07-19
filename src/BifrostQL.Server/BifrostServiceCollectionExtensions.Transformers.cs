@@ -9,6 +9,20 @@ namespace BifrostQL.Server
     public static partial class BifrostServiceCollectionExtensions
     {
         /// <summary>
+        /// Registers each consumer module-API type into the static
+        /// <see cref="ModuleApiRegistry"/> so all four registry paths honor it. Backs
+        /// <see cref="BifrostSetupOptions.AddModuleApi{T}"/>. Module API surfaces are
+        /// stateless argument declarers with a public parameterless constructor (the
+        /// <c>new()</c> constraint on the option method), so each is activated directly;
+        /// the registry de-duplicates by type, so a repeated container build is idempotent.
+        /// </summary>
+        internal static void RegisterModuleApis(IReadOnlyList<Type> moduleApiTypes)
+        {
+            foreach (var type in moduleApiTypes)
+                ModuleApiRegistry.Register((IModuleApi)Activator.CreateInstance(type)!);
+        }
+
+        /// <summary>
         /// Appends instances of the supplied <paramref name="types"/>, resolved from
         /// <paramref name="sp"/>, to the caller-configured collection. Backs the generic
         /// <c>AddFilterTransformer&lt;T&gt;</c>/<c>AddMutationTransformer&lt;T&gt;</c>/<c>AddQueryObserver&lt;T&gt;</c>

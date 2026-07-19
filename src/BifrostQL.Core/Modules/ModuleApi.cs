@@ -88,15 +88,69 @@ public static class ModuleApiRegistry
         new SoftDeleteModuleApi(),
     };
 
+    // Consumer modules registered via AddBifrostQL(o => o.AddModuleApi<T>()). The four
+    // consumer-facing paths below iterate BuiltIns ∪ Registered so a registered module's
+    // arguments are BOTH emitted (SDL) AND captured (into the user/module context) — a
+    // module whose arg is emitted but not captured would be a silent no-op. Registration
+    // is additive: the built-in SoftDeleteModuleApi is never dropped.
+    private static readonly List<IModuleApi> Registered = new();
+    private static readonly object RegisterGate = new();
+
+    /// <summary>
+    /// Registers a consumer <see cref="IModuleApi"/> so all four registry paths — query
+    /// SDL, mutation SDL, query capture, mutation capture — honor it alongside the
+    /// built-ins. De-duplicated by concrete type so a repeated host build (e.g. desktop
+    /// per-connection rebind) replaces rather than accumulates, which would otherwise
+    /// double-emit a module's GraphQL argument. Returns a token whose disposal removes the
+    /// registration again (used by tests; a live host never disposes it, so the module
+    /// stays registered for the process lifetime). Server-side wiring lives in
+    /// <c>AddModuleApi&lt;T&gt;()</c>.
+    /// </summary>
+    public static IDisposable Register(IModuleApi module)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+        lock (RegisterGate)
+        {
+            Registered.RemoveAll(m => m.GetType() == module.GetType());
+            Registered.Add(module);
+        }
+        return new Registration(module);
+    }
+
+    /// <summary>The built-in modules composed with every consumer module registered via
+    /// <see cref="Register"/>. Snapshotted under the register lock so schema generation /
+    /// value capture (post-startup reads) never races a startup registration.</summary>
+    public static IReadOnlyList<IModuleApi> Modules
+    {
+        get
+        {
+            lock (RegisterGate)
+                return Registered.Count == 0 ? BuiltIns : BuiltIns.Concat(Registered).ToArray();
+        }
+    }
+
+    private sealed class Registration : IDisposable
+    {
+        private IModuleApi? _module;
+        public Registration(IModuleApi module) => _module = module;
+        public void Dispose()
+        {
+            var module = Interlocked.Exchange(ref _module, null);
+            if (module is null) return;
+            lock (RegisterGate)
+                Registered.Remove(module);
+        }
+    }
+
     /// <summary>SDL fragment (leading-space separated) for the table's query field, e.g. " _includeDeleted: Boolean".</summary>
     public static string QueryArgumentsSdl(IDbTable table) =>
-        string.Concat(BuiltIns
+        string.Concat(Modules
             .SelectMany(m => m.GetQueryArguments(table))
             .Select(a => $" {a.Name}: {a.GraphQlType}"));
 
     /// <summary>SDL fragment (comma prefixed) for the table's mutation field, e.g. ", _hardDelete: Boolean".</summary>
     public static string MutationArgumentsSdl(IDbTable table) =>
-        string.Concat(BuiltIns
+        string.Concat(Modules
             .SelectMany(m => m.GetMutationArguments(table))
             .Select(a => $", {a.Name}: {a.GraphQlType}"));
 
@@ -109,7 +163,7 @@ public static class ModuleApiRegistry
     /// </summary>
     public static void CaptureQueryArguments(IBifrostFieldContext context, IDbTable table, IDictionary<string, object?> userContext)
     {
-        foreach (var arg in BuiltIns.SelectMany(m => m.GetQueryArguments(table)))
+        foreach (var arg in Modules.SelectMany(m => m.GetQueryArguments(table)))
         {
             if (!context.HasArgument(arg.Name))
                 continue;
@@ -129,7 +183,7 @@ public static class ModuleApiRegistry
     public static IReadOnlyDictionary<string, object?> CaptureQueryArguments(IReadOnlyDictionary<string, object?> arguments, IDbTable table)
     {
         Dictionary<string, object?>? captured = null;
-        foreach (var arg in BuiltIns.SelectMany(m => m.GetQueryArguments(table)))
+        foreach (var arg in Modules.SelectMany(m => m.GetQueryArguments(table)))
         {
             if (!arguments.TryGetValue(arg.Name, out var value))
                 continue;
@@ -146,7 +200,7 @@ public static class ModuleApiRegistry
     public static IReadOnlyDictionary<string, object?> CaptureMutationArguments(IBifrostFieldContext context, IDbTable table)
     {
         Dictionary<string, object?>? captured = null;
-        foreach (var arg in BuiltIns.SelectMany(m => m.GetMutationArguments(table)))
+        foreach (var arg in Modules.SelectMany(m => m.GetMutationArguments(table)))
         {
             if (!context.HasArgument(arg.Name))
                 continue;

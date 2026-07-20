@@ -221,4 +221,66 @@ public class ModelConfigValidatorTests
         // Assert
         act.Should().NotThrow();
     }
+
+    [Fact]
+    public void Validate_RetainKeyWrongCasing_ThrowsHardError()
+    {
+        // A miscased retention key is silently ignored by the case-sensitive metadata reader,
+        // so data would never be purged — a compliance gap. Registering the key in
+        // KnownTableKeys makes this a HARD error, not a warning.
+        var model = DbModelTestFixture.Create()
+            .WithTable("Orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("deleted_at", "datetime2", isNullable: true)
+                .WithMetadata(MetadataKeys.SoftDelete.Column, "deleted_at")
+                .WithMetadata("Retain", "90d"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.Orders").And.Contain("Retain").And.Contain("casing");
+    }
+
+    [Fact]
+    public void Validate_BadTtlAnchorColumn_ThrowsWithTableAndKey()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("Sessions", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("created_at", "datetime2")
+                .WithMetadata(MetadataKeys.Retention.Ttl, "30d after nope"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.Sessions").And.Contain("nope")
+            .And.Contain(MetadataKeys.Retention.Ttl);
+    }
+
+    [Fact]
+    public void Validate_ValidRetentionConfig_DoesNotThrow()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("Orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("deleted_at", "datetime2", isNullable: true)
+                .WithColumn("created_at", "datetime2")
+                .WithMetadata(MetadataKeys.SoftDelete.Column, "deleted_at")
+                .WithMetadata(MetadataKeys.Retention.Retain, "90d"))
+            .WithTable("Sessions", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("created_at", "datetime2")
+                .WithMetadata(MetadataKeys.Retention.Ttl, "12h after created_at"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().NotThrow();
+    }
 }

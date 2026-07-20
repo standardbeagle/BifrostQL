@@ -61,6 +61,7 @@ namespace BifrostQL.Core.Model
                 ValidateCdcTokens(table, errors);
                 ValidateHistoryTokens(table, errors);
                 ValidateFtsColumns(table, errors);
+                ValidateRetention(table, errors);
 
                 var tableRef = $"{table.TableSchema}.{table.DbName}";
                 ValidateMetadataKeyCasing(table.Metadata, MetadataValidator.KnownTableKeys, "table", tableRef, errors);
@@ -334,6 +335,33 @@ namespace BifrostQL.Core.Model
             {
                 errors.Add(Problem(table, MetadataKeys.Fts.Search,
                     table.GetMetadataValue(MetadataKeys.Fts.Search), ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// Fail-fast validation for a table's data-retention opt-in (<c>retain</c> / <c>ttl</c>).
+        /// A malformed duration, a <c>retain</c> without a <c>soft-delete</c> anchor, a <c>ttl</c>
+        /// without its explicit <c>after &lt;column&gt;</c> anchor, or an anchor column that does not
+        /// exist or is not a timestamp would otherwise leave a table that reads as retention-managed
+        /// in config either purging nothing (a silent compliance gap) or built to purge the wrong
+        /// rows — invisible until the scheduler slice runs. Reuses
+        /// <see cref="Modules.Retention.RetentionConfig.FromTable"/> so validation cannot drift from
+        /// the runtime parse.
+        /// </summary>
+        private static void ValidateRetention(IDbTable table, List<string> errors)
+        {
+            try
+            {
+                Modules.Retention.RetentionConfig.FromTable(table);
+            }
+            catch (Exception ex)
+            {
+                // Attribute to whichever key is present (retain if both) — the exception
+                // message itself names the offending key precisely.
+                var key = !string.IsNullOrWhiteSpace(table.GetMetadataValue(MetadataKeys.Retention.Retain))
+                    ? MetadataKeys.Retention.Retain
+                    : MetadataKeys.Retention.Ttl;
+                errors.Add(Problem(table, key, table.GetMetadataValue(key), ex.Message));
             }
         }
 

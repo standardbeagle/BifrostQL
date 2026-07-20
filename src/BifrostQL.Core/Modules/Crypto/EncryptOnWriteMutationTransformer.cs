@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using BifrostQL.Core.Crypto;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules.Approval;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Core.Modules.Crypto
@@ -48,6 +49,9 @@ namespace BifrostQL.Core.Modules.Crypto
                     continue;
                 if (value is null)
                     continue; // A null is stored as NULL — nothing to encrypt.
+
+                if (ApprovalInterceptMutationHook.IsApprovedReplay(context.UserContext))
+                    continue; // Approval payload is post-transformer ciphertext with its original blind index.
 
                 if (keyManager is null)
                 {

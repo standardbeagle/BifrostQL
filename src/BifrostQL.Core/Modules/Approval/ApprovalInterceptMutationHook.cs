@@ -56,6 +56,7 @@ namespace BifrostQL.Core.Modules.Approval
 
         /// <summary>Internal marker used only when an already-approved intent is replayed.</summary>
         internal const string ReplayMarkerKey = "bifrost.approval.replay";
+        private static readonly object ApprovedReplayToken = new();
 
         /// <summary>
         /// Replay user-context keys (ordinal, code-owned) carrying the pending-change id and the
@@ -72,6 +73,20 @@ namespace BifrostQL.Core.Modules.Approval
 
         /// <inheritdoc cref="ReplayPendingIdKey"/>
         internal const string ReplayApproverKey = "bifrost.approval.replay.approver";
+
+        /// <summary>
+        /// Adds the non-serializable, identity-checked replay capability after approval
+        /// authorization. A wire caller cannot forge this private token through UserContext.
+        /// </summary>
+        internal static void MarkApprovedReplay(IDictionary<string, object?> context, long pendingChangeId, string approver)
+        {
+            context[ReplayMarkerKey] = ApprovedReplayToken;
+            context[ReplayPendingIdKey] = pendingChangeId;
+            context[ReplayApproverKey] = approver;
+        }
+
+        internal static bool IsApprovedReplay(IDictionary<string, object?> context)
+            => context.TryGetValue(ReplayMarkerKey, out var replay) && ReferenceEquals(replay, ApprovedReplayToken);
 
         /// <summary>
         /// True when the before-commit phase DIVERTED this mutation into approval (the hook
@@ -105,7 +120,7 @@ namespace BifrostQL.Core.Modules.Approval
             // pending row's pending -> approved transition on the replay's OWN transaction, so
             // the state transition and the replayed data write commit atomically, then let the
             // write proceed.
-            if (context.UserContext.TryGetValue(ReplayMarkerKey, out var replay) && replay is true)
+            if (IsApprovedReplay(context.UserContext))
             {
                 await StampApprovedTransitionAsync(context);
                 return Array.Empty<string>();

@@ -41,9 +41,7 @@ public sealed class ApprovalDecisionService
         var requesterContext = DeserializeContext(row.RequesterContext);
         requesterContext[AuditMutationTransformer.ActorOverrideKey] =
             AuditMutationTransformer.CreateActorOverride(approver);
-        requesterContext[ApprovalInterceptMutationHook.ReplayMarkerKey] = true;
-        requesterContext[ApprovalInterceptMutationHook.ReplayPendingIdKey] = pendingChangeId;
-        requesterContext[ApprovalInterceptMutationHook.ReplayApproverKey] = approver;
+        ApprovalInterceptMutationHook.MarkApprovedReplay(requesterContext, pendingChangeId, approver);
 
         var payload = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(row.Payload)
             ?? throw new BifrostExecutionError("Approval payload is invalid.");

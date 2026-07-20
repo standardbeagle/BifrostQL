@@ -32,14 +32,19 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
     private const string ConnString = "Data Source=bifrost_approval_intercept_test;Mode=Memory;Cache=Shared";
     private const string EndpointPath = "/graphql";
     private SqliteConnection _keepAlive = null!;
+    private IDbModel _model = null!;
 
     // orders: approval-gated AND tenant-filtered, so the same fixture proves both the
     // enqueue-not-apply invariant and that the serialized payload is the scoped intent.
-    // blogs/posts: an approval-gated parent/child pair for the nested TreeSync path.
+    // blogs/posts: an approval-gated parent/child pair, both gated so the nested TreeSync
+    // path diverts every node (no gated/ungated mixing). The root user-audit-key resolves
+    // the requester from the caller's context.
     private static readonly string[] Rules =
     {
+        ":root { user-audit-key: user_id }",
         "main.orders { approval: enabled; approver-role: manager; tenant-filter: tenant_id }",
         "main.blogs { approval: enabled; approver-role: manager }",
+        "main.posts { approval: enabled; approver-role: manager }",
     };
 
     public async Task InitializeAsync()
@@ -88,6 +93,9 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
                 reason           TEXT NULL
             )
             """);
+
+        _model = await new DbModelLoader(
+            new SqliteDbConnFactory(ConnString), new MetadataLoader(Rules)).LoadAsync();
     }
 
     public async Task DisposeAsync() => await _keepAlive.DisposeAsync();
@@ -150,22 +158,24 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
             });
         });
 
-        var transformers = new MutationTransformersWrap
-        {
-            Transformers = new IMutationTransformer[]
-            {
-                new PolicyMutationTransformer(),
-                new StateMachineMutationTransformer(),
-                new EnumValueMutationTransformer(),
-                new SoftDeleteMutationTransformer(),
-                new TenantMutationTransformer(),
-                new AuditMutationTransformer(),
-                new ConcurrencyMutationTransformer(),
-            },
-        };
-
-        return new MutationIntentExecutor(pathCache, transformers, BuildHookProvider());
+        return new MutationIntentExecutor(pathCache, BuiltInTransformers(), BuildHookProvider());
     }
+
+    // The built-in security/audit transformer chain the server auto-prepends, so tenant
+    // isolation shapes the intent BEFORE the approval gate serializes it.
+    private static IMutationTransformers BuiltInTransformers() => new MutationTransformersWrap
+    {
+        Transformers = new IMutationTransformer[]
+        {
+            new PolicyMutationTransformer(),
+            new StateMachineMutationTransformer(),
+            new EnumValueMutationTransformer(),
+            new SoftDeleteMutationTransformer(),
+            new TenantMutationTransformer(),
+            new AuditMutationTransformer(),
+            new ConcurrencyMutationTransformer(),
+        },
+    };
 
     // The before-commit hook composite, built from every registered hook exactly as the
     // host DI does — here the single approval intercept hook.
@@ -205,5 +215,216 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         pending[0].Table.Should().Be("main.orders");
         pending[0].Op.Should().Be("insert");
         pending[0].State.Should().Be(PendingChangeStore.StatePending);
+    }
+
+    // ---- criterion 2: every single-row verb enqueues rather than applies ----
+
+    [Fact]
+    public async Task Update_OnGatedTable_Enqueues_AndChangesNoTargetRow()
+    {
+        var executor = BuildExecutor();
+
+        var act = () => executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "orders",
+            Action = MutationIntentAction.Update,
+            Data = new Dictionary<string, object?> { ["name"] = "renamed" },
+            PrimaryKey = new object?[] { 10 },
+            UserContext = TenantContext(1),
+            Endpoint = EndpointPath,
+        });
+
+        await act.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*pending approval*");
+        (await CountAsync("orders", "id = 10 AND name = 'seed-order'")).Should().Be(1, "the update never applied");
+        (await CountAsync("orders", "name = 'renamed'")).Should().Be(0);
+
+        var pending = await PendingRowsAsync();
+        pending.Should().ContainSingle();
+        pending[0].Op.Should().Be("update");
+    }
+
+    [Fact]
+    public async Task Delete_OnGatedTable_Enqueues_AndRemovesNoTargetRow()
+    {
+        var executor = BuildExecutor();
+
+        var act = () => executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "orders",
+            Action = MutationIntentAction.Delete,
+            Data = new Dictionary<string, object?>(),
+            PrimaryKey = new object?[] { 10 },
+            UserContext = TenantContext(1),
+            Endpoint = EndpointPath,
+        });
+
+        await act.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*pending approval*");
+        (await CountAsync("orders", "id = 10")).Should().Be(1, "the delete never applied");
+
+        var pending = await PendingRowsAsync();
+        pending.Should().ContainSingle();
+        pending[0].Op.Should().Be("delete");
+    }
+
+    [Fact]
+    public async Task Batch_OnGatedTable_EnqueuesEachAction_AndAppliesNone()
+    {
+        var executor = BuildExecutor();
+
+        var act = () => executor.ExecuteBatchAsync(new MutationBatchIntent
+        {
+            Table = "orders",
+            Actions = new[]
+            {
+                new MutationBatchAction(MutationIntentAction.Insert,
+                    new Dictionary<string, object?> { ["name"] = "batch-a", ["tenant_id"] = 1 }),
+                new MutationBatchAction(MutationIntentAction.Insert,
+                    new Dictionary<string, object?> { ["name"] = "batch-b", ["tenant_id"] = 1 }),
+            },
+            UserContext = TenantContext(1),
+            Endpoint = EndpointPath,
+        });
+
+        await act.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*pending approval*");
+        // No rows applied (only the seed remains); one pending row PER action.
+        (await CountAsync("orders", "1 = 1")).Should().Be(1, "no batch action reached the target table");
+        var pending = await PendingRowsAsync();
+        pending.Should().HaveCount(2, "each batch action enqueues its own pending change");
+        pending.Should().OnlyContain(p => p.Op == "insert" && p.State == PendingChangeStore.StatePending);
+    }
+
+    [Fact]
+    public async Task TreeSync_OnGatedTable_EnqueuesEveryNode_AndAppliesNone()
+    {
+        // A nested sync of two gated tables (blogs + posts): every node diverts, so nothing
+        // is applied to either table and one pending row lands per node.
+        var result = await ExecuteGraphQlAsync(
+            "mutation { blogs(sync: { name: \"B\", posts: [ { title: \"first\" } ] }) }");
+
+        result.Errors.Should().NotBeNullOrEmpty();
+        result.Errors!.Single().Message.Should().Contain("pending approval");
+        (await CountAsync("blogs", "1 = 1")).Should().Be(0, "no gated tree node reached the target table");
+        (await CountAsync("posts", "1 = 1")).Should().Be(0);
+
+        var pending = await PendingRowsAsync();
+        pending.Should().HaveCount(2, "the blog and its post each enqueue a pending change");
+        pending.Select(p => p.Table).Should().BeEquivalentTo(new[] { "main.blogs", "main.posts" });
+    }
+
+    // ---- criterion 3: enqueued payload is the POST-transformer scoped intent ----
+
+    [Fact]
+    public async Task EnqueuedPayload_CarriesTheScopedIntent_NotRawClientInput()
+    {
+        var executor = BuildExecutor();
+
+        // The caller tries to plant the row in tenant 999; the tenant transformer pins it to
+        // the caller's tenant (1) BEFORE the gate serializes it, so the enqueued payload can
+        // never carry the out-of-scope value a slice-3 replay would otherwise resurrect.
+        var act = () => executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "orders",
+            Action = MutationIntentAction.Insert,
+            Data = new Dictionary<string, object?> { ["name"] = "scoped", ["tenant_id"] = 999 },
+            UserContext = TenantContext(1),
+            Endpoint = EndpointPath,
+        });
+
+        await act.Should().ThrowAsync<BifrostExecutionError>();
+
+        var pending = await PendingRowsAsync();
+        pending.Should().ContainSingle();
+        var payload = Payload(pending[0].Payload);
+        payload["tenant_id"].GetInt32().Should().Be(1, "the payload carries the pinned tenant, not the client's 999");
+        payload["name"].GetString().Should().Be("scoped");
+    }
+
+    // ---- criterion 4: requester + tenant captured from the caller's context ----
+
+    [Fact]
+    public async Task EnqueuedPending_CarriesRequesterAndTenant_FromUserContext()
+    {
+        var executor = BuildExecutor();
+
+        var context = TenantContext(1);
+        context["user_id"] = "alice"; // resolved by the root user-audit-key
+
+        var act = () => executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "orders",
+            Action = MutationIntentAction.Insert,
+            Data = new Dictionary<string, object?> { ["name"] = "who", ["tenant_id"] = 1 },
+            UserContext = context,
+            Endpoint = EndpointPath,
+        });
+
+        await act.Should().ThrowAsync<BifrostExecutionError>();
+
+        var pending = await PendingRowsAsync();
+        pending.Should().ContainSingle();
+        pending[0].Requester.Should().Be("alice", "the requester is the caller, not the approver");
+        pending[0].Tenant.Should().Be("1", "the requester's tenant is persisted for replay scoping");
+    }
+
+    // ---- fail-closed: a gated write with no store table is refused, not applied ----
+
+    [Fact]
+    public async Task MissingStoreTable_FailsClosed_AndAppliesNoWrite()
+    {
+        await Exec("DROP TABLE pending_changes");
+        // Rebuild the model without the store table so the gate cannot resolve it.
+        var pathCache = new PathCache<Inputs>();
+        pathCache.AddLoader(EndpointPath, async () =>
+        {
+            var factory = new SqliteDbConnFactory(ConnString);
+            var model = await new DbModelLoader(factory, new MetadataLoader(Rules)).LoadAsync();
+            return new Inputs(new Dictionary<string, object?> { ["model"] = model, ["connFactory"] = factory });
+        });
+        var executor = new MutationIntentExecutor(pathCache, BuiltInTransformers(), BuildHookProvider());
+
+        var act = () => executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "orders",
+            Action = MutationIntentAction.Insert,
+            Data = new Dictionary<string, object?> { ["name"] = "no-store", ["tenant_id"] = 1 },
+            UserContext = TenantContext(1),
+            Endpoint = EndpointPath,
+        });
+
+        await act.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*not present in the model*");
+        (await CountAsync("orders", "1 = 1")).Should().Be(1, "a gated write with no store must NOT reach the target table");
+    }
+
+    // The GraphQL harness for the TreeSync path: registers the approval intercept hook and the
+    // before-commit composite in RequestServices, exactly as the host DI composes them, so the
+    // nested sync runs the before-commit phase.
+    private async Task<ExecutionResult> ExecuteGraphQlAsync(string mutation)
+    {
+        var schema = DbSchema.FromModel(_model);
+        var factory = new SqliteDbConnFactory(ConnString);
+
+        var services = new ServiceCollection();
+        services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap
+        {
+            Transformers = Array.Empty<IMutationTransformer>(),
+        });
+        services.AddSingleton<IBeforeCommitMutationHook, ApprovalInterceptMutationHook>();
+        services.AddSingleton(sp => new BeforeCommitMutationHooks(
+            sp.GetServices<IBeforeCommitMutationHook>().ToArray()));
+        await using var provider = services.BuildServiceProvider();
+
+        var executor = new DocumentExecuter();
+        return await executor.ExecuteAsync(options =>
+        {
+            options.Schema = schema;
+            options.Query = mutation;
+            options.RequestServices = provider;
+            options.Extensions = new Inputs(new Dictionary<string, object?>
+            {
+                ["connFactory"] = factory,
+                ["model"] = _model,
+                ["tableReaderFactory"] = new SqlExecutionManager(_model, schema),
+            });
+        });
     }
 }

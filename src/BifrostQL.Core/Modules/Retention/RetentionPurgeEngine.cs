@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
+using BifrostQL.Core.Modules.History;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
@@ -163,14 +164,24 @@ namespace BifrostQL.Core.Modules.Retention
         /// never widens a purge), tenants are enumerated for scoped fan-out, and each (table, tenant)
         /// is swept for both <c>retain</c> and <c>ttl</c>.
         /// </summary>
+        /// <param name="dryRun">
+        /// When true, ENUMERATES the rows the pass would purge — via the SAME scoped
+        /// selection read a live pass uses (<see cref="ReadExpiredKeysAsync"/>) — and reports
+        /// them in <see cref="RetentionPurgeOutcome.Candidates"/> WITHOUT routing a single
+        /// Delete intent, so no row changes. Because the candidate set is produced by the
+        /// identical read a live pass then deletes, an operator can trust the dry-run report
+        /// as the exact set the next live pass will remove.
+        /// </param>
         public async Task<RetentionPurgeOutcome> PurgeOnceAsync(
-            IDbModel model, IDbConnFactory connFactory, string? endpoint, CancellationToken cancellationToken)
+            IDbModel model, IDbConnFactory connFactory, string? endpoint, CancellationToken cancellationToken,
+            bool dryRun = false)
         {
             if (model is null) throw new ArgumentNullException(nameof(model));
             if (connFactory is null) throw new ArgumentNullException(nameof(connFactory));
 
             var now = _clock();
             int tablesSwept = 0, rowsPurged = 0, tablesSkipped = 0;
+            var candidates = dryRun ? new List<RetentionCandidate>() : null;
 
             foreach (var table in model.Tables)
             {
@@ -207,11 +218,14 @@ namespace BifrostQL.Core.Modules.Retention
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     rowsPurged += await SweepTableForTenantAsync(
-                        model, table, config, tenantColumn, tenant, endpoint, now, cancellationToken);
+                        model, table, config, tenantColumn, tenant, endpoint, now, cancellationToken,
+                        dryRun, candidates);
                 }
             }
 
-            return new RetentionPurgeOutcome(tablesSwept, rowsPurged, tablesSkipped);
+            return new RetentionPurgeOutcome(
+                tablesSwept, rowsPurged, tablesSkipped,
+                (IReadOnlyList<RetentionCandidate>?)candidates ?? Array.Empty<RetentionCandidate>());
         }
 
         /// <summary>
@@ -222,15 +236,16 @@ namespace BifrostQL.Core.Modules.Retention
         /// </summary>
         internal async Task<int> SweepTableForTenantAsync(
             IDbModel model, IDbTable table, RetentionConfig config, string? tenantColumn,
-            object? tenantValue, string? endpoint, DateTime now, CancellationToken cancellationToken)
+            object? tenantValue, string? endpoint, DateTime now, CancellationToken cancellationToken,
+            bool dryRun = false, List<RetentionCandidate>? candidates = null)
         {
             var purged = 0;
 
             if (config.PurgesSoftDeleted)
-                purged += await PurgeRetainAsync(model, table, config, tenantColumn, tenantValue, endpoint, now, cancellationToken);
+                purged += await PurgeRetainAsync(model, table, config, tenantColumn, tenantValue, endpoint, now, cancellationToken, dryRun, candidates);
 
             if (config.ExpiresLiveRows)
-                purged += await PurgeTtlAsync(model, table, config, tenantColumn, tenantValue, endpoint, now, cancellationToken);
+                purged += await PurgeTtlAsync(model, table, config, tenantColumn, tenantValue, endpoint, now, cancellationToken, dryRun, candidates);
 
             return purged;
         }
@@ -240,7 +255,8 @@ namespace BifrostQL.Core.Modules.Retention
         // hard-delete route so it reaches a row a soft-delete UPDATE could never match.
         private async Task<int> PurgeRetainAsync(
             IDbModel model, IDbTable table, RetentionConfig config, string? tenantColumn,
-            object? tenantValue, string? endpoint, DateTime now, CancellationToken cancellationToken)
+            object? tenantValue, string? endpoint, DateTime now, CancellationToken cancellationToken,
+            bool dryRun, List<RetentionCandidate>? candidates)
         {
             var cutoff = now - config.RetainWindow!.Value;
             var readContext = BuildTenantContext(model, tenantColumn, tenantValue);
@@ -249,6 +265,11 @@ namespace BifrostQL.Core.Modules.Retention
             readContext[SoftDeleteModuleApi.OnlyDeletedKey] = true;
 
             var rows = await ReadExpiredKeysAsync(table, config.RetainAnchorColumn!, cutoff, readContext, endpoint, cancellationToken);
+
+            // Dry-run reports the SAME candidate set the read produced and routes NO delete —
+            // see PurgeOnceAsync(dryRun).
+            if (dryRun)
+                return ReportCandidates(candidates!, table, RetentionMode.Retain, tenantValue, rows);
 
             var hardRole = table.GetMetadataValue(MetadataKeys.SoftDelete.HardDeleteRole);
 
@@ -263,6 +284,9 @@ namespace BifrostQL.Core.Modules.Retention
                 // needs none.
                 if (!string.IsNullOrWhiteSpace(hardRole))
                     deleteContext["roles"] = new[] { hardRole };
+                // Mark this delete an erasure so the change-history writer tombstones the trail
+                // instead of re-persisting the before-image of the PII being purged.
+                deleteContext[HistoryErasure.ContextKey] = HistoryErasure.Marker;
 
                 var result = await _writer.ExecuteAsync(new MutationIntent
                 {
@@ -285,7 +309,8 @@ namespace BifrostQL.Core.Modules.Retention
         // let the pipeline decide hard-vs-soft — the engine never special-cases soft-delete.
         private async Task<int> PurgeTtlAsync(
             IDbModel model, IDbTable table, RetentionConfig config, string? tenantColumn,
-            object? tenantValue, string? endpoint, DateTime now, CancellationToken cancellationToken)
+            object? tenantValue, string? endpoint, DateTime now, CancellationToken cancellationToken,
+            bool dryRun, List<RetentionCandidate>? candidates)
         {
             var cutoff = now - config.TtlWindow!.Value;
             // Default read context: the soft-delete filter (if any) hides already-deleted rows, which
@@ -294,10 +319,21 @@ namespace BifrostQL.Core.Modules.Retention
 
             var rows = await ReadExpiredKeysAsync(table, config.TtlAnchorColumn!, cutoff, readContext, endpoint, cancellationToken);
 
+            // Dry-run reports the SAME candidate set the read produced and routes NO delete.
+            if (dryRun)
+                return ReportCandidates(candidates!, table, RetentionMode.Ttl, tenantValue, rows);
+
             var purged = 0;
             foreach (var primaryKey in rows)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
+                var deleteContext = BuildTenantContext(model, tenantColumn, tenantValue);
+                // Mark this delete an erasure. When the pipeline hard-deletes (a ttl table with
+                // no soft-delete), the history writer tombstones the trail; when it SOFT-deletes
+                // (ttl on a soft-delete table), the writer records normally — the erasure branch
+                // is gated on a physical delete, so the marker is harmless there.
+                deleteContext[HistoryErasure.ContextKey] = HistoryErasure.Marker;
 
                 var result = await _writer.ExecuteAsync(new MutationIntent
                 {
@@ -305,7 +341,7 @@ namespace BifrostQL.Core.Modules.Retention
                     Action = MutationIntentAction.Delete,
                     Data = EmptyData,
                     PrimaryKey = primaryKey,
-                    UserContext = BuildTenantContext(model, tenantColumn, tenantValue),
+                    UserContext = deleteContext,
                     Endpoint = endpoint,
                 }, cancellationToken);
 
@@ -313,6 +349,18 @@ namespace BifrostQL.Core.Modules.Retention
             }
 
             return purged;
+        }
+
+        // Records the read's candidate keys into the dry-run report and returns their count.
+        // The keys come straight from ReadExpiredKeysAsync — the SAME selection a live pass
+        // deletes — so the reported set equals what the next live pass removes.
+        private static int ReportCandidates(
+            List<RetentionCandidate> candidates, IDbTable table, RetentionMode mode,
+            object? tenantValue, IReadOnlyList<IReadOnlyList<object?>> rows)
+        {
+            foreach (var primaryKey in rows)
+                candidates.Add(new RetentionCandidate(table.DbName, mode, tenantValue, primaryKey));
+            return rows.Count;
         }
 
         // Reads up to _batchSize expired primary keys through the scoped read seam. The tenant/
@@ -385,8 +433,7 @@ namespace BifrostQL.Core.Modules.Retention
         {
             var dialect = connFactory.Dialect;
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var column = dialect.EscapeIdentifier(tenantColumn);
-            var sql = $"SELECT DISTINCT {column} FROM {tableRef} WHERE {column} IS NOT NULL;";
+            var sql = BuildTenantEnumerationSql(dialect, tableRef, tenantColumn);
 
             await using var conn = connFactory.GetConnection();
             await conn.OpenAsync(cancellationToken);
@@ -398,6 +445,18 @@ namespace BifrostQL.Core.Modules.Retention
             while (await reader.ReadAsync(cancellationToken))
                 tenants.Add(await reader.IsDBNullAsync(0, cancellationToken) ? null : reader.GetValue(0));
             return tenants;
+        }
+
+        /// <summary>
+        /// The DISTINCT-tenant enumeration SELECT, emitted entirely through
+        /// <see cref="ISqlDialect"/> (no dialect literal), so it renders valid on every
+        /// supported dialect. Reads ONLY the set of non-null tenant identifiers — never row
+        /// data — so the sweep can fan out one tenant-scoped purge per tenant.
+        /// </summary>
+        internal static string BuildTenantEnumerationSql(ISqlDialect dialect, string tableRef, string tenantColumn)
+        {
+            var column = dialect.EscapeIdentifier(tenantColumn);
+            return $"SELECT DISTINCT {column} FROM {tableRef} WHERE {column} IS NOT NULL;";
         }
 
         // Synthesizes the per-tenant system context. For a tenant-scoped table it carries only the
@@ -460,7 +519,29 @@ namespace BifrostQL.Core.Modules.Retention
     /// The result of one <see cref="RetentionPurgeEngine.PurgeOnceAsync"/> pass:
     /// <see cref="TablesSwept"/> tables had retention applied, <see cref="RowsPurged"/> rows were
     /// actually deleted (scoped-away no-ops do not count), and <see cref="TablesSkipped"/> tables
-    /// were skipped fail-closed on an invalid config.
+    /// were skipped fail-closed on an invalid config. <see cref="Candidates"/> is populated ONLY
+    /// on a dry-run pass — the rows the pass WOULD purge, read via the same selection path a live
+    /// pass deletes — and is empty for a live pass.
     /// </summary>
-    public readonly record struct RetentionPurgeOutcome(int TablesSwept, int RowsPurged, int TablesSkipped);
+    public readonly record struct RetentionPurgeOutcome(
+        int TablesSwept, int RowsPurged, int TablesSkipped, IReadOnlyList<RetentionCandidate> Candidates);
+
+    /// <summary>Which retention window selected a candidate row.</summary>
+    public enum RetentionMode
+    {
+        /// <summary>Live-row expiry (<c>ttl</c>).</summary>
+        Ttl,
+
+        /// <summary>Hard-purge of an already-soft-deleted row (<c>retain</c>).</summary>
+        Retain,
+    }
+
+    /// <summary>
+    /// One row a dry-run pass reports it WOULD purge: the <see cref="Table"/> DB name, the
+    /// <see cref="Mode"/> that selected it, the <see cref="Tenant"/> the sweep scoped to (null
+    /// for a non-tenant table), and its positional <see cref="PrimaryKey"/>. Produced by the
+    /// same scoped read a live pass deletes, so a live pass then removes exactly this set.
+    /// </summary>
+    public readonly record struct RetentionCandidate(
+        string Table, RetentionMode Mode, object? Tenant, IReadOnlyList<object?> PrimaryKey);
 }

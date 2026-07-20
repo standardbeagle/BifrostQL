@@ -276,6 +276,48 @@ public sealed class RetentionPurgeEngineTests : IAsyncLifetime
         fourth.Should().Be(0);
     }
 
+    // ---- dry-run: same selection path, zero deletes ------------------------------
+
+    [Fact]
+    public async Task DryRun_ReportsCandidatesViaSameSelectionPath_ChangesZeroRows_AndLiveRunDeletesExactlyThatSet()
+    {
+        var (engine, _, reader, _) = Build();
+        var model = await reader.GetModelAsync(EndpointPath);
+        var connFactory = new SqliteDbConnFactory(ConnString);
+
+        // Dry-run: enumerate what WOULD be purged, without routing a single Delete intent.
+        var dry = await engine.PurgeOnceAsync(model, connFactory, EndpointPath, CancellationToken.None, dryRun: true);
+
+        // The candidate set is exactly the same 8 rows a live pass removes (sessions t1+t2
+        // expired = 2, audit_log aged = 1, metrics = 5), reported from the SAME scoped read.
+        dry.Candidates.Should().HaveCount(8);
+        CandidateIds(dry, "metrics", RetentionMode.Ttl).Should().BeEquivalentTo(new[] { 1L, 2L, 3L, 4L, 5L });
+        CandidateIds(dry, "audit_log", RetentionMode.Retain).Should().BeEquivalentTo(new[] { 1L });
+        CandidateIds(dry, "sessions", RetentionMode.Ttl).Should().BeEquivalentTo(new[] { 1L, 2L });
+
+        // NOT ONE ROW CHANGED — a dry-run routes zero Delete intents.
+        (await ScalarAsync("SELECT COUNT(*) FROM metrics")).Should().Be("5");
+        (await ScalarAsync("SELECT COUNT(*) FROM audit_log")).Should().Be("3");
+        (await ScalarAsync("SELECT COUNT(*) FROM sessions WHERE deleted_at IS NULL")).Should().Be("3");
+
+        // A subsequent LIVE run deletes EXACTLY the reported set.
+        var live = await engine.PurgeOnceAsync(model, connFactory, EndpointPath, CancellationToken.None);
+        live.RowsPurged.Should().Be(8);
+        live.Candidates.Should().BeEmpty("a live pass reports no dry-run candidates");
+        (await ScalarAsync("SELECT COUNT(*) FROM metrics")).Should().Be("0", "the 5 reported metrics rows were deleted");
+        (await ScalarAsync("SELECT COUNT(*) FROM audit_log WHERE id = 1")).Should().Be("0", "the reported aged row was purged");
+        (await ScalarAsync("SELECT deleted_at FROM sessions WHERE id = 1")).Should().NotBeNullOrEmpty();
+        (await ScalarAsync("SELECT deleted_at FROM sessions WHERE id = 2")).Should().NotBeNullOrEmpty();
+        (await ScalarAsync("SELECT deleted_at FROM sessions WHERE id = 3")).Should().BeNullOrEmpty("the fresh session was never a candidate");
+    }
+
+    private static long[] CandidateIds(RetentionPurgeOutcome outcome, string table, RetentionMode mode)
+        => outcome.Candidates
+            .Where(c => c.Table == table && c.Mode == mode)
+            .Select(c => Convert.ToInt64(c.PrimaryKey[0]))
+            .OrderBy(id => id)
+            .ToArray();
+
     // ---- full pass: multi-tenant, multi-table ------------------------------------
 
     [Fact]

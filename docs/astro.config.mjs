@@ -62,6 +62,7 @@ export default defineConfig({
 						{ label: 'Emitting Change Events (CDC)', slug: 'guides/cdc-events' },
 						{ label: 'Recording Change History', slug: 'guides/change-history' },
 						{ label: 'Rotating Field-Encryption Keys', slug: 'guides/field-encryption' },
+						{ label: 'Data Retention & Right-to-Erasure', slug: 'guides/retention' },
 						{ label: 'LLM Chat Endpoints', slug: 'guides/llm-chat' },
 						{ label: 'Chat Connectors', slug: 'guides/chat-connectors' },
 						{ label: 'MCP Server (Agent Tools)', slug: 'guides/mcp-server' },

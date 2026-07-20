@@ -78,6 +78,32 @@ public sealed class ApprovalDecisionService
         }, cancellationToken);
     }
 
+    /// <summary>
+    /// Marks a pending change expired through the normal mutation pipeline. This is the seam for
+    /// a scheduler/sweeper: it deliberately does not infer expiry from a timestamp at approval
+    /// time, because the state-machine transition is the authoritative terminal decision.
+    /// </summary>
+    public async Task ExpireAsync(long pendingChangeId, string reason, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+            throw new ArgumentException("An expiry reason is required.", nameof(reason));
+
+        var store = FindTable(PendingChangeStore.TableName);
+        await _mutations.ExecuteAsync(new MutationIntent
+        {
+            Table = store.DbName,
+            Action = MutationIntentAction.Update,
+            Data = new Dictionary<string, object?>
+            {
+                [PendingChangeStore.ColState] = PendingChangeStore.StateExpired,
+                [PendingChangeStore.ColReason] = reason,
+                [PendingChangeStore.ColDecidedAt] = DateTimeOffset.UtcNow,
+            },
+            PrimaryKey = new object?[] { pendingChangeId },
+            UserContext = new Dictionary<string, object?>(),
+        }, cancellationToken);
+    }
+
     public async Task RejectAsync(long pendingChangeId, string reason,
         IDictionary<string, object?> approverContext, CancellationToken cancellationToken = default)
     {

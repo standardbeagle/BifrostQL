@@ -53,6 +53,7 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         "main.blogs { approval: enabled; approver-role: manager }",
         "main.posts { approval: enabled; approver-role: manager }",
         "main.gated_posts { approval: enabled; approver-role: manager }",
+        "main.pending_changes { state-column: state; initial-state: pending; states: pending, approved, rejected, expired; transitions: pending->approved|pending->rejected|pending->expired }",
     };
 
     public async Task InitializeAsync()
@@ -521,6 +522,22 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         await enqueueDelete.Should().ThrowAsync<BifrostExecutionError>();
         (await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"2\") }", approver)).Errors.Should().BeNullOrEmpty();
         (await CountAsync("orders", "id = 11 AND deleted_at IS NOT NULL")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ExpiredPendingChange_CannotBeApproved_AndUsesTheStateMachineTransition()
+    {
+        var executor = BuildExecutor();
+        await EnqueueAsync(executor, "expired", RequesterContext());
+        var service = new ApprovalDecisionService(_model, new SqliteDbConnFactory(ConnString), executor);
+
+        await service.ExpireAsync(1, "approval window elapsed", CancellationToken.None);
+
+        (await CountAsync("pending_changes", "id = 1 AND \"state\" = 'expired' AND reason = 'approval window elapsed'")).Should().Be(1);
+        var approval = await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"1\") }", ApproverContext("bob", "manager"));
+        approval.Errors.Should().NotBeNullOrEmpty();
+        approval.Errors!.Single().Message.Should().Contain("already been decided");
+        (await CountAsync("orders", "name = 'expired'")).Should().Be(0);
     }
 
     [Fact]

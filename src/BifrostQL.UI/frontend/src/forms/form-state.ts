@@ -14,6 +14,15 @@
 
 import type { BuilderSchema, BuilderColumn } from "../lib/builder-bridge";
 
+export interface FormSubform {
+  relationship: string;
+  childTable: string;
+  parentColumns: string[];
+  childColumns: string[];
+  label: string;
+  mode: "grid" | "stacked";
+}
+
 /** The data-entry widget a field renders as. */
 export type FormControlType =
   | "text"
@@ -46,6 +55,7 @@ export interface FormDefinition {
   /** Layout columns (1–4): how many fields sit side-by-side. */
   columns: number;
   fields: FormField[];
+  subforms?: FormSubform[];
 }
 
 const MAX_LAYOUT_COLUMNS = 4;
@@ -113,7 +123,21 @@ export function buildFormFromTable(schema: BuilderSchema, qualified: string): Fo
     title: humanizeLabel(unqualifiedName(qualified)),
     columns: 1,
     fields,
+    subforms: schema.relationships
+      .filter((r) => r.rightTable === qualified && r.leftColumns.length > 0 && r.leftColumns.length === r.rightColumns.length)
+      .map((r) => ({
+        relationship: `${r.leftTable}:${r.leftColumns.join(",")}`,
+        childTable: r.leftTable,
+        parentColumns: r.rightColumns,
+        childColumns: r.leftColumns,
+        label: humanizeLabel(unqualifiedName(r.leftTable)),
+        mode: "grid" as const,
+      })),
   };
+}
+
+export function setSubformMode(def: FormDefinition, relationship: string, mode: FormSubform["mode"]): FormDefinition {
+  return { ...def, subforms: (def.subforms ?? []).map((s) => s.relationship === relationship ? { ...s, mode } : s) };
 }
 
 function mapField(

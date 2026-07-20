@@ -53,6 +53,14 @@ describe('parseFormDefinition', () => {
     expect(def!.fields[0].control).toBe('text');
     expect(def!.title).toBe('users'); // title defaults to the table
   });
+
+  it('keeps only complete schema-derived subforms, including all composite FK pairs', () => {
+    const def = parseFormDefinition({ table: 'orders', fields: [{ column: 'id' }], subforms: [
+      { relationship: 'lines', childTable: 'lines', parentColumns: ['tenant_id', 'id'], childColumns: ['tenant_id', 'order_id'], label: 'Lines', mode: 'stacked' },
+      { relationship: 'broken', childTable: 'lines', parentColumns: ['id'], childColumns: ['tenant_id', 'order_id'] },
+    ] });
+    expect(def!.subforms).toEqual([{ relationship: 'lines', childTable: 'lines', parentColumns: ['tenant_id', 'id'], childColumns: ['tenant_id', 'order_id'], label: 'Lines', mode: 'stacked' }]);
+  });
 });
 
 describe('visibleFields', () => {

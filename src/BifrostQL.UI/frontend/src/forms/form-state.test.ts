@@ -68,6 +68,12 @@ describe("buildFormFromTable", () => {
     expect(def.fields.every((f) => f.include)).toBe(true);
   });
 
+  it("derives child subforms from incoming relationships without dropping composite FK columns", () => {
+    const ordersSchema: BuilderSchema = { ...schema, tables: [...schema.tables, { schema: 'sales', name: 'orders', qualified: 'sales.orders' }, { schema: 'sales', name: 'order_lines', qualified: 'sales.order_lines' }], relationships: [{ leftTable: 'sales.order_lines', leftColumns: ['tenant_id', 'order_id'], rightTable: 'sales.orders', rightColumns: ['tenant_id', 'order_id'] }] };
+    const def = buildFormFromTable(ordersSchema, 'sales.orders');
+    expect(def.subforms).toEqual([expect.objectContaining({ childTable: 'sales.order_lines', parentColumns: ['tenant_id', 'order_id'], childColumns: ['tenant_id', 'order_id'], mode: 'grid' })]);
+  });
+
   it("makes the primary key read-only and NOT NULL columns required", () => {
     const def = buildFormFromTable(schema, "dbo.users");
     const id = def.fields.find((f) => f.column === "id")!;

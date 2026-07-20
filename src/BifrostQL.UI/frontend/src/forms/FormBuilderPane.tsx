@@ -19,6 +19,7 @@ import {
   setTitle,
   setLayoutColumns,
   moveField,
+  setSubformMode,
   visibleFields,
   type FormDefinition,
   type FormControlType,
@@ -321,6 +322,25 @@ function FieldEditor({
           ))}
         </tbody>
       </table>
+      {(def.subforms?.length ?? 0) > 0 && (
+        <section style={styles.subforms} aria-label="Related records">
+          <h3 style={styles.subformTitle}>Related records</h3>
+          {def.subforms!.map((subform) => (
+            <label key={subform.relationship} style={styles.subformRow}>
+              <span>{subform.label}</span>
+              <select
+                style={styles.select}
+                value={subform.mode}
+                aria-label={`Display ${subform.label} as`}
+                onChange={(e) => setDef((d) => d ? setSubformMode(d, subform.relationship, e.target.value as "grid" | "stacked") : d)}
+              >
+                <option value="grid">Grid</option>
+                <option value="stacked">Stacked</option>
+              </select>
+            </label>
+          ))}
+        </section>
+      )}
     </div>
   );
 }
@@ -377,6 +397,9 @@ const styles: Record<string, React.CSSProperties> = {
   editor: { flex: 1, minWidth: 0, overflow: "auto", borderRight: "1px solid var(--border, #d1d5db)", padding: 12 },
   editorHeader: { display: "flex", gap: 16, marginBottom: 12, flexWrap: "wrap" },
   fieldTable: { width: "100%", borderCollapse: "collapse", fontSize: 13 },
+  subforms: { marginTop: 18, borderTop: "1px solid var(--border, #d1d5db)", paddingTop: 10 },
+  subformTitle: { margin: "0 0 8px", fontSize: 13 },
+  subformRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 13, padding: "4px 0" },
   th: { textAlign: "left", padding: "4px 6px", borderBottom: "1px solid var(--border, #d1d5db)", color: "#6b7280", fontWeight: 600, whiteSpace: "nowrap" },
   td: { padding: "4px 6px", borderBottom: "1px solid #f1f5f9", verticalAlign: "middle" },
   preview: { flex: 1, minWidth: 0, overflow: "auto", padding: 16, background: "#f8fafc" },

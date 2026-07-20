@@ -34,6 +34,18 @@ export interface FormField {
   include: boolean;
 }
 
+/** A schema-derived related-record section below the parent form. */
+export interface FormSubform {
+  /** Stable relationship id, normally the parent collection field. */
+  relationship: string;
+  childTable: string;
+  /** Parent and child FK columns are parallel; composite links include every pair. */
+  parentColumns: string[];
+  childColumns: string[];
+  label: string;
+  mode: 'grid' | 'stacked';
+}
+
 export interface FormDefinition {
   /** Identifier of the bound table (qualified "schema.name" or GraphQL name). */
   table: string;
@@ -42,6 +54,7 @@ export interface FormDefinition {
   /** Layout columns (1–4): how many fields sit side-by-side. */
   columns: number;
   fields: FormField[];
+  subforms?: FormSubform[];
 }
 
 const MAX_LAYOUT_COLUMNS = 4;
@@ -80,6 +93,23 @@ function parseField(value: unknown): FormField | null {
   };
 }
 
+function parseSubform(value: unknown): FormSubform | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const s = value as Record<string, unknown>;
+  if (typeof s.relationship !== 'string' || typeof s.childTable !== 'string'
+    || !Array.isArray(s.parentColumns) || !Array.isArray(s.childColumns)
+    || !s.parentColumns.every((x) => typeof x === 'string') || !s.childColumns.every((x) => typeof x === 'string')
+    || s.parentColumns.length === 0 || s.parentColumns.length !== s.childColumns.length) return null;
+  return {
+    relationship: s.relationship,
+    childTable: s.childTable,
+    parentColumns: s.parentColumns as string[],
+    childColumns: s.childColumns as string[],
+    label: typeof s.label === 'string' ? s.label : s.childTable,
+    mode: s.mode === 'stacked' ? 'stacked' : 'grid',
+  };
+}
+
 /**
  * Validates an unknown value (e.g. a `SavedObject.definition`) as a
  * {@link FormDefinition}. Returns null when it cannot be bound — a missing table,
@@ -102,6 +132,7 @@ export function parseFormDefinition(value: unknown): FormDefinition | null {
     title: typeof def.title === 'string' ? def.title : def.table,
     columns: parseLayoutColumns(def.columns),
     fields,
+    subforms: Array.isArray(def.subforms) ? def.subforms.map(parseSubform).filter((s): s is FormSubform => s !== null) : undefined,
   };
 }
 

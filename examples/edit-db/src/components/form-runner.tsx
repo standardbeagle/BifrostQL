@@ -42,6 +42,7 @@ import {
   type FieldWidgetHint,
 } from '../lib/form-widget';
 import { nextIndex, canNavigate, positionLabel, type NavDirection } from '../lib/form-runner-nav';
+import { FormSubformPanel } from './form-subform';
 
 /** Unqualified suffix of a possibly "schema.name"-qualified identifier. */
 function unqualified(id: string): string {
@@ -146,13 +147,14 @@ interface FormRunnerViewProps {
   /** App-metadata widget hints keyed by column name (widget / visible / readOnly). */
   fieldMetadata?: Record<string, FieldWidgetHint>;
   onClose?: () => void;
+  schema?: SchemaContextValue;
 }
 
 /**
  * The bound runtime for a resolved table. Split from {@link FormRunner} so it can
  * be exercised directly with a `Table` and a fetcher, without a schema fetch.
  */
-export function FormRunnerView({ table, definition, fieldMetadata, onClose }: FormRunnerViewProps) {
+export function FormRunnerView({ table, definition, fieldMetadata, onClose, schema }: FormRunnerViewProps) {
   const fetcher = useFetcher();
   const queryClient = useQueryClient();
 
@@ -209,7 +211,11 @@ export function FormRunnerView({ table, definition, fieldMetadata, onClose }: Fo
     [editColumns],
   );
 
-  const fields = useMemo(() => selectFields(bound, table), [bound, table]);
+  const fields = useMemo(() => {
+    const selected = new Set(selectFields(bound, table));
+    for (const subform of definition.subforms ?? []) for (const source of subform.parentColumns) selected.add(source);
+    return [...selected];
+  }, [bound, table, definition.subforms]);
 
   // The active-row read: an offset browse (row + total) or a pinned by-PK lookup.
   const rowQuery = useMemo(() => {
@@ -437,6 +443,10 @@ export function FormRunnerView({ table, definition, fieldMetadata, onClose }: Fo
             })}
           </div>
         )}
+        {!isNew && currentRow && schema && (definition.subforms ?? []).map((subform) => {
+          const child = resolveDefinitionTable(schema, subform.childTable);
+          return child ? <FormSubformPanel key={subform.relationship} parent={table} child={child} subform={subform} row={currentRow} /> : <p key={subform.relationship} style={styles.notice}>{subform.label} is not available in this schema.</p>;
+        })}
       </div>
 
       <div style={styles.footer}>
@@ -534,7 +544,7 @@ export function FormRunner({ definition, fieldMetadata, onClose }: FormRunnerPro
   if (!table) {
     return <div style={styles.notice}>Table “{definition.table}” is not in the current schema.</div>;
   }
-  return <FormRunnerView table={table} definition={definition} fieldMetadata={fieldMetadata} onClose={onClose} />;
+  return <FormRunnerView table={table} definition={definition} fieldMetadata={fieldMetadata} onClose={onClose} schema={schema} />;
 }
 
 const styles: Record<string, React.CSSProperties> = {

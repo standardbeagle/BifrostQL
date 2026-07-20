@@ -370,7 +370,10 @@ namespace BifrostQL.Core.Modules.Cdc
             var sql =
                 $"SELECT {columnList} FROM {tableRef} " +
                 $"WHERE {dialect.EscapeIdentifier(MetadataKeys.Cdc.ColDispatchedAt)} IS NULL " +
-                $"AND {dialect.EscapeIdentifier(MetadataKeys.Cdc.ColDead)} = @dead {pagination};";
+                $"AND {dialect.EscapeIdentifier(MetadataKeys.Cdc.ColDead)} = @dead " +
+                (outbox.Columns.Any(c => string.Equals(c.ColumnName, DeferredOutboxColumns.State, StringComparison.OrdinalIgnoreCase))
+                    ? $"AND ({dialect.EscapeIdentifier(DeferredOutboxColumns.State)} IS NULL OR {dialect.EscapeIdentifier(DeferredOutboxColumns.State)} = '{DeferredOutboxColumns.Pending}') "
+                    : string.Empty) + pagination + ";";
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;

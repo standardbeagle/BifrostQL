@@ -2,6 +2,7 @@ using System.Text.Json;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.Deferred;
+using BifrostQL.Core.Modules.Cdc;
 using BifrostQL.Core.Modules.History;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
@@ -26,7 +27,7 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
     {
         _keepAlive = new SqliteConnection(ConnString);
         await _keepAlive.OpenAsync();
-        foreach (var table in new[] { "__history", "tenant_widgets", "soft_widgets", "widgets", "change_set_deltas", "change_sets" })
+        foreach (var table in new[] { "__outbox", "__history", "tenant_widgets", "soft_widgets", "widgets", "change_set_deltas", "change_sets" })
             await Exec($"DROP TABLE IF EXISTS {table}");
         await Exec("CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT NULL CHECK (name <> 'boom'), version INTEGER NULL DEFAULT 1)");
         await Exec("CREATE TABLE soft_widgets (id INTEGER PRIMARY KEY, name TEXT NULL, deleted_at TEXT NULL, version INTEGER NULL DEFAULT 1)");
@@ -34,6 +35,7 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
         await Exec("CREATE TABLE __history (id INTEGER PRIMARY KEY, entity TEXT NOT NULL, entity_id TEXT NOT NULL, op TEXT NOT NULL, actor TEXT NULL, tenant_id INTEGER NULL, changed_at TEXT NOT NULL, before TEXT NULL, after TEXT NULL, changed_columns TEXT NULL)");
         await Exec("CREATE TABLE change_sets (id INTEGER PRIMARY KEY, state TEXT NOT NULL, undo_window_expires_at TEXT NOT NULL, requester TEXT NULL, tenant TEXT NULL, tables TEXT NOT NULL, created_at TEXT NOT NULL, applied_at TEXT NULL, reversed_at TEXT NULL)");
         await Exec("CREATE TABLE change_set_deltas (id INTEGER PRIMARY KEY, change_set_id INTEGER NOT NULL, \"table\" TEXT NOT NULL, pk TEXT NOT NULL, op TEXT NOT NULL, inverse_op TEXT NOT NULL, before_image TEXT NULL, after_image TEXT NULL, created_at TEXT NOT NULL)");
+        await Exec("CREATE TABLE __outbox (id INTEGER PRIMARY KEY, aggregate TEXT NOT NULL, op TEXT NOT NULL, payload TEXT NOT NULL, tenant TEXT NULL, created_at TEXT NOT NULL, dispatched_at TEXT NULL, attempts INTEGER NOT NULL DEFAULT 0, dead INTEGER NOT NULL DEFAULT 0, change_set_id INTEGER NULL, state TEXT NULL)");
         await Exec("INSERT INTO widgets(id, name) VALUES (1, 'original')");
         await Exec("INSERT INTO soft_widgets(id, name) VALUES (1, 'soft-original')");
         await Exec("INSERT INTO tenant_widgets(id, tenant_id, name) VALUES (1, 1, 'tenant-original')");
@@ -218,6 +220,44 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task HoldEvents_WritesPendingHoldAndTimedReleaseIsIdempotent()
+    {
+        var model = await LoadModelAsync(
+            "main.widgets { emit-events: insert; hold-events: until-window }",
+            ":root { outbox-table: main.__outbox }");
+
+        var result = await ExecuteMutationAsync("mutation { widgets(insert: { name: \"held-event\" }) }", model);
+
+        result.Errors.Should().BeNullOrEmpty();
+        (await ScalarAsync("SELECT state || ':' || change_set_id FROM __outbox")).Should().MatchRegex("pending_hold:[0-9]+");
+        (await new DeferredOutboxReleaseEngine(model, new SqliteDbConnFactory(ConnString))
+            .ReleaseOnceAsync(DateTimeOffset.UtcNow.AddHours(2))).Should().Be(1);
+        (await new DeferredOutboxReleaseEngine(model, new SqliteDbConnFactory(ConnString))
+            .ReleaseOnceAsync(DateTimeOffset.UtcNow.AddHours(2))).Should().Be(0);
+        (await ScalarAsync("SELECT state FROM __outbox")).Should().Be("pending");
+    }
+
+    [Fact]
+    public async Task Undo_SuppressesHeldEvent_AndCompensatesDispatchedEvent()
+    {
+        var model = await LoadModelAsync(":root { outbox-table: main.__outbox }");
+        await Exec("UPDATE widgets SET name='edited', version=2 WHERE id=1");
+        await SeedChangeSetAsync(90, "main.widgets", 1, "update", "restore", "{\"id\":1,\"name\":\"original\",\"version\":1}", "{\"id\":1,\"name\":\"edited\",\"version\":2}");
+        await Exec("INSERT INTO __outbox(id,aggregate,op,payload,created_at,attempts,dead,change_set_id,state) VALUES(90,'main.widgets','update','{\"id\":1}','2026-07-20',0,0,90,'pending_hold')");
+
+        await new DeferredUndoEngine(model, new SqliteDbConnFactory(ConnString), BuildMutationExecutor(model))
+            .UndoAsync(90, new Dictionary<string, object?>());
+        (await ScalarAsync("SELECT state FROM __outbox WHERE id=90")).Should().Be("suppressed");
+
+        await Exec("UPDATE widgets SET name='edited-again', version=4 WHERE id=1");
+        await SeedChangeSetAsync(91, "main.widgets", 1, "update", "restore", "{\"id\":1,\"name\":\"original\",\"version\":3}", "{\"id\":1,\"name\":\"edited-again\",\"version\":4}");
+        await Exec("INSERT INTO __outbox(id,aggregate,op,payload,created_at,dispatched_at,attempts,dead,change_set_id,state) VALUES(91,'main.widgets','update','{\"id\":1}','2026-07-20','2026-07-20',0,0,91,'pending')");
+        await new DeferredUndoEngine(model, new SqliteDbConnFactory(ConnString), BuildMutationExecutor(model))
+            .UndoAsync(91, new Dictionary<string, object?>());
+        (await CountAsync("__outbox", "change_set_id=91 AND op='compensate' AND state='pending'")).Should().Be(1);
+    }
+
+    [Fact]
     public async Task MissingBeforeImage_FailsClosedAndRollsBackWrite()
     {
         var result = await ExecuteMutationAsync("mutation { widgets(update: { id: 1, name: \"must-not-commit\" }) }", registerHistory: false);
@@ -259,6 +299,7 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
             services.AddSingleton<IInTransactionMutationHook>(sp => sp.GetRequiredService<HistoryMutationHook>());
         }
         services.AddSingleton<IInTransactionMutationHook, DeferredDeltaMutationHook>();
+        services.AddSingleton<IInTransactionMutationHook, OutboxMutationHook>();
         if (addFailingHook)
             services.AddSingleton<IInTransactionMutationHook, FailingHook>();
         services.AddSingleton<BeforeCommitMutationHooks>(sp => new BeforeCommitMutationHooks(sp.GetServices<IBeforeCommitMutationHook>().ToArray()));

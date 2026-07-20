@@ -80,11 +80,12 @@ public sealed class DeferredConfig
         if (string.IsNullOrWhiteSpace(raw))
             return false;
 
-        if (string.Equals(raw.Trim(), MetadataKeys.Deferred.Enabled, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(raw.Trim(), MetadataKeys.Deferred.Enabled, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(raw.Trim(), "until-window", StringComparison.OrdinalIgnoreCase))
             return true;
 
         throw new InvalidOperationException(
-            $"'{MetadataKeys.Deferred.HoldEvents}' on '{table.TableSchema}.{table.DbName}' must be '{MetadataKeys.Deferred.Enabled}' when present.");
+            $"'{MetadataKeys.Deferred.HoldEvents}' on '{table.TableSchema}.{table.DbName}' must be 'until-window' when present.");
     }
 
     private static InvalidOperationException InvalidDuration(IDbTable table, string token, string detail) =>

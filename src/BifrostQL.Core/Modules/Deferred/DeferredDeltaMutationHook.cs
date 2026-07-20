@@ -42,6 +42,18 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
         IDbTable DeltaTable,
         HashSet<string> TouchedTables);
 
+    /// <summary>Returns the change set created for the current mutation transaction.</summary>
+    public static bool TryGetActiveChangeSetId(IDictionary<string, object?> mutationState, out object? id)
+    {
+        if (mutationState.TryGetValue(ActiveChangeSetKey, out var stored) && stored is ActiveChangeSet active)
+        {
+            id = active.Id;
+            return true;
+        }
+        id = null;
+        return false;
+    }
+
     public async ValueTask AfterWriteInTransactionAsync(MutationObserverContext context)
     {
         var config = DeferredConfig.FromTable(context.Table);

@@ -3,6 +3,7 @@ using System.Text.Json;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.Core.Modules.Cdc;
 
 namespace BifrostQL.Core.Modules.Deferred;
 
@@ -34,6 +35,8 @@ public sealed class DeferredUndoEngine
             throw new BifrostExecutionError("The deferred change set is not available for undo.");
         if (changeSet.ExpiresAt <= DateTimeOffset.UtcNow)
             throw new BifrostExecutionError("The deferred change set undo window has expired.");
+        if (!await TryClaimUndoAsync(changeSetId, cancellationToken))
+            throw new BifrostExecutionError("The deferred change set is not available for undo.");
 
         var undone = 0;
         var conflicts = 0;
@@ -56,6 +59,7 @@ public sealed class DeferredUndoEngine
             }
         }
 
+        await SettleHeldEventsAsync(changeSetId, cancellationToken);
         await SetStateAsync(changeSetId, conflicts == 0 ? Undone : Partial, cancellationToken);
         return new DeferredUndoResult(changeSetId, undone, conflicts, false);
     }
@@ -157,6 +161,46 @@ public sealed class DeferredUndoEngine
         command.CommandText = $"UPDATE {_connections.Dialect.TableReference(table.TableSchema, table.DbName)} SET {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.State)} = @state, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.ReversedAt)} = @at WHERE {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Id)} = @id";
         Add(command, "@state", state); Add(command, "@at", DateTimeOffset.UtcNow); Add(command, "@id", id);
         if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new BifrostExecutionError("The deferred change set state could not be recorded.");
+    }
+
+    private async Task<bool> TryClaimUndoAsync(long id, CancellationToken cancellationToken)
+    {
+        var table = FindTable(MetadataKeys.Deferred.ChangeSet.Table);
+        await using var connection = _connections.GetConnection();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"UPDATE {_connections.Dialect.TableReference(table.TableSchema, table.DbName)} SET {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.State)}=@claim WHERE {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Id)}=@id AND {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.State)}=@held AND {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.UndoWindowExpiresAt)}>@now";
+        Add(command, "@claim", "undoing"); Add(command, "@id", id); Add(command, "@held", Held); Add(command, "@now", DateTimeOffset.UtcNow);
+        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+    }
+
+    private async Task SettleHeldEventsAsync(long changeSetId, CancellationToken cancellationToken)
+    {
+        var outboxName = _model.GetMetadataValue(MetadataKeys.Cdc.OutboxTable);
+        var outbox = string.IsNullOrWhiteSpace(outboxName) ? null : ModelTableReference.Find(_model, outboxName);
+        if (outbox is null || !outbox.Columns.Any(c => string.Equals(c.ColumnName, DeferredOutboxColumns.State, StringComparison.OrdinalIgnoreCase)))
+            return;
+        var d = _connections.Dialect;
+        var table = d.TableReference(outbox.TableSchema, outbox.DbName);
+        await using var connection = _connections.GetConnection();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var columns = new[] { MetadataKeys.Cdc.ColAggregate, MetadataKeys.Cdc.ColOp, MetadataKeys.Cdc.ColPayload, MetadataKeys.Cdc.ColTenant, MetadataKeys.Cdc.ColCreatedAt, MetadataKeys.Cdc.ColAttempts, MetadataKeys.Cdc.ColDead, DeferredOutboxColumns.State, DeferredOutboxColumns.ChangeSetId };
+        await using (var compensate = connection.CreateCommand())
+        {
+            compensate.Transaction = transaction;
+            compensate.CommandText = $"INSERT INTO {table} ({string.Join(",", columns.Select(d.EscapeIdentifier))}) SELECT {d.EscapeIdentifier(MetadataKeys.Cdc.ColAggregate)},@op,{d.EscapeIdentifier(MetadataKeys.Cdc.ColPayload)},{d.EscapeIdentifier(MetadataKeys.Cdc.ColTenant)},@now,0,@dead,@pending,{d.EscapeIdentifier(DeferredOutboxColumns.ChangeSetId)} FROM {table} WHERE {d.EscapeIdentifier(DeferredOutboxColumns.ChangeSetId)}=@id AND {d.EscapeIdentifier(MetadataKeys.Cdc.ColDispatchedAt)} IS NOT NULL";
+            Add(compensate, "@op", "compensate"); Add(compensate, "@now", DateTimeOffset.UtcNow); Add(compensate, "@dead", false); Add(compensate, "@pending", DeferredOutboxColumns.Pending); Add(compensate, "@id", changeSetId);
+            await compensate.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await using (var suppress = connection.CreateCommand())
+        {
+            suppress.Transaction = transaction;
+            suppress.CommandText = $"UPDATE {table} SET {d.EscapeIdentifier(DeferredOutboxColumns.State)}=@suppressed WHERE {d.EscapeIdentifier(DeferredOutboxColumns.ChangeSetId)}=@id AND {d.EscapeIdentifier(MetadataKeys.Cdc.ColDispatchedAt)} IS NULL AND {d.EscapeIdentifier(MetadataKeys.Cdc.ColOp)}<>@compensate";
+            Add(suppress, "@suppressed", DeferredOutboxColumns.Suppressed); Add(suppress, "@id", changeSetId); Add(suppress, "@compensate", "compensate");
+            await suppress.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
     }
 
     private static Dictionary<string, object?> DeserializeObject(string? json, string name)

@@ -86,8 +86,8 @@ namespace BifrostQL.Server
             // the one built-in — it no-ops for tables without emit-events metadata and
             // writes its event on the mutation's own transaction, after the write, so it
             // can name the generated identity. A host/test may register additional hooks.
-            services.AddSingleton<IInTransactionMutationHook, BifrostQL.Core.Modules.Cdc.OutboxMutationHook>();
             services.AddSingleton<IInTransactionMutationHook, BifrostQL.Core.Modules.Deferred.DeferredDeltaMutationHook>();
+            services.AddSingleton<IInTransactionMutationHook, BifrostQL.Core.Modules.Cdc.OutboxMutationHook>();
             services.AddSingleton<InTransactionMutationHooks>(sp => new InTransactionMutationHooks(
                 sp.GetServices<IInTransactionMutationHook>().ToArray()));
 
@@ -362,6 +362,9 @@ namespace BifrostQL.Server
             services.AddSingleton<Microsoft.Extensions.Hosting.IHostedService>(sp =>
                 new CdcOutboxHostedService(
                     sp.GetRequiredService<BifrostQL.Core.Modules.Cdc.OutboxDispatcher>()));
+            services.AddSingleton<Microsoft.Extensions.Hosting.IHostedService>(sp =>
+                new DeferredOutboxReleaseHostedService(
+                    sp.GetRequiredService<Core.Schema.PathCache<GraphQL.Inputs>>()));
 
             // The metadata-driven retention purge is a background worker in the same shape as the
             // CDC dispatcher (Core engine + thin IHostedService wrapper), so it is registered here
@@ -581,6 +584,48 @@ namespace BifrostQL.Server
                 var completed = await Task.WhenAny(_loop, Task.Delay(Timeout.Infinite, cancellationToken));
                 if (completed == _loop)
                     await _loop; // observe any fault (RunAsync is fail-safe, so this is defensive)
+            }
+        }
+    }
+
+    /// <summary>Periodically releases expired deferred CDC holds for the dispatcher.</summary>
+    internal sealed class DeferredOutboxReleaseHostedService : Microsoft.Extensions.Hosting.IHostedService
+    {
+        private readonly Core.Schema.PathCache<GraphQL.Inputs> _paths;
+        private readonly CancellationTokenSource _stopping = new();
+        private Task? _loop;
+
+        public DeferredOutboxReleaseHostedService(Core.Schema.PathCache<GraphQL.Inputs> paths) => _paths = paths;
+
+        public Task StartAsync(CancellationToken cancellationToken)
+        {
+            _loop = RunAsync(_stopping.Token);
+            return Task.CompletedTask;
+        }
+
+        public async Task StopAsync(CancellationToken cancellationToken)
+        {
+            _stopping.Cancel();
+            if (_loop is not null)
+                await Task.WhenAny(_loop, Task.Delay(Timeout.Infinite, cancellationToken));
+        }
+
+        private async Task RunAsync(CancellationToken cancellationToken)
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    var inputs = await _paths.GetFirstValueAsync();
+                    if (inputs is not null
+                        && inputs.TryGetValue("model", out var modelValue) && modelValue is BifrostQL.Core.Model.IDbModel model
+                        && inputs.TryGetValue("connFactory", out var factoryValue) && factoryValue is BifrostQL.Core.Model.IDbConnFactory factory)
+                        await new BifrostQL.Core.Modules.Cdc.DeferredOutboxReleaseEngine(model, factory)
+                            .ReleaseOnceAsync(DateTimeOffset.UtcNow, cancellationToken);
+                    await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+                catch { await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken); }
             }
         }
     }

@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.Core.Modules.Deferred;
 
 namespace BifrostQL.Core.Modules.Cdc
 {
@@ -87,6 +88,15 @@ namespace BifrostQL.Core.Modules.Cdc
                 // id is an identity column and dispatched_at starts NULL, so both are
                 // omitted from the INSERT column list.
             };
+
+            var deferred = DeferredConfig.FromTable(context.Table);
+            if (deferred.HoldEvents)
+            {
+                if (!DeferredDeltaMutationHook.TryGetActiveChangeSetId(context.MutationState, out var changeSetId))
+                    throw new BifrostExecutionError("CDC hold requires an active deferred change set in the mutation transaction.");
+                eventRow[DeferredOutboxColumns.ChangeSetId] = changeSetId;
+                eventRow[DeferredOutboxColumns.State] = DeferredOutboxColumns.PendingHold;
+            }
 
             var tableRef = context.Dialect.TableReference(outbox.TableSchema, outbox.DbName);
             var sql = MutationCommandExecutor.BuildInsertInto(context.Dialect, outbox, tableRef, eventRow.Keys) + ";";

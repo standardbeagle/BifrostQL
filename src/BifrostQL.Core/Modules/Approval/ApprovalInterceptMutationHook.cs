@@ -54,6 +54,18 @@ namespace BifrostQL.Core.Modules.Approval
         // Stored in the mutation's shared MutationState bag (ordinal key, code-owned).
         internal const string DivertMessageKey = "bifrost.approval.pending-message";
 
+        // The caller's logical verb, retained in the hook's non-serialized state bag when
+        // a transformer rewrites it physically (Delete -> soft-delete Update).
+        internal const string LogicalMutationTypeKey = "bifrost.approval.logical-mutation-type";
+
+        internal static void SetLogicalMutationType(MutationObserverContext context, MutationType type)
+            => context.MutationState[LogicalMutationTypeKey] = type;
+
+        private static MutationType LogicalMutationType(MutationObserverContext context)
+            => context.MutationState.TryGetValue(LogicalMutationTypeKey, out var value) && value is MutationType type
+                ? type
+                : context.MutationType;
+
         /// <summary>Internal marker used only when an already-approved intent is replayed.</summary>
         internal const string ReplayMarkerKey = "bifrost.approval.replay";
         private static readonly object ApprovedReplayToken = new();
@@ -221,8 +233,8 @@ namespace BifrostQL.Core.Modules.Approval
             => new(StringComparer.OrdinalIgnoreCase)
             {
                 [PendingChangeStore.ColTable] = Qualify(context.Table),
-                [PendingChangeStore.ColOp] = context.MutationType.ToString().ToLowerInvariant(),
-                // The POST-transformer, scoped intent — see the ordering note on the class.
+                [PendingChangeStore.ColOp] = LogicalMutationType(context).ToString().ToLowerInvariant(),
+                // The POST-transformer, scoped physical intent — see the ordering note on the class.
                 [PendingChangeStore.ColPayload] = JsonSerializer.Serialize(context.Data),
                 // Requester + tenant come from the caller's context so replay (slice 3) runs
                 // under the REQUESTER's scope, not the approver's.

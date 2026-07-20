@@ -279,7 +279,7 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
 
         var pending = await PendingRowsAsync();
         pending.Should().ContainSingle();
-        pending[0].Op.Should().Be("update", "the configured soft-delete transformer rewrites deletes before approval intercepts them");
+        pending[0].Op.Should().Be("delete", "approval authorization and replay retain the caller's logical delete action");
     }
 
     [Fact]
@@ -394,6 +394,26 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         result.Errors.Should().NotBeNullOrEmpty();
         result.Errors!.Single().Message.Should().Contain("cannot approve their own");
         (await CountAsync("orders", "name = 'self-denied'")).Should().Be(0);
+        (await CountAsync("pending_changes", "id = 1 AND \"state\" = 'pending'")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GraphQlApprove_DeleteDeniedByPolicy_StaysPendingDespiteSoftDeleteRewrite()
+    {
+        var executor = BuildExecutor();
+        Func<Task> enqueue = async () => await executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "orders", Action = MutationIntentAction.Delete, Data = new Dictionary<string, object?>(),
+            PrimaryKey = new object?[] { 10 }, UserContext = RequesterContext(), Endpoint = EndpointPath,
+        });
+        await enqueue.Should().ThrowAsync<BifrostExecutionError>();
+
+        ((DbTable)_model.GetTableFromDbName("orders")).Metadata["policy-actions"] = "read,update";
+        var result = await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"1\") }", ApproverContext("bob", "manager"));
+
+        result.Errors.Should().NotBeNullOrEmpty();
+        result.Errors!.Single().Message.Should().Contain("not authorized to approve");
+        (await CountAsync("orders", "id = 10 AND deleted_at IS NULL")).Should().Be(1);
         (await CountAsync("pending_changes", "id = 1 AND \"state\" = 'pending'")).Should().Be(1);
     }
 

@@ -214,7 +214,7 @@ namespace BifrostQL.Core.Resolvers
         /// </summary>
         private static async Task<(T Result, string? PendingApproval)> RunHookedWriteAsync<T>(
             BatchExecutionContext ctx, MutationType type, IDictionary<string, object?> data,
-            Func<Task<T>> write)
+            Func<Task<T>> write, MutationType? logicalType = null)
         {
             var hookContext = new MutationObserverContext
             {
@@ -230,6 +230,8 @@ namespace BifrostQL.Core.Resolvers
                 ConnFactory = ctx.ConnFactory,
                 MutationState = MutationObserverContext.NewMutationState(),
             };
+            if (logicalType is not null)
+                ApprovalInterceptMutationHook.SetLogicalMutationType(hookContext, logicalType.Value);
             await MutationNotifier.RunBeforeCommitHooksAsync(ctx.TransformContext.Services, hookContext);
             // Approval gate: the action was enqueued as a pending change on the batch's shared
             // transaction. Skip its write (and the after-write hooks) so nothing applies; the
@@ -408,7 +410,7 @@ namespace BifrostQL.Core.Resolvers
                     AddParameters(cmd, dbData);
                     AddExtraParameters(cmd, additionalFilter.Parameters);
                     return await cmd.ExecuteNonQueryAsync(ctx.Ct);
-                });
+                }, MutationType.Delete);
                 if (softPending is not null)
                     return new BatchActionOutcome(0, MutationType.Update, transformResult.Data, null, softPending);
                 return new BatchActionOutcome(softAffected, MutationType.Update, transformResult.Data, transformResult.StateTransition);

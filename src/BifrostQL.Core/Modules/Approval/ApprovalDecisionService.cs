@@ -57,6 +57,12 @@ public sealed class ApprovalDecisionService
             key = keyValues;
             foreach (var column in target.KeyColumns)
                 values.Remove(column.ColumnName);
+
+            // A queued soft-delete payload contains the physical UPDATE's stamped columns.
+            // Replay its logical DELETE with only its predicate: the normal mutation pipeline
+            // re-applies soft-delete, tenant, policy, audit, and encryption transformers.
+            if (action == MutationIntentAction.Delete)
+                values.Clear();
         }
 
         // The replay applies the data write AND (via the intercept hook's before-commit phase)

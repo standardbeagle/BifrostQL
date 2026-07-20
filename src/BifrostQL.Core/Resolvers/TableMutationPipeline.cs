@@ -375,6 +375,7 @@ namespace BifrostQL.Core.Resolvers
             await MutationCommandExecutor.RunInTransactionAsync(ctx.ConnFactory, async (conn, transaction) =>
             {
                 var hookContext = HookContext(table, MutationType.Update, dbData, ctx, conn, transaction, dialect);
+                ApprovalInterceptMutationHook.SetLogicalMutationType(hookContext, MutationType.Delete);
                 await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, hookContext);
                 if (ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))
                 {

@@ -111,6 +111,7 @@ public sealed class TreeSyncExecutor
                 ResolveForeignKeys(op, idsByTable, idsByInstance);
 
                 var mutationType = MapMutationType(op.OperationType);
+                var logicalMutationType = mutationType;
                 var data = op.Data;
                 (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter
                     = ("", Array.Empty<SqlParameterInfo>());
@@ -162,6 +163,7 @@ public sealed class TreeSyncExecutor
                         ConnFactory = connFactory,
                         MutationState = MutationObserverContext.NewMutationState(),
                     };
+                    Approval.ApprovalInterceptMutationHook.SetLogicalMutationType(hookContext, logicalMutationType);
                     await MutationNotifier.RunBeforeCommitHooksAsync(services, hookContext);
 
                     // Approval gate: this operation was enqueued as a pending change on the

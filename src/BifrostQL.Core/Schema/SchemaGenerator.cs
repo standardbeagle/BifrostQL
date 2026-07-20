@@ -152,6 +152,11 @@ namespace BifrostQL.Core.Schema
                 {
                     builder.Append(FileStorageSchemaExtensions.GetFileStorageMutationFields());
                 }
+                if (model.Tables.Any(table => Modules.Approval.ApprovalConfig.FromTable(table).RequiresApproval))
+                {
+                    builder.AppendLine("approve(pendingChangeId: ID!): Boolean!");
+                    builder.AppendLine("reject(pendingChangeId: ID!, reason: String!): Boolean!");
+                }
                 builder.AppendLine("}");
             }
 

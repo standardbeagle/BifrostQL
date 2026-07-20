@@ -54,6 +54,9 @@ namespace BifrostQL.Core.Modules.Approval
         // Stored in the mutation's shared MutationState bag (ordinal key, code-owned).
         internal const string DivertMessageKey = "bifrost.approval.pending-message";
 
+        /// <summary>Internal marker used only when an already-approved intent is replayed.</summary>
+        internal const string ReplayMarkerKey = "bifrost.approval.replay";
+
         /// <summary>
         /// True when the before-commit phase DIVERTED this mutation into approval (the hook
         /// enqueued a pending_changes row on the mutation's transaction). Every write path calls
@@ -80,8 +83,9 @@ namespace BifrostQL.Core.Modules.Approval
         public async ValueTask<IReadOnlyList<string>> BeforeCommitAsync(MutationObserverContext context)
         {
             var config = ApprovalConfig.FromTable(context.Table);
-            if (!config.RequiresApproval)
-                return Array.Empty<string>(); // Ungated: no-op, the write proceeds normally.
+            if (!config.RequiresApproval ||
+                (context.UserContext.TryGetValue(ReplayMarkerKey, out var replay) && replay is true))
+                return Array.Empty<string>(); // Ungated or approved replay: proceed normally.
 
             // Fail-closed: the gate can only run in the before-commit phase, where these are
             // populated on every write path. Their absence means the hook was invoked outside

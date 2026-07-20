@@ -237,7 +237,10 @@ namespace BifrostQL.Core.Resolvers
 
                 var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
                 var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, standardData.Keys, propertyInfo.keyData.Keys, additionalFilter.WhereSuffix);
-                var hookContext = HookContext(table, MutationType.Update, updatedData, ctx, conn, transaction, dialect);
+                var hookData = new Dictionary<string, object?>(updatedData, StringComparer.OrdinalIgnoreCase);
+                foreach (var key in propertyInfo.keyData)
+                    hookData[key.Key] = key.Value;
+                var hookContext = HookContext(table, MutationType.Update, hookData, ctx, conn, transaction, dialect);
                 await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, hookContext);
                 // Approval gate: the update was enqueued as a pending change — skip the write,
                 // commit the pending row, surface pending-approval after the transaction.

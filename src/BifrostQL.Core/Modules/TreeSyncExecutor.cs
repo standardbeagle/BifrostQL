@@ -158,6 +158,7 @@ public sealed class TreeSyncExecutor
                         Transaction = null,
                         Model = model,
                         Dialect = _dialect,
+                        ConnFactory = connFactory,
                         MutationState = MutationObserverContext.NewMutationState(),
                     };
                     await MutationNotifier.RunBeforeCommitHooksAsync(services, hookContext);

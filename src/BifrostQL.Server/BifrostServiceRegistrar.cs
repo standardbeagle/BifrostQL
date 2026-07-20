@@ -70,6 +70,15 @@ namespace BifrostQL.Server
                 sp.GetRequiredService<BifrostQL.Core.Modules.History.HistoryMutationHook>());
             services.AddSingleton<IInTransactionMutationHook>(sp =>
                 sp.GetRequiredService<BifrostQL.Core.Modules.History.HistoryMutationHook>());
+            // The approval write-gate. On a table opted into `approval`, it enqueues the
+            // (post-transformer, tenant/policy-scoped) intended change into a pending_changes
+            // row on its OWN committed connection, then vetoes the target write so the change
+            // never applies — only the pending row lands. It no-ops for ungated tables. It is
+            // stateless (resolves everything from the hook context), so registration order is
+            // immaterial: hooks always run AFTER the transformer chain, so the payload it
+            // serializes is already the scoped intent.
+            services.AddSingleton<IBeforeCommitMutationHook,
+                BifrostQL.Core.Modules.Approval.ApprovalInterceptMutationHook>();
             // Before-commit veto hooks: built from every registered IBeforeCommitMutationHook.
             services.AddSingleton<BeforeCommitMutationHooks>(sp => new BeforeCommitMutationHooks(
                 sp.GetServices<IBeforeCommitMutationHook>().ToArray()));

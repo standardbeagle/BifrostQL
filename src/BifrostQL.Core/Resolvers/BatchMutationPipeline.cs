@@ -78,7 +78,7 @@ namespace BifrostQL.Core.Resolvers
                 // so the executors take only their per-action data.
                 var execContext = new BatchExecutionContext(
                     table, ctx.Transformers, ctx.Model, ctx.ConnFactory.Dialect, conn, transaction,
-                    ctx.UserContext, transformContext, ctx.ModuleArguments, ct);
+                    ctx.UserContext, transformContext, ctx.ModuleArguments, ct, ctx.ConnFactory);
                 foreach (var action in actions)
                 {
                     var outcome = await ExecuteAction(execContext, action);
@@ -167,7 +167,8 @@ namespace BifrostQL.Core.Resolvers
             IDictionary<string, object?> UserContext,
             MutationTransformContext TransformContext,
             IReadOnlyDictionary<string, object?> ModuleArguments,
-            CancellationToken Ct);
+            CancellationToken Ct,
+            IDbConnFactory ConnFactory);
 
         private static async Task<BatchActionOutcome?> ExecuteAction(BatchExecutionContext ctx, BatchAction action)
         {
@@ -213,6 +214,7 @@ namespace BifrostQL.Core.Resolvers
                 Transaction = ctx.Transaction,
                 Model = ctx.Model,
                 Dialect = ctx.Dialect,
+                ConnFactory = ctx.ConnFactory,
                 MutationState = MutationObserverContext.NewMutationState(),
             };
             await MutationNotifier.RunBeforeCommitHooksAsync(ctx.TransformContext.Services, hookContext);

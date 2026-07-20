@@ -48,6 +48,19 @@ public sealed record MutationObserverContext
     public ISqlDialect? Dialect { get; init; }
 
     /// <summary>
+    /// The connection factory for the in-flight mutation (before-commit only; else null). A
+    /// before-commit hook that must DURABLY write while ABORTING the mutation — the approval
+    /// intercept, which enqueues a pending_changes row and then vetoes the target write — needs
+    /// its own connection/transaction: the veto surfaces as a <c>BifrostExecutionError</c> that
+    /// rolls the mutation's transaction back, so a write on <see cref="Connection"/>/
+    /// <see cref="Transaction"/> would be discarded with it. Writing on a fresh connection from
+    /// this factory lets the enqueue commit independently of the vetoed target write. A hook
+    /// that only reads the pre-image (change-history) uses <see cref="Connection"/> and ignores
+    /// this. Populated on every before-commit path (single-row, batch, TreeSync).
+    /// </summary>
+    public IDbConnFactory? ConnFactory { get; init; }
+
+    /// <summary>
     /// Scratchpad shared by the before-commit and after-write in-transaction phases of
     /// the SAME mutation, so a hook that must observe the row BEFORE the write (the
     /// change-history before-image) can hand that observation to its own after-write

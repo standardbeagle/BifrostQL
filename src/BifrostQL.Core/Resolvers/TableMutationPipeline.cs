@@ -63,6 +63,7 @@ namespace BifrostQL.Core.Resolvers
                 Transaction = transaction,
                 Model = ctx.Model,
                 Dialect = dialect,
+                ConnFactory = ctx.ConnFactory,
                 MutationState = MutationObserverContext.NewMutationState(),
             };
 

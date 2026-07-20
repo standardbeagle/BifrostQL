@@ -20,6 +20,16 @@ namespace BifrostQL.Core.Modules.Approval
     /// </summary>
     public static class PendingChangeStore
     {
+        /// <summary>
+        /// Conventional DbName of the pending-changes store table. The intercept hook (slice 2)
+        /// resolves the store by this name from the model — there is no per-table metadata key
+        /// pointing at it — so a deployment that opts a table into approval MUST create a table
+        /// with this DbName (in any schema) carrying the <see cref="StateMachineMetadata"/>. When
+        /// the store table is absent from the model, a gated write is REFUSED (fail-closed): a
+        /// gate that cannot enqueue must never let the write through un-gated.
+        /// </summary>
+        public const string TableName = "pending_changes";
+
         // --- Store schema columns (id, table, op, intended-payload json, requester, tenant,
         // state, approver, decided_at, reason). Names pinned so slices 2-3 use these, never
         // string literals at call sites. ---

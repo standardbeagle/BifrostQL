@@ -16,6 +16,36 @@ We rejected stage-then-apply: it would require a parallel pending-state read mod
 would make normal reads diverge from the database's committed state. Apply-then-reverse
 keeps the existing write, audit, authorization, and history semantics authoritative.
 
+### Compensating review is not maker-checker approval
+
+An `until-approved` event hold adds a review queue to this live-data model; it does not
+turn the mutation into maker-checker approval. The requester's database write is already
+committed and visible to ordinary reads. Approval releases its parked outbox events.
+Rejection runs the stored inverse through the normal mutation pipeline as a compensating
+write, so concurrency drift can produce conflicts or a partial reversal.
+
+By contrast, maker-checker keeps a proposed write outside the authoritative tables until
+an approver accepts it. Its approval applies the proposal for the first time, and its
+rejection merely discards pending data. Applications that require unapproved values to
+remain invisible must use maker-checker approval rather than the deferred review queue.
+
+The GraphQL review surface is emitted when a table uses `hold-events: until-approved`:
+
+```graphql
+query {
+  deferredReviewQueue { changeSetId requester tenant tables createdAt }
+}
+
+mutation {
+  approveDeferredChangeSet(changeSetId: 42)
+}
+```
+
+`rejectDeferredChangeSet(changeSetId: ID!)` returns `DeferredUndoResult`. Queue entries
+are tenant-scoped, require readable policy on every affected table, and are omitted when
+configuration or policy evaluation fails. Approval and rejection additionally require
+each table's approver role and honor `self-approve: false`.
+
 Future capture and undo slices must implement this named decision; this guide deliberately
 adds no write-path behavior.
 
@@ -34,9 +64,9 @@ dbo.orders {
 ```
 
 `undo-window` accepts a positive integer followed by `d` (days) or `h` (hours), for
-example `90d` or `12h`. There is no default window. `hold-events` is optional; when set,
-it must be `enabled` and instructs later event-delivery slices to hold outbound events
-until finalization.
+example `90d` or `12h`. There is no default window. `hold-events` is optional. `enabled`
+parks outbound events until undo-window finalization; `until-approved` parks them until
+an authorized reviewer approves the live change or rejects it with a compensating undo.
 
 `deferrable` requires both `concurrency-token` and `history`; model loading rejects a
 partial configuration.

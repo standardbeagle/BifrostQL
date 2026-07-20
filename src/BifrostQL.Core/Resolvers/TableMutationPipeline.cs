@@ -85,7 +85,22 @@ namespace BifrostQL.Core.Resolvers
                     $"Table '{table.TableSchema}.{table.DbName}' is a change-history table and is not writable. " +
                     "Trail rows are written only by the change-history writer, in the tracked write's transaction.")
                 { ErrorCode = BifrostExecutionError.AccessDeniedCode };
+
+            if (IsDeferredStoreTarget(table, model))
+                throw new BifrostExecutionError(
+                    $"Table '{table.TableSchema}.{table.DbName}' is an internal deferred-effects table and is not writable. " +
+                    "Change sets and reverse deltas are written only by the deferred-effects hook, in the tracked write's transaction.")
+                { ErrorCode = BifrostExecutionError.AccessDeniedCode };
         }
+
+        private static bool IsDeferredStoreTarget(IDbTable table, IDbModel model)
+            => IsSameTable(table, ModelTableReference.Find(model, MetadataKeys.Deferred.ChangeSet.Table))
+               || IsSameTable(table, ModelTableReference.Find(model, MetadataKeys.Deferred.ChangeSetDelta.Table));
+
+        private static bool IsSameTable(IDbTable left, IDbTable? right)
+            => right is not null
+               && string.Equals(left.TableSchema, right.TableSchema, StringComparison.OrdinalIgnoreCase)
+               && string.Equals(left.DbName, right.DbName, StringComparison.OrdinalIgnoreCase);
 
         public static async Task<object?> InsertAsync(
             IDbTable table, Dictionary<string, object?> data, MutationPipelineContext ctx)

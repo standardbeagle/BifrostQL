@@ -19,8 +19,24 @@ namespace BifrostQL.Core.Modules.Deferred;
 /// </summary>
 public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
 {
-    internal const string ChangeSetIdKey = "bifrost.deferred.change-set-id";
-    private const string TouchedTablesKey = "bifrost.deferred.change-set-tables";
+    internal const string ActiveChangeSetKey = "bifrost.deferred.active-change-set";
+    private const string HeldLifecycle = "held";
+    private const string HookSource = "deferred-delta";
+
+    // A state bag may be shared by a batch or TreeSync transaction. The value is deliberately
+    // typed and bound to that exact transaction seam; an id alone could be replayed into a
+    // later mutation and attach its delta to the wrong held change set.
+    private sealed record ActiveChangeSet(
+        object Id,
+        string Lifecycle,
+        string Source,
+        DbConnection Connection,
+        DbTransaction? Transaction,
+        object TransactionMarker,
+        IDbModel Model,
+        IDbTable ChangeSetTable,
+        IDbTable DeltaTable,
+        HashSet<string> TouchedTables);
 
     public async ValueTask AfterWriteInTransactionAsync(MutationObserverContext context)
     {
@@ -35,24 +51,28 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
             throw new BifrostExecutionError(
                 "Deferred delta writer was invoked without an open mutation transaction.");
 
-        var before = context.MutationType == MutationType.Insert
+        var capturedBefore = context.MutationType == MutationType.Insert
             ? null
-            : HistoryMutationHook.GetCapturedBeforeImage(context)
-                ?? throw new BifrostExecutionError(
-                    $"No before-image exists for deferrable {context.MutationType.ToString().ToLowerInvariant()} of " +
-                    $"'{context.Table.TableSchema}.{context.Table.DbName}'. Refusing to create an empty reverse delta.");
+            : GetRequiredCapturedBeforeImage(context);
+        var operation = context.MutationType == MutationType.Update && capturedBefore is null
+            ? MutationType.Insert
+            : context.MutationType;
+        if (operation != MutationType.Insert && capturedBefore is null)
+            throw new BifrostExecutionError(
+                $"No before-image exists for deferrable {context.MutationType.ToString().ToLowerInvariant()} of " +
+                $"'{context.Table.TableSchema}.{context.Table.DbName}'. Refusing to create an empty reverse delta.");
 
-        var changeSetId = await GetOrCreateChangeSetAsync(context, config);
-        var key = ResolveKeyData(context.Table, context.Data, context.Result, before);
-        var deltaTable = RequireTable(context.Model, MetadataKeys.Deferred.ChangeSetDelta.Table);
+        var activeChangeSet = await GetOrCreateChangeSetAsync(context, config);
+        var key = ResolveKeyData(context.Table, context.Data, context.Result, capturedBefore, operation);
+        var deltaTable = activeChangeSet.DeltaTable;
         var delta = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
         {
-            [MetadataKeys.Deferred.ChangeSetDelta.Column.ChangeSetId] = changeSetId,
+            [MetadataKeys.Deferred.ChangeSetDelta.Column.ChangeSetId] = activeChangeSet.Id,
             [MetadataKeys.Deferred.ChangeSetDelta.Column.Table] = $"{context.Table.TableSchema}.{context.Table.DbName}",
             [MetadataKeys.Deferred.ChangeSetDelta.Column.Pk] = JsonSerializer.Serialize(key),
-            [MetadataKeys.Deferred.ChangeSetDelta.Column.Op] = context.MutationType.ToString().ToLowerInvariant(),
-            [MetadataKeys.Deferred.ChangeSetDelta.Column.InverseOp] = InverseOperation(context.MutationType, before),
-            [MetadataKeys.Deferred.ChangeSetDelta.Column.BeforeImage] = before is null ? null : JsonSerializer.Serialize(before),
+            [MetadataKeys.Deferred.ChangeSetDelta.Column.Op] = operation.ToString().ToLowerInvariant(),
+            [MetadataKeys.Deferred.ChangeSetDelta.Column.InverseOp] = InverseOperation(operation),
+            [MetadataKeys.Deferred.ChangeSetDelta.Column.BeforeImage] = capturedBefore is null ? null : JsonSerializer.Serialize(capturedBefore),
             [MetadataKeys.Deferred.ChangeSetDelta.Column.AfterImage] = null,
             [MetadataKeys.Deferred.ChangeSetDelta.Column.CreatedAt] = DateTime.UtcNow,
         };
@@ -62,38 +82,43 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
         await MutationCommandExecutor.ExecuteNonQuery(context.Connection, context.Transaction, sql, delta);
     }
 
-    private static async ValueTask<object> GetOrCreateChangeSetAsync(MutationObserverContext context, DeferredConfig config)
+    private static async ValueTask<ActiveChangeSet> GetOrCreateChangeSetAsync(MutationObserverContext context, DeferredConfig config)
     {
         var changeSetTable = RequireTable(context.Model!, MetadataKeys.Deferred.ChangeSet.Table);
-        if (context.MutationState.TryGetValue(ChangeSetIdKey, out var existing) && existing is not null)
+        var deltaTable = RequireTable(context.Model!, MetadataKeys.Deferred.ChangeSetDelta.Table);
+        if (context.MutationState.TryGetValue(ActiveChangeSetKey, out var stored))
         {
-            var tables = (HashSet<string>)context.MutationState[TouchedTablesKey]!;
-            var tableName = $"{context.Table.TableSchema}.{context.Table.DbName}";
-            if (tables.Add(tableName))
+            if (stored is not ActiveChangeSet active)
+                throw new BifrostExecutionError("Deferred change-set mutation state has an invalid type.");
+
+            ValidateActiveChangeSet(active, context, changeSetTable, deltaTable);
+            var touchedTableName = $"{context.Table.TableSchema}.{context.Table.DbName}";
+            if (active.TouchedTables.Add(touchedTableName))
             {
                 var changeSetTableRef = context.Dialect!.TableReference(changeSetTable.TableSchema, changeSetTable.DbName);
                 var update = new Dictionary<string, object?>
                 {
-                    [MetadataKeys.Deferred.ChangeSet.Column.Tables] = JsonSerializer.Serialize(tables),
-                    [MetadataKeys.Deferred.ChangeSet.Column.Id] = existing,
+                    [MetadataKeys.Deferred.ChangeSet.Column.Tables] = JsonSerializer.Serialize(active.TouchedTables),
+                    [MetadataKeys.Deferred.ChangeSet.Column.Id] = active.Id,
                 };
                 var sql = $"UPDATE {changeSetTableRef} SET {context.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Tables)}=" +
                           $"@{MetadataKeys.Deferred.ChangeSet.Column.Tables} WHERE {context.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Id)}=@{MetadataKeys.Deferred.ChangeSet.Column.Id};";
                 await MutationCommandExecutor.ExecuteNonQuery(context.Connection!, context.Transaction, sql, update);
             }
-            return existing;
+            return active;
         }
 
         var tenantKey = context.Model!.GetMetadataValue(MetadataKeys.Security.TenantContextKey)
             ?? MetadataKeys.Auth.DefaultTenantContextKey;
         context.UserContext.TryGetValue(tenantKey, out var tenant);
+        var tableName = $"{context.Table.TableSchema}.{context.Table.DbName}";
         var changeSet = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
         {
-            [MetadataKeys.Deferred.ChangeSet.Column.State] = "held",
+            [MetadataKeys.Deferred.ChangeSet.Column.State] = HeldLifecycle,
             [MetadataKeys.Deferred.ChangeSet.Column.UndoWindowExpiresAt] = DateTime.UtcNow.Add(config.UndoWindow!.Value),
             [MetadataKeys.Deferred.ChangeSet.Column.Requester] = AuditMutationTransformer.ResolveActor(context.Model!, context.UserContext)?.ToString(),
             [MetadataKeys.Deferred.ChangeSet.Column.Tenant] = tenant?.ToString(),
-            [MetadataKeys.Deferred.ChangeSet.Column.Tables] = JsonSerializer.Serialize(new[] { $"{context.Table.TableSchema}.{context.Table.DbName}" }),
+            [MetadataKeys.Deferred.ChangeSet.Column.Tables] = JsonSerializer.Serialize(new[] { tableName }),
             [MetadataKeys.Deferred.ChangeSet.Column.CreatedAt] = DateTime.UtcNow,
         };
 
@@ -106,13 +131,33 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
         if (id is null || id is DBNull)
             throw new BifrostExecutionError("Deferred change-set store did not return its generated identity.");
 
-        context.MutationState[ChangeSetIdKey] = id;
-        context.MutationState[TouchedTablesKey] = new HashSet<string>(StringComparer.Ordinal)
-        {
-            $"{context.Table.TableSchema}.{context.Table.DbName}",
-        };
-        return id;
+        var created = new ActiveChangeSet(
+            id, HeldLifecycle, HookSource, context.Connection!, context.Transaction,
+            (object?)context.Transaction ?? context.Connection!, context.Model!, changeSetTable, deltaTable,
+            new HashSet<string>(StringComparer.Ordinal) { tableName });
+        context.MutationState[ActiveChangeSetKey] = created;
+        return created;
     }
+
+    private static void ValidateActiveChangeSet(
+        ActiveChangeSet active, MutationObserverContext context, IDbTable changeSetTable, IDbTable deltaTable)
+    {
+        if (active.Id is null
+            || active.Lifecycle != HeldLifecycle
+            || active.Source != HookSource
+            || !ReferenceEquals(active.Connection, context.Connection)
+            || !ReferenceEquals(active.Transaction, context.Transaction)
+            || !ReferenceEquals(active.TransactionMarker, (object?)context.Transaction ?? context.Connection)
+            || !ReferenceEquals(active.Model, context.Model)
+            || !SameTable(active.ChangeSetTable, changeSetTable)
+            || !SameTable(active.DeltaTable, deltaTable))
+            throw new BifrostExecutionError(
+                "Deferred change-set mutation state does not belong to this model transaction.");
+    }
+
+    private static bool SameTable(IDbTable left, IDbTable right)
+        => string.Equals(left.TableSchema, right.TableSchema, StringComparison.OrdinalIgnoreCase)
+           && string.Equals(left.DbName, right.DbName, StringComparison.OrdinalIgnoreCase);
 
     private static async ValueTask<object?> InsertAndReadIdentityAsync(
         DbConnection connection, DbTransaction? transaction, string insert, string identity, Dictionary<string, object?> data)
@@ -135,18 +180,33 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
         => ModelTableReference.Find(model, name)
            ?? throw new BifrostExecutionError($"Deferred store table '{name}' was not found in the model.");
 
+    private static IReadOnlyDictionary<string, object?>? GetRequiredCapturedBeforeImage(MutationObserverContext context)
+    {
+        if (!context.MutationState.TryGetValue(HistoryMutationHook.BeforeImageKey, out var captured)
+            || captured is not HistoryMutationHook.BeforeImage image)
+            throw new BifrostExecutionError(
+                $"No before-image was captured for deferrable {context.MutationType.ToString().ToLowerInvariant()} of " +
+                $"'{context.Table.TableSchema}.{context.Table.DbName}'. Refusing to create a reverse delta.");
+        return image.Row;
+    }
+
     private static Dictionary<string, object?> ResolveKeyData(
         IDbTable table, IDictionary<string, object?> data, object? result,
-        IReadOnlyDictionary<string, object?>? before)
+        IReadOnlyDictionary<string, object?>? before, MutationType operation)
     {
+        var resultKey = result as IReadOnlyDictionary<string, object?>;
         var key = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         foreach (var column in table.KeyColumns)
         {
-            if (data.TryGetValue(column.ColumnName, out var value) && value is not null)
+            if (operation == MutationType.Delete
+                && resultKey?.TryGetValue(column.ColumnName, out var resultValue) == true
+                && resultValue is not null)
+                key[column.ColumnName] = resultValue;
+            else if (data.TryGetValue(column.ColumnName, out var value) && value is not null)
                 key[column.ColumnName] = value;
             else if (before is not null && before.TryGetValue(column.ColumnName, out value) && value is not null)
                 key[column.ColumnName] = value;
-            else if (table.KeyColumns.Count() == 1 && result is not null)
+            else if (table.KeyColumns.Count() == 1 && operation == MutationType.Insert && result is not null)
                 key[column.ColumnName] = result;
             else
                 throw new BifrostExecutionError(
@@ -156,10 +216,8 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
         return key;
     }
 
-    private static string InverseOperation(MutationType mutationType, IReadOnlyDictionary<string, object?>? before)
-        => mutationType == MutationType.Insert || (mutationType == MutationType.Update && before is null)
-            ? "delete"
-            : "restore";
+    private static string InverseOperation(MutationType operation)
+        => operation == MutationType.Insert ? "delete" : "restore";
 
     private static bool IsUpdateOrDelete(MutationType mutationType)
         => mutationType is MutationType.Update or MutationType.Delete;

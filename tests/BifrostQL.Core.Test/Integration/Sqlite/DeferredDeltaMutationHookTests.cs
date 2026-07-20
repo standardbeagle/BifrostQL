@@ -330,6 +330,66 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GraphQlReviewQueue_ListsAndApprovesHeldChangeSetToRelease()
+    {
+        var model = await ReviewModelAsync();
+        await SeedReviewHoldAsync(95, "requester", "tenant-1");
+
+        var listed = await ExecuteReviewGraphQlAsync(model,
+            "query { deferredReviewQueue { changeSetId requester tenant tables createdAt } }", Reviewer("reviewer", "tenant-1"));
+        listed.Errors.Should().BeNullOrEmpty();
+        listed.Data!.ToString().Should().Contain("95").And.Contain("requester");
+
+        var approved = await ExecuteReviewGraphQlAsync(model,
+            "mutation { approveDeferredChangeSet(changeSetId: 95) }", Reviewer("reviewer", "tenant-1"));
+        approved.Errors.Should().BeNullOrEmpty();
+        (await ScalarAsync("SELECT state FROM change_sets WHERE id=95")).Should().Be("released");
+        (await ScalarAsync("SELECT state FROM __outbox WHERE id=95")).Should().Be("pending");
+    }
+
+    [Fact]
+    public async Task GraphQlReviewQueue_DeniesCrossTenantApproval()
+    {
+        var model = await ReviewModelAsync();
+        await SeedReviewHoldAsync(96, "requester", "tenant-1");
+
+        var result = await ExecuteReviewGraphQlAsync(model,
+            "mutation { approveDeferredChangeSet(changeSetId: 96) }", Reviewer("reviewer", "tenant-2"));
+
+        result.Errors.Should().BeNullOrEmpty();
+        result.Data!.ToString().Should().Contain("False");
+        (await ScalarAsync("SELECT state FROM change_sets WHERE id=96")).Should().Be("held");
+    }
+
+    [Fact]
+    public async Task GraphQlReviewQueue_DeniesSelfApprovalWhenDisabled()
+    {
+        var model = await ReviewModelAsync();
+        await SeedReviewHoldAsync(97, "requester", "tenant-1");
+
+        var result = await ExecuteReviewGraphQlAsync(model,
+            "mutation { approveDeferredChangeSet(changeSetId: 97) }", Reviewer("requester", "tenant-1"));
+
+        result.Errors.Should().BeNullOrEmpty();
+        result.Data!.ToString().Should().Contain("False");
+        (await ScalarAsync("SELECT state FROM change_sets WHERE id=97")).Should().Be("held");
+    }
+
+    [Fact]
+    public async Task GraphQlReviewQueue_ExcludesChangeSetWhenPolicyCannotBeEvaluated()
+    {
+        var model = await ReviewModelAsync();
+        await SeedReviewHoldAsync(98, "requester", "tenant-1");
+        await Exec("UPDATE change_sets SET tables='[\"main.missing_policy_target\"]' WHERE id=98");
+
+        var result = await ExecuteReviewGraphQlAsync(model,
+            "query { deferredReviewQueue { changeSetId } }", Reviewer("reviewer", "tenant-1"));
+
+        result.Errors.Should().BeNullOrEmpty();
+        result.Data!.ToString().Should().NotContain("98");
+    }
+
+    [Fact]
     public async Task MissingBeforeImage_FailsClosedAndRollsBackWrite()
     {
         var result = await ExecuteMutationAsync("mutation { widgets(update: { id: 1, name: \"must-not-commit\" }) }", registerHistory: false);
@@ -402,6 +462,40 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
         {
             new TenantMutationTransformer(), new SoftDeleteMutationTransformer(), new ConcurrencyMutationTransformer(),
         }});
+    }
+
+    private static AppIdentity Reviewer(string id, string tenant) =>
+        new(id, "test", tenantId: tenant, roles: ["manager"]);
+
+    private static Task<IDbModel> ReviewModelAsync(string extraMetadata = "") => LoadModelAsync(
+        $"main.widgets {{ hold-events: until-approved; approval: enabled; approver-role: manager; self-approve: false{extraMetadata} }}",
+        ":root { outbox-table: main.__outbox }");
+
+    private async Task SeedReviewHoldAsync(long id, string requester, string tenant)
+    {
+        await SeedChangeSetAsync(id, "main.widgets", 1, "update", "restore",
+            "{\"id\":1,\"name\":\"original\",\"version\":1}", "{\"id\":1,\"name\":\"edited\",\"version\":2}");
+        await Exec($"UPDATE change_sets SET requester='{requester}', tenant='{tenant}', tables='[\"main.widgets\"]' WHERE id={id}");
+        await Exec($"INSERT INTO __outbox(id,aggregate,op,payload,created_at,attempts,dead,change_set_id,state) VALUES({id},'main.widgets','update','{{\"id\":1}}','2026-07-20',0,0,{id},'pending_hold')");
+    }
+
+    private static async Task<ExecutionResult> ExecuteReviewGraphQlAsync(IDbModel model, string query, AppIdentity identity)
+    {
+        var schema = DbSchema.FromModel(model);
+        var mutations = BuildMutationExecutor(model);
+        await using var provider = new ServiceCollection().AddSingleton<IMutationIntentExecutor>(mutations).BuildServiceProvider();
+        return await new DocumentExecuter().ExecuteAsync(options =>
+        {
+            options.Schema = schema;
+            options.Query = query;
+            options.RequestServices = provider;
+            options.UserContext = new IdentityContextMapper().ToUserContext(identity);
+            options.Extensions = new Inputs(new Dictionary<string, object?>
+            {
+                ["connFactory"] = new SqliteDbConnFactory(ConnString), ["model"] = model,
+                ["tableReaderFactory"] = new SqlExecutionManager(model, schema),
+            });
+        });
     }
 
     private Task<DeferredUndoResult> UndoAsync(long id, IDictionary<string, object?>? user = null) =>

@@ -104,13 +104,15 @@ namespace BifrostQL.Core.Modules.History
         public async ValueTask AfterWriteInTransactionAsync(MutationObserverContext context)
         {
             var config = HistoryConfig.FromTable(context.Table);
-            if (!config.RecordsHistory || !MayRecord(config, context.MutationType))
+            if (!config.RecordsHistory)
                 return;
 
             // An UPDATE/DELETE that affected zero rows changed nothing — an out-of-scope
             // tenant/policy no-op, or a predicate that matched no row. Recording it would
             // fabricate a change that never happened, so the before-image read above is
-            // simply discarded. An INSERT's result is the generated identity, not a count.
+            // simply discarded (and an erasure that removed nothing must not tombstone a
+            // trail it never touched). An INSERT's result is the generated identity, not a
+            // count.
             if (IsUpdateOrDelete(context.MutationType) && AffectedZeroRows(context.Result))
                 return;
 
@@ -118,6 +120,22 @@ namespace BifrostQL.Core.Modules.History
                 throw new BifrostExecutionError(
                     "The change-history writer was invoked without an open transaction; the change " +
                     "could not be recorded.");
+
+            // Right-to-erasure purge that PHYSICALLY removed the row: tombstone the trail
+            // instead of appending a before-image of the very PII the purge erased. Runs for
+            // ANY history-recording table — even one that opts into inserts/updates but not
+            // deletes — because prior insert/update trail rows still hold that PII and must be
+            // cleared. Gated on MutationType.Delete so a ttl expiry that the pipeline turned
+            // into a SOFT delete (surfaced here as an Update, the row still present) records
+            // normally; only an actual physical removal erases. See WriteErasureTombstoneAsync.
+            if (context.MutationType == MutationType.Delete && HistoryErasure.IsErasurePurge(context.UserContext))
+            {
+                await WriteErasureTombstoneAsync(context, config);
+                return;
+            }
+
+            if (!MayRecord(config, context.MutationType))
+                return;
 
             var historyTable = ResolveHistoryTable(context.Model, context.Table, config);
             var trackedColumns = TrackedColumns(context.Table, config);
@@ -219,6 +237,81 @@ namespace BifrostQL.Core.Modules.History
 
             await MutationCommandExecutor.ExecuteNonQuery(
                 context.Connection, context.Transaction, sql, historyRow);
+        }
+
+        /// <summary>
+        /// The right-to-erasure trail policy: TOMBSTONE, not append. When a retention/erasure
+        /// purge physically deletes a row, this runs INSTEAD of the normal before-image write:
+        /// <list type="number">
+        ///   <item>it PURGES the entity's existing trail rows (the before/after images from
+        ///     prior inserts/updates — themselves the erased PII) via a direct dialect DELETE
+        ///     on the purge's own transaction, so no PII survives the erasure;</item>
+        ///   <item>it records ONE payload-free tombstone (<c>op='erase'</c>, before/after
+        ///     both null) so the FACT of erasure — who, when, which entity — stays auditable
+        ///     without the data.</item>
+        /// </list>
+        /// Both statements run on <see cref="MutationObserverContext.Connection"/>/
+        /// <see cref="MutationObserverContext.Transaction"/>, so the trail change commits or
+        /// rolls back ATOMICALLY with the delete. The erasure TERMINATES by construction: both
+        /// statements are direct SQL that never re-enter the mutation pipeline, so neither the
+        /// trail purge nor the tombstone triggers history-of-history, and the tombstone carries
+        /// no before-image to re-capture — there is no recursive re-generation of the data.
+        /// </summary>
+        private static async Task WriteErasureTombstoneAsync(MutationObserverContext context, HistoryConfig config)
+        {
+            var historyTable = ResolveHistoryTable(context.Model!, context.Table, config);
+            var keyData = ResolveKeyData(context.Table, context.Data, context.Result, MutationType.Delete);
+            var entity = Qualify(context.Table);
+            var entityId = JsonSerializer.Serialize(keyData);
+            var tableRef = context.Dialect!.TableReference(historyTable.TableSchema, historyTable.DbName);
+
+            // 1. Purge the entity's existing trail. entity_id is the row's serialized primary
+            //    key (row-unique), so this reaches only this entity's trail — it cannot cross
+            //    to another row, or, on a tenant-filtered table, to another tenant.
+            var purgeScope = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                [MetadataKeys.History.Column.Entity] = entity,
+                [MetadataKeys.History.Column.EntityId] = entityId,
+            };
+            await MutationCommandExecutor.ExecuteNonQuery(
+                context.Connection!, context.Transaction,
+                HistoryErasure.BuildTrailPurgeSql(context.Dialect, tableRef), purgeScope);
+
+            // 2. Record the payload-free tombstone. No before/after image — recording the
+            //    erased PII would defeat the erasure.
+            var tombstone = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                [MetadataKeys.History.Column.Entity] = entity,
+                [MetadataKeys.History.Column.EntityId] = entityId,
+                [MetadataKeys.History.Column.Op] = HistoryErasure.EraseOp,
+                [MetadataKeys.History.Column.Actor] = AuditMutationTransformer.ResolveActor(context.Model!, context.UserContext)?.ToString(),
+                [MetadataKeys.History.Column.ChangedAt] = DateTime.UtcNow,
+                [MetadataKeys.History.Column.Before] = null,
+                [MetadataKeys.History.Column.After] = null,
+                [MetadataKeys.History.Column.ChangedColumns] = JsonSerializer.Serialize(Array.Empty<string>()),
+            };
+
+            // A tenant-filtered trail materializes its scope column so tenant-scoped history
+            // reads can authorize the tombstone. On erasure there is no after-image to copy it
+            // from, so the value comes from the purge's synthesized per-tenant context claim.
+            var scopeColumn = HistoryConfig.ResolveTenantScopeColumn(context.Table);
+            if (scopeColumn is not null)
+                tombstone[scopeColumn] = ResolveErasureScopeValue(context);
+
+            var insertSql = MutationCommandExecutor.BuildInsertInto(
+                context.Dialect, historyTable, tableRef, tombstone.Keys) + ";";
+            await MutationCommandExecutor.ExecuteNonQuery(
+                context.Connection!, context.Transaction, insertSql, tombstone);
+        }
+
+        // The tenant scope value for an erasure tombstone: the purge synthesizes a per-tenant
+        // system context carrying the tenant claim under the model's resolved tenant-context
+        // key, and the tracked row was scoped to exactly that tenant, so the claim IS the
+        // trail scope value.
+        private static object? ResolveErasureScopeValue(MutationObserverContext context)
+        {
+            var key = TenantFilterTransformer.ResolveTenantContextKey(context.Model!);
+            return context.UserContext.TryGetValue(key, out var value) ? value : null;
         }
 
         /// <summary>

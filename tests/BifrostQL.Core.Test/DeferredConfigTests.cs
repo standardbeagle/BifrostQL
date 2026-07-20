@@ -95,4 +95,28 @@ public class DeferredConfigTests
             .And.Contain(MetadataKeys.Concurrency.Token)
             .And.Contain(MetadataKeys.History.Enabled);
     }
+
+    [Fact]
+    public void Validate_DeferrableWithNarrowedHistoryColumns_RejectsConfiguration()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("Orders", table => table
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("version", "int")
+                .WithColumn("status", "nvarchar")
+                .WithMetadata(MetadataKeys.Concurrency.Token, "version")
+                .WithMetadata(MetadataKeys.History.Enabled, "update")
+                .WithMetadata(MetadataKeys.History.Columns, "status")
+                .WithMetadata(MetadataKeys.Deferred.Deferrable, "enabled")
+                .WithMetadata(MetadataKeys.Deferred.UndoWindow, "90d"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain(MetadataKeys.Deferred.Deferrable)
+            .And.Contain(MetadataKeys.History.Columns)
+            .And.Contain("full before-image");
+    }
 }

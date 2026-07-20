@@ -403,6 +403,23 @@ namespace BifrostQL.Core.Model
                 errors.Add(Problem(table, MetadataKeys.Deferred.Deferrable,
                     table.GetMetadataValue(MetadataKeys.Deferred.Deferrable),
                     $"requires '{MetadataKeys.History.Enabled}' so the applied change remains auditable"));
+                return;
+            }
+
+            try
+            {
+                var history = HistoryConfig.FromTable(table);
+                if (!history.TracksAllColumns)
+                {
+                    errors.Add(Problem(table, MetadataKeys.Deferred.Deferrable,
+                        table.GetMetadataValue(MetadataKeys.Deferred.Deferrable),
+                        $"cannot combine with '{MetadataKeys.History.Columns}'; deferred reversal reuses " +
+                        "HistoryMutationHook's full before-image to reconstruct the original row."));
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                // ValidateHistoryTokens reports malformed history metadata.
             }
         }
 

@@ -13,6 +13,7 @@ using FluentAssertions;
 using GraphQL;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using NSubstitute;
 using Xunit;
 
 namespace BifrostQL.Core.Test.Sqlite;
@@ -551,6 +552,29 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         result.Errors.Should().NotBeNullOrEmpty();
         (await CountAsync("orders", "name = 'seed-order'")).Should().Be(1, "the failed replay cannot insert a second target row");
         (await CountAsync("pending_changes", "id = 1 AND \"state\" = 'pending'")).Should().Be(1, "the failed replay rolls back the approval transition");
+    }
+
+    [Fact]
+    public async Task RejectAsync_UsesMutationPipelineWithApproverAndReason()
+    {
+        var executor = BuildExecutor();
+        await EnqueueAsync(executor, "pipeline-rejected", RequesterContext());
+        var mutations = Substitute.For<IMutationIntentExecutor>();
+        mutations.ExecuteAsync(Arg.Any<MutationIntent>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new MutationIntentResult { AffectedRows = 1 }));
+        var approver = ApproverContext("bob", "manager");
+        var service = new ApprovalDecisionService(_model, new SqliteDbConnFactory(ConnString), mutations);
+
+        await service.RejectAsync(1, "duplicate", approver);
+
+        await mutations.Received(1).ExecuteAsync(Arg.Is<MutationIntent>(intent =>
+            intent.Table == PendingChangeStore.TableName &&
+            intent.Action == MutationIntentAction.Update &&
+            intent.PrimaryKey != null && intent.PrimaryKey.SequenceEqual(new object?[] { 1L }) &&
+            Equals(intent.Data[PendingChangeStore.ColState], PendingChangeStore.StateRejected) &&
+            Equals(intent.Data[PendingChangeStore.ColApprover], "bob") &&
+            Equals(intent.Data[PendingChangeStore.ColReason], "duplicate") &&
+            ReferenceEquals(intent.UserContext, approver)), Arg.Any<CancellationToken>());
     }
 
     [Fact]

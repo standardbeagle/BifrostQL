@@ -112,7 +112,7 @@ public sealed class ApprovalDecisionService
         var row = await LoadAsync(pendingChangeId, cancellationToken);
         Authorize(row, approverContext);
         await TransitionAsync(pendingChangeId, PendingChangeStore.StateRejected,
-            PolicyIdentity.FromUserContext(approverContext).Id, reason, cancellationToken);
+            PolicyIdentity.FromUserContext(approverContext).Id, reason, approverContext, cancellationToken);
     }
 
     private void Authorize(PendingRow row, IDictionary<string, object?> context)
@@ -171,16 +171,25 @@ public sealed class ApprovalDecisionService
             reader.IsDBNull(9) ? null : reader.GetValue(9)?.ToString());
     }
 
-    private async Task TransitionAsync(long id, string state, string approver, string? reason, CancellationToken cancellationToken)
+    private async Task TransitionAsync(long id, string state, string approver, string? reason,
+        IDictionary<string, object?> approverContext, CancellationToken cancellationToken)
     {
-        await using var connection = _connections.GetConnection();
-        await connection.OpenAsync(cancellationToken);
-        var table = _model.Tables.First(t => string.Equals(t.DbName, PendingChangeStore.TableName, StringComparison.OrdinalIgnoreCase));
-        var d = _connections.Dialect;
-        await using var command = connection.CreateCommand();
-        command.CommandText = $"UPDATE {d.TableReference(table.TableSchema, table.DbName)} SET {d.EscapeIdentifier(PendingChangeStore.ColState)} = @state, {d.EscapeIdentifier(PendingChangeStore.ColApprover)} = @approver, {d.EscapeIdentifier(PendingChangeStore.ColDecidedAt)} = @decided, {d.EscapeIdentifier(PendingChangeStore.ColReason)} = @reason WHERE {d.EscapeIdentifier(PendingChangeStore.ColId)} = @id AND {d.EscapeIdentifier(PendingChangeStore.ColState)} = @pending";
-        Add(command, "@state", state); Add(command, "@approver", approver); Add(command, "@decided", DateTimeOffset.UtcNow); Add(command, "@reason", reason); Add(command, "@id", id); Add(command, "@pending", PendingChangeStore.StatePending);
-        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+        var store = FindTable(PendingChangeStore.TableName);
+        var result = await _mutations.ExecuteAsync(new MutationIntent
+        {
+            Table = store.DbName,
+            Action = MutationIntentAction.Update,
+            Data = new Dictionary<string, object?>
+            {
+                [PendingChangeStore.ColState] = state,
+                [PendingChangeStore.ColApprover] = approver,
+                [PendingChangeStore.ColDecidedAt] = DateTimeOffset.UtcNow,
+                [PendingChangeStore.ColReason] = reason,
+            },
+            PrimaryKey = new object?[] { id },
+            UserContext = approverContext,
+        }, cancellationToken);
+        if (result.AffectedRows != 1)
             throw new BifrostExecutionError("The pending change could not be transitioned.");
     }
 

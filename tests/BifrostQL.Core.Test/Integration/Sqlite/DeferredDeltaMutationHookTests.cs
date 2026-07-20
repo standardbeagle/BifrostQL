@@ -11,6 +11,7 @@ using BifrostQL.Model;
 using BifrostQL.Sqlite;
 using FluentAssertions;
 using GraphQL;
+using GraphQL.SystemTextJson;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -338,7 +339,7 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
         var listed = await ExecuteReviewGraphQlAsync(model,
             "query { deferredReviewQueue { changeSetId requester tenant tables createdAt } }", Reviewer("reviewer", "tenant-1"));
         listed.Errors.Should().BeNullOrEmpty();
-        listed.Data!.ToString().Should().Contain("95").And.Contain("requester");
+        GraphQlJson(listed).Should().Contain("95").And.Contain("requester");
 
         var approved = await ExecuteReviewGraphQlAsync(model,
             "mutation { approveDeferredChangeSet(changeSetId: 95) }", Reviewer("reviewer", "tenant-1"));
@@ -357,7 +358,7 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
             "mutation { approveDeferredChangeSet(changeSetId: 96) }", Reviewer("reviewer", "tenant-2"));
 
         result.Errors.Should().BeNullOrEmpty();
-        result.Data!.ToString().Should().Contain("False");
+        GraphQlJson(result).Should().Contain("false");
         (await ScalarAsync("SELECT state FROM change_sets WHERE id=96")).Should().Be("held");
     }
 
@@ -371,7 +372,7 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
             "mutation { approveDeferredChangeSet(changeSetId: 97) }", Reviewer("requester", "tenant-1"));
 
         result.Errors.Should().BeNullOrEmpty();
-        result.Data!.ToString().Should().Contain("False");
+        GraphQlJson(result).Should().Contain("false");
         (await ScalarAsync("SELECT state FROM change_sets WHERE id=97")).Should().Be("held");
     }
 
@@ -386,7 +387,7 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
             "query { deferredReviewQueue { changeSetId } }", Reviewer("reviewer", "tenant-1"));
 
         result.Errors.Should().BeNullOrEmpty();
-        result.Data!.ToString().Should().NotContain("98");
+        GraphQlJson(result).Should().NotContain("98");
     }
 
     [Fact]
@@ -497,6 +498,8 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
             });
         });
     }
+
+    private static string GraphQlJson(ExecutionResult result) => new GraphQLSerializer().Serialize(result);
 
     private Task<DeferredUndoResult> UndoAsync(long id, IDictionary<string, object?>? user = null) =>
         new DeferredUndoEngine(_model, new SqliteDbConnFactory(ConnString), BuildMutationExecutor(_model))

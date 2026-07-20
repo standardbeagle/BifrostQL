@@ -1,3 +1,4 @@
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules.ComputedColumns;
 using BifrostQL.Core.Modules.Approval;
@@ -211,6 +212,13 @@ namespace BifrostQL.Core.Resolvers
             if (_model.Tables.Any(table => DeferredConfig.FromTable(table).IsDeferrable))
                 mut.FieldFor("undo").Resolver = this;
 
+            if (SchemaGenerator.HasDeferredReviewQueue(_model))
+            {
+                query.FieldFor("deferredReviewQueue").Resolver = this;
+                mut.FieldFor("approveDeferredChangeSet").Resolver = this;
+                mut.FieldFor("rejectDeferredChangeSet").Resolver = this;
+            }
+
             foreach (var proc in _model.StoredProcedures)
             {
                 if (proc.IsReadOnly)
@@ -305,6 +313,29 @@ namespace BifrostQL.Core.Resolvers
             }
         }
 
+        private sealed class DeferredReviewResolver : IBifrostResolver
+        {
+            public async ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
+            {
+                var request = new BifrostContextAdapter(context);
+                var mutations = context.RequestServices?.GetService<IMutationIntentExecutor>()
+                    ?? throw new BifrostExecutionError("Deferred review requires the mutation intent executor.");
+                var identity = PolicyIdentity.FromUserContext(request.UserContext,
+                    request.Model.GetMetadataValue(MetadataKeys.Security.TenantContextKey));
+                var queue = new DeferredReviewQueue(request.Model, request.ConnFactory, mutations, new PolicyEvaluator());
+                var id = context.FieldName == "deferredReviewQueue"
+                    ? 0
+                    : context.GetArgument<long>("changeSetId");
+
+                return context.FieldName switch
+                {
+                    "deferredReviewQueue" => await queue.ListAsync(identity, context.CancellationToken),
+                    "approveDeferredChangeSet" => await queue.ApproveAsync(id, identity, context.CancellationToken),
+                    _ => await queue.RejectAsync(id, identity, context.CancellationToken),
+                };
+            }
+        }
+
         private sealed class ApprovalDecisionResolver : IBifrostResolver
         {
             public async ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
@@ -370,6 +401,14 @@ namespace BifrostQL.Core.Resolvers
 
             if (model.Tables.Any(table => DeferredConfig.FromTable(table).IsDeferrable))
                 map[(mutationType, "undo")] = new DeferredUndoResolver();
+
+            if (SchemaGenerator.HasDeferredReviewQueue(model))
+            {
+                var review = new DeferredReviewResolver();
+                map[(queryType, "deferredReviewQueue")] = review;
+                map[(mutationType, "approveDeferredChangeSet")] = review;
+                map[(mutationType, "rejectDeferredChangeSet")] = review;
+            }
 
             foreach (var proc in model.StoredProcedures)
             {

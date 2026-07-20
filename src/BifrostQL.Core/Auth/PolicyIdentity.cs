@@ -25,6 +25,10 @@ public static class PolicyIdentity
     /// rather than being skipped.
     /// </summary>
     public static AppIdentity FromUserContext(IDictionary<string, object?> userContext)
+        => FromUserContext(userContext, MetadataKeys.Auth.DefaultTenantContextKey);
+
+    /// <summary>Builds the policy identity including the configured tenant claim.</summary>
+    public static AppIdentity FromUserContext(IDictionary<string, object?> userContext, string? tenantContextKey)
     {
         if (userContext is null) throw new ArgumentNullException(nameof(userContext));
 
@@ -35,7 +39,14 @@ public static class PolicyIdentity
         if (string.IsNullOrWhiteSpace(userId))
             userId = "anonymous";
 
-        return new AppIdentity(userId, "query-context", roles: ExtractRoles(userContext));
+        tenantContextKey = string.IsNullOrWhiteSpace(tenantContextKey)
+            ? MetadataKeys.Auth.DefaultTenantContextKey
+            : tenantContextKey;
+        var tenantId = userContext.TryGetValue(tenantContextKey, out var tenantValue)
+            ? tenantValue?.ToString()
+            : null;
+
+        return new AppIdentity(userId, "query-context", tenantId: tenantId, roles: ExtractRoles(userContext));
     }
 
     /// <summary>

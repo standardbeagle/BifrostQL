@@ -62,7 +62,12 @@ namespace BifrostQL.Core.Schema
             {
                 builder.Append(FileStorageSchemaExtensions.GetFileStorageQueryFields());
             }
+            if (HasDeferredReviewQueue(model))
+                builder.AppendLine("deferredReviewQueue: [DeferredReviewItem!]!");
             builder.AppendLine("}");
+
+            if (HasDeferredReviewQueue(model))
+                builder.AppendLine("type DeferredReviewItem { changeSetId: ID! requester: String tenant: String tables: [String!]! createdAt: DateTimeOffset! }");
 
             // Global enum shared by every table's pivot field — emitted once so the
             // SDL declares it a single time regardless of table count.
@@ -159,6 +164,11 @@ namespace BifrostQL.Core.Schema
                 }
                 if (model.Tables.Any(table => Modules.Deferred.DeferredConfig.FromTable(table).IsDeferrable))
                     builder.AppendLine("undo(changeSetId: ID!): DeferredUndoResult!");
+                if (HasDeferredReviewQueue(model))
+                {
+                    builder.AppendLine("approveDeferredChangeSet(changeSetId: ID!): Boolean!");
+                    builder.AppendLine("rejectDeferredChangeSet(changeSetId: ID!): DeferredUndoResult");
+                }
                 builder.AppendLine("}");
                 if (model.Tables.Any(table => Modules.Deferred.DeferredConfig.FromTable(table).IsDeferrable))
                     builder.AppendLine("type DeferredUndoResult { changeSetId: ID! undoneRows: Int! conflictRows: Int! alreadyUndone: Boolean! }");
@@ -216,6 +226,10 @@ namespace BifrostQL.Core.Schema
 
         internal static string GetSimpleGraphQlTypeName(string dataType)
             => DefaultTypeMapper.GetGraphQlType(dataType);
+
+        internal static bool HasDeferredReviewQueue(IDbModel model) =>
+            model.Tables.Any(table => Modules.Deferred.DeferredConfig.FromTable(table).EventHold ==
+                                      Modules.Deferred.DeferredEventHold.UntilApproved);
 
         internal static bool IsRawSqlEnabled(IDbModel model)
         {

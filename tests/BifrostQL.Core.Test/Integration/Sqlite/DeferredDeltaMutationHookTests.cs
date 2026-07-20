@@ -252,11 +252,12 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
         await Exec("UPDATE widgets SET name='edited-again', version=4 WHERE id=1");
         await SeedChangeSetAsync(91, "main.widgets", 1, "update", "restore", "{\"id\":1,\"name\":\"original\",\"version\":3}", "{\"id\":1,\"name\":\"edited-again\",\"version\":4}");
         await Exec("INSERT INTO __outbox(id,aggregate,op,payload,created_at,attempts,dead,change_set_id,state) VALUES(91,'main.widgets','update','{\"id\":1}','2026-07-20',0,0,91,'pending_hold')");
+        var afterExpiry = DateTimeOffset.Parse("2100-01-01T00:00:00Z");
         (await new DeferredOutboxReleaseEngine(model, new SqliteDbConnFactory(ConnString))
-            .ReleaseOnceAsync(DateTimeOffset.Parse("2100-01-01T00:00:00Z"))).Should().Be(1);
+            .ReleaseOnceAsync(afterExpiry)).Should().Be(1);
         (await OutboxDispatcher.DrainOnceAsync(model, new SqliteDbConnFactory(ConnString), new DeliveredSink(), null, 100, 5, default))
             .Delivered.Should().Be(1);
-        await new DeferredUndoEngine(model, new SqliteDbConnFactory(ConnString), BuildMutationExecutor(model))
+        await new DeferredUndoEngine(model, new SqliteDbConnFactory(ConnString), BuildMutationExecutor(model), () => afterExpiry)
             .UndoAsync(91, new Dictionary<string, object?>());
         (await CountAsync("__outbox", "change_set_id=91 AND op='compensate' AND state='pending'")).Should().Be(1);
     }
@@ -266,12 +267,20 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
     {
         var model = await LoadModelAsync(":root { outbox-table: main.__outbox }");
         await SeedChangeSetAsync(92, "main.widgets", 1, "update", "restore", "{\"id\":1,\"name\":\"original\",\"version\":1}", "{\"id\":1,\"name\":\"edited\",\"version\":2}");
-        await Exec("UPDATE change_sets SET state='undoing' WHERE id=92");
+        await Exec("UPDATE widgets SET name='edited', version=2 WHERE id=1");
         await Exec("INSERT INTO __outbox(id,aggregate,op,payload,created_at,attempts,dead,change_set_id,state) VALUES(92,'main.widgets','update','{\"id\":1}','2026-07-20',0,0,92,'pending_hold')");
+        var clock = DateTimeOffset.Parse("2090-01-01T00:00:00Z");
+        Func<Task> interrupted = async () => await new DeferredUndoEngine(
+                model, new SqliteDbConnFactory(ConnString), new InterruptingMutationExecutor(), () => clock)
+            .UndoAsync(92, new Dictionary<string, object?>());
+        await interrupted.Should().ThrowAsync<OperationCanceledException>();
+        (await ScalarAsync("SELECT state FROM change_sets WHERE id=92")).Should().Be("undoing",
+            "the pre-expiry conditional claim is durable before inverse execution");
         // Simulate a process crash after the inverse committed but before outbox settlement/finalization.
         await Exec("UPDATE widgets SET name='original', version=3 WHERE id=1");
 
-        var resumed = await new DeferredUndoEngine(model, new SqliteDbConnFactory(ConnString), BuildMutationExecutor(model))
+        clock = DateTimeOffset.Parse("2100-01-01T00:00:00Z");
+        var resumed = await new DeferredUndoEngine(model, new SqliteDbConnFactory(ConnString), BuildMutationExecutor(model), () => clock)
             .UndoAsync(92, new Dictionary<string, object?>());
 
         resumed.Should().Be(new DeferredUndoResult(92, 1, 0, false));
@@ -280,6 +289,21 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
         (await new DeferredOutboxReleaseEngine(model, new SqliteDbConnFactory(ConnString))
             .ReleaseOnceAsync(DateTimeOffset.Parse("2100-01-01T00:00:00Z"))).Should().Be(0,
                 "the conditional state transition lets undo win exactly once");
+    }
+
+    [Fact]
+    public async Task OrdinaryExpiredHeldState_RemainsClosed()
+    {
+        var model = await LoadModelAsync(":root { outbox-table: main.__outbox }");
+        await SeedChangeSetAsync(93, "main.widgets", 1, "update", "restore", "{\"id\":1,\"name\":\"original\",\"version\":1}", "{\"id\":1,\"name\":\"edited\",\"version\":2}");
+        var afterExpiry = DateTimeOffset.Parse("2100-01-01T00:00:00Z");
+
+        Func<Task> undo = async () => await new DeferredUndoEngine(
+                model, new SqliteDbConnFactory(ConnString), BuildMutationExecutor(model), () => afterExpiry)
+            .UndoAsync(93, new Dictionary<string, object?>());
+
+        await undo.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*expired*");
+        (await ScalarAsync("SELECT state FROM change_sets WHERE id=93")).Should().Be("held");
     }
 
     [Fact]
@@ -379,6 +403,15 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
         public ValueTask<EventDeliveryResult> DeliverAsync(
             System.Text.Json.Nodes.JsonObject cloudEvent, string idempotencyKey, CancellationToken cancellationToken)
             => ValueTask.FromResult(EventDeliveryResult.Delivered);
+    }
+
+    private sealed class InterruptingMutationExecutor : IMutationIntentExecutor
+    {
+        public Task<MutationIntentResult> ExecuteAsync(MutationIntent intent, CancellationToken cancellationToken = default)
+            => throw new OperationCanceledException("simulated process interruption");
+
+        public Task<MutationBatchIntentResult> ExecuteBatchAsync(MutationBatchIntent intent, CancellationToken cancellationToken = default)
+            => throw new OperationCanceledException("simulated process interruption");
     }
 
     private sealed record Delta(long ChangeSetId, string Table, string Pk, string Op, string InverseOp, string? BeforeImage, string? AfterImage);

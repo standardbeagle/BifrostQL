@@ -18,12 +18,15 @@ public sealed class DeferredUndoEngine
     private readonly IDbModel _model;
     private readonly IDbConnFactory _connections;
     private readonly IMutationIntentExecutor _mutations;
+    private readonly Func<DateTimeOffset> _clock;
 
-    public DeferredUndoEngine(IDbModel model, IDbConnFactory connections, IMutationIntentExecutor mutations)
+    public DeferredUndoEngine(IDbModel model, IDbConnFactory connections, IMutationIntentExecutor mutations,
+        Func<DateTimeOffset>? clock = null)
     {
         _model = model ?? throw new ArgumentNullException(nameof(model));
         _connections = connections ?? throw new ArgumentNullException(nameof(connections));
         _mutations = mutations ?? throw new ArgumentNullException(nameof(mutations));
+        _clock = clock ?? (() => DateTimeOffset.UtcNow);
     }
 
     public async Task<DeferredUndoResult> UndoAsync(long changeSetId, IDictionary<string, object?> userContext,
@@ -37,7 +40,10 @@ public sealed class DeferredUndoEngine
         var released = string.Equals(changeSet.State, Released, StringComparison.OrdinalIgnoreCase);
         if (!resuming && !released && !string.Equals(changeSet.State, Held, StringComparison.OrdinalIgnoreCase))
             throw new BifrostExecutionError("The deferred change set is not available for undo.");
-        if (changeSet.ExpiresAt <= DateTimeOffset.UtcNow)
+        // Lifecycle is authoritative. A durable undo claim remains resumable after the
+        // original window, and a released event must be compensatable after dispatch.
+        // Only an ordinary, never-claimed held change is closed by expiry.
+        if (!resuming && !released && changeSet.ExpiresAt <= _clock())
             throw new BifrostExecutionError("The deferred change set undo window has expired.");
         if (!resuming && !await TryClaimUndoAsync(changeSetId, changeSet.State, cancellationToken))
             throw new BifrostExecutionError("The deferred change set is not available for undo.");
@@ -178,8 +184,12 @@ public sealed class DeferredUndoEngine
         await using var connection = _connections.GetConnection();
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = $"UPDATE {_connections.Dialect.TableReference(table.TableSchema, table.DbName)} SET {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.State)}=@claim WHERE {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Id)}=@id AND {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.State)}=@expected AND {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.UndoWindowExpiresAt)}>@now";
-        Add(command, "@claim", Undoing); Add(command, "@id", id); Add(command, "@expected", expectedState); Add(command, "@now", DateTimeOffset.UtcNow);
+        var expiryGuard = string.Equals(expectedState, Held, StringComparison.OrdinalIgnoreCase)
+            ? $" AND {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.UndoWindowExpiresAt)}>@now"
+            : string.Empty;
+        command.CommandText = $"UPDATE {_connections.Dialect.TableReference(table.TableSchema, table.DbName)} SET {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.State)}=@claim WHERE {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Id)}=@id AND {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.State)}=@expected{expiryGuard}";
+        Add(command, "@claim", Undoing); Add(command, "@id", id); Add(command, "@expected", expectedState);
+        if (string.Equals(expectedState, Held, StringComparison.OrdinalIgnoreCase)) Add(command, "@now", _clock());
         return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
     }
 

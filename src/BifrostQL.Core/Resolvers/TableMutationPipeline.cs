@@ -2,6 +2,7 @@ using System.Data.Common;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
+using BifrostQL.Core.Modules.Approval;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Model;
 using static BifrostQL.Core.Resolvers.DbParameterBinder;
@@ -120,15 +121,28 @@ namespace BifrostQL.Core.Resolvers
             // Before-commit hooks and the insert (with its identity SELECT) run in
             // one transaction so a hook veto or a failed write rolls back as a unit.
             object? result = null;
+            string? pendingApproval = null;
             await MutationCommandExecutor.RunInTransactionAsync(ctx.ConnFactory, async (conn, transaction) =>
             {
                 var hookContext = HookContext(table, MutationType.Insert, data, ctx, conn, transaction, dialect);
                 await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, hookContext);
+                // The approval gate DIVERTS a gated write: it enqueued a pending_changes row
+                // on this transaction, so skip the target write and let the transaction commit
+                // (persisting the pending row), then surface pending-approval below.
+                if (ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))
+                {
+                    pendingApproval = divertMessage;
+                    return;
+                }
                 result = HandleDecimals(await MutationCommandExecutor.ExecuteScalar(conn, transaction, sql, data, ctx.CancellationToken));
                 // After-write, still in-transaction: the outbox writer runs here so the
                 // event can name the generated identity (result) returned by the insert.
                 await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, hookContext, result);
             }, ctx.CancellationToken);
+            // Thrown AFTER the commit so the enqueued pending row survives; never
+            // reported as success-as-applied.
+            if (pendingApproval is not null)
+                throw ApprovalInterceptMutationHook.PendingApprovalError(pendingApproval);
             await MutationNotifier.NotifyMutationAsync(ctx.Services, table, MutationType.Insert, data, result, ctx.UserContext);
             return result;
         }
@@ -182,6 +196,7 @@ namespace BifrostQL.Core.Resolvers
             // on and the write it produces commit atomically or roll back together.
             Dictionary<string, object?> updatedData = null!;
             int result = 0;
+            string? pendingApproval = null;
             StateTransitionInfo? stateTransition = null;
             await MutationCommandExecutor.RunInTransactionAsync(ctx.ConnFactory, async (conn, transaction) =>
             {
@@ -224,6 +239,13 @@ namespace BifrostQL.Core.Resolvers
                 var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, standardData.Keys, propertyInfo.keyData.Keys, additionalFilter.WhereSuffix);
                 var hookContext = HookContext(table, MutationType.Update, updatedData, ctx, conn, transaction, dialect);
                 await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, hookContext);
+                // Approval gate: the update was enqueued as a pending change — skip the write,
+                // commit the pending row, surface pending-approval after the transaction.
+                if (ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))
+                {
+                    pendingApproval = divertMessage;
+                    return;
+                }
                 result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, updatedData, additionalFilter.Parameters, ctx.CancellationToken);
 
                 // A zero-row update under a concurrency-token guard is a lost update:
@@ -244,6 +266,8 @@ namespace BifrostQL.Core.Resolvers
 
                 stateTransition = transformResult.StateTransition;
             }, ctx.CancellationToken);
+            if (pendingApproval is not null)
+                throw ApprovalInterceptMutationHook.PendingApprovalError(pendingApproval);
             await MutationNotifier.NotifyMutationAsync(ctx.Services, table, MutationType.Update, updatedData, result, ctx.UserContext);
             await MutationNotifier.NotifyStateTransitionAsync(ctx.Services, stateTransition, ctx.UserContext);
             // The update mutation field is typed `Int`, so its scalar return cannot
@@ -344,14 +368,22 @@ namespace BifrostQL.Core.Resolvers
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, setData.Keys, keyData.Keys, additionalFilter.WhereSuffix);
             var result = 0;
+            string? pendingApproval = null;
             await MutationCommandExecutor.RunInTransactionAsync(ctx.ConnFactory, async (conn, transaction) =>
             {
                 var hookContext = HookContext(table, MutationType.Update, dbData, ctx, conn, transaction, dialect);
                 await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, hookContext);
+                if (ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))
+                {
+                    pendingApproval = divertMessage;
+                    return;
+                }
                 result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, dbData, additionalFilter.Parameters, ctx.CancellationToken);
                 // Soft delete is modeled as an UPDATE; emit an update event (hook skips zero-row).
                 await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, hookContext, result);
             }, ctx.CancellationToken);
+            if (pendingApproval is not null)
+                throw ApprovalInterceptMutationHook.PendingApprovalError(pendingApproval);
             await MutationNotifier.NotifyMutationAsync(ctx.Services, table, MutationType.Update, dbData, result, ctx.UserContext);
             return result;
         }
@@ -374,13 +406,21 @@ namespace BifrostQL.Core.Resolvers
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var sql = MutationCommandExecutor.BuildDeleteSql(dialect, tableRef, deleteData.Keys, additionalFilter.WhereSuffix);
             var result = 0;
+            string? pendingApproval = null;
             await MutationCommandExecutor.RunInTransactionAsync(ctx.ConnFactory, async (conn, transaction) =>
             {
                 var hookContext = HookContext(table, MutationType.Delete, deleteData, ctx, conn, transaction, dialect);
                 await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, hookContext);
+                if (ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))
+                {
+                    pendingApproval = divertMessage;
+                    return;
+                }
                 result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, deleteData, additionalFilter.Parameters, ctx.CancellationToken);
                 await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, hookContext, result);
             }, ctx.CancellationToken);
+            if (pendingApproval is not null)
+                throw ApprovalInterceptMutationHook.PendingApprovalError(pendingApproval);
             await MutationNotifier.NotifyMutationAsync(ctx.Services, table, MutationType.Delete, deleteData, result, ctx.UserContext);
             return result;
         }

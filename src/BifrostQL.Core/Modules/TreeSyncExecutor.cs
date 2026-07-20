@@ -96,6 +96,7 @@ public sealed class TreeSyncExecutor
         var idsByInstance = new Dictionary<string, object?>(StringComparer.Ordinal);
 
         object? rootId = null;
+        string? pendingApproval = null;
 
         // Transaction control as SQL on the open connection (dialect keywords),
         // not the ADO.NET DbTransaction API — the boundary shows up in the SQL.
@@ -162,6 +163,18 @@ public sealed class TreeSyncExecutor
                         MutationState = MutationObserverContext.NewMutationState(),
                     };
                     await MutationNotifier.RunBeforeCommitHooksAsync(services, hookContext);
+
+                    // Approval gate: this operation was enqueued as a pending change on the
+                    // tree's transaction. Skip its write (and after-write hooks) so nothing
+                    // applies to the gated table; the tree commits the pending row(s) and
+                    // surfaces pending-approval after the commit. A gated node never inserts,
+                    // so a child's deferred FK to it stays unresolved (its intent is enqueued,
+                    // not applied) — consistent with "no SQL reaches a gated table".
+                    if (Approval.ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))
+                    {
+                        pendingApproval = divertMessage;
+                        continue;
+                    }
                 }
 
                 object? opResult;
@@ -194,13 +207,18 @@ public sealed class TreeSyncExecutor
             }
 
             await ExecuteRawAsync(conn, _dialect.CommitTransactionSql);
-            return rootId;
         }
         catch (Exception ex)
         {
             try { await ExecuteRawAsync(conn, _dialect.RollbackTransactionSql); } catch { /* surface the original error */ }
             throw BifrostExecutionError.FromDatabaseException(ex);
         }
+
+        // Thrown AFTER the commit (outside the try, so it is not wrapped as a database error)
+        // so the enqueued pending row(s) survive; never reported as success-as-applied.
+        if (pendingApproval is not null)
+            throw Approval.ApprovalInterceptMutationHook.PendingApprovalError(pendingApproval);
+        return rootId;
     }
 
 

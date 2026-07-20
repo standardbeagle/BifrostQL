@@ -2,6 +2,7 @@ using System.Data.Common;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
+using BifrostQL.Core.Modules.Approval;
 using BifrostQL.Core.QueryModel;
 using Microsoft.Extensions.DependencyInjection;
 using static BifrostQL.Core.Resolvers.DbParameterBinder;
@@ -30,7 +31,11 @@ namespace BifrostQL.Core.Resolvers
             int Affected,
             MutationType MutationType,
             IDictionary<string, object?> Data,
-            StateTransitionInfo? Transition);
+            StateTransitionInfo? Transition,
+            // Set when the approval gate diverted this action into a pending change: it
+            // applied nothing (Affected 0) and no observer should fire for it; the batch
+            // surfaces the pending-approval message after it commits the pending rows.
+            string? PendingApproval = null);
 
         /// <summary>
         /// The table's maximum batch size (<see cref="MetadataKeys.Batch.MaxSize"/>,
@@ -104,6 +109,14 @@ namespace BifrostQL.Core.Resolvers
                 if (transaction != null)
                     await transaction.DisposeAsync();
             }
+
+            // The approval gate diverted at least one action into a pending change (enqueued on
+            // the batch's transaction, now committed). Surface pending-approval AFTER the commit
+            // — a batch on a gated table applied nothing and enqueued one pending row per action.
+            // Thrown here, outside the try, so it is not caught and wrapped as a database error.
+            var pending = outcomes.FirstOrDefault(o => o.PendingApproval is not null);
+            if (pending is not null)
+                throw ApprovalInterceptMutationHook.PendingApprovalError(pending.PendingApproval!);
 
             // Observers fire only after commit so audit/state-transition
             // notifications never describe rolled-back work. Failures inside
@@ -199,7 +212,7 @@ namespace BifrostQL.Core.Resolvers
         /// event can name the row) or the affected-row count for an update/delete (so a
         /// zero-row no-op records nothing).
         /// </summary>
-        private static async Task<T> RunHookedWriteAsync<T>(
+        private static async Task<(T Result, string? PendingApproval)> RunHookedWriteAsync<T>(
             BatchExecutionContext ctx, MutationType type, IDictionary<string, object?> data,
             Func<Task<T>> write)
         {
@@ -218,9 +231,14 @@ namespace BifrostQL.Core.Resolvers
                 MutationState = MutationObserverContext.NewMutationState(),
             };
             await MutationNotifier.RunBeforeCommitHooksAsync(ctx.TransformContext.Services, hookContext);
+            // Approval gate: the action was enqueued as a pending change on the batch's shared
+            // transaction. Skip its write (and the after-write hooks) so nothing applies; the
+            // batch commits the pending row with the rest and surfaces pending-approval.
+            if (ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))
+                return (default!, divertMessage);
             var result = await write();
             await MutationNotifier.RunInTransactionHooksAsync(ctx.TransformContext.Services, hookContext, result);
-            return result;
+            return (result, null);
         }
 
         private static async Task<BatchActionOutcome?> ExecuteInsert(BatchExecutionContext ctx, Dictionary<string, object?> data)
@@ -250,7 +268,7 @@ namespace BifrostQL.Core.Resolvers
             var sql = returning != null
                 ? $"{insertInto}{returning};"
                 : $"{insertInto};SELECT {dialect.LastInsertedIdentity} ID;";
-            await RunHookedWriteAsync(ctx, MutationType.Insert, data, async () =>
+            var (_, insertPending) = await RunHookedWriteAsync(ctx, MutationType.Insert, data, async () =>
             {
                 await using var cmd = ctx.Conn.CreateCommand();
                 cmd.CommandText = sql;
@@ -258,6 +276,8 @@ namespace BifrostQL.Core.Resolvers
                 AddParameters(cmd, data);
                 return await cmd.ExecuteScalarAsync(ctx.Ct);
             });
+            if (insertPending is not null)
+                return new BatchActionOutcome(0, MutationType.Insert, data, null, insertPending);
             return new BatchActionOutcome(1, MutationType.Insert, data, transformResult.StateTransition);
         }
 
@@ -313,7 +333,7 @@ namespace BifrostQL.Core.Resolvers
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, standardData.Keys, keyData.Keys, additionalFilter.WhereSuffix);
-            var affected = await RunHookedWriteAsync(ctx, MutationType.Update, updatedData, async () =>
+            var (affected, updatePending) = await RunHookedWriteAsync(ctx, MutationType.Update, updatedData, async () =>
             {
                 await using var cmd = ctx.Conn.CreateCommand();
                 cmd.CommandText = sql;
@@ -333,6 +353,8 @@ namespace BifrostQL.Core.Resolvers
 
                 return rows;
             });
+            if (updatePending is not null)
+                return new BatchActionOutcome(0, MutationType.Update, updatedData, null, updatePending);
             return new BatchActionOutcome(affected, MutationType.Update, updatedData, transformResult.StateTransition);
         }
 
@@ -378,7 +400,7 @@ namespace BifrostQL.Core.Resolvers
                 var setData = dbData.Where(d => !keyData.ContainsKey(d.Key))
                     .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
                 var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, setData.Keys, keyData.Keys, additionalFilter.WhereSuffix);
-                var softAffected = await RunHookedWriteAsync(ctx, MutationType.Update, dbData, async () =>
+                var (softAffected, softPending) = await RunHookedWriteAsync(ctx, MutationType.Update, dbData, async () =>
                 {
                     await using var cmd = ctx.Conn.CreateCommand();
                     cmd.CommandText = sql;
@@ -387,6 +409,8 @@ namespace BifrostQL.Core.Resolvers
                     AddExtraParameters(cmd, additionalFilter.Parameters);
                     return await cmd.ExecuteNonQueryAsync(ctx.Ct);
                 });
+                if (softPending is not null)
+                    return new BatchActionOutcome(0, MutationType.Update, transformResult.Data, null, softPending);
                 return new BatchActionOutcome(softAffected, MutationType.Update, transformResult.Data, transformResult.StateTransition);
             }
 
@@ -395,7 +419,7 @@ namespace BifrostQL.Core.Resolvers
             // WHERE clause and parameters, mirroring the soft-delete branch above.
             var deleteData = dbData;
             var deleteSql = MutationCommandExecutor.BuildDeleteSql(dialect, tableRef, deleteData.Keys, additionalFilter.WhereSuffix);
-            var deleteAffected = await RunHookedWriteAsync(ctx, MutationType.Delete, deleteData, async () =>
+            var (deleteAffected, deletePending) = await RunHookedWriteAsync(ctx, MutationType.Delete, deleteData, async () =>
             {
                 await using var deleteCmd = ctx.Conn.CreateCommand();
                 deleteCmd.CommandText = deleteSql;
@@ -404,6 +428,8 @@ namespace BifrostQL.Core.Resolvers
                 AddExtraParameters(deleteCmd, additionalFilter.Parameters);
                 return await deleteCmd.ExecuteNonQueryAsync(ctx.Ct);
             });
+            if (deletePending is not null)
+                return new BatchActionOutcome(0, MutationType.Delete, deleteData, null, deletePending);
             return new BatchActionOutcome(deleteAffected, MutationType.Delete, deleteData, transformResult.StateTransition);
         }
 
@@ -450,7 +476,7 @@ namespace BifrostQL.Core.Resolvers
                 var upsertData = ToDbColumnKeys(table, transformResult.Data);
                 // Upsert is keyed by primary key, so upsertData carries the key the event
                 // needs even when the statement inserts a new row.
-                var affected = await RunHookedWriteAsync(ctx, MutationType.Update, upsertData, async () =>
+                var (affected, upsertPending) = await RunHookedWriteAsync(ctx, MutationType.Update, upsertData, async () =>
                 {
                     await using var cmd = ctx.Conn.CreateCommand();
                     cmd.CommandText = upsertSql;
@@ -458,6 +484,8 @@ namespace BifrostQL.Core.Resolvers
                     AddParameters(cmd, upsertData);
                     return await cmd.ExecuteNonQueryAsync(ctx.Ct);
                 });
+                if (upsertPending is not null)
+                    return new BatchActionOutcome(0, MutationType.Update, upsertData, null, upsertPending);
                 return new BatchActionOutcome(affected, MutationType.Update, upsertData, transformResult.StateTransition);
             }
 

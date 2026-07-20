@@ -80,11 +80,15 @@ public sealed class DeferredUndoEngine
         var token = table.GetMetadataValue(MetadataKeys.Concurrency.Token);
         if (!string.IsNullOrWhiteSpace(token))
         {
-            // Insert/update inverses delete the exact stored post-image; a deleted
-            // row has no post-image, so its restore is guarded by the captured
-            // pre-delete token. In both cases the token is pipeline data, never an
-            // engine-built predicate.
-            var tokenImage = data;
+            // An inserted or updated row still exists at undo time, so its inverse
+            // must guard against the stored post-write version. A deleted row has no
+            // target to guard; its restore carries the captured pre-delete version.
+            var tokenImage = delta.Op switch
+            {
+                "insert" or "update" => DeserializeObject(delta.AfterImage, "post-write image"),
+                "delete" => data,
+                _ => throw new BifrostExecutionError("The deferred delta has an invalid operation."),
+            };
             if (!tokenImage.TryGetValue(token, out var version))
                 throw new BifrostExecutionError("The deferred delta is missing its captured concurrency token.");
             data[token] = version;

@@ -26,15 +26,17 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
     {
         _keepAlive = new SqliteConnection(ConnString);
         await _keepAlive.OpenAsync();
-        foreach (var table in new[] { "__history", "soft_widgets", "widgets", "change_set_deltas", "change_sets" })
+        foreach (var table in new[] { "__history", "tenant_widgets", "soft_widgets", "widgets", "change_set_deltas", "change_sets" })
             await Exec($"DROP TABLE IF EXISTS {table}");
         await Exec("CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT NULL CHECK (name <> 'boom'), version INTEGER NULL DEFAULT 1)");
         await Exec("CREATE TABLE soft_widgets (id INTEGER PRIMARY KEY, name TEXT NULL, deleted_at TEXT NULL, version INTEGER NULL DEFAULT 1)");
-        await Exec("CREATE TABLE __history (id INTEGER PRIMARY KEY, entity TEXT NOT NULL, entity_id TEXT NOT NULL, op TEXT NOT NULL, actor TEXT NULL, changed_at TEXT NOT NULL, before TEXT NULL, after TEXT NULL, changed_columns TEXT NULL)");
+        await Exec("CREATE TABLE tenant_widgets (id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL, name TEXT NULL, version INTEGER NULL DEFAULT 1)");
+        await Exec("CREATE TABLE __history (id INTEGER PRIMARY KEY, entity TEXT NOT NULL, entity_id TEXT NOT NULL, op TEXT NOT NULL, actor TEXT NULL, tenant_id INTEGER NULL, changed_at TEXT NOT NULL, before TEXT NULL, after TEXT NULL, changed_columns TEXT NULL)");
         await Exec("CREATE TABLE change_sets (id INTEGER PRIMARY KEY, state TEXT NOT NULL, undo_window_expires_at TEXT NOT NULL, requester TEXT NULL, tenant TEXT NULL, tables TEXT NOT NULL, created_at TEXT NOT NULL, applied_at TEXT NULL, reversed_at TEXT NULL)");
         await Exec("CREATE TABLE change_set_deltas (id INTEGER PRIMARY KEY, change_set_id INTEGER NOT NULL, \"table\" TEXT NOT NULL, pk TEXT NOT NULL, op TEXT NOT NULL, inverse_op TEXT NOT NULL, before_image TEXT NULL, after_image TEXT NULL, created_at TEXT NOT NULL)");
         await Exec("INSERT INTO widgets(id, name) VALUES (1, 'original')");
         await Exec("INSERT INTO soft_widgets(id, name) VALUES (1, 'soft-original')");
+        await Exec("INSERT INTO tenant_widgets(id, tenant_id, name) VALUES (1, 1, 'tenant-original')");
         _model = await LoadModelAsync();
     }
 
@@ -60,6 +62,105 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
         Json(deltas[2].BeforeImage!)["version"].GetInt64().Should().Be(2, "restore must carry the pre-delete concurrency token");
         Json(deltas[3].BeforeImage!)["deleted_at"].ValueKind.Should().Be(JsonValueKind.Null);
         (await CountAsync("soft_widgets", "id = 1 AND deleted_at IS NOT NULL")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task UndoUpdate_UsesRealPipelineAndCapturedPostWriteToken()
+    {
+        await Exec("INSERT INTO change_sets (id, state, undo_window_expires_at, tables, created_at) VALUES (42, 'held', '2099-01-01T00:00:00Z', '[]', '2026-07-20T00:00:00Z')");
+        await Exec("INSERT INTO change_set_deltas (id, change_set_id, \"table\", pk, op, inverse_op, before_image, after_image, created_at) VALUES (42, 42, 'main.widgets', '{\"id\":1}', 'update', 'restore', '{\"id\":1,\"name\":\"original\",\"version\":1}', '{\"id\":1,\"name\":\"edited\",\"version\":2}', '2026-07-20T00:00:00Z')");
+        await Exec("UPDATE widgets SET name = 'edited', version = 2 WHERE id = 1");
+
+        var result = await UndoAsync(42);
+
+        result.Should().Be(new DeferredUndoResult(42, 1, 0, false));
+        (await ScalarAsync("SELECT name || ':' || version FROM widgets WHERE id = 1")).Should().Be("original:3");
+    }
+
+    [Fact]
+    public async Task UndoUpdate_WithDrift_RecordsConflictAndLeavesRowUntouched()
+    {
+        await SeedChangeSetAsync(43, "main.widgets", 1, "update", "restore",
+            "{\"id\":1,\"name\":\"original\",\"version\":1}", "{\"id\":1,\"name\":\"edited\",\"version\":2}");
+        await Exec("UPDATE widgets SET name = 'newer', version = 3 WHERE id = 1");
+
+        (await UndoAsync(43)).Should().Be(new DeferredUndoResult(43, 0, 1, false));
+        (await ScalarAsync("SELECT name || ':' || version FROM widgets WHERE id = 1")).Should().Be("newer:3");
+        (await ScalarAsync("SELECT state FROM change_sets WHERE id = 43")).Should().Be("partial");
+    }
+
+    [Fact]
+    public async Task Undo_MixedRows_IsPartialAndSecondCallIsUnavailable()
+    {
+        await Exec("INSERT INTO widgets(id, name, version) VALUES (2, 'two-edited', 2)");
+        await Exec("UPDATE widgets SET name = 'one-edited', version = 2 WHERE id = 1");
+        await Exec("INSERT INTO change_sets (id, state, undo_window_expires_at, tables, created_at) VALUES (44, 'held', '2099-01-01T00:00:00Z', '[]', '2026-07-20T00:00:00Z')");
+        await Exec("INSERT INTO change_set_deltas VALUES (440,44,'main.widgets','{\"id\":1}','update','restore','{\"id\":1,\"name\":\"original\",\"version\":1}','{\"id\":1,\"name\":\"one-edited\",\"version\":2}','2026-07-20T00:00:00Z')");
+        await Exec("INSERT INTO change_set_deltas VALUES (441,44,'main.widgets','{\"id\":2}','update','restore','{\"id\":2,\"name\":\"two\",\"version\":1}','{\"id\":2,\"name\":\"two-edited\",\"version\":2}','2026-07-20T00:00:00Z')");
+        await Exec("UPDATE widgets SET version = 3 WHERE id = 2");
+
+        (await UndoAsync(44)).Should().Be(new DeferredUndoResult(44, 1, 1, false));
+        Func<Task> retry = async () => await UndoAsync(44);
+        await retry.Should().ThrowAsync<BifrostExecutionError>();
+    }
+
+    [Fact]
+    public async Task UndoInsertThenReEdit_ConflictsWhileUndoDeleteRestoresRow()
+    {
+        await Exec("INSERT INTO widgets(id, name, version) VALUES (10, 'inserted', 1)");
+        await SeedChangeSetAsync(45, "main.widgets", 10, "insert", "delete", null,
+            "{\"id\":10,\"name\":\"inserted\",\"version\":1}");
+        await Exec("UPDATE widgets SET name = 're-edited', version = 2 WHERE id = 10");
+        (await UndoAsync(45)).ConflictRows.Should().Be(1);
+        (await CountAsync("widgets", "id = 10")).Should().Be(1);
+
+        await Exec("DELETE FROM widgets WHERE id = 1");
+        await SeedChangeSetAsync(46, "main.widgets", 1, "delete", "restore",
+            "{\"id\":1,\"name\":\"original\",\"version\":1}", null);
+        (await UndoAsync(46)).UndoneRows.Should().Be(1);
+        (await ScalarAsync("SELECT name FROM widgets WHERE id = 1")).Should().Be("original");
+    }
+
+    [Fact]
+    public async Task Undo_CrossTenant_IsDeniedThroughPipelineScoping()
+    {
+        await Exec("UPDATE tenant_widgets SET name = 'edited', version = 2 WHERE id = 1");
+        await SeedChangeSetAsync(47, "main.tenant_widgets", 1, "update", "restore",
+            "{\"id\":1,\"tenant_id\":1,\"name\":\"tenant-original\",\"version\":1}",
+            "{\"id\":1,\"tenant_id\":1,\"name\":\"edited\",\"version\":2}");
+
+        (await UndoAsync(47, new Dictionary<string, object?> { ["tenant_id"] = 2 })).ConflictRows.Should().Be(1);
+        (await ScalarAsync("SELECT name FROM tenant_widgets WHERE id = 1")).Should().Be("edited");
+    }
+
+    [Fact]
+    public async Task GraphQlUndo_WiresDispatcherAndIsIdempotent()
+    {
+        await Exec("UPDATE widgets SET name = 'edited', version = 2 WHERE id = 1");
+        await SeedChangeSetAsync(48, "main.widgets", 1, "update", "restore",
+            "{\"id\":1,\"name\":\"original\",\"version\":1}", "{\"id\":1,\"name\":\"edited\",\"version\":2}");
+        var executor = BuildMutationExecutor(_model);
+        await using var provider = new ServiceCollection().AddSingleton<IMutationIntentExecutor>(executor).BuildServiceProvider();
+        var schema = DbSchema.FromModel(_model);
+
+        async Task<ExecutionResult> Run() => await new DocumentExecuter().ExecuteAsync(options =>
+        {
+            options.Schema = schema;
+            options.Query = "mutation { undo(changeSetId: 48) { changeSetId undoneRows conflictRows alreadyUndone } }";
+            options.RequestServices = provider;
+            options.UserContext = new Dictionary<string, object?>();
+            options.Extensions = new Inputs(new Dictionary<string, object?>
+            {
+                ["connFactory"] = new SqliteDbConnFactory(ConnString), ["model"] = _model,
+                ["tableReaderFactory"] = new SqlExecutionManager(_model, schema),
+            });
+        });
+
+        (await Run()).Errors.Should().BeNullOrEmpty();
+        var second = await Run();
+        second.Errors.Should().BeNullOrEmpty();
+        (await ScalarAsync("SELECT state FROM change_sets WHERE id = 48")).Should().Be("undone");
+        (await ScalarAsync("SELECT version FROM widgets WHERE id = 1")).Should().Be("3", "the second GraphQL undo must not replay the inverse");
     }
 
     [Fact]
@@ -141,6 +242,7 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
     {
         "main.widgets { deferrable: enabled; undo-window: 1h; concurrency-token: version; history: enabled }",
         "main.soft_widgets { deferrable: enabled; undo-window: 1h; soft-delete: deleted_at; concurrency-token: version; history: enabled }",
+        "main.tenant_widgets { deferrable: enabled; undo-window: 1h; tenant-filter: tenant_id; concurrency-token: version; history: enabled }",
         ":root { history-table: main.__history }",
     }.Concat(extra).ToArray())).LoadAsync();
 
@@ -176,6 +278,31 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
         });
     }
 
+    private static MutationIntentExecutor BuildMutationExecutor(IDbModel model)
+    {
+        var cache = new PathCache<Inputs>();
+        cache.AddLoader("/graphql", () => Task.FromResult(new Inputs(new Dictionary<string, object?>
+        {
+            ["model"] = model, ["connFactory"] = new SqliteDbConnFactory(ConnString),
+        })));
+        return new MutationIntentExecutor(cache, new MutationTransformersWrap { Transformers = new IMutationTransformer[]
+        {
+            new TenantMutationTransformer(), new SoftDeleteMutationTransformer(), new ConcurrencyMutationTransformer(),
+        }});
+    }
+
+    private Task<DeferredUndoResult> UndoAsync(long id, IDictionary<string, object?>? user = null) =>
+        new DeferredUndoEngine(_model, new SqliteDbConnFactory(ConnString), BuildMutationExecutor(_model))
+            .UndoAsync(id, user ?? new Dictionary<string, object?>());
+
+    private async Task SeedChangeSetAsync(long id, string table, long pk, string op, string inverse, string? before, string? after)
+    {
+        await Exec($"INSERT INTO change_sets (id, state, undo_window_expires_at, tables, created_at) VALUES ({id}, 'held', '2099-01-01T00:00:00Z', '[]', '2026-07-20T00:00:00Z')");
+        await Exec($"INSERT INTO change_set_deltas (id, change_set_id, \"table\", pk, op, inverse_op, before_image, after_image, created_at) VALUES ({id}, {id}, '{table}', '{{\"id\":{pk}}}', '{op}', '{inverse}', {Sql(before)}, {Sql(after)}, '2026-07-20T00:00:00Z')");
+    }
+
+    private static string Sql(string? value) => value is null ? "NULL" : $"'{value.Replace("'", "''")}'";
+
     private sealed class FailingHook : IInTransactionMutationHook
     {
         public ValueTask AfterWriteInTransactionAsync(MutationObserverContext context) => throw new InvalidOperationException("forced deferred rollback");
@@ -196,6 +323,11 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
     {
         await using var command = new SqliteCommand($"SELECT COUNT(*) FROM {table} WHERE {where}", _keepAlive);
         return Convert.ToInt64(await command.ExecuteScalarAsync());
+    }
+    private async Task<string?> ScalarAsync(string sql)
+    {
+        await using var command = new SqliteCommand(sql, _keepAlive);
+        return (await command.ExecuteScalarAsync())?.ToString();
     }
     private async Task Exec(string sql)
     {

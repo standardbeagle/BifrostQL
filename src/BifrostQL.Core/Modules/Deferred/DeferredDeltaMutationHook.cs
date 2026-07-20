@@ -13,9 +13,13 @@ using static BifrostQL.Core.Resolvers.DbParameterBinder;
 namespace BifrostQL.Core.Modules.Deferred;
 
 /// <summary>
-/// Writes a durable reverse delta immediately after a deferrable mutation. The delta and
-/// its held change set use the mutation's connection, so either both commit with the write
-/// or a hook failure rolls all three back.
+/// Writes the durable undo contract immediately after a deferrable mutation. Every delta is
+/// bound to one typed active held change set and records the full stored before-image for a
+/// restore inverse. Insert/update deltas record the full stored post-image, including database
+/// generated concurrency tokens, so a later delete/restore predicate can reject a newer write;
+/// delete deltas retain the pre-delete token in their before-image. The delta and its held change
+/// set use the mutation's connection, so either both commit with the write or a hook failure
+/// rolls all three back.
 /// </summary>
 public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
 {
@@ -64,6 +68,18 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
 
         var activeChangeSet = await GetOrCreateChangeSetAsync(context, config);
         var key = ResolveKeyData(context.Table, context.Data, context.Result, capturedBefore, operation);
+        IReadOnlyDictionary<string, object?>? storedAfter = null;
+        if (operation != MutationType.Delete)
+        {
+            storedAfter = await MutationCommandExecutor.LoadRowByKey(
+                context.Connection, context.Transaction, context.Dialect, context.Table,
+                context.Table.Columns.Select(column => column.ColumnName).ToList(), key);
+            if (storedAfter is null)
+                throw new BifrostExecutionError(
+                    $"Deferred delta could not read back the row it just wrote in " +
+                    $"'{context.Table.TableSchema}.{context.Table.DbName}'; refusing to record an unsafe undo contract.");
+        }
+
         var deltaTable = activeChangeSet.DeltaTable;
         var delta = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
         {
@@ -73,10 +89,10 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
             [MetadataKeys.Deferred.ChangeSetDelta.Column.Op] = operation.ToString().ToLowerInvariant(),
             [MetadataKeys.Deferred.ChangeSetDelta.Column.InverseOp] = InverseOperation(operation),
             [MetadataKeys.Deferred.ChangeSetDelta.Column.BeforeImage] = capturedBefore is null ? null : JsonSerializer.Serialize(capturedBefore),
-            // The pipeline has already applied mutation transformers here. Persist the
-            // resulting token so an inverse update guards against a later write rather
-            // than comparing the stale pre-write version.
-            [MetadataKeys.Deferred.ChangeSetDelta.Column.AfterImage] = JsonSerializer.Serialize(context.Data),
+            // The inverse predicate must compare against the row exactly as the database stored
+            // it, not the write input: defaults, triggers, and generated concurrency tokens are
+            // otherwise absent or stale. Deletes retain their pre-delete token in before_image.
+            [MetadataKeys.Deferred.ChangeSetDelta.Column.AfterImage] = storedAfter is null ? null : JsonSerializer.Serialize(storedAfter),
             [MetadataKeys.Deferred.ChangeSetDelta.Column.CreatedAt] = DateTime.UtcNow,
         };
 

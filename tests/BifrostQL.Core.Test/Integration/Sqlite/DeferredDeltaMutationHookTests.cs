@@ -52,9 +52,12 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
         deltas.Should().HaveCount(4);
         deltas.Select(d => (d.Op, d.InverseOp)).Should().Equal(("insert", "delete"), ("update", "restore"), ("delete", "restore"), ("update", "restore"));
         deltas[0].BeforeImage.Should().BeNull();
+        Json(deltas[0].AfterImage!)["id"].GetInt64().Should().BeGreaterThan(0, "the delete inverse must target the generated row");
+        Json(deltas[0].AfterImage!)["version"].GetInt64().Should().Be(1, "the delete inverse must carry the stored default concurrency token");
         Json(deltas[1].BeforeImage!)["name"].GetString().Should().Be("original");
         Json(deltas[1].AfterImage!)["version"].GetInt64().Should().Be(2, "undo must carry the post-write concurrency token");
         Json(deltas[2].BeforeImage!)["name"].GetString().Should().Be("edited");
+        Json(deltas[2].BeforeImage!)["version"].GetInt64().Should().Be(2, "restore must carry the pre-delete concurrency token");
         Json(deltas[3].BeforeImage!)["deleted_at"].ValueKind.Should().Be(JsonValueKind.Null);
         (await CountAsync("soft_widgets", "id = 1 AND deleted_at IS NOT NULL")).Should().Be(1);
     }
@@ -70,6 +73,7 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
         delta.InverseOp.Should().Be("delete");
         Json(delta.Pk)["id"].GetInt64().Should().Be(77);
         delta.BeforeImage.Should().BeNull();
+        Json(delta.AfterImage!)["version"].GetInt64().Should().Be(1, "the delete inverse must use the stored post-upsert token");
     }
 
     [Fact]

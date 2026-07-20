@@ -1,7 +1,10 @@
+using System.Text;
 using System.Text.Json;
+using BifrostQL.Core.Crypto;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.Approval;
+using BifrostQL.Core.Modules.Crypto;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
 using BifrostQL.Model;
@@ -33,6 +36,7 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
     private const string EndpointPath = "/graphql";
     private SqliteConnection _keepAlive = null!;
     private IDbModel _model = null!;
+    private static readonly EnvelopeKeyManager KeyManager = NewKeyManager();
 
     // orders: approval-gated AND tenant-filtered, so the same fixture proves both the
     // enqueue-not-apply invariant and that the serialized payload is the scoped intent.
@@ -42,7 +46,8 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
     private static readonly string[] Rules =
     {
         ":root { user-audit-key: user_id }",
-        "main.orders { approval: enabled; approver-role: manager; tenant-filter: tenant_id }",
+        "main.orders { approval: enabled; approver-role: manager; self-approve: false; tenant-filter: tenant_id; soft-delete: deleted_at }",
+        "main.orders.secret { encrypt: aes-256-gcm; key-ref: config:approval; blind-index: secret_bidx }",
         "main.orders.created_by { populate: created-by }",
         "main.orders.updated_by { populate: updated-by }",
         "main.blogs { approval: enabled; approver-role: manager }",
@@ -62,7 +67,10 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
             CREATE TABLE orders (
                 id         INTEGER PRIMARY KEY,
                 tenant_id  INTEGER NOT NULL,
-                name       TEXT NOT NULL,
+                name       TEXT NOT NULL UNIQUE,
+                secret     TEXT NULL,
+                secret_bidx TEXT NULL,
+                deleted_at TEXT NULL,
                 created_by TEXT NULL,
                 updated_by TEXT NULL
             )
@@ -163,7 +171,8 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
             });
         });
 
-        return new MutationIntentExecutor(pathCache, BuiltInTransformers(), BuildHookProvider());
+        var services = BuildHookProvider();
+        return new MutationIntentExecutor(pathCache, BuiltInTransformers(), services);
     }
 
     // The built-in security/audit transformer chain the server auto-prepends, so tenant
@@ -179,6 +188,7 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
             new TenantMutationTransformer(),
             new AuditMutationTransformer(),
             new ConcurrencyMutationTransformer(),
+            new EncryptOnWriteMutationTransformer(),
         },
     };
 
@@ -187,6 +197,7 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
     private static ServiceProvider BuildHookProvider()
     {
         var services = new ServiceCollection();
+        services.AddSingleton(KeyManager);
         services.AddSingleton<IBeforeCommitMutationHook, ApprovalInterceptMutationHook>();
         services.AddSingleton(sp => new BeforeCommitMutationHooks(
             sp.GetServices<IBeforeCommitMutationHook>().ToArray()));
@@ -268,7 +279,7 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
 
         var pending = await PendingRowsAsync();
         pending.Should().ContainSingle();
-        pending[0].Op.Should().Be("delete");
+        pending[0].Op.Should().Be("update", "the configured soft-delete transformer rewrites deletes before approval intercepts them");
     }
 
     [Fact]
@@ -372,6 +383,89 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GraphQlApprove_SelfApprover_IsDenied_AndLeavesChangePending()
+    {
+        var executor = BuildExecutor();
+        var alice = ApproverContext("alice", "manager");
+        await EnqueueAsync(executor, "self-denied", alice);
+
+        var result = await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"1\") }", alice);
+
+        result.Errors.Should().NotBeNullOrEmpty();
+        result.Errors!.Single().Message.Should().Contain("cannot approve their own");
+        (await CountAsync("orders", "name = 'self-denied'")).Should().Be(0);
+        (await CountAsync("pending_changes", "id = 1 AND \"state\" = 'pending'")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GraphQlApprove_CallerWithoutApproverRole_IsDenied_AndLeavesChangePending()
+    {
+        var executor = BuildExecutor();
+        await EnqueueAsync(executor, "role-denied", RequesterContext());
+
+        var result = await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"1\") }", ApproverContext("bob", "requester"));
+
+        result.Errors.Should().NotBeNullOrEmpty();
+        result.Errors!.Single().Message.Should().Contain("not an approval-role holder");
+        (await CountAsync("orders", "name = 'role-denied'")).Should().Be(0);
+        (await CountAsync("pending_changes", "id = 1 AND \"state\" = 'pending'")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GraphQlApprove_UnevaluablePolicy_IsDenied_AndLeavesChangePending()
+    {
+        var executor = BuildExecutor();
+        await EnqueueAsync(executor, "policy-denied", RequesterContext());
+        ((DbTable)_model.GetTableFromDbName("orders")).Metadata["policy-actions"] = "invalid";
+
+        var result = await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"1\") }", ApproverContext("bob", "manager"));
+
+        result.Errors.Should().NotBeNullOrEmpty();
+        result.Errors!.Single().Message.Should().Contain("policy could not be evaluated");
+        (await CountAsync("orders", "name = 'policy-denied'")).Should().Be(0);
+        (await CountAsync("pending_changes", "id = 1 AND \"state\" = 'pending'")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GraphQlApprove_ReplaysEncryptionAndSoftDeleteTransformers()
+    {
+        var executor = BuildExecutor();
+        await EnqueueAsync(executor, "encrypted", RequesterContext(), secret: "approval-secret");
+        var approver = ApproverContext("bob", "manager");
+
+        (await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"1\") }", approver)).Errors.Should().BeNullOrEmpty();
+        var (secret, blindIndex) = await ReadSecretAsync("encrypted");
+        secret.Should().NotBe("approval-secret");
+        var replayedCiphertext = FieldCipher.Decrypt(KeyManager.GetDataKey("config:approval"), secret!, CryptoAad.Build("main", "orders", "secret"));
+        replayedCiphertext.Should().NotBe("approval-secret", "the replay applies encrypt-on-write again through the normal pipeline");
+        FieldCipher.Decrypt(KeyManager.GetDataKey("config:approval"), replayedCiphertext, CryptoAad.Build("main", "orders", "secret"))
+            .Should().Be("approval-secret");
+        blindIndex.Should().Be(BlindIndexComputer.Compute(KeyManager.GetBlindIndexKey("config:approval"), replayedCiphertext));
+
+        Func<Task> enqueueDelete = async () => await executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "orders", Action = MutationIntentAction.Delete, Data = new Dictionary<string, object?>(),
+            PrimaryKey = new object?[] { 11 }, UserContext = RequesterContext(), Endpoint = EndpointPath,
+        });
+        await enqueueDelete.Should().ThrowAsync<BifrostExecutionError>();
+        (await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"2\") }", approver)).Errors.Should().BeNullOrEmpty();
+        (await CountAsync("orders", "id = 11 AND deleted_at IS NOT NULL")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GraphQlApprove_ReplayFailure_RollsBackTargetAndPendingTransition()
+    {
+        var executor = BuildExecutor();
+        await EnqueueAsync(executor, "seed-order", RequesterContext());
+
+        var result = await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"1\") }", ApproverContext("bob", "manager"));
+
+        result.Errors.Should().NotBeNullOrEmpty();
+        (await CountAsync("orders", "name = 'seed-order'")).Should().Be(1, "the failed replay cannot insert a second target row");
+        (await CountAsync("pending_changes", "id = 1 AND \"state\" = 'pending'")).Should().Be(1, "the failed replay rolls back the approval transition");
+    }
+
+    [Fact]
     public async Task GraphQlApprovalMutations_ReplayUnderRequesterContext_AndRejectWithoutWriting()
     {
         var executor = BuildExecutor();
@@ -445,6 +539,39 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         (await CountAsync("orders", "1 = 1")).Should().Be(1, "a gated write with no store must NOT reach the target table");
     }
 
+    private static IDictionary<string, object?> RequesterContext()
+        => new Dictionary<string, object?> { ["tenant_id"] = 1, ["user_id"] = "alice", ["roles"] = new[] { "requester" } };
+
+    private static IDictionary<string, object?> ApproverContext(string userId, string role)
+        => new Dictionary<string, object?> { ["tenant_id"] = 2, ["user_id"] = userId, ["roles"] = new[] { role } };
+
+    private static EnvelopeKeyManager NewKeyManager()
+    {
+        var rootKey = Enumerable.Range(1, FieldCipher.KeySize).Select(value => (byte)value).ToArray();
+        return new EnvelopeKeyManager(new ConfigRootKeyProvider(rootKey), new InMemoryDataEncryptionKeyStore());
+    }
+
+    private async Task EnqueueAsync(MutationIntentExecutor executor, string name, IDictionary<string, object?> requester, string? secret = null)
+    {
+        var data = new Dictionary<string, object?> { ["name"] = name, ["tenant_id"] = 1 };
+        if (secret is not null) data["secret"] = secret;
+        Func<Task> enqueue = async () => await executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "orders", Action = MutationIntentAction.Insert, Data = data,
+            UserContext = requester, Endpoint = EndpointPath,
+        });
+        await enqueue.Should().ThrowAsync<BifrostExecutionError>();
+    }
+
+    private async Task<(string? Secret, string? BlindIndex)> ReadSecretAsync(string name)
+    {
+        await using var command = new SqliteCommand("SELECT secret, secret_bidx FROM orders WHERE name = $name", _keepAlive);
+        command.Parameters.AddWithValue("$name", name);
+        await using var reader = await command.ExecuteReaderAsync();
+        (await reader.ReadAsync()).Should().BeTrue();
+        return (reader.IsDBNull(0) ? null : reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1));
+    }
+
     // The GraphQL harness for the TreeSync path: registers the approval intercept hook and the
     // before-commit composite in RequestServices, exactly as the host DI composes them, so the
     // nested sync runs the before-commit phase.
@@ -460,6 +587,7 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
             Transformers = Array.Empty<IMutationTransformer>(),
         });
         services.AddSingleton<IMutationIntentExecutor>(BuildExecutor());
+        services.AddSingleton(KeyManager);
         services.AddSingleton<IBeforeCommitMutationHook, ApprovalInterceptMutationHook>();
         services.AddSingleton(sp => new BeforeCommitMutationHooks(
             sp.GetServices<IBeforeCommitMutationHook>().ToArray()));

@@ -62,6 +62,7 @@ namespace BifrostQL.Core.Model
                 ValidateHistoryTokens(table, errors);
                 ValidateFtsColumns(table, errors);
                 ValidateRetention(table, errors);
+                ValidateApproval(table, errors);
 
                 var tableRef = $"{table.TableSchema}.{table.DbName}";
                 ValidateMetadataKeyCasing(table.Metadata, MetadataValidator.KnownTableKeys, "table", tableRef, errors);
@@ -362,6 +363,29 @@ namespace BifrostQL.Core.Model
                     ? MetadataKeys.Retention.Retain
                     : MetadataKeys.Retention.Ttl;
                 errors.Add(Problem(table, key, table.GetMetadataValue(key), ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// Fail-fast validation for a table's approval opt-in (<c>approval</c> /
+        /// <c>approver-role</c> / <c>self-approve</c>). An <c>approval</c> declaration with no
+        /// <c>approver-role</c> is fail-open (a gate nobody can approve), and a bad
+        /// <c>approval</c>/<c>self-approve</c> value would silently mis-gate — each would leave a
+        /// table that reads as approval-managed in config either impossible to approve or
+        /// ungated, invisible until the write-interception slice runs. Reuses
+        /// <see cref="Modules.Approval.ApprovalConfig.FromTable"/> so validation cannot drift
+        /// from the runtime parse.
+        /// </summary>
+        private static void ValidateApproval(IDbTable table, List<string> errors)
+        {
+            try
+            {
+                Modules.Approval.ApprovalConfig.FromTable(table);
+            }
+            catch (Exception ex)
+            {
+                errors.Add(Problem(table, MetadataKeys.Approval.Marker,
+                    table.GetMetadataValue(MetadataKeys.Approval.Marker), ex.Message));
             }
         }
 

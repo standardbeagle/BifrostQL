@@ -44,6 +44,8 @@ import {
 import { nextIndex, canNavigate, positionLabel, type NavDirection } from '../lib/form-runner-nav';
 import { FormSubformPanel } from './form-subform';
 
+const EMPTY_VALUES: Record<string, unknown> = {};
+
 /** Unqualified suffix of a possibly "schema.name"-qualified identifier. */
 function unqualified(id: string): string {
   const dot = id.lastIndexOf('.');
@@ -148,13 +150,21 @@ interface FormRunnerViewProps {
   fieldMetadata?: Record<string, FieldWidgetHint>;
   onClose?: () => void;
   schema?: SchemaContextValue;
+  /** Values fixed by a containing form when creating a related record. */
+  initialValues?: Record<string, unknown>;
+  /** Fields supplied by a containing form; retain them in mutations but do not render inputs. */
+  hiddenFields?: readonly string[];
+  /** Opens the runner directly in create mode for a related-record action. */
+  startInNewMode?: boolean;
+  /** Opens the runner on this row for a related-record edit action. */
+  initialPkRoute?: string;
 }
 
 /**
  * The bound runtime for a resolved table. Split from {@link FormRunner} so it can
  * be exercised directly with a `Table` and a fetcher, without a schema fetch.
  */
-export function FormRunnerView({ table, definition, fieldMetadata, onClose, schema }: FormRunnerViewProps) {
+export function FormRunnerView({ table, definition, fieldMetadata, onClose, schema, initialValues = EMPTY_VALUES, hiddenFields = [], startInNewMode = false, initialPkRoute }: FormRunnerViewProps) {
   const fetcher = useFetcher();
   const queryClient = useQueryClient();
 
@@ -164,9 +174,9 @@ export function FormRunnerView({ table, definition, fieldMetadata, onClose, sche
   );
 
   // Displayed fields: included + visible + still present in the schema.
-  const [location, setLocation] = useState<Location>({ kind: 'offset', index: 0 });
-  const [mode, setMode] = useState<'browse' | 'new'>('browse');
-  const [draft, setDraft] = useState<Record<string, unknown>>({});
+  const [location, setLocation] = useState<Location>(initialPkRoute ? { kind: 'pk', route: initialPkRoute } : { kind: 'offset', index: 0 });
+  const [mode, setMode] = useState<'browse' | 'new'>(startInNewMode ? 'new' : 'browse');
+  const [draft, setDraft] = useState<Record<string, unknown>>(initialValues);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [jump, setJump] = useState('');
@@ -274,13 +284,13 @@ export function FormRunnerView({ table, definition, fieldMetadata, onClose, sche
     setFieldErrors({});
     setFormError(null);
     if (isNew) {
-      setDraft({});
+      setDraft(initialValues);
       return;
     }
     const next: Record<string, unknown> = {};
     for (const b of bound) next[b.column.name] = currentRow?.[b.column.name] ?? null;
     setDraft(next);
-  }, [rowKey, currentRow, isNew, bound]);
+  }, [rowKey, currentRow, isNew, bound, initialValues]);
 
   const currentIndex = location.kind === 'offset' ? location.index : -1;
 
@@ -425,7 +435,7 @@ export function FormRunnerView({ table, definition, fieldMetadata, onClose, sche
           <p style={styles.notice}>No records. Use “New” to create one.</p>
         ) : (
           <div style={{ ...styles.grid, gridTemplateColumns: `repeat(${definition.columns}, minmax(0, 1fr))` }}>
-            {bound.map((b) => {
+            {bound.filter((b) => !hiddenFields.includes(b.column.name)).map((b) => {
               const editable = isEditable(b);
               const value = draft[b.column.name];
               const err = fieldErrors[b.column.name];

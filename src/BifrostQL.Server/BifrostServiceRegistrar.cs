@@ -352,6 +352,36 @@ namespace BifrostQL.Server
             services.AddSingleton<Microsoft.Extensions.Hosting.IHostedService>(sp =>
                 new CdcOutboxHostedService(
                     sp.GetRequiredService<BifrostQL.Core.Modules.Cdc.OutboxDispatcher>()));
+
+            // The metadata-driven retention purge is a background worker in the same shape as the
+            // CDC dispatcher (Core engine + thin IHostedService wrapper), so it is registered here
+            // on the same host-common hook. It reuses the shared scoped read/write seams, so every
+            // purge delete is pipeline-routed and per-tenant-scoped; a host with no retain/ttl
+            // metadata idles without polling.
+            RegisterRetentionPurgeServices(services);
+        }
+
+        /// <summary>
+        /// Registers the metadata-driven retention purge engine
+        /// (<see cref="BifrostQL.Core.Modules.Retention.RetentionPurgeEngine"/>) and its
+        /// <see cref="Microsoft.Extensions.Hosting.IHostedService"/> wrapper. The engine resolves
+        /// the model/connection from the same <see cref="Core.Schema.PathCache{T}"/> the GraphQL
+        /// middleware uses and routes every delete through the shared <see cref="IQueryIntentExecutor"/>
+        /// / <see cref="IMutationIntentExecutor"/> seams — so a background purge cannot bypass the
+        /// mutation pipeline or cross a tenant boundary. A host with no <c>retain</c>/<c>ttl</c>
+        /// metadata idles without polling, so a non-retention host pays nothing. TryAdd so a host
+        /// may register its own engine first.
+        /// </summary>
+        private static void RegisterRetentionPurgeServices(IServiceCollection services)
+        {
+            services.TryAddSingleton(sp => new BifrostQL.Core.Modules.Retention.RetentionPurgeEngine(
+                sp.GetRequiredService<IQueryIntentExecutor>(),
+                sp.GetRequiredService<IMutationIntentExecutor>(),
+                sp.GetRequiredService<Core.Schema.PathCache<GraphQL.Inputs>>(),
+                logger: sp.GetService<ILogger<BifrostQL.Core.Modules.Retention.RetentionPurgeEngine>>()));
+            services.AddSingleton<Microsoft.Extensions.Hosting.IHostedService>(sp =>
+                new RetentionPurgeHostedService(
+                    sp.GetRequiredService<BifrostQL.Core.Modules.Retention.RetentionPurgeEngine>()));
         }
 
         /// <summary>
@@ -538,6 +568,41 @@ namespace BifrostQL.Server
             {
                 // Await the loop's exit, but do not hang shutdown if it is mid-delay: give up
                 // when the host's own shutdown token trips.
+                var completed = await Task.WhenAny(_loop, Task.Delay(Timeout.Infinite, cancellationToken));
+                if (completed == _loop)
+                    await _loop; // observe any fault (RunAsync is fail-safe, so this is defensive)
+            }
+        }
+    }
+
+    /// <summary>
+    /// Ties the <see cref="BifrostQL.Core.Modules.Retention.RetentionPurgeEngine"/>'s purge loop
+    /// to the host lifecycle without the Core engine taking a hosting dependency (mirroring
+    /// <see cref="CdcOutboxHostedService"/>). The engine's <c>RunAsync</c> is launched detached on
+    /// start and cancelled on graceful shutdown; the loop is fail-safe and never throws to the host.
+    /// </summary>
+    internal sealed class RetentionPurgeHostedService : Microsoft.Extensions.Hosting.IHostedService
+    {
+        private readonly BifrostQL.Core.Modules.Retention.RetentionPurgeEngine _engine;
+        private readonly CancellationTokenSource _stopping = new();
+        private Task? _loop;
+
+        public RetentionPurgeHostedService(BifrostQL.Core.Modules.Retention.RetentionPurgeEngine engine)
+            => _engine = engine ?? throw new ArgumentNullException(nameof(engine));
+
+        public Task StartAsync(CancellationToken cancellationToken)
+        {
+            // Detached from startup so the first purge pass never blocks host start; the loop
+            // observes _stopping for graceful shutdown.
+            _loop = _engine.RunAsync(_stopping.Token);
+            return Task.CompletedTask;
+        }
+
+        public async Task StopAsync(CancellationToken cancellationToken)
+        {
+            _stopping.Cancel();
+            if (_loop is not null)
+            {
                 var completed = await Task.WhenAny(_loop, Task.Delay(Timeout.Infinite, cancellationToken));
                 if (completed == _loop)
                     await _loop; // observe any fault (RunAsync is fail-safe, so this is defensive)

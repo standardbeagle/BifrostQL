@@ -54,6 +54,19 @@ public sealed class MutationIntent
     public IDictionary<string, object?> UserContext { get; init; } = new Dictionary<string, object?>();
 
     /// <summary>
+    /// Module mutation-argument values, keyed by the module's server-side context
+    /// key — the programmatic equivalent of a GraphQL delete field's declared
+    /// module arguments (e.g. <see cref="Modules.SoftDeleteModuleApi.HardDeleteKey"/>
+    /// to route a real DELETE that bypasses the soft-delete rewrite). Empty by
+    /// default. Threaded into the mutation transformer chain exactly as the
+    /// resolver threads a request's <c>_hardDelete</c>, so an adapter or background
+    /// writer reaches the pipeline's DECLARED hard-delete route (role-gated by the
+    /// table's <c>soft-delete-hard-role</c>) instead of special-casing soft-delete
+    /// itself.
+    /// </summary>
+    public IReadOnlyDictionary<string, object?> ModuleArguments { get; init; } = ModuleApiRegistry.EmptyArguments;
+
+    /// <summary>
     /// The registered GraphQL endpoint path (e.g. <c>/graphql</c>) whose cached
     /// DbModel/connection the intent executes against. Null selects the single
     /// registered endpoint; with multiple endpoints registered it is required,
@@ -196,6 +209,9 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
             // stamped a profile leaves the full set active (fail-closed for writes).
             Transformers = BifrostProfileRegistry.FilterBy(_transformers, intent.UserContext),
             UserContext = intent.UserContext,
+            // Declared module arguments (e.g. hard_delete) reach the delete path's
+            // transformers exactly as the GraphQL resolver's captured arguments do.
+            ModuleArguments = intent.ModuleArguments,
             Services = _services,
             CancellationToken = cancellationToken,
         };

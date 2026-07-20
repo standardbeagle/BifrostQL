@@ -32,6 +32,7 @@ public sealed class MutationIntentExecutorTests : IAsyncLifetime
         "*.orders.created_at { populate: created-on }",
         "*.orders.updated_at { populate: updated-on }",
         "*.notes { tenant-filter: tenant_id }",
+        "*.events { tenant-filter: tenant_id; soft-delete: deleted_at; soft-delete-hard-role: purge_admin }",
     };
 
     public async Task InitializeAsync()
@@ -71,6 +72,23 @@ public sealed class MutationIntentExecutorTests : IAsyncLifetime
             INSERT INTO notes(id, tenant_id, body) VALUES
                 (1, 1, 'tenant-one-note'),
                 (2, 2, 'tenant-two-note')
+            """);
+
+        await Exec("DROP TABLE IF EXISTS events");
+        await Exec(
+            """
+            CREATE TABLE events (
+                id INTEGER PRIMARY KEY,
+                tenant_id INTEGER NOT NULL,
+                label TEXT NOT NULL,
+                deleted_at TEXT NULL
+            )
+            """);
+        await Exec(
+            """
+            INSERT INTO events(id, tenant_id, label, deleted_at) VALUES
+                (1, 1, 'live-event', NULL),
+                (2, 1, 'already-soft-deleted', '2000-01-01 00:00:00')
             """);
     }
 
@@ -323,6 +341,87 @@ public sealed class MutationIntentExecutorTests : IAsyncLifetime
 
         result.Value.Should().Be(1);
         (await ScalarAsync("SELECT COUNT(*) FROM notes WHERE id = 1")).Should().Be("0");
+    }
+
+    // ---- delete: pipeline decides soft-vs-hard; declared hard-delete route ----
+
+    [Fact]
+    public async Task Delete_OnSoftDeleteTable_PipelineSoftDeletes_RowRemainsStamped()
+    {
+        var executor = BuildExecutor();
+
+        // A plain Delete intent carries NO hard_delete argument. On a soft-delete
+        // table the pipeline rewrites it to an UPDATE (deleted_at stamped) — the
+        // caller never special-cases soft-delete.
+        var result = await executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "events",
+            Action = MutationIntentAction.Delete,
+            Data = new Dictionary<string, object?>(),
+            PrimaryKey = new object?[] { 1 },
+            UserContext = TenantContext(1),
+            Endpoint = EndpointPath,
+        });
+
+        result.Value.Should().Be(1, "one row was soft-deleted");
+        (await ScalarAsync("SELECT COUNT(*) FROM events WHERE id = 1")).Should().Be("1", "the row is still present (soft delete)");
+        (await ScalarAsync("SELECT deleted_at FROM events WHERE id = 1")).Should().NotBeNullOrEmpty("soft-delete stamped deleted_at");
+    }
+
+    [Fact]
+    public async Task Delete_WithHardDeleteModuleArgument_AndRole_HardPurgesTheRow()
+    {
+        var executor = BuildExecutor();
+
+        // The declared hard-delete route: the hard_delete module argument (role-gated
+        // by soft-delete-hard-role) bypasses the soft-delete rewrite and runs a real
+        // DELETE — reaching an already-soft-deleted row that a soft-delete UPDATE
+        // (WHERE deleted_at IS NULL) could never touch.
+        var context = TenantContext(1);
+        context["roles"] = new[] { "purge_admin" };
+
+        var result = await executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "events",
+            Action = MutationIntentAction.Delete,
+            Data = new Dictionary<string, object?>(),
+            PrimaryKey = new object?[] { 2 },
+            UserContext = context,
+            ModuleArguments = new Dictionary<string, object?>
+            {
+                [BifrostQL.Core.Modules.SoftDeleteModuleApi.HardDeleteKey] = true,
+            },
+            Endpoint = EndpointPath,
+        });
+
+        result.Value.Should().Be(1, "the hard delete removed one row");
+        (await ScalarAsync("SELECT COUNT(*) FROM events WHERE id = 2")).Should().Be("0", "the row was physically deleted");
+    }
+
+    [Fact]
+    public async Task Delete_WithHardDeleteModuleArgument_WithoutRole_IsDenied()
+    {
+        var executor = BuildExecutor();
+
+        // hard_delete without the table's required soft-delete-hard-role must be
+        // denied — the role gate runs on the intent path exactly as on GraphQL.
+        var act = () => executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "events",
+            Action = MutationIntentAction.Delete,
+            Data = new Dictionary<string, object?>(),
+            PrimaryKey = new object?[] { 2 },
+            UserContext = TenantContext(1),
+            ModuleArguments = new Dictionary<string, object?>
+            {
+                [BifrostQL.Core.Modules.SoftDeleteModuleApi.HardDeleteKey] = true,
+            },
+            Endpoint = EndpointPath,
+        });
+
+        await act.Should().ThrowAsync<BifrostExecutionError>()
+            .WithMessage("*requires role 'purge_admin'*");
+        (await ScalarAsync("SELECT COUNT(*) FROM events WHERE id = 2")).Should().Be("1", "denied hard delete left the row");
     }
 
     // ---- fail fast --------------------------------------------------------

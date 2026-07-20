@@ -12,12 +12,12 @@ namespace BifrostQL.Core.Modules.Deferred;
 public sealed class DeferredConfig
 {
     /// <summary>The no-deferred-effects sentinel for tables that have not opted in.</summary>
-    public static readonly DeferredConfig None = new(undoWindow: null, holdEvents: false);
+    public static readonly DeferredConfig None = new(undoWindow: null, DeferredEventHold.None);
 
-    private DeferredConfig(TimeSpan? undoWindow, bool holdEvents)
+    private DeferredConfig(TimeSpan? undoWindow, DeferredEventHold eventHold)
     {
         UndoWindow = undoWindow;
-        HoldEvents = holdEvents;
+        EventHold = eventHold;
     }
 
     /// <summary>Whether the table explicitly permits reversible deferred effects.</summary>
@@ -27,7 +27,8 @@ public sealed class DeferredConfig
     public TimeSpan? UndoWindow { get; }
 
     /// <summary>Whether outbound events remain held until the change becomes final.</summary>
-    public bool HoldEvents { get; }
+    public bool HoldEvents => EventHold != DeferredEventHold.None;
+    public DeferredEventHold EventHold { get; }
 
     /// <summary>
     /// Parses one table's deferred-effects metadata. A marked table requires an explicit,
@@ -75,17 +76,19 @@ public sealed class DeferredConfig
         }
     }
 
-    private static bool ParseHoldEvents(string? raw, IDbTable table)
+    private static DeferredEventHold ParseHoldEvents(string? raw, IDbTable table)
     {
         if (string.IsNullOrWhiteSpace(raw))
-            return false;
+            return DeferredEventHold.None;
 
         if (string.Equals(raw.Trim(), MetadataKeys.Deferred.Enabled, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(raw.Trim(), "until-window", StringComparison.OrdinalIgnoreCase))
-            return true;
+            || string.Equals(raw.Trim(), MetadataKeys.Deferred.HoldUntilWindow, StringComparison.OrdinalIgnoreCase))
+            return DeferredEventHold.UntilWindow;
+        if (string.Equals(raw.Trim(), MetadataKeys.Deferred.HoldUntilApproved, StringComparison.OrdinalIgnoreCase))
+            return DeferredEventHold.UntilApproved;
 
         throw new InvalidOperationException(
-            $"'{MetadataKeys.Deferred.HoldEvents}' on '{table.TableSchema}.{table.DbName}' must be 'until-window' when present.");
+            $"'{MetadataKeys.Deferred.HoldEvents}' on '{table.TableSchema}.{table.DbName}' must be 'until-window' or 'until-approved' when present.");
     }
 
     private static InvalidOperationException InvalidDuration(IDbTable table, string token, string detail) =>
@@ -93,3 +96,5 @@ public sealed class DeferredConfig
             $"'{MetadataKeys.Deferred.UndoWindow}' on '{table.TableSchema}.{table.DbName}' has an invalid duration '{token}': {detail}. " +
             "Use a positive integer followed by 'd' (days) or 'h' (hours), e.g. '90d' or '12h'.");
 }
+
+public enum DeferredEventHold { None, UntilWindow, UntilApproved }

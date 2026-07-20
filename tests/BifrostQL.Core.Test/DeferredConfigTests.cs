@@ -48,6 +48,20 @@ public class DeferredConfigTests
         config.UndoWindow.Should().BeNull();
     }
 
+    [Theory]
+    [InlineData("until-window", DeferredEventHold.UntilWindow)]
+    [InlineData("until-approved", DeferredEventHold.UntilApproved)]
+    public void FromTable_HoldEvents_ParsesReleaseMode(string value, DeferredEventHold expected)
+    {
+        var config = DeferredConfig.FromTable(TableWithMetadata(
+            (MetadataKeys.Deferred.Deferrable, "enabled"),
+            (MetadataKeys.Deferred.UndoWindow, "1h"),
+            (MetadataKeys.Deferred.HoldEvents, value)));
+
+        config.HoldEvents.Should().BeTrue();
+        config.EventHold.Should().Be(expected);
+    }
+
     [Fact]
     public void ChangeSetColumnContracts_AreCentralized()
     {

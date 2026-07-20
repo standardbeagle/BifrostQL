@@ -58,6 +58,14 @@ public sealed class PolicyEvaluator
             : PolicyDecision.Deny;
     }
 
+    public PolicyDecision CanAct(TablePolicy policy, PolicyAction action, AppIdentity identity, string requiredRole)
+    {
+        var policyDecision = CanAct(policy, action, identity);
+        if (!policyDecision.Allowed || string.IsNullOrWhiteSpace(requiredRole)) return PolicyDecision.Deny;
+        return identity.Roles.Any(role => string.Equals(role, requiredRole, StringComparison.OrdinalIgnoreCase))
+            ? PolicyDecision.Allow : PolicyDecision.Deny;
+    }
+
     /// <summary>
     /// Answers whether <paramref name="identity"/> may access
     /// <paramref name="column"/> in the given <paramref name="direction"/> on a

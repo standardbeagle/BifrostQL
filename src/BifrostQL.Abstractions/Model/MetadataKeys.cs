@@ -511,6 +511,9 @@ namespace BifrostQL.Core.Model
             /// <summary>Optional opt-in holding outbound events until the change is final.</summary>
             public const string HoldEvents = "hold-events";
 
+            public const string HoldUntilWindow = "until-window";
+            public const string HoldUntilApproved = "until-approved";
+
             /// <summary>The only valid value for <see cref="Deferrable"/> and <see cref="HoldEvents"/>.</summary>
             public const string Enabled = "enabled";
 

@@ -12,6 +12,7 @@ public enum MutationIntentAction
     Insert,
     Update,
     Delete,
+    Restore,
 }
 
 /// <summary>
@@ -28,6 +29,12 @@ public sealed class MutationIntent
     public required string Table { get; init; }
 
     public required MutationIntentAction Action { get; init; }
+
+    /// <summary>
+    /// Distinguishes restoration of a soft-deleted row from re-insertion of a
+    /// hard-deleted row. Only the deferred undo engine creates restore intents.
+    /// </summary>
+    public bool RestoreSoftDeleted { get; init; }
 
     /// <summary>
     /// Column values, keyed by GraphQL field name or database column name
@@ -212,13 +219,16 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
             // transformers exactly as the GraphQL resolver's captured arguments do.
             ModuleArguments = intent.ModuleArguments,
             Services = _services,
+            RestoreSoftDeleted = intent.Action == MutationIntentAction.Restore && intent.RestoreSoftDeleted,
+            RestoreHardDeleted = intent.Action == MutationIntentAction.Restore && !intent.RestoreSoftDeleted,
             CancellationToken = cancellationToken,
         };
 
         // An update carries a real affected-row count out to the adapter: its own
         // Value is the primary key on a single-key table, which no caller can read
         // as "did this change a row?".
-        if (intent.Action == MutationIntentAction.Update)
+        if (intent.Action == MutationIntentAction.Update ||
+            (intent.Action == MutationIntentAction.Restore && intent.RestoreSoftDeleted))
         {
             var (updateValue, affectedRows) = await TableMutationPipeline.UpdateWithAffectedRowsAsync(
                 table, MutationArgumentBinder.SplitProperties(table, intent.Data, intent.PrimaryKey), ctx);
@@ -228,6 +238,7 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
         var value = intent.Action switch
         {
             MutationIntentAction.Insert => await InsertAsync(table, intent, ctx),
+            MutationIntentAction.Restore => await InsertAsync(table, intent, ctx),
             MutationIntentAction.Delete => await TableMutationPipeline.DeleteAsync(
                 table, MergePrimaryKey(table, intent), ctx),
             _ => throw new BifrostExecutionError($"Unsupported mutation intent action '{intent.Action}'."),
@@ -237,7 +248,7 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
             Value = value,
             AffectedRows = intent.Action == MutationIntentAction.Delete && value is int deleteAffectedRows
                 ? deleteAffectedRows
-                : null,
+                : intent.Action == MutationIntentAction.Restore ? 1 : null,
         };
     }
 

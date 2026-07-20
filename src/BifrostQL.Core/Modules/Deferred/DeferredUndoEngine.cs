@@ -64,15 +64,18 @@ public sealed class DeferredUndoEngine
     {
         var table = FindTable(delta.Table);
         var key = DeserializeObject(delta.Pk, "primary key");
-        var after = DeserializeObject(delta.AfterImage, "post-write image");
+        var restoringSoftDeletedRow = string.Equals(delta.Op, "update", StringComparison.Ordinal);
         var data = delta.InverseOp switch
         {
-            "delete" => after,
+            "delete" => DeserializeObject(delta.AfterImage, "post-write image"),
             "restore" => DeserializeObject(delta.BeforeImage, "before image"),
             _ => throw new BifrostExecutionError("The deferred delta has an invalid inverse operation."),
         };
-        foreach (var (name, value) in key)
-            data.Remove(name);
+        if (delta.InverseOp != "restore" || restoringSoftDeletedRow)
+        {
+            foreach (var (name, _) in key)
+                data.Remove(name);
+        }
 
         var token = table.GetMetadataValue(MetadataKeys.Concurrency.Token);
         if (!string.IsNullOrWhiteSpace(token))
@@ -81,9 +84,7 @@ public sealed class DeferredUndoEngine
             // row has no post-image, so its restore is guarded by the captured
             // pre-delete token. In both cases the token is pipeline data, never an
             // engine-built predicate.
-            var tokenImage = string.Equals(delta.InverseOp, "delete", StringComparison.Ordinal)
-                ? after
-                : data;
+            var tokenImage = data;
             if (!tokenImage.TryGetValue(token, out var version))
                 throw new BifrostExecutionError("The deferred delta is missing its captured concurrency token.");
             data[token] = version;
@@ -92,13 +93,20 @@ public sealed class DeferredUndoEngine
         return new MutationIntent
         {
             Table = table.DbName,
-            Action = string.Equals(delta.InverseOp, "delete", StringComparison.Ordinal)
-                ? MutationIntentAction.Delete : MutationIntentAction.Update,
+            Action = delta.InverseOp switch
+            {
+                "delete" => MutationIntentAction.Delete,
+                "restore" => MutationIntentAction.Restore,
+                _ => throw new BifrostExecutionError("The deferred delta has an invalid inverse operation."),
+            },
+            RestoreSoftDeleted = restoringSoftDeletedRow,
             Data = data,
-            PrimaryKey = table.KeyColumns.Select(column =>
-                key.TryGetValue(column.ColumnName, out var value)
-                    ? value
-                    : throw new BifrostExecutionError("The deferred delta is missing a primary-key value.")).ToArray(),
+            PrimaryKey = delta.InverseOp == "restore" && !restoringSoftDeletedRow
+                ? null
+                : table.KeyColumns.Select(column =>
+                    key.TryGetValue(column.ColumnName, out var value)
+                        ? value
+                        : throw new BifrostExecutionError("The deferred delta is missing a primary-key value.")).ToArray(),
             UserContext = userContext,
         };
     }
@@ -128,11 +136,11 @@ public sealed class DeferredUndoEngine
         await using var connection = _connections.GetConnection();
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.Table)}, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.Pk)}, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.InverseOp)}, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.BeforeImage)}, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.AfterImage)} FROM {_connections.Dialect.TableReference(table.TableSchema, table.DbName)} WHERE {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.ChangeSetId)} = @id ORDER BY {_connections.Dialect.EscapeIdentifier("id")}";
+        command.CommandText = $"SELECT {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.Table)}, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.Pk)}, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.Op)}, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.InverseOp)}, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.BeforeImage)}, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.AfterImage)} FROM {_connections.Dialect.TableReference(table.TableSchema, table.DbName)} WHERE {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.ChangeSetId)} = @id ORDER BY {_connections.Dialect.EscapeIdentifier("id")}";
         Add(command, "@id", changeSetId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
-            rows.Add(new Delta(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4)));
+            rows.Add(new Delta(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5)));
         return rows;
     }
 
@@ -163,7 +171,7 @@ public sealed class DeferredUndoEngine
     };
     private static void Add(DbCommand command, string name, object? value) { var parameter = command.CreateParameter(); parameter.ParameterName = name; parameter.Value = value ?? DBNull.Value; command.Parameters.Add(parameter); }
     private sealed record ChangeSet(string State, DateTimeOffset ExpiresAt);
-    private sealed record Delta(string Table, string Pk, string InverseOp, string? BeforeImage, string? AfterImage);
+    private sealed record Delta(string Table, string Pk, string Op, string InverseOp, string? BeforeImage, string? AfterImage);
 }
 
 public sealed record DeferredUndoResult(long ChangeSetId, int UndoneRows, int ConflictRows, bool AlreadyUndone);

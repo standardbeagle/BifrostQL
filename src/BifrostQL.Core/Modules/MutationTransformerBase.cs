@@ -120,6 +120,12 @@ public abstract class SoftDeleteMutationTransformerBase : MetadataMutationTransf
             return PassThrough(MutationType.Delete, data);
         }
 
+        // Deferred undo restores a previously soft-deleted row. It must bypass only
+        // this visibility filter; policy, tenant, audit and concurrency transformers
+        // still run through the normal update pipeline.
+        if (mutationType == MutationType.Update && context.RestoreSoftDeleted)
+            return PassThrough(mutationType, data);
+
         // For both UPDATE and DELETE, ensure we only affect non-deleted records
         var softDeleteFilter = TableFilterFactory.IsNull(table.DbName, columnName);
 

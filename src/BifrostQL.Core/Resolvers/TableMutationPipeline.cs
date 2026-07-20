@@ -30,6 +30,12 @@ namespace BifrostQL.Core.Resolvers
         /// </summary>
         public IReadOnlyDictionary<string, object?> ModuleArguments { get; init; } = ModuleApiRegistry.EmptyArguments;
 
+        /// <summary>Allows the deferred undo seam to target a soft-deleted row while preserving every other mutation transformer.</summary>
+        public bool RestoreSoftDeleted { get; init; }
+
+        /// <summary>Marks re-insertion of a hard-deleted deferred row.</summary>
+        public bool RestoreHardDeleted { get; init; }
+
         public CancellationToken CancellationToken { get; init; }
     }
 
@@ -115,6 +121,7 @@ namespace BifrostQL.Core.Resolvers
                 Model = ctx.Model,
                 UserContext = ctx.UserContext,
                 Services = ctx.Services,
+                RestoreHardDeleted = ctx.RestoreHardDeleted,
             };
             var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Insert, data, transformContext);
             if (transformResult.Errors.Length > 0)
@@ -230,6 +237,8 @@ namespace BifrostQL.Core.Resolvers
                     UserContext = ctx.UserContext,
                     CurrentRow = currentRow,
                     Services = ctx.Services,
+                    RestoreSoftDeleted = ctx.RestoreSoftDeleted,
+                    RestoreHardDeleted = ctx.RestoreHardDeleted,
                 };
                 var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Update, propertyInfo.data, transformContext);
                 if (transformResult.Errors.Length > 0)

@@ -216,6 +216,62 @@ public sealed class MutationIntentExecutorTests : IAsyncLifetime
             .WithMessage("*PrimaryKey is not valid for an insert*");
     }
 
+    // ---- deferred restore ------------------------------------------------
+
+    [Fact]
+    public async Task Restore_HardDeletedRow_ReinsertsCapturedImageThroughTenantPipeline()
+    {
+        var executor = BuildExecutor();
+        await executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "orders", Action = MutationIntentAction.Delete,
+            Data = new Dictionary<string, object?> { ["row_version"] = 5 },
+            PrimaryKey = new object?[] { 10 }, UserContext = TenantContext(1), Endpoint = EndpointPath,
+        });
+
+        var result = await executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "orders", Action = MutationIntentAction.Restore,
+            Data = new Dictionary<string, object?> { ["id"] = 10L, ["tenant_id"] = 1L, ["name"] = "tenant-one-order", ["row_version"] = 5L },
+            UserContext = TenantContext(1), Endpoint = EndpointPath,
+        });
+
+        result.AffectedRows.Should().Be(1);
+        (await ScalarAsync("SELECT name FROM orders WHERE id = 10 AND tenant_id = 1")).Should().Be("tenant-one-order");
+    }
+
+    [Fact]
+    public async Task Restore_SoftDeletedRow_UsesCapturedTokenAndBypassesOnlySoftDeleteFilter()
+    {
+        var executor = BuildExecutor();
+
+        var result = await executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "events", Action = MutationIntentAction.Restore, RestoreSoftDeleted = true,
+            Data = new Dictionary<string, object?> { ["label"] = "already-soft-deleted", ["deleted_at"] = null },
+            PrimaryKey = new object?[] { 2 }, UserContext = TenantContext(1), Endpoint = EndpointPath,
+        });
+
+        result.AffectedRows.Should().Be(1);
+        (await ScalarAsync("SELECT deleted_at FROM events WHERE id = 2")).Should().BeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Restore_HardDeletedRow_ForAnotherTenantFailsClosed()
+    {
+        var executor = BuildExecutor();
+
+        var act = () => executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "orders", Action = MutationIntentAction.Restore,
+            Data = new Dictionary<string, object?> { ["id"] = 20L, ["tenant_id"] = 2L, ["name"] = "tenant-two-order", ["row_version"] = 3L },
+            UserContext = TenantContext(1), Endpoint = EndpointPath,
+        });
+
+        await act.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*outside the caller's tenant scope*");
+        (await ScalarAsync("SELECT tenant_id FROM orders WHERE id = 20")).Should().Be("2");
+    }
+
     // ---- update: concurrency + audit ------------------------------------
 
     [Fact]

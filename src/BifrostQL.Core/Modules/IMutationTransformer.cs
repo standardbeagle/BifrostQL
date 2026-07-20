@@ -105,6 +105,12 @@ public sealed class MutationTransformContext
     /// <see cref="ModuleApiRegistry.CaptureMutationArguments"/>.
     /// </summary>
     public IReadOnlyDictionary<string, object?> ModuleArguments { get; init; } = ModuleApiRegistry.EmptyArguments;
+
+    /// <summary>Set only by the deferred undo pipeline path to restore a soft-deleted row.</summary>
+    public bool RestoreSoftDeleted { get; init; }
+
+    /// <summary>Set only by the deferred undo pipeline path to reinsert a hard-deleted row.</summary>
+    public bool RestoreHardDeleted { get; init; }
 }
 
 /// <summary>

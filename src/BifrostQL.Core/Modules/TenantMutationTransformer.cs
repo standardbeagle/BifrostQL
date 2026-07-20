@@ -56,6 +56,21 @@ public sealed class TenantMutationTransformer : MetadataMutationTransformerBase
         {
             case MutationType.Insert:
             {
+                // A deferred hard-delete restore must re-create the original row,
+                // never turn another tenant's deleted row into a new row for the
+                // caller. Normal inserts still pin their tenant as usual.
+                if (context.RestoreHardDeleted &&
+                    (!data.TryGetValue(columnName, out var capturedTenant) ||
+                     !string.Equals(capturedTenant?.ToString(), tenantId.ToString(), StringComparison.Ordinal)))
+                {
+                    return new MutationTransformResult
+                    {
+                        MutationType = MutationType.Insert,
+                        Data = data,
+                        Errors = new[] { "Deferred restore is outside the caller's tenant scope." },
+                    };
+                }
+
                 // Pin the tenant column to the caller's tenant, overriding any
                 // client-supplied value so a caller cannot plant a row in
                 // another tenant.

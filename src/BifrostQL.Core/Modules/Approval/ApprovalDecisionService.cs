@@ -34,13 +34,14 @@ public sealed class ApprovalDecisionService
         Authorize(row, approverContext);
 
         var target = FindTable(row.Table);
-        var requesterContext = new Dictionary<string, object?>(approverContext, StringComparer.OrdinalIgnoreCase)
-        {
-            [ApprovalInterceptMutationHook.ReplayMarkerKey] = true,
-        };
-        var tenantKey = TenantFilterTransformer.ResolveTenantContextKey(_model);
-        if (row.Tenant is not null)
-            requesterContext[tenantKey] = row.Tenant;
+        // Replay under the requester identity so tenant, policy, and audit transformers see
+        // the same caller that submitted the change; approver identity is carried only to stamp
+        // the approval decision. This prevents approver privileges from widening the replay.
+        var approver = PolicyIdentity.FromUserContext(approverContext).Id;
+        var requesterContext = DeserializeContext(row.RequesterContext);
+        requesterContext[ApprovalInterceptMutationHook.ReplayMarkerKey] = true;
+        requesterContext[ApprovalInterceptMutationHook.ReplayPendingIdKey] = pendingChangeId;
+        requesterContext[ApprovalInterceptMutationHook.ReplayApproverKey] = approver;
 
         var payload = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(row.Payload)
             ?? throw new BifrostExecutionError("Approval payload is invalid.");
@@ -58,6 +59,9 @@ public sealed class ApprovalDecisionService
                 values.Remove(column.ColumnName);
         }
 
+        // The replay applies the data write AND (via the intercept hook's before-commit phase)
+        // stamps the pending -> approved transition inside ONE transaction. If either fails the
+        // whole thing rolls back, so a decision is never half-applied.
         await _mutations.ExecuteAsync(new MutationIntent
         {
             Table = target.DbName,
@@ -66,9 +70,6 @@ public sealed class ApprovalDecisionService
             PrimaryKey = key,
             UserContext = requesterContext,
         }, cancellationToken);
-
-        await TransitionAsync(pendingChangeId, PendingChangeStore.StateApproved,
-            PolicyIdentity.FromUserContext(approverContext).Id, null, cancellationToken);
     }
 
     public async Task RejectAsync(long pendingChangeId, string reason,
@@ -133,8 +134,9 @@ public sealed class ApprovalDecisionService
             throw new BifrostExecutionError("The pending change was not found.");
         return new PendingRow(
             reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
-            reader.IsDBNull(4) ? null : reader.GetValue(4)?.ToString(), reader.GetString(5),
-            reader.IsDBNull(6) ? null : reader.GetValue(6)?.ToString());
+            reader.IsDBNull(4) ? null : reader.GetValue(4)?.ToString(),
+            reader.IsDBNull(5) ? null : reader.GetString(5), reader.GetString(6),
+            reader.IsDBNull(9) ? null : reader.GetValue(9)?.ToString());
     }
 
     private async Task TransitionAsync(long id, string state, string approver, string? reason, CancellationToken cancellationToken)
@@ -166,6 +168,16 @@ public sealed class ApprovalDecisionService
         _ => throw new BifrostExecutionError("The pending change operation is invalid."),
     };
 
+    private static IDictionary<string, object?> DeserializeContext(string? serialized)
+    {
+        if (string.IsNullOrWhiteSpace(serialized))
+            throw new BifrostExecutionError("The pending change is missing its requester identity.");
+
+        var values = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(serialized)
+            ?? throw new BifrostExecutionError("The pending change requester identity is invalid.");
+        return values.ToDictionary(pair => pair.Key, pair => ToValue(pair.Value), StringComparer.OrdinalIgnoreCase);
+    }
+
     private static object? ToValue(JsonElement value) => value.ValueKind switch
     {
         JsonValueKind.Null => null,
@@ -174,7 +186,9 @@ public sealed class ApprovalDecisionService
         JsonValueKind.False => false,
         JsonValueKind.Number when value.TryGetInt64(out var integer) => integer,
         JsonValueKind.Number => value.GetDecimal(),
-        _ => value.GetRawText(),
+        JsonValueKind.Array => value.EnumerateArray().Select(ToValue).ToArray(),
+        JsonValueKind.Object => value.EnumerateObject().ToDictionary(pair => pair.Name, pair => ToValue(pair.Value), StringComparer.OrdinalIgnoreCase),
+        _ => throw new BifrostExecutionError("The pending change requester identity contains an unsupported value."),
     };
 
     private static void Add(DbCommand command, string name, object? value)
@@ -182,5 +196,7 @@ public sealed class ApprovalDecisionService
         var parameter = command.CreateParameter(); parameter.ParameterName = name; parameter.Value = value ?? DBNull.Value; command.Parameters.Add(parameter);
     }
 
-    private sealed record PendingRow(string Table, string Op, string Payload, string Requester, string? Tenant, string State, string? Reason);
+    private sealed record PendingRow(
+        string Table, string Op, string Payload, string Requester, string? Tenant,
+        string? RequesterContext, string State, string? Reason);
 }

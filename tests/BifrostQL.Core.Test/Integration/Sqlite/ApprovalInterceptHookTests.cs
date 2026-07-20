@@ -87,6 +87,7 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
                 intended_payload TEXT NOT NULL,
                 requester        TEXT NULL,
                 tenant           TEXT NULL,
+                requester_context TEXT NULL,
                 "state"          TEXT NOT NULL,
                 approver         TEXT NULL,
                 decided_at       TEXT NULL,
@@ -366,6 +367,49 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         pending[0].Tenant.Should().Be("1", "the requester's tenant is persisted for replay scoping");
     }
 
+    [Fact]
+    public async Task GraphQlApprovalMutations_ReplayUnderRequesterContext_AndRejectWithoutWriting()
+    {
+        var executor = BuildExecutor();
+        var requester = TenantContext(1);
+        requester["user_id"] = "alice";
+        requester["roles"] = new[] { "requester" };
+
+        Func<Task> enqueueApproved = async () => await executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "orders",
+            Action = MutationIntentAction.Insert,
+            Data = new Dictionary<string, object?> { ["name"] = "approved", ["tenant_id"] = 999 },
+            UserContext = requester,
+            Endpoint = EndpointPath,
+        });
+        await enqueueApproved.Should().ThrowAsync<BifrostExecutionError>();
+
+        var approver = TenantContext(2);
+        approver["user_id"] = "bob";
+        approver["roles"] = new[] { "manager" };
+        var approved = await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"1\") }", approver);
+        approved.Errors.Should().BeNullOrEmpty();
+        (await CountAsync("orders", "name = 'approved' AND tenant_id = 1")).Should().Be(1,
+            "the replay uses the persisted requester tenant, not the approver tenant");
+        (await CountAsync("pending_changes", "\"state\" = 'approved' AND approver = 'bob'")).Should().Be(1);
+
+        Func<Task> enqueueRejected = async () => await executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "orders",
+            Action = MutationIntentAction.Insert,
+            Data = new Dictionary<string, object?> { ["name"] = "rejected", ["tenant_id"] = 1 },
+            UserContext = requester,
+            Endpoint = EndpointPath,
+        });
+        await enqueueRejected.Should().ThrowAsync<BifrostExecutionError>();
+
+        var rejected = await ExecuteGraphQlAsync("mutation { reject(pendingChangeId: \"2\", reason: \"duplicate\") }", approver);
+        rejected.Errors.Should().BeNullOrEmpty();
+        (await CountAsync("orders", "name = 'rejected'")).Should().Be(0, "rejection never replays data");
+        (await CountAsync("pending_changes", "\"state\" = 'rejected' AND approver = 'bob' AND reason = 'duplicate'")).Should().Be(1);
+    }
+
     // ---- fail-closed: a gated write with no store table is refused, not applied ----
 
     [Fact]
@@ -398,7 +442,8 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
     // The GraphQL harness for the TreeSync path: registers the approval intercept hook and the
     // before-commit composite in RequestServices, exactly as the host DI composes them, so the
     // nested sync runs the before-commit phase.
-    private async Task<ExecutionResult> ExecuteGraphQlAsync(string mutation)
+    private async Task<ExecutionResult> ExecuteGraphQlAsync(
+        string mutation, IDictionary<string, object?>? userContext = null)
     {
         var schema = DbSchema.FromModel(_model);
         var factory = new SqliteDbConnFactory(ConnString);
@@ -408,6 +453,7 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         {
             Transformers = Array.Empty<IMutationTransformer>(),
         });
+        services.AddSingleton<IMutationIntentExecutor>(BuildExecutor());
         services.AddSingleton<IBeforeCommitMutationHook, ApprovalInterceptMutationHook>();
         services.AddSingleton(sp => new BeforeCommitMutationHooks(
             sp.GetServices<IBeforeCommitMutationHook>().ToArray()));
@@ -419,6 +465,7 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
             options.Schema = schema;
             options.Query = mutation;
             options.RequestServices = provider;
+            options.UserContext = userContext ?? new Dictionary<string, object?>();
             options.Extensions = new Inputs(new Dictionary<string, object?>
             {
                 ["connFactory"] = factory,

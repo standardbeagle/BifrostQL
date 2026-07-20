@@ -52,6 +52,9 @@ namespace BifrostQL.Core.Modules.Approval
         /// <summary>Tenant id captured from the requester's user context (nullable).</summary>
         public const string ColTenant = "tenant";
 
+        /// <summary>Serialized requester identity context reconstructed for approved replay.</summary>
+        public const string ColRequesterContext = "requester_context";
+
         /// <summary>Lifecycle state column — the state-machine <see cref="MetadataKeys.StateMachine.StateColumn"/>.</summary>
         public const string ColState = "state";
 
@@ -67,7 +70,7 @@ namespace BifrostQL.Core.Modules.Approval
         /// <summary>Every column of the pending_changes store, in declaration order.</summary>
         public static readonly IReadOnlyList<string> Columns = new[]
         {
-            ColId, ColTable, ColOp, ColPayload, ColRequester, ColTenant,
+            ColId, ColTable, ColOp, ColPayload, ColRequester, ColTenant, ColRequesterContext,
             ColState, ColApprover, ColDecidedAt, ColReason,
         };
 

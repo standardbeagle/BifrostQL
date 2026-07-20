@@ -58,6 +58,22 @@ namespace BifrostQL.Core.Modules.Approval
         internal const string ReplayMarkerKey = "bifrost.approval.replay";
 
         /// <summary>
+        /// Replay user-context keys (ordinal, code-owned) carrying the pending-change id and the
+        /// approver identity, so the SAME before-commit phase that lets an approved replay through
+        /// the gate ALSO stamps the pending row's <c>pending -&gt; approved</c> transition on the
+        /// replay's OWN transaction — the state transition and the replayed data write therefore
+        /// commit atomically or roll back together (a failed replay leaves the row pending; a
+        /// pending row that was already decided fails the guarded UPDATE and rolls the replay
+        /// back). TRUST BOUNDARY: as with <see cref="ReplayMarkerKey"/>, these are set ONLY by
+        /// <see cref="ApprovalDecisionService"/> after full authorization; the auth-context factory
+        /// must never project client input into a <c>bifrost.approval.*</c> key.
+        /// </summary>
+        internal const string ReplayPendingIdKey = "bifrost.approval.replay.pending-id";
+
+        /// <inheritdoc cref="ReplayPendingIdKey"/>
+        internal const string ReplayApproverKey = "bifrost.approval.replay.approver";
+
+        /// <summary>
         /// True when the before-commit phase DIVERTED this mutation into approval (the hook
         /// enqueued a pending_changes row on the mutation's transaction). Every write path calls
         /// this AFTER the before-commit hooks and BEFORE the target write: when it returns true
@@ -83,9 +99,20 @@ namespace BifrostQL.Core.Modules.Approval
         public async ValueTask<IReadOnlyList<string>> BeforeCommitAsync(MutationObserverContext context)
         {
             var config = ApprovalConfig.FromTable(context.Table);
-            if (!config.RequiresApproval ||
-                (context.UserContext.TryGetValue(ReplayMarkerKey, out var replay) && replay is true))
-                return Array.Empty<string>(); // Ungated or approved replay: proceed normally.
+
+            // An approved-change replay: do NOT re-divert (that would re-enqueue the approved
+            // write into a second pending row, making it un-appliable). Instead stamp the
+            // pending row's pending -> approved transition on the replay's OWN transaction, so
+            // the state transition and the replayed data write commit atomically, then let the
+            // write proceed.
+            if (context.UserContext.TryGetValue(ReplayMarkerKey, out var replay) && replay is true)
+            {
+                await StampApprovedTransitionAsync(context);
+                return Array.Empty<string>();
+            }
+
+            if (!config.RequiresApproval)
+                return Array.Empty<string>(); // Ungated: no-op, the write proceeds normally.
 
             // Fail-closed: the gate can only run in the before-commit phase, where these are
             // populated on every write path. Their absence means the hook was invoked outside
@@ -123,6 +150,54 @@ namespace BifrostQL.Core.Modules.Approval
             return Array.Empty<string>();
         }
 
+        // Stamps the pending row's pending -> approved transition on the REPLAY's own
+        // transaction (context.Connection/Transaction), so it commits atomically with the
+        // replayed data write. The WHERE guard `state = 'pending'` is exactly the state
+        // machine's pending -> approved legal-transition guard: a row already decided (or
+        // removed) matches zero rows, so the UPDATE affects nothing and we throw — which rolls
+        // the whole replay back (no applied-but-still-pending, no re-decide of a terminal row).
+        private static async ValueTask StampApprovedTransitionAsync(MutationObserverContext context)
+        {
+            if (context.Connection is null || context.Dialect is null || context.Model is null)
+                throw new BifrostExecutionError(
+                    "The approval replay was invoked without an open transaction; the pending change " +
+                    "could not be transitioned and the approval is refused.");
+
+            if (!context.UserContext.TryGetValue(ReplayPendingIdKey, out var idValue) || idValue is null)
+                throw new BifrostExecutionError(
+                    "The approval replay is missing the pending-change id; the approval is refused.");
+
+            var store = ModelTableReference.Find(context.Model, PendingChangeStore.TableName)
+                ?? throw new BifrostExecutionError(
+                    $"The pending-changes store table '{PendingChangeStore.TableName}' is not present in " +
+                    "the model; the approval cannot be recorded and is refused.");
+
+            var d = context.Dialect;
+            var tableRef = d.TableReference(store.TableSchema, store.DbName);
+            var approver = context.UserContext.TryGetValue(ReplayApproverKey, out var a) ? a?.ToString() : null;
+            var parameters = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                [PendingChangeStore.ColState] = PendingChangeStore.StateApproved,
+                [PendingChangeStore.ColApprover] = approver,
+                [PendingChangeStore.ColDecidedAt] = DateTimeOffset.UtcNow,
+                [PendingChangeStore.ColId] = idValue,
+                ["from_state"] = PendingChangeStore.StatePending,
+            };
+            var sql =
+                $"UPDATE {tableRef} SET {d.EscapeIdentifier(PendingChangeStore.ColState)}=@state, " +
+                $"{d.EscapeIdentifier(PendingChangeStore.ColApprover)}=@approver, " +
+                $"{d.EscapeIdentifier(PendingChangeStore.ColDecidedAt)}=@decided_at " +
+                $"WHERE {d.EscapeIdentifier(PendingChangeStore.ColId)}=@id " +
+                $"AND {d.EscapeIdentifier(PendingChangeStore.ColState)}=@from_state;";
+
+            var affected = await MutationCommandExecutor.ExecuteNonQuery(
+                context.Connection, context.Transaction, sql, parameters);
+            if (affected != 1)
+                throw new BifrostExecutionError(
+                    "The pending change could not be transitioned to approved (it was already decided or " +
+                    "removed); the approval is refused and the replayed write is rolled back.");
+        }
+
         // The pending_changes row for this mutation. `id` is an identity column, so it is
         // omitted from the INSERT; approver/decided_at/reason are null until a decision, so
         // they are omitted too (nullable). The remaining columns are keyed by the slice-1
@@ -139,6 +214,7 @@ namespace BifrostQL.Core.Modules.Approval
                 [PendingChangeStore.ColRequester] =
                     AuditMutationTransformer.ResolveActor(context.Model!, context.UserContext)?.ToString(),
                 [PendingChangeStore.ColTenant] = ResolveTenant(context)?.ToString(),
+                [PendingChangeStore.ColRequesterContext] = JsonSerializer.Serialize(context.UserContext),
                 [PendingChangeStore.ColState] = PendingChangeStore.StatePending,
             };
 

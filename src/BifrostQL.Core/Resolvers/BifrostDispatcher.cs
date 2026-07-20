@@ -1,5 +1,6 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules.ComputedColumns;
+using BifrostQL.Core.Modules.Approval;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Schema;
 using BifrostQL.Core.Storage;
@@ -7,6 +8,7 @@ using GraphQL;
 using GraphQL.Resolvers;
 using GraphQL.Types;
 using GraphQL.Utilities;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Core.Resolvers
 {
@@ -199,6 +201,12 @@ namespace BifrostQL.Core.Resolvers
                 mut.FieldFor("_fileDelete").Resolver = this;
             }
 
+            if (_model.Tables.Any(table => ApprovalConfig.FromTable(table).RequiresApproval))
+            {
+                mut.FieldFor("approve").Resolver = this;
+                mut.FieldFor("reject").Resolver = this;
+            }
+
             foreach (var proc in _model.StoredProcedures)
             {
                 if (proc.IsReadOnly)
@@ -281,6 +289,25 @@ namespace BifrostQL.Core.Resolvers
                 new HistoryTableResolver(table, target);
         }
 
+        private sealed class ApprovalDecisionResolver : IBifrostResolver
+        {
+            public async ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
+            {
+                var request = new BifrostContextAdapter(context);
+                var mutations = context.RequestServices?.GetService<IMutationIntentExecutor>()
+                    ?? throw new BifrostExecutionError("Approval decisions require the mutation intent executor.");
+                var service = new ApprovalDecisionService(request.Model, request.ConnFactory, mutations);
+                var id = context.GetArgument<long>("pendingChangeId");
+
+                if (string.Equals(context.FieldName, "approve", StringComparison.Ordinal))
+                    await service.ApproveAsync(id, request.UserContext, context.CancellationToken);
+                else
+                    await service.RejectAsync(id, context.GetArgument<string>("reason") ?? string.Empty,
+                        request.UserContext, context.CancellationToken);
+                return true;
+            }
+        }
+
         private static Dictionary<(string typeName, string fieldName), IBifrostResolver> BuildResolverMap(IDbModel model)
         {
             var map = new Dictionary<(string, string), IBifrostResolver>();
@@ -317,6 +344,12 @@ namespace BifrostQL.Core.Resolvers
                 map[(queryType, "_fileDownload")] = new FileDownloadResolver(fileStorageService);
                 map[(mutationType, "_fileUpload")] = new FileUploadResolver(fileStorageService);
                 map[(mutationType, "_fileDelete")] = new FileDeleteResolver(fileStorageService);
+            }
+
+            if (model.Tables.Any(table => ApprovalConfig.FromTable(table).RequiresApproval))
+            {
+                map[(mutationType, "approve")] = new ApprovalDecisionResolver();
+                map[(mutationType, "reject")] = new ApprovalDecisionResolver();
             }
 
             foreach (var proc in model.StoredProcedures)

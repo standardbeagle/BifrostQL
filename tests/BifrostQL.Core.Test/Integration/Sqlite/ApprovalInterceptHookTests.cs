@@ -43,6 +43,8 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
     {
         ":root { user-audit-key: user_id }",
         "main.orders { approval: enabled; approver-role: manager; tenant-filter: tenant_id }",
+        "main.orders.created_by { populate: created-by }",
+        "main.orders.updated_by { populate: updated-by }",
         "main.blogs { approval: enabled; approver-role: manager }",
         "main.posts { approval: enabled; approver-role: manager }",
     };
@@ -58,9 +60,11 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         await Exec(
             """
             CREATE TABLE orders (
-                id        INTEGER PRIMARY KEY,
-                tenant_id INTEGER NOT NULL,
-                name      TEXT NOT NULL
+                id         INTEGER PRIMARY KEY,
+                tenant_id  INTEGER NOT NULL,
+                name       TEXT NOT NULL,
+                created_by TEXT NULL,
+                updated_by TEXT NULL
             )
             """);
         await Exec("INSERT INTO orders(id, tenant_id, name) VALUES (10, 1, 'seed-order')");
@@ -392,6 +396,8 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         approved.Errors.Should().BeNullOrEmpty();
         (await CountAsync("orders", "name = 'approved' AND tenant_id = 1")).Should().Be(1,
             "the replay uses the persisted requester tenant, not the approver tenant");
+        (await CountAsync("orders", "name = 'approved' AND created_by = 'bob' AND updated_by = 'bob'")).Should().Be(1,
+            "the approved replay stamps the approver as the audit actor while retaining requester scope");
         (await CountAsync("pending_changes", "\"state\" = 'approved' AND approver = 'bob'")).Should().Be(1);
 
         Func<Task> enqueueRejected = async () => await executor.ExecuteAsync(new MutationIntent

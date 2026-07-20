@@ -39,6 +39,8 @@ public sealed class ApprovalDecisionService
         // the approval decision. This prevents approver privileges from widening the replay.
         var approver = PolicyIdentity.FromUserContext(approverContext).Id;
         var requesterContext = DeserializeContext(row.RequesterContext);
+        requesterContext[AuditMutationTransformer.ActorOverrideKey] =
+            AuditMutationTransformer.CreateActorOverride(approver);
         requesterContext[ApprovalInterceptMutationHook.ReplayMarkerKey] = true;
         requesterContext[ApprovalInterceptMutationHook.ReplayPendingIdKey] = pendingChangeId;
         requesterContext[ApprovalInterceptMutationHook.ReplayApproverKey] = approver;

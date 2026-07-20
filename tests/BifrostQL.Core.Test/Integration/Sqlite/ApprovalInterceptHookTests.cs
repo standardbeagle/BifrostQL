@@ -52,6 +52,7 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         "main.orders.updated_by { populate: updated-by }",
         "main.blogs { approval: enabled; approver-role: manager }",
         "main.posts { approval: enabled; approver-role: manager }",
+        "main.gated_posts { approval: enabled; approver-role: manager }",
     };
 
     public async Task InitializeAsync()
@@ -59,7 +60,7 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         _keepAlive = new SqliteConnection(ConnString);
         await _keepAlive.OpenAsync();
 
-        foreach (var drop in new[] { "orders", "pending_changes", "posts", "blogs" })
+        foreach (var drop in new[] { "gated_posts", "ungated_blogs", "orders", "pending_changes", "posts", "blogs" })
             await Exec($"DROP TABLE IF EXISTS {drop}");
 
         await Exec(
@@ -78,6 +79,15 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         await Exec("INSERT INTO orders(id, tenant_id, name) VALUES (10, 1, 'seed-order')");
 
         await Exec("CREATE TABLE blogs (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
+        await Exec("CREATE TABLE ungated_blogs (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
+        await Exec(
+            """
+            CREATE TABLE gated_posts (
+                id      INTEGER PRIMARY KEY,
+                blog_id INTEGER NOT NULL REFERENCES ungated_blogs(id),
+                title   TEXT NOT NULL
+            )
+            """);
         await Exec(
             """
             CREATE TABLE posts (
@@ -325,6 +335,49 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         var pending = await PendingRowsAsync();
         pending.Should().HaveCount(2, "the blog and its post each enqueue a pending change");
         pending.Select(p => p.Table).Should().BeEquivalentTo(new[] { "main.blogs", "main.posts" });
+    }
+
+    [Fact]
+    public async Task TreeSync_MixedGatedAndUngatedNodes_CommitsUngatedNode_AndQueuesGatedNode()
+    {
+        // Approval is a divert, not a transaction veto: an ungated parent can commit while
+        // its gated child is queued. Pin this intentionally so callers use a fully gated tree
+        // when they require all-or-nothing approval semantics.
+        var factory = new SqliteDbConnFactory(ConnString);
+        var services = BuildHookProvider();
+        var executor = new TreeSyncExecutor(factory.Dialect);
+        var ungatedBlog = _model.GetTableFromDbName("ungated_blogs");
+        var gatedPost = _model.GetTableFromDbName("gated_posts");
+        var parent = new TreeSyncOperation
+        {
+            Table = ungatedBlog,
+            OperationType = TreeSyncOperationType.Insert,
+            Data = new Dictionary<string, object?> { ["name"] = "applied-parent" },
+            Depth = 0,
+        };
+        var child = new TreeSyncOperation
+        {
+            Table = gatedPost,
+            OperationType = TreeSyncOperationType.Insert,
+            Data = new Dictionary<string, object?> { ["title"] = "queued-child" },
+            ForeignKeyAssignments = new Dictionary<string, string> { ["blog_id"] = ungatedBlog.GraphQlName },
+            ParentInstanceId = parent.InstanceId,
+            Depth = 1,
+        };
+
+        var act = () => executor.ExecuteAsync(
+            new[] { parent, child }, factory, new MutationTransformersWrap
+            {
+                Transformers = Array.Empty<IMutationTransformer>(),
+            }, _model, new Dictionary<string, object?>(), services);
+
+        await act.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*pending approval*");
+        (await CountAsync("ungated_blogs", "name = 'applied-parent'")).Should().Be(1);
+        (await CountAsync("gated_posts", "title = 'queued-child'")).Should().Be(0);
+        var pending = await PendingRowsAsync();
+        pending.Should().ContainSingle(p => p.Table == "main.gated_posts" && p.Op == "insert");
+        Payload(pending.Single().Payload)["blog_id"].GetInt64().Should().BeGreaterThan(0,
+            "the queued child retains the resolved FK of the committed ungated parent");
     }
 
     // ---- criterion 3: enqueued payload is the POST-transformer scoped intent ----

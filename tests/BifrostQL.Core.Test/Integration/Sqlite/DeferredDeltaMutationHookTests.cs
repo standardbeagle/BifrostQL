@@ -126,6 +126,25 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Undo_OverlappingChangesRequireLifoOrder()
+    {
+        // Each inverse is guarded by the post-write version it captured. Undoing the
+        // newest change first advances that version again, making an older overlapping
+        // inverse an explicit conflict rather than silently overwriting the live row.
+        await Exec("UPDATE widgets SET name = 'first', version = 2 WHERE id = 1");
+        await SeedChangeSetAsync(49, "main.widgets", 1, "update", "restore",
+            "{\"id\":1,\"name\":\"original\",\"version\":1}", "{\"id\":1,\"name\":\"first\",\"version\":2}");
+        await Exec("UPDATE widgets SET name = 'second', version = 3 WHERE id = 1");
+        await SeedChangeSetAsync(50, "main.widgets", 1, "update", "restore",
+            "{\"id\":1,\"name\":\"first\",\"version\":2}", "{\"id\":1,\"name\":\"second\",\"version\":3}");
+
+        (await UndoAsync(50)).Should().Be(new DeferredUndoResult(50, 1, 0, false));
+        (await UndoAsync(49)).Should().Be(new DeferredUndoResult(49, 0, 1, false));
+        (await ScalarAsync("SELECT name || ':' || version FROM widgets WHERE id = 1")).Should().Be("first:4");
+        (await ScalarAsync("SELECT state FROM change_sets WHERE id = 49")).Should().Be("partial");
+    }
+
+    [Fact]
     public async Task Undo_CrossTenant_IsDeniedThroughPipelineScoping()
     {
         await Exec("UPDATE tenant_widgets SET name = 'edited', version = 2 WHERE id = 1");
@@ -346,6 +365,37 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
         approved.Errors.Should().BeNullOrEmpty();
         (await ScalarAsync("SELECT state FROM change_sets WHERE id=95")).Should().Be("released");
         (await ScalarAsync("SELECT state FROM __outbox WHERE id=95")).Should().Be("pending");
+    }
+
+    [Fact]
+    public async Task HeldReviewChange_RemainsVisibleToOrdinaryReads()
+    {
+        var model = await ReviewModelAsync();
+        await SeedReviewHoldAsync(99, "requester", "tenant-1");
+        await Exec("UPDATE widgets SET name='live-held-change', version=2 WHERE id=1");
+
+        var result = await ExecuteReviewGraphQlAsync(model,
+            "query { widgets { data { id name } } }", Reviewer("reviewer", "tenant-1"));
+
+        result.Errors.Should().BeNullOrEmpty();
+        GraphQlJson(result).Should().Contain("live-held-change");
+    }
+
+    [Fact]
+    public async Task ExpiryCannotReleaseUntilApprovedHold_ButApprovalReleasesItOnce()
+    {
+        var model = await ReviewModelAsync();
+        await SeedReviewHoldAsync(100, "requester", "tenant-1");
+        await Exec("UPDATE change_sets SET undo_window_expires_at='2020-01-01T00:00:00Z' WHERE id=100");
+        var queue = new DeferredReviewQueue(model, new SqliteDbConnFactory(ConnString),
+            BuildMutationExecutor(model), new PolicyEvaluator());
+        var release = new DeferredOutboxReleaseEngine(model, new SqliteDbConnFactory(ConnString));
+
+        (await release.ReleaseOnceAsync(DateTimeOffset.Parse("2100-01-01T00:00:00Z"))).Should().Be(0);
+        (await queue.ApproveAsync(100, Reviewer("reviewer", "tenant-1"))).Should().BeTrue();
+        (await release.ReleaseOnceAsync(DateTimeOffset.Parse("2100-01-01T00:00:00Z"))).Should().Be(0);
+        (await ScalarAsync("SELECT state FROM change_sets WHERE id=100")).Should().Be("released");
+        (await ScalarAsync("SELECT state FROM __outbox WHERE id=100")).Should().Be("pending");
     }
 
     [Fact]

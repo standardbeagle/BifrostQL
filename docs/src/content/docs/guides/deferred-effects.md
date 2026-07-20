@@ -24,6 +24,13 @@ committed and visible to ordinary reads. Approval releases its parked outbox eve
 Rejection runs the stored inverse through the normal mutation pipeline as a compensating
 write, so concurrency drift can produce conflicts or a partial reversal.
 
+Held rows are still live: deferred effects add no read filter. If a row is edited again
+inside an open undo window, the later change captures a newer concurrency token. Reversals
+therefore have LIFO semantics for overlapping rows: undo the newest change first; attempting
+an older overlapping undo after a newer reversal is an explicit conflict rather than a silent
+overwrite. Timed expiry never releases an `until-approved` hold; only an authorized approval
+does, while a rejection suppresses its parked events as part of the compensating undo.
+
 By contrast, maker-checker keeps a proposed write outside the authoritative tables until
 an approver accepts it. Its approval applies the proposal for the first time, and its
 rejection merely discards pending data. Applications that require unapproved values to
@@ -48,6 +55,9 @@ each table's approver role and honor `self-approve: false`.
 
 Future capture and undo slices must implement this named decision; this guide deliberately
 adds no write-path behavior.
+
+Bulk deferred-effects controls in the edit-db UI remain a follow-up; this guide documents
+server behavior only and does not add a bulk UI workflow.
 
 ## Metadata contract
 

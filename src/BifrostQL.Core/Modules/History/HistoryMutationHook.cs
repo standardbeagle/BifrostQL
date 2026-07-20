@@ -40,7 +40,7 @@ namespace BifrostQL.Core.Modules.History
         // The pre-write row, or null when no row matched the key. Wrapped in a type (rather
         // than storing the row dictionary directly) so "captured, and there was no row" is
         // distinguishable from "never captured" — the latter must fail closed.
-        private sealed record BeforeImage(IReadOnlyDictionary<string, object?>? Row);
+        internal sealed record BeforeImage(IReadOnlyDictionary<string, object?>? Row);
 
         /// <summary>
         /// Pre-write phase: capture the before-image of the row an UPDATE or DELETE is about
@@ -332,6 +332,9 @@ namespace BifrostQL.Core.Modules.History
         /// the writer never read. Fail closed: a trail with a fabricated pre-image is worse
         /// than a rejected write.
         /// </summary>
+        internal static IReadOnlyDictionary<string, object?>? GetCapturedBeforeImage(MutationObserverContext context)
+            => RequireCapturedBeforeImage(context).Row;
+
         private static BeforeImage RequireCapturedBeforeImage(MutationObserverContext context)
         {
             if (!context.MutationState.TryGetValue(BeforeImageKey, out var captured)

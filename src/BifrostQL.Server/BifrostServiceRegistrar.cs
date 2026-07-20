@@ -87,6 +87,7 @@ namespace BifrostQL.Server
             // writes its event on the mutation's own transaction, after the write, so it
             // can name the generated identity. A host/test may register additional hooks.
             services.AddSingleton<IInTransactionMutationHook, BifrostQL.Core.Modules.Cdc.OutboxMutationHook>();
+            services.AddSingleton<IInTransactionMutationHook, BifrostQL.Core.Modules.Deferred.DeferredDeltaMutationHook>();
             services.AddSingleton<InTransactionMutationHooks>(sp => new InTransactionMutationHooks(
                 sp.GetServices<IInTransactionMutationHook>().ToArray()));
 

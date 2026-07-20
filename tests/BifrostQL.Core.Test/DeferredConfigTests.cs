@@ -52,7 +52,7 @@ public class DeferredConfigTests
     public void ChangeSetColumnContracts_AreCentralized()
     {
         MetadataKeys.Deferred.ChangeSet.Columns.Should().Equal(
-            "id", "state", "undo_window_expires_at", "requester", "created_at", "applied_at", "reversed_at");
+            "id", "state", "undo_window_expires_at", "requester", "tenant", "tables", "created_at", "applied_at", "reversed_at");
         MetadataKeys.Deferred.ChangeSetDelta.Columns.Should().Equal(
             "id", "change_set_id", "table", "pk", "op", "inverse_op", "before_image", "after_image", "created_at");
     }

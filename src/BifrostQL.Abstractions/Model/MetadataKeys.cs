@@ -517,12 +517,16 @@ namespace BifrostQL.Core.Model
             /// <summary>Column contract for the durable change-set store.</summary>
             public static class ChangeSet
             {
+                public const string Table = "change_sets";
+
                 public static class Column
                 {
                     public const string Id = "id";
                     public const string State = "state";
                     public const string UndoWindowExpiresAt = "undo_window_expires_at";
                     public const string Requester = "requester";
+                    public const string Tenant = "tenant";
+                    public const string Tables = "tables";
                     public const string CreatedAt = "created_at";
                     public const string AppliedAt = "applied_at";
                     public const string ReversedAt = "reversed_at";
@@ -531,13 +535,15 @@ namespace BifrostQL.Core.Model
                 public static readonly IReadOnlyList<string> Columns = new[]
                 {
                     Column.Id, Column.State, Column.UndoWindowExpiresAt, Column.Requester,
-                    Column.CreatedAt, Column.AppliedAt, Column.ReversedAt,
+                    Column.Tenant, Column.Tables, Column.CreatedAt, Column.AppliedAt, Column.ReversedAt,
                 };
             }
 
             /// <summary>Column contract for the reverse deltas belonging to a change set.</summary>
             public static class ChangeSetDelta
             {
+                public const string Table = "change_set_deltas";
+
                 public static class Column
                 {
                     public const string Id = "id";

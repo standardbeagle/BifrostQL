@@ -97,6 +97,7 @@ public sealed class TreeSyncExecutor
 
         object? rootId = null;
         string? pendingApproval = null;
+        var treeMutationState = MutationObserverContext.NewMutationState();
 
         // Transaction control as SQL on the open connection (dialect keywords),
         // not the ADO.NET DbTransaction API — the boundary shows up in the SQL.
@@ -161,7 +162,7 @@ public sealed class TreeSyncExecutor
                         Model = model,
                         Dialect = _dialect,
                         ConnFactory = connFactory,
-                        MutationState = MutationObserverContext.NewMutationState(),
+                        MutationState = treeMutationState,
                     };
                     Approval.ApprovalInterceptMutationHook.SetLogicalMutationType(hookContext, logicalMutationType);
                     await MutationNotifier.RunBeforeCommitHooksAsync(services, hookContext);

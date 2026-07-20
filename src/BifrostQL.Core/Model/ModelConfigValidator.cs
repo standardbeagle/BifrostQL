@@ -86,6 +86,7 @@ namespace BifrostQL.Core.Model
             ValidateCdcOutbox(model, errors);
             ValidateCdcSubscription(model, errors);
             ValidateHistoryTargets(model, errors);
+            ValidateDeferredStores(model, errors);
             ValidateChat(model, errors);
             ValidateChatConnectors(model, errors);
             ValidatePrometheusMetrics(model, errors);
@@ -403,6 +404,44 @@ namespace BifrostQL.Core.Model
                     table.GetMetadataValue(MetadataKeys.Deferred.Deferrable),
                     $"requires '{MetadataKeys.History.Enabled}' so the applied change remains auditable"));
             }
+        }
+
+        private static void ValidateDeferredStores(IDbModel model, List<string> errors)
+        {
+            var hasDeferrableTable = false;
+            foreach (var table in model.Tables)
+            {
+                try
+                {
+                    hasDeferrableTable |= DeferredConfig.FromTable(table).IsDeferrable;
+                }
+                catch (InvalidOperationException)
+                {
+                    // ValidateDeferred already reports malformed deferred metadata.
+                }
+            }
+
+            if (!hasDeferrableTable)
+                return;
+
+            ValidateDeferredStore(model, MetadataKeys.Deferred.ChangeSet.Table,
+                MetadataKeys.Deferred.ChangeSet.Columns, errors);
+            ValidateDeferredStore(model, MetadataKeys.Deferred.ChangeSetDelta.Table,
+                MetadataKeys.Deferred.ChangeSetDelta.Columns, errors);
+        }
+
+        private static void ValidateDeferredStore(
+            IDbModel model, string tableName, IReadOnlyList<string> requiredColumns, List<string> errors)
+        {
+            var table = ModelTableReference.Find(model, tableName);
+            if (table is null)
+            {
+                errors.Add($"Deferred effects require store table '{tableName}', but it was not found in the model.");
+                return;
+            }
+
+            foreach (var column in requiredColumns.Where(column => !DbColumnExists(table, column)))
+                errors.Add($"Deferred store table '{table.TableSchema}.{table.DbName}' is missing required column '{column}'.");
         }
 
         /// <summary>

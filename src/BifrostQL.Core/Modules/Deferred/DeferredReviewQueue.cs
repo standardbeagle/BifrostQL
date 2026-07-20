@@ -57,7 +57,8 @@ public sealed class DeferredReviewQueue
     {
         if (await LoadAuthorizedAsync(id, identity, ct) is null) return null;
         var mapper = new IdentityContextMapper(_model.GetMetadataValue(MetadataKeys.Security.TenantContextKey));
-        return await new DeferredUndoEngine(_model, _connections, _mutations, _clock).UndoAsync(id, mapper.ToUserContext(identity), ct);
+        return await new DeferredUndoEngine(_model, _connections, _mutations, _clock)
+            .RejectApprovalHoldAsync(id, mapper.ToUserContext(identity), ct);
     }
 
     private async Task<DeferredReviewItem?> LoadAuthorizedAsync(long id, AppIdentity identity, CancellationToken ct)

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.Deferred;
@@ -304,6 +305,28 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
 
         await undo.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*expired*");
         (await ScalarAsync("SELECT state FROM change_sets WHERE id=93")).Should().Be("held");
+    }
+
+    [Fact]
+    public async Task ReviewRejection_ClaimsAndCompensatesExpiredUntilApprovedHold()
+    {
+        var model = await LoadModelAsync(
+            "main.widgets { hold-events: until-approved; approval: enabled; approver-role: manager }",
+            ":root { outbox-table: main.__outbox }");
+        await SeedChangeSetAsync(94, "main.widgets", 1, "update", "restore", "{\"id\":1,\"name\":\"original\",\"version\":1}", "{\"id\":1,\"name\":\"edited\",\"version\":2}");
+        await Exec("UPDATE widgets SET name='edited', version=2 WHERE id=1");
+        await Exec("UPDATE change_sets SET undo_window_expires_at='2020-01-01T00:00:00Z', requester='requester', tenant='tenant-1', tables='[\"main.widgets\"]' WHERE id=94");
+        await Exec("INSERT INTO __outbox(id,aggregate,op,payload,created_at,attempts,dead,change_set_id,state) VALUES(94,'main.widgets','update','{\"id\":1}','2026-07-20',0,0,94,'pending_hold')");
+        var reviewer = new AppIdentity("reviewer", "test", tenantId: "tenant-1", roles: ["manager"]);
+
+        var result = await new DeferredReviewQueue(model, new SqliteDbConnFactory(ConnString),
+                BuildMutationExecutor(model), new PolicyEvaluator(), () => DateTimeOffset.Parse("2026-07-20T00:00:00Z"))
+            .RejectAsync(94, reviewer);
+
+        result.Should().Be(new DeferredUndoResult(94, 1, 0, false));
+        (await ScalarAsync("SELECT state FROM change_sets WHERE id=94")).Should().Be("undone");
+        (await ScalarAsync("SELECT state FROM __outbox WHERE id=94")).Should().Be("suppressed");
+        (await ScalarAsync("SELECT name FROM widgets WHERE id=1")).Should().Be("original");
     }
 
     [Fact]

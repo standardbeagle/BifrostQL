@@ -31,6 +31,14 @@ public sealed class DeferredUndoEngine
 
     public async Task<DeferredUndoResult> UndoAsync(long changeSetId, IDictionary<string, object?> userContext,
         CancellationToken cancellationToken = default)
+        => await UndoAsync(changeSetId, userContext, allowExpiredHeld: false, cancellationToken);
+
+    internal async Task<DeferredUndoResult> RejectApprovalHoldAsync(long changeSetId,
+        IDictionary<string, object?> userContext, CancellationToken cancellationToken = default)
+        => await UndoAsync(changeSetId, userContext, allowExpiredHeld: true, cancellationToken);
+
+    private async Task<DeferredUndoResult> UndoAsync(long changeSetId, IDictionary<string, object?> userContext,
+        bool allowExpiredHeld, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(userContext);
         var changeSet = await LoadChangeSetAsync(changeSetId, cancellationToken);
@@ -42,10 +50,11 @@ public sealed class DeferredUndoEngine
             throw new BifrostExecutionError("The deferred change set is not available for undo.");
         // Lifecycle is authoritative. A durable undo claim remains resumable after the
         // original window, and a released event must be compensatable after dispatch.
-        // Only an ordinary, never-claimed held change is closed by expiry.
-        if (!resuming && !released && changeSet.ExpiresAt <= _clock())
+        // Only an ordinary, never-claimed held change is closed by expiry;
+        // an authorized approval rejection remains compensatable while held.
+        if (!allowExpiredHeld && !resuming && !released && changeSet.ExpiresAt <= _clock())
             throw new BifrostExecutionError("The deferred change set undo window has expired.");
-        if (!resuming && !await TryClaimUndoAsync(changeSetId, changeSet.State, cancellationToken))
+        if (!resuming && !await TryClaimUndoAsync(changeSetId, changeSet.State, allowExpiredHeld, cancellationToken))
             throw new BifrostExecutionError("The deferred change set is not available for undo.");
 
         var undone = 0;
@@ -178,18 +187,19 @@ public sealed class DeferredUndoEngine
         if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new BifrostExecutionError("The deferred change set state could not be recorded.");
     }
 
-    private async Task<bool> TryClaimUndoAsync(long id, string expectedState, CancellationToken cancellationToken)
+    private async Task<bool> TryClaimUndoAsync(long id, string expectedState, bool allowExpiredHeld,
+        CancellationToken cancellationToken)
     {
         var table = FindTable(MetadataKeys.Deferred.ChangeSet.Table);
         await using var connection = _connections.GetConnection();
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        var expiryGuard = string.Equals(expectedState, Held, StringComparison.OrdinalIgnoreCase)
+        var expiryGuard = !allowExpiredHeld && string.Equals(expectedState, Held, StringComparison.OrdinalIgnoreCase)
             ? $" AND {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.UndoWindowExpiresAt)}>@now"
             : string.Empty;
         command.CommandText = $"UPDATE {_connections.Dialect.TableReference(table.TableSchema, table.DbName)} SET {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.State)}=@claim WHERE {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Id)}=@id AND {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.State)}=@expected{expiryGuard}";
         Add(command, "@claim", Undoing); Add(command, "@id", id); Add(command, "@expected", expectedState);
-        if (string.Equals(expectedState, Held, StringComparison.OrdinalIgnoreCase)) Add(command, "@now", _clock());
+        if (!allowExpiredHeld && string.Equals(expectedState, Held, StringComparison.OrdinalIgnoreCase)) Add(command, "@now", _clock());
         return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
     }
 

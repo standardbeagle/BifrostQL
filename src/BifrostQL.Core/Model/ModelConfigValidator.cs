@@ -9,6 +9,7 @@ using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.Cdc;
 using BifrostQL.Core.Modules.Chat;
 using BifrostQL.Core.Modules.ComputedColumns;
+using BifrostQL.Core.Modules.Deferred;
 using BifrostQL.Core.Modules.History;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Storage;
@@ -62,6 +63,7 @@ namespace BifrostQL.Core.Model
                 ValidateHistoryTokens(table, errors);
                 ValidateFtsColumns(table, errors);
                 ValidateRetention(table, errors);
+                ValidateDeferred(table, errors);
                 ValidateApproval(table, errors);
 
                 var tableRef = $"{table.TableSchema}.{table.DbName}";
@@ -363,6 +365,43 @@ namespace BifrostQL.Core.Model
                     ? MetadataKeys.Retention.Retain
                     : MetadataKeys.Retention.Ttl;
                 errors.Add(Problem(table, key, table.GetMetadataValue(key), ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// A deferred reversal relies on an optimistic token to avoid undoing over a newer
+        /// write, and on temporal history to preserve the original audit trail. Neither may
+        /// be inferred or defaulted: a marked table missing either prerequisite is invalid.
+        /// </summary>
+        private static void ValidateDeferred(IDbTable table, List<string> errors)
+        {
+            DeferredConfig config;
+            try
+            {
+                config = DeferredConfig.FromTable(table);
+            }
+            catch (Exception ex)
+            {
+                errors.Add(Problem(table, MetadataKeys.Deferred.Deferrable,
+                    table.GetMetadataValue(MetadataKeys.Deferred.Deferrable), ex.Message));
+                return;
+            }
+
+            if (!config.IsDeferrable)
+                return;
+
+            if (string.IsNullOrWhiteSpace(table.GetMetadataValue(MetadataKeys.Concurrency.Token)))
+            {
+                errors.Add(Problem(table, MetadataKeys.Deferred.Deferrable,
+                    table.GetMetadataValue(MetadataKeys.Deferred.Deferrable),
+                    $"requires '{MetadataKeys.Concurrency.Token}' so a reversal cannot overwrite a newer change"));
+            }
+
+            if (string.IsNullOrWhiteSpace(table.GetMetadataValue(MetadataKeys.History.Enabled)))
+            {
+                errors.Add(Problem(table, MetadataKeys.Deferred.Deferrable,
+                    table.GetMetadataValue(MetadataKeys.Deferred.Deferrable),
+                    $"requires '{MetadataKeys.History.Enabled}' so the applied change remains auditable"));
             }
         }
 

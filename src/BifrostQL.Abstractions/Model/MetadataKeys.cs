@@ -496,6 +496,70 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
+        /// Metadata keys and durable-store contracts for reversible deferred effects. A table
+        /// opts in only when it is already concurrency-protected and history-enabled:
+        /// <c>dbo.orders { deferrable: enabled; undo-window: 90d; hold-events: enabled }</c>.
+        /// </summary>
+        public static class Deferred
+        {
+            /// <summary>Table-level opt-in enabling deferred/reversible changes.</summary>
+            public const string Deferrable = "deferrable";
+
+            /// <summary>Required positive undo window, such as <c>90d</c> or <c>12h</c>.</summary>
+            public const string UndoWindow = "undo-window";
+
+            /// <summary>Optional opt-in holding outbound events until the change is final.</summary>
+            public const string HoldEvents = "hold-events";
+
+            /// <summary>The only valid value for <see cref="Deferrable"/> and <see cref="HoldEvents"/>.</summary>
+            public const string Enabled = "enabled";
+
+            /// <summary>Column contract for the durable change-set store.</summary>
+            public static class ChangeSet
+            {
+                public static class Column
+                {
+                    public const string Id = "id";
+                    public const string State = "state";
+                    public const string UndoWindowExpiresAt = "undo_window_expires_at";
+                    public const string Requester = "requester";
+                    public const string CreatedAt = "created_at";
+                    public const string AppliedAt = "applied_at";
+                    public const string ReversedAt = "reversed_at";
+                }
+
+                public static readonly IReadOnlyList<string> Columns = new[]
+                {
+                    Column.Id, Column.State, Column.UndoWindowExpiresAt, Column.Requester,
+                    Column.CreatedAt, Column.AppliedAt, Column.ReversedAt,
+                };
+            }
+
+            /// <summary>Column contract for the reverse deltas belonging to a change set.</summary>
+            public static class ChangeSetDelta
+            {
+                public static class Column
+                {
+                    public const string Id = "id";
+                    public const string ChangeSetId = "change_set_id";
+                    public const string Table = "table";
+                    public const string Pk = "pk";
+                    public const string Op = "op";
+                    public const string InverseOp = "inverse_op";
+                    public const string BeforeImage = "before_image";
+                    public const string AfterImage = "after_image";
+                    public const string CreatedAt = "created_at";
+                }
+
+                public static readonly IReadOnlyList<string> Columns = new[]
+                {
+                    Column.Id, Column.ChangeSetId, Column.Table, Column.Pk, Column.Op,
+                    Column.InverseOp, Column.BeforeImage, Column.AfterImage, Column.CreatedAt,
+                };
+            }
+        }
+
+        /// <summary>
         /// Metadata keys for explicit relationship declarations.
         /// </summary>
         public static class Relationships

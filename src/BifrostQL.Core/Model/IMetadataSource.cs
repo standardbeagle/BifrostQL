@@ -195,6 +195,11 @@ namespace BifrostQL.Core.Model
             // key, but the same fail-fast requirement.
             MetadataKeys.Retention.Retain,
             MetadataKeys.Retention.Ttl,
+            // Reversible deferred effects (table-level opt-in). A miscased key must be a
+            // hard error, never silently leave a declared table outside the undo contract.
+            MetadataKeys.Deferred.Deferrable,
+            MetadataKeys.Deferred.UndoWindow,
+            MetadataKeys.Deferred.HoldEvents,
             // Approval / pending-change gate (table-level opt-in). A miscased or typo'd key
             // MUST be a HARD error, never a warning: a silently-ignored 'approval' key leaves
             // the table's writes UNGATED (fail-open) — the exact bug the allow-list exists to

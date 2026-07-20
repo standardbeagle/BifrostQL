@@ -219,12 +219,24 @@ namespace BifrostQL.Core.Modules.Retention
             if (!int.TryParse(magnitude, NumberStyles.None, CultureInfo.InvariantCulture, out var value) || value <= 0)
                 throw reason("the magnitude must be a positive integer.");
 
-            return unit switch
+            // A magnitude that parses as an int can still overflow TimeSpan (max ~10.7M
+            // days). Rethrow as the same friendly InvalidOperationException so the
+            // model-load validator (which filters InvalidOperationException) catches it
+            // and the purge sweep's per-table guard skips the table fail-closed, rather
+            // than letting a raw OverflowException escape either path.
+            try
             {
-                'd' => TimeSpan.FromDays(value),
-                'h' => TimeSpan.FromHours(value),
-                _ => throw reason($"'{token[^1]}' is not a recognized unit."),
-            };
+                return unit switch
+                {
+                    'd' => TimeSpan.FromDays(value),
+                    'h' => TimeSpan.FromHours(value),
+                    _ => throw reason($"'{token[^1]}' is not a recognized unit."),
+                };
+            }
+            catch (Exception ex) when (ex is OverflowException or ArgumentOutOfRangeException)
+            {
+                throw reason("the window is too large to represent.");
+            }
         }
 
         // Resolves an anchor column, enforcing existence AND timestamp-typedness — a purge

@@ -208,4 +208,22 @@ public class RetentionConfigTests
         act.Should().Throw<InvalidOperationException>()
             .WithMessage("*name*timestamp*");
     }
+
+    [Fact]
+    public void FromTable_HugeButParseableDuration_ThrowsFriendlyError_NotOverflow()
+    {
+        // A magnitude that parses as an int but overflows TimeSpan (max ~10.7M days)
+        // must surface as the friendly InvalidOperationException the model-load
+        // validator already catches — NOT a raw OverflowException that would escape
+        // ValidateRetention (which filters InvalidOperationException) unhandled, and
+        // NOT abort the purge sweep that calls FromTable directly.
+        var table = TableWithMetadata(
+            (MetadataKeys.SoftDelete.Column, "deleted_at"),
+            (MetadataKeys.Retention.Retain, "99999999d"));
+
+        var act = () => RetentionConfig.FromTable(table);
+
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*invalid duration*");
+    }
 }

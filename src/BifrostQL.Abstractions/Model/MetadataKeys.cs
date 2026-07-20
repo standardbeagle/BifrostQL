@@ -439,6 +439,49 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
+        /// Metadata keys for data-retention purge policy. TWO deliberately separate keys
+        /// with very different blast radii — the split is load-bearing, not cosmetic:
+        /// <list type="bullet">
+        ///   <item><see cref="Retain"/> hard-purges rows that are ALREADY soft-deleted,
+        ///   anchored on the table's <see cref="SoftDelete.Column"/> timestamp. A live row
+        ///   (soft-delete column IS NULL) can NEVER match, so <c>retain</c> alone can never
+        ///   destroy a live row — structurally, not by remembering to filter.</item>
+        ///   <item><see cref="Ttl"/> expires LIVE rows, anchored on an explicit timestamp
+        ///   column named with the <c>after &lt;column&gt;</c> clause. Destroying live rows is
+        ///   destructive and must be declared explicitly with its OWN key; it is never an
+        ///   emergent consequence of <c>retain</c>.</item>
+        /// </list>
+        /// This slice establishes the metadata contract + fail-fast validation only; the
+        /// purge scheduler that acts on it is a later Retention sub-task. Parsed into a typed
+        /// <c>RetentionConfig</c>. Configured like the tenant-filter convention:
+        ///   "dbo.orders { soft-delete: deleted_at; retain: 90d }"
+        ///   "dbo.sessions { ttl: 12h after created_at }"
+        /// </summary>
+        public static class Retention
+        {
+            /// <summary>
+            /// Table-level hard-purge window for ALREADY-soft-deleted rows. The value is a
+            /// duration (<c>90d</c>, <c>12h</c>); the anchor is always the table's
+            /// <see cref="SoftDelete.Column"/> (which must be configured and timestamp-typed),
+            /// so a purge only ever removes a row that was soft-deleted longer ago than the
+            /// window. Presence of this key opts the table into retention purging. It takes NO
+            /// <c>after</c> clause — live-row expiry is the separate <see cref="Ttl"/> key.
+            /// </summary>
+            public const string Retain = "retain";
+
+            /// <summary>
+            /// Table-level time-to-live window for LIVE rows — the explicit, separate,
+            /// destructive live-row expiry. The value is a duration followed by an explicit
+            /// anchor: <c>&lt;duration&gt; after &lt;column&gt;</c> (e.g. <c>30d after created_at</c>),
+            /// where <c>&lt;column&gt;</c> must exist on the table and be a timestamp type. A row is
+            /// eligible once the anchor timestamp is older than the window, regardless of
+            /// soft-delete state. Kept distinct from <see cref="Retain"/> so purging live data
+            /// always requires this deliberate opt-in.
+            /// </summary>
+            public const string Ttl = "ttl";
+        }
+
+        /// <summary>
         /// Metadata keys for optimistic-concurrency (lost-update prevention).
         /// </summary>
         public static class Concurrency

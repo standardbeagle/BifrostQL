@@ -189,6 +189,12 @@ namespace BifrostQL.Core.Model
             // operator would simply never surface, with no error).
             MetadataKeys.Fts.Search,
             MetadataKeys.Fts.SearchLanguage,
+            // Data-retention purge policy (table-level opt-in). A miscased or typo'd key must
+            // be a HARD error, never a warning: a typo'd retention key means data is silently
+            // NOT purged (a compliance gap) — the opposite directional risk from a security
+            // key, but the same fail-fast requirement.
+            MetadataKeys.Retention.Retain,
+            MetadataKeys.Retention.Ttl,
         };
 
         // Internal for the same reason as KnownTableKeys above (case-casing

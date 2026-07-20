@@ -1346,5 +1346,65 @@ namespace BifrostQL.Core.Model
                     "float", "real", "double", "double precision",
                 };
         }
+
+        /// <summary>
+        /// Metadata keys for the approval / pending-change gate. A table opts in by declaring
+        /// <see cref="Approval"/>; a write to a gated table is diverted into a pending_changes
+        /// row (state <c>pending</c>) that an <see cref="ApproverRole"/> holder must approve
+        /// before it applies. Configured like the tenant-filter convention:
+        ///   "dbo.orders { approval: enabled; approver-role: manager; self-approve: false }"
+        /// This slice establishes the metadata contract, the typed collector
+        /// (<c>ApprovalConfig</c>), fail-fast validation, and the pending_changes state model
+        /// (pinned through the <see cref="StateMachine"/> module); the write-interception
+        /// transformer that diverts a gated write is a later Approval sub-task.
+        /// </summary>
+        public static class Approval
+        {
+            /// <summary>
+            /// Table-level opt-in marking the table's writes gated behind approval. The value
+            /// must be <see cref="Enabled"/>. Presence-with-that-value is what diverts a write
+            /// into a pending_changes row; a miscased or typo'd key must be a HARD model-load
+            /// error, never a silently-ungated table (a silently-ignored <c>approval</c> key
+            /// means writes apply UNGATED — the fail-open direction this gate exists to close).
+            /// </summary>
+            public const string Marker = "approval";
+
+            /// <summary>
+            /// Table-level role name whose holder may approve a pending change on this table.
+            /// REQUIRED when <see cref="Marker"/> is present: an approval gate with no
+            /// approver is fail-open (nobody can approve, or worse, anybody can) and must not
+            /// load. There is no implicit/default approver role ever.
+            /// </summary>
+            public const string ApproverRole = "approver-role";
+
+            /// <summary>
+            /// Table-level flag controlling whether the change's requester may approve their
+            /// own pending change (when they also hold the <see cref="ApproverRole"/>).
+            /// Defaults to <c>true</c> unless declared false; recognized values are the
+            /// <see cref="TrueValues"/> / <see cref="FalseValues"/> tokens.
+            /// </summary>
+            public const string SelfApprove = "self-approve";
+
+            /// <summary>
+            /// The only valid value of <see cref="Marker"/>. Spelled <c>enabled</c> so the
+            /// opt-in reads as a plain switch, matching <c>raw-sql: enabled</c> and
+            /// <c>history: enabled</c>.
+            /// </summary>
+            public const string Enabled = "enabled";
+
+            /// <summary>Recognized truthy tokens for <see cref="SelfApprove"/>.</summary>
+            public static readonly IReadOnlySet<string> TrueValues =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "true", "yes", "on", "1", "enabled",
+                };
+
+            /// <summary>Recognized falsy tokens for <see cref="SelfApprove"/>.</summary>
+            public static readonly IReadOnlySet<string> FalseValues =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "false", "no", "off", "0", "disabled",
+                };
+        }
     }
 }

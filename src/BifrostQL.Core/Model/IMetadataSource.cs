@@ -195,6 +195,14 @@ namespace BifrostQL.Core.Model
             // key, but the same fail-fast requirement.
             MetadataKeys.Retention.Retain,
             MetadataKeys.Retention.Ttl,
+            // Approval / pending-change gate (table-level opt-in). A miscased or typo'd key
+            // MUST be a HARD error, never a warning: a silently-ignored 'approval' key leaves
+            // the table's writes UNGATED (fail-open) — the exact bug the allow-list exists to
+            // catch. approver-role and self-approve are allow-listed alongside it so a miscased
+            // approver/self-approve key is flagged rather than silently reverting to defaults.
+            MetadataKeys.Approval.Marker,
+            MetadataKeys.Approval.ApproverRole,
+            MetadataKeys.Approval.SelfApprove,
         };
 
         // Internal for the same reason as KnownTableKeys above (case-casing

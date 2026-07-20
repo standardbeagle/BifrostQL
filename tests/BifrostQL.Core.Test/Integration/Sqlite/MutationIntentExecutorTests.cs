@@ -321,6 +321,7 @@ public sealed class MutationIntentExecutorTests : IAsyncLifetime
         });
 
         result.Value.Should().Be(0, "the tenant scope matched no rows");
+        result.AffectedRows.Should().Be(0, "intent callers must not infer a write count from Value");
         (await ScalarAsync("SELECT COUNT(*) FROM notes WHERE id = 1")).Should().Be("1");
     }
 
@@ -340,6 +341,7 @@ public sealed class MutationIntentExecutorTests : IAsyncLifetime
         });
 
         result.Value.Should().Be(1);
+        result.AffectedRows.Should().Be(1);
         (await ScalarAsync("SELECT COUNT(*) FROM notes WHERE id = 1")).Should().Be("0");
     }
 

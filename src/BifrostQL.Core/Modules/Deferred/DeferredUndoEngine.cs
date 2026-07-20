@@ -42,12 +42,13 @@ public sealed class DeferredUndoEngine
             try
             {
                 var result = await _mutations.ExecuteAsync(ToInverseIntent(delta, userContext), cancellationToken);
-                // Update is the only intent with a separate affected-row contract. A
-                // narrowed tenant/policy scope is a conflict, never a successful undo.
-                if (result.AffectedRows is 0)
-                    conflicts++;
-                else
+                // Every inverse must report exactly one affected row. A null count
+                // has no success semantics; zero includes policy/tenant narrowing,
+                // and any other count means the addressed inverse was not singular.
+                if (result.AffectedRows == 1)
                     undone++;
+                else
+                    conflicts++;
             }
             catch (BifrostExecutionError error) when (string.Equals(error.ErrorCode, "CONFLICT", StringComparison.Ordinal))
             {
@@ -73,26 +74,19 @@ public sealed class DeferredUndoEngine
         foreach (var (name, value) in key)
             data.Remove(name);
 
-        // A DELETE receives the captured token in ordinary predicate data. The
-        // standard pipeline parameterizes and combines it with every security filter;
-        // the engine never creates a WHERE clause.
-        if (string.Equals(delta.InverseOp, "delete", StringComparison.Ordinal))
+        var token = table.GetMetadataValue(MetadataKeys.Concurrency.Token);
+        if (!string.IsNullOrWhiteSpace(token))
         {
-            var token = DeferredConfig.FromTable(table).IsDeferrable
-                ? table.GetMetadataValue(MetadataKeys.Concurrency.Token)
-                : null;
-            if (!string.IsNullOrWhiteSpace(token) && after.TryGetValue(token, out var version))
-                data[token] = version;
-        }
-        else
-        {
-            var token = table.GetMetadataValue(MetadataKeys.Concurrency.Token);
-            if (!string.IsNullOrWhiteSpace(token))
-            {
-                if (!after.TryGetValue(token, out var version))
-                    throw new BifrostExecutionError("The deferred delta is missing its post-write concurrency token.");
-                data[token] = version;
-            }
+            // Insert/update inverses delete the exact stored post-image; a deleted
+            // row has no post-image, so its restore is guarded by the captured
+            // pre-delete token. In both cases the token is pipeline data, never an
+            // engine-built predicate.
+            var tokenImage = string.Equals(delta.InverseOp, "delete", StringComparison.Ordinal)
+                ? after
+                : data;
+            if (!tokenImage.TryGetValue(token, out var version))
+                throw new BifrostExecutionError("The deferred delta is missing its captured concurrency token.");
+            data[token] = version;
         }
 
         return new MutationIntent

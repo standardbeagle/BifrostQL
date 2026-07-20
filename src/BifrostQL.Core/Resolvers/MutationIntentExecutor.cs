@@ -96,9 +96,8 @@ public sealed class MutationIntentResult
     /// tenant/policy/soft-delete filter, or the row vanished between the read and
     /// the write; an adapter that reports that as success is lying to its caller.</para>
     ///
-    /// <para>Populated for Update. Null for Insert (which reports a generated
-    /// identity, not a count) and for Delete (whose <see cref="Value"/> already IS
-    /// the affected count, matching the GraphQL delete field).</para>
+    /// <para>Populated for Update and Delete. Null for Insert, which reports a
+    /// generated identity rather than an affected-row count.</para>
     /// </summary>
     public int? AffectedRows { get; init; }
 }
@@ -233,7 +232,13 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
                 table, MergePrimaryKey(table, intent), ctx),
             _ => throw new BifrostExecutionError($"Unsupported mutation intent action '{intent.Action}'."),
         };
-        return new MutationIntentResult { Value = value };
+        return new MutationIntentResult
+        {
+            Value = value,
+            AffectedRows = intent.Action == MutationIntentAction.Delete && value is int deleteAffectedRows
+                ? deleteAffectedRows
+                : null,
+        };
     }
 
     public async Task<MutationBatchIntentResult> ExecuteBatchAsync(

@@ -73,7 +73,10 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
             [MetadataKeys.Deferred.ChangeSetDelta.Column.Op] = operation.ToString().ToLowerInvariant(),
             [MetadataKeys.Deferred.ChangeSetDelta.Column.InverseOp] = InverseOperation(operation),
             [MetadataKeys.Deferred.ChangeSetDelta.Column.BeforeImage] = capturedBefore is null ? null : JsonSerializer.Serialize(capturedBefore),
-            [MetadataKeys.Deferred.ChangeSetDelta.Column.AfterImage] = null,
+            // The pipeline has already applied mutation transformers here. Persist the
+            // resulting token so an inverse update guards against a later write rather
+            // than comparing the stale pre-write version.
+            [MetadataKeys.Deferred.ChangeSetDelta.Column.AfterImage] = JsonSerializer.Serialize(context.Data),
             [MetadataKeys.Deferred.ChangeSetDelta.Column.CreatedAt] = DateTime.UtcNow,
         };
 

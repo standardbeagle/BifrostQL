@@ -157,7 +157,11 @@ namespace BifrostQL.Core.Schema
                     builder.AppendLine("approve(pendingChangeId: ID!): Boolean!");
                     builder.AppendLine("reject(pendingChangeId: ID!, reason: String!): Boolean!");
                 }
+                if (model.Tables.Any(table => Modules.Deferred.DeferredConfig.FromTable(table).IsDeferrable))
+                    builder.AppendLine("undo(changeSetId: ID!): DeferredUndoResult!");
                 builder.AppendLine("}");
+                if (model.Tables.Any(table => Modules.Deferred.DeferredConfig.FromTable(table).IsDeferrable))
+                    builder.AppendLine("type DeferredUndoResult { changeSetId: ID! undoneRows: Int! conflictRows: Int! alreadyUndone: Boolean! }");
             }
 
             foreach (var generator in tableGenerators)

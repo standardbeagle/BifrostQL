@@ -1,6 +1,7 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules.ComputedColumns;
 using BifrostQL.Core.Modules.Approval;
+using BifrostQL.Core.Modules.Deferred;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Schema;
 using BifrostQL.Core.Storage;
@@ -207,6 +208,9 @@ namespace BifrostQL.Core.Resolvers
                 mut.FieldFor("reject").Resolver = this;
             }
 
+            if (_model.Tables.Any(table => DeferredConfig.FromTable(table).IsDeferrable))
+                mut.FieldFor("undo").Resolver = this;
+
             foreach (var proc in _model.StoredProcedures)
             {
                 if (proc.IsReadOnly)
@@ -289,6 +293,18 @@ namespace BifrostQL.Core.Resolvers
                 new HistoryTableResolver(table, target);
         }
 
+        private sealed class DeferredUndoResolver : IBifrostResolver
+        {
+            public async ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
+            {
+                var request = new BifrostContextAdapter(context);
+                var mutations = context.RequestServices?.GetService<IMutationIntentExecutor>()
+                    ?? throw new BifrostExecutionError("Deferred undo requires the mutation intent executor.");
+                return await new DeferredUndoEngine(request.Model, request.ConnFactory, mutations).UndoAsync(
+                    context.GetArgument<long>("changeSetId"), request.UserContext, context.CancellationToken);
+            }
+        }
+
         private sealed class ApprovalDecisionResolver : IBifrostResolver
         {
             public async ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
@@ -351,6 +367,9 @@ namespace BifrostQL.Core.Resolvers
                 map[(mutationType, "approve")] = new ApprovalDecisionResolver();
                 map[(mutationType, "reject")] = new ApprovalDecisionResolver();
             }
+
+            if (model.Tables.Any(table => DeferredConfig.FromTable(table).IsDeferrable))
+                map[(mutationType, "undo")] = new DeferredUndoResolver();
 
             foreach (var proc in model.StoredProcedures)
             {

@@ -43,16 +43,17 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
     [Fact]
     public async Task SingleRowWrites_RecordReversibleInsertUpdateDeleteAndSoftDeleteDeltas()
     {
-        (await ExecuteMutationAsync("mutation { widgets(insert: { name: \"new\" }) }")).Errors.Should().BeNullOrEmpty();
-        (await ExecuteMutationAsync("mutation { widgets(update: { id: 1, name: \"edited\" }) }")).Errors.Should().BeNullOrEmpty();
-        (await ExecuteMutationAsync("mutation { widgets(delete: { id: 1 }) }")).Errors.Should().BeNullOrEmpty();
-        (await ExecuteMutationAsync("mutation { soft_widgets(delete: { id: 1 }) }")).Errors.Should().BeNullOrEmpty();
+        (await ExecuteMutationAsync("mutation { widgets(insert: { name: \"new\" }) }", registerConcurrency: true)).Errors.Should().BeNullOrEmpty();
+        (await ExecuteMutationAsync("mutation { widgets(update: { id: 1, name: \"edited\", version: 1 }) }", registerConcurrency: true)).Errors.Should().BeNullOrEmpty();
+        (await ExecuteMutationAsync("mutation { widgets(delete: { id: 1 }) }", registerConcurrency: true)).Errors.Should().BeNullOrEmpty();
+        (await ExecuteMutationAsync("mutation { soft_widgets(delete: { id: 1 }) }", registerConcurrency: true)).Errors.Should().BeNullOrEmpty();
 
         var deltas = await DeltasAsync();
         deltas.Should().HaveCount(4);
         deltas.Select(d => (d.Op, d.InverseOp)).Should().Equal(("insert", "delete"), ("update", "restore"), ("delete", "restore"), ("update", "restore"));
         deltas[0].BeforeImage.Should().BeNull();
         Json(deltas[1].BeforeImage!)["name"].GetString().Should().Be("original");
+        Json(deltas[1].AfterImage!)["version"].GetInt64().Should().Be(2, "undo must carry the post-write concurrency token");
         Json(deltas[2].BeforeImage!)["name"].GetString().Should().Be("edited");
         Json(deltas[3].BeforeImage!)["deleted_at"].ValueKind.Should().Be(JsonValueKind.Null);
         (await CountAsync("soft_widgets", "id = 1 AND deleted_at IS NOT NULL")).Should().Be(1);
@@ -139,12 +140,12 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
         ":root { history-table: main.__history }",
     }.Concat(extra).ToArray())).LoadAsync();
 
-    private async Task<ExecutionResult> ExecuteMutationAsync(string mutation, IDbModel? model = null, bool registerHistory = true, bool addFailingHook = false)
+    private async Task<ExecutionResult> ExecuteMutationAsync(string mutation, IDbModel? model = null, bool registerHistory = true, bool addFailingHook = false, bool registerConcurrency = false)
     {
         model ??= _model;
         var schema = DbSchema.FromModel(model);
         var services = new ServiceCollection();
-        services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap { Transformers = new IMutationTransformer[] { new SoftDeleteMutationTransformer() } });
+        services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap { Transformers = registerConcurrency ? new IMutationTransformer[] { new ConcurrencyMutationTransformer(), new SoftDeleteMutationTransformer() } : new IMutationTransformer[] { new SoftDeleteMutationTransformer() } });
         if (registerHistory)
         {
             services.AddSingleton<HistoryMutationHook>();
@@ -176,13 +177,13 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
         public ValueTask AfterWriteInTransactionAsync(MutationObserverContext context) => throw new InvalidOperationException("forced deferred rollback");
     }
 
-    private sealed record Delta(long ChangeSetId, string Table, string Pk, string Op, string InverseOp, string? BeforeImage);
+    private sealed record Delta(long ChangeSetId, string Table, string Pk, string Op, string InverseOp, string? BeforeImage, string? AfterImage);
     private async Task<List<Delta>> DeltasAsync()
     {
         var result = new List<Delta>();
-        await using var command = new SqliteCommand("SELECT change_set_id, \"table\", pk, op, inverse_op, before_image FROM change_set_deltas ORDER BY id", _keepAlive);
+        await using var command = new SqliteCommand("SELECT change_set_id, \"table\", pk, op, inverse_op, before_image, after_image FROM change_set_deltas ORDER BY id", _keepAlive);
         await using var reader = await command.ExecuteReaderAsync();
-        while (await reader.ReadAsync()) result.Add(new(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5)));
+        while (await reader.ReadAsync()) result.Add(new(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5), reader.IsDBNull(6) ? null : reader.GetString(6)));
         return result;
     }
 

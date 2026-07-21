@@ -97,6 +97,13 @@
   .bifrost-chart-pane label { display: grid; gap: .25rem; font-size: .8rem; color: var(--ui-muted-foreground); }
   .bifrost-chart-pane input, .bifrost-chart-pane select, .bifrost-chart-pane button { color: var(--ui-foreground); background: var(--ui-card); border: 1px solid var(--ui-border); border-radius: .25rem; padding: .4rem .5rem; }
   .bifrost-chart-preview { height: 320px; min-width: 18rem; background: var(--ui-card); border: 1px solid var(--ui-border); border-radius: var(--radius); padding: .5rem; }
+  .bifrost-pivot-pane { padding: 1rem; overflow: auto; color: var(--ui-foreground); }
+  .bifrost-pivot-pane header, .bifrost-pivot-wells, .bifrost-pivot-save { display: flex; align-items: end; gap: .75rem; flex-wrap: wrap; margin-bottom: .75rem; }
+  .bifrost-pivot-pane label { display: grid; gap: .25rem; font-size: .8rem; color: var(--ui-muted-foreground); }
+  .bifrost-pivot-pane input, .bifrost-pivot-pane select, .bifrost-pivot-pane button { color: var(--ui-foreground); background: var(--ui-card); border: 1px solid var(--ui-border); border-radius: .25rem; padding: .4rem .5rem; }
+  .bifrost-pivot-grid { overflow: auto; border: 1px solid var(--ui-border); border-radius: var(--radius); }
+  .bifrost-pivot-grid table { border-collapse: collapse; width: 100%; }
+  .bifrost-pivot-grid th, .bifrost-pivot-grid td { padding: .45rem; text-align: left; border-bottom: 1px solid var(--ui-border); white-space: nowrap; }
 
   @media print {
     @page { margin: 12mm; }

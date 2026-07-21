@@ -18,6 +18,7 @@ import { ReportsPane } from './reports/ReportsPane';
 import { ErdPane } from './erd/ErdPane';
 import { ChartPane } from './charts/ChartPane';
 import type { ChartDefinition } from './charts/chart-model';
+import { PivotPane } from './pivot/PivotPane';
 import './erd/erd.css';
 import { runFormsMigrationOnce } from './forms/forms-migration-boot';
 import { isSqlBridgeAvailable, probeSqlBridge } from './lib/sql-bridge';
@@ -390,6 +391,8 @@ export default function App() {
           <ReportsPane fetcher={editorFetcher} />
         ) : editorPane === 'charts' && editorFetcher ? (
           <ChartPane fetcher={editorFetcher} initialDefinition={chartToOpen} />
+        ) : editorPane === 'pivot' && editorFetcher ? (
+          <PivotPane fetcher={editorFetcher} />
         ) : editorPane === 'erd' && editorFetcher ? (
           <ErdPane fetcher={editorFetcher} onOpenTable={handleOpenDiagramTable} />
         ) : editorFetcher && transport && transport.mode === transportMode ? (

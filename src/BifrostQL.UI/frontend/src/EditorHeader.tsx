@@ -3,7 +3,7 @@ import type { ApiProfile } from './profiles/types';
 import type { ConnectionInfo } from './connection';
 import type { TransportMode } from './lib/transport';
 
-export type EditorPane = 'graphql' | 'sql' | 'builder' | 'forms' | 'reports' | 'erd' | 'charts';
+export type EditorPane = 'graphql' | 'sql' | 'builder' | 'forms' | 'reports' | 'erd' | 'charts' | 'pivot';
 
 interface EditorHeaderProps {
   connectionInfo: ConnectionInfo | null;
@@ -127,6 +127,7 @@ export function EditorHeader({
             ['forms', 'Form builder'],
             ['reports', 'Reports'],
             ['charts', 'Charts'],
+            ['pivot', 'Pivot'],
             ['erd', 'ER diagram'],
           ] as const).filter(([pane]) => sqlBridgeAvailable || pane !== 'sql').map(([pane, label]) => (
             <button

@@ -75,6 +75,7 @@ public sealed class PolymorphicLinkTests
         companyNotes.TypePredicate.Should().NotBeNull();
         companyNotes.TypePredicate!.Column.ColumnName.Should().Be("entity_type");
         companyNotes.TypePredicate.Value.Should().Be("company");
+        companyNotes.RelationshipKind.Should().Be(TableLinkRelationshipKind.Polymorphic);
         companyNotes.ChildTable.DbName.Should().Be("notes");
         companyNotes.ChildId.ColumnName.Should().Be("entity_id");
         companyNotes.ParentId.ColumnName.Should().Be("company_id");

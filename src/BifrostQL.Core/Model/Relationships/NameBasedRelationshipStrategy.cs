@@ -66,6 +66,7 @@ namespace BifrostQL.Core.Model.Relationships
                     new TableLinkDto
                     {
                         Name = idMatch.parent.GraphQlName,
+                        RelationshipKind = TableLinkRelationshipKind.NameBased,
                         ChildId = idMatch.column,
                         ParentId = idMatch.parent.KeyColumns.First(),
                         ChildTable = idMatch.table,
@@ -79,6 +80,7 @@ namespace BifrostQL.Core.Model.Relationships
                         new TableLinkDto
                         {
                             Name = idMatch.table.GraphQlName,
+                            RelationshipKind = TableLinkRelationshipKind.NameBased,
                             ChildFieldNameOverride = childFieldName,
                             ChildId = idMatch.column,
                             ParentId = idMatch.parent.KeyColumns.First(),

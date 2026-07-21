@@ -59,6 +59,9 @@ public static class MetadataSchemaGenerator
         sb.AppendLine("\tsourceColumnNames: [String!]!");
         sb.AppendLine("\tdestinationTable: String!");
         sb.AppendLine("\tdestinationColumnNames: [String!]!");
+        // Provenance is deliberately part of the introspection contract: UI
+        // consumers must not guess whether a link was inferred by naming.
+        sb.AppendLine("\trelationshipKind: String!");
         sb.AppendLine("\tmetadata: [dbMetadataSchema!]!");
         // Polymorphic child links (e.g. a shared notes table joined via a
         // discriminator). Null on ordinary joins.

@@ -71,6 +71,7 @@ namespace BifrostQL.Core.Model.Relationships
                     parent.MultiLinks.Add(fieldName, new TableLinkDto
                     {
                         Name = child.GraphQlName,
+                        RelationshipKind = TableLinkRelationshipKind.Polymorphic,
                         ChildFieldNameOverride = fieldName,
                         ParentTable = parent,
                         ParentId = parentKey,

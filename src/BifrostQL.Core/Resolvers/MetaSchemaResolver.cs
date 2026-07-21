@@ -133,6 +133,7 @@ namespace BifrostQL.Core.Resolvers
                                 // fieldName is the GraphQL selection field on the source table;
                                 // destinationTable remains the target table/type name.
                                 fieldName = j.ChildFieldName,
+                                relationshipKind = RelationshipKindValue(j.RelationshipKind),
                                 sourceColumnNames = j.ParentIds.Select(p => p.GraphQlName).ToArray(),
                                 destinationTable = j.ChildTable.GraphQlName,
                                 destinationColumnNames = j.ChildIds.Select(c => c.GraphQlName).ToArray(),
@@ -148,6 +149,7 @@ namespace BifrostQL.Core.Resolvers
                                 // fieldName is the GraphQL selection field on the source table;
                                 // destinationTable remains the target table/type name.
                                 fieldName = j.ParentFieldName,
+                                relationshipKind = RelationshipKindValue(j.RelationshipKind),
                                 sourceColumnNames = j.ChildIds.Select(c => c.GraphQlName).ToArray(),
                                 destinationTable = j.ParentTable.GraphQlName,
                                 destinationColumnNames = j.ParentIds.Select(p => p.GraphQlName).ToArray(),
@@ -182,6 +184,14 @@ namespace BifrostQL.Core.Resolvers
         }
 
         static bool Equal(string? a, string? b) => string.Equals(a, b, StringComparison.InvariantCultureIgnoreCase);
+
+        private static string RelationshipKindValue(TableLinkRelationshipKind kind) => kind switch
+        {
+            TableLinkRelationshipKind.ForeignKey => "foreign-key",
+            TableLinkRelationshipKind.NameBased => "name-based",
+            TableLinkRelationshipKind.Polymorphic => "polymorphic",
+            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown table-link relationship kind."),
+        };
 
         /// <summary>
         /// Extracts numeric precision and scale from data type strings like DECIMAL(10,2) or NUMERIC(18,4).

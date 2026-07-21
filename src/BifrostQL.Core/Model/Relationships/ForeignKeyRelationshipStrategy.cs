@@ -60,6 +60,7 @@ namespace BifrostQL.Core.Model.Relationships
                         new TableLinkDto
                         {
                             Name = fk.ParentTable.GraphQlName,
+                            RelationshipKind = TableLinkRelationshipKind.ForeignKey,
                             ParentFieldNameOverride = needsRoleNames ? parentFieldName : null,
                             ChildId = fk.ChildColumns[0],
                             ParentId = fk.ParentColumns[0],
@@ -83,6 +84,7 @@ namespace BifrostQL.Core.Model.Relationships
                             new TableLinkDto
                             {
                                 Name = fk.ChildTable.GraphQlName,
+                                RelationshipKind = TableLinkRelationshipKind.ForeignKey,
                                 ChildFieldNameOverride = childFieldName,
                                 ChildId = fk.ChildColumns[0],
                                 ParentId = fk.ParentColumns[0],

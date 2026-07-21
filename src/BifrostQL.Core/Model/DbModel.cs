@@ -572,6 +572,13 @@ namespace BifrostQL.Core.Model
         public TableLinkDto() { }
         /// <summary>The name of the join in the scope of the table being linked from, it is context dependent. The ParentTable and ChildTable properties refer to the same tables from both sides of the link.</summary>
         public string Name { get; init; } = null!;
+        /// <summary>
+        /// The relationship discovery strategy that produced this link. This is
+        /// exposed by <c>_dbSchema</c> so presentation clients can distinguish
+        /// a database foreign key from a convention-based relationship without
+        /// inferring it from names.
+        /// </summary>
+        public TableLinkRelationshipKind RelationshipKind { get; init; } = TableLinkRelationshipKind.ForeignKey;
         /// <summary>Parent table always refers to the one in one to many relations in database joins</summary>
         public IDbTable ParentTable { get; init; } = null!;
         /// <summary>Child table always refers to the many in one to many relations in database joins</summary>
@@ -633,6 +640,18 @@ namespace BifrostQL.Core.Model
         // the Model layer stays pure data (no dialect, no SQL text). See that class
         // and its sole consumer GqlAggregateColumn.
         public override string ToString() => $"{Name}-[{ChildId.TableName}.{ChildId.ColumnName}={ParentId.TableName}.{ParentId.ColumnName}]";
+    }
+
+    /// <summary>
+    /// Provenance of a relationship discovered for a <see cref="TableLinkDto"/>.
+    /// This is deliberately distinct from app-metadata presentation relationship
+    /// kinds: it describes how a database-model link was discovered.
+    /// </summary>
+    public enum TableLinkRelationshipKind
+    {
+        ForeignKey,
+        NameBased,
+        Polymorphic,
     }
 
     /// <summary>

@@ -38,6 +38,7 @@ public class MetadataSchemaGeneratorTests
     [InlineData("sourceColumnNames: [String!]!")]
     [InlineData("destinationTable: String!")]
     [InlineData("destinationColumnNames: [String!]!")]
+    [InlineData("relationshipKind: String!")]
     public void DbJoinSchema_DeclaresExpectedFields(string field)
     {
         JoinSchemaBlock().Should().Contain(field);

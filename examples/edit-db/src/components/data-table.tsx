@@ -64,6 +64,9 @@ import { useRowHoverActions } from '@/hooks/useRowHoverActions';
 import { useFitMode, FIT_SENTINEL } from '@/hooks/useFitMode';
 import { useEditorConfig } from '@/hooks/useEditorConfig';
 import { orderColumns } from '@/lib/column-order';
+import { GroupedGridSummary } from './grouped-grid-summary';
+import type { Column } from '@/types/schema';
+import type { GroupingRow } from '@/lib/grid-grouping';
 
 /**
  * Props for the DataTable component.
@@ -140,6 +143,10 @@ interface DataTableProps<TData> {
     totalRows?: number;
     /** Opens a chart prefilled from this table and its schema-aware filters. */
     onVisualize?: () => void;
+    /** Schema columns offered by the URL-backed server grouping selector. */
+    groupableColumns?: readonly Column[];
+    grouping?: { column: Column; rows: GroupingRow[]; loading: boolean; error: Error | null } | null;
+    onGroupingChange?: (columnName: string | null) => void;
 }
 
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100];
@@ -199,6 +206,9 @@ export function DataTable<TData>({
     exportRows,
     totalRows,
     onVisualize,
+    groupableColumns,
+    grouping,
+    onGroupingChange,
 }: DataTableProps<TData>) {
     const {
         hoveredRow,
@@ -457,6 +467,22 @@ export function DataTable<TData>({
                         {stackingEnabled ? 'Stacked' : 'Grid'}
                     </Button>
                 )}
+                {onGroupingChange && groupableColumns && (
+                    <Select
+                        value={grouping?.column.name ?? '__none'}
+                        onValueChange={(value) => onGroupingChange(value === '__none' ? null : value)}
+                    >
+                        <SelectTrigger size="sm" className="w-40" aria-label="Group grid by column">
+                            <SelectValue placeholder="Group by" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="__none">No grouping</SelectItem>
+                            {groupableColumns.map((column) => (
+                                <SelectItem key={column.name} value={column.name}>{column.label}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                )}
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                         <Button variant="outline" size="sm">
@@ -492,6 +518,12 @@ export function DataTable<TData>({
                 </DropdownMenu>
                 </div>
             </div>
+            {grouping && <GroupedGridSummary
+                label={grouping.column.label}
+                rows={grouping.rows}
+                loading={grouping.loading}
+                error={grouping.error}
+            />}
             {/* Zero-height wrapper OUTSIDE the scroll container: the bar overlays the
                 grid's top edge without adding to the scrollable content height — a
                 sticky bar inside the container contributed its 2px and summoned a
@@ -510,6 +542,7 @@ export function DataTable<TData>({
                 </div>
             )}
             <div ref={scrollRef} className="relative flex-1 overflow-auto min-h-0" aria-busy={fetching || loading}>
+
                 <Table style={{ tableLayout: 'fixed', width: table.getTotalSize() }}>
                     {/* Column widths live on <colgroup> under table-layout:fixed so
                         body cells don't each carry a width style — that keeps the

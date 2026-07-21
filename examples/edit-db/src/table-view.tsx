@@ -120,6 +120,7 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
         pageCount,
         rows,
         totalRows,
+        grouping,
         exportRows,
         loading,
         fetching,
@@ -128,6 +129,7 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
         onColumnFiltersChange,
         onPageIndexChange,
         onPageSizeChange,
+        onGroupingChange,
     } = useDataTable(table, id, filterTable, filterColumn, handleExpandContent, onOpenColumn);
 
     const handleConfirmDelete = useCallback(async () => {
@@ -391,6 +393,9 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
                 onToggleStacking={onToggleStacking}
                 exportRows={exportRows}
                 totalRows={totalRows}
+                groupableColumns={table.columns}
+                grouping={grouping}
+                onGroupingChange={onGroupingChange}
                 onVisualize={handleVisualize}
             />
             <ConfirmDialog

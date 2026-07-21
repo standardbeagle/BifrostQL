@@ -35,6 +35,7 @@ import {
 import { rowIdOf, encodeRouteParts } from "../lib/row-id";
 import { isComposite, fkDestinationColumnFor } from "../lib/fk";
 import { exportAllRows, type ExportRunner } from "../lib/export";
+import { buildGridGroupingRequest, groupingColumnFromUrl, readGroupingRows, type GroupingRow } from "../lib/grid-grouping";
 
 // Re-export for existing filter component imports.
 export { getFilterOperators } from "../lib/query-builder";
@@ -464,6 +465,8 @@ interface UseDataTableResult {
     rows: RowData[];
     /** Total matching rows for the active filter/sort (across all pages). */
     totalRows: number;
+    /** Server aggregate rows for URL-selected grouping; never derived from the page. */
+    grouping: { column: Column; rows: GroupingRow[]; loading: boolean; error: Error | null } | null;
     /**
      * Export the FULL result set for the current filters + sort, paging through
      * the same fetcher/query — not just the visible page. Null when there is no
@@ -488,6 +491,8 @@ interface UseDataTableResult {
     onPageIndexChange: (pageIndex: number) => void;
     /** Update page size */
     onPageSizeChange: (pageSize: number) => void;
+    /** Rewrites only the URL-owned grouping parameter. */
+    onGroupingChange: (columnName: string | null) => void;
 }
 
 /**
@@ -523,6 +528,7 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     const navigate = useNavigate();
     const filterString = search.get('filter') ?? '';
     const cfParam = search.get('cf') ?? '';
+    const gbParam = search.get('gb');
     // Memoized because its result feeds `queryVariables`, whose OBJECT IDENTITY is
     // part of the react-query key. A fresh `variables` object every render meant
     // that memo never hit, so the key changed on every render — the query was
@@ -571,6 +577,25 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         () => reconcileColumnFiltersFromUrl(columnFilters, cfParam),
         [columnFilters, cfParam],
     );
+    // gb is URL-owned just like cf: history navigation and a table switch take
+    // effect during render, before a stale grouping request can be issued.
+    const groupingTableRef = useRef(table?.name);
+    const groupingTableChanged = groupingTableRef.current !== table?.name;
+    if (groupingTableChanged) groupingTableRef.current = table?.name;
+    const groupingColumn = useMemo(
+        () => groupingTableChanged ? null : groupingColumnFromUrl(gbParam, table),
+        [groupingTableChanged, gbParam, table],
+    );
+    // A grouping column is meaningful only within its source table. Clear it on
+    // switch (including same-named columns) so Back/Forward cannot reapply it to
+    // a new schema. The render-time guard above prevents a transient old request.
+    useEffect(() => {
+        if (!groupingTableChanged || !gbParam) return;
+        const params = new URLSearchParams(search);
+        params.delete('gb');
+        const qs = params.toString();
+        navigate(qs ? `?${qs}` : '?');
+    }, [groupingTableChanged, gbParam, search, navigate]);
 
     // The default sort must land on a SORTABLE column. The old fallback used the
     // literal first column, so a table whose leading column is a blob/varbinary,
@@ -653,6 +678,25 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         },
     });
 
+    const groupingRequest = useMemo(
+        () => table && groupingColumn
+            ? buildGridGroupingRequest(table, groupingColumn, effectiveColumnFilters, filterString)
+            : null,
+        [table, groupingColumn, effectiveColumnFilters, filterString],
+    );
+    const groupingQuery = useQuery({
+        queryKey: ['tableGrouping', table?.name, groupingRequest?.query, groupingRequest?.variables],
+        queryFn: ({ signal }) => fetcher.query<Record<string, unknown>>(
+            groupingRequest!.query,
+            groupingRequest!.variables,
+            { signal },
+        ),
+        enabled: groupingRequest !== null,
+        // Do not carry old groups into a new table; a summary labelled with the
+        // new schema but counted from the old one is worse than a short loading state.
+        placeholderData: undefined,
+    });
+
     const columns = useMemo(
         () => table ? getTableColumns(table, schema, onExpandContent, onOpenColumn) : [],
         [table, schema, onExpandContent, onOpenColumn]
@@ -726,6 +770,14 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         setPageIndex(0);
     }, []);
 
+    const onGroupingChange = useCallback((columnName: string | null) => {
+        const params = new URLSearchParams(search);
+        if (columnName) params.set('gb', columnName);
+        else params.delete('gb');
+        const qs = params.toString();
+        navigate(qs ? `?${qs}` : '?');
+    }, [search, navigate]);
+
     const primaryKeys = table?.primaryKeys ?? [];
 
     // Full-result-set export. Issues an EXPORT-projection variant of the grid
@@ -785,6 +837,14 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         pageCount,
         rows,
         totalRows,
+        grouping: groupingRequest
+            ? {
+                column: groupingRequest.groupBy,
+                rows: readGroupingRows(groupingQuery.data, table!, groupingRequest.groupBy),
+                loading: groupingQuery.isLoading,
+                error: groupingQuery.error as Error | null,
+            }
+            : null,
         exportRows,
         loading: isLoading,
         // In flight while previous rows are shown as placeholder (page turn,
@@ -796,5 +856,6 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         onColumnFiltersChange,
         onPageIndexChange,
         onPageSizeChange,
+        onGroupingChange,
     };
 }

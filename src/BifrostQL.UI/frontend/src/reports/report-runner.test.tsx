@@ -77,6 +77,23 @@ describe('runReport', () => {
     expect(screen.getByText('owner: c subtotal _sum.amount: 11')).toBeTruthy();
   });
 
+  it('renders configured header and footer title, timestamp, and page-number fields', async () => {
+    const query = vi.fn(async (text: string) => {
+      if (text.includes('ordersAggregate')) return {
+        band0: [{ region: 'east', _sum: { amount: 7 } }],
+        band1: [{ region: 'east', owner: 'a', _sum: { amount: 7 } }],
+        grand: [{ _sum: { amount: 7 } }],
+      };
+      return { orders: { total: 1, data: [{ region: 'east', owner: 'a', amount: 7 }] } };
+    });
+    const fields = { title: 'Orders Printout', timestamp: true, pageNumber: true };
+    const timestamp = new Date('2026-07-21T12:34:56.000Z');
+    render(<ReportRunner definition={{ ...definition, pageHeader: fields, pageFooter: fields }} fetcher={{ query } as GraphQLFetcher} now={timestamp} />);
+    await waitFor(() => expect(screen.getAllByText('Orders Printout')).toHaveLength(2));
+    expect(screen.getAllByText('2026-07-21T12:34:56.000Z')).toHaveLength(2);
+    expect(screen.getAllByText('Page 1 of 1')).toHaveLength(2);
+  });
+
   it('requests band ordering so an interleaved source cannot repeat a group header or subtotal', async () => {
     const query = vi.fn(async (text: string) => {
       if (text.includes('ordersAggregate')) return {

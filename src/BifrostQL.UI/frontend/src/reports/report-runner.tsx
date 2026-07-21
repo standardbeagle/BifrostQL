@@ -11,6 +11,19 @@ export interface ReportData {
   grandTotals: Record<string, unknown>;
 }
 
+type PageFields = ReportDefinition['pageHeader'];
+
+/** Rendered screen text is intentionally stable; print CSS upgrades it to page counters. */
+export function ReportPageFields({ fields, now, heading = false }: { fields?: PageFields; now: Date; heading?: boolean }) {
+  if (!fields) return null;
+  const title = fields.title && (heading ? <h2>{fields.title}</h2> : <span className="bifrost-report__title">{fields.title}</span>);
+  return <div className="bifrost-report__page-fields">
+    {title}
+    {fields.timestamp && <time dateTime={now.toISOString()}>{now.toISOString()}</time>}
+    {fields.pageNumber && <span className="bifrost-report__page-number">Page 1 of 1</span>}
+  </div>;
+}
+
 const opField = (total: ReportTotal) => `_${total.op}`;
 const aggregateSelection = (totals: readonly ReportTotal[]) => [...new Set(totals.map((total) => total.op === 'count' ? '_count' : `${opField(total)} { ${total.column} }`))].join(' ');
 const aggregateValue = (row: Record<string, unknown>, total: ReportTotal) => total.op === 'count' ? row._count : (row[opField(total)] as Record<string, unknown> | undefined)?.[total.column!];
@@ -99,7 +112,7 @@ export async function buildReportCsv(fetcher: GraphQLFetcher, definitionInput: R
   return result.content;
 }
 
-export function ReportRunner({ definition, fetcher }: { definition: ReportDefinition; fetcher: GraphQLFetcher }) {
+export function ReportRunner({ definition, fetcher, now = new Date() }: { definition: ReportDefinition; fetcher: GraphQLFetcher; now?: Date }) {
   const [data, setData] = useState<ReportData | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => { void runReport(fetcher, definition).then(setData).catch((reason) => setError(String(reason))); }, [fetcher, definition]);
@@ -123,10 +136,10 @@ export function ReportRunner({ definition, fetcher }: { definition: ReportDefini
   }
   if (previous) for (let depth = bands.length - 1; depth >= 0; depth--) body.push(subtotal(previous, depth));
   return <section className="bifrost-report">
-    <header><h2>{definition.pageHeader?.title ?? 'Report'}</h2><button type="button" onClick={() => window.print()}>Print</button></header>
+    <header className="bifrost-report__page-header"><ReportPageFields fields={definition.pageHeader} now={now} heading /><button type="button" onClick={() => window.print()}>Print</button></header>
     <table><thead><tr>{definition.columns.map((column) => <th key={column.column}>{column.label ?? column.column}</th>)}</tr></thead><tbody>
       {body}
     </tbody></table>
-    <footer>{Object.entries(data.grandTotals).map(([key, value]) => <span key={key}>{key}: {String(value ?? '')} </span>)}</footer>
+    <footer className="bifrost-report__page-footer"><ReportPageFields fields={definition.pageFooter} now={now} />{Object.entries(data.grandTotals).map(([key, value]) => <span key={key}>{key}: {String(value ?? '')} </span>)}</footer>
   </section>;
 }

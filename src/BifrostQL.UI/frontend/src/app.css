@@ -89,12 +89,17 @@
   .bifrost-report table { width: 100%; border-collapse: collapse; }
   .bifrost-report th, .bifrost-report td { padding: .45rem; text-align: left; border-bottom: 1px solid var(--void-border); }
   .bifrost-report header { display: flex; justify-content: space-between; align-items: center; }
+  .bifrost-report__page-fields { display: flex; align-items: center; gap: .75rem; }
+  .bifrost-report__page-fields h2 { margin: 0; }
+  .bifrost-report__page-footer { display: flex; justify-content: space-between; gap: .75rem; padding-top: .75rem; }
 
   @media print {
     @page { margin: 12mm; }
     .bifrost-report thead { display: table-header-group; }
     .bifrost-report tbody tr { page-break-inside: avoid; break-inside: avoid; }
     .bifrost-report footer { page-break-inside: avoid; break-inside: avoid; }
+    .bifrost-report__page-number { font-size: 0; }
+    .bifrost-report__page-number::after { content: 'Page ' counter(page) ' of ' counter(pages); font-size: 12px; }
   }
   .app-container {
     height: 100vh;

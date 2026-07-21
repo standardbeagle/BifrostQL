@@ -138,6 +138,8 @@ interface DataTableProps<TData> {
     exportRows?: ExportRunner;
     /** Total matching rows — drives the export's above-cap confirmation. */
     totalRows?: number;
+    /** Opens a chart prefilled from this table and its schema-aware filters. */
+    onVisualize?: () => void;
 }
 
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100];
@@ -196,6 +198,7 @@ export function DataTable<TData>({
     onToggleStacking,
     exportRows,
     totalRows,
+    onVisualize,
 }: DataTableProps<TData>) {
     const {
         hoveredRow,
@@ -422,6 +425,14 @@ export function DataTable<TData>({
                     )}
                 </div>
                 <div className="flex items-center gap-2">
+                {onVisualize && <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={onVisualize}
+                    title="Open a chart using this table and its active filters"
+                >
+                    Visualize
+                </Button>}
                 {exportRows && (
                     <ExportButton
                         exportRows={exportRows}

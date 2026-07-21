@@ -422,6 +422,18 @@ export function QueryBuilderPane({
         <button type="button" onClick={() => void onRun()} disabled={running || degraded} style={styles.runBtn}>
           {running ? "Running…" : "Run"}
         </button>
+        <button
+          type="button"
+          onClick={() => {
+            const table = state.tables.length === 1 ? state.tables[0].table : null;
+            if (table) window.dispatchEvent(new CustomEvent("bifrostql:visualize", { detail: { table } }));
+          }}
+          disabled={!result || state.tables.length !== 1}
+          title={state.tables.length === 1 ? "Visualize this result as a server aggregate chart" : "Charts require one source table"}
+          style={styles.btn}
+        >
+          Visualize
+        </button>
         {result && (
           <span style={styles.status}>
             {result.rows.length} row(s){result.truncated ? " (truncated)" : ""}

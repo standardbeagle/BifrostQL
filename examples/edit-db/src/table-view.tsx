@@ -14,7 +14,9 @@ import { Table, Column } from './types/schema';
 import type { DrillFrame } from './lib/drill-stack';
 import { encodePkRoute, pkFilterFor, buildPkEqFilter, type PkFilter } from './lib/row-id';
 import { buildSingleRowQuery } from './lib/query-builder';
+import { buildColumnFilters, getFilterOperators, type ColumnFilterValue } from './lib/query-builder';
 import { useFetcher } from './common/fetcher';
+import type { ColumnFiltersState } from '@tanstack/react-table';
 
 interface TableViewParams {
     table: Table;
@@ -33,6 +35,23 @@ interface TableViewParams {
 type DeleteTarget =
     | { type: 'single'; pk: PkFilter }
     | { type: 'batch'; pks: PkFilter[] };
+
+/** Converts the already schema-validated grid filter state into GraphQL input
+ * variables. No identifier text is accepted from the UI: columns are looked up
+ * in the current schema and operators are validated by the shared builder. */
+export function chartFilter(filters: ColumnFiltersState, table: Table): Record<string, unknown> | undefined {
+    const valid = buildColumnFilters(filters, table);
+    if (valid.filterTexts.length === 0) return undefined;
+    const clauses: Record<string, unknown>[] = [];
+    for (const filter of filters) {
+        const value = filter.value as ColumnFilterValue;
+        const column = table.columns.find((candidate) => candidate.name === filter.id);
+        if (!column || !getFilterOperators(column.paramType).includes(value.operator)) continue;
+        if (value.value === undefined || (value.value === '' && value.operator !== '_null')) continue;
+        clauses.push({ [column.graphQlName]: { [value.operator]: value.value } });
+    }
+    return clauses.length === 1 ? clauses[0] : clauses.length > 1 ? { and: clauses } : undefined;
+}
 
 /**
  * Content-panel target. The row is snapshotted by PRIMARY KEY at open time,
@@ -325,6 +344,19 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
         handleExpandContent(next, panel.columnName);
     }, [panel, panelRowIndex, rows.length, handleExpandContent]);
 
+    const handleVisualize = useCallback(() => {
+        const filter = chartFilter(columnFilters, table);
+        window.dispatchEvent(new CustomEvent('bifrostql:visualize', {
+            detail: {
+                table: table.graphQlName,
+                filter,
+                // This is the schema-generated filter input naming convention
+                // used by BifrostQL's list query surface.
+                filterType: `${table.graphQlName}Filter`,
+            },
+        }));
+    }, [columnFilters, table]);
+
     if (error) return (
         <Alert variant="destructive" className="m-2">
             <AlertDescription>Error: {error.message}</AlertDescription>
@@ -359,6 +391,7 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
                 onToggleStacking={onToggleStacking}
                 exportRows={exportRows}
                 totalRows={totalRows}
+                onVisualize={handleVisualize}
             />
             <ConfirmDialog
                 open={deleteTarget !== null}

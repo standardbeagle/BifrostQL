@@ -16,6 +16,8 @@ import { SavedQueryList } from './designer/SavedQueryList';
 import { FormBuilderPane } from './forms/FormBuilderPane';
 import { ReportsPane } from './reports/ReportsPane';
 import { ErdPane } from './erd/ErdPane';
+import { ChartPane } from './charts/ChartPane';
+import type { ChartDefinition } from './charts/chart-model';
 import './erd/erd.css';
 import { runFormsMigrationOnce } from './forms/forms-migration-boot';
 import { isSqlBridgeAvailable, probeSqlBridge } from './lib/sql-bridge';
@@ -49,6 +51,7 @@ export default function App() {
   // Editor pane toggle: GraphQL editor (default) vs raw SQL console. The SQL
   // console rides the Photino bridge, so it's only offered inside the desktop app.
   const [editorPane, setEditorPane] = useState<EditorPane>('graphql');
+  const [chartToOpen, setChartToOpen] = useState<ChartDefinition | null>(null);
   // The native bridge answers synchronously, but the opt-in HTTP transport has to
   // be probed, so this starts at the synchronous answer and upgrades if the probe
   // finds one. Without the probe the desktop-only panes would stay hidden in a
@@ -108,6 +111,21 @@ export default function App() {
     // the embedded route react immediately after the shell changes the URL.
     window.history.pushState(null, '', `/${encodeURIComponent(tableName)}`);
     window.dispatchEvent(new PopStateEvent('popstate'));
+  }, []);
+
+  // Grid toolbar sends a shell event so edit-db stays transport-agnostic. Its
+  // table identity is schema-derived; filter decoding stays in edit-db and is
+  // intentionally not reconstructed from page rows here.
+  useEffect(() => {
+    const visualize = (event: Event) => {
+      const detail = (event as CustomEvent<{ table?: string; filter?: Record<string, unknown>; filterType?: string }>).detail;
+      const table = detail?.table;
+      if (!table) return;
+      setChartToOpen({ kind: 'bifrost.chart', version: 1, source: { kind: 'table', table, filter: detail.filter, filterType: detail.filter ? detail.filterType : undefined }, dimensions: [], measures: [{ op: 'count' }], chartType: 'bar', limit: 100 });
+      setEditorPane('charts');
+    };
+    window.addEventListener('bifrostql:visualize', visualize);
+    return () => window.removeEventListener('bifrostql:visualize', visualize);
   }, []);
 
   // First-run migration: once the app reaches the editor (i.e. is connected to a
@@ -370,6 +388,8 @@ export default function App() {
           <FormBuilderPane fetcher={editorFetcher ?? undefined} />
         ) : editorPane === 'reports' && editorFetcher ? (
           <ReportsPane fetcher={editorFetcher} />
+        ) : editorPane === 'charts' && editorFetcher ? (
+          <ChartPane fetcher={editorFetcher} initialDefinition={chartToOpen} />
         ) : editorPane === 'erd' && editorFetcher ? (
           <ErdPane fetcher={editorFetcher} onOpenTable={handleOpenDiagramTable} />
         ) : editorFetcher && transport && transport.mode === transportMode ? (

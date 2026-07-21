@@ -146,9 +146,12 @@ describe("DashboardPane", () => {
     expect(screen.queryByRole("button", { name: "Rename dashboard" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Delete dashboard" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Add chart" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "New dashboard" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Remove Order count" })).toBeNull();
     expect(screen.queryByLabelText("Resize Order count")).toBeNull();
     expect(screen.queryByLabelText("Drag Order count")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Edit dashboard" }));
+    expect(screen.getByRole("button", { name: "New dashboard" })).toBeTruthy();
   });
 
   it("renders a missing reference as a tile error while sibling values still load", async () => {

@@ -116,7 +116,7 @@ export function DashboardPane({ fetcher, store = dashboardStore, onOpenTable }: 
   const resize = (id: string) => updateTile(id, (tile) => ({ ...tile, layout: { ...tile.layout, w: Math.min(definition.grid.cols, tile.layout.w + 1), h: tile.layout.h + 1 } }));
 
   return <section className="bifrost-dashboard-pane" aria-label="Dashboards">
-    <aside className="bifrost-dashboard-list"><h2>Dashboards</h2><button type="button" onClick={() => { setActive(null); setDefinition(blankDashboard()); setName("Untitled dashboard"); setEditMode(true); }}>New dashboard</button>{dashboards.map((object) => <button type="button" key={object.id} aria-pressed={active?.id === object.id} onClick={() => open(object)}>{object.name}</button>)}</aside>
+    <aside className="bifrost-dashboard-list"><h2>Dashboards</h2>{editMode && <button type="button" onClick={() => { setActive(null); setDefinition(blankDashboard()); setName("Untitled dashboard"); }}>New dashboard</button>}{dashboards.map((object) => <button type="button" key={object.id} aria-pressed={active?.id === object.id} onClick={() => open(object)}>{object.name}</button>)}</aside>
     <main className="bifrost-dashboard-main"><div className="bifrost-dashboard-toolbar">{editMode
       ? <><label>Name <input aria-label="Dashboard name" value={name} onChange={(event) => setName(event.target.value)} /></label><button type="button" onClick={() => void save()}>Save dashboard</button>{active && <button type="button" onClick={() => void rename()}>Rename dashboard</button>}{active && <button type="button" onClick={() => void removeDashboard()}>Delete dashboard</button>}</>
       : <h2 className="bifrost-dashboard-title">{name}</h2>}

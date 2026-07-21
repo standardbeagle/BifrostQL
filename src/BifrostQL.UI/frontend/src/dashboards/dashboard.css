@@ -1,0 +1,17 @@
+.bifrost-dashboard-pane { display: flex; flex: 1; min-height: 0; gap: 1rem; padding: 1rem; overflow: auto; color: var(--text-primary, #e5e7eb); }
+.bifrost-dashboard-list { width: 13rem; flex: 0 0 auto; border-right: 1px solid var(--ui-border, #374151); padding-right: .75rem; }
+.bifrost-dashboard-list button { display: block; width: 100%; text-align: left; margin: .25rem 0; }
+.bifrost-dashboard-main { flex: 1; min-width: 0; }
+.bifrost-dashboard-toolbar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-bottom: .75rem; }
+/* Deliberately CSS Grid rather than react-grid-layout: native drag/drop and a
+   persisted {x,y,w,h} model cover this shell's needs without another runtime dependency. */
+.bifrost-dashboard-grid { display: grid; grid-template-columns: repeat(var(--dashboard-columns), minmax(0, 1fr)); grid-auto-rows: 3rem; gap: .75rem; }
+.bifrost-dashboard-tile { position: relative; overflow: auto; border: 1px solid var(--ui-border, #4b5563); border-radius: .4rem; background: var(--surface, #1f2937); padding: .6rem; min-width: 0; }
+.bifrost-dashboard-tile h3 { margin: 0 0 .5rem; font-size: .95rem; }
+.bifrost-dashboard-tile__controls { position: absolute; top: .35rem; right: .35rem; display: flex; gap: .25rem; }
+.bifrost-dashboard-drag { cursor: grab; user-select: none; }
+.bifrost-dashboard-resize { position: absolute; right: .2rem; bottom: .15rem; cursor: nwse-resize; border: 0; background: transparent; color: inherit; }
+.bifrost-dashboard-count { font-size: 2rem; font-weight: 700; }
+.bifrost-dashboard-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.bifrost-dashboard-table th, .bifrost-dashboard-table td { border-bottom: 1px solid var(--ui-border, #374151); padding: .25rem; text-align: left; }
+.bifrost-dashboard-error { color: var(--accent-danger, #f87171); }

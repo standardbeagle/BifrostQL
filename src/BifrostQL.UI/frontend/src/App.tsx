@@ -14,6 +14,7 @@ import { SqlConsole } from './SqlConsole';
 import { QueryBuilderPane } from './designer/QueryBuilderPane';
 import { SavedQueryList } from './designer/SavedQueryList';
 import { FormBuilderPane } from './forms/FormBuilderPane';
+import { ReportsPane } from './reports/ReportsPane';
 import { runFormsMigrationOnce } from './forms/forms-migration-boot';
 import { isSqlBridgeAvailable, probeSqlBridge } from './lib/sql-bridge';
 import {
@@ -357,6 +358,8 @@ export default function App() {
           </div>
         ) : editorPane === 'forms' ? (
           <FormBuilderPane fetcher={editorFetcher ?? undefined} />
+        ) : editorPane === 'reports' && editorFetcher ? (
+          <ReportsPane fetcher={editorFetcher} />
         ) : editorFetcher && transport && transport.mode === transportMode ? (
           // Only mount the editor once the effect has published a transport
           // whose mode matches the current selection. During a mode toggle the

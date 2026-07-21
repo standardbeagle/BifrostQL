@@ -3,7 +3,7 @@ import type { ApiProfile } from './profiles/types';
 import type { ConnectionInfo } from './connection';
 import type { TransportMode } from './lib/transport';
 
-export type EditorPane = 'graphql' | 'sql' | 'builder' | 'forms' | 'reports';
+export type EditorPane = 'graphql' | 'sql' | 'builder' | 'forms' | 'reports' | 'erd';
 
 interface EditorHeaderProps {
   connectionInfo: ConnectionInfo | null;
@@ -118,7 +118,7 @@ export function EditorHeader({
           {transportMode === 'binary' ? 'Binary' : 'HTTP'}
         </button>
       </div>
-      {sqlBridgeAvailable && (
+      {(
         <div role="group" aria-label="Editor pane" style={{ display: 'flex', gap: 4, marginRight: 12 }}>
           {([
             ['graphql', 'GraphQL'],
@@ -126,7 +126,8 @@ export function EditorHeader({
             ['builder', 'Query builder'],
             ['forms', 'Form builder'],
             ['reports', 'Reports'],
-          ] as const).map(([pane, label]) => (
+            ['erd', 'ER diagram'],
+          ] as const).filter(([pane]) => sqlBridgeAvailable || pane !== 'sql').map(([pane, label]) => (
             <button
               key={pane}
               type="button"

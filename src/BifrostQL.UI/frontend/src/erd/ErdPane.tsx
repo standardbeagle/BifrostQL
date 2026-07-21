@@ -1,0 +1,33 @@
+import { useEffect, useMemo, useState } from 'react';
+import { ReactFlow, Background, Controls, MiniMap, type NodeProps } from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+import type { GraphQLFetcher } from '@standardbeagle/edit-db';
+import type { ErdTable as Table } from './types';
+import { layoutErd, mapSchemaToErd, neighborhood, schemaName, type ErdGraph } from './model';
+
+const GET_ERD_SCHEMA = `query ErdSchema { _dbSchema { dbName graphQlName labelColumn primaryKeys isEditable metadata { key value } columns { dbName graphQlName paramType dbType isPrimaryKey isIdentity isNullable isReadOnly metadata { key value } } multiJoins { name fieldName sourceColumnNames destinationTable destinationColumnNames isPolymorphic polymorphicTypeColumn polymorphicTypeValue } singleJoins { name fieldName sourceColumnNames destinationTable destinationColumnNames isPolymorphic polymorphicTypeColumn polymorphicTypeValue } manyToManyJoins { name targetTable junctionTable junctionTargetField sourceColumnNames junctionSourceColumnNames junctionTargetColumnNames targetColumnNames hasPayload } } }`;
+
+function TableNode({ data }: NodeProps) {
+  const table = data as unknown as Table;
+  const [expanded, setExpanded] = useState(false);
+  return <button type="button" className="erd-table-node" onClick={() => setExpanded((value) => !value)} title="Click to show columns; double-click to open table">
+    <strong>{table.label || table.name}</strong><span className="erd-pk">PK {table.primaryKeys.join(', ') || '—'}</span>
+    {expanded && <ul>{table.columns.map((column) => <li key={column.name}>{column.name}</li>)}</ul>}
+  </button>;
+}
+
+export interface ErdPaneProps { fetcher: GraphQLFetcher; onOpenTable: (name: string) => void; }
+export function ErdPane({ fetcher, onOpenTable }: ErdPaneProps) {
+  const [graph, setGraph] = useState<ErdGraph>({ nodes: [], edges: [] });
+  const [filter, setFilter] = useState('');
+  const [hops, setHops] = useState(1);
+  const [cluster, setCluster] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { let active = true; fetcher.query<{ _dbSchema: Table[] }>(GET_ERD_SCHEMA).then((result) => layoutErd(mapSchemaToErd(result._dbSchema))).then((next) => { if (active) setGraph(next); }).catch((reason: Error) => { if (active) setError(reason.message); }); return () => { active = false; }; }, [fetcher]);
+  const schemaNames = useMemo(() => [...new Set(graph.nodes.map((node) => schemaName(node.data)))], [graph]);
+  const clustered = useMemo(() => cluster ? { nodes: graph.nodes.filter((node) => schemaName(node.data) === cluster), edges: graph.edges.filter((edge) => graph.nodes.find((node) => node.id === edge.source && schemaName(node.data) === cluster) && graph.nodes.find((node) => node.id === edge.target && schemaName(node.data) === cluster)) } : graph, [cluster, graph]);
+  const display = useMemo(() => filter ? neighborhood(clustered, filter, hops) : clustered, [clustered, filter, hops]);
+  const exportPng = async () => { const svg = document.querySelector('.react-flow__viewport svg') as SVGSVGElement | null; if (!svg) return; const blob = new Blob([new XMLSerializer().serializeToString(svg)], { type: 'image/svg+xml' }); const image = new Image(); image.onload = () => { const canvas = document.createElement('canvas'); canvas.width = image.width || 1200; canvas.height = image.height || 800; canvas.getContext('2d')?.drawImage(image, 0, 0); const link = document.createElement('a'); link.download = 'bifrostql-erd.png'; link.href = canvas.toDataURL('image/png'); link.click(); }; image.src = URL.createObjectURL(blob); };
+  if (error) return <div role="alert">Could not load diagram: {error}</div>;
+  return <section className="erd-pane"><div className="erd-toolbar"><label>Table <select value={filter} onChange={(event) => setFilter(event.target.value)}><option value="">All tables</option>{graph.nodes.map((node) => <option key={node.id} value={node.id}>{node.data.label || node.id}</option>)}</select></label><label>N-hop <input aria-label="N-hop neighbors" type="number" min="1" max="10" value={hops} onChange={(event) => setHops(Number(event.target.value))} /></label>{graph.nodes.length > 100 && <label>Schema cluster <select value={cluster} onChange={(event) => setCluster(event.target.value)}><option value="">All schemas</option>{schemaNames.map((name) => <option key={name}>{name}</option>)}</select></label>}<button type="button" onClick={() => void exportPng()}>Export PNG</button></div><div className="erd-canvas"><ReactFlow nodes={display.nodes} edges={display.edges} nodeTypes={{ table: TableNode }} onNodeDoubleClick={(_, node) => onOpenTable(node.id)} fitView><MiniMap /><Controls /><Background /></ReactFlow></div></section>;
+}

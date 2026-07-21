@@ -15,6 +15,8 @@ import { QueryBuilderPane } from './designer/QueryBuilderPane';
 import { SavedQueryList } from './designer/SavedQueryList';
 import { FormBuilderPane } from './forms/FormBuilderPane';
 import { ReportsPane } from './reports/ReportsPane';
+import { ErdPane } from './erd/ErdPane';
+import './erd/erd.css';
 import { runFormsMigrationOnce } from './forms/forms-migration-boot';
 import { isSqlBridgeAvailable, probeSqlBridge } from './lib/sql-bridge';
 import {
@@ -98,6 +100,14 @@ export default function App() {
   const enterEditor = useCallback(() => {
     setEditorKey((k) => k + 1);
     setCurrentView('editor');
+  }, []);
+
+  const handleOpenDiagramTable = useCallback((tableName: string) => {
+    setEditorPane('graphql');
+    // edit-db owns navigation inside its BrowserRouter. A popstate event makes
+    // the embedded route react immediately after the shell changes the URL.
+    window.history.pushState(null, '', `/${encodeURIComponent(tableName)}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
   }, []);
 
   // First-run migration: once the app reaches the editor (i.e. is connected to a
@@ -360,6 +370,8 @@ export default function App() {
           <FormBuilderPane fetcher={editorFetcher ?? undefined} />
         ) : editorPane === 'reports' && editorFetcher ? (
           <ReportsPane fetcher={editorFetcher} />
+        ) : editorPane === 'erd' && editorFetcher ? (
+          <ErdPane fetcher={editorFetcher} onOpenTable={handleOpenDiagramTable} />
         ) : editorFetcher && transport && transport.mode === transportMode ? (
           // Only mount the editor once the effect has published a transport
           // whose mode matches the current selection. During a mode toggle the

@@ -24,7 +24,12 @@ function filterArgs(definition: ReportDefinition): { params: string; args: strin
 function pageQuery(definition: ReportDefinition): string {
   const source = sourceOf(definition);
   const filter = filterArgs(definition);
-  return `query ReportPage($offset: Int!, $limit: Int!${filter.params ? `, ${filter.params}` : ''}) { ${source.table}(${filter.args}offset: $offset, limit: $limit) { total data { ${definition.columns.map((column) => column.column).join(' ')} } } }`;
+  const bands = definition.groupBands ?? [];
+  // Band keys must be both selected and ordered. Without this, page order can
+  // interleave one group around another and make a streamed table repeat bands.
+  const fields = [...new Set([...definition.columns.map((column) => column.column), ...bands.map((band) => band.column)])];
+  const sort = bands.length ? `sort: [${bands.map((band) => `${band.column}_${band.sortDir ?? 'asc'}`).join(', ')}], ` : '';
+  return `query ReportPage($offset: Int!, $limit: Int!${filter.params ? `, ${filter.params}` : ''}) { ${source.table}(${filter.args}${sort}offset: $offset, limit: $limit) { total data { ${fields.join(' ')} } } }`;
 }
 
 function aggregateQuery(definition: ReportDefinition): string {

@@ -145,8 +145,9 @@ interface DataTableProps<TData> {
     onVisualize?: () => void;
     /** Schema columns offered by the URL-backed server grouping selector. */
     groupableColumns?: readonly Column[];
-    grouping?: { column: Column; rows: GroupingRow[]; loading: boolean; error: Error | null } | null;
+    grouping?: { column: Column; sumColumn: Column | null; rows: GroupingRow[]; loading: boolean; error: Error | null; memberRequest: (value: unknown) => { query: string; variables: Record<string, unknown> } } | null;
     onGroupingChange?: (columnName: string | null) => void;
+    onGroupingSumChange?: (columnName: string | null) => void;
 }
 
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100];
@@ -209,6 +210,7 @@ export function DataTable<TData>({
     groupableColumns,
     grouping,
     onGroupingChange,
+    onGroupingSumChange,
 }: DataTableProps<TData>) {
     const {
         hoveredRow,
@@ -483,6 +485,17 @@ export function DataTable<TData>({
                         </SelectContent>
                     </Select>
                 )}
+                {grouping && onGroupingSumChange && groupableColumns && (
+                    <Select value={grouping.sumColumn?.name ?? '__none'} onValueChange={(value) => onGroupingSumChange(value === '__none' ? null : value)}>
+                        <SelectTrigger size="sm" className="w-40" aria-label="Group sum column"><SelectValue placeholder="Sum column" /></SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="__none">Count only</SelectItem>
+                            {groupableColumns.filter((column) => /^(byte|short|int|long|float|double|decimal|numeric|money|real)/i.test(column.paramType.replace(/[!\[\]]/g, ''))).map((column) => (
+                                <SelectItem key={column.name} value={column.name}>Sum {column.label}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                )}
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                         <Button variant="outline" size="sm">
@@ -523,7 +536,10 @@ export function DataTable<TData>({
                 rows={grouping.rows}
                 loading={grouping.loading}
                 error={grouping.error}
+                sumLabel={grouping.sumColumn?.label}
+                memberRequest={grouping.memberRequest}
             />}
+            {grouping && <p className="border-b px-2 py-1 text-xs text-muted-foreground" role="note">Inline editing is disabled while grouping is active; expand a group to inspect its server-filtered members.</p>}
             {/* Zero-height wrapper OUTSIDE the scroll container: the bar overlays the
                 grid's top edge without adding to the scrollable content height — a
                 sticky bar inside the container contributed its 2px and summoned a

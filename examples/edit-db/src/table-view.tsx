@@ -130,6 +130,7 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
         onPageIndexChange,
         onPageSizeChange,
         onGroupingChange,
+        onGroupingSumChange,
     } = useDataTable(table, id, filterTable, filterColumn, handleExpandContent, onOpenColumn);
 
     const handleConfirmDelete = useCallback(async () => {
@@ -379,16 +380,16 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
                 loading={loading}
                 fetching={fetching}
                 primaryKeys={table.primaryKeys ?? []}
-                selectable={isEditable}
+                selectable={isEditable && !grouping}
                 selectedRowId={selectedRowId}
                 onRowSelect={onRowSelect}
                 onSortingChange={onSortingChange}
                 onColumnFiltersChange={onColumnFiltersChange}
                 onPageIndexChange={onPageIndexChange}
                 onPageSizeChange={onPageSizeChange}
-                onEditRow={isEditable ? handleEditRow : undefined}
-                onDeleteRow={isEditable ? handleDeleteRow : undefined}
-                onDeleteSelected={isEditable ? handleDeleteSelected : undefined}
+                onEditRow={isEditable && !grouping ? handleEditRow : undefined}
+                onDeleteRow={isEditable && !grouping ? handleDeleteRow : undefined}
+                onDeleteSelected={isEditable && !grouping ? handleDeleteSelected : undefined}
                 stackingEnabled={stackingEnabled}
                 onToggleStacking={onToggleStacking}
                 exportRows={exportRows}
@@ -396,6 +397,7 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
                 groupableColumns={table.columns}
                 grouping={grouping}
                 onGroupingChange={onGroupingChange}
+                onGroupingSumChange={onGroupingSumChange}
                 onVisualize={handleVisualize}
             />
             <ConfirmDialog

@@ -5,9 +5,12 @@ import { DashboardPane } from "./DashboardPane";
 import { openDashboard, saveDashboard } from "./dashboard-store";
 import type { DashboardDefinition } from "./dashboard-model";
 
+const dashboardSources = import.meta.glob("./*.{ts,tsx}", { eager: true, query: "?raw", import: "default" }) as Record<string, string>;
+
 vi.mock("recharts", () => {
   const Box = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>;
-  return { Area: Box, AreaChart: Box, Bar: Box, BarChart: Box, CartesianGrid: Box, Legend: Box, Line: Box, LineChart: Box, Pie: Box, PieChart: Box, ResponsiveContainer: Box, Tooltip: Box, XAxis: Box, YAxis: Box };
+  const Chart = ({ children, data }: { children?: React.ReactNode; data?: unknown }) => <div data-testid="dashboard-chart-points">{JSON.stringify(data)}{children}</div>;
+  return { Area: Box, AreaChart: Chart, Bar: Box, BarChart: Chart, CartesianGrid: Box, Legend: Box, Line: Box, LineChart: Chart, Pie: Box, PieChart: Chart, ResponsiveContainer: Box, Tooltip: Box, XAxis: Box, YAxis: Box };
 });
 
 afterEach(cleanup);
@@ -39,7 +42,48 @@ function fetcher({ failOrders = false } = {}) {
     return Promise.resolve({});
   }) };
 }
-async function openDashboardPane(store = memoryStore(), live = fetcher()) {
+
+type ServerOrder = { id: number; region: string };
+type DashboardServerFixture = { orders: ServerOrder[]; customers: Array<{ id: number }> };
+
+/**
+ * A tiny GraphQL server-contract harness: unlike `fetcher()` above it does not
+ * return pre-baked response fixtures.  Each request is executed against its
+ * backing rows, mirroring the aggregate/table surfaces exposed by BifrostQL.
+ * The assertions below calculate their expected values through separate
+ * SQL-equivalent functions so a tile cannot pass because its fixture happens
+ * to contain the expected literal.
+ */
+function serverContractFetcher(data: DashboardServerFixture) {
+  return {
+    query: async (query: string) => {
+      if (query.includes("DashboardSchema")) return { _dbSchema: [] };
+      if (query.includes("ordersAggregate") && query.includes("groupBy")) {
+        const groups = new Map<string, number>();
+        for (const row of data.orders) groups.set(row.region, (groups.get(row.region) ?? 0) + 1);
+        return { ordersAggregate: [...groups].map(([region, _count]) => ({ region, _count })) };
+      }
+      if (query.includes("ordersAggregate")) return { ordersAggregate: { _count: data.orders.length } };
+      if (query.includes("customersAggregate")) return { customersAggregate: { _count: data.customers.length } };
+      if (query.includes("DashboardTable")) return { orders: data.orders.slice(0, 3) };
+      throw new Error(`Unhandled dashboard server operation: ${query}`);
+    },
+  };
+}
+
+function runEquivalentSql(data: DashboardServerFixture, sql: string): Array<Record<string, unknown>> {
+  // Deliberately independent from the GraphQL operation harness above. These
+  // are the four SQL results that an operator would compare with the dashboard.
+  switch (sql) {
+    case "SELECT region, COUNT(*) AS count FROM orders GROUP BY region ORDER BY region":
+      return [...new Set(data.orders.map((row) => row.region))].sort().map((region) => ({ category: region, count: data.orders.filter((row) => row.region === region).length }));
+    case "SELECT COUNT(*) AS count FROM orders": return [{ count: data.orders.filter(() => true).length }];
+    case "SELECT COUNT(*) AS count FROM customers": return [{ count: data.customers.filter(() => true).length }];
+    case "SELECT id, region FROM orders ORDER BY id LIMIT 3": return [...data.orders].sort((a, b) => a.id - b.id).slice(0, 3);
+    default: throw new Error(`Unexpected SQL equivalence query: ${sql}`);
+  }
+}
+async function openDashboardPane(store = memoryStore(), live: { query: any } = fetcher()) {
   render(<DashboardPane fetcher={live as never} store={store as never} />);
   fireEvent.click(await screen.findByRole("button", { name: "Operations" }));
   return { store, live };
@@ -52,12 +96,30 @@ describe("DashboardPane", () => {
     expect(screen.getByLabelText("Orders").textContent).toContain("7");
     expect(screen.getByLabelText("Customers").textContent).toContain("3");
     expect(screen.getByText("north")).toBeTruthy();
-    const calls = live.query.mock.calls.map(([query]) => String(query));
+    const calls = (live.query.mock.calls as Array<[string]>).map(([query]: [string]) => String(query));
     expect(calls.some((query) => query.includes("ordersAggregate") && query.includes("_count"))).toBe(true);
     expect(calls.some((query) => query.includes("customersAggregate") && query.includes("_count"))).toBe(true);
     expect(calls.some((query) => query.includes("DashboardTable"))).toBe(true);
     // Count tiles get a scalar server aggregate, never an array which the client counts.
     expect(calls.filter((query) => query.includes("DashboardCount")).every((query) => query.includes("Aggregate") && !query.includes("limit:"))).toBe(true);
+  });
+
+  it("renders every tile of a saved dashboard equal to independent SQL-equivalent server results", async () => {
+    const data: DashboardServerFixture = {
+      orders: [{ id: 101, region: "north" }, { id: 102, region: "north" }, { id: 103, region: "south" }, { id: 104, region: "south" }],
+      customers: [{ id: 1 }, { id: 2 }, { id: 3 }],
+    };
+    const expectedChart = runEquivalentSql(data, "SELECT region, COUNT(*) AS count FROM orders GROUP BY region ORDER BY region");
+    const expectedOrders = runEquivalentSql(data, "SELECT COUNT(*) AS count FROM orders")[0].count;
+    const expectedCustomers = runEquivalentSql(data, "SELECT COUNT(*) AS count FROM customers")[0].count;
+    const expectedTable = runEquivalentSql(data, "SELECT id, region FROM orders ORDER BY id LIMIT 3");
+
+    await openDashboardPane(memoryStore(), serverContractFetcher(data));
+    await screen.findByText("101");
+    expect(JSON.parse(screen.getByTestId("dashboard-chart-points").textContent ?? "[]")).toEqual(expectedChart.map(({ category, count }) => ({ category, count })));
+    expect(screen.getByLabelText("Orders").textContent).toContain(String(expectedOrders));
+    expect(screen.getByLabelText("Customers").textContent).toContain(String(expectedCustomers));
+    expect([...screen.getAllByRole("row")].slice(1).map((row) => Array.from(row.querySelectorAll("td")).map((cell) => cell.textContent))).toEqual(expectedTable.map((row) => [String(row.id), String(row.region)]));
   });
 
   it("saves and reopens exact drag and resize layout coordinates", async () => {
@@ -79,6 +141,10 @@ describe("DashboardPane", () => {
 
   it("has no edit affordances in view mode", async () => {
     await openDashboardPane();
+    expect(screen.queryByLabelText("Dashboard name")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save dashboard" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Rename dashboard" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete dashboard" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Add chart" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Remove Order count" })).toBeNull();
     expect(screen.queryByLabelText("Resize Order count")).toBeNull();
@@ -128,5 +194,11 @@ describe("DashboardPane", () => {
     const saved = await saveDashboard(store as never, { id: "d1", name: "D", definition, version: 0 });
     expect(saved.type).toBe("dashboard");
     expect(openDashboard(saved)).toEqual(definition);
+  });
+
+  it("keeps dashboard tile data on the shared fetcher seam", () => {
+    const sources = Object.values(dashboardSources).join("\n");
+    expect(sources).not.toMatch(/\bfetch\s*\(/);
+    expect(sources).not.toMatch(/\bnew\s+(?:XMLHttpRequest|HttpClient|Axios|GraphQLClient)\b/);
   });
 });

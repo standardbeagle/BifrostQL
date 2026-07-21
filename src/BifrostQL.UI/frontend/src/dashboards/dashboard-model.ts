@@ -4,7 +4,7 @@ export type DashboardTileKind = "chart" | "count" | "table";
 
 export interface DashboardLayout { x: number; y: number; w: number; h: number; }
 export interface CountTileConfig { table: string; label?: string; filter?: Record<string, unknown>; filterType?: string; }
-export interface TableTileConfig { table: string; columns: string[]; limit?: number; }
+export interface TableTileConfig { table: string; columns: string[]; limit?: number; filter?: Record<string, unknown>; filterType?: string; }
 export type DashboardTileConfig = ChartDefinition | CountTileConfig | TableTileConfig;
 
 export interface DashboardTile {

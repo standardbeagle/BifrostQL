@@ -112,6 +112,17 @@ describe("DashboardPane", () => {
     expect(openDashboard(store.objects[0])).not.toBeNull();
   });
 
+  it("keeps a saved query reference's validated filter in its count request", async () => {
+    const visualQuery = { id: "north-orders", type: "query", name: "North orders", version: 1, definition: { kind: "bifrost.visual-query", version: 1, state: { tables: [{ table: "dbo.orders", alias: null }], columns: [], joins: [], filter: { op: "leaf", children: null, criterion: { table: "dbo.orders", column: "region", operator: "_eq", value: "north" } }, rowLimit: null } } };
+    const filtered: DashboardDefinition = { ...definition, tiles: [{ id: "north", kind: "count", title: "North", ref: "north-orders", layout: { x: 0, y: 0, w: 3, h: 3 } }] };
+    const live = fetcher();
+    await openDashboardPane(memoryStore([dashboard(filtered), visualQuery] as any[]), live);
+    await screen.findByLabelText("North orders");
+    const call = (live.query.mock.calls as Array<[string, Record<string, unknown>?]>).find(([query]) => String(query).includes("DashboardCount"));
+    expect(call?.[0]).toContain("TableFilterordersInput");
+    expect(call?.[1]).toEqual({ filter: { region: { _eq: "north" } } });
+  });
+
   it("persists dashboards under the dashboard saved-object type", async () => {
     const store = memoryStore([]);
     const saved = await saveDashboard(store as never, { id: "d1", name: "D", definition, version: 0 });

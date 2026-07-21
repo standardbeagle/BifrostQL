@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import type { GraphQLFetcher, SavedObject, SavedObjectsClient } from "@standardbeagle/edit-db";
 import { ChartPreview } from "../charts/ChartPane";
 import { buildChartAggregateQuery, mapAggregateRows, parseChartDefinition, type ChartDefinition, type ChartPoint } from "../charts/chart-model";
+import { toFilter } from "../designer/designer-state";
 import { parseQueryDefinition } from "../designer/saved-query";
+import type { VisualFilter } from "../lib/visual-query";
 import { assertDashboardName, blankDashboard, type CountTileConfig, type DashboardDefinition, type DashboardLayout, type DashboardTile, type TableTileConfig } from "./dashboard-model";
 import { dashboardStore, DASHBOARD_SAVED_OBJECT_TYPE, openDashboard, saveDashboard } from "./dashboard-store";
 import "./dashboard.css";
@@ -11,6 +13,17 @@ type ResolvedTile = { kind: "chart"; config: ChartDefinition } | { kind: "count"
 type SchemaTable = { graphQlName: string; columns: Array<{ graphQlName: string }> };
 
 function tablePart(qualified: string): string { const parts = qualified.split("."); return parts[parts.length - 1] ?? qualified; }
+/** Saved-query filters are parser-validated identifiers. Values still become GraphQL variables. */
+function resolveSavedQueryFilter(filter: VisualFilter | null, tableRef: string): Record<string, unknown> | undefined {
+  if (!filter) return undefined;
+  if (filter.op === "leaf") {
+    const criterion = filter.criterion;
+    if (!criterion || criterion.table !== tableRef) throw new Error("The saved query filter is not scoped to its backing table.");
+    return { [criterion.column]: { [criterion.operator]: criterion.value } };
+  }
+  const children = (filter.children ?? []).map((child) => resolveSavedQueryFilter(child, tableRef)).filter((child): child is Record<string, unknown> => !!child);
+  return children.length ? { [filter.op]: children } : undefined;
+}
 function configFromSaved(tile: DashboardTile, object: SavedObject): ResolvedTile {
   if (tile.kind === "chart") {
     const chart = parseChartDefinition(object.definition);
@@ -18,9 +31,14 @@ function configFromSaved(tile: DashboardTile, object: SavedObject): ResolvedTile
   }
   const query = parseQueryDefinition(object.definition);
   if (query?.state.tables.length === 1 && query.state.joins.length === 0) {
+    const tableRef = query.state.tables[0].alias ?? query.state.tables[0].table;
     const table = tablePart(query.state.tables[0].table);
-    if (tile.kind === "count") return { kind: "count", config: { table, label: object.name } };
-    return { kind: "table", config: { table, columns: query.state.columns.filter((column) => column.show).map((column) => column.column), limit: query.state.rowLimit ?? 10 } };
+    try {
+      const filter = resolveSavedQueryFilter(query.state.filter ?? toFilter(query.state), tableRef);
+      const source = filter ? { filter, filterType: `TableFilter${table}Input` } : {};
+      if (tile.kind === "count") return { kind: "count", config: { table, label: object.name, ...source } };
+      return { kind: "table", config: { table, columns: query.state.columns.filter((column) => column.show).map((column) => column.column), limit: query.state.rowLimit ?? 10, ...source } };
+    } catch (reason) { return { error: reason instanceof Error ? reason.message : String(reason) }; }
   }
   const config = object.definition;
   if (config && typeof config === "object" && "table" in config && typeof (config as { table?: unknown }).table === "string") {
@@ -144,7 +162,7 @@ function CountTile({ fetcher, config, refreshSeconds }: { fetcher: GraphQLFetche
 
 function TableTile({ fetcher, config, refreshSeconds, onOpenTable }: { fetcher: GraphQLFetcher; config: TableTileConfig; refreshSeconds?: number; onOpenTable?: (table: string) => void }) {
   const columns = config.columns.length ? config.columns : ["id"];
-  const request = useMemo(() => () => { assertDashboardName(config.table, "table"); columns.forEach((column) => assertDashboardName(column, "table field")); return fetcher.query<Record<string, Record<string, unknown>[]>>(`query DashboardTable($limit: Int!, $offset: Int!) { ${config.table}(limit: $limit, offset: $offset) { ${columns.join(" ")} } }`, { limit: Math.min(Math.max(config.limit ?? 10, 1), 100), offset: 0 }).then((data) => data[config.table] ?? []); }, [fetcher, config, columns]);
+  const request = useMemo(() => () => { assertDashboardName(config.table, "table"); columns.forEach((column) => assertDashboardName(column, "table field")); if (config.filter && !config.filterType) throw new Error("Table filter is missing its schema-derived type."); if (config.filterType) assertDashboardName(config.filterType, "filter type"); const declaration = config.filter ? `, $filter: ${config.filterType}` : ""; const argument = config.filter ? ", filter: $filter" : ""; return fetcher.query<Record<string, Record<string, unknown>[]>>(`query DashboardTable($limit: Int!, $offset: Int!${declaration}) { ${config.table}(limit: $limit, offset: $offset${argument}) { ${columns.join(" ")} } }`, { limit: Math.min(Math.max(config.limit ?? 10, 1), 100), offset: 0, ...(config.filter ? { filter: config.filter } : {}) }).then((data) => data[config.table] ?? []); }, [fetcher, config, columns]);
   const { value, error } = useTileRequest<Record<string, unknown>[]>(request, refreshSeconds);
   if (error) return <p className="bifrost-dashboard-error" role="alert">Table failed: {error}</p>;
   if (!value) return <p>Loading table…</p>;

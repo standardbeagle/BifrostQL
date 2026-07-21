@@ -66,7 +66,7 @@ import { useEditorConfig } from '@/hooks/useEditorConfig';
 import { orderColumns } from '@/lib/column-order';
 import { GroupedGridSummary } from './grouped-grid-summary';
 import type { Column } from '@/types/schema';
-import type { GridGroupMemberRequest, GroupingRow } from '@/lib/grid-grouping';
+import type { GridGroupMemberRequest, GroupingRow, GroupingSort } from '@/lib/grid-grouping';
 
 /**
  * Props for the DataTable component.
@@ -145,7 +145,7 @@ interface DataTableProps<TData> {
     onVisualize?: () => void;
     /** Schema columns offered by the URL-backed server grouping selector. */
     groupableColumns?: readonly Column[];
-    grouping?: { column: Column; sumColumn: Column | null; rows: GroupingRow[]; loading: boolean; error: Error | null; memberRequest: (value: unknown) => GridGroupMemberRequest } | null;
+    grouping?: { column: Column; sumColumn: Column | null; rows: GroupingRow[]; loading: boolean; error: Error | null; sort: GroupingSort; onSortChange: (sort: GroupingSort) => void; memberRequest: (value: unknown) => GridGroupMemberRequest } | null;
     onGroupingChange?: (columnName: string | null) => void;
     onGroupingSumChange?: (columnName: string | null) => void;
 }
@@ -539,6 +539,8 @@ export function DataTable<TData>({
                     error={grouping.error}
                     sumLabel={grouping.sumColumn?.label}
                     pageSize={pageSize}
+                    sort={grouping.sort}
+                    onSortChange={grouping.onSortChange}
                     memberRequest={grouping.memberRequest}
                 />
                 <p className="border-b px-2 py-1 text-xs text-muted-foreground" role="note">Inline editing is disabled while grouping is active; expand a group to inspect its server-filtered members.</p>

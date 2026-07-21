@@ -235,6 +235,8 @@ describe('DataTable server grouping mode', () => {
                     rows: [{ value: 'A', count: 2, sum: undefined }],
                     loading: false,
                     error: null,
+                    sort: { field: 'key', desc: false },
+                    onSortChange: () => { /* noop */ },
                     memberRequest: () => ({ query: '', variables: {}, responseKey: 'enrollments' }),
                 }}
                 onSortingChange={() => { /* noop */ }}

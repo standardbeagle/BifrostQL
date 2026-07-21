@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useFetcher } from '@/common/fetcher';
-import type { GridGroupMemberRequest, GroupingRow } from '@/lib/grid-grouping';
+import type { GridGroupMemberRequest, GroupingRow, GroupingSort } from '@/lib/grid-grouping';
 
 interface GroupedGridSummaryProps {
     label: string;
@@ -11,11 +11,14 @@ interface GroupedGridSummaryProps {
     sumLabel?: string;
     /** Uses the active grid page-size preference, not an unrelated constant. */
     pageSize: number;
+    /** Aggregate bucket order; member rows retain the active flat-grid order. */
+    sort: GroupingSort;
+    onSortChange: (sort: GroupingSort) => void;
     memberRequest: (value: unknown) => GridGroupMemberRequest;
 }
 
 /** Server aggregate groups with local group paging and one expandable, server-filtered member bucket. */
-export function GroupedGridSummary({ label, rows, loading, error, sumLabel, pageSize, memberRequest }: GroupedGridSummaryProps) {
+export function GroupedGridSummary({ label, rows, loading, error, sumLabel, pageSize, sort, onSortChange, memberRequest }: GroupedGridSummaryProps) {
     const fetcher = useFetcher();
     const [page, setPage] = useState(0);
     const [expanded, setExpanded] = useState<GroupingRow | null>(null);
@@ -38,7 +41,26 @@ export function GroupedGridSummary({ label, rows, loading, error, sumLabel, page
     const visible = rows.slice(Math.min(page, pageCount - 1) * safePageSize, (Math.min(page, pageCount - 1) + 1) * safePageSize);
     const memberPage = request ? members.data?.[request.responseKey] : undefined;
     return <div className="border-b px-2 py-2" aria-label={`Grouped by ${label}`}>
-        <div className="mb-1 flex items-center justify-between text-sm font-medium"><span>Grouped by {label}</span><span className="text-muted-foreground">{rows.length} groups</span></div>
+        <div className="mb-1 flex items-center justify-between gap-2 text-sm font-medium">
+            <span>Grouped by {label}</span>
+            <label className="text-xs font-normal text-muted-foreground">Group order
+                <select
+                    aria-label="Group order"
+                    className="ml-1 rounded border bg-background px-1 py-0.5 text-foreground"
+                    value={`${sort.field}:${sort.desc ? 'desc' : 'asc'}`}
+                    onChange={(event) => {
+                        const [field, direction] = event.target.value.split(':');
+                        onSortChange({ field: field === 'count' ? 'count' : 'key', desc: direction === 'desc' });
+                    }}
+                >
+                    <option value="key:asc">{label} ascending</option>
+                    <option value="key:desc">{label} descending</option>
+                    <option value="count:desc">Count high to low</option>
+                    <option value="count:asc">Count low to high</option>
+                </select>
+            </label>
+            <span className="text-muted-foreground">{rows.length} groups</span>
+        </div>
         <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-4 gap-y-1 text-sm">
             {visible.map((row, index) => <div key={`${String(row.value)}-${index}`} className="contents">
                 <button type="button" className="text-left underline-offset-2 hover:underline" aria-expanded={expanded === row} onClick={() => setExpanded(expanded === row ? null : row)}>{row.value === null || row.value === undefined ? '(null)' : String(row.value)}</button>

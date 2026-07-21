@@ -15,6 +15,8 @@ function renderSummary(fetcher: GraphQLFetcher, rows: GroupingRow[] = [{ value: 
                     label="Status"
                     rows={rows}
                     pageSize={pageSize}
+                    sort={{ field: 'key', desc: false }}
+                    onSortChange={() => { /* test default */ }}
                     memberRequest={(value) => ({
                         query: 'query Members { orders { total data { status } } }',
                         variables: { filter: { status: value === null ? { _null: true } : { _eq: value } } },
@@ -51,5 +53,16 @@ describe('GroupedGridSummary', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Next groups' }));
         expect(screen.getByText('status-10')).toBeInTheDocument();
         expect(screen.getByText('Group page 2 of 2')).toBeInTheDocument();
+    });
+
+    it('defines explicit aggregate key/count ordering controls', () => {
+        const onSortChange = vi.fn();
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        render(<QueryClientProvider client={client}><FetcherProvider value={{ query: vi.fn() }}>
+            <GroupedGridSummary label="Status" rows={[]} pageSize={20} sort={{ field: 'key', desc: false }} onSortChange={onSortChange} memberRequest={() => ({ query: '', variables: {}, responseKey: 'orders' })} />
+        </FetcherProvider></QueryClientProvider>);
+
+        fireEvent.change(screen.getByLabelText('Group order'), { target: { value: 'count:desc' } });
+        expect(onSortChange).toHaveBeenCalledWith({ field: 'count', desc: true });
     });
 });

@@ -26,11 +26,22 @@ export interface GroupingRow {
     sum: unknown;
 }
 
+/**
+ * Grouped results have their own aggregate-row ordering.  It is intentionally
+ * separate from the flat-grid sort: the latter orders individual records,
+ * while this controls aggregate buckets.  Count ties always use the group key
+ * ascending so pagination remains deterministic.
+ */
+export type GroupingSort = { field: 'key' | 'count'; desc: boolean };
+
+export const DEFAULT_GROUPING_SORT: GroupingSort = { field: 'key', desc: false };
+
 export interface GridGroupingRequest {
     query: string;
     variables: Record<string, unknown>;
     groupBy: Column;
     sumBy: Column | null;
+    sort: GroupingSort;
 }
 
 export interface GridGroupMemberRequest {
@@ -108,6 +119,7 @@ export function buildGridGroupingRequest(
     columnFilters: ColumnFiltersState,
     headerFilter: string,
     sumBy: Column | null = null,
+    sort: GroupingSort = DEFAULT_GROUPING_SORT,
 ): GridGroupingRequest {
     for (const name of [table.name, table.graphQlName, groupBy.graphQlName, ...(sumBy ? [sumBy.graphQlName] : [])]) {
         if (!GRAPHQL_NAME.test(name)) throw new Error('Invalid schema-derived grouping name.');
@@ -120,20 +132,17 @@ export function buildGridGroupingRequest(
         variables: filter ? { filter } : {},
         groupBy,
         sumBy,
+        sort,
     };
 }
 
-export function readGroupingRows(data: Record<string, unknown> | undefined, table: Table, groupBy: Column): GroupingRow[] {
+export function readGroupingRows(data: Record<string, unknown> | undefined, table: Table, groupBy: Column, sort: GroupingSort = DEFAULT_GROUPING_SORT): GroupingRow[] {
     const rows = data?.[`${table.name}Aggregate`];
     if (!Array.isArray(rows)) return [];
-    // Grouped mode has no flat-row header to sort. Its defined sort is the
-    // group key ascending (null bucket first), independent of the flat-grid
-    // sort state. This keeps paging stable and avoids pretending a row sort
-    // applies to an aggregate result.
     return rows.map((row) => {
         const record = row as Record<string, unknown>;
         return { value: record[groupBy.graphQlName], count: Number(record._count ?? 0), sum: undefined };
-    }).sort(compareGroupingRowsByKey);
+    }).sort((left, right) => compareGroupingRows(left, right, sort));
 }
 
 /** Defined aggregate ordering for the server-grouped replacement surface. */
@@ -145,13 +154,23 @@ export function compareGroupingRowsByKey(left: GroupingRow, right: GroupingRow):
     return String(left.value).localeCompare(String(right.value));
 }
 
+/** Sort aggregate buckets by the selected key/count direction with a stable key tie-breaker. */
+export function compareGroupingRows(left: GroupingRow, right: GroupingRow, sort: GroupingSort = DEFAULT_GROUPING_SORT): number {
+    if (sort.field === 'count') {
+        const byCount = left.count - right.count;
+        if (byCount !== 0) return sort.desc ? -byCount : byCount;
+        return compareGroupingRowsByKey(left, right);
+    }
+    const byKey = compareGroupingRowsByKey(left, right);
+    return sort.desc ? -byKey : byKey;
+}
+
 /** Reads a selected configured measure without ever deriving it from page rows. */
-export function readGroupingRowsWithSum(data: Record<string, unknown> | undefined, table: Table, groupBy: Column, sumBy: Column | null): GroupingRow[] {
+export function readGroupingRowsWithSum(data: Record<string, unknown> | undefined, table: Table, groupBy: Column, sumBy: Column | null, sort: GroupingSort = DEFAULT_GROUPING_SORT): GroupingRow[] {
     const raw = data?.[`${table.name}Aggregate`];
     if (!Array.isArray(raw)) return [];
-    // Couple each server row to its configured sum before applying the defined
-    // display ordering. Sorting a count-only projection first would associate
-    // a null/key-sorted row with a different raw aggregate index.
+    // Couple each server row to its configured sum before ordering; never
+    // calculate a measure from the current flat page.
     return raw.map((source) => {
         const record = source as Record<string, unknown>;
         return {
@@ -159,11 +178,11 @@ export function readGroupingRowsWithSum(data: Record<string, unknown> | undefine
             count: Number(record._count ?? 0),
             sum: sumBy ? (record._sum as Record<string, unknown> | undefined)?.[sumBy.graphQlName] : undefined,
         };
-    }).sort(compareGroupingRowsByKey);
+    }).sort((left, right) => compareGroupingRows(left, right, sort));
 }
 
 /** Schema-derived member query for a single aggregate key. It merges, never replaces, active filters. */
-export function buildGridGroupMemberRequest(table: Table, groupBy: Column, value: unknown, columnFilters: ColumnFiltersState, headerFilter: string): GridGroupMemberRequest {
+export function buildGridGroupMemberRequest(table: Table, groupBy: Column, value: unknown, columnFilters: ColumnFiltersState, headerFilter: string, sort: readonly string[] = []): GridGroupMemberRequest {
     for (const name of [table.name, table.graphQlName, groupBy.graphQlName, ...table.columns.map((column) => column.graphQlName)]) {
         if (!GRAPHQL_NAME.test(name)) throw new Error('Invalid schema-derived grouping name.');
     }
@@ -173,8 +192,10 @@ export function buildGridGroupMemberRequest(table: Table, groupBy: Column, value
     const filter = active ? { and: [active, member] } : member;
     const fields = table.columns.map((column) => column.graphQlName).join(' ');
     return {
-        query: `query GridGroupMembers($filter: ${table.graphQlName}Filter, $limit: Int, $offset: Int) { ${table.name}(filter: $filter limit: $limit offset: $offset) { total offset limit data { ${fields} } } }`,
-        variables: { filter, limit: 50, offset: 0 },
+        query: `query GridGroupMembers($filter: ${table.graphQlName}Filter, $sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int) { ${table.name}(filter: $filter sort: $sort limit: $limit offset: $offset) { total offset limit data { ${fields} } } }`,
+        // Member ordering deliberately remains the active flat-grid order.
+        // It is bound as a GraphQL variable, never interpolated from UI state.
+        variables: { filter, sort: [...sort], limit: 50, offset: 0 },
         responseKey: table.name,
     };
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildSchema, parse, validate } from "graphql";
 import { buildChartAggregateQuery, mapAggregateRows, MAX_CHART_CATEGORIES, NULL_CATEGORY_LABEL, type ChartDefinition } from "./chart-model";
 import { openChart, saveChart } from "./chart-store";
 
@@ -16,9 +17,27 @@ describe("chart aggregate model", () => {
 
   it("uses a server aggregate query and retains the active filter as a variable", () => {
     const result = buildChartAggregateQuery(definition());
+    // TableSchemaGenerator declares aggregate(filter, groupBy) only.  Keeping
+    // this contract assertion here catches unsupported pagination arguments.
     expect(result.query).toContain("ordersAggregate(filter: $filter, groupBy: [region]");
+    expect(result.query).not.toMatch(/\blimit\s*:/);
     expect(result.query).not.toContain("paid");
     expect(result.variables).toEqual({ filter: { status: { _eq: "paid" } } });
+  });
+
+  it("validates its document against the server's grouped-aggregate argument contract", () => {
+    // This mirrors TableSchemaGenerator: aggregate fields accept filter and
+    // groupBy, whereas limit belongs only to normal paged table fields.
+    const schema = buildSchema(`
+      type Query { ordersAggregate(filter: ordersFilter, groupBy: [ordersColumn!]): [ordersAggregate!]! }
+      input ordersFilter { status: StringFilter }
+      input StringFilter { _eq: String }
+      enum ordersColumn { region amount }
+      type ordersAggregate { region: String, _sum: ordersAggregateFields, _count: Int! }
+      type ordersAggregateFields { amount: Float }
+    `);
+    const { query } = buildChartAggregateQuery(definition());
+    expect(validate(schema, parse(query)).map((error) => error.message)).toEqual([]);
   });
 
   it("does not accept user-supplied GraphQL identifiers", () => {

@@ -69,7 +69,11 @@ export function buildChartAggregateQuery(definition: ChartDefinition): { query: 
   if (filter && !filterType) throw new Error("Chart filter is missing its schema-derived type.");
   if (filterType) assertGraphQlName(filterType, "chart filter type");
   const vars = filter ? "$filter: " + filterType : "";
-  const args = [filter ? "filter: $filter" : "", `groupBy: [${dimension}]`, `limit: ${Math.min(parsed.limit ?? MAX_CHART_CATEGORIES + 1, MAX_CHART_CATEGORIES + 1)}`].filter(Boolean).join(", ");
+  // The aggregate surface intentionally exposes only filter and groupBy.  Unlike
+  // normal table queries it has no pagination arguments, so do not smuggle a
+  // `limit` into the document.  The bounded category guard lives at the result
+  // boundary below, before any chart renderer receives the rows.
+  const args = [filter ? "filter: $filter" : "", `groupBy: [${dimension}]`].filter(Boolean).join(", ");
   return {
     query: `query ChartAggregate${vars ? `(${vars})` : ""} { ${parsed.source.table}Aggregate(${args}) { ${dimension} ${parsed.measures.map(selectionFor).join(" ")} } }`,
     variables: filter ? { filter } : {},

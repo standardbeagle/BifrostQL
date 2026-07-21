@@ -66,7 +66,7 @@ import { useEditorConfig } from '@/hooks/useEditorConfig';
 import { orderColumns } from '@/lib/column-order';
 import { GroupedGridSummary } from './grouped-grid-summary';
 import type { Column } from '@/types/schema';
-import type { GroupingRow } from '@/lib/grid-grouping';
+import type { GridGroupMemberRequest, GroupingRow } from '@/lib/grid-grouping';
 
 /**
  * Props for the DataTable component.
@@ -145,7 +145,7 @@ interface DataTableProps<TData> {
     onVisualize?: () => void;
     /** Schema columns offered by the URL-backed server grouping selector. */
     groupableColumns?: readonly Column[];
-    grouping?: { column: Column; sumColumn: Column | null; rows: GroupingRow[]; loading: boolean; error: Error | null; memberRequest: (value: unknown) => { query: string; variables: Record<string, unknown> } } | null;
+    grouping?: { column: Column; sumColumn: Column | null; rows: GroupingRow[]; loading: boolean; error: Error | null; memberRequest: (value: unknown) => GridGroupMemberRequest } | null;
     onGroupingChange?: (columnName: string | null) => void;
     onGroupingSumChange?: (columnName: string | null) => void;
 }
@@ -531,15 +531,17 @@ export function DataTable<TData>({
                 </DropdownMenu>
                 </div>
             </div>
-            {grouping && <GroupedGridSummary
-                label={grouping.column.label}
-                rows={grouping.rows}
-                loading={grouping.loading}
-                error={grouping.error}
-                sumLabel={grouping.sumColumn?.label}
-                memberRequest={grouping.memberRequest}
-            />}
-            {grouping && <p className="border-b px-2 py-1 text-xs text-muted-foreground" role="note">Inline editing is disabled while grouping is active; expand a group to inspect its server-filtered members.</p>}
+            {grouping ? <>
+                <GroupedGridSummary
+                    label={grouping.column.label}
+                    rows={grouping.rows}
+                    loading={grouping.loading}
+                    error={grouping.error}
+                    sumLabel={grouping.sumColumn?.label}
+                    memberRequest={grouping.memberRequest}
+                />
+                <p className="border-b px-2 py-1 text-xs text-muted-foreground" role="note">Inline editing is disabled while grouping is active; expand a group to inspect its server-filtered members.</p>
+            </> : <>
             {/* Zero-height wrapper OUTSIDE the scroll container: the bar overlays the
                 grid's top edge without adding to the scrollable content height — a
                 sticky bar inside the container contributed its 2px and summoned a
@@ -558,7 +560,6 @@ export function DataTable<TData>({
                 </div>
             )}
             <div ref={scrollRef} className="relative flex-1 overflow-auto min-h-0" aria-busy={fetching || loading}>
-
                 <Table style={{ tableLayout: 'fixed', width: table.getTotalSize() }}>
                     {/* Column widths live on <colgroup> under table-layout:fixed so
                         body cells don't each carry a width style — that keeps the
@@ -723,6 +724,7 @@ export function DataTable<TData>({
                     </Button>
                 </div>
             </div>
+            </>}
         </div>
     );
 }

@@ -25,6 +25,18 @@ describe('grid grouping request', () => {
         expect(request.variables).toEqual({ filter: { status: { _null: true } } });
     });
 
+    it('uses the identical filter object for server count and sum aggregates, never a page-row total', () => {
+        const request = buildGridGroupingRequest(orders, orders.columns[0], [
+            { id: 'amount', value: { operator: '_gte', value: 10 } },
+        ], JSON.stringify(['status', '_neq', 'cancelled', 'String']), groupingSumColumnFromUrl('amount', orders));
+        expect(request.variables).toEqual({
+            filter: { and: [{ status: { _neq: 'cancelled' } }, { amount: { _gte: 10 } }] },
+        });
+        expect(request.query).toContain('_count _sum { amount }');
+        expect(request.query).not.toContain('limit:');
+        expect(request.query).not.toContain('offset:');
+    });
+
     it('requests one schema-configured server sum and maps its server value unchanged', () => {
         const sum = groupingSumColumnFromUrl('amount', orders);
         const request = buildGridGroupingRequest(orders, orders.columns[0], [], '', sum);
@@ -39,6 +51,7 @@ describe('grid grouping request', () => {
         const nullMembers = buildGridGroupMemberRequest(orders, orders.columns[0], null, [{ id: 'amount', value: { operator: '_gte', value: 10 } }], '');
         expect(nullMembers.query).toContain('orders(filter: $filter limit: $limit offset: $offset)');
         expect(nullMembers.variables.filter).toEqual({ and: [{ amount: { _gte: 10 } }, { status: { _null: true } }] });
+        expect(nullMembers.responseKey).toBe('orders');
         expect(buildGridGroupMemberRequest(orders, orders.columns[0], '', [], '').variables.filter).toEqual({ status: { _eq: '' } });
     });
 

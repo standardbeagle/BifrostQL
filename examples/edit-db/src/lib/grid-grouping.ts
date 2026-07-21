@@ -33,6 +33,13 @@ export interface GridGroupingRequest {
     sumBy: Column | null;
 }
 
+export interface GridGroupMemberRequest {
+    query: string;
+    variables: Record<string, unknown>;
+    /** Response field selected from the current schema, never parsed from query text. */
+    responseKey: string;
+}
+
 export function groupingSumColumnFromUrl(value: string | null, table: Table | null): Column | null {
     if (!value || !table) return null;
     const column = groupingColumnFromUrl(value, table);
@@ -109,7 +116,7 @@ export function readGroupingRowsWithSum(data: Record<string, unknown> | undefine
 }
 
 /** Schema-derived member query for a single aggregate key. It merges, never replaces, active filters. */
-export function buildGridGroupMemberRequest(table: Table, groupBy: Column, value: unknown, columnFilters: ColumnFiltersState, headerFilter: string): { query: string; variables: Record<string, unknown> } {
+export function buildGridGroupMemberRequest(table: Table, groupBy: Column, value: unknown, columnFilters: ColumnFiltersState, headerFilter: string): GridGroupMemberRequest {
     for (const name of [table.name, table.graphQlName, groupBy.graphQlName, ...table.columns.map((column) => column.graphQlName)]) {
         if (!GRAPHQL_NAME.test(name)) throw new Error('Invalid schema-derived grouping name.');
     }
@@ -121,5 +128,6 @@ export function buildGridGroupMemberRequest(table: Table, groupBy: Column, value
     return {
         query: `query GridGroupMembers($filter: ${table.graphQlName}Filter, $limit: Int, $offset: Int) { ${table.name}(filter: $filter limit: $limit offset: $offset) { total offset limit data { ${fields} } } }`,
         variables: { filter, limit: 50, offset: 0 },
+        responseKey: table.name,
     };
 }

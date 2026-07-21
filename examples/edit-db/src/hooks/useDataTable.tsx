@@ -35,7 +35,7 @@ import {
 import { rowIdOf, encodeRouteParts } from "../lib/row-id";
 import { isComposite, fkDestinationColumnFor } from "../lib/fk";
 import { exportAllRows, type ExportRunner } from "../lib/export";
-import { buildGridGroupingRequest, buildGridGroupMemberRequest, groupingColumnFromUrl, groupingSumColumnFromUrl, readGroupingRowsWithSum, type GroupingRow } from "../lib/grid-grouping";
+import { buildGridGroupingRequest, buildGridGroupMemberRequest, groupingColumnFromUrl, groupingSumColumnFromUrl, readGroupingRowsWithSum, type GridGroupMemberRequest, type GroupingRow } from "../lib/grid-grouping";
 
 // Re-export for existing filter component imports.
 export { getFilterOperators } from "../lib/query-builder";
@@ -466,7 +466,7 @@ interface UseDataTableResult {
     /** Total matching rows for the active filter/sort (across all pages). */
     totalRows: number;
     /** Server aggregate rows for URL-selected grouping; never derived from the page. */
-    grouping: { column: Column; sumColumn: Column | null; rows: GroupingRow[]; loading: boolean; error: Error | null; memberRequest: (value: unknown) => { query: string; variables: Record<string, unknown> } } | null;
+    grouping: { column: Column; sumColumn: Column | null; rows: GroupingRow[]; loading: boolean; error: Error | null; memberRequest: (value: unknown) => GridGroupMemberRequest } | null;
     /**
      * Export the FULL result set for the current filters + sort, paging through
      * the same fetcher/query — not just the visible page. Null when there is no

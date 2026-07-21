@@ -5,6 +5,10 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from './data-table';
 import type { PkFilter } from '@/lib/row-id';
 
+vi.mock('./grouped-grid-summary', () => ({
+    GroupedGridSummary: ({ label }: { label: string }) => <div data-testid="grouped-grid">Grouped by {label}</div>,
+}));
+
 // Jsdom shims: DataTable uses `ResizeObserver` for fit-to-height sizing and the Popover API
 // for the hover action toolbar. Neither is implemented in jsdom by default.
 if (typeof HTMLElement !== 'undefined') {
@@ -210,6 +214,41 @@ describe('DataTable action callback payloads', () => {
             { student_id: 1, course_id: 'cs-202' },
             { student_id: 2, course_id: 'cs-101' },
         ]);
+    });
+});
+
+describe('DataTable server grouping mode', () => {
+    it('replaces the flat result table and its row pager with the grouped surface', () => {
+        render(
+            <DataTable<EnrollmentRow>
+                columns={makeColumns()}
+                data={enrollmentRows}
+                pageCount={3}
+                pageIndex={1}
+                pageSize={50}
+                sorting={[]}
+                columnFilters={[]}
+                primaryKeys={['student_id', 'course_id']}
+                grouping={{
+                    column: { name: 'grade', graphQlName: 'grade', label: 'Grade', paramType: 'String' } as never,
+                    sumColumn: null,
+                    rows: [{ value: 'A', count: 2, sum: undefined }],
+                    loading: false,
+                    error: null,
+                    memberRequest: () => ({ query: '', variables: {}, responseKey: 'enrollments' }),
+                }}
+                onSortingChange={() => { /* noop */ }}
+                onColumnFiltersChange={() => { /* noop */ }}
+                onPageIndexChange={() => { /* noop */ }}
+                onPageSizeChange={() => { /* noop */ }}
+            />,
+        );
+
+        expect(screen.getByTestId('grouped-grid')).toHaveTextContent('Grouped by Grade');
+        expect(screen.queryByText('Rows per page')).not.toBeInTheDocument();
+        expect(screen.queryByText('cs-101')).not.toBeInTheDocument();
+        expect(screen.queryByRole('table')).not.toBeInTheDocument();
+        expect(screen.getByRole('note')).toHaveTextContent('Inline editing is disabled');
     });
 });
 

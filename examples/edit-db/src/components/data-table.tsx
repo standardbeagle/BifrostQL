@@ -538,6 +538,7 @@ export function DataTable<TData>({
                     loading={grouping.loading}
                     error={grouping.error}
                     sumLabel={grouping.sumColumn?.label}
+                    pageSize={pageSize}
                     memberRequest={grouping.memberRequest}
                 />
                 <p className="border-b px-2 py-1 text-xs text-muted-foreground" role="note">Inline editing is disabled while grouping is active; expand a group to inspect its server-filtered members.</p>

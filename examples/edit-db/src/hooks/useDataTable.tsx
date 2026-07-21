@@ -35,7 +35,7 @@ import {
 import { rowIdOf, encodeRouteParts } from "../lib/row-id";
 import { isComposite, fkDestinationColumnFor } from "../lib/fk";
 import { exportAllRows, type ExportRunner } from "../lib/export";
-import { buildGridGroupingRequest, buildGridGroupMemberRequest, groupingColumnFromUrl, groupingSumColumnFromUrl, readGroupingRowsWithSum, type GridGroupMemberRequest, type GroupingRow } from "../lib/grid-grouping";
+import { buildGridGroupingRequest, buildGridGroupMemberRequest, GRID_GROUP_BY_PARAM, GRID_GROUP_SUM_PARAM, groupingColumnFromUrl, groupingSumColumnFromUrl, readGroupingRowsWithSum, withGroupingUrlParam, withoutGroupingUrlParams, type GridGroupMemberRequest, type GroupingRow } from "../lib/grid-grouping";
 
 // Re-export for existing filter component imports.
 export { getFilterOperators } from "../lib/query-builder";
@@ -597,9 +597,7 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     // a new schema. The render-time guard above prevents a transient old request.
     useEffect(() => {
         if (!groupingTableChanged || !gbParam) return;
-        const params = new URLSearchParams(search);
-        params.delete('gb');
-        params.delete('gs');
+        const params = withoutGroupingUrlParams(search);
         const qs = params.toString();
         navigate(qs ? `?${qs}` : '?');
     }, [groupingTableChanged, gbParam, search, navigate]);
@@ -778,16 +776,15 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     }, []);
 
     const onGroupingChange = useCallback((columnName: string | null) => {
-        const params = new URLSearchParams(search);
-        if (columnName) params.set('gb', columnName);
-        else params.delete('gb');
+        const params = withGroupingUrlParam(search, GRID_GROUP_BY_PARAM, columnName);
+        // A configured measure is meaningful only while a grouping key is
+        // selected; do not leave an inert `gs` to revive later through history.
+        if (!columnName) params.delete(GRID_GROUP_SUM_PARAM);
         const qs = params.toString();
         navigate(qs ? `?${qs}` : '?');
     }, [search, navigate]);
     const onGroupingSumChange = useCallback((columnName: string | null) => {
-        const params = new URLSearchParams(search);
-        if (columnName) params.set('gs', columnName);
-        else params.delete('gs');
+        const params = withGroupingUrlParam(search, GRID_GROUP_SUM_PARAM, columnName);
         const qs = params.toString();
         navigate(qs ? `?${qs}` : '?');
     }, [search, navigate]);

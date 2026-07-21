@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildGridGroupMemberRequest, buildGridGroupingRequest, groupingColumnFromUrl, groupingSumColumnFromUrl, readGroupingRows, readGroupingRowsWithSum } from './grid-grouping';
+import { buildGridGroupMemberRequest, buildGridGroupingRequest, groupingColumnFromUrl, groupingSumColumnFromUrl, GRID_GROUP_BY_PARAM, GRID_GROUP_SUM_PARAM, readGroupingRows, readGroupingRowsWithSum, withGroupingUrlParam, withoutGroupingUrlParams } from './grid-grouping';
 import type { Table } from '../types/schema';
 
 const orders = {
@@ -13,6 +13,27 @@ describe('grid grouping request', () => {
     it('resolves only a column from the active schema', () => {
         expect(groupingColumnFromUrl('status', orders)?.name).toBe('status');
         expect(groupingColumnFromUrl('status) { bad', orders)).toBeNull();
+    });
+
+    it('round-trips URL-owned grouping state without dropping unrelated parameters', () => {
+        const initial = new URLSearchParams('cf=active&profile=readonly');
+        const grouped = withGroupingUrlParam(initial, GRID_GROUP_BY_PARAM, 'status');
+        const withMeasure = withGroupingUrlParam(grouped, GRID_GROUP_SUM_PARAM, 'amount');
+
+        expect(withMeasure.toString()).toBe('cf=active&profile=readonly&gb=status&gs=amount');
+        expect(groupingColumnFromUrl(withMeasure.get(GRID_GROUP_BY_PARAM), orders)?.name).toBe('status');
+        expect(groupingSumColumnFromUrl(withMeasure.get(GRID_GROUP_SUM_PARAM), orders)?.name).toBe('amount');
+        expect(withGroupingUrlParam(withMeasure, GRID_GROUP_BY_PARAM, null).get(GRID_GROUP_BY_PARAM)).toBeNull();
+    });
+
+    it('clears gb and gs on a table switch while retaining unrelated URL state', () => {
+        const oldTableUrl = new URLSearchParams('cf=active&gb=status&gs=amount&profile=readonly');
+        const switched = withoutGroupingUrlParams(oldTableUrl);
+
+        expect(switched.toString()).toBe('cf=active&profile=readonly');
+        // A shared column name on the next table must not revive old grouping.
+        expect(groupingColumnFromUrl(switched.get(GRID_GROUP_BY_PARAM), orders)).toBeNull();
+        expect(groupingSumColumnFromUrl(switched.get(GRID_GROUP_SUM_PARAM), orders)).toBeNull();
     });
 
     it('uses the server aggregate and preserves null filters as boolean predicates', () => {
@@ -37,13 +58,25 @@ describe('grid grouping request', () => {
         expect(request.query).not.toContain('offset:');
     });
 
-    it('requests one schema-configured server sum and maps its server value unchanged', () => {
+    it('matches fixture-backed SQL GROUP BY counts and configured sums without page-row arithmetic', () => {
         const sum = groupingSumColumnFromUrl('amount', orders);
         const request = buildGridGroupingRequest(orders, orders.columns[0], [], '', sum);
         expect(request.query).toContain('_sum { amount }');
-        // This fixture is the aggregate result from the SQL-backed server; no page-row arithmetic is involved.
-        expect(readGroupingRowsWithSum({ ordersAggregate: [{ status: 'paid', _count: 2, _sum: { amount: '19.25' } }] }, orders, orders.columns[0], sum))
-            .toMatchObject([{ value: 'paid', count: 2, sum: '19.25' }]);
+        // Equivalent SQL fixture:
+        // SELECT status, COUNT(*), SUM(amount) FROM orders GROUP BY status ORDER BY status.
+        // These values represent the SQL-backed aggregate response, not a page.
+        const aggregateFixture = {
+            ordersAggregate: [
+                { status: null, _count: 1, _sum: { amount: '3.50' } },
+                { status: 'cancelled', _count: 1, _sum: { amount: '2.00' } },
+                { status: 'paid', _count: 2, _sum: { amount: '19.25' } },
+            ],
+        };
+        expect(readGroupingRowsWithSum(aggregateFixture, orders, orders.columns[0], sum)).toEqual([
+            { value: null, count: 1, sum: '3.50' },
+            { value: 'cancelled', count: 1, sum: '2.00' },
+            { value: 'paid', count: 2, sum: '19.25' },
+        ]);
         expect(groupingSumColumnFromUrl('status', orders)).toBeNull();
     });
 
@@ -55,8 +88,8 @@ describe('grid grouping request', () => {
         expect(buildGridGroupMemberRequest(orders, orders.columns[0], '', [], '').variables.filter).toEqual({ status: { _eq: '' } });
     });
 
-    it('maps aggregate result rows rather than summing page rows', () => {
+    it('maps aggregate result rows rather than summing page rows and defines key-ascending group order', () => {
         expect(readGroupingRows({ ordersAggregate: [{ status: 'paid', _count: 42 }, { status: null, _count: 3 }] }, orders, orders.columns[0]))
-            .toEqual([{ value: 'paid', count: 42 }, { value: null, count: 3 }]);
+            .toEqual([{ value: null, count: 3 }, { value: 'paid', count: 42 }]);
     });
 });

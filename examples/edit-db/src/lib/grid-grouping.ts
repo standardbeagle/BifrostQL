@@ -48,6 +48,31 @@ export function groupingSumColumnFromUrl(value: string | null, table: Table | nu
         : null;
 }
 
+/**
+ * Update one of the grouping-owned URL fields without disturbing filters, the
+ * selected profile, or other application-owned state.  The caller receives a
+ * fresh instance so it is safe to use during render/effects as well as event
+ * handlers.
+ */
+export function withGroupingUrlParam(
+    search: URLSearchParams,
+    param: typeof GRID_GROUP_BY_PARAM | typeof GRID_GROUP_SUM_PARAM,
+    value: string | null,
+): URLSearchParams {
+    const next = new URLSearchParams(search);
+    if (value) next.set(param, value);
+    else next.delete(param);
+    return next;
+}
+
+/** Remove grouping state when navigation changes the source table. */
+export function withoutGroupingUrlParams(search: URLSearchParams): URLSearchParams {
+    const next = new URLSearchParams(search);
+    next.delete(GRID_GROUP_BY_PARAM);
+    next.delete(GRID_GROUP_SUM_PARAM);
+    return next;
+}
+
 function asFilter(filters: ColumnFiltersState, table: Table, headerFilter: string): Record<string, unknown> | undefined {
     const clauses: Record<string, unknown>[] = [];
 
@@ -101,18 +126,40 @@ export function buildGridGroupingRequest(
 export function readGroupingRows(data: Record<string, unknown> | undefined, table: Table, groupBy: Column): GroupingRow[] {
     const rows = data?.[`${table.name}Aggregate`];
     if (!Array.isArray(rows)) return [];
+    // Grouped mode has no flat-row header to sort. Its defined sort is the
+    // group key ascending (null bucket first), independent of the flat-grid
+    // sort state. This keeps paging stable and avoids pretending a row sort
+    // applies to an aggregate result.
     return rows.map((row) => {
         const record = row as Record<string, unknown>;
         return { value: record[groupBy.graphQlName], count: Number(record._count ?? 0), sum: undefined };
-    });
+    }).sort(compareGroupingRowsByKey);
+}
+
+/** Defined aggregate ordering for the server-grouped replacement surface. */
+export function compareGroupingRowsByKey(left: GroupingRow, right: GroupingRow): number {
+    if (left.value === right.value) return 0;
+    if (left.value === null || left.value === undefined) return -1;
+    if (right.value === null || right.value === undefined) return 1;
+    if (typeof left.value === 'number' && typeof right.value === 'number') return left.value - right.value;
+    return String(left.value).localeCompare(String(right.value));
 }
 
 /** Reads a selected configured measure without ever deriving it from page rows. */
 export function readGroupingRowsWithSum(data: Record<string, unknown> | undefined, table: Table, groupBy: Column, sumBy: Column | null): GroupingRow[] {
-    const rows = readGroupingRows(data, table, groupBy);
-    if (!sumBy) return rows;
     const raw = data?.[`${table.name}Aggregate`];
-    return rows.map((row, index) => ({ ...row, sum: ((raw as Record<string, unknown>[] | undefined)?.[index]?._sum as Record<string, unknown> | undefined)?.[sumBy.graphQlName] }));
+    if (!Array.isArray(raw)) return [];
+    // Couple each server row to its configured sum before applying the defined
+    // display ordering. Sorting a count-only projection first would associate
+    // a null/key-sorted row with a different raw aggregate index.
+    return raw.map((source) => {
+        const record = source as Record<string, unknown>;
+        return {
+            value: record[groupBy.graphQlName],
+            count: Number(record._count ?? 0),
+            sum: sumBy ? (record._sum as Record<string, unknown> | undefined)?.[sumBy.graphQlName] : undefined,
+        };
+    }).sort(compareGroupingRowsByKey);
 }
 
 /** Schema-derived member query for a single aggregate key. It merges, never replaces, active filters. */

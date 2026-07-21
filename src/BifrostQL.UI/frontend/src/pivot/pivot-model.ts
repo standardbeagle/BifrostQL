@@ -26,6 +26,15 @@ export interface PivotPayload {
   rows: Array<Record<string, unknown> & { cells: Record<string, unknown> }>;
 }
 
+/** A resolved saved visual query that can be represented by the table-pivot API.
+ * Pivot deliberately refuses joins: the server pivot surface accepts one table
+ * plus its table filter, and silently dropping a join would change the result. */
+export interface ResolvedSavedQueryPivotSource {
+  table: string;
+  filter?: Record<string, unknown>;
+  filterType?: string;
+}
+
 export const NULL_PIVOT_LABEL = "(null)";
 const GRAPHQL_NAME = /^[_A-Za-z][_0-9A-Za-z]*$/;
 const aggregateValues: readonly PivotAggregate[] = ["count", "sum", "avg", "min", "max"];

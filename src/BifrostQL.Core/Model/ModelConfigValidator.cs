@@ -13,6 +13,7 @@ using BifrostQL.Core.Modules.Deferred;
 using BifrostQL.Core.Modules.History;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Storage;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.Core.Model
 {
@@ -65,6 +66,7 @@ namespace BifrostQL.Core.Model
                 ValidateRetention(table, errors);
                 ValidateDeferred(table, errors);
                 ValidateApproval(table, errors);
+                ValidateFeed(table, errors);
 
                 var tableRef = $"{table.TableSchema}.{table.DbName}";
                 ValidateMetadataKeyCasing(table.Metadata, MetadataValidator.KnownTableKeys, "table", tableRef, errors);
@@ -1323,6 +1325,130 @@ namespace BifrostQL.Core.Model
         /// missing column would either fail to encrypt (leaking plaintext at rest) or
         /// throw deep in the mutation pipeline on the first write. Reject at model load.
         /// </summary>
+        private static void ValidateFeed(IDbTable table, List<string> errors)
+        {
+            var config = FeedConfig.FromTable(table);
+            var feedKeys = new[]
+            {
+                MetadataKeys.Feed.Timestamp,
+                MetadataKeys.Feed.Title,
+                MetadataKeys.Feed.Body,
+                MetadataKeys.Feed.Link,
+            };
+            var configuredKeys = feedKeys.Where(key => table.Metadata.ContainsKey(key)).ToArray();
+
+            if (configuredKeys.Length == 0)
+                return;
+
+            if (!config.IsEnabled)
+            {
+                errors.Add(Problem(table, MetadataKeys.Feed.Timestamp,
+                    table.GetMetadataValue(MetadataKeys.Feed.Timestamp),
+                    "feed-* metadata requires a non-empty feed-timestamp column to opt the table into publication"));
+                return;
+            }
+
+            if (!table.ColumnLookup.TryGetValue(config.TimestampColumn!, out var timestampColumn))
+            {
+                errors.Add(Problem(table, MetadataKeys.Feed.Timestamp, config.TimestampColumn,
+                    "column does not exist"));
+            }
+            else if (!IsDateTimeType(timestampColumn.EffectiveDataType))
+            {
+                errors.Add(Problem(table, MetadataKeys.Feed.Timestamp, config.TimestampColumn,
+                    $"column '{timestampColumn.ColumnName}' has type '{timestampColumn.EffectiveDataType}'; feed timestamps must be date/time-typed"));
+            }
+
+            if (string.IsNullOrWhiteSpace(config.TitleTemplate))
+            {
+                errors.Add(Problem(table, MetadataKeys.Feed.Title, config.TitleTemplate,
+                    "a feed requires a non-empty title column or {column} template"));
+            }
+            else
+            {
+                ValidateFeedTemplate(table, MetadataKeys.Feed.Title, config.TitleTemplate, true, errors);
+            }
+
+            if (string.IsNullOrWhiteSpace(config.BodyColumn))
+            {
+                errors.Add(Problem(table, MetadataKeys.Feed.Body, config.BodyColumn,
+                    "a feed requires a non-empty body column"));
+            }
+            else
+            {
+                ValidateUnencryptedFeedColumn(table, MetadataKeys.Feed.Body, config.BodyColumn, errors);
+            }
+
+            if (!string.IsNullOrWhiteSpace(config.LinkTemplate))
+                ValidateFeedTemplate(table, MetadataKeys.Feed.Link, config.LinkTemplate, false, errors);
+
+            var primaryKeys = table.KeyColumns.ToArray();
+            if (primaryKeys.Length == 0)
+            {
+                errors.Add(Problem(table, MetadataKeys.Feed.Timestamp, config.TimestampColumn,
+                    "a feed table requires at least one primary-key column so item GUIDs and stable ordering can identify rows"));
+            }
+        }
+
+        private static void ValidateFeedTemplate(
+            IDbTable table, string metadataKey, string template, bool titleTemplate, List<string> errors)
+        {
+            if (FeedConfig.HasMalformedPlaceholders(template))
+            {
+                errors.Add(Problem(table, metadataKey, template,
+                    "template contains malformed placeholders; only schema-derived {column} placeholders are allowed"));
+                return;
+            }
+
+            var placeholders = FeedConfig.GetPlaceholders(template);
+            if (placeholders.Count == 0 && titleTemplate)
+            {
+                // A bare title value is a column shorthand. Other literal text remains a
+                // valid template, but a title must still come from a row.
+                ValidateUnencryptedFeedColumn(table, metadataKey, template, errors);
+                return;
+            }
+
+            foreach (var placeholder in placeholders)
+            {
+                if (!TryGetSchemaColumn(table, placeholder, out var column))
+                {
+                    errors.Add(Problem(table, metadataKey, placeholder,
+                        "template placeholder does not name a schema column"));
+                    continue;
+                }
+
+                if (titleTemplate && !string.IsNullOrWhiteSpace(column.GetMetadataValue(MetadataKeys.Crypto.Encrypt)))
+                {
+                    errors.Add(Problem(table, metadataKey, placeholder,
+                        $"column '{column.ColumnName}' is field-encrypted ('{MetadataKeys.Crypto.Encrypt}'); feed titles must use unencrypted columns"));
+                }
+            }
+        }
+
+        private static void ValidateUnencryptedFeedColumn(IDbTable table, string metadataKey, string columnName, List<string> errors)
+        {
+            if (!table.ColumnLookup.TryGetValue(columnName, out var column))
+            {
+                errors.Add(Problem(table, metadataKey, columnName, "column does not exist"));
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(column.GetMetadataValue(MetadataKeys.Crypto.Encrypt)))
+            {
+                errors.Add(Problem(table, metadataKey, columnName,
+                    $"column '{column.ColumnName}' is field-encrypted ('{MetadataKeys.Crypto.Encrypt}'); feed content must use an unencrypted column"));
+            }
+        }
+
+        private static bool TryGetSchemaColumn(IDbTable table, string name, out ColumnDto column)
+            => table.ColumnLookup.TryGetValue(name, out column!) || table.GraphQlLookup.TryGetValue(name, out column!);
+
+        private static bool IsDateTimeType(string dataType)
+            => StringNormalizer.NormalizeType(dataType) is
+                "date" or "datetime" or "datetime2" or "smalldatetime" or
+                "datetimeoffset" or "time" or "timestamp";
+
         private static void ValidateCrypto(IDbTable table, ColumnDto column, List<string> errors)
         {
             var algorithm = column.GetMetadataValue(MetadataKeys.Crypto.Encrypt);

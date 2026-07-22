@@ -866,6 +866,24 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
+        /// Metadata keys for opt-in table-backed syndication feeds.
+        /// </summary>
+        public static class Feed
+        {
+            /// <summary>Required date/time column that opts a table into feed publication.</summary>
+            public const string Timestamp = "feed-timestamp";
+
+            /// <summary>Title column or a safe <c>{column}</c> title template.</summary>
+            public const string Title = "feed-title";
+
+            /// <summary>Column containing the feed item's body.</summary>
+            public const string Body = "feed-body";
+
+            /// <summary>Optional safe <c>{column}</c> link template.</summary>
+            public const string Link = "feed-link";
+        }
+
+        /// <summary>
         /// Metadata keys for Change Data Capture / outbound domain events. A table
         /// opts in by declaring which mutations emit events; the model names the
         /// transactional outbox table the events are written to. Configured like the

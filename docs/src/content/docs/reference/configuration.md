@@ -185,6 +185,24 @@ consistently.
 | `file-name-column` | column name | column | Column storing original filename |
 | `accept` | MIME pattern | column | Accepted upload MIME types |
 
+### Feed metadata
+
+Opts a table into the syndicated feed surface. A table is not published unless it
+sets `feed-timestamp`; feed metadata without that required opt-in is rejected at
+model load. The table must have one or more primary-key columns (composite keys
+are supported) so every item has a stable GUID and ordering identity.
+
+| Property | Values | Applies to | Description |
+|----------|--------|------------|-------------|
+| `feed-timestamp` | date/time column name | table | **Required opt-in.** Existing date/time column used to order feed items |
+| `feed-title` | column name or `{column}` template | table | **Required.** Title source; referenced columns must exist and be unencrypted |
+| `feed-body` | column name | table | **Required.** Body source; the column must exist and be unencrypted |
+| `feed-link` | `{column}` template | table | Optional item-link template. Placeholders are limited to schema-derived column names |
+
+For example: `dbo.posts { feed-timestamp: published_at; feed-title: {title}; feed-body: body; feed-link: /posts/{slug}; }`.
+Malformed placeholders, unknown `feed-*` keys, empty configuration, and a
+timestamp that is missing or not date/time-typed all fail fast at model load.
+
 ### Chat metadata
 
 Declares a chat schema over user-supplied tables — exactly one conversations table

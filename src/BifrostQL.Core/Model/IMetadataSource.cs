@@ -208,6 +208,12 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Approval.Marker,
             MetadataKeys.Approval.ApproverRole,
             MetadataKeys.Approval.SelfApprove,
+            // Syndication feeds are table-level opt-in. Keep the whole feed-* family
+            // explicit so typos fail at model load instead of quietly publishing nothing.
+            MetadataKeys.Feed.Timestamp,
+            MetadataKeys.Feed.Title,
+            MetadataKeys.Feed.Body,
+            MetadataKeys.Feed.Link,
         };
 
         // Internal for the same reason as KnownTableKeys above (case-casing

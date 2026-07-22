@@ -109,7 +109,7 @@ public class FeedConfigTests
     }
 
     [Fact]
-    public void Validate_FeedMetadataWithoutTimestampAndCompositePrimaryKey_Throw()
+    public void Validate_FeedMetadataWithoutTimestamp_Throws()
     {
         var model = DbModelTestFixture.Create().WithTable("posts", t => t
             .WithSchema("dbo").WithPrimaryKey("tenant_id").WithPrimaryKey("id")
@@ -122,6 +122,20 @@ public class FeedConfigTests
         var act = () => ModelConfigValidator.Validate(model);
 
         act.Should().Throw<InvalidOperationException>().Which.Message
-            .Should().Contain(MetadataKeys.Feed.Timestamp).And.Contain("composite primary key");
+            .Should().Contain(MetadataKeys.Feed.Timestamp);
+    }
+
+    [Fact]
+    public void Validate_CompositePrimaryKey_IsSupported()
+    {
+        var model = DbModelTestFixture.Create().WithTable("posts", t =>
+        {
+            FeedTable(t);
+            t.WithPrimaryKey("tenant_id");
+        }).Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().NotThrow();
     }
 }

@@ -74,6 +74,24 @@ public class FeedConfigTests
             .And.Contain(MetadataKeys.Crypto.Encrypt);
     }
 
+    [Fact]
+    public void Validate_EncryptedFeedLinkPlaceholder_Throws()
+    {
+        var model = DbModelTestFixture.Create().WithTable("posts", t =>
+        {
+            FeedTable(t);
+            t.WithMetadata(MetadataKeys.Feed.Link, "/posts/{slug}");
+            t.WithColumnMetadata("slug", MetadataKeys.Crypto.Encrypt, "aes-256-gcm");
+            t.WithColumnMetadata("slug", MetadataKeys.Crypto.KeyRef, "kms:feed");
+        }).Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>().Which.Message
+            .Should().Contain(MetadataKeys.Feed.Link).And.Contain("slug")
+            .And.Contain(MetadataKeys.Crypto.Encrypt);
+    }
+
     [Theory]
     [InlineData("Post: {missing}")]
     [InlineData("Post: {title")]

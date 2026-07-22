@@ -197,7 +197,7 @@ are supported) so every item has a stable GUID and ordering identity.
 | `feed-timestamp` | date/time column name | table | **Required opt-in.** Existing date/time column used to order feed items |
 | `feed-title` | column name or `{column}` template | table | **Required.** Title source; referenced columns must exist and be unencrypted |
 | `feed-body` | column name | table | **Required.** Body source; the column must exist and be unencrypted |
-| `feed-link` | `{column}` template | table | Optional item-link template. Placeholders are limited to schema-derived column names |
+| `feed-link` | `{column}` template | table | Optional item-link template. Placeholders must name schema-derived, unencrypted columns |
 
 For example: `dbo.posts { feed-timestamp: published_at; feed-title: {title}; feed-body: body; feed-link: /posts/{slug}; }`.
 Malformed placeholders, unknown `feed-*` keys, empty configuration, and a

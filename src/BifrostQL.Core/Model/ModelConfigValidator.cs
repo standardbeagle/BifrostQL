@@ -1418,10 +1418,10 @@ namespace BifrostQL.Core.Model
                     continue;
                 }
 
-                if (titleTemplate && !string.IsNullOrWhiteSpace(column.GetMetadataValue(MetadataKeys.Crypto.Encrypt)))
+                if (!string.IsNullOrWhiteSpace(column.GetMetadataValue(MetadataKeys.Crypto.Encrypt)))
                 {
                     errors.Add(Problem(table, metadataKey, placeholder,
-                        $"column '{column.ColumnName}' is field-encrypted ('{MetadataKeys.Crypto.Encrypt}'); feed titles must use unencrypted columns"));
+                        $"column '{column.ColumnName}' is field-encrypted ('{MetadataKeys.Crypto.Encrypt}'); feed templates must use unencrypted columns"));
                 }
             }
         }

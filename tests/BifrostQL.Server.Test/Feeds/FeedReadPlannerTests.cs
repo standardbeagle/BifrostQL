@@ -162,23 +162,30 @@ namespace BifrostQL.Server.Test.Feeds
         [Fact]
         public async Task Template_expansion_does_not_re_expand_a_placeholder_token_injected_by_a_row_value()
         {
-            var table = FeedTableFixture.Posts();
+            // A MULTI-placeholder template is required for this guard to bite: the first placeholder's
+            // row value injects the LITERAL token of a LATER placeholder in the SAME template. A
+            // sequential String.Replace loop expands {title} first (yielding "evil {slug}"), then its
+            // second pass over {slug} re-expands the injected token into the slug value -> the leak. A
+            // single-pass expander appends the {title} value raw and never re-scans it, so the injected
+            // "{slug}" stays inert. (A single-placeholder template cannot exercise this: with only one
+            // Replace pass there is no later placeholder to re-expand the injected token, which is why
+            // the previous fixture passed even against the pre-fix sequential expander -- vacuous.)
+            var table = FeedTableFixture.PostsWithTitleTemplate("{title} - {slug}");
             var reads = new CapturingReads
             {
                 Rows = new[]
                 {
-                    // The title column value itself contains "{slug}"; a sequential-Replace expander
-                    // would re-expand it into the slug value on a later pass. Single-pass must not.
                     Row(("id", 1), ("published_at", new DateTime(2026, 5, 1, 0, 0, 0, DateTimeKind.Utc)),
-                        ("title", "Injected {slug} token"), ("body", "B"), ("slug", "leaked-slug")),
+                        ("title", "evil {slug}"), ("body", "B"), ("slug", "leaked-slug")),
                 },
             };
 
             var document = await new FeedReadPlanner(reads).BuildAsync(table, new FeedRequest(null, null), Empty(), Options);
 
-            // "Post: {title}" expands title once; the "{slug}" that arrived inside the title value stays
-            // inert literal text instead of resolving to "leaked-slug".
-            document.Items.Single().Title.Should().Be("Post: Injected {slug} token");
+            // Single-pass: {title} -> "evil {slug}" (raw), " - ", {slug} -> "leaked-slug". The "{slug}"
+            // that arrived inside the title value stays literal instead of resolving to "leaked-slug".
+            // A sequential-Replace expander would instead yield "evil leaked-slug - leaked-slug".
+            document.Items.Single().Title.Should().Be("evil {slug} - leaked-slug");
         }
 
         // ---- deterministic item id --------------------------------------------------------------
@@ -310,10 +317,13 @@ namespace BifrostQL.Server.Test.Feeds
         public static IDbTable Posts()
             => Build(keyOrder: new[] { "id" });
 
+        public static IDbTable PostsWithTitleTemplate(string titleTemplate)
+            => Build(keyOrder: new[] { "id" }, titleTemplate: titleTemplate);
+
         public static IDbTable CompositeKeyPosts()
             => Build(keyOrder: new[] { "tenant_id", "id" });
 
-        private static IDbTable Build(string[] keyOrder)
+        private static IDbTable Build(string[] keyOrder, string titleTemplate = "Post: {title}")
         {
             var keySet = new HashSet<string>(keyOrder, StringComparer.Ordinal);
             var columns = new List<ColumnDto>
@@ -331,7 +341,7 @@ namespace BifrostQL.Server.Test.Feeds
             var meta = new Dictionary<string, object?>
             {
                 [MetadataKeys.Feed.Timestamp] = " PUBLISHED_AT ",
-                [MetadataKeys.Feed.Title] = "Post: {title}",
+                [MetadataKeys.Feed.Title] = titleTemplate,
                 [MetadataKeys.Feed.Body] = "body",
                 [MetadataKeys.Feed.Link] = "/posts/{slug}",
             };

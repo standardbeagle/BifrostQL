@@ -22,11 +22,11 @@ so the SDL and the SQL can never disagree.
 ```graphql
 type Query {
   ordersPivot(
-    rowKeys: [ordersColumnEnum!]!
-    pivotColumn: ordersColumnEnum!
-    valueColumn: ordersColumnEnum!
+    rowKeys: [ordersEnum!]!
+    pivotColumn: ordersEnum!
+    valueColumn: ordersEnum!
     aggregate: PivotAggregate! = count
-    filter: ordersFilter
+    filter: TableFilterordersInput
   ): JSON!
 }
 
@@ -40,7 +40,7 @@ enum PivotAggregate { count sum avg min max }
 - **`filter`** — the same filter input the row query accepts.
 
 All four arguments that name a column are **schema-derived enums**
-(`<table>ColumnEnum`), so a caller can never inject an arbitrary identifier into
+(`<table>Enum`), so a caller can never inject an arbitrary identifier into
 the generated SQL.
 
 ### Example

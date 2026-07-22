@@ -20,8 +20,8 @@ and execute through
 ```graphql
 type Query {
   ordersAggregate(
-    filter: ordersFilter
-    groupBy: [ordersColumnEnum!]
+    filter: TableFilterordersInput
+    groupBy: [ordersEnum!]
   ): [orders_aggregate!]!
 }
 
@@ -45,7 +45,7 @@ type orders_aggregateFields {
 ```
 
 - **`groupBy`** takes a list of the schema-derived column enum
-  (`<table>ColumnEnum`), so a caller can never pass a name that is not a real,
+  (`<table>Enum`), so a caller can never pass a name that is not a real,
   visible column.
 - **`_count`** is always available.
 - **`_sum` / `_avg` / `_min` / `_max`** are only emitted when the table has at

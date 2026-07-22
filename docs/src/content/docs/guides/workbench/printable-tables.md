@@ -28,7 +28,9 @@ derived, so interleaved groups cannot split a band.
 
 - **Print CSS** emits a repeating `<thead>` per printed page and
   `page-break-inside: avoid` on band boundaries. Print through `window.print` —
-  the browser and the Photino desktop shell both render Chromium.
+  the report renders in whatever engine hosts the page: a desktop browser, or
+  the platform-native webview the Photino desktop shell embeds (WebView2/Chromium
+  on Windows, WebKitGTK on Linux, WKWebView/WebKit on macOS).
 - **CSV export** flattens the full result set across every page (via paged
   fetch), so the exported row count and cell values match what a full scroll
   would show — see [export](/BifrostQL/guides/workbench/export/).

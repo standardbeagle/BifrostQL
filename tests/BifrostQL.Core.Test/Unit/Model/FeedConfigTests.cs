@@ -30,7 +30,7 @@ public class FeedConfigTests
     [Fact]
     public void Validate_ValidFeedWithNormalizedTimestamp_DoesNotThrow()
     {
-        var model = DbModelTestFixture.Create().WithTable("posts", FeedTable).Build();
+        var model = DbModelTestFixture.Create().WithTable("posts", t => FeedTable(t)).Build();
 
         var act = () => ModelConfigValidator.Validate(model);
 

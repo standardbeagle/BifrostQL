@@ -20,6 +20,7 @@
     "check": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "perf": "tsc && node perf/aggregate-transport-perf.mjs",
     "coverage": "vitest run --coverage"
   },
   "dependencies": {

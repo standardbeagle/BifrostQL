@@ -25,6 +25,7 @@ namespace BifrostQL.Server.Test.Feeds
             Title = "My Feed",
             Link = "https://example.test/feed",
             Description = "A test feed",
+            Author = "Feed Operator",
         };
 
         // ---- query shape / projection -----------------------------------------------------------
@@ -155,6 +156,7 @@ namespace BifrostQL.Server.Test.Feeds
             item.Timestamp.Should().Be(new DateTime(2026, 5, 1, 0, 0, 0, DateTimeKind.Utc));
             document.Updated.Should().Be(item.Timestamp);
             document.Title.Should().Be(Options.Title);
+            document.Author.Should().Be(Options.Author);
         }
 
         // ---- deterministic item id --------------------------------------------------------------

@@ -15,6 +15,11 @@ namespace BifrostQL.Server.Feeds
     {
         private const string AtomNamespace = "http://www.w3.org/2005/Atom";
 
+        // An empty feed has no item to date the feed from. A wall-clock fallback (DateTime.UtcNow)
+        // would make every scrape of an empty feed differ, defeating conditional-GET / caching, so the
+        // fallback is a fixed deterministic instant (Unix epoch) instead.
+        private static readonly DateTime EmptyFeedUpdated = DateTime.UnixEpoch;
+
         public static string Write(FeedDocument document)
         {
             ArgumentNullException.ThrowIfNull(document);
@@ -31,10 +36,13 @@ namespace BifrostQL.Server.Feeds
                 writer.WriteStartDocument();
                 writer.WriteStartElement("feed", AtomNamespace);
 
-                // Required Atom feed fields: id, title, updated.
+                // Required Atom feed fields: id, title, updated, author (RFC 4287 §4.1.1).
                 writer.WriteElementString("id", AtomNamespace, document.FeedId);
                 writer.WriteElementString("title", AtomNamespace, document.Title);
-                writer.WriteElementString("updated", AtomNamespace, Rfc3339(document.Updated ?? DateTime.UtcNow));
+                writer.WriteElementString("updated", AtomNamespace, Rfc3339(document.Updated ?? EmptyFeedUpdated));
+                writer.WriteStartElement("author", AtomNamespace);
+                writer.WriteElementString("name", AtomNamespace, document.Author);
+                writer.WriteEndElement(); // author
                 WriteLink(writer, "self", document.Link);
 
                 foreach (var item in document.Items)

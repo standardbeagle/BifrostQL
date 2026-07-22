@@ -208,6 +208,7 @@ namespace BifrostQL.Server.Feeds
                 Title = options.Title,
                 Link = options.Link,
                 Description = options.Description,
+                Author = options.Author,
                 FeedId = options.Link,
                 Updated = items.Count > 0 ? items.Max(item => item.Timestamp) : null,
                 Items = items,

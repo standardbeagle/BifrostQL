@@ -15,6 +15,13 @@ namespace BifrostQL.Server.Feeds
         /// <summary>The feed's self/site link. Operator-supplied.</summary>
         public required string Link { get; init; }
 
+        /// <summary>
+        /// The feed-level author name (Atom <c>&lt;author&gt;&lt;name&gt;</c>). RFC 4287 §4.1.1 requires
+        /// an author at the feed level (or on every entry); the writer emits it at the feed level.
+        /// Operator-supplied trusted text — the writer still XML-escapes it.
+        /// </summary>
+        public required string Author { get; init; }
+
         /// <summary>Channel description (RSS). May be null for Atom-only use.</summary>
         public string? Description { get; init; }
 

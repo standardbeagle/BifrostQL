@@ -20,6 +20,7 @@ namespace BifrostQL.Server.Test.Feeds
             Title = "Example Feed",
             Link = "https://example.test/feed",
             Description = "An example feed",
+            Author = "Example Author",
             FeedId = "https://example.test/feed",
             Updated = new DateTime(2026, 5, 1, 12, 0, 0, DateTimeKind.Utc),
             Items = items,
@@ -74,6 +75,8 @@ namespace BifrostQL.Server.Test.Feeds
             feed.Element(Atom + "id")!.Value.Should().Be("https://example.test/feed");
             feed.Element(Atom + "title")!.Value.Should().Be("Example Feed");
             feed.Element(Atom + "updated").Should().NotBeNull();
+            // RFC 4287 §4.1.1: a feed-level atom:author with a name.
+            feed.Element(Atom + "author")!.Element(Atom + "name")!.Value.Should().Be("Example Author");
 
             var entry = feed.Element(Atom + "entry")!;
             entry.Element(Atom + "id")!.Value.Should().Be("urn:uuid:11111111-2222-3333-4444-555555555555");
@@ -132,6 +135,56 @@ namespace BifrostQL.Server.Test.Feeds
             var atomEntry = atom.Root!.Element(Atom + "entry")!;
             atomEntry.Element(Atom + "content").Should().BeNull();
             atomEntry.Elements(Atom + "link").Should().BeEmpty();
+        }
+
+        // ---- feed-level author (RFC 4287 §4.1.1) ------------------------------------------------
+
+        [Fact]
+        public void Atom_escapes_a_hostile_author_value_and_stays_well_formed()
+        {
+            var document = new FeedDocument
+            {
+                Title = "Example Feed",
+                Link = "https://example.test/feed",
+                Description = "An example feed",
+                Author = Hostile,
+                FeedId = "https://example.test/feed",
+                Updated = new DateTime(2026, 5, 1, 12, 0, 0, DateTimeKind.Utc),
+                Items = new[] { Item() },
+            };
+
+            var xml = AtomFeedWriter.Write(document);
+
+            // A hostile author value round-trips as inert escaped text — no injected element, no break-out.
+            var doc = XDocument.Parse(xml);
+            doc.Root!.Element(Atom + "author")!.Element(Atom + "name")!.Value.Should().Be(Hostile);
+            doc.Descendants("script").Should().BeEmpty();
+            xml.Should().NotContain("<script>");
+            xml.Should().NotContain("<![CDATA[");
+        }
+
+        // ---- empty feed: deterministic updated (conditional-GET stability) -----------------------
+
+        [Fact]
+        public void Atom_empty_feed_updated_is_deterministic_across_writes()
+        {
+            var empty = new FeedDocument
+            {
+                Title = "Example Feed",
+                Link = "https://example.test/feed",
+                Description = "An example feed",
+                Author = "Example Author",
+                FeedId = "https://example.test/feed",
+                Updated = null, // empty feed: no item to date from
+                Items = Array.Empty<FeedItem>(),
+            };
+
+            var first = XDocument.Parse(AtomFeedWriter.Write(empty)).Root!.Element(Atom + "updated")!.Value;
+            var second = XDocument.Parse(AtomFeedWriter.Write(empty)).Root!.Element(Atom + "updated")!.Value;
+
+            // A wall-clock fallback would differ per scrape and break conditional GET; it must be fixed.
+            second.Should().Be(first);
+            first.Should().Be("1970-01-01T00:00:00Z");
         }
     }
 }

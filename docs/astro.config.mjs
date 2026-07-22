@@ -79,6 +79,7 @@ export default defineConfig({
 						{ label: 'S3-Compatible Object Endpoint', slug: 'guides/s3' },
 						{ label: 'gRPC Endpoint', slug: 'guides/grpc' },
 						{ label: 'Prometheus Metrics Endpoint', slug: 'guides/prometheus' },
+						{ label: 'Syndication Feeds (RSS & Atom)', slug: 'guides/feeds' },
 						{ label: 'React Native', slug: 'guides/react-native' },
 						{ label: 'WordPress', slug: 'guides/wordpress' },
 					],

@@ -233,10 +233,41 @@ namespace BifrostQL.Server.Feeds
             if (placeholders.Length == 0)
                 return isTitle ? ColumnValue(table, template, row) : template;
 
-            var expanded = template;
-            foreach (var name in placeholders)
-                expanded = expanded.Replace("{" + name + "}", ColumnValue(table, name, row) ?? string.Empty, StringComparison.Ordinal);
-            return expanded;
+            // Single-pass expansion: scan the template once, substituting each placeholder as it is
+            // reached. A substituted row value is appended straight to the output and is never
+            // re-scanned, so a row value that itself contains "{another-placeholder}" stays inert
+            // literal text instead of being re-expanded (a sequential String.Replace loop would let a
+            // value injected by an earlier placeholder be re-expanded by a later one).
+            var valid = new HashSet<string>(placeholders, StringComparer.Ordinal);
+            var expanded = new StringBuilder(template.Length);
+            var cursor = 0;
+            while (cursor < template.Length)
+            {
+                var open = template.IndexOf('{', cursor);
+                if (open < 0)
+                {
+                    expanded.Append(template, cursor, template.Length - cursor);
+                    break;
+                }
+
+                var close = template.IndexOf('}', open + 1);
+                if (close < 0)
+                {
+                    expanded.Append(template, cursor, template.Length - cursor);
+                    break;
+                }
+
+                expanded.Append(template, cursor, open - cursor);
+                var name = template.Substring(open + 1, close - open - 1);
+                if (valid.Contains(name))
+                    expanded.Append(ColumnValue(table, name, row) ?? string.Empty);
+                else
+                    expanded.Append(template, open, close - open + 1); // not a grammar placeholder: literal
+
+                cursor = close + 1;
+            }
+
+            return expanded.ToString();
         }
 
         private static IEnumerable<string> TemplateColumns(IDbTable table, string? template, bool isTitle)

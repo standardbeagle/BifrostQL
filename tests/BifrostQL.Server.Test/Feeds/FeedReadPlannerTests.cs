@@ -159,6 +159,28 @@ namespace BifrostQL.Server.Test.Feeds
             document.Author.Should().Be(Options.Author);
         }
 
+        [Fact]
+        public async Task Template_expansion_does_not_re_expand_a_placeholder_token_injected_by_a_row_value()
+        {
+            var table = FeedTableFixture.Posts();
+            var reads = new CapturingReads
+            {
+                Rows = new[]
+                {
+                    // The title column value itself contains "{slug}"; a sequential-Replace expander
+                    // would re-expand it into the slug value on a later pass. Single-pass must not.
+                    Row(("id", 1), ("published_at", new DateTime(2026, 5, 1, 0, 0, 0, DateTimeKind.Utc)),
+                        ("title", "Injected {slug} token"), ("body", "B"), ("slug", "leaked-slug")),
+                },
+            };
+
+            var document = await new FeedReadPlanner(reads).BuildAsync(table, new FeedRequest(null, null), Empty(), Options);
+
+            // "Post: {title}" expands title once; the "{slug}" that arrived inside the title value stays
+            // inert literal text instead of resolving to "leaked-slug".
+            document.Items.Single().Title.Should().Be("Post: Injected {slug} token");
+        }
+
         // ---- deterministic item id --------------------------------------------------------------
 
         [Fact]

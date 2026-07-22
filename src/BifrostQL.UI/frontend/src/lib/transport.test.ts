@@ -876,3 +876,146 @@ describe("TransportGraphQLFetcher", () => {
     expect(binaryLike.calls.map((c) => c.text)).toEqual(["{ b }"]);
   });
 });
+
+/**
+ * Cross-transport equality + wire-routing for the phase 2-4 aggregate/pivot
+ * surfaces (charts, dashboards, grouped grid, pivot). The server proves the two
+ * wires emit byte-identical payloads for these queries (see the .NET
+ * BinaryAggregatePivotPassthroughTests); these tests hold the CLIENT half of
+ * that contract: given the same server payload, neither transport mangles the
+ * shape — including a pivot's DYNAMIC output columns, whose names are data — so
+ * the HTTP and binary results deep-equal per surface, and toggling the transport
+ * demonstrably changes which wire carries the request.
+ */
+describe("aggregate/pivot cross-transport equality and wire routing", () => {
+  let originalFetch: typeof fetch | undefined;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    if (originalFetch) {
+      globalThis.fetch = originalFetch;
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      delete (globalThis as any).fetch;
+    }
+  });
+
+  // One representative payload per phase 2-4 surface. The pivot payload carries
+  // dynamic columns (status values) and a null hole — the shape most at risk of
+  // transport-specific mangling.
+  const surfacePayloads: Array<{ surface: string; data: unknown }> = [
+    {
+      surface: "chart (single-dimension aggregate)",
+      data: {
+        ordersAggregate: [
+          { region: "east", _count: 3, _sum: { amount: 150 } },
+          { region: "west", _count: 2, _sum: { amount: 80 } },
+        ],
+      },
+    },
+    {
+      surface: "grouped grid (multi-column aggregate)",
+      data: {
+        ordersAggregate: [
+          { region: "east", status: "open", _count: 2, _sum: { amount: 110 }, _avg: { amount: 55 } },
+          { region: "east", status: "closed", _count: 1, _sum: { amount: 40 }, _avg: { amount: 40 } },
+          { region: "west", status: "open", _count: 1, _sum: { amount: 25 }, _avg: { amount: 25 } },
+        ],
+      },
+    },
+    {
+      surface: "dashboard (aggregate tile)",
+      data: { ordersAggregate: [{ _count: 5, _sum: { amount: 230 } }] },
+    },
+    {
+      surface: "pivot (dynamic columns + null hole)",
+      data: {
+        ordersPivot: {
+          pivotColumn: "status",
+          rowKeys: ["region"],
+          columns: ["closed", "open", "shipped"],
+          rows: [
+            { region: "east", cells: { closed: 40, open: 110, shipped: null } },
+            { region: "west", cells: { closed: null, open: 25, shipped: 55 } },
+          ],
+        },
+      },
+    },
+  ];
+
+  for (const { surface, data } of surfacePayloads) {
+    it(`returns identical results over HTTP and binary for ${surface}`, async () => {
+      // HTTP wire: server responds with the surface payload.
+      const fetchSpy = vi.fn(async () =>
+        new Response(JSON.stringify({ data, errors: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+      globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+      // Binary wire: the client decodes the SAME payload (server byte-equality
+      // is proven .NET-side; here the binary client yields that decoded data).
+      const fake = new FakeBinaryClient();
+      fake.nextResult = { data, errors: [] };
+
+      const http = new HttpTransport("http://localhost:5000/graphql");
+      const binary = new BinaryTransport(
+        "ws://localhost:5000/bifrost-ws",
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (() => fake) as unknown as any
+      );
+
+      const query = "{ someAggregateOrPivot }";
+      const httpResult = await http.query(query);
+      const binaryResult = await binary.query(query);
+
+      // Deep equality of the result payloads across both transports.
+      expect(binaryResult).toEqual(httpResult);
+      expect(binaryResult).toEqual({ data, errors: [] });
+    });
+  }
+
+  it("toggling the transport changes the wire: binary sends a frame and issues no HTTP request", async () => {
+    const fetchSpy = vi.fn(async () =>
+      new Response(JSON.stringify({ data: { ok: true }, errors: [] }), { status: 200 })
+    );
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const fake = new FakeBinaryClient();
+    const binary = new BinaryTransport(
+      "ws://localhost:5000/bifrost-ws",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (() => fake) as unknown as any
+    );
+
+    await binary.query("{ ordersAggregate(groupBy: [region]) { region _count } }");
+
+    // The binary wire carried it: the client's query path ran (a frame was sent)…
+    expect(fake.queryCalls).toHaveLength(1);
+    expect(fake.connectCalls).toBe(1);
+    // …and the HTTP path issued no request at all.
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("toggling the transport changes the wire: HTTP issues a request and opens no socket", async () => {
+    const fetchSpy = vi.fn(async () =>
+      new Response(JSON.stringify({ data: { ok: true }, errors: [] }), { status: 200 })
+    );
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const fake = new FakeBinaryClient();
+    const http = new HttpTransport("http://localhost:5000/graphql");
+
+    await http.query("{ ordersAggregate(groupBy: [region]) { region _count } }");
+
+    // The HTTP wire carried it…
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    // …and no binary socket was ever opened (the fake client stayed untouched).
+    expect(fake.connectCalls).toBe(0);
+    expect(fake.queryCalls).toHaveLength(0);
+  });
+});

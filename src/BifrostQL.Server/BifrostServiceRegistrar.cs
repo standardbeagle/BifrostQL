@@ -495,6 +495,16 @@ namespace BifrostQL.Server
             // its own factory before AddBifrostQL runs.
             services.TryAddSingleton<IBifrostAuthContextFactory, BifrostAuthContextFactory>();
 
+            // The feed front-door identity seam (slice 4 mounts the endpoint over it). It resolves the
+            // shared auth factory and the OPTIONAL host-supplied IFeedCredentialStore, so feed identity
+            // — Bearer or scoped token — projects through the same fail-closed seam every other
+            // transport gate uses. The store is deliberately optional: a deployment that registers none
+            // accepts only Bearer identities and every scoped-token feed request fails closed with 401.
+            services.TryAddSingleton(sp => new BifrostQL.Server.Feeds.FeedAuthenticator(
+                sp.GetRequiredService<IBifrostAuthContextFactory>(),
+                sp.GetService<BifrostQL.Server.Feeds.IFeedCredentialStore>(),
+                sp.GetService<ILogger<BifrostQL.Server.Feeds.FeedAuthenticator>>()));
+
             services.AddGraphQL(b => b
                     .AddSystemTextJson()
                     .AddComplexityAnalyzer(c => GraphQlComplexityLimits.Apply(c, maxDepth, maxComplexity))

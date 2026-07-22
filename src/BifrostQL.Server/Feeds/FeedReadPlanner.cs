@@ -90,6 +90,9 @@ namespace BifrostQL.Server.Feeds
     public sealed class FeedReadPlanner
     {
         // A fixed namespace so item ids are RFC-4122 v5 (name-based) and stable across processes.
+        // FROZEN FOREVER: every feed item id is derived from this GUID; changing its value silently
+        // re-keys every previously published item id in every consumer's cache/history. It is part of
+        // the durable wire contract — never edit it.
         private static readonly Guid FeedNamespace = new("6f2d5e1a-3b7c-4f9a-8c2e-1d0b9a7c6e50");
 
         private readonly IQueryIntentExecutor _reads;

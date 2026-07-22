@@ -241,6 +241,62 @@ namespace BifrostQL.Server.Test.Feeds
             await act.Should().ThrowAsync<FeedException>();
         }
 
+        // ---- provider-sourced string timestamps (SQLite TEXT storage class) ----------------------
+
+        [Theory]
+        [InlineData("2026-05-01T00:00:00Z")]  // ISO-8601 with a zone designator
+        [InlineData("2026-05-01 00:00:00")]   // SQLite "yyyy-MM-dd HH:mm:ss" TEXT form, no zone
+        public async Task Item_parses_a_string_timestamp_as_utc(string stored)
+        {
+            // A provider such as SQLite hands a datetime column back as a TEXT storage class — i.e. a
+            // System.String, not a DateTime. The planner must parse it to the SAME UTC instant the
+            // DateTime path yields, treating a zone-less value as already-UTC. Without this the whole
+            // SQLite feed fails to render (blocker: FeedException "unsupported type 'String'").
+            var table = FeedTableFixture.Posts();
+            var reads = new CapturingReads
+            {
+                Rows = new[] { Row(("id", 1), ("published_at", stored), ("title", "T"), ("body", "B"), ("slug", "s")) },
+            };
+
+            var document = await new FeedReadPlanner(reads).BuildAsync(table, new FeedRequest(null, null), Empty(), Options);
+
+            document.Items.Single().Timestamp.Should().Be(new DateTime(2026, 5, 1, 0, 0, 0, DateTimeKind.Utc));
+            document.Items.Single().Timestamp.Kind.Should().Be(DateTimeKind.Utc);
+        }
+
+        [Fact]
+        public async Task Item_guid_is_identical_whether_the_timestamp_arrives_as_string_or_datetime()
+        {
+            // Cross-provider id stability: the same instant sourced as a SQLite TEXT string and as a CLR
+            // DateTime must canonicalize identically, or an item id would DRIFT when the same table is
+            // served over a different provider — silently re-keying every consumer's dedupe/history.
+            var table = FeedTableFixture.Posts();
+            var instant = new DateTime(2026, 5, 1, 0, 0, 0, DateTimeKind.Utc);
+
+            var fromString = await GuidFor(table,
+                Row(("id", 42), ("published_at", "2026-05-01T00:00:00Z"), ("title", "T"), ("body", "B"), ("slug", "s")));
+            var fromDateTime = await GuidFor(table,
+                Row(("id", 42), ("published_at", instant), ("title", "T"), ("body", "B"), ("slug", "s")));
+
+            fromString.Should().Be(fromDateTime);
+        }
+
+        [Fact]
+        public async Task Item_fails_safely_on_an_unparseable_string_timestamp()
+        {
+            // A non-timestamp TEXT value must fail closed (throw), never silently emit an item with an
+            // ambiguous date — same fail-safe posture as a null/unsupported-type timestamp.
+            var table = FeedTableFixture.Posts();
+            var reads = new CapturingReads
+            {
+                Rows = new[] { Row(("id", 1), ("published_at", "not-a-timestamp"), ("title", "T"), ("body", "B"), ("slug", "s")) },
+            };
+
+            var act = () => new FeedReadPlanner(reads).BuildAsync(table, new FeedRequest(null, null), Empty(), Options);
+
+            await act.Should().ThrowAsync<FeedException>();
+        }
+
         // ---- request parsing (invariant 5) ------------------------------------------------------
 
         [Fact]

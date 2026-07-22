@@ -377,9 +377,30 @@ namespace BifrostQL.Server.Feeds
             {
                 DateTime dt => (dt.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(dt, DateTimeKind.Utc) : dt).ToUniversalTime(),
                 DateTimeOffset dto => dto.UtcDateTime,
+                // A provider that surfaces a datetime column as its TEXT storage class (SQLite hands back
+                // System.String, not DateTime) still has to yield the same UTC instant the DateTime path
+                // does, so the id/timestamp canonicalization is provider-independent. A zone-less value
+                // (SQLite's "yyyy-MM-dd HH:mm:ss") is treated as already-UTC; an ISO value carrying a zone
+                // is normalized to UTC. An unparseable string fails closed like a null/unsupported value.
+                string s => ParseTimestampString(s, timestampColumn.DbName),
                 _ => throw new FeedException(
                     $"Feed timestamp column '{timestampColumn.DbName}' has unsupported type '{value.GetType().Name}'."),
             };
+        }
+
+        private static DateTime ParseTimestampString(string value, string column)
+        {
+            try
+            {
+                return DateTimeOffset.Parse(
+                    value, CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal).UtcDateTime;
+            }
+            catch (Exception ex) when (ex is FormatException or OverflowException or ArgumentException)
+            {
+                throw new FeedException(
+                    $"Feed timestamp column '{column}' has an unparseable string value.");
+            }
         }
 
         private static string Stringify(object value) => value switch

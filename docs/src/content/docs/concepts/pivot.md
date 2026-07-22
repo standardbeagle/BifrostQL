@@ -1,40 +1,92 @@
 ---
-title: "Pivot queries (potential — not on the roadmap)"
-description: "Cross-tab pivot SQL generation exists as a standalone helper. The GraphQL surface is intentionally not wired."
+title: "Pivot / Cross-Tab Queries"
+description: "Turn a long-form table into a cross-tab through the schema-generated <table>Pivot GraphQL field — server-side pivoting across all four SQL dialects, with a distinct-value cardinality cap."
 ---
 
-:::caution[Status]
-**Potential feature. Not on the roadmap.** The helper is shipped and unit-tested across all four dialects, but there is no GraphQL field that triggers it and no resolver that consumes it. Calls only go through the helper API directly.
-:::
+BifrostQL exposes a **pivot (cross-tab)** query for every table through a
+schema-generated root field, `<table>Pivot`. The server does all of the
+pivoting — it discovers the distinct pivot-column values, generates a
+parameterized cross-tab, and returns the result. The client never cross-tabs
+fetched rows itself.
 
-BifrostQL ships `BifrostQL.Core.QueryModel.PivotSqlGenerator`, a static helper that turns a [`PivotQueryConfig`](https://github.com/standardbeagle/BifrostQL/blob/main/src/BifrostQL.Core/QueryModel/PivotQueryConfig.cs) into parameterized cross-tab SQL. It supports SQL Server's native `PIVOT` operator and a portable `CASE WHEN` fallback for every other dialect.
+Under the hood the field routes through
+[`PivotSqlGenerator.GeneratePivot`](https://github.com/standardbeagle/BifrostQL/blob/main/src/BifrostQL.Core/QueryModel/PivotSqlGenerator.cs),
+which uses SQL Server's native `PIVOT` operator where available and a portable
+`CASE WHEN` cross-tab on every other dialect. The field name and aggregate-function
+enum come from a single source of truth,
+[`PivotSurface`](https://github.com/standardbeagle/BifrostQL/blob/main/src/BifrostQL.Core/Schema/PivotSurface.cs),
+so the SDL and the SQL can never disagree.
 
-## What works today
+## The `<table>Pivot` field
 
-| Capability | State |
-|---|---|
-| `PivotQueryConfig.Create` validation | shipped |
-| SQL Server native `PIVOT (... FOR ... IN (...))` | shipped, unit-tested |
-| Engine-agnostic `CASE WHEN` cross-tab | shipped, unit-tested |
-| `ISqlDialect.SupportsNativePivot` dispatch | shipped, unit-tested |
-| `PivotSqlGenerator.GeneratePivot(dialect, ...)` entry point | shipped |
-| `GraphQL` field that returns pivot results | **not implemented** |
-| End-to-end tests against real DB engines | **not implemented** |
+```graphql
+type Query {
+  ordersPivot(
+    rowKeys: [ordersColumnEnum!]!
+    pivotColumn: ordersColumnEnum!
+    valueColumn: ordersColumnEnum!
+    aggregate: PivotAggregate! = count
+    filter: ordersFilter
+  ): JSON!
+}
 
-## What's intentionally missing
+enum PivotAggregate { count sum avg min max }
+```
 
-No `_pivot(...)` field is emitted by the schema generator. No resolver consumes the helper's `ParameterizedSql`. No `ReaderEnum` branch shapes pivot rows into a GraphQL response. The two-pass flow (`GenerateDistinctValuesSql` to enumerate pivot columns, then `GeneratePivot` to project) has no orchestrator.
+- **`rowKeys`** — one or more columns that form the stable left-hand row group.
+- **`pivotColumn`** — the column whose distinct values become output columns.
+- **`valueColumn`** — the column the aggregate is computed over.
+- **`aggregate`** — `count` (default), `sum`, `avg`, `min`, or `max`.
+- **`filter`** — the same filter input the row query accepts.
 
-That gap is deliberate. Pivot is a wide, low-cardinality shape that doesn't fit the per-row resolver pattern BifrostQL was built around, and the design questions — how does pivot interact with paging, filters, joins, security policies, the aggregate-value type — haven't been answered.
+All four arguments that name a column are **schema-derived enums**
+(`<table>ColumnEnum`), so a caller can never inject an arbitrary identifier into
+the generated SQL.
 
-## If you need pivot today
+### Example
 
-Three viable paths in priority order:
+Cross-tab total order `amount` by `region` (rows) against `quarter` (columns):
 
-1. **Use `_agg(value: { joinTable: { column: ... } } operation: ...)`** — for the common "group X by Y and aggregate Z" case, the aggregate path already returns one row per group through a normal GraphQL resolver. See [`docs/research/agg-dialect-survey.md`](https://github.com/standardbeagle/BifrostQL/blob/main/docs/research/agg-dialect-survey.md).
-2. **Call `PivotSqlGenerator` from a custom resolver in your host** — the helper is public; a module or middleware can build a `ParameterizedSql` and execute it against the `IDbConnFactory`. The output shape and contract are entirely yours.
-3. **Pivot in the client** — for low-cardinality pivots, pulling the long-form aggregate and pivoting in TypeScript/SQL keeps the GraphQL contract narrow.
+```graphql
+{
+  ordersPivot(
+    rowKeys: [region]
+    pivotColumn: quarter
+    valueColumn: amount
+    aggregate: sum
+  )
+}
+```
 
-## If you want to drive pivot onto the roadmap
+The result is a `JSON!` scalar: a list of row objects, each carrying its row-key
+values plus one field per distinct pivot value.
 
-The unblock work is captured in [`docs/research/pivot-dialect-survey.md`](https://github.com/standardbeagle/BifrostQL/blob/main/docs/research/pivot-dialect-survey.md). Open an issue with a concrete use case before opening a PR — the surface design needs to be settled first.
+## Security: distinct-value discovery is filtered
+
+The subtle correctness property of a server-side pivot is that the *column
+headers* — the distinct pivot-column values — must not leak rows the caller
+cannot see. The resolver runs the tenant-isolation and soft-delete filter
+transformers **before** the distinct-value discovery query, so a cross-tenant
+pivot value never appears as an output column. This is the same fail-closed
+filter path the row and [aggregate](/BifrostQL/guides/aggregate-queries/) queries
+use. All identifiers are schema-derived and all values are parameterized.
+
+## Cardinality cap
+
+A pivot expands one output column per distinct pivot value, so an unbounded
+pivot column would generate a runaway-wide result set and SQL statement. The
+resolver caps the number of distinct pivot-column values
+(`PivotSurface.DefaultMaxPivotColumns`, default **100**). Above the cap it
+**errors with steering** rather than truncating — a truncated pivot would
+silently drop columns and misrepresent the data. Add a `filter` to narrow the
+pivot column, or choose a lower-cardinality column.
+
+`NULL` pivot values render as their own explicitly labeled category, distinct
+from the empty string.
+
+## Related
+
+- [Aggregate queries](/BifrostQL/guides/aggregate-queries/) — the `GROUP BY`
+  companion surface for one row per group.
+- [Pivot UI](/BifrostQL/guides/workbench/pivot-ui/) — the drag-and-drop pivot
+  designer in the desktop workbench that drives this field.

@@ -34,6 +34,7 @@ export default defineConfig({
 						{ label: 'Computed Columns & Validation', slug: 'concepts/computed-columns-and-validation' },
 						{ label: 'Lookup-Table Enums', slug: 'concepts/lookup-table-enums' },
 						{ label: 'Pivot / Cross-Tab', slug: 'concepts/pivot' },
+						{ label: 'Saved Objects', slug: 'concepts/saved-objects' },
 						{ label: 'EAV & the _meta Field', slug: 'concepts/eav-meta' },
 						{ label: 'App Schema Detection', slug: 'concepts/app-schema-detection' },
 						{ label: 'App Metadata Overlay', slug: 'concepts/app-metadata-overlay' },
@@ -49,6 +50,7 @@ export default defineConfig({
 					label: 'Guides',
 					items: [
 						{ label: 'Queries', slug: 'guides/queries' },
+						{ label: 'Aggregate Queries (GROUP BY)', slug: 'guides/aggregate-queries' },
 						{ label: 'Joins', slug: 'guides/joins' },
 						{ label: 'Full-Text Search', slug: 'guides/full-text-search' },
 						{ label: 'Mutations', slug: 'guides/mutations' },
@@ -99,6 +101,22 @@ export default defineConfig({
 						{ label: 'Desktop App', slug: 'guides/desktop-app' },
 						{ label: 'Visual Query Builder', slug: 'concepts/visual-query-builder' },
 						{ label: 'Hosted SPA / API Mode', slug: 'guides/hosted-spa' },
+					],
+				},
+				{
+					label: 'Data Workbench',
+					items: [
+						{ label: 'Overview', slug: 'guides/workbench' },
+						{ label: 'Saved Queries', slug: 'guides/workbench/saved-queries' },
+						{ label: 'Forms & Subforms', slug: 'guides/workbench/forms' },
+						{ label: 'Tabular Reports', slug: 'guides/workbench/printable-tables' },
+						{ label: 'SQL Editor', slug: 'guides/workbench/sql-editor' },
+						{ label: 'ER Diagram', slug: 'guides/workbench/erd' },
+						{ label: 'Export Everywhere', slug: 'guides/workbench/export' },
+						{ label: 'Chart Panel', slug: 'guides/workbench/charts' },
+						{ label: 'Pivot UI', slug: 'guides/workbench/pivot-ui' },
+						{ label: 'Dashboards', slug: 'guides/workbench/dashboards' },
+						{ label: 'Grid Grouping', slug: 'guides/workbench/grouping' },
 					],
 				},
 				{

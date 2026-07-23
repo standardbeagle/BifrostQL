@@ -1,3 +1,4 @@
+using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 
 namespace BifrostQL.SqlServer;
@@ -166,6 +167,56 @@ public sealed class SqlServerDialect : SqlDialectBase
     /// </remarks>
     public override string EscapeLikeValue(string value) =>
         base.EscapeLikeValue(value).Replace("[", "\\[");
+
+    /// <summary>SQL Server's <c>DATEADD</c>/<c>DATEDIFF</c>/<c>DATEPART</c> datepart keyword.</summary>
+    private static string DatePartKeyword(DateUnit unit) => unit switch
+    {
+        DateUnit.Year => "year",
+        DateUnit.Month => "month",
+        DateUnit.Day => "day",
+        DateUnit.Hour => "hour",
+        DateUnit.Minute => "minute",
+        DateUnit.Second => "second",
+        _ => throw new ArgumentOutOfRangeException(nameof(unit), unit, null)
+    };
+
+    /// <inheritdoc />
+    /// <remarks><c>DATEADD(day, &lt;amount&gt;, &lt;source&gt;)</c>. The amount lowers to a bound
+    /// parameter; the datepart is a T-SQL keyword, never client text.</remarks>
+    protected override string LowerDateAdd(SqlExpr.DateAdd node, IDbTable table, SqlParameterCollection parameters)
+    {
+        var amount = LowerExpression(node.Amount, table, parameters);
+        var source = LowerExpression(node.Source, table, parameters);
+        return $"DATEADD({DatePartKeyword(node.Unit)}, {amount}, {source})";
+    }
+
+    /// <inheritdoc />
+    /// <remarks><c>DATEDIFF(day, &lt;start&gt;, &lt;end&gt;)</c> — native for every unit, including
+    /// whole months/years.</remarks>
+    protected override string LowerDateDiff(SqlExpr.DateDiff node, IDbTable table, SqlParameterCollection parameters)
+    {
+        var start = LowerExpression(node.Start, table, parameters);
+        var end = LowerExpression(node.End, table, parameters);
+        return $"DATEDIFF({DatePartKeyword(node.Unit)}, {start}, {end})";
+    }
+
+    /// <inheritdoc />
+    /// <remarks><c>DATEPART(year, &lt;source&gt;)</c>.</remarks>
+    protected override string LowerDatePart(SqlExpr.DatePart node, IDbTable table, SqlParameterCollection parameters)
+    {
+        var source = LowerExpression(node.Source, table, parameters);
+        return $"DATEPART({DatePartKeyword(node.Unit)}, {source})";
+    }
+
+    /// <inheritdoc />
+    /// <remarks><c>JSON_VALUE(&lt;source&gt;, '$.a.b')</c>. The path is spliced from
+    /// <see cref="JsonPath"/>'s validated segments, so the single-quoted path literal cannot be
+    /// broken out of.</remarks>
+    protected override string LowerJsonGet(SqlExpr.JsonGet node, IDbTable table, SqlParameterCollection parameters)
+    {
+        var source = LowerExpression(node.Source, table, parameters);
+        return $"JSON_VALUE({source}, '{node.Path.ToDollarPath()}')";
+    }
 
     /// <inheritdoc />
     /// <remarks>

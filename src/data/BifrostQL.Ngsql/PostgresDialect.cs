@@ -1,3 +1,4 @@
+using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Utils;
 
@@ -154,6 +155,98 @@ public sealed class PostgresDialect : StandardConcatDialectBase
         return t is "character varying" or "varchar"
             or "character" or "char"
             or "text";
+    }
+
+    /// <summary>Singular interval unit for <c>INTERVAL '1 &lt;unit&gt;'</c> arithmetic.</summary>
+    private static string IntervalUnit(DateUnit unit) => unit switch
+    {
+        DateUnit.Year => "year",
+        DateUnit.Month => "month",
+        DateUnit.Day => "day",
+        DateUnit.Hour => "hour",
+        DateUnit.Minute => "minute",
+        DateUnit.Second => "second",
+        _ => throw new ArgumentOutOfRangeException(nameof(unit), unit, null)
+    };
+
+    /// <summary>The <c>EXTRACT(&lt;field&gt; FROM …)</c> field name.</summary>
+    private static string ExtractField(DateUnit unit) => unit switch
+    {
+        DateUnit.Year => "YEAR",
+        DateUnit.Month => "MONTH",
+        DateUnit.Day => "DAY",
+        DateUnit.Hour => "HOUR",
+        DateUnit.Minute => "MINUTE",
+        DateUnit.Second => "SECOND",
+        _ => throw new ArgumentOutOfRangeException(nameof(unit), unit, null)
+    };
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Interval arithmetic: <c>(&lt;source&gt; + (&lt;amount&gt; * INTERVAL '1 day'))</c>. Multiplying
+    /// a unit interval by the bound amount handles any signed count; the interval unit is a fixed
+    /// keyword, never client text.
+    /// </remarks>
+    protected override string LowerDateAdd(SqlExpr.DateAdd node, IDbTable table, SqlParameterCollection parameters)
+    {
+        var amount = LowerExpression(node.Amount, table, parameters);
+        var source = LowerExpression(node.Source, table, parameters);
+        return $"({source} + ({amount} * INTERVAL '1 {IntervalUnit(node.Unit)}'))";
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// PostgreSQL has no single <c>DATEDIFF</c> primitive. For the epoch-computable units
+    /// (day/hour/minute/second) the difference is <c>FLOOR(EXTRACT(EPOCH FROM (end - start)) /
+    /// &lt;seconds&gt;)</c>. Whole months/years are NOT epoch-computable — a fixed seconds divisor
+    /// cannot count calendar boundaries — so they fail fast with
+    /// <see cref="SqlExprLoweringNotSupportedException"/> rather than emit a silently-wrong
+    /// approximation.
+    /// </remarks>
+    protected override string LowerDateDiff(SqlExpr.DateDiff node, IDbTable table, SqlParameterCollection parameters)
+    {
+        var secondsPerUnit = node.Unit switch
+        {
+            DateUnit.Day => 86400,
+            DateUnit.Hour => 3600,
+            DateUnit.Minute => 60,
+            DateUnit.Second => 1,
+            _ => throw new SqlExprLoweringNotSupportedException(
+                nameof(SqlExpr.DateDiff), "PostgreSQL",
+                $"whole-{node.Unit.ToString().ToLowerInvariant()} difference cannot be computed exactly " +
+                "from an epoch delta (calendar boundaries vary); use DatePart-based arithmetic instead.")
+        };
+
+        var start = LowerExpression(node.Start, table, parameters);
+        var end = LowerExpression(node.End, table, parameters);
+        return $"FLOOR(EXTRACT(EPOCH FROM ({end} - {start})) / {secondsPerUnit})";
+    }
+
+    /// <inheritdoc />
+    /// <remarks><c>EXTRACT(YEAR FROM &lt;source&gt;)</c>.</remarks>
+    protected override string LowerDatePart(SqlExpr.DatePart node, IDbTable table, SqlParameterCollection parameters)
+    {
+        var source = LowerExpression(node.Source, table, parameters);
+        return $"EXTRACT({ExtractField(node.Unit)} FROM {source})";
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// jsonb path traversal with the <c>-&gt;</c> / <c>-&gt;&gt;</c> operators: each intermediate
+    /// segment uses <c>-&gt;</c> (returns jsonb) and the final segment uses <c>-&gt;&gt;</c>
+    /// (returns the scalar as text). Segments are <see cref="JsonPath"/>-validated, so the
+    /// single-quoted key literals cannot break out.
+    /// </remarks>
+    protected override string LowerJsonGet(SqlExpr.JsonGet node, IDbTable table, SqlParameterCollection parameters)
+    {
+        var expr = LowerExpression(node.Source, table, parameters);
+        var segments = node.Path.Segments;
+        for (var i = 0; i < segments.Count; i++)
+        {
+            var op = i == segments.Count - 1 ? "->>" : "->";
+            expr = $"({expr} {op} '{segments[i]}')";
+        }
+        return expr;
     }
 
     /// <inheritdoc />

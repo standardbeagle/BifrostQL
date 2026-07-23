@@ -320,6 +320,10 @@ public abstract class SqlDialectBase : ISqlDialect
             SqlExpr.Concat concat =>
                 LowerConcat(concat.Parts.Select(part => LowerExpression(part, table, parameters)).ToList()),
             SqlExpr.Case @case => LowerCase(@case, table, parameters),
+            SqlExpr.DateAdd dateAdd => LowerDateAdd(dateAdd, table, parameters),
+            SqlExpr.DateDiff dateDiff => LowerDateDiff(dateDiff, table, parameters),
+            SqlExpr.DatePart datePart => LowerDatePart(datePart, table, parameters),
+            SqlExpr.JsonGet jsonGet => LowerJsonGet(jsonGet, table, parameters),
             _ => throw new BifrostExecutionError(
                 $"Unsupported SqlExpr node type '{expr.GetType().Name}' in expression lowering.")
         };
@@ -406,6 +410,42 @@ public abstract class SqlDialectBase : ISqlDialect
         SqlExprType.Int => "INTEGER",
         _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
     };
+
+    /// <summary>
+    /// Lowers a <see cref="SqlExpr.DateAdd"/> into this dialect's native date-arithmetic form.
+    /// Declared ABSTRACT ON PURPOSE — unlike <see cref="LowerConcat"/>/<see cref="MapFunctionName"/>/
+    /// <see cref="RenderCastType"/> (whose ANSI-ish defaults are correct for most engines), the
+    /// four engines' date/JSON facilities share NO portable spelling (SQL Server <c>DATEADD</c>,
+    /// PostgreSQL interval arithmetic, MySQL <c>DATE_ADD</c>, SQLite <c>datetime()</c>). A shared
+    /// default could only pick one engine's syntax — broken on the other three, or a silently-wrong
+    /// no-op — so forcing every dialect to override makes "a new dialect forgot date/JSON lowering"
+    /// a compile error, never a runtime data defect.
+    /// </summary>
+    protected abstract string LowerDateAdd(SqlExpr.DateAdd node, IDbTable table, SqlParameterCollection parameters);
+
+    /// <summary>
+    /// Lowers a <see cref="SqlExpr.DateDiff"/> into this dialect's native difference form.
+    /// Abstract for the same reason as <see cref="LowerDateAdd"/>; an engine that cannot express a
+    /// requested <see cref="DateUnit"/> exactly must throw
+    /// <see cref="SqlExprLoweringNotSupportedException"/> (naming node + dialect) rather than emit a
+    /// wrong approximation.
+    /// </summary>
+    protected abstract string LowerDateDiff(SqlExpr.DateDiff node, IDbTable table, SqlParameterCollection parameters);
+
+    /// <summary>
+    /// Lowers a <see cref="SqlExpr.DatePart"/> into this dialect's native field-extraction form.
+    /// Abstract for the same reason as <see cref="LowerDateAdd"/>.
+    /// </summary>
+    protected abstract string LowerDatePart(SqlExpr.DatePart node, IDbTable table, SqlParameterCollection parameters);
+
+    /// <summary>
+    /// Lowers a <see cref="SqlExpr.JsonGet"/> into this dialect's native JSON scalar-extraction
+    /// form. Abstract for the same reason as <see cref="LowerDateAdd"/>. Implementers splice the
+    /// path from <see cref="SqlExpr.JsonGet.Path"/>, whose segments are already validated safe by
+    /// <see cref="JsonPath"/>, and lower <see cref="SqlExpr.JsonGet.Source"/> through
+    /// <see cref="LowerExpression"/> so its value binds as a parameter.
+    /// </summary>
+    protected abstract string LowerJsonGet(SqlExpr.JsonGet node, IDbTable table, SqlParameterCollection parameters);
 }
 
 /// <summary>

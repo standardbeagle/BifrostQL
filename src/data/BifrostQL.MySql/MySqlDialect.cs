@@ -1,3 +1,4 @@
+using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 
 namespace BifrostQL.MySql;
@@ -66,6 +67,56 @@ public sealed class MySqlDialect : LimitOffsetDialectBase
         SqlExprType.Int => "SIGNED",
         _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
     };
+
+    /// <summary>MySQL keyword used for <c>INTERVAL</c>, <c>TIMESTAMPDIFF</c>, and <c>EXTRACT</c>.</summary>
+    private static string UnitKeyword(DateUnit unit) => unit switch
+    {
+        DateUnit.Year => "YEAR",
+        DateUnit.Month => "MONTH",
+        DateUnit.Day => "DAY",
+        DateUnit.Hour => "HOUR",
+        DateUnit.Minute => "MINUTE",
+        DateUnit.Second => "SECOND",
+        _ => throw new ArgumentOutOfRangeException(nameof(unit), unit, null)
+    };
+
+    /// <inheritdoc />
+    /// <remarks><c>DATE_ADD(&lt;source&gt;, INTERVAL &lt;amount&gt; DAY)</c>. The amount lowers to a
+    /// bound parameter; the unit is a fixed keyword.</remarks>
+    protected override string LowerDateAdd(SqlExpr.DateAdd node, IDbTable table, SqlParameterCollection parameters)
+    {
+        var amount = LowerExpression(node.Amount, table, parameters);
+        var source = LowerExpression(node.Source, table, parameters);
+        return $"DATE_ADD({source}, INTERVAL {amount} {UnitKeyword(node.Unit)})";
+    }
+
+    /// <inheritdoc />
+    /// <remarks><c>TIMESTAMPDIFF(DAY, &lt;start&gt;, &lt;end&gt;)</c> — native for every unit,
+    /// including whole months/years.</remarks>
+    protected override string LowerDateDiff(SqlExpr.DateDiff node, IDbTable table, SqlParameterCollection parameters)
+    {
+        var start = LowerExpression(node.Start, table, parameters);
+        var end = LowerExpression(node.End, table, parameters);
+        return $"TIMESTAMPDIFF({UnitKeyword(node.Unit)}, {start}, {end})";
+    }
+
+    /// <inheritdoc />
+    /// <remarks><c>EXTRACT(YEAR FROM &lt;source&gt;)</c>.</remarks>
+    protected override string LowerDatePart(SqlExpr.DatePart node, IDbTable table, SqlParameterCollection parameters)
+    {
+        var source = LowerExpression(node.Source, table, parameters);
+        return $"EXTRACT({UnitKeyword(node.Unit)} FROM {source})";
+    }
+
+    /// <inheritdoc />
+    /// <remarks><c>JSON_UNQUOTE(JSON_EXTRACT(&lt;source&gt;, '$.a.b'))</c> — JSON_EXTRACT returns a
+    /// quoted JSON scalar, JSON_UNQUOTE strips the quotes to the raw text. The path is spliced from
+    /// <see cref="JsonPath"/>'s validated segments.</remarks>
+    protected override string LowerJsonGet(SqlExpr.JsonGet node, IDbTable table, SqlParameterCollection parameters)
+    {
+        var source = LowerExpression(node.Source, table, parameters);
+        return $"JSON_UNQUOTE(JSON_EXTRACT({source}, '{node.Path.ToDollarPath()}'))";
+    }
 
     /// <inheritdoc />
     /// <remarks>

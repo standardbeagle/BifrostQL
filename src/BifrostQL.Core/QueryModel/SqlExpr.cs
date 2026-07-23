@@ -1,3 +1,6 @@
+using System.Text.RegularExpressions;
+using BifrostQL.Core.Resolvers;
+
 namespace BifrostQL.Core.QueryModel;
 
 /// <summary>
@@ -46,6 +49,125 @@ public abstract record SqlExpr
     /// <summary>String concatenation of its parts, rendered with the dialect's own concat form
     /// (<c>+</c> / <c>||</c> / <c>CONCAT()</c>) — the node itself does not know which.</summary>
     public sealed record Concat(IReadOnlyList<SqlExpr> Parts) : SqlExpr;
+
+    /// <summary>Adds a signed <paramref name="Amount"/> of <paramref name="Unit"/> to a
+    /// temporal <paramref name="Source"/>. There is NO portable spelling (SQL Server
+    /// <c>DATEADD</c>, PostgreSQL interval arithmetic, MySQL <c>DATE_ADD</c>, SQLite
+    /// <c>datetime()</c>), so each dialect lowers it explicitly — no inherited default.</summary>
+    public sealed record DateAdd(SqlExpr Source, DateUnit Unit, SqlExpr Amount) : SqlExpr;
+
+    /// <summary>The whole-<paramref name="Unit"/> difference <c>End - Start</c> between two
+    /// temporal expressions. Each dialect lowers it natively; a dialect that cannot express a
+    /// given unit exactly (e.g. calendar months/years via epoch math) fails fast rather than
+    /// emitting a silently-wrong approximation.</summary>
+    public sealed record DateDiff(DateUnit Unit, SqlExpr Start, SqlExpr End) : SqlExpr;
+
+    /// <summary>Extracts a single <paramref name="Unit"/> field (year, month, …) from a temporal
+    /// <paramref name="Source"/> as an integer. Lowers per dialect (SQL Server <c>DATEPART</c>,
+    /// PostgreSQL/MySQL <c>EXTRACT</c>, SQLite <c>strftime</c>).</summary>
+    public sealed record DatePart(DateUnit Unit, SqlExpr Source) : SqlExpr;
+
+    /// <summary>Extracts a scalar value from a JSON <paramref name="Source"/> at a validated
+    /// <paramref name="Path"/>. The path is a <see cref="JsonPath"/> of safe segments — never
+    /// raw client text — so it cannot inject SQL or JSON-path syntax. Lowers per dialect
+    /// (SQL Server <c>JSON_VALUE</c>, PostgreSQL <c>-&gt;&gt;</c>, MySQL
+    /// <c>JSON_UNQUOTE(JSON_EXTRACT(...))</c>, SQLite <c>json_extract</c>).</summary>
+    public sealed record JsonGet(SqlExpr Source, JsonPath Path) : SqlExpr;
+}
+
+/// <summary>
+/// The temporal unit shared by <see cref="SqlExpr.DateAdd"/>, <see cref="SqlExpr.DateDiff"/>,
+/// and <see cref="SqlExpr.DatePart"/>. Deliberately a closed enum (not a free-text unit string)
+/// so a unit can never reach the SQL text as raw input — each dialect maps it to its own keyword.
+/// </summary>
+public enum DateUnit
+{
+    Year,
+    Month,
+    Day,
+    Hour,
+    Minute,
+    Second
+}
+
+/// <summary>
+/// A validated JSON access path: an ordered list of object-key segments (e.g. <c>user.name</c>).
+/// Every segment must be a simple identifier (<c>[A-Za-z_][A-Za-z0-9_]*</c>); anything else —
+/// quotes, brackets, dots, dollar signs, whitespace, SQL/JSON-path metacharacters — is rejected
+/// at construction. This is the single trust boundary for <see cref="SqlExpr.JsonGet"/>: because
+/// a <see cref="JsonGet"/> can only ever hold an already-validated path, each dialect can splice
+/// the segments into its native path literal (<c>$.user.name</c> / <c>-&gt;&gt; 'name'</c>)
+/// without the segment text ever being able to break out of the string or path grammar.
+/// </summary>
+public sealed class JsonPath
+{
+    // Anchored so a segment must be ENTIRELY a safe identifier — a partial match
+    // (e.g. "name'); DROP") would still leave the injecting suffix in the segment.
+    private static readonly Regex SafeSegment =
+        new("^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.CultureInvariant);
+
+    /// <summary>The validated, order-preserving path segments.</summary>
+    public IReadOnlyList<string> Segments { get; }
+
+    public JsonPath(IReadOnlyList<string> segments)
+    {
+        ArgumentNullException.ThrowIfNull(segments);
+        if (segments.Count == 0)
+            throw new BifrostExecutionError(
+                "A JSON path must have at least one segment; an empty path selects nothing.");
+
+        var copy = new string[segments.Count];
+        for (var i = 0; i < segments.Count; i++)
+        {
+            var seg = segments[i];
+            if (seg is null || !SafeSegment.IsMatch(seg))
+                throw new BifrostExecutionError(
+                    $"Unsafe JSON path segment '{seg}'. A JSON path segment must be a simple identifier " +
+                    "([A-Za-z_][A-Za-z0-9_]*) so it cannot inject SQL string or JSON-path syntax. " +
+                    "Client-supplied text must be validated into safe segments before building a JsonPath.");
+            copy[i] = seg;
+        }
+
+        Segments = copy;
+    }
+
+    public JsonPath(params string[] segments)
+        : this((IReadOnlyList<string>)segments)
+    {
+    }
+
+    /// <summary>
+    /// Renders the segments as a SQLPath/JSONPath literal (<c>$.user.name</c>) for the dialects
+    /// that address JSON with a single path string (SQL Server, MySQL, SQLite). Safe to splice
+    /// into a single-quoted SQL literal because every segment passed construction validation.
+    /// </summary>
+    public string ToDollarPath() => "$." + string.Join(".", Segments);
+}
+
+/// <summary>
+/// Thrown when a specific dialect genuinely cannot lower a given <see cref="SqlExpr"/> node —
+/// e.g. a whole-month/year <see cref="SqlExpr.DateDiff"/> on an engine whose only difference
+/// primitive is epoch/Julian-day math, which cannot count calendar boundaries exactly. It names
+/// BOTH the offending node and the dialect so the failure is actionable, and fails fast instead
+/// of emitting a silently-wrong approximation, a NULL, or an empty string. Derives from
+/// <see cref="BifrostExecutionError"/> so it travels the same error channel as the rest of
+/// expression lowering (unknown column/function), while its type still marks it as a
+/// not-supported condition callers can single out.
+/// </summary>
+public sealed class SqlExprLoweringNotSupportedException : BifrostExecutionError
+{
+    /// <summary>The unqualified <see cref="SqlExpr"/> node type that could not be lowered.</summary>
+    public string NodeType { get; }
+
+    /// <summary>The dialect that cannot lower the node.</summary>
+    public string Dialect { get; }
+
+    public SqlExprLoweringNotSupportedException(string nodeType, string dialect, string reason)
+        : base($"SQL expression node '{nodeType}' is not supported by the {dialect} dialect: {reason}")
+    {
+        NodeType = nodeType;
+        Dialect = dialect;
+    }
 }
 
 /// <summary>

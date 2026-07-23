@@ -263,3 +263,27 @@ builder.Services.AddBifrostQL(o => o
     .AddMutationTransformer<MyMutationTransformer>()
     .AddQueryObserver<MyQueryObserver>());
 ```
+
+## Building portable SQL expressions
+
+When a module needs a column-level SQL expression (a computed column, a custom projection, a
+derived filter value), do not concatenate SQL strings. Use the public `SqlExprBuilder`
+(`BifrostQL.Core.QueryModel`) to build an immutable, dialect-agnostic `SqlExpr` tree once and let
+each dialect lower it to correct, parameterized SQL:
+
+```csharp
+var b = SqlExprBuilder.For(table);
+SqlExpr expr = b.Coalesce(b.Col("status").Upper(), b.Lit("UNKNOWN"))
+    .Concat(b.Lit(" #"), b.Col("id").Cast(SqlExprType.Text));
+
+var parameters = new SqlParameterCollection();
+string sql = dialect.LowerExpression(expr, table, parameters); // parameterized fragment
+```
+
+The builder validates eagerly: an unknown column, an unknown function, or a wrong-arity call throws
+`SqlExprBuildException` at build time naming the offending symbol — never a deferred SQL error. This
+whole surface is public (no `InternalsVisibleTo` needed) so an external module assembly can consume
+it. `ISqlDialect.LowerExpression` (implemented by `SqlDialectBase`) is the extension point a
+third-party dialect overrides. See the [Building SQL Expressions
+guide](../../../docs/src/content/docs/guides/expression-builder.md) for the node set, the
+per-dialect support matrix, and a worked example.

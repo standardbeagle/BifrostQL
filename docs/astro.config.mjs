@@ -56,6 +56,7 @@ export default defineConfig({
 						{ label: 'Mutations', slug: 'guides/mutations' },
 						{ label: 'Module System', slug: 'guides/modules' },
 						{ label: 'Extending BifrostQL (Hooks & Providers)', slug: 'guides/extensibility' },
+						{ label: 'Building SQL Expressions (SqlExpr)', slug: 'guides/expression-builder' },
 						{ label: 'Authentication', slug: 'guides/authentication' },
 						{ label: 'Multi-Tenant Org Model', slug: 'guides/org-model' },
 						{ label: 'State Machines', slug: 'guides/state-machines' },

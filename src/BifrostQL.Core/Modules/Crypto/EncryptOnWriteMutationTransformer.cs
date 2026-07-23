@@ -86,8 +86,10 @@ namespace BifrostQL.Core.Modules.Crypto
                 var blindIndexColumn = column.GetMetadataValue(MetadataKeys.Crypto.BlindIndex);
                 if (!string.IsNullOrWhiteSpace(blindIndexColumn))
                 {
-                    var indexKey = keyManager.GetBlindIndexKey(keyRef);
-                    result[blindIndexColumn] = BlindIndexComputer.Compute(indexKey, plaintext);
+                    // Single-definition derivation shared with the query-time equality
+                    // rewrite (BlindIndexComputer.ComputeSearchToken) so write and read
+                    // tokens can never drift.
+                    result[blindIndexColumn] = BlindIndexComputer.ComputeSearchToken(keyManager, keyRef, value);
                 }
             }
 

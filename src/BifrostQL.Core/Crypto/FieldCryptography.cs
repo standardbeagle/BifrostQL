@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using BifrostQL.Core.Model;
@@ -256,6 +257,23 @@ namespace BifrostQL.Core.Crypto
             Span<byte> hash = stackalloc byte[32];
             HMACSHA256.HashData(indexKey, Encoding.UTF8.GetBytes(value), hash);
             return Convert.ToHexString(hash).ToLowerInvariant();
+        }
+
+        /// <summary>
+        /// The SINGLE definition of the equality-search blind-index token derivation,
+        /// so the encrypt-on-write sibling population and the query-time equality
+        /// rewrite cannot drift apart (a divergence would make written values
+        /// unfindable). Serializes <paramref name="value"/> with invariant culture — so
+        /// a decimal/DateTime hashes identically on every host — resolves the per-column
+        /// blind-index key for <paramref name="keyRef"/>, and returns the keyed hash.
+        /// </summary>
+        public static string ComputeSearchToken(EnvelopeKeyManager keyManager, string keyRef, object? value)
+        {
+            ArgumentNullException.ThrowIfNull(keyManager);
+            ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
+            var serialized = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+            var indexKey = keyManager.GetBlindIndexKey(keyRef);
+            return Compute(indexKey, serialized);
         }
     }
 }

@@ -4,8 +4,18 @@ written_at: "2026-07-17T21:06:03Z"
 source_event: "task:01KX7ZNT9XAYEWRCBBG709C37G"
 source_commit: "5ce68c9b10e8f98e67d1e766e7a806d235e276ac"
 workspace: "bifrostql"
-tags: ["docs", "mcp-slice", "acceptance-criteria", "review-process"]
+tags: ["docs", "mcp-slice", "acceptance-criteria", "review-process", "docs-follow-verified-source"]
+recurrence: 2
+family: "docs-must-derive-from-verified-source"
+related:
+  - "docs/solutions/bifrostql/docs-sdl-typenames-greppable-to-emission-site-2026-07-23.md"
 ---
+
+<!-- recurrence: family "docs-must-derive-from-verified-source" reached 2nd
+occurrence in task 01KWXEA37SE93RT8XYVZ2317WV (5.4, invented SDL type names).
+This doc = following a wrong criterion; the sibling = inventing plausible
+identifiers. Promote at N=3 (operator decision, not auto). -->
+
 
 ## Problem
 

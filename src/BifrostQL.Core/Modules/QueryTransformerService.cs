@@ -102,6 +102,15 @@ public sealed class QueryTransformerService : IQueryTransformerService
             IsNestedQuery = isNested
         };
 
+        // Field-level encryption equality routing. BEFORE the read guard rejects a
+        // filter on an encrypted column, transparently rewrite an `_eq`/`_in` predicate
+        // on an encrypted column that carries a `blind-index` sibling into an
+        // equality/IN on that sibling column, deriving the search token with the SAME
+        // derivation as encrypt-on-write. Every other operator on an encrypted column,
+        // and an encrypted column without a sibling, is left in place so the guard below
+        // still rejects it — the oracle guard is not weakened.
+        query.Filter = RewriteBlindIndexEquality(query.Filter, query.DbTable);
+
         // Column-level read enforcement. IFilterTransformer only sees the table,
         // so transformers that enforce column-read-deny (the policy engine)
         // implement IColumnReadGuard and are called here with every column this
@@ -225,6 +234,102 @@ public sealed class QueryTransformerService : IQueryTransformerService
         {
             And = new List<TableFilter> { existing, additional },
             FilterType = FilterType.And,
+        };
+    }
+
+    /// <summary>
+    /// Rewrites routable equality predicates on encrypted columns onto their blind-index
+    /// sibling. Walks the filter tree mirroring <see cref="CollectFilterColumns"/>'s own
+    /// traversal (AND/OR wrappers, leaf predicates, and SingleLinks relationship chains
+    /// attributed to the linked table) so a rewrite lands on the same column the guard
+    /// would otherwise reject. Returns the (possibly replaced) node so the caller can
+    /// splice it back in — a leaf whose target column changes is a brand-new node because
+    /// <see cref="TableFilter.ColumnName"/> is init-only.
+    /// </summary>
+    private TableFilter? RewriteBlindIndexEquality(TableFilter? filter, IDbTable table)
+    {
+        if (filter is null)
+            return null;
+
+        // AND/OR wrapper: recurse into each branch, replacing it in place.
+        if (filter.Next is null)
+        {
+            for (var i = 0; i < filter.And.Count; i++)
+                filter.And[i] = RewriteBlindIndexEquality(filter.And[i], table)!;
+            for (var i = 0; i < filter.Or.Count; i++)
+                filter.Or[i] = RewriteBlindIndexEquality(filter.Or[i], table)!;
+            return filter;
+        }
+
+        // Leaf predicate: `column: { _op: value }` — Next is the terminal operator node.
+        if (filter.Next.Next is null)
+            return RewriteLeafPredicate(filter, table);
+
+        // Relationship chain: ColumnName names a SingleLinks relationship into another
+        // table; the remaining chain is attributed to that table.
+        if (table.SingleLinks.TryGetValue(filter.ColumnName, out var link))
+            filter.Next = RewriteBlindIndexEquality(filter.Next, link.ParentTable);
+
+        return filter;
+    }
+
+    private TableFilter RewriteLeafPredicate(TableFilter leaf, IDbTable table)
+    {
+        // Resolve the leaf column tolerant of both name spaces; unknown columns are
+        // left untouched (the render path will surface a clear error).
+        var column = table.GraphQlLookup.TryGetValue(leaf.ColumnName, out var byGraphQl) ? byGraphQl
+            : table.ColumnLookup.TryGetValue(leaf.ColumnName, out var byDb) ? byDb
+            : null;
+        if (column is null)
+            return leaf;
+
+        // Only encrypted columns participate; a plain column passes through unchanged.
+        if (string.IsNullOrWhiteSpace(column.GetMetadataValue(MetadataKeys.Crypto.Encrypt)))
+            return leaf;
+
+        var op = leaf.Next!.RelationName;
+
+        // Only equality/IN route. `_eq: null` is an IS NULL check, not a value search —
+        // routing it would hash the empty string and match the wrong rows, so it (and
+        // every other operator) is left in place for the guard to reject.
+        var isRoutableEq = op == FilterOperators.Eq && leaf.Next.Value is not null;
+        var isRoutableIn = op == FilterOperators.In;
+        if (!isRoutableEq && !isRoutableIn)
+            return leaf;
+
+        // Equality is routable strictly when a blind-index sibling exists to route it to;
+        // an encrypted column without one still hits the guard (no partial oracle).
+        var blindIndexColumn = column.GetMetadataValue(MetadataKeys.Crypto.BlindIndex);
+        if (string.IsNullOrWhiteSpace(blindIndexColumn))
+            return leaf;
+
+        // Fail closed: without a resolvable key manager or key-ref no token can be
+        // derived — reject rather than emit a raw predicate on ciphertext or the _bidx
+        // column.
+        var keyRef = column.GetMetadataValue(MetadataKeys.Crypto.KeyRef);
+        if (_keyManager is null || string.IsNullOrWhiteSpace(keyRef))
+            throw new BifrostExecutionError(EncryptedColumnReadGuard.FilterDeniedMessage)
+            { ErrorCode = BifrostExecutionError.AccessDeniedCode };
+
+        // Derive the search token(s) with the IDENTICAL derivation as the write path.
+        object? routedValue = isRoutableEq
+            ? BlindIndexComputer.ComputeSearchToken(_keyManager, keyRef, leaf.Next.Value)
+            : ((leaf.Next.Value as IEnumerable<object?>) ?? Array.Empty<object?>())
+                .Select(v => (object?)BlindIndexComputer.ComputeSearchToken(_keyManager, keyRef, v))
+                .ToList();
+
+        // Replace the predicate: target the blind-index sibling with the token(s).
+        return new TableFilter
+        {
+            TableName = leaf.TableName,
+            ColumnName = blindIndexColumn,
+            FilterType = FilterType.Join,
+            Next = new TableFilter
+            {
+                RelationName = op,
+                Value = routedValue,
+                FilterType = FilterType.Relation,
+            },
         };
     }
 

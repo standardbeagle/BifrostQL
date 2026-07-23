@@ -87,10 +87,13 @@ public sealed class DecryptMaskOnReadTests : IAsyncLifetime
     private async Task<ExecutionResult> QueryAsync(string query, params string[] roles)
     {
         var schema = DbSchema.FromModel(_model);
+        // The transformer service holds the key manager so it can rewrite an equality on
+        // the encrypted column onto its blind-index sibling (same manager the write path
+        // and the read projector use, so ciphertext round-trips).
         var transformerService = new QueryTransformerService(new FilterTransformersWrap
         {
             Transformers = new IFilterTransformer[] { new EncryptedColumnReadGuard() },
-        });
+        }, _manager);
         var services = new ServiceCollection();
         services.AddSingleton(_manager);
         await using var provider = services.BuildServiceProvider();
@@ -142,12 +145,49 @@ public sealed class DecryptMaskOnReadTests : IAsyncLifetime
         ssn.Should().NotBe("123-45-6789").And.EndWith("6789").And.NotContain("123-45");
     }
 
-    [Fact]
-    public async Task Filter_OnEncryptedColumn_IsRejected()
+    private static IReadOnlyList<int> Ids(ExecutionResult result)
     {
-        var result = await QueryAsync("{ secrets(filter: { ssn: { _eq: \"x\" } }) { data { id } } }", "compliance");
+        using var doc = JsonDocument.Parse(new GraphQLSerializer().Serialize(result));
+        return doc.RootElement.GetProperty("data").GetProperty("secrets").GetProperty("data")
+            .EnumerateArray().Select(e => e.GetProperty("id").GetInt32()).ToArray();
+    }
+
+    [Fact]
+    public async Task Filter_RangeOnEncryptedColumn_IsRejected()
+    {
+        // A non-equality operator on the encrypted column is still an oracle and stays
+        // rejected — only _eq/_in route through the blind index.
+        var result = await QueryAsync("{ secrets(filter: { ssn: { _gt: \"x\" } }) { data { id } } }", "compliance");
         result.Errors.Should().NotBeNullOrEmpty();
         result.Errors!.Single().Message.Should().Contain("filter, sort, or aggregate");
+    }
+
+    [Fact]
+    public async Task Filter_EqOnEncryptedColumn_RoutesThroughBlindIndex_FindsRow()
+    {
+        // The seeded row was encrypted-on-write with blind index ssn_bidx. An _eq on the
+        // same plaintext is rewritten onto that sibling and finds the row — the write and
+        // read token derivations agree.
+        var result = await QueryAsync("{ secrets(filter: { ssn: { _eq: \"123-45-6789\" } }) { data { id } } }", "compliance");
+        result.Errors.Should().BeNullOrEmpty();
+        Ids(result).Should().Equal(1);
+    }
+
+    [Fact]
+    public async Task Filter_EqOnEncryptedColumn_WrongPlaintext_FindsNothing()
+    {
+        var result = await QueryAsync("{ secrets(filter: { ssn: { _eq: \"000-00-0000\" } }) { data { id } } }", "compliance");
+        result.Errors.Should().BeNullOrEmpty();
+        Ids(result).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Filter_InContainingPlaintext_RoutesThroughBlindIndex_FindsRow()
+    {
+        var result = await QueryAsync(
+            "{ secrets(filter: { ssn: { _in: [\"000-00-0000\", \"123-45-6789\"] } }) { data { id } } }", "compliance");
+        result.Errors.Should().BeNullOrEmpty();
+        Ids(result).Should().Equal(1);
     }
 
     [Fact]

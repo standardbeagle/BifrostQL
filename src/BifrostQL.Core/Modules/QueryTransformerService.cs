@@ -1,6 +1,9 @@
+using BifrostQL.Core.Crypto;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules.ComputedColumns;
+using BifrostQL.Core.Modules.Crypto;
 using BifrostQL.Core.QueryModel;
+using BifrostQL.Core.Resolvers;
 
 namespace BifrostQL.Core.Modules;
 
@@ -22,9 +25,16 @@ public sealed class QueryTransformerService : IQueryTransformerService
 {
     private readonly IFilterTransformers _filterTransformers;
 
-    public QueryTransformerService(IFilterTransformers filterTransformers)
+    // Optional (fail-closed) key manager for the blind-index equality rewrite. A
+    // singleton, resolved by DI when field-level encryption is configured; null when it
+    // is not, in which case an equality on an encrypted+blind-indexed column is rejected
+    // rather than executed as a raw predicate. Same optional-DI shape as the write path.
+    private readonly EnvelopeKeyManager? _keyManager;
+
+    public QueryTransformerService(IFilterTransformers filterTransformers, EnvelopeKeyManager? keyManager = null)
     {
         _filterTransformers = filterTransformers;
+        _keyManager = keyManager;
     }
 
     public void ApplyTransformers(

@@ -87,6 +87,14 @@ namespace BifrostQL.Server.Test.Ldap
         public static byte[] Control(string oid, bool criticality)
             => BerWriter.Sequence(BerWriter.OctetString(oid), Boolean(criticality));
 
+        /// <summary>
+        /// A control whose criticality Boolean carries ZERO content bytes (tag 0x01, len 0) — legal
+        /// BER framing, empty primitive. Exercises the length-checked Boolean accessor: an unchecked
+        /// <c>Content(...)[0]</c> would index-out-of-bounds on this input.
+        /// </summary>
+        public static byte[] ControlWithEmptyCriticalityBoolean(string oid)
+            => BerWriter.Sequence(BerWriter.OctetString(oid), BerWriter.Tlv(LdapProtocol.Boolean, Array.Empty<byte>()));
+
         // Minimal BER content bytes of a small non-negative integer (message IDs are small).
         private static byte[] IntContent(int value)
         {

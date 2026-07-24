@@ -107,6 +107,28 @@ namespace BifrostQL.Server.Test.Ldap
         }
 
         [Fact]
+        public async Task Controls_ZeroLengthCriticalityBoolean_IsCleanProtocolError_NotIndexOutOfRange()
+        {
+            // Arrange: a control whose criticality Boolean has ZERO content bytes (tag 0x01, len 0) —
+            // legal BER framing, empty primitive — on the FIRST unauthenticated message's controls
+            // envelope. The pre-fix DecodeControls did `Content(ReadElement(Boolean))[0]`, which
+            // threw IndexOutOfRangeException on the empty content. That type is OUTSIDE the connection
+            // loop's catch filter (LdapProtocolException/FormatException/OverflowException/
+            // ArgumentException) and its outer catch (IOException/OperationCanceledException), so it
+            // escaped unhandled to Kestrel — no Notice of Disconnection, an error-level unhandled
+            // throw an unauthenticated peer can trigger (protocol-adapter-security invariant 5).
+            //
+            // Revert-proof: restoring the `Content(...)[0]` accessor makes this throw
+            // IndexOutOfRangeException, which does NOT satisfy ThrowAsync<LdapProtocolException> → RED.
+            var control = LdapWire.ControlWithEmptyCriticalityBoolean("1.2.840.113556.1.4.319");
+            var message = LdapWire.Message(1, LdapWire.SearchRequest(), LdapWire.Controls(control));
+
+            var act = async () => await Reader().ReadRequestAsync(new MemoryStream(message), default);
+
+            await act.Should().ThrowAsync<LdapProtocolException>().WithMessage("*Boolean*");
+        }
+
+        [Fact]
         public async Task NegativeMessageId_IsRejected()
         {
             // Arrange: message ID -1 is illegal; the decoder must refuse it, not wrap it.

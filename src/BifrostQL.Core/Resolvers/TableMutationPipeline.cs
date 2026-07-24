@@ -125,7 +125,8 @@ namespace BifrostQL.Core.Resolvers
             };
             var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Insert, data, transformContext);
             if (transformResult.Errors.Length > 0)
-                throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
+                throw new BifrostExecutionError(string.Join("; ", transformResult.Errors))
+                { ErrorCode = transformResult.ErrorCode };
 
             // Adopt the (possibly rewritten) data so transformer output — e.g.
             // enum-name → DB-value mapping — actually reaches the SQL, and rekey
@@ -242,7 +243,8 @@ namespace BifrostQL.Core.Resolvers
                 };
                 var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Update, propertyInfo.data, transformContext);
                 if (transformResult.Errors.Length > 0)
-                    throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
+                    throw new BifrostExecutionError(string.Join("; ", transformResult.Errors))
+                    { ErrorCode = transformResult.ErrorCode };
 
                 // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
                 // IS NULL) is ANDed onto the WHERE clause so it narrows — never
@@ -337,7 +339,8 @@ namespace BifrostQL.Core.Resolvers
             var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Delete, data, transformContext);
 
             if (transformResult.Errors.Length > 0)
-                throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
+                throw new BifrostExecutionError(string.Join("; ", transformResult.Errors))
+                { ErrorCode = transformResult.ErrorCode };
 
             // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
             // IS NULL) is ANDed onto the WHERE clause so it narrows — never

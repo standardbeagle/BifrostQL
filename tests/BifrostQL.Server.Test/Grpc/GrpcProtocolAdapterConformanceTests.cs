@@ -65,7 +65,10 @@ namespace BifrostQL.Server.Test.Grpc
         protected override IReadOnlyList<string> MetadataRules => new[]
         {
             "*.orders { tenant-filter: tenant_id; soft-delete: deleted_at; grpc-write: enabled }",
-            "*.documents { policy-read-deny: body }",
+            // policy-write-deny mirrors the existing policy-read-deny on the same column so the
+            // write path has a real policy-deny to exercise; grpc-write opts the table into the
+            // write allow-list so the deny is reached at the mutation pipeline, not the door gate.
+            "*.documents { policy-read-deny: body; policy-write-deny: body; grpc-write: enabled }",
         };
 
         // gRPC is driven on its own HTTP/2 front door bound to the base fixture's real executors, so
@@ -281,6 +284,46 @@ namespace BifrostQL.Server.Test.Grpc
 
             // The reconciled write status stays sanitized: the internal reason must not reach the wire.
             writeFault.Status.Detail.Should().NotContainAny("tenant_id", "Tenant context", "orders", "SQL");
+        }
+
+        /// <summary>
+        /// Cross-op-class denial parity for a POLICY write-deny (the residual instance the gRPC
+        /// epic-close security review flagged: TableMutationPipeline threw a CODELESS
+        /// BifrostExecutionError on a policy-denied write, which fell to the GrpcStatusMapper funnel's
+        /// default → generic INTERNAL, while a policy-denied READ of the same column surfaces
+        /// PERMISSION_DENIED). PolicyMutationTransformer now tags its denial with AccessDeniedCode
+        /// (mirroring the read-side PolicyFilterTransformer), so the single funnel maps the policy WRITE
+        /// deny to the SAME PERMISSION_DENIED status as the read deny — mapping by CONDITION, not op
+        /// class. Both fail closed (nothing is written); the reconciled write status stays sanitized
+        /// (invariant 3 — the transformer's internal "authorization policy" text must not reach the wire).
+        /// </summary>
+        [Fact]
+        public async Task PolicyWriteDeny_ReadAndWrite_SurfaceTheSameDeniedStatus()
+        {
+            var headers = GrpcRealDbHarness.Identity("user-a", "tenant-a");
+
+            // READ path: selecting the policy-read-denied column surfaces PERMISSION_DENIED.
+            var readFault = await Assert.ThrowsAsync<RpcException>(
+                () => _client.ListAsync("documents", headers));
+
+            // WRITE path: inserting the policy-write-denied column is rejected by the policy mutation
+            // transformer — the condition this task tags so it stops mapping to a generic INTERNAL.
+            var writeFault = await Assert.ThrowsAsync<RpcException>(
+                () => _client.InsertAsync(
+                    "documents",
+                    new Dictionary<string, object?> { ["title"] = "denied-write", ["body"] = "x" },
+                    headers));
+
+            // Parity: the read deny and the write deny map to the SAME status through the single funnel.
+            readFault.StatusCode.Should().Be(StatusCode.PermissionDenied);
+            writeFault.StatusCode.Should().Be(
+                readFault.StatusCode,
+                "a policy WRITE deny must surface the same status as the policy READ deny for one condition");
+            writeFault.Status.Detail.Should().Be(readFault.Status.Detail);
+
+            // The reconciled write status stays sanitized: the transformer's internal reason
+            // ("...not permitted by authorization policy") must not reach the wire (invariant 3).
+            writeFault.Status.Detail.Should().NotContainAny("authorization", "body", "documents", "SQL");
         }
     }
 }

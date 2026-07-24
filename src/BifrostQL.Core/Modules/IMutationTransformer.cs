@@ -35,6 +35,20 @@ public sealed class MutationTransformResult
     public string[] Errors { get; init; } = Array.Empty<string>();
 
     /// <summary>
+    /// Classification for <see cref="Errors"/>, propagated onto the
+    /// <see cref="BifrostQL.Core.Resolvers.BifrostExecutionError"/> the pipeline
+    /// throws so every transport gate maps the abort by its CONDITION, not by op
+    /// class. An access-denial rejection (policy action/column write-deny) sets
+    /// <see cref="BifrostQL.Core.Resolvers.BifrostExecutionError.AccessDeniedCode"/>
+    /// so a policy-denied WRITE surfaces the SAME status as the read-side deny
+    /// (the single-funnel-needs-condition-tagging lesson). Validation, enum,
+    /// concurrency and state-machine rejections leave it null so they stay a
+    /// generic fault — an access-denied code must never be blanket-stamped over a
+    /// non-authorization error (that would mask a genuine INTERNAL).
+    /// </summary>
+    public string? ErrorCode { get; init; }
+
+    /// <summary>
     /// Additional filter to apply (e.g., for soft-delete to add deleted_at IS NULL to UPDATE/DELETE).
     /// </summary>
     public TableFilter? AdditionalFilter { get; init; }
@@ -140,6 +154,14 @@ public sealed class MutationTransformersWrap : IMutationTransformers
         var currentType = mutationType;
         var currentData = data;
         var allErrors = new List<string>();
+        // The classification of the FIRST transformer to abort (transformers run in
+        // priority order, so the security band — policy/tenant — is seen first).
+        // Captured once and never overwritten so a later codeless validation error
+        // cannot recolor an earlier denial, and a codeless first-abort is never
+        // upgraded to a denial. Only an access-denial condition carries a code; a
+        // validation/enum/concurrency error leaves it null → generic fault.
+        string? errorCode = null;
+        var errorCodeCaptured = false;
         TableFilter? combinedFilter = null;
         StateTransitionInfo? stateTransition = null;
         var conflictOnNoRows = false;
@@ -154,6 +176,11 @@ public sealed class MutationTransformersWrap : IMutationTransformers
             if (result.Errors.Length > 0)
             {
                 allErrors.AddRange(result.Errors);
+                if (!errorCodeCaptured)
+                {
+                    errorCode = result.ErrorCode;
+                    errorCodeCaptured = true;
+                }
             }
 
             currentType = result.MutationType;
@@ -175,6 +202,7 @@ public sealed class MutationTransformersWrap : IMutationTransformers
             MutationType = currentType,
             Data = currentData,
             Errors = allErrors.ToArray(),
+            ErrorCode = errorCode,
             AdditionalFilter = combinedFilter,
             StateTransition = stateTransition,
             ConflictOnNoRows = conflictOnNoRows,

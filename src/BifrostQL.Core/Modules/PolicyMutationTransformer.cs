@@ -2,6 +2,7 @@ using System.Collections;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
+using BifrostQL.Core.Resolvers;
 
 namespace BifrostQL.Core.Modules;
 
@@ -105,6 +106,12 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
                 MutationType = mutationType,
                 Data = data,
                 Errors = new[] { ActionDeniedMessage },
+                // Tag the fail-closed denial so a policy-denied WRITE surfaces the SAME
+                // transport status as the read-side deny (PolicyFilterTransformer throws
+                // AccessDeniedCode). Without it the codeless pipeline abort fell to the
+                // gRPC funnel's default → INTERNAL, a cross-op-class status divergence
+                // for one authorization condition (single-funnel-needs-condition-tagging).
+                ErrorCode = BifrostExecutionError.AccessDeniedCode,
             };
         }
 
@@ -121,6 +128,10 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
                     MutationType = mutationType,
                     Data = data,
                     Errors = new[] { ColumnWriteDeniedMessage },
+                    // Same access-denial classification as the table-action deny above,
+                    // so a column-write-deny maps to the same status as the read-side
+                    // column-read-deny rather than a generic INTERNAL.
+                    ErrorCode = BifrostExecutionError.AccessDeniedCode,
                 };
             }
         }

@@ -254,6 +254,52 @@ public class LdapMappingValidationTests
     }
 
     [Fact]
+    public void Validate_CredentialColumnUsedAsNamingColumn_Throws()
+    {
+        // SECURITY (second egress path): the DN template names each entry by the RDN column's
+        // VALUE. If that naming column is the credential (password-hash) column, every entry's DN
+        // literally carries the password hash — a leak INDEPENDENT of ldap-attributes. Here the
+        // 'uid' attribute is returned from a benign column ('username'), so the attributes-list
+        // guard sees nothing wrong, yet the RDN is uid={password_hash}, so the DN string itself
+        // exposes the hash. Removing the naming-column credential guard in ParseCredentialColumn
+        // makes this go green while the password column leaks through the DN — revert-proof that
+        // this regression test is non-vacuous.
+        var model = DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.Ldap.BaseDn, "dc=example,dc=com")
+            .WithTable("users", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("username", "nvarchar")
+                .WithColumn("password_hash", "nvarchar")
+                .WithMetadata(MetadataKeys.Ldap.ObjectClass, "inetOrgPerson")
+                .WithMetadata(MetadataKeys.Ldap.DnTemplate, "uid={password_hash},ou=people")
+                .WithMetadata(MetadataKeys.Ldap.Attributes, "uid=username")
+                .WithMetadata(MetadataKeys.Ldap.Credential, "password_hash"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("password_hash")
+            .And.Contain("must never appear in an entry's DN");
+    }
+
+    [Theory]
+    // SQL Server 'timestamp'/'rowversion' is a BINARY row-version token, NOT a datetime — it must
+    // classify as OctetString so its bytes are not emitted as a GeneralizedTime string. Genuine
+    // datetime types keep GeneralizedTime.
+    [InlineData("timestamp", LdapSyntax.OctetString)]
+    [InlineData("rowversion", LdapSyntax.OctetString)]
+    [InlineData("varbinary", LdapSyntax.OctetString)]
+    [InlineData("datetime", LdapSyntax.GeneralizedTime)]
+    [InlineData("datetime2", LdapSyntax.GeneralizedTime)]
+    [InlineData("datetimeoffset", LdapSyntax.GeneralizedTime)]
+    public void ColumnSyntax_ClassifiesTimestampAsBinary(string dataType, LdapSyntax expected)
+    {
+        LdapMappingConfig.ColumnSyntax(dataType).Should().Be(expected);
+    }
+
+    [Fact]
     public void Validate_UnknownMembershipRelationship_Throws()
     {
         var model = DbModelTestFixture.Create()

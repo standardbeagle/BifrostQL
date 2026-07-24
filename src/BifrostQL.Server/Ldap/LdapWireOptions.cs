@@ -67,5 +67,40 @@ namespace BifrostQL.Server.Ldap
         /// Null selects the single registered endpoint. Carried but unused by this codec/lifecycle slice.
         /// </summary>
         public string? Endpoint { get; set; }
+
+        // ---- bind authentication (slice 3) ----
+
+        /// <summary>
+        /// Whether an anonymous bind (zero-length DN + zero-length password) is admitted. Default
+        /// FALSE (fail-closed): an anonymous bind is refused with invalidCredentials unless a
+        /// deployment explicitly opts in. When enabled, an admitted anonymous session may read only the
+        /// RootDSE / subschema until a later policy explicitly grants data search (criterion 4).
+        /// </summary>
+        public bool AnonymousBindEnabled { get; set; }
+
+        /// <summary>
+        /// Hard cap on the byte length of a presented simple-bind password. A password beyond this is
+        /// refused BEFORE it reaches the adaptive password hasher, so an oversized password cannot be
+        /// weaponized as a hash-DoS (criterion 3). Default 4096 bytes — far above any real password,
+        /// yet a bound.
+        /// </summary>
+        public int MaxPasswordLength { get; set; } = 4096;
+
+        /// <summary>
+        /// Maximum bind attempts admitted per connection source within
+        /// <see cref="BindRateLimitWindow"/> before further attempts from that source are refused.
+        /// Bounds one client spraying credentials across many accounts. Default 100.
+        /// </summary>
+        public int MaxBindAttemptsPerSource { get; set; } = 100;
+
+        /// <summary>
+        /// Maximum bind attempts admitted per bind DN within <see cref="BindRateLimitWindow"/> before
+        /// further attempts against that account are refused. Bounds a brute-force against one account.
+        /// Default 10.
+        /// </summary>
+        public int MaxBindAttemptsPerAccount { get; set; } = 10;
+
+        /// <summary>The fixed window over which the per-source and per-account bind caps are counted. Default 1 minute.</summary>
+        public TimeSpan BindRateLimitWindow { get; set; } = TimeSpan.FromMinutes(1);
     }
 }

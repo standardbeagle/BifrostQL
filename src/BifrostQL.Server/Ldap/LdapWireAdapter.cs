@@ -72,6 +72,18 @@ namespace BifrostQL.Server.Ldap
             if (options.IdleTimeout <= TimeSpan.Zero)
                 throw new ArgumentOutOfRangeException(nameof(options.IdleTimeout), options.IdleTimeout,
                     "ldap IdleTimeout must be positive.");
+            if (options.MaxPasswordLength < 1)
+                throw new ArgumentOutOfRangeException(nameof(options.MaxPasswordLength), options.MaxPasswordLength,
+                    "ldap MaxPasswordLength must be at least 1.");
+            if (options.MaxBindAttemptsPerSource < 1)
+                throw new ArgumentOutOfRangeException(nameof(options.MaxBindAttemptsPerSource), options.MaxBindAttemptsPerSource,
+                    "ldap MaxBindAttemptsPerSource must be at least 1.");
+            if (options.MaxBindAttemptsPerAccount < 1)
+                throw new ArgumentOutOfRangeException(nameof(options.MaxBindAttemptsPerAccount), options.MaxBindAttemptsPerAccount,
+                    "ldap MaxBindAttemptsPerAccount must be at least 1.");
+            if (options.BindRateLimitWindow <= TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(options.BindRateLimitWindow), options.BindRateLimitWindow,
+                    "ldap BindRateLimitWindow must be positive.");
         }
     }
 }

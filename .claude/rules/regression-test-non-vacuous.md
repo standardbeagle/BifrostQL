@@ -39,8 +39,35 @@ implementations produce provably different output.
 - Parameterize the shared builder with a default preserving prior behavior
   rather than mutating the shared fixture (keeps blast radius to one test).
 
+## Forced rebuild before the RED run
+
+The revert experiment is only valid if the test runs against a binary built
+from the mutated source. In this repo `dotnet test` (and any `--no-build` /
+incremental invocation) can leave a **stale `BifrostQL.Core.dll`** after a
+source-only edit: the test host loads the old assembly, the mutation never
+takes effect, and the revert-proof falsely shows GREEN — a revert-proof
+executed against a stale binary is itself vacuous, the exact failure this rule
+exists to prevent. Observed on the blind-index read-routing slice: a weakened
+operator-gate mutation showed GREEN on the first `dotnet test`; only a forced
+`dotnet build src/BifrostQL.Core` (or `touch` + rebuild of the mutated project)
+surfaced the expected 6× RED. Both implementer and reviewer hit it.
+
+- **Before EVERY mutant/revert run** (implementer proving, reviewer replaying),
+  force a clean build of the mutated project — `dotnet build src/BifrostQL.Core`
+  — do not trust an incremental `dotnet test`. A GREEN mutant run is only
+  evidence of a vacuous test if you have first confirmed the binary under test
+  contains the mutation.
+- **Backstop-guarded fail-closed branches:** when the branch being proven sits
+  in front of an independent backstop that ALSO rejects (e.g. a security guard
+  downstream of the rewrite), disabling the branch changes nothing — both paths
+  reject, so the proof is vacuous a second way. Revert-prove such a branch
+  against the specific UNSAFE FALL-THROUGH it prevents (e.g. a raw predicate on
+  a column the backstop does not cover), not against merely disabling it.
+
 ## Related
 
+- `docs/solutions/bifrostql/crypto-blind-index-read-routing-2026-07-24.md`
+  — the harvest that added the forced-rebuild + backstop-fall-through subsection.
 - `protocol-adapter-security.md` invariant 8 — the fixture-span requirement
   (composite PK, single PK, PK value `0`, pre-existing state) and the original
   revert technique for key-addressed writes.

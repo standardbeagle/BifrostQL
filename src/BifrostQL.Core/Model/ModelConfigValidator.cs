@@ -92,6 +92,7 @@ namespace BifrostQL.Core.Model
             ValidateChat(model, errors);
             ValidateChatConnectors(model, errors);
             ValidatePrometheusMetrics(model, errors);
+            ValidateLdap(model, errors);
 
             if (errors.Count > 0)
             {
@@ -1627,6 +1628,197 @@ namespace BifrostQL.Core.Model
                     $"produces the same metric series (name + label set) as {names}; duplicate series would " +
                     "collide on the exposition wire. Rename one metric or give it a distinct label set."));
             }
+        }
+
+        // A single DN component, e.g. "dc=example" or "ou=people": attribute=value with no
+        // placeholder. The base DN and the static DN-template path are both chains of these.
+        private static readonly System.Text.RegularExpressions.Regex DnComponentGrammar =
+            new(@"^[A-Za-z][A-Za-z0-9-]*=[^,=]+$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        /// <summary>
+        /// Fail-fast validation for the LDAP directory mapping contract (<c>ldap-*</c>). A
+        /// misconfiguration must be caught at model load, before a listener is ever opened: an
+        /// invalid or non-unique DN template, a naming/attribute/credential column that does not
+        /// exist, an attribute mapped onto a column whose type is incompatible with the
+        /// attribute's LDAP syntax, a group-membership relationship that names no relationship,
+        /// is composite (explicitly unsupported in this slice), or points at a non-mapped table,
+        /// and — the security crux, enforced in the parser — a credential (password-hash) column
+        /// exposed as a returned attribute. Reuses <see cref="LdapMappingConfig.FromTable"/> so
+        /// validation cannot drift from the runtime parse.
+        /// </summary>
+        private static void ValidateLdap(IDbModel model, List<string> errors)
+        {
+            var mapped = new List<(IDbTable Table, LdapMappingConfig Config)>();
+
+            foreach (var table in model.Tables)
+            {
+                LdapMappingConfig config;
+                try
+                {
+                    config = LdapMappingConfig.FromTable(table);
+                }
+                catch (Exception ex)
+                {
+                    var key = FirstPresentLdapKey(table);
+                    errors.Add(Problem(table, key, table.GetMetadataValue(key), ex.Message));
+                    continue;
+                }
+
+                if (config.IsMapped)
+                {
+                    mapped.Add((table, config));
+                    continue;
+                }
+
+                // ldap-dn-template / ldap-attributes / ldap-credential / ldap-member without
+                // ldap-object-class map nothing: the author believes the table is a directory
+                // entry and it is not.
+                foreach (var key in new[]
+                {
+                    MetadataKeys.Ldap.DnTemplate, MetadataKeys.Ldap.Attributes,
+                    MetadataKeys.Ldap.Credential, MetadataKeys.Ldap.Member,
+                })
+                {
+                    var value = table.GetMetadataValue(key);
+                    if (!string.IsNullOrWhiteSpace(value))
+                        errors.Add(Problem(table, key, value,
+                            $"set without '{MetadataKeys.Ldap.ObjectClass}'; the table publishes no directory " +
+                            "entry, so this key has no effect."));
+                }
+            }
+
+            if (mapped.Count == 0)
+                return; // LDAP not in use — a model-level base DN is simply unused.
+
+            // A mapped directory must be rooted somewhere.
+            var baseDn = model.GetMetadataValue(MetadataKeys.Ldap.BaseDn);
+            if (string.IsNullOrWhiteSpace(baseDn))
+                errors.Add(
+                    $"  :root [{MetadataKeys.Ldap.BaseDn}]: {mapped.Count} table(s) map to LDAP but no base DN " +
+                    "is configured; the directory has nowhere to root its entries.");
+            else if (!IsValidDn(baseDn))
+                errors.Add(
+                    $"  :root [{MetadataKeys.Ldap.BaseDn}]: '{baseDn}' is not a valid DN " +
+                    "(expected a comma-separated chain of 'attribute=value', e.g. 'dc=example,dc=com').");
+
+            // Two tables whose entries would share a DN namespace (same normalized template)
+            // would produce overlapping/ambiguous DNs; reject the collision at model load.
+            foreach (var group in mapped.GroupBy(m => m.Config.NormalizedDnTemplate, StringComparer.Ordinal))
+            {
+                var members = group.ToArray();
+                if (members.Length < 2)
+                    continue;
+
+                var names = string.Join(", ", members.Select(m => $"{m.Table.TableSchema}.{m.Table.DbName}"));
+                errors.Add(Problem(members[0].Table, MetadataKeys.Ldap.DnTemplate, members[0].Config.DnTemplate,
+                    $"produces the same DN namespace as {names}; two tables cannot publish entries under the same " +
+                    "DN template. Give each a distinct DN template."));
+            }
+
+            foreach (var (table, config) in mapped)
+            {
+                if (!DbColumnExists(table, config.NamingColumn!))
+                    errors.Add(Problem(table, MetadataKeys.Ldap.DnTemplate, config.NamingColumn,
+                        "the DN template's naming column does not exist on the table"));
+
+                foreach (var attribute in config.Attributes)
+                    ValidateLdapAttribute(table, attribute, errors);
+
+                if (config.CredentialColumn != null && !DbColumnExists(table, config.CredentialColumn))
+                    errors.Add(Problem(table, MetadataKeys.Ldap.Credential, config.CredentialColumn,
+                        "the credential column does not exist on the table"));
+
+                if (config.MemberRelationship != null)
+                    ValidateLdapMembership(table, config.MemberRelationship, errors);
+            }
+        }
+
+        // Each returned attribute must name an existing column whose type is compatible with the
+        // attribute's LDAP syntax. A well-known attribute (uid/cn/mail/uidNumber/...) carries a
+        // required syntax class; mapping it onto a column of a different class (e.g. a text
+        // attribute onto an integer column) would emit values the syntax cannot represent, so it
+        // is rejected. A custom (unregistered) attribute has no syntax constraint.
+        private static void ValidateLdapAttribute(IDbTable table, LdapAttributeMapping attribute, List<string> errors)
+        {
+            if (!table.ColumnLookup.TryGetValue(attribute.Column, out var column))
+            {
+                errors.Add(Problem(table, MetadataKeys.Ldap.Attributes, attribute.Column,
+                    $"attribute '{attribute.Attribute}' maps to a column that does not exist on the table"));
+                return;
+            }
+
+            if (!LdapMappingConfig.WellKnownAttributeSyntax.TryGetValue(attribute.Attribute, out var required))
+                return; // Custom attribute — no syntax requirement.
+
+            var actual = LdapMappingConfig.ColumnSyntax(column.DataType);
+            if (actual != required)
+                errors.Add(Problem(table, MetadataKeys.Ldap.Attributes, attribute.Column,
+                    $"attribute '{attribute.Attribute}' requires LDAP syntax {required}, but column " +
+                    $"'{column.ColumnName}' has type '{column.DataType}' (syntax {actual}); the column type is " +
+                    "incompatible with the attribute's syntax."));
+        }
+
+        // The group-membership relationship must name a real to-many relationship (a multi-link
+        // or a many-to-many) whose target table is itself LDAP-mapped, so a member DN can be
+        // constructed. A composite-key relationship is explicitly unsupported in this slice —
+        // rejected by name rather than silently taking the first key column.
+        private static void ValidateLdapMembership(IDbTable table, string relationship, List<string> errors)
+        {
+            if (table.MultiLinks.TryGetValue(relationship, out var multiLink))
+            {
+                if (multiLink.IsComposite)
+                {
+                    errors.Add(Problem(table, MetadataKeys.Ldap.Member, relationship,
+                        "names a composite-key relationship; composite group-membership relationships are not " +
+                        "supported in this slice. Use a single-column relationship."));
+                    return;
+                }
+                RequireMappedMemberTarget(table, relationship, multiLink.ChildTable, errors);
+                return;
+            }
+
+            if (table.ManyToManyLinks.TryGetValue(relationship, out var m2mLink))
+            {
+                RequireMappedMemberTarget(table, relationship, m2mLink.TargetTable, errors);
+                return;
+            }
+
+            if (table.SingleLinks.ContainsKey(relationship))
+            {
+                errors.Add(Problem(table, MetadataKeys.Ldap.Member, relationship,
+                    "names a to-one relationship; group membership requires a to-many relationship " +
+                    "(a multi-link or a many-to-many)."));
+                return;
+            }
+
+            errors.Add(Problem(table, MetadataKeys.Ldap.Member, relationship,
+                "does not name a known relationship on the table"));
+        }
+
+        private static void RequireMappedMemberTarget(
+            IDbTable table, string relationship, IDbTable target, List<string> errors)
+        {
+            if (!LdapMappingConfig.FromTable(target).IsMapped)
+                errors.Add(Problem(table, MetadataKeys.Ldap.Member, relationship,
+                    $"the membership target table '{target.TableSchema}.{target.DbName}' is not LDAP-mapped " +
+                    $"(no '{MetadataKeys.Ldap.ObjectClass}'); a member DN cannot be constructed for an unmapped table."));
+        }
+
+        private static bool IsValidDn(string dn) =>
+            dn.Split(',', StringSplitOptions.TrimEntries)
+              .All(component => component.Length > 0 && DnComponentGrammar.IsMatch(component));
+
+        private static string FirstPresentLdapKey(IDbTable table)
+        {
+            var keys = new[]
+            {
+                MetadataKeys.Ldap.ObjectClass,
+                MetadataKeys.Ldap.DnTemplate,
+                MetadataKeys.Ldap.Attributes,
+                MetadataKeys.Ldap.Credential,
+                MetadataKeys.Ldap.Member,
+            };
+            return keys.FirstOrDefault(table.Metadata.ContainsKey) ?? MetadataKeys.Ldap.ObjectClass;
         }
 
         private static void ValidateStateMachine(IDbTable table, List<string> errors)

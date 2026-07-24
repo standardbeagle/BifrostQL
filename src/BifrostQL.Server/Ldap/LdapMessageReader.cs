@@ -95,17 +95,23 @@ namespace BifrostQL.Server.Ldap
             var version = bind.Int32(bind.ReadElement(LdapProtocol.Integer));
             var name = bind.String(bind.ReadElement(LdapProtocol.OctetString));
             var authKind = LdapBindAuthKind.Unknown;
+            byte[]? simplePassword = null;
             if (bind.HasMore)
             {
-                authKind = bind.PeekTag switch
+                var authChoice = bind.ReadElement();
+                authKind = authChoice.Tag switch
                 {
                     LdapProtocol.BindSimpleAuth => LdapBindAuthKind.Simple,
                     LdapProtocol.BindSaslAuth => LdapBindAuthKind.Sasl,
                     _ => LdapBindAuthKind.Unknown,
                 };
-                bind.ReadElement(); // consume the auth choice (not verified this slice)
+                // The simple-auth choice ([0] primitive) IS the password octets; capture them so the
+                // authenticator can verify (and then zero) them. SASL ([3] constructed) is a non-goal
+                // and its credentials are never extracted here.
+                if (authKind == LdapBindAuthKind.Simple)
+                    simplePassword = bind.Content(authChoice);
             }
-            return new LdapBindRequest(version, name, authKind);
+            return new LdapBindRequest(version, name, authKind, simplePassword);
         }
 
         private LdapOperation DecodeSearch(BerCursor search)

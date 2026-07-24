@@ -20,8 +20,14 @@ namespace BifrostQL.Server.Ldap
     /// <summary>The decoded protocolOp of an <see cref="LdapRequest"/>.</summary>
     internal abstract record LdapOperation;
 
-    /// <summary>BindRequest: the requested protocol version, bind DN, and which auth choice was presented (not verified this slice).</summary>
-    internal sealed record LdapBindRequest(int Version, string Name, LdapBindAuthKind AuthKind) : LdapOperation;
+    /// <summary>
+    /// BindRequest: the requested protocol version, bind DN, which auth choice was presented, and —
+    /// for a Simple bind — the presented password bytes. The password is carried as a mutable
+    /// <see cref="byte"/> array (not a string) so the authenticator can zero it after the credential
+    /// verify (secret hygiene): an interned/immutable string could not be wiped. It is <c>null</c> for
+    /// SASL / unknown / absent auth choices, and a zero-length array for an empty Simple password.
+    /// </summary>
+    internal sealed record LdapBindRequest(int Version, string Name, LdapBindAuthKind AuthKind, byte[]? SimplePassword) : LdapOperation;
 
     /// <summary>Which authentication choice a BindRequest carried.</summary>
     internal enum LdapBindAuthKind { Simple, Sasl, Unknown }

@@ -73,6 +73,7 @@ namespace BifrostQL.Server.Ldap
         Success = 0,
         ProtocolError = 2,
         UnavailableCriticalExtension = 12,
+        InvalidCredentials = 49,
         UnwillingToPerform = 53,
     }
 }

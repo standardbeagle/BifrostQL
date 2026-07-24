@@ -43,6 +43,24 @@ namespace BifrostQL.Server.Test.Ldap
             bind.Version.Should().Be(3);
             bind.Name.Should().Be("cn=admin");
             bind.AuthKind.Should().Be(LdapBindAuthKind.Simple);
+            // The simple-auth password octets are captured so the authenticator can verify (then zero)
+            // them — the credential is a byte[] (wipeable), never an interned string.
+            System.Text.Encoding.UTF8.GetString(bind.SimplePassword!).Should().Be("secret");
+        }
+
+        [Fact]
+        public async Task BindRequest_EmptySimplePassword_DecodesToZeroLengthNotNull()
+        {
+            // An anonymous / unauthenticated simple bind presents a zero-length [0] password. It must
+            // decode to an empty (present) byte[], distinct from a SASL/absent choice (null), so the
+            // authenticator can tell "empty simple password" from "no simple auth choice".
+            var message = LdapWire.Message(1, LdapWire.BindRequest(name: "", password: ""));
+
+            var request = await DecodeAsync(message);
+
+            var bind = request.Operation.Should().BeOfType<LdapBindRequest>().Subject;
+            bind.AuthKind.Should().Be(LdapBindAuthKind.Simple);
+            bind.SimplePassword.Should().NotBeNull().And.BeEmpty();
         }
 
         [Fact]

@@ -268,7 +268,12 @@ public sealed class MutationIntentExecutorTests : IAsyncLifetime
             UserContext = TenantContext(1), Endpoint = EndpointPath,
         });
 
-        await act.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*outside the caller's tenant scope*");
+        // Parity: the deferred-restore tenant-scope denial is an access-control condition, so it must
+        // carry AccessDeniedCode — the SAME signal the read-side TenantFilterTransformer throws — so every
+        // transport funnel maps it to the denied class (gRPC PERMISSION_DENIED, chat 403), never a generic
+        // INTERNAL/500. Non-vacuous: with the tag stripped from TenantMutationTransformer the code is null.
+        (await act.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*outside the caller's tenant scope*"))
+            .Which.ErrorCode.Should().Be(BifrostExecutionError.AccessDeniedCode);
         (await ScalarAsync("SELECT tenant_id FROM orders WHERE id = 20")).Should().Be("2");
     }
 
@@ -477,8 +482,13 @@ public sealed class MutationIntentExecutorTests : IAsyncLifetime
             Endpoint = EndpointPath,
         });
 
-        await act.Should().ThrowAsync<BifrostExecutionError>()
-            .WithMessage("*requires role 'purge_admin'*");
+        // Parity: the hard-delete role gate is an access-control denial, so it must carry AccessDeniedCode
+        // — the SAME signal the read/policy guards throw — so every transport funnel maps it to the denied
+        // class, never a generic INTERNAL/500. Non-vacuous: with the tag stripped from
+        // SoftDeleteMutationTransformerBase the pipeline throw is codeless and this assertion fails.
+        (await act.Should().ThrowAsync<BifrostExecutionError>()
+            .WithMessage("*requires role 'purge_admin'*"))
+            .Which.ErrorCode.Should().Be(BifrostExecutionError.AccessDeniedCode);
         (await ScalarAsync("SELECT COUNT(*) FROM events WHERE id = 2")).Should().Be("1", "denied hard delete left the row");
     }
 

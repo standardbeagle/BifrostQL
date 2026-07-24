@@ -222,7 +222,10 @@ namespace BifrostQL.Server.Test.Ldap
             Client = new LdapTestClient(clientSocket.GetStream());
         }
 
-        public static async Task<LdapFixture> StartAsync(LdapWireOptions? options = null, LdapBoundedCounter? connectionLimiter = null)
+        public static async Task<LdapFixture> StartAsync(
+            LdapWireOptions? options = null,
+            LdapBoundedCounter? connectionLimiter = null,
+            LdapBindAuthenticator? authenticator = null)
         {
             options ??= new LdapWireOptions();
             var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -234,10 +237,10 @@ namespace BifrostQL.Server.Test.Ldap
             var serverSocket = await listener.AcceptTcpClientAsync();
             await connectTask;
 
-            var handler = new LdapConnectionHandler(options, connectionLimiter);
+            var handler = new LdapConnectionHandler(options, connectionLimiter, authenticator);
             var serverTask = Task.Run(async () =>
             {
-                try { await handler.HandleConnectionAsync(serverSocket.GetStream(), CancellationToken.None); }
+                try { await handler.HandleConnectionAsync(serverSocket.GetStream(), CancellationToken.None, source: "test-client:1"); }
                 finally { serverSocket.Close(); }
             });
             return new LdapFixture(listener, clientSocket, serverSocket, serverTask);

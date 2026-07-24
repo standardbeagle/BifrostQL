@@ -15,9 +15,10 @@ related:
   - .claude/rules/regression-test-non-vacuous.md        # the fixture that decouples the two egress channels is the non-vacuous requirement
   - docs/solutions/bifrostql/s3-slice1-address-vs-storage-key-2026-07-16.md   # "consult in-repo prior art before building a second seam over the same resource"
   - docs/solutions/bifrostql/crypto-blind-index-read-routing-2026-07-24.md    # backstop-shadow / revert-proof-must-target-the-specific-branch
+  - docs/solutions/bifrostql/ldap-slice2-fixed-index-wire-decode-nonparse-exception-2026-07-24.md   # consecutive LDAP slice, same "reviewer sweep found the unguarded sibling path" shape (wire-decode side)
 tags: [ldap, protocol-adapter, security, credential-column, second-egress-path, egress-sweep, revert-proof, non-vacuous, dialect-blind-type, module-slice, rewind]
 status: steering
-recurrence: 1
+recurrence: 2
 ---
 
 # LDAP slice 1: a never-expose guard must cover EVERY egress path, not the obvious one (1 rewind)
@@ -137,3 +138,14 @@ recurrence gate clears, fold a config-egress invariant (12) into
 `.claude/rules/protocol-adapter-security.md` so the checklist reaches every
 adapter, not just those that read this steering doc. Flagged for operator
 decision; registered as steering only for now.
+
+**Recurrence update (2026-07-24):** LDAP slice 2 is the SECOND consecutive LDAP
+slice where the reviewer's adversarial sweep found a pre-auth blocker the
+implementer + green suite missed, same "guard/catch covers the obvious path, a
+sibling path is unguarded" shape — slice 1 on the config-egress side, slice 2 on
+the wire-decode side (a fixed-index `Content(...)[0]` read throwing a non-parse
+`IndexOutOfRangeException` outside the loop's catch family). See
+`docs/solutions/bifrostql/ldap-slice2-fixed-index-wire-decode-nonparse-exception-2026-07-24.md`.
+The shared meta-lesson — after the reviewer names one path, SWEEP the whole SET
+of sibling paths and record the per-path conclusion — now spans config-egress
+AND wire-decode surfaces.

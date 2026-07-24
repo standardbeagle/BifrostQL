@@ -195,7 +195,7 @@ namespace BifrostQL.Core.Model
                     $"the DN template's naming attribute '{namingAttribute}' is not listed in " +
                     $"'{MetadataKeys.Ldap.Attributes}'; the naming attribute must be a returned attribute.");
 
-            var credentialColumn = ParseCredentialColumn(table, attributes);
+            var credentialColumn = ParseCredentialColumn(table, namingColumn, attributes);
 
             var memberRelationship = table.GetMetadataValue(MetadataKeys.Ldap.Member);
             if (memberRelationship != null && string.IsNullOrWhiteSpace(memberRelationship))
@@ -269,7 +269,8 @@ namespace BifrostQL.Core.Model
             return mappings;
         }
 
-        private static string? ParseCredentialColumn(IDbTable table, IReadOnlyList<LdapAttributeMapping> attributes)
+        private static string? ParseCredentialColumn(
+            IDbTable table, string namingColumn, IReadOnlyList<LdapAttributeMapping> attributes)
         {
             var credential = table.GetMetadataValue(MetadataKeys.Ldap.Credential);
             if (string.IsNullOrWhiteSpace(credential))
@@ -288,6 +289,17 @@ namespace BifrostQL.Core.Model
                     $"'{MetadataKeys.Ldap.Credential}' column '{credentialColumn}' is also exposed as the " +
                     $"'{exposing.Attribute}' attribute in '{MetadataKeys.Ldap.Attributes}'; the credential column " +
                     "verifies binds only and must never be a searchable or returned attribute. Remove that mapping.");
+
+            // Second egress path: the DN template's RDN names each entry by the naming column's
+            // VALUE. If that column is the credential column, every entry's DN literally carries
+            // the password hash — a leak independent of the attributes list above (the returned
+            // attribute may map to a benign column while the DN still exposes the hash). Reject it
+            // at the same boundary so the credential column can never appear in a DN.
+            if (string.Equals(namingColumn, credentialColumn, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    $"'{MetadataKeys.Ldap.Credential}' column '{credentialColumn}' is also the " +
+                    $"'{MetadataKeys.Ldap.DnTemplate}' RDN naming column; the credential column verifies binds " +
+                    "only and must never appear in an entry's DN. Name the RDN by a non-credential column.");
 
             return credentialColumn;
         }
@@ -322,13 +334,15 @@ namespace BifrostQL.Core.Model
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
                 "date", "datetime", "datetime2", "smalldatetime", "datetimeoffset",
-                "time", "timestamp", "timestamptz",
+                "time", "timestamptz",
             };
 
+        // SQL Server 'timestamp' is a synonym for 'rowversion' — an opaque binary row-version
+        // token, not a datetime — so it classifies as an octet-string, never GeneralizedTime.
         private static readonly IReadOnlySet<string> BinaryTypes =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                "binary", "varbinary", "image", "bytea", "blob", "rowversion", "timestamp_binary",
+                "binary", "varbinary", "image", "bytea", "blob", "rowversion", "timestamp",
             };
 
         private static string CanonicalizeColumn(IDbTable table, string name) =>

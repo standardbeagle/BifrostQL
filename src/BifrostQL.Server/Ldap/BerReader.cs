@@ -134,6 +134,20 @@ namespace BifrostQL.Server.Ldap
             return value;
         }
 
+        /// <summary>
+        /// Decodes an element's content as a BER Boolean (control criticality, typesOnly…). A Boolean
+        /// carries exactly one content byte; any nonzero byte is true. A zero-length Boolean is a clean
+        /// protocol error, never an out-of-bounds read — the boundary an unchecked <c>Content(...)[0]</c>
+        /// would leak past the connection handler's catch filter as an uncaught IndexOutOfRangeException
+        /// on an unauthenticated peer's malformed control (protocol-adapter-security invariant 5).
+        /// </summary>
+        public bool Boolean(BerElement element)
+        {
+            if (element.ContentLength == 0)
+                throw new LdapProtocolException("BER Boolean must have exactly one content byte.");
+            return _buffer[element.ContentStart] != 0;
+        }
+
         /// <summary>Decodes an integer element and range-checks it into an <see cref="int"/> (messageID, sizeLimit…).</summary>
         public int Int32(BerElement element)
         {

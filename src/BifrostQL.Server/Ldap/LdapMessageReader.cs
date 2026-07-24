@@ -216,7 +216,7 @@ namespace BifrostQL.Server.Ldap
                 var criticality = false;
                 byte[]? value = null;
                 if (control.HasMore && control.PeekTag == LdapProtocol.Boolean)
-                    criticality = control.Content(control.ReadElement(LdapProtocol.Boolean))[0] != 0;
+                    criticality = control.Boolean(control.ReadElement(LdapProtocol.Boolean));
                 if (control.HasMore && control.PeekTag == LdapProtocol.OctetString)
                     value = control.Content(control.ReadElement(LdapProtocol.OctetString));
                 controls.Add(new LdapControl(oid, criticality, value));

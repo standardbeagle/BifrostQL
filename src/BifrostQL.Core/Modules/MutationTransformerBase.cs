@@ -1,5 +1,6 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
+using BifrostQL.Core.Resolvers;
 
 namespace BifrostQL.Core.Modules;
 
@@ -115,6 +116,12 @@ public abstract class SoftDeleteMutationTransformerBase : MetadataMutationTransf
                     MutationType = mutationType,
                     Data = data,
                     Errors = new[] { denial },
+                    // Tag the role-gated hard-delete denial with AccessDeniedCode so it surfaces the SAME
+                    // transport status as every other authorization denial (policy/tenant) rather than a
+                    // generic INTERNAL/500 — mapping by CONDITION, not op class
+                    // (single-funnel-needs-condition-tagging). The message is unchanged and stays generic
+                    // on the wire (invariant 3). No new denial semantics — only the classification code.
+                    ErrorCode = BifrostExecutionError.AccessDeniedCode,
                 };
             }
             return PassThrough(MutationType.Delete, data);

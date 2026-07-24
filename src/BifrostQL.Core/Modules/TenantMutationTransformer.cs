@@ -68,6 +68,15 @@ public sealed class TenantMutationTransformer : MetadataMutationTransformerBase
                         MutationType = MutationType.Insert,
                         Data = data,
                         Errors = new[] { "Deferred restore is outside the caller's tenant scope." },
+                        // Tag the fail-closed tenant-scope denial with AccessDeniedCode so a deferred
+                        // restore that crosses a tenant boundary surfaces the SAME transport status as the
+                        // read-side tenant guard (TenantFilterTransformer) — mapping by CONDITION, not op
+                        // class. Without it the codeless pipeline abort fell to a funnel's default
+                        // (gRPC INTERNAL, chat 500), a cross-op-class divergence for one authorization
+                        // condition (single-funnel-needs-condition-tagging). The message is unchanged and
+                        // stays generic on the wire (invariant 3). The deferred/undo abort semantics are
+                        // untouched — only the classification code is added.
+                        ErrorCode = BifrostExecutionError.AccessDeniedCode,
                     };
                 }
 

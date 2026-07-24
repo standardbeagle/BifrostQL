@@ -1497,5 +1497,82 @@ namespace BifrostQL.Core.Model
                     "false", "no", "off", "0", "disabled",
                 };
         }
+
+        /// <summary>
+        /// Metadata keys for the opt-in LDAP directory front door. A model opts in by
+        /// declaring a base DN; a table opts in by declaring the objectClass(es) its rows
+        /// present as, a DN template that names each entry, and the attribute→column
+        /// mappings a directory search returns. Configured like the tenant-filter
+        /// convention:
+        ///   ":root { ldap-base-dn: dc=example,dc=com }"
+        ///   "dbo.users { ldap-object-class: inetOrgPerson; ldap-dn-template: uid={username},ou=people;
+        ///                ldap-attributes: uid=username,cn=full_name,mail=email;
+        ///                ldap-credential: password_hash }"
+        ///   "dbo.groups { ldap-object-class: groupOfNames; ldap-dn-template: cn={name},ou=groups;
+        ///                 ldap-attributes: cn=name; ldap-member: members }"
+        /// This slice establishes the metadata contract, the typed collector
+        /// (<c>LdapMappingConfig</c>), fail-fast DN/schema validation, and the deterministic
+        /// RootDSE/subschema model (<c>LdapDirectoryModel</c>); the listener, BER codec,
+        /// bind verification, and search execution are later LDAP sub-tasks.
+        /// </summary>
+        public static class Ldap
+        {
+            /// <summary>
+            /// Model-level base DN under which every mapped entry is published
+            /// (e.g. <c>dc=example,dc=com</c>). Required once any table opts into the
+            /// directory; a mapped model with no base DN has nowhere to root its entries.
+            /// </summary>
+            public const string BaseDn = "ldap-base-dn";
+
+            /// <summary>
+            /// Table-level comma-separated list of objectClasses the table's rows present
+            /// as (e.g. <c>inetOrgPerson</c>, <c>groupOfNames</c>). Presence of this key is
+            /// what opts a table into the directory; a present-but-empty value is rejected.
+            /// </summary>
+            public const string ObjectClass = "ldap-object-class";
+
+            /// <summary>
+            /// Table-level DN template, RELATIVE to <see cref="BaseDn"/>, naming each entry
+            /// (e.g. <c>uid={username},ou=people</c>). The first (leftmost) component is the
+            /// RDN: <c>attr={column}</c>, whose attribute is the entry's naming attribute and
+            /// whose <c>{column}</c> placeholder supplies the RDN value. Every remaining
+            /// component is a static <c>attr=value</c> path. Required on a mapped table.
+            /// </summary>
+            public const string DnTemplate = "ldap-dn-template";
+
+            /// <summary>
+            /// Table-level comma-separated attribute→column mappings the directory returns
+            /// (e.g. <c>uid=username,cn=full_name,mail=email</c>). Each entry is
+            /// <c>attribute=column</c>; the column must exist and its type must be compatible
+            /// with the attribute's LDAP syntax. The naming attribute from
+            /// <see cref="DnTemplate"/> must appear here so a search can return it. Required
+            /// on a mapped table.
+            /// </summary>
+            public const string Attributes = "ldap-attributes";
+
+            /// <summary>
+            /// Table-level column holding the credential verifier (a password hash) used by
+            /// simple bind. It is used for bind verification ONLY and is NEVER exposed as a
+            /// searchable or returned attribute — the mapping is rejected at model load if
+            /// this column also appears as a source in <see cref="Attributes"/>.
+            /// </summary>
+            public const string Credential = "ldap-credential";
+
+            /// <summary>
+            /// Table-level name of the relationship whose target rows are the entry's group
+            /// members (a multi-link or many-to-many named on this table). The members are
+            /// surfaced as the <see cref="MemberAttributeName"/> attribute, each value the
+            /// member entry's DN. The target table must itself be LDAP-mapped so its DN can
+            /// be constructed; a composite-key relationship is explicitly unsupported in this
+            /// slice.
+            /// </summary>
+            public const string Member = "ldap-member";
+
+            /// <summary>
+            /// The synthesized attribute name carrying group membership DNs, following the
+            /// <c>groupOfNames</c> convention. Fixed rather than configurable in this slice.
+            /// </summary>
+            public const string MemberAttributeName = "member";
+        }
     }
 }

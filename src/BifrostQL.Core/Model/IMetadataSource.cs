@@ -214,6 +214,15 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Feed.Title,
             MetadataKeys.Feed.Body,
             MetadataKeys.Feed.Link,
+            // LDAP directory front door (table-level opt-in + mappings). A miscased or
+            // typo'd key must be flagged, not silently leave a table out of the directory
+            // (or, worse for ldap-credential, silently expose or fail to protect the
+            // password column) — the mapping is an authentication-adjacent surface.
+            MetadataKeys.Ldap.ObjectClass,
+            MetadataKeys.Ldap.DnTemplate,
+            MetadataKeys.Ldap.Attributes,
+            MetadataKeys.Ldap.Credential,
+            MetadataKeys.Ldap.Member,
         };
 
         // Internal for the same reason as KnownTableKeys above (case-casing
@@ -318,6 +327,10 @@ namespace BifrostQL.Core.Model
             // Temporal change history (model-level). Shared default history table for
             // every history-enabled table that does not override it.
             MetadataKeys.History.Table,
+            // LDAP directory front door (model-level). The base DN under which every mapped
+            // entry is published; a miscased key must be flagged, not silently leave a
+            // mapped directory with nowhere to root its entries.
+            MetadataKeys.Ldap.BaseDn,
         };
 
         /// <summary>

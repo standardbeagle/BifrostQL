@@ -39,10 +39,10 @@
     }
   },
   "devDependencies": {
-    "@types/node": "^20.19.41",
-    "@vitest/coverage-v8": "^4.1.8",
-    "typescript": "^5.9.3",
-    "vitest": "^4.1.8"
+    "@types/node": "^26.1.1",
+    "@vitest/coverage-v8": "^4.1.10",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   },
   "license": "ISC",
   "repository": {

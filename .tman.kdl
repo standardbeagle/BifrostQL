@@ -1,12 +1,72 @@
+// Supervision policy for BifrostQL.
+//
+// Read this before changing a number: the PATH shims re-issue `dotnet test`,
+// `pnpm test` and friends as their own nested `tman run` with NO flags, so a
+// nested run is governed by THIS `defaults` block and nothing else. Caps set
+// on an alias below — or passed on the command line — apply only to the outer
+// wrapper process and never reach the build/test that actually burns the
+// resources. That is why the ceilings live in `defaults` and are sized for the
+// heaviest workload in the repo rather than the typical one.
+
 defaults {
-    stall "60s"
-    max-mem 2048
-    max-cpu 95
+    // Hang backstop, NOT a runtime budget. `dotnet test BifrostQL.sln` restores
+    // and builds three TFMs of the multi-targeted src libraries before printing
+    // anything, and the release tier compounds that across the full matrix.
+    // (The scaffolded 60s was a runtime budget wearing a backstop's name.)
+    stall "30m"
+
+    // Runaway guard only. A full parallel epic run peaks at ~2.1GB on a 6-core
+    // box, so the scaffolded 2048 sat *below* the healthy working set and culled
+    // the gate mid-build with exit 126. 8192 keeps ~4x headroom over the real
+    // peak while still catching a leak long before it threatens a 24GB machine.
+    max-mem 8192
+
+    // No `max-cpu` on purpose. tman normalises CPU% across all cores, so the
+    // scaffolded 95 meant "kill anything that saturates the machine" — exactly
+    // what a healthy parallel build or a threaded vitest run is supposed to do.
+    // It is also sampled on the root process only, so it fires or not depending
+    // on whether the work happens in the wrapper or a child: a cull that lands
+    // unpredictably teaches nothing. Bound runtime with `max-time` instead.
+
+    // Two concurrent runs per bucket. Slots are scoped per bucket-and-directory,
+    // so this never contends with a run in another checkout.
     max-parallel 2
+
+    // Suites here run for minutes, and with only two slots a queued run must be
+    // able to outwait the one ahead of it. The 5m built-in expires while a run
+    // is legitimately waiting its turn.
+    queue-timeout "30m"
+
+    retain "24h"
 }
 
+// Default gate: every test project on the current TFM, Fuzz excluded. Extra args
+// pass through, so `./test tests/BifrostQL.Server.Test` scopes it to one project.
+// Deliberately not `npm run test` — this repo is pnpm-only, and the root test
+// script bypasses the epic/release tier split these scripts exist to enforce.
 alias "test" {
-    command "npm"
-    args "run" "test"
+    command "./scripts/test-epic.sh"
+    max-time "30m"
 }
 
+// JS workspace only: 7 packages, ~1800 vitest tests. Useful when a change is
+// frontend-only and the .NET gate is not implicated.
+alias "test-js" {
+    command "pnpm"
+    args "test:js"
+    max-time "20m"
+}
+
+// Release tier: the full net8.0/net9.0/net10.0 matrix plus the Fuzz category,
+// gated before pack-publish. Needs live databases — see scripts/test-release.sh
+// for the docker compose + scripts/test-env.sh preamble.
+alias "test-release" {
+    command "./scripts/test-release.sh"
+    max-time "90m"
+}
+
+alias "build" {
+    command "dotnet"
+    args "build" "BifrostQL.sln"
+    max-time "30m"
+}

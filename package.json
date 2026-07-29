@@ -24,12 +24,5 @@
   "dependencies": {
     "@standardbeagle/virtual-router": "^1.2.0",
     "ajv": "^8.20.0"
-  },
-  "pnpm": {
-    "overrides": {
-      "ajv": "$ajv",
-      "form-data": "^4.0.6",
-      "js-yaml": "^4.2.0"
-    }
   }
 }

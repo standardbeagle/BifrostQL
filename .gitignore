@@ -375,6 +375,9 @@ FodyWeavers.xsd
 !.claude/rules/
 !.claude/skills
 
+# Nested per-package .claude dirs hold only local loop state/logs — never shared
+**/*/.claude/
+
 # DartAI loop runtime state
 .dartai/
 .dartai-locks.json

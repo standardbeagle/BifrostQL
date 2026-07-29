@@ -401,3 +401,7 @@ src/BifrostQL.UI/wwwroot/index.html
 
 # TypeScript incremental build state
 *.tsbuildinfo
+
+# tman shims
+/test
+/test.cmd

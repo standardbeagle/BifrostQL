@@ -23,6 +23,14 @@
 		<Copyright>Copyright © Standard Beagle Studio LLC.</Copyright>
 		<IsPackable>true</IsPackable>
 		<IsPublishable>false</IsPublishable>
+
+		<!-- This is the harness LIBRARY, not a test project: it carries no tests and
+		     no test SDK/adapter, so its output dir has neither the package assemblies
+		     nor a runtimeconfig.dev.json probing path. Without this, `dotnet test` on
+		     the solution tries to execute it on every TFM, the testhost fails to
+		     resolve a transitive package assembly, and the run aborts before the
+		     real test projects execute. -->
+		<IsTestProject>false</IsTestProject>
 	</PropertyGroup>
 
 	<ItemGroup>

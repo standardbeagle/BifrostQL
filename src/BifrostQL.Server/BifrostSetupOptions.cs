@@ -350,7 +350,7 @@ namespace BifrostQL.Server
             // so a request to /GraphQL reaches this middleware with that casing; the PathCache
             // is ordinal-keyed, so the lookup side normalizes to the same lowercase form.
             extensionsLoader.AddLoader(path.ToLowerInvariant(), () => ProfileCacheBootstrapper.BuildInputsAsync(
-                _connectionString ?? throw new InvalidOperationException("Connection string has not been configured."),
+                _connectionString ?? throw new ConnectionNotConfiguredException(),
                 _provider,
                 configMetadataRules,
                 metadataSources,

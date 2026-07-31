@@ -141,7 +141,18 @@ namespace BifrostQL.Core.Modules.Cdc
 
         private async Task<(IDbModel? Model, IDbConnFactory? ConnFactory)> ResolveAsync()
         {
-            var inputs = await _pathCache.GetFirstValueAsync();
+            Inputs? inputs;
+            try
+            {
+                inputs = await _pathCache.GetFirstValueAsync();
+            }
+            catch (ConnectionNotConfiguredException)
+            {
+                // Deferred-connection host (started without a connection string): not an
+                // error — keep polling quietly until the user connects and the cache resets.
+                _logger?.LogDebug("CDC outbox dispatcher idle: no database connection configured yet.");
+                return (null, null);
+            }
             if (inputs is null)
                 return (null, null);
 

@@ -67,16 +67,3 @@ proxies {
         fallback-port 5173
     }
 }
-
-hooks {
-    on-response {
-        toast true
-        indicator true
-    }
-}
-
-toast {
-    duration 4000
-    position "bottom-right"
-    max-visible 3
-}

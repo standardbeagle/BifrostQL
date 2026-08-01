@@ -3,7 +3,7 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
 export default defineConfig({
-	site: 'https://standardbeagle.github.io',
+	site: 'https://dev.standardbeagle.com',
 	base: '/BifrostQL',
 	integrations: [
 		starlight({

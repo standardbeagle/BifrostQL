@@ -2,7 +2,7 @@
 
 **Zero-config GraphQL API for your existing database. One connection string. Full API.**
 
-[Documentation](https://standardbeagle.github.io/BifrostQL/) | [GitHub](https://github.com/standardbeagle/BifrostQL) | [NuGet](https://www.nuget.org/packages/BifrostQL.Server)
+[Documentation](https://dev.standardbeagle.com/BifrostQL/) | [GitHub](https://github.com/standardbeagle/BifrostQL) | [NuGet](https://www.nuget.org/packages/BifrostQL.Server)
 
 ```csharp
 // Program.cs - that's it

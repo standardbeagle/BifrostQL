@@ -553,7 +553,7 @@ dotnet run --project src/BifrostQL.Host
 - [AGENTS.md](AGENTS.md) — Detailed architecture and development guide (CLAUDE.md is a pointer to it)
 - [GitHub Repository](https://github.com/standardbeagle/BifrostQL)
 - [NuGet Package](https://www.nuget.org/packages/BifrostQL.Server)
-- [Full Documentation](https://standardbeagle.github.io/BifrostQL/)
+- [Full Documentation](https://dev.standardbeagle.com/BifrostQL/)
 
 ---
 

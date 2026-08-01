@@ -85,11 +85,14 @@ public sealed class GqlObjectQueryEdgeCaseTest
     }
 
     [Fact]
-    public void AddSqlParameterized_EmptySortList_UsesDefaultPaginationWithNullOrder()
+    public void AddSqlParameterized_EmptySortList_PagesByPrimaryKey()
     {
         // Arrange
-        // NOTE: SQL Server requires ORDER BY for OFFSET/FETCH pagination.
-        // When no sort is specified but pagination is applied, it uses ORDER BY (SELECT NULL)
+        // NOTE: SQL Server requires ORDER BY for OFFSET/FETCH pagination, and a paged
+        // window is only well-defined under a TOTAL order. With no caller sort the
+        // query pages by the primary key — the placeholder ORDER BY (SELECT NULL) let
+        // the parent SELECT and a link's join-id sub-query page to different rows.
+        // See PagedParentJoinAlignmentTests.
         var dbModel = StandardTestFixtures.SimpleUsers();
         var usersTable = dbModel.GetTableFromDbName("Users");
         var query = GqlObjectQueryBuilder.Create()
@@ -104,13 +107,10 @@ public sealed class GqlObjectQueryEdgeCaseTest
         // Act
         query.AddSqlParameterized(dbModel, Dialect, sqls, parameters);
 
-        // Assert - with default pagination, ORDER BY (SELECT NULL) is used
+        // Assert - default pagination orders by the key, never the null placeholder
         var sql = sqls["Users"].Sql;
-        if (sql.Contains("OFFSET"))
-        {
-            // SQL Server requires ORDER BY for OFFSET/FETCH
-            sql.Should().Contain("ORDER BY (SELECT NULL)");
-        }
+        sql.Should().Contain("ORDER BY [Id] asc");
+        sql.Should().NotContain("(SELECT NULL)");
     }
 
     [Fact]

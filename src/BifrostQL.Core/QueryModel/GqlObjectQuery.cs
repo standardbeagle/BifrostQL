@@ -92,20 +92,60 @@ namespace BifrostQL.Core.QueryModel
             var prefix = alias == null ? "" : $"{dialect.EscapeIdentifier(alias)}.";
             return sort.Select(s =>
             {
-                var (graphQlName, direction) = s switch
-                {
-                    { } when s.EndsWith("_asc") => (s[..^4], "asc"),
-                    { } when s.EndsWith("_desc") => (s[..^5], "desc"),
-                    _ => throw new BifrostExecutionError($"Unsupported sort token '{s}'; expected suffix '_asc' or '_desc'.")
-                };
-                // Map the GraphQL column name back to its DB name. When the node has no
-                // resolved table, or the token is not a mapped scalar column (e.g. a
-                // projection alias), leave it as-is — the prior behavior.
-                var dbName = graphQlName;
-                if (table != null && table.GraphQlLookup.TryGetValue(graphQlName, out var col))
-                    dbName = col.DbName;
+                var (dbName, direction) = ParseSortToken(table, s);
                 return $"{prefix}{dialect.EscapeIdentifier(dbName)} {direction}";
             });
+        }
+
+        /// <summary>
+        /// Splits a GraphQL sort token into its database column name and direction,
+        /// mapping the GraphQL column name back to its DB name. When the node has no
+        /// resolved table, or the token is not a mapped scalar column (e.g. a
+        /// projection alias), the name is left as-is.
+        /// </summary>
+        private static (string DbName, string Direction) ParseSortToken(IDbTable? table, string token)
+        {
+            var (graphQlName, direction) = token switch
+            {
+                { } when token.EndsWith("_asc") => (token[..^4], "asc"),
+                { } when token.EndsWith("_desc") => (token[..^5], "desc"),
+                _ => throw new BifrostExecutionError($"Unsupported sort token '{token}'; expected suffix '_asc' or '_desc'.")
+            };
+            if (table != null && table.GraphQlLookup.TryGetValue(graphQlName, out var col))
+                return (col.DbName, direction);
+            return (graphQlName, direction);
+        }
+
+        /// <summary>
+        /// ORDER BY expressions for a query that is about to be PAGED: the caller's
+        /// sort, then the table's primary key ascending as a tie-break.
+        ///
+        /// A LIMIT/OFFSET window over an unordered (or non-uniquely ordered) result
+        /// is undefined — the engine may return any qualifying rows. That is not
+        /// merely untidy here: a link field's rows are fetched by a SEPARATE
+        /// statement that re-pages the parent table down to its join-id columns
+        /// (<see cref="GetRestrictedSqlParameterized"/>). Two statements with
+        /// different projections can pick different access paths, so the two windows
+        /// drift apart and the parent rows returned to the caller correlate against a
+        /// join-id set for rows they are not — every link field on the page resolves
+        /// null/empty. Giving both statements the same total order makes them select
+        /// the same rows by construction. Keyless tables (views) have no total order
+        /// available, so they keep the caller's sort alone.
+        /// </summary>
+        private static IEnumerable<string>? RenderPagedSortColumns(ISqlDialect dialect, IDbTable? table, IReadOnlyList<string> sort, string? alias = null)
+        {
+            var rendered = RenderSortColumns(dialect, table, sort, alias)?.ToList() ?? new List<string>();
+            if (table == null)
+                return rendered.Count > 0 ? rendered : null;
+
+            var prefix = alias == null ? "" : $"{dialect.EscapeIdentifier(alias)}.";
+            var sorted = new HashSet<string>(
+                sort.Select(s => ParseSortToken(table, s).DbName), SqlNameComparer.Instance);
+            rendered.AddRange(table.KeyColumns
+                .Where(c => !sorted.Contains(c.DbName))
+                .Select(c => $"{prefix}{dialect.EscapeIdentifier(c.DbName)} asc"));
+
+            return rendered.Count > 0 ? rendered : null;
         }
 
         /// <summary>
@@ -187,7 +227,7 @@ namespace BifrostQL.Core.QueryModel
                 var columnSql = string.Join(",", fullColumns.Select(n => n.ToSelectSql(dbModel, DbTable, dialect)));
                 var cmdText = $"SELECT {columnSql} FROM {tableRef}";
 
-                var sortCols = RenderSortColumns(dialect, DbTable, Sort);
+                var sortCols = RenderPagedSortColumns(dialect, DbTable, Sort);
                 var pagination = dialect.Pagination(sortCols, Offset, Limit);
 
                 var baseSql = new ParameterizedSql(cmdText, Array.Empty<SqlParameterInfo>())
@@ -399,7 +439,10 @@ namespace BifrostQL.Core.QueryModel
                 // ORDER BY {pk}` is rejected by SQL Server because the sort (pk) columns
                 // aren't in the DISTINCT projection. A non-DISTINCT inner can ORDER BY any
                 // column, and the outer wrap then de-duplicates the join-id set.
-                var sortCols = RenderSortColumns(dialect, query.FromTable.DbTable, query.FromTable.Sort);
+                // Must match the parent SELECT's ORDER BY exactly (see
+                // RenderPagedSortColumns) — this window and the parent's window have
+                // to land on the same rows.
+                var sortCols = RenderPagedSortColumns(dialect, query.FromTable.DbTable, query.FromTable.Sort);
                 var pagination = dialect.Pagination(sortCols, query.FromTable.Offset, query.FromTable.Limit);
 
                 var inner = new ParameterizedSql($"SELECT {projection} FROM {tableRef}", Array.Empty<SqlParameterInfo>())

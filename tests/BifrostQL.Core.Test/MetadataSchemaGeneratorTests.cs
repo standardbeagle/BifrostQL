@@ -44,6 +44,16 @@ public class MetadataSchemaGeneratorTests
     }
 
     [Fact]
+    public void DbColumnSchema_ExposesIsLargeValue()
+    {
+        // edit-db excludes large-value columns from grid SELECTs based on this
+        // dialect-decided flag; without it the client falls back to dbType-name
+        // guessing, which blanks every string column on SQLite/Postgres.
+        var sdl = MetadataSchemaGenerator.Generate();
+        sdl.Should().Contain("isLargeValue: Boolean!");
+    }
+
+    [Fact]
     public void DbTableSchema_ExposesManyToManyJoins()
     {
         // Without this field GraphQL.NET silently drops the resolver's

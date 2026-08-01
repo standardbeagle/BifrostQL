@@ -479,6 +479,89 @@ public class TypeMapperTests
         }
     }
 
+    /// <summary>
+    /// IsLargeValue is a per-dialect judgement, not a name lookup: the same declared
+    /// type name must classify differently where its semantics differ. The load-bearing
+    /// case is "text" — a LOB on SQL Server/MySQL, the ordinary string type on
+    /// PostgreSQL/SQLite (where misclassifying it hides every string column from
+    /// grid clients that exclude large values from bulk selections).
+    /// </summary>
+    public class IsLargeValueTests
+    {
+        [Theory]
+        [InlineData("text", true)]
+        [InlineData("ntext", true)]
+        [InlineData("image", true)]
+        [InlineData("xml", true)]
+        [InlineData("varchar(max)", true)]
+        [InlineData("nvarchar(MAX)", true)]
+        [InlineData("varbinary(max)", true)]
+        [InlineData("varchar(100)", false)]
+        [InlineData("nvarchar", false)]
+        [InlineData("int", false)]
+        public void SqlServer_ClassifiesLobs(string dbType, bool expected)
+            => Assert.Equal(expected, SqlServerTypeMapper.Instance.IsLargeValue(dbType));
+
+        [Theory]
+        [InlineData("tinytext", true)]
+        [InlineData("text", true)]
+        [InlineData("mediumtext", true)]
+        [InlineData("longtext", true)]
+        [InlineData("tinyblob", true)]
+        [InlineData("blob", true)]
+        [InlineData("mediumblob", true)]
+        [InlineData("longblob", true)]
+        [InlineData("varchar(255)", false)]
+        [InlineData("json", false)]
+        public void MySql_ClassifiesTextAndBlobFamilies(string dbType, bool expected)
+            => Assert.Equal(expected, MySqlTypeMapper.Instance.IsLargeValue(dbType));
+
+        [Theory]
+        [InlineData("text", false)] // Postgres text is the idiomatic string type, NOT a LOB
+        [InlineData("character varying", false)]
+        [InlineData("bytea", true)]
+        [InlineData("xml", true)]
+        public void Postgres_TextIsAnOrdinaryString(string dbType, bool expected)
+            => Assert.Equal(expected, PostgresTypeMapper.Instance.IsLargeValue(dbType));
+
+        [Theory]
+        [InlineData("TEXT", false)] // SQLite's only string type — idiomatic schemas declare everything TEXT
+        [InlineData("text", false)]
+        [InlineData("varchar", false)]
+        [InlineData("BLOB", true)]
+        [InlineData("integer", false)]
+        public void Sqlite_OnlyBlobIsLarge(string dbType, bool expected)
+            => Assert.Equal(expected, SqliteTypeMapper.Instance.IsLargeValue(dbType));
+
+        [Theory]
+        [InlineData("blob", true)]
+        [InlineData("clob", true)]
+        [InlineData("bytea", true)]
+        [InlineData("longtext", true)]
+        [InlineData("varchar(max)", true)]
+        // Dialect-ambiguous "text" must NOT be large in the neutral fallback:
+        // misclassifying an ordinary string hides its data, the worse failure mode.
+        [InlineData("text", false)]
+        [InlineData("varchar(100)", false)]
+        public void AnsiFallback_OnlyUnambiguousLobs(string dbType, bool expected)
+            => Assert.Equal(expected, AnsiSqlTypeMapper.Instance.IsLargeValue(dbType));
+
+        [Fact]
+        public void DefaultInterfaceImplementation_IsFalse()
+        {
+            // A custom mapper that doesn't override IsLargeValue must fail open to
+            // "ordinary value" (data visible) rather than hiding columns.
+            var custom = new MapperWithoutIsLargeValue();
+            Assert.False(((ITypeMapper)custom).IsLargeValue("text"));
+        }
+
+        private sealed class MapperWithoutIsLargeValue : ITypeMapper
+        {
+            public string GetGraphQlType(string dataType) => "String";
+            public bool IsSupported(string dataType) => true;
+        }
+    }
+
     #endregion
 
     #region Backward Compatibility

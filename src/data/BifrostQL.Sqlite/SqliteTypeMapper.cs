@@ -79,6 +79,16 @@ public sealed class SqliteTypeMapper : ITypeMapper
     public bool IsSupported(string dataType)
         => KnownTypes.Contains(StripPrecision(dataType));
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// SQLite has type affinity, not real types: TEXT is the ONLY string type and
+    /// idiomatic schemas declare every string (and often every date) as TEXT, so it
+    /// must never count as a large value. Only BLOB affinity carries binary
+    /// fetch-on-demand semantics.
+    /// </remarks>
+    public bool IsLargeValue(string dataType)
+        => StripPrecision(dataType) is "blob";
+
     private static string StripPrecision(string dataType)
     {
         var normalized = StringNormalizer.NormalizeType(dataType);

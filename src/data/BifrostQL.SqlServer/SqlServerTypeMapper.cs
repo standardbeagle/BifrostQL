@@ -78,4 +78,17 @@ public sealed class SqlServerTypeMapper : ITypeMapper
     /// <inheritdoc />
     public bool IsSupported(string dataType)
         => KnownTypes.Contains(StringNormalizer.NormalizeType(dataType));
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// SQL Server LOBs: the deprecated text/ntext/image types, xml, and the
+    /// (max)-length variants of (n)varchar/varbinary. Bounded (n)varchar(n) is not
+    /// a large value.
+    /// </remarks>
+    public bool IsLargeValue(string dataType)
+    {
+        var normalized = StringNormalizer.NormalizeType(dataType);
+        if (normalized.Contains("(max)")) return true;
+        return normalized is "text" or "ntext" or "image" or "xml";
+    }
 }

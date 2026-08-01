@@ -86,6 +86,15 @@ public sealed class PostgresTypeMapper : ITypeMapper
         => $"FilterType{GetGraphQlType(dataType)}Input";
 
     /// <inheritdoc />
+    /// <remarks>
+    /// PostgreSQL <c>text</c> is the database's ordinary, idiomatic string type —
+    /// NOT a LOB — so it is deliberately not a large value here. Only bytea and
+    /// xml carry fetch-on-demand payload semantics.
+    /// </remarks>
+    public bool IsLargeValue(string dataType)
+        => StringNormalizer.NormalizeType(dataType) is "bytea" or "xml";
+
+    /// <inheritdoc />
     public bool IsSupported(string dataType)
         => KnownTypes.Contains(StringNormalizer.NormalizeType(dataType));
 }

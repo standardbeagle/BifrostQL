@@ -70,6 +70,9 @@ public static class MetadataSchemaGenerator
         sb.AppendLine("\tisUpdatedByColumn: Boolean!");
         sb.AppendLine("\tisDeletedOnColumn: Boolean!");
         sb.AppendLine("\tisDeletedColumn: Boolean!");
+        // Dialect-decided LOB semantics: true when the value may be arbitrarily large
+        // (fetch on demand). Postgres text / SQLite TEXT are ordinary strings -> false.
+        sb.AppendLine("\tisLargeValue: Boolean!");
         sb.AppendLine("\tmaxLength: Int");
         sb.AppendLine("\tminLength: Int");
         // min/max/step are strings: bounds may be numeric ("0.01") or dates ("2020-01-01")

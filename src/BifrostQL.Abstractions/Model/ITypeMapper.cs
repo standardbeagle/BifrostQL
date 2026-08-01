@@ -40,4 +40,14 @@ public interface ITypeMapper
     /// Unrecognized types fall back to String.
     /// </summary>
     bool IsSupported(string dataType);
+
+    /// <summary>
+    /// True when the type has large-object semantics IN THIS DIALECT: the value may be
+    /// arbitrarily large, so grid/list clients should exclude it from bulk row selections
+    /// and fetch it on demand. This is a per-dialect judgement, not a name lookup —
+    /// PostgreSQL <c>text</c> and SQLite <c>TEXT</c> are those databases' ordinary string
+    /// types and must return false, while SQL Server <c>text</c> and MySQL <c>text</c>
+    /// are LOB types and must return true.
+    /// </summary>
+    bool IsLargeValue(string dataType) => false;
 }

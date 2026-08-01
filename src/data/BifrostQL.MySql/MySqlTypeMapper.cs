@@ -75,4 +75,14 @@ public sealed class MySqlTypeMapper : ITypeMapper
     /// <inheritdoc />
     public bool IsSupported(string dataType)
         => KnownTypes.Contains(StringNormalizer.NormalizeType(dataType));
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// MySQL's TEXT and BLOB families are true LOB types (stored off-page, no
+    /// default, restricted indexing), so all of them count as large values.
+    /// </remarks>
+    public bool IsLargeValue(string dataType)
+        => StringNormalizer.NormalizeType(dataType)
+            is "tinytext" or "text" or "mediumtext" or "longtext"
+            or "tinyblob" or "blob" or "mediumblob" or "longblob";
 }

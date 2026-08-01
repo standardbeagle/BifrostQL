@@ -74,4 +74,28 @@ public sealed class AnsiSqlTypeMapper : ITypeMapper
     /// <inheritdoc />
     public bool IsSupported(string dataType)
         => KnownTypes.Contains(StringNormalizer.NormalizeType(dataType));
+
+    // Types that are unambiguously LOBs across dialects. Deliberately excludes plain
+    // "text": without knowing the dialect it is undecidable (LOB on SQL Server/MySQL,
+    // the ordinary string type on PostgreSQL/SQLite), and misclassifying an ordinary
+    // string column hides its data from grid clients — the worse failure mode.
+    private static readonly HashSet<string> LargeValueTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "blob", "tinyblob", "mediumblob", "longblob",
+        "clob", "nclob",
+        "image", "ntext",
+        "bytea",
+        "longtext", "mediumtext",
+        "xml",
+    };
+
+    /// <inheritdoc />
+    public bool IsLargeValue(string dataType)
+    {
+        var normalized = StringNormalizer.NormalizeType(dataType);
+        if (normalized.Contains("(max)")) return true;
+        var parenIdx = normalized.IndexOf('(');
+        var baseType = parenIdx >= 0 ? normalized[..parenIdx].TrimEnd() : normalized;
+        return LargeValueTypes.Contains(baseType);
+    }
 }

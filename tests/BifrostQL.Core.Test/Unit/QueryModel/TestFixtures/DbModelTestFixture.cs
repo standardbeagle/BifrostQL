@@ -17,8 +17,20 @@ public sealed class DbModelTestFixture
     private readonly List<DbForeignKey> _foreignKeys = new();
     private readonly List<EavConfig> _eavConfigs = new();
     private readonly Dictionary<string, object?> _modelMetadata = new();
+    private ITypeMapper? _typeMapper;
 
     public static DbModelTestFixture Create() => new();
+
+    /// <summary>
+    /// Sets the dialect type mapper the model reports (defaults to the interface's
+    /// AnsiSqlTypeMapper). Needed by tests pinning dialect-dependent projections
+    /// (e.g. dbColumnSchema.isLargeValue).
+    /// </summary>
+    public DbModelTestFixture WithTypeMapper(ITypeMapper typeMapper)
+    {
+        _typeMapper = typeMapper;
+        return this;
+    }
 
     public DbModelTestFixture WithModelMetadata(string key, object? value)
     {
@@ -156,6 +168,8 @@ public sealed class DbModelTestFixture
         var model = new TestDbModel(_tables, _modelMetadata);
         if (_eavConfigs.Count > 0)
             model.EavConfigs = _eavConfigs;
+        if (_typeMapper != null)
+            model.TypeMapper = _typeMapper;
         return model;
     }
 
@@ -254,6 +268,8 @@ public sealed class DbModelTestFixture
     {
         private readonly Dictionary<string, DbTable> _tables;
         private readonly Dictionary<string, DbTable> _tablesByGraphQlName;
+
+        public ITypeMapper TypeMapper { get; set; } = AnsiSqlTypeMapper.Instance;
 
         public TestDbModel(Dictionary<string, DbTable> tables, Dictionary<string, object?>? modelMetadata = null)
         {

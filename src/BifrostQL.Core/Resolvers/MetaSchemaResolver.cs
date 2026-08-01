@@ -90,6 +90,7 @@ namespace BifrostQL.Core.Resolvers
                                     isUpdatedByColumn = c.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.UpdatedBy),
                                     isDeletedOnColumn = c.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.DeletedOn),
                                     isDeletedColumn = c.CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.DeletedBy),
+                                    isLargeValue = _dbModel.TypeMapper.IsLargeValue(c.DataType),
                                     maxLength = rules.MaxLength,
                                     minLength = rules.MinLength,
                                     min = rules.Min,

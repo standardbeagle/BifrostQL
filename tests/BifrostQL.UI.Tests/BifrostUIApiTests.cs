@@ -232,6 +232,43 @@ public class BifrostUIApiTests
             _output.WriteLine($"JavaScript bundle status: {response.StatusCode} (may have different hash)");
         }
     }
+
+    [Fact]
+    public async Task BinaryWebSocketEndpoint_AcceptsHandshake()
+    {
+        // The frontend's Binary transport toggle connects to /bifrost-ws. The host
+        // must accept the WebSocket upgrade (a non-browser client sends no Origin
+        // header, which the same-origin CSWSH guard permits). Before the endpoint
+        // was mapped this handshake failed, leaving the toggle permanently broken.
+        using var timeout = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var ws = new System.Net.WebSockets.ClientWebSocket();
+        await ws.ConnectAsync(
+            new Uri($"ws://127.0.0.1:{_server.Port}/bifrost-ws"),
+            timeout.Token);
+
+        Assert.Equal(System.Net.WebSockets.WebSocketState.Open, ws.State);
+        await ws.CloseAsync(
+            System.Net.WebSockets.WebSocketCloseStatus.NormalClosure,
+            "test done",
+            timeout.Token);
+    }
+
+    [Fact]
+    public async Task BinaryWebSocketEndpoint_RejectsCrossOriginHandshake()
+    {
+        // allowedOrigins is intentionally left null in BifrostUiWebHost: this host is
+        // same-origin only. A cross-origin Origin header must be refused before upgrade.
+        using var timeout = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var ws = new System.Net.WebSockets.ClientWebSocket();
+        ws.Options.SetRequestHeader("Origin", "http://evil.example");
+
+        var ex = await Assert.ThrowsAsync<System.Net.WebSockets.WebSocketException>(() =>
+            ws.ConnectAsync(
+                new Uri($"ws://127.0.0.1:{_server.Port}/bifrost-ws"),
+                timeout.Token));
+
+        _output.WriteLine($"Cross-origin handshake rejected: {ex.Message}");
+    }
 }
 
 /// <summary>

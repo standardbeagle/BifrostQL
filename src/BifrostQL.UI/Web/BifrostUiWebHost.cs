@@ -68,6 +68,9 @@ namespace BifrostQL.UI.Web
                        });
             });
 
+            // Binary WebSocket transport engine — required by UseBifrostBinary below.
+            builder.Services.AddBifrostEngine();
+
             builder.Services.AddCors();
             builder.Services.AddEndpointsApiExplorer();
 
@@ -104,6 +107,15 @@ namespace BifrostQL.UI.Web
 
             // BifrostQL GraphQL endpoint — always registered, connection set dynamically
             app.UseBifrostQL();
+
+            // Binary WebSocket transport at /bifrost-ws — the frontend's Binary toggle
+            // routes editor queries here. allowedOrigins stays null (same-origin only):
+            // a WebSocket handshake bypasses CORS, and this host's posture is strictly
+            // same-origin (see the CORS comment above), so the CSWSH guard must not be
+            // widened. The engine falls back to the single registered GraphQL endpoint
+            // for schema resolution.
+            app.UseWebSockets();
+            app.UseBifrostBinary();
 
             // Fallback to index.html for SPA routing
             app.MapFallbackToFile("index.html");

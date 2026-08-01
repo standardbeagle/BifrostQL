@@ -112,8 +112,24 @@ export default function App() {
     handleDisconnect,
   } = flows;
 
+  // The health check runs outside the render flow, so it reads the live view
+  // through a ref rather than closing over a stale `currentView`.
+  const currentViewRef = useRef(currentView);
+  currentViewRef.current = currentView;
+
+  // The server lost its database binding (restart). Nothing the client holds can
+  // restore it — the session in localStorage only records *which* database was
+  // open, and credentials never cross HTTP — so send the user back to the
+  // connect flow instead of leaving the editor stuck on "Connecting…".
+  const handleServerUnbound = useCallback(() => {
+    if (currentViewRef.current !== 'editor') return;
+    handleDisconnect();
+    setCurrentView('welcome');
+    setErrorMessage('The server restarted and no longer has a database connection. Please reconnect.');
+  }, [handleDisconnect, setErrorMessage]);
+
   // Periodic health check — detects backend restarts and auto-recovers.
-  useHealthCheck(setErrorMessage, setConnectionState);
+  useHealthCheck(setErrorMessage, setConnectionState, handleServerUnbound);
 
   // Refresh the profile list whenever the active connection changes. The
   // server schema is connection-scoped, so each connection may expose a

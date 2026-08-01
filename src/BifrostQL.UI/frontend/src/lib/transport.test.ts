@@ -18,6 +18,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  BINARY_CONNECT_TIMEOUT_MS,
   BinaryTransport,
   DEFAULT_TRANSPORT_MODE,
   HttpTransport,
@@ -587,6 +588,162 @@ describe("BinaryTransport", () => {
 
     await t.query("{ a }");
     expect(captured).toEqual({});
+  });
+});
+
+describe("BinaryTransport connect timeout", () => {
+  /**
+   * Fake client whose connect() never settles, mirroring a WebSocket upgrade
+   * the far side never answers (e.g. a dev proxy with no /bifrost-ws entry).
+   */
+  class HangingConnectClient {
+    isConnected = false;
+    closeCalls = 0;
+    connectCalls = 0;
+
+    connect(): Promise<void> {
+      this.connectCalls++;
+      return new Promise<void>(() => {
+        // Intentionally never settles.
+      });
+    }
+
+    async query(): Promise<{ data: unknown; errors: string[] }> {
+      return { data: { ok: true }, errors: [] };
+    }
+
+    async mutate(): Promise<{ data: unknown; errors: string[] }> {
+      return { data: { ok: true }, errors: [] };
+    }
+
+    close(): void {
+      this.closeCalls++;
+    }
+
+    get connected(): boolean {
+      return this.isConnected;
+    }
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("rejects a query with an actionable error when the handshake never settles", async () => {
+    const changes: boolean[] = [];
+    const fake = new HangingConnectClient();
+    const t = new BinaryTransport(
+      "ws://localhost:5000/bifrost-ws",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (() => fake) as unknown as any,
+      { onConnectedChange: (connected) => changes.push(connected) }
+    );
+
+    const pending = t.query("{ hello }");
+    const expectation = expect(pending).rejects.toThrow(
+      /could not connect to ws:\/\/localhost:5000\/bifrost-ws within 8s.*switch the transport back to HTTP/s
+    );
+    await vi.advanceTimersByTimeAsync(BINARY_CONNECT_TIMEOUT_MS);
+    await expectation;
+
+    // The UI badge is told the transport is not connected.
+    expect(changes).toEqual([false]);
+    // The client is kept (its reconnect design stays intact), not closed.
+    expect(fake.closeCalls).toBe(0);
+  });
+
+  it("does not time out a connect that settles within the window", async () => {
+    const fake = new FakeBinaryClient();
+    const t = new BinaryTransport(
+      "ws://localhost:5000/bifrost-ws",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (() => fake) as unknown as any
+    );
+
+    const result = await t.query("{ hello }");
+    expect(result.data).toEqual({ ok: true });
+    // The timeout timer was cleared when connect resolved — nothing left to fire.
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("fails subsequent queries fast instead of waiting out a fresh window each retry", async () => {
+    const fake = new HangingConnectClient();
+    const t = new BinaryTransport(
+      "ws://localhost:5000/bifrost-ws",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (() => fake) as unknown as any
+    );
+
+    const first = t.query("{ a }");
+    const firstExpectation = expect(first).rejects.toThrow(/within 8s/);
+    await vi.advanceTimersByTimeAsync(BINARY_CONNECT_TIMEOUT_MS);
+    await firstExpectation;
+
+    // A retry (react-query re-issues the schema query) rejects immediately
+    // with the same sticky failure — no timers advanced.
+    await expect(t.query("{ b }")).rejects.toThrow(/within 8s/);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("recovers once the socket actually reports open", async () => {
+    const fake = new HangingConnectClient();
+    const t = new BinaryTransport(
+      "ws://localhost:5000/bifrost-ws",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (() => fake) as unknown as any
+    );
+
+    const pending = t.query("{ a }");
+    const expectation = expect(pending).rejects.toThrow(/within 8s/);
+    await vi.advanceTimersByTimeAsync(BINARY_CONNECT_TIMEOUT_MS);
+    await expectation;
+
+    // The client's background reconnect eventually lands the socket.
+    fake.isConnected = true;
+
+    const result = await t.query("{ b }");
+    expect(result.data).toEqual({ ok: true });
+  });
+
+  it("cancels the pending timeout when the transport is closed mid-handshake", async () => {
+    const fake = new HangingConnectClient();
+    const t = new BinaryTransport(
+      "ws://localhost:5000/bifrost-ws",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (() => fake) as unknown as any
+    );
+
+    const pending = t.query("{ a }");
+    // Swallow the eventual (never-firing) rejection so the test harness does
+    // not flag an unhandled rejection if the promise were ever to settle.
+    pending.catch(() => {});
+    expect(vi.getTimerCount()).toBe(1);
+
+    t.close();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(fake.closeCalls).toBe(1);
+  });
+
+  it("honors a custom timeout threaded through createTransport", async () => {
+    const fake = new HangingConnectClient();
+    const t = createTransport(
+      "binary",
+      {
+        endpoint: "http://localhost:5000",
+        binaryConnectTimeoutMs: 1_000,
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (() => fake) as unknown as any
+    );
+
+    const pending = t.query("{ a }");
+    const expectation = expect(pending).rejects.toThrow(/within 1s/);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expectation;
   });
 });
 

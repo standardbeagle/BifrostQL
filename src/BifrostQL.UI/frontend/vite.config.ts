@@ -80,6 +80,13 @@ export default defineConfig({
           proxy.on('error', () => {});
         },
       },
+      '/bifrost-ws': {
+        target: 'ws://localhost:5000',
+        ws: true,
+        configure: (proxy) => {
+          proxy.on('error', () => {});
+        },
+      },
     },
   },
 });

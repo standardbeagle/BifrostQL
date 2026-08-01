@@ -45,6 +45,10 @@ namespace BifrostQL.UI.Web
             builder.Logging.SetMinimumLevel(LogLevel.Information);
             builder.Logging.AddConsole();
             builder.Logging.AddDebug();
+            // The CORS policy below rejects every cross-origin Origin by design, so
+            // ASP.NET Core's info-level "CORS policy execution failed" lines are pure
+            // noise here — keep only genuine CORS warnings/errors.
+            builder.Logging.AddFilter("Microsoft.AspNetCore.Cors", LogLevel.Warning);
 
             // Add in-memory configuration for BifrostQL
             builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>

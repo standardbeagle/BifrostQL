@@ -58,6 +58,12 @@ namespace BifrostQL.Server.Logging
 
         private static LogLevel DetermineLogLevel(ExecutionError error)
         {
+            // A canceled operation (client abort surfacing as GraphQL.NET's
+            // OPERATION_CANCELED error, or an OperationCanceledException wrapped in an
+            // ExecutionError) is routine, not a server fault — log quietly.
+            if (error.Code == "OPERATION_CANCELED" || error.InnerException is OperationCanceledException)
+                return LogLevel.Debug;
+
             return error switch
             {
                 ValidationError or DocumentError or SyntaxError => LogLevel.Warning,

@@ -59,6 +59,14 @@ namespace BifrostQL.Server.Logging
 
                 return result;
             }
+            catch (OperationCanceledException) when (options.CancellationToken.IsCancellationRequested)
+            {
+                // Client-abort cancellation (the request's own token fired) — not a server
+                // fault. Rethrow without wrapping it into an error-level log entry; the
+                // HTTP middleware logs the disconnect at Debug. A cancellation thrown
+                // while the token is NOT canceled is a real fault and falls through below.
+                throw;
+            }
             catch (Exception ex)
             {
                 var error = new ExecutionError("An unhandled error has occurred.", ex);

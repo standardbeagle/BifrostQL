@@ -72,6 +72,13 @@ namespace BifrostQL.Server
             {
                 result = await _executor.ExecuteAsync(options);
             }
+            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+            {
+                // The client disconnected mid-execution — routine, not a server fault.
+                // One quiet line, no stack trace; the response can't be delivered anyway.
+                _logger.LogDebug("GraphQL request canceled: client disconnected.");
+                return;
+            }
             catch (Exception ex)
             {
                 // Log full exception with stack trace server-side; never expose details to clients.

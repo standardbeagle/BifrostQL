@@ -48,6 +48,7 @@ query dbSchema {
       isIdentity
       isNullable
       isReadOnly
+      isLargeValue
       maxLength
       minLength
       min

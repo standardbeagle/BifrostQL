@@ -20,6 +20,7 @@ interface DbColumnItem {
     isNullable: boolean;
     isReadOnly: boolean;
     metadata: MetadataItem[];
+    isLargeValue?: boolean;
     maxLength?: number;
     minLength?: number;
     min?: number;

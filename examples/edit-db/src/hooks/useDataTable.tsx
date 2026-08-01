@@ -14,7 +14,7 @@ import { HoverCard, HoverCardTrigger, HoverCardContent } from "../components/ui/
 import { ContentViewer } from "../components/content-viewer";
 import { EmptyValue } from "../components/empty-value";
 import { formatColumnValue } from "../lib/format-value";
-import { isLongTextDbType, isBinaryDbType, isJsonColumn } from "../lib/content-detect";
+import { isLargeValueColumn, isJsonColumn } from "../lib/content-detect";
 import {
     getFilterOperators,
     getFilterObj,
@@ -24,6 +24,7 @@ import {
     serializeColumnFilters,
     deserializeColumnFilters,
     buildQuery,
+    exportableColumns,
     buildPkEqVariables,
     getPkTypes,
     resolveDrillDown,
@@ -261,7 +262,9 @@ function buildScalarColumn(
         };
     }
 
-    const useContentViewer = isLongTextDbType(c.dbType) || isBinaryDbType(c.dbType) || isJsonColumn(c);
+    // Large values render as a fetch-on-demand viewer badge; ordinary strings
+    // (including Postgres text / SQLite TEXT — see isLargeValueColumn) render inline.
+    const useContentViewer = isLargeValueColumn(c) || isJsonColumn(c);
 
     if (useContentViewer) {
         return {
@@ -274,6 +277,9 @@ function buildScalarColumn(
                 <ContentViewer
                     value={row.original[c.name]}
                     dbType={c.dbType}
+                    // Large values are excluded from the grid SELECT, so a missing
+                    // value means "not fetched", not NULL.
+                    deferred={isLargeValueColumn(c)}
                     onExpand={onExpandContent ? () => onExpandContent(row.index, c.name) : undefined}
                 />
             ),
@@ -560,7 +566,7 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         const pk = getPkTypes(table)[0]?.name;
         if (pk && table.columns.some((c) => c.name === pk)) return pk;
         const sortable = table.columns.find(
-            (c) => !isBinaryDbType(c.dbType) && !isLongTextDbType(c.dbType) && !isJsonColumn(c),
+            (c) => !isLargeValueColumn(c) && !isJsonColumn(c),
         );
         return sortable?.name ?? table.columns.at(0)?.name ?? 'id';
     }, [table]);
@@ -687,15 +693,22 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
 
     const primaryKeys = table?.primaryKeys ?? [];
 
-    // Full-result-set export. Re-issues the SAME query (so the active header
-    // filter, column filters, and sort all carry) with a paging window, reading
-    // `total` to drive the loop. FK anchor/join objects live under separate
-    // response keys, so projecting on the table's own column names yields the
-    // flat scalar grid (FK scalar values included) — the shared util then does
-    // the lossless CSV/JSON coercion.
+    // Full-result-set export. Issues an EXPORT-projection variant of the grid
+    // query — same filter/sort/drill context and variables, but selecting every
+    // exportable column (long text included, binary excluded — see
+    // exportableColumns) and no FK/multi-join blocks. The grid query must NOT be
+    // reused here: it deliberately omits large-value columns, which would export
+    // as silently blank cells.
+    const exportQuery = useMemo(
+        () => table
+            ? buildQuery(table, schema, filterString, effectiveColumnFilters, id, filterTable, filterColumn, { fields: 'export' })
+            : null,
+        [table, schema, filterString, effectiveColumnFilters, id, filterTable, filterColumn]
+    );
+
     const exportRows = useCallback<ExportRunner>(async (options) => {
-        if (!query || !table) return null;
-        const exportColumns = table.columns;
+        if (!exportQuery || !table) return null;
+        const exportColumns = exportableColumns(table);
         const headers = exportColumns.map((c) => c.label);
         const fields = exportColumns.map((c) => c.name);
         return exportAllRows({
@@ -710,7 +723,7 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
                 // Override only the paging window; every filter/sort variable
                 // stays as the grid built it.
                 const vars = { ...queryVariables, limit, offset };
-                const pageData = await fetcher.query<QueryData>(query, vars, { signal: options.signal });
+                const pageData = await fetcher.query<QueryData>(exportQuery, vars, { signal: options.signal });
                 let pageRecords: RowData[];
                 let total: number;
                 if (drill && !canFlatFilterDrill(drill.childJoin)) {
@@ -725,7 +738,7 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
                 return { rows: pageRecords.map((r) => fields.map((f) => r[f])), total };
             },
         });
-    }, [query, table, queryVariables, fetcher, drill]);
+    }, [exportQuery, table, queryVariables, fetcher, drill]);
 
     return {
         columns,

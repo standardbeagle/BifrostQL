@@ -8,7 +8,8 @@ import { DataTable } from './components/data-table';
 import { ConfirmDialog } from './components/confirm-dialog';
 import { ContentPanel, type ContentPanelTarget } from './components/content-panel';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { isJsonColumn } from './lib/content-detect';
+import { useQuery } from '@tanstack/react-query';
+import { isJsonColumn, isLargeValueColumn } from './lib/content-detect';
 import { Table, Column } from './types/schema';
 import { ColumnPanel } from './data-panel';
 import { encodePkRoute, pkFilterFor, buildPkEqFilter, type PkFilter } from './lib/row-id';
@@ -152,6 +153,40 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
     }, [panel, panelPkRoute, rows, table]);
     const panelRow = panelRowIndex >= 0 ? (rows[panelRowIndex] as Record<string, unknown>) : undefined;
 
+    // PK-equality filter for the snapshotted panel row. Defined before the panel
+    // target because it also drives the deferred-value fetch below (and the save
+    // path further down).
+    const panelPkEq = useMemo(() => (panel?.pk ? buildPkEqFilter(panel.pk, table) : null), [panel, table]);
+
+    // Large-value columns are excluded from the grid SELECT, so the grid row cannot
+    // supply the panel's value — fetch it on demand by the snapshotted PK. Without
+    // this the panel opened with '' for real content, and saving wrote the empty
+    // editor text over the column (silent data loss on SQL Server/MySQL LOBs).
+    const panelColumn = panel ? table.columns.find((c: Column) => c.name === panel.columnName) : undefined;
+    const panelNeedsFetch = !!panel && !!panelColumn && !!panelPkEq
+        && isLargeValueColumn(panelColumn)
+        && panelRow !== undefined && !(panelColumn.name in panelRow);
+    const { data: panelFetchedValue, isLoading: panelValueLoading, error: panelValueError } = useQuery({
+        queryKey: ['contentPanelValue', table.name, panel?.columnName, panelPkRoute],
+        queryFn: async () => {
+            const q = buildSingleRowQuery(table, panelPkEq!, [panelColumn!.name]);
+            const res = await fetcher.query<{ value: { data: Record<string, unknown>[] } }>(q, panelPkEq!.variables);
+            const row = res?.value?.data?.at(0);
+            if (!row) throw new Error('Row no longer exists.');
+            return (row[panelColumn!.name] ?? null) as unknown;
+        },
+        enabled: panelNeedsFetch,
+    });
+
+    // Deferred fetch failed: close rather than show an empty editor that would
+    // save '' over real content.
+    useEffect(() => {
+        if (panel !== null && panelNeedsFetch && panelValueError) {
+            setPanel(null);
+            toast(`Could not load content: ${(panelValueError as Error).message}`, 'error');
+        }
+    }, [panel, panelNeedsFetch, panelValueError, toast]);
+
     // Table switched under a reused component instance: drop the stale panel
     // silently — it belongs to the previous table, so neither the row-gone
     // error toast nor the PK-less index fallback should see the new rows.
@@ -177,7 +212,10 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
         if (!panel || !panelRow) return null;
         const col = table.columns.find((c: Column) => c.name === panel.columnName);
         if (!col) return null;
-        const rawValue = panelRow[panel.columnName];
+        // Deferred (large-value) columns: wait for the on-demand fetch — rendering
+        // the editor before the value arrives would present real content as ''.
+        if (panelNeedsFetch && (panelValueLoading || panelValueError)) return null;
+        const rawValue = panelNeedsFetch ? panelFetchedValue : panelRow[panel.columnName];
         // Native JSON columns come back parsed (object/array/number/string) — always
         // serialize so the panel edits canonical JSON text (a stored JSON string
         // "123" shows as "123", round-tripping losslessly) rather than "[object
@@ -198,15 +236,15 @@ export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRo
             rowKey: panelPkRoute ?? `row-${panel.rowIndex}`,
             isReadOnly: col.isReadOnly || col.isPrimaryKey || col.isIdentity,
         };
-    }, [panel, panelRow, panelPkRoute, table]);
+    }, [panel, panelRow, panelPkRoute, table, panelNeedsFetch, panelFetchedValue, panelValueLoading, panelValueError]);
 
     // Single-field save from the content expand panel. Reuses the row update
     // mutation, keyed by the PK snapshotted when the panel opened — immune to
     // grid reorder. Update_ marks only non-nullable columns required and SETs
     // only provided fields, so the fresh read + echo carries just the
     // non-nullable editable columns plus the edited one; untouched nullable
-    // (often wide) columns skip the round trip entirely.
-    const panelPkEq = useMemo(() => (panel?.pk ? buildPkEqFilter(panel.pk, table) : null), [panel, table]);
+    // (often wide) columns skip the round trip entirely. (panelPkEq is defined
+    // above, next to the deferred-value fetch it also drives.)
     const editableColumns = useMemo(
         () => table.columns.filter((c: Column) => !c.isReadOnly && !c.isIdentity),
         [table],

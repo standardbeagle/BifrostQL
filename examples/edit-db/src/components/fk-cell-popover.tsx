@@ -7,6 +7,7 @@ import type { Column, Join, Table } from "../types/schema";
 import { buildFkEqFilter, coerceForGql, isComposite } from "../lib/fk";
 import { getGraphQlType } from "../lib/query-builder";
 import { formatColumnValue, DISPLAY_FORMAT_PREVIEW_KEY } from "../lib/format-value";
+import { isLargeValueColumn } from "../lib/content-detect";
 
 const MAX_PREVIEW_COLUMNS = 5;
 const HOVER_OPEN_DELAY = 400;
@@ -36,8 +37,10 @@ interface FkCellPopoverProps {
 }
 
 function getPreviewColumns(columns: Column[]): Column[] {
+    // Skip large-value (LOB) columns: a hover preview must never pull a
+    // multi-megabyte payload for one tooltip row.
     return columns
-        .filter((c) => !c.isPrimaryKey)
+        .filter((c) => !c.isPrimaryKey && !isLargeValueColumn(c))
         .slice(0, MAX_PREVIEW_COLUMNS);
 }
 

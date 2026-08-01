@@ -61,6 +61,13 @@ export interface Column {
   isReadOnly: boolean;
   /** Custom metadata for the column */
   metadata: ColumnMetadata;
+  /**
+   * Dialect-decided LOB semantics from the server: true when the value may be
+   * arbitrarily large and should be fetched on demand. Authoritative over any
+   * dbType-name guess (Postgres text / SQLite TEXT are ordinary strings).
+   * Optional only for servers that predate the field.
+   */
+  isLargeValue?: boolean;
   /** Maximum string length (for validation) */
   maxLength?: number;
   /** Minimum string length (for validation) */

@@ -12,6 +12,7 @@ import {
     getPkTypes,
     buildPkEqVariables,
     buildQuery,
+    exportableColumns,
     buildSingleRowQuery,
     resolveDrillDown,
     unwrapDrillDownPage,
@@ -852,6 +853,55 @@ describe('buildQuery', () => {
         expect(q).not.toMatch(/\bnotes\b/);
         expect(q).not.toMatch(/\bspec\b/);
         expect(q).not.toMatch(/\bblob\b/);
+    });
+
+    it('trusts the server isLargeValue flag over the dbType name (SQLite/Postgres text stays selected)', () => {
+        // On SQLite every string column is declared TEXT and on Postgres `text` is
+        // the ordinary string type — the server's dialect decides, not the name.
+        const sqliteish = makeTable({
+            name: 'comments',
+            graphQlName: 'comments',
+            primaryKeys: ['comment_id'],
+            columns: [
+                makeColumn({ name: 'comment_id', paramType: 'Int!', dbType: 'integer', isPrimaryKey: true }),
+                makeColumn({ name: 'author_name', paramType: 'String', dbType: 'text', isLargeValue: false }),
+                makeColumn({ name: 'attachment', paramType: 'String', dbType: 'varchar', isLargeValue: true }),
+            ],
+        });
+        const q = buildQuery(sqliteish, makeSchema([sqliteish]), '', [])!;
+        expect(q).toMatch(/\bauthor_name\b/);      // ordinary string despite dbType text
+        expect(q).not.toMatch(/\battachment\b/);   // large despite innocuous dbType
+    });
+
+    it('export projection includes long-text columns, excludes binary, and emits no join blocks', () => {
+        const other = makeTable({ name: 'tags', graphQlName: 'tags', primaryKeys: ['id'], columns: [makeColumn({ name: 'id', paramType: 'Int!', dbType: 'int', isPrimaryKey: true })] });
+        const heavy = makeTable({
+            name: 'docs',
+            graphQlName: 'docs',
+            primaryKeys: ['doc_id'],
+            columns: [
+                makeColumn({ name: 'doc_id', paramType: 'Int!', dbType: 'int', isPrimaryKey: true }),
+                makeColumn({ name: 'title', paramType: 'String', dbType: 'nvarchar' }),
+                makeColumn({ name: 'body', paramType: 'String', dbType: 'text' }),
+                makeColumn({ name: 'payload', paramType: 'String', dbType: 'varbinary' }),
+            ],
+            multiJoins: [{ name: 'tags', fieldName: 'tags', sourceColumnNames: ['doc_id'], destinationTable: 'tags', destinationColumnNames: ['id'] }],
+        });
+        const q = buildQuery(heavy, makeSchema([heavy, other]), '', [], undefined, undefined, undefined, { fields: 'export' })!;
+        expect(q).toMatch(/\bbody\b/);             // the point of export: full data
+        expect(q).not.toMatch(/\bpayload\b/);      // binary has no CSV representation
+        expect(q).not.toContain('tags(limit:');    // no multi-join preview blocks
+    });
+
+    it('exportableColumns keeps long text, drops non-PK binary, keeps binary PKs', () => {
+        const t = makeTable({
+            columns: [
+                makeColumn({ name: 'k', paramType: 'String!', dbType: 'varbinary', isPrimaryKey: true }),
+                makeColumn({ name: 'body', paramType: 'String', dbType: 'text' }),
+                makeColumn({ name: 'raw', paramType: 'String', dbType: 'blob' }),
+            ],
+        });
+        expect(exportableColumns(t).map((c) => c.name)).toEqual(['k', 'body']);
     });
 
     it('keeps a heavy column in the SELECT when it is a primary key (needed for identity)', () => {

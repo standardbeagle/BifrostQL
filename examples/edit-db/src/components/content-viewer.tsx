@@ -29,6 +29,13 @@ interface ContentViewerProps {
     value: unknown;
     dbType?: string;
     onExpand?: () => void;
+    /**
+     * True when the column's value is deliberately NOT selected by the grid query
+     * (large-value/LOB columns, fetched on demand). A missing value then means
+     * "not fetched", which must not render as NULL — that would misreport real
+     * content as absent. Expanding fetches the actual value.
+     */
+    deferred?: boolean;
 }
 
 function formatForPreview(value: string, kind: ContentKind): string {
@@ -42,7 +49,27 @@ function formatForPreview(value: string, kind: ContentKind): string {
     return value;
 }
 
-export function ContentViewer({ value, dbType, onExpand }: ContentViewerProps) {
+export function ContentViewer({ value, dbType, onExpand, deferred }: ContentViewerProps) {
+    if (value === undefined && deferred) {
+        // Unfetched large value: show a neutral "content lives here" affordance,
+        // never a NULL badge (the row may well have content — it wasn't selected).
+        return (
+            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                <FileText className="size-3.5" />
+                <span className="text-xs italic">content</span>
+                {onExpand && (
+                    <button
+                        type="button"
+                        className="shrink-0 opacity-40 hover:opacity-100 transition-opacity"
+                        onClick={(e) => { e.stopPropagation(); onExpand(); }}
+                        aria-label="Expand content"
+                    >
+                        <Expand className="size-3" />
+                    </button>
+                )}
+            </span>
+        );
+    }
     if (value === null || value === undefined) return <EmptyValue kind="null" />;
     // Native JSON columns arrive already parsed (object/array) from the GraphQL
     // JSON scalar; serialize so detection + preview operate on JSON text rather

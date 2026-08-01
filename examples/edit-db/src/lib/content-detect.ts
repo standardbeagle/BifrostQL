@@ -29,6 +29,19 @@ export function isLongTextDbType(dbType: string): boolean {
     return false;
 }
 
+/**
+ * Column-level "large value" check for fetch-on-demand decisions (grid SELECT
+ * exclusion, sortability, content-viewer cells). Prefers the server's
+ * dialect-decided `dbColumnSchema.isLargeValue` flag; the dbType-name fallback
+ * exists only for servers that predate the flag. The name heuristic is WRONG on
+ * PostgreSQL and SQLite — `text` is their ordinary string type, not a LOB — which
+ * is exactly why the server flag is authoritative when present.
+ */
+export function isLargeValueColumn(col: { dbType: string; isLargeValue?: boolean }): boolean {
+    if (typeof col.isLargeValue === 'boolean') return col.isLargeValue;
+    return isBinaryDbType(col.dbType) || isLongTextDbType(col.dbType);
+}
+
 /** Detect content kind from a string value and optional dbType hint */
 export function detectContentKind(value: string, dbType?: string): ContentKind {
     if (!value) return 'text';

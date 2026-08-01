@@ -9,7 +9,7 @@ import { rowIdOf, buildPkEqFilter, parsePkRoute, decodePkPart, encodeRouteParts,
 import { coerceForGql } from './fk';
 import { resolveChildJoin, childFieldName } from './polymorphic';
 import { isComposite } from './fk';
-import { isBinaryDbType, isLongTextDbType } from './content-detect';
+import { isBinaryDbType, isLargeValueColumn } from './content-detect';
 
 export interface FilterResult {
     variables: Record<string, unknown>;
@@ -329,12 +329,14 @@ function buildDataColumns(table: Table, schema: Schema, tableSchema: Table): str
     const emittedJoinSources = new Set<string>();
     return table.columns
         .filter((x: Column) => (x as ColumnWithJoin)?.joinTable === undefined)
-        // Exclude blob/varbinary and long-text/xml columns from the grid SELECT: the
-        // grid only shows a size/preview badge for them, and pulling the full payload
-        // for every row on the page is the dominant transfer cost. The viewer fetches
-        // the real value on demand (mirrors the multi-join preview cap above). PK
-        // columns are always kept — they carry row identity and drive links.
-        .filter((x: Column) => x.isPrimaryKey || !(isBinaryDbType(x.dbType) || isLongTextDbType(x.dbType)))
+        // Exclude large-value (LOB) columns from the grid SELECT: the grid only shows
+        // a size/preview badge for them, and pulling the full payload for every row on
+        // the page is the dominant transfer cost. The viewer fetches the real value on
+        // demand (mirrors the multi-join preview cap above). Large-ness is the server's
+        // dialect-decided isLargeValue flag — Postgres text / SQLite TEXT are ordinary
+        // strings and stay selected. PK columns are always kept — they carry row
+        // identity and drive links.
+        .filter((x: Column) => x.isPrimaryKey || !isLargeValueColumn(x))
         .map((x: Column): ColumnWithJoin => {
             const joinTable = tableSchema.singleJoins.find((j: Join) => j.sourceColumnNames?.[0] === x.name);
             if (!joinTable) return x;
@@ -383,6 +385,7 @@ function buildDrillQuery(
     allFields: string,
     tableFilter?: string,
     filterColumn?: string,
+    forExport = false,
 ): string | null {
     const drill = resolveDrillDown(table, schema, tableFilter, filterColumn);
     if (drill && canFlatFilterDrill(drill.childJoin)) {
@@ -397,7 +400,7 @@ function buildDrillQuery(
         const parentPkType = getPkTypes(drill.parentTable)[0]?.gqlType ?? "Int";
         const param = `, $id: ${parentPkType}`;
         const flatFilter = `filter: { ${fkCol}: { _eq: $id } }`;
-        const flatMultiJoinFields = buildMultiJoinFields(
+        const flatMultiJoinFields = forExport ? '' : buildMultiJoinFields(
             schema,
             tableSchema.multiJoins.filter((join) => !sameJoin(join, drill.childJoin)),
         );
@@ -493,6 +496,29 @@ function buildListQuery(
     return queryEnvelope(table, param, filterText ? `filter: ${filterText}` : '', allFields);
 }
 
+/**
+ * Columns included in a full-data export: every column EXCEPT binary payloads
+ * (non-PK), which have no useful CSV/JSON representation. Long-text columns ARE
+ * included — export means the full data, not the grid's preview projection.
+ * Single source of truth for export headers, fields, and the export query's
+ * SELECT list so the three cannot drift.
+ */
+export function exportableColumns(table: Table): Column[] {
+    return table.columns.filter((c) => c.isPrimaryKey || !isBinaryDbType(c.dbType));
+}
+
+export interface BuildQueryOptions {
+    /**
+     * `grid` (default): the on-screen projection — large values excluded, FK label
+     * blocks and multi-join count/preview blocks included.
+     * `export`: the full-data projection — every exportable scalar column (long
+     * text included, binary excluded), and NO join/multi-join blocks: exports
+     * project scalar fields only, so fetching label/preview blocks for every row
+     * would be pure transfer waste.
+     */
+    fields?: 'grid' | 'export';
+}
+
 export function buildQuery(
     table: Table,
     schema: Schema,
@@ -501,17 +527,21 @@ export function buildQuery(
     id?: string,
     tableFilter?: string,
     filterColumn?: string,
+    options?: BuildQueryOptions,
 ): string | null {
     if (!table || !schema?.data) return null;
     const tableSchema = schema.findTable(table.graphQlName);
     if (!tableSchema) return null;
 
-    const dataColumns = buildDataColumns(table, schema, tableSchema);
-    const multiJoinFields = buildMultiJoinFields(schema, tableSchema.multiJoins);
+    const forExport = options?.fields === 'export';
+    const dataColumns = forExport
+        ? exportableColumns(table).map((c) => c.name).join(' ')
+        : buildDataColumns(table, schema, tableSchema);
+    const multiJoinFields = forExport ? '' : buildMultiJoinFields(schema, tableSchema.multiJoins);
     const allFields = multiJoinFields ? `${dataColumns} ${multiJoinFields}` : dataColumns;
 
     if (id && (filterColumn || tableFilter)) {
-        return buildDrillQuery(table, schema, tableSchema, dataColumns, allFields, tableFilter, filterColumn);
+        return buildDrillQuery(table, schema, tableSchema, dataColumns, allFields, tableFilter, filterColumn, forExport);
     }
 
     if (id && !tableFilter && !filterColumn) {

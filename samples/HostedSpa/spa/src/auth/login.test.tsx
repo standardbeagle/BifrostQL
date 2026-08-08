@@ -38,7 +38,11 @@ function identityWith(permissions: string[]): TestIdentity {
  * configured). The login POST flips the session ref so a follow-up
  * `/auth/session` refetch resolves authenticated, mirroring the cookie flow.
  */
-function createFetchMock(options: { loginSucceeds: boolean }) {
+function createFetchMock(options: {
+  loginSucceeds: boolean;
+  /** When `false`, `/auth/login` returns 200 but the session never opens. */
+  sessionOpens?: boolean;
+}) {
   const state = { authenticated: false };
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString();
@@ -65,7 +69,7 @@ function createFetchMock(options: { loginSucceeds: boolean }) {
         return Promise.reject(new Error(`unexpected method for ${url}`));
       }
       if (options.loginSucceeds) {
-        state.authenticated = true;
+        state.authenticated = options.sessionOpens !== false;
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -171,5 +175,53 @@ describe('Login', () => {
         password: 'secret',
       });
     });
+  });
+
+  it('reports a login whose session never opens', async () => {
+    // Arrange: /auth/login answers 200, but the cookie is not accepted so
+    // /auth/session keeps answering 401.
+    globalThis.fetch = createFetchMock({
+      loginSucceeds: true,
+      sessionOpens: false,
+    });
+    renderLogin();
+    await waitFor(() =>
+      expect(screen.getByTestId('login-screen')).toBeInTheDocument(),
+    );
+
+    // Act
+    await userEvent.type(screen.getByLabelText(/username/i), 'admin');
+    await userEvent.type(screen.getByLabelText(/password/i), 'secret');
+    await userEvent.click(screen.getByRole('button', { name: /sign in/i }));
+
+    // Assert: the dead end is named rather than silently swallowed, and the
+    // form is usable again for a retry.
+    await waitFor(() =>
+      expect(screen.getByTestId('login-error')).toHaveTextContent(
+        /session could not be established/i,
+      ),
+    );
+    expect(screen.getByRole('button', { name: /sign in/i })).toBeEnabled();
+  });
+
+  it('clears the password and holds the button once the session resolves', async () => {
+    // Arrange
+    globalThis.fetch = createFetchMock({ loginSucceeds: true });
+    renderLogin();
+    await waitFor(() =>
+      expect(screen.getByTestId('login-screen')).toBeInTheDocument(),
+    );
+
+    // Act
+    await userEvent.type(screen.getByLabelText(/username/i), 'admin');
+    await userEvent.type(screen.getByLabelText(/password/i), 'secret');
+    await userEvent.click(screen.getByRole('button', { name: /sign in/i }));
+
+    // Assert: the password does not linger in the DOM, and the button stays
+    // disabled until the app's gates replace this screen — no double-submit.
+    await waitFor(() =>
+      expect(screen.getByLabelText(/password/i)).toHaveValue(''),
+    );
+    expect(screen.getByRole('button', { name: /signing in/i })).toBeDisabled();
   });
 });

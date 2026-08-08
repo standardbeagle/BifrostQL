@@ -12,6 +12,14 @@ import { Onboarding } from './onboarding';
 const LOGIN_PATH = '/auth/login';
 
 /**
+ * Conventional path of the read-session endpoint — the same one the app-shell
+ * `SessionProvider` polls. The login screen reads it directly once, before
+ * declaring success, because `useSession().refresh()` returns `void` and so
+ * cannot report that the session failed to open.
+ */
+const SESSION_PATH = '/auth/session';
+
+/**
  * Derive an `/auth/*` endpoint URL from the configured BifrostQL GraphQL
  * endpoint. In hosted mode the auth routes are same-origin siblings of the
  * GraphQL endpoint, so the path segment is replaced rather than appended.
@@ -34,9 +42,14 @@ function resolveAuthUrl(graphqlEndpoint: string, path: string): string {
  * Rendered by the `/login` route, which the app's {@link ProtectedRoute} gates
  * redirect to when the session is unauthenticated. Submitting the form posts
  * the username/password to `/auth/login` with `credentials: 'include'` so the
- * host can issue its auth cookie; on success the session is refreshed via
- * {@link useSession}, which flips the app's gates to the authenticated app. A
- * failed login surfaces the server's error message inline.
+ * host can issue its auth cookie. A 200 from `/auth/login` is not on its own
+ * proof that the operator is signed in — the cookie can still be rejected
+ * (cross-origin, `SameSite`) or the read-session endpoint can fail — so the
+ * screen reads `/auth/session` itself before declaring success, and only then
+ * refreshes the shared session via {@link useSession} to flip the app's gates.
+ * A failed login, or a login whose session never opens, surfaces inline and
+ * re-enables the form; the submit button stays disabled until the session has
+ * actually resolved, so the form cannot be double-submitted in the gap.
  *
  * The screen also composes the {@link Onboarding} panel so a first-run operator
  * sees the "sign in with the seeded admin credentials" guidance alongside the
@@ -74,14 +87,33 @@ export function Login() {
           error?: string;
         } | null;
         setError(body?.error ?? 'Sign in failed. Check your credentials.');
+        setSubmitting(false);
         return;
       }
 
-      // Cookie issued — refresh the session so the app's gates re-evaluate.
+      // The cookie is issued — but only a session read proves it was accepted.
+      const sessionResponse = await fetch(
+        resolveAuthUrl(config.endpoint, SESSION_PATH),
+        { credentials: 'include' },
+      );
+      const identity = sessionResponse.ok
+        ? ((await sessionResponse.json().catch(() => null)) as unknown)
+        : null;
+      if (identity === null) {
+        setError(
+          'Signed in, but the session could not be established. Check that cookies are allowed for this site, then try again.',
+        );
+        setSubmitting(false);
+        return;
+      }
+
+      // The session is real: drop the password and refresh the shared session
+      // so the app's gates re-evaluate. `submitting` stays set — the gates
+      // replace this screen, and until they do the form must not re-submit.
+      setPassword('');
       refresh();
     } catch {
       setError('Could not reach the server. Try again.');
-    } finally {
       setSubmitting(false);
     }
   };

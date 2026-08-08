@@ -1,3 +1,9 @@
+/**
+ * Three roles: redacting secrets out of connection strings/ConnectionInfo
+ * before persistence (sanitize*), validating untrusted stored JSON back into a
+ * ConnectionInfo (`parseConnectionInfo`, used by session and recent-connections
+ * loads), and small parsing helpers (`parsePort`, `parseAdoConnectionString`).
+ */
 import { ConnectionInfo, Provider } from './types';
 
 const REDACTED_VALUE = '<redacted>';

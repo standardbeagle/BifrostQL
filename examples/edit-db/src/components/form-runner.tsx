@@ -19,7 +19,7 @@ import { useFetcher } from '../common/fetcher';
 import { useSchema } from '../hooks/useSchema';
 import { useTableMutation } from '../hooks/useTableMutation';
 import { useDeleteMutation } from '../hooks/useDeleteMutation';
-import type { Column, Schema, Table } from '../types/schema';
+import type { Column, SchemaContextValue, Table } from '../types/schema';
 import {
   rowIdOf,
   pkFilterFor,
@@ -55,7 +55,7 @@ function unqualified(id: string): string {
  * GraphQL name, so match on either form. Returns undefined when the table is no
  * longer in the published schema.
  */
-export function resolveDefinitionTable(schema: Schema, tableId: string): Table | undefined {
+export function resolveDefinitionTable(schema: SchemaContextValue, tableId: string): Table | undefined {
   const direct = schema.findTable(tableId);
   if (direct) return direct;
   const unq = unqualified(tableId);

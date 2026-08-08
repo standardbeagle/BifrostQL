@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { GET_DB_SCHEMA } from "../common/schema-queries";
 import { createContext, useContext, useMemo, ReactNode } from "react";
-import { Schema, Table, Column, TableMetadata, ManyToManyJoin } from '../types/schema';
+import { SchemaContextValue, Table, Column, TableMetadata, ManyToManyJoin } from '../types/schema';
 import { useFetcher } from "../common/fetcher";
 import { humanizeName } from "../lib/humanize";
 
@@ -51,7 +51,7 @@ interface DbSchemaResponse {
     _dbSchema: DbSchemaItem[];
 }
 
-const SchemaContext = createContext<Schema>({loading: true, error: null, data: [], findTable: () => undefined});
+const SchemaContext = createContext<SchemaContextValue>({loading: true, error: null, data: [], findTable: () => undefined});
 
 /**
  * Provider component for database schema context.
@@ -89,7 +89,7 @@ export function useSchema() {
     return useContext(SchemaContext);
 }
 
-function useSchemaLoader(): Schema {
+function useSchemaLoader(): SchemaContextValue {
     const fetcher = useFetcher();
 
     const { isLoading, error, data: dbData } = useQuery({
@@ -98,7 +98,7 @@ function useSchemaLoader(): Schema {
         staleTime: Infinity,
     });
 
-    return useMemo((): Schema => {
+    return useMemo((): SchemaContextValue => {
         if (isLoading) return { loading: true, error: null, data: [], findTable: () => undefined };
         if (error) return { loading: false, error: { message: (error as Error).message }, data: [], findTable: () => undefined };
         if (!dbData) return { loading: false, error: null, data: [], findTable: () => undefined };

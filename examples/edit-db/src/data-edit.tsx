@@ -3,7 +3,7 @@ import { ReactElement, ReactNode, useEffect, useMemo, useState } from "react";
 import { useForm, useStore, AnyFieldApi, ReactFormExtendedApi } from "@tanstack/react-form";
 import { useSchema } from "./hooks/useSchema";
 import { useParams, useNavigate } from "./hooks/usePath";
-import { Schema, Table, Column, Join } from "./types/schema";
+import { SchemaContextValue, Table, Column, Join } from "./types/schema";
 import { TableRefValue, useTableRef, useTableRefValue } from "./hooks/useTableRef";
 import { useCompositeTableRef } from "./hooks/useCompositeTableRef";
 import { useFetcher } from "./common/fetcher";
@@ -103,7 +103,7 @@ interface ColumnJoin {
     fkRole: FkRole;
 }
 
-function useTable(schema: Schema, tableName: string) {
+function useTable(schema: SchemaContextValue, tableName: string) {
     return useMemo(() => {
         const table = schema?.data?.find((x: { graphQlName: string | undefined; }) => x.graphQlName === tableName)!;
         const editColumns = table.columns.filter((c: Column) => !c.isReadOnly && !c.isIdentity);
@@ -218,7 +218,7 @@ function useEditRecord(dataTable: Table, editColumns: ColumnJoin[], editid: stri
     return { isLoading, error, value, defaultValues, pkResolveFailed };
 }
 
-function DataEditDetail({ table, schema, editid, onClose }: { table: string, schema: Schema, editid: string, onClose: () => void }) {
+function DataEditDetail({ table, schema, editid, onClose }: { table: string, schema: SchemaContextValue, editid: string, onClose: () => void }) {
     const isInsert = editid === undefined || editid === '';
     const [dataTable, editColumns, idColumns] = useTable(schema, table);
     const labelColumn = dataTable.labelColumn;
@@ -485,7 +485,7 @@ interface EditFieldProps {
     join?: Join;
     fkRole?: FkRole;
     form: AnyReactFormApi;
-    schema?: Schema;
+    schema?: SchemaContextValue;
 }
 
 function CharacterCounter({ current, max }: { current: number; max: number }) {
@@ -881,7 +881,7 @@ interface ParentFieldProps {
     column: Column;
     join: Join;
     form: AnyReactFormApi;
-    schema: Schema;
+    schema: SchemaContextValue;
     isRequired: boolean;
 }
 
@@ -965,7 +965,7 @@ interface CompositeParentFieldProps {
     column: Column;
     join: Join;
     form: AnyReactFormApi;
-    schema: Schema;
+    schema: SchemaContextValue;
     isRequired: boolean;
 }
 

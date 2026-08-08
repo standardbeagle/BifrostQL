@@ -31,7 +31,7 @@ import {
     getPkTypes,
     type PkTypeInfo,
 } from './query-builder';
-import type { Column, Schema, Table } from '../types/schema';
+import type { Column, SchemaContextValue, Table } from '../types/schema';
 
 function col(name: string, paramType: string, isPrimaryKey = false): Column {
     return {
@@ -65,7 +65,7 @@ function table(name: string, primaryKeys: string[], columns: Column[]): Table {
     };
 }
 
-function schemaOf(tables: Table[]): Schema {
+function schemaOf(tables: Table[]): SchemaContextValue {
     return {
         loading: false,
         error: null,

@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
 import { FormRunnerView, resolveDefinitionTable } from './form-runner';
 import { FetcherProvider, type GraphQLFetcher } from '../common/fetcher';
-import type { Column, Schema, Table } from '../types/schema';
+import type { Column, SchemaContextValue, Table } from '../types/schema';
 import type { FormDefinition } from '../lib/form-definition';
 
 function col(name: string, paramType: string, opts: Partial<Column> = {}): Column {
@@ -299,7 +299,7 @@ describe('FormRunnerView — composite (2-column) PK', () => {
 });
 
 describe('resolveDefinitionTable', () => {
-  const schema: Schema = {
+  const schema: SchemaContextValue = {
     loading: false,
     error: null,
     data: [usersTable],

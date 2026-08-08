@@ -3,7 +3,7 @@
  * Extracted from useDataTable for testability.
  */
 
-import type { Table, Column, Join, Schema } from '../types/schema';
+import type { Table, Column, Join, SchemaContextValue } from '../types/schema';
 import type { ColumnFiltersState } from '@tanstack/react-table';
 import { rowIdOf, buildPkEqFilter, parsePkRoute, decodePkPart, encodeRouteParts, type PkEqFilterResult } from './row-id';
 import { coerceForGql } from './fk';
@@ -283,7 +283,7 @@ export function buildSingleRowQuery(
  */
 const MULTIJOIN_PREVIEW_LIMIT = 11;
 
-function buildMultiJoinFields(schema: Schema, multiJoins: Join[]): string {
+function buildMultiJoinFields(schema: SchemaContextValue, multiJoins: Join[]): string {
     return multiJoins
         .map((j) => {
             const joinSchema = schema.findTable(j.destinationTable);
@@ -321,7 +321,7 @@ function queryEnvelope(
  * table's grid, excluding heavy blob/long-text payloads. FK columns emit a
  * nested block anchored on the FIRST source column of a composite FK.
  */
-function buildDataColumns(table: Table, schema: Schema, tableSchema: Table): string {
+function buildDataColumns(table: Table, schema: SchemaContextValue, tableSchema: Table): string {
     // For composite FKs, anchor the nested sub-query on the FIRST source column so
     // we only emit one FK block. The other member columns render as plain scalars
     // (their values still come back on the parent row — useful for rebuilding a
@@ -379,7 +379,7 @@ function buildDataColumns(table: Table, schema: Schema, tableSchema: Table): str
  */
 function buildDrillQuery(
     table: Table,
-    schema: Schema,
+    schema: SchemaContextValue,
     tableSchema: Table,
     dataColumns: string,
     allFields: string,
@@ -521,7 +521,7 @@ export interface BuildQueryOptions {
 
 export function buildQuery(
     table: Table,
-    schema: Schema,
+    schema: SchemaContextValue,
     filterString: string,
     columnFilters: ColumnFiltersState,
     id?: string,
@@ -621,7 +621,7 @@ export function unwrapDrillDownPage(
 
 export function resolveDrillDown(
     table: Table,
-    schema: Schema,
+    schema: SchemaContextValue,
     filterTable?: string,
     filterColumn?: string,
 ): DrillDownTarget | null {

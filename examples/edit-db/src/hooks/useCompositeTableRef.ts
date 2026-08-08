@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
-import { Schema } from '../types/schema';
+import { SchemaContextValue } from '../types/schema';
 import { useFetcher } from '../common/fetcher';
 import { rowIdOf, encodeRouteParts } from '../lib/row-id';
 import { coerceForGql, gqlTypeOf } from '../lib/fk';
@@ -48,7 +48,7 @@ export interface CompositeTableRefOptions {
  * outside the fetched window so it stays selectable instead of showing blank.
  */
 export function useCompositeTableRef(
-    schema: Schema,
+    schema: SchemaContextValue,
     destTableName: string,
     destColumnNames: string[],
     options: CompositeTableRefOptions = {},

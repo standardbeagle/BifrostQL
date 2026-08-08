@@ -20,7 +20,7 @@ import {
     type ColumnFilterValue,
 } from './query-builder';
 import { buildPkEqFilter } from './row-id';
-import type { Table, Schema, Column, Join } from '../types/schema';
+import type { Table, SchemaContextValue, Column, Join } from '../types/schema';
 
 // ── Test Fixtures ──────────────────────────────────────────────
 
@@ -61,7 +61,7 @@ function makeTable(overrides: Partial<Table> = {}): Table {
     };
 }
 
-function makeSchema(tables: Table[]): Schema {
+function makeSchema(tables: Table[]): SchemaContextValue {
     return {
         loading: false,
         error: null,

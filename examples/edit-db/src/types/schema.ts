@@ -179,9 +179,9 @@ export interface Table {
 
 /**
  * Schema context value containing database metadata and loading state.
- * @interface Schema
+ * @interface SchemaContextValue
  */
-export interface Schema {
+export interface SchemaContextValue {
   /** Whether schema data is currently loading */
   loading: boolean;
   /** Error object if schema loading failed, null otherwise */

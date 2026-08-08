@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "./usePath";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSchema } from "./useSchema";
-import { Table, Column, Join, Schema } from "../types/schema";
+import { Table, Column, Join, SchemaContextValue } from "../types/schema";
 import { ColumnDef, ColumnFiltersState, SortingState } from "@tanstack/react-table";
 import { useFetcher } from "../common/fetcher";
 import { DataTableColumnHeader } from "../components/data-table-column-header";
@@ -123,7 +123,7 @@ function buildJoinColumn(
     c: Column,
     anchorJoin: Join,
     table: Table,
-    schema: Schema,
+    schema: SchemaContextValue,
     operators: string[],
     onOpenColumn?: (panel: ColumnPanel) => void,
 ): ColumnDef<RowData, unknown> {
@@ -200,7 +200,7 @@ function buildScalarColumn(
     c: Column,
     memberJoin: Join | undefined,
     table: Table,
-    schema: Schema,
+    schema: SchemaContextValue,
     operators: string[],
     onExpandContent?: (rowIndex: number, columnName: string) => void,
 ): ColumnDef<RowData, unknown> {
@@ -296,7 +296,7 @@ function buildScalarColumn(
     };
 }
 
-const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: ColumnPanel) => void): ColumnDef<RowData, unknown>[] => {
+const getTableColumns = (table: Table, schema: SchemaContextValue, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: ColumnPanel) => void): ColumnDef<RowData, unknown>[] => {
     if (!table || !schema) return [];
 
     const dataColumns: ColumnDef<RowData, unknown>[] = table.columns
@@ -418,7 +418,7 @@ const getTableColumns = (table: Table, schema: Schema, onExpandContent?: (rowInd
 function buildIdLookupVariables(
     id: string,
     table: Table,
-    schema: Schema,
+    schema: SchemaContextValue,
     filterTable?: string,
     filterColumn?: string,
 ): Record<string, unknown> {

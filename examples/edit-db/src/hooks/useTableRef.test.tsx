@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
-import type { Column, Schema, Table } from '../types/schema';
+import type { Column, SchemaContextValue, Table } from '../types/schema';
 
 const fetcherQuery = vi.fn();
 vi.mock('../common/fetcher', () => ({ useFetcher: () => ({ query: fetcherQuery }) }));
@@ -27,7 +27,7 @@ function table(name: string, opts: Partial<Table> = {}): Table {
     };
 }
 
-function schemaOf(...tables: Table[]): Schema {
+function schemaOf(...tables: Table[]): SchemaContextValue {
     return {
         loading: false,
         error: null,

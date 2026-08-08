@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
-import { Schema, Table } from "../types/schema";
+import { SchemaContextValue, Table } from "../types/schema";
 import { useFetcher } from "../common/fetcher";
 import {
     TABLE_REF_LIMIT,
@@ -24,7 +24,7 @@ export interface TableRef {
     serverSearch: boolean;
 }
 
-function findTable(schema: Schema, tableName: string): Table | undefined {
+function findTable(schema: SchemaContextValue, tableName: string): Table | undefined {
     return schema?.data?.find((x: { graphQlName: string }) => x.graphQlName === tableName);
 }
 
@@ -34,7 +34,7 @@ function findTable(schema: Schema, tableName: string): Table | undefined {
  * list is narrowed server-side, so parents beyond the fetch window stay
  * findable; otherwise one window is fetched and the caller filters it.
  */
-export function useTableRef(schema: Schema, tableName: string, columnName: string, search = '', enabled = true): TableRef {
+export function useTableRef(schema: SchemaContextValue, tableName: string, columnName: string, search = '', enabled = true): TableRef {
     const fetcher = useFetcher();
 
     const table = useMemo(() => findTable(schema, tableName), [schema, tableName]);
@@ -84,7 +84,7 @@ export interface TableRefLookup {
  * Select can still display the stored value instead of a misleading
  * placeholder. Pass `key` as null/'' to disable the lookup.
  */
-export function useTableRefValue(schema: Schema, tableName: string, columnName: string, key: unknown): TableRefLookup {
+export function useTableRefValue(schema: SchemaContextValue, tableName: string, columnName: string, key: unknown): TableRefLookup {
     const fetcher = useFetcher();
 
     const table = useMemo(() => findTable(schema, tableName), [schema, tableName]);

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Table } from '../types/schema';
 import { useSchema } from '../hooks/useSchema';
-import { DataDataTable } from '../data-data-table';
+import { TableView } from '../table-view';
 import { M2mPanel } from './m2m-panel';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -128,7 +128,7 @@ export function DetailPanel({ parentTable, selectedRowId, onClose, onOpenColumn 
                             <div className={childHasMultiJoins && childSelectedRowId
                                 ? 'flex-1 min-h-0 max-h-[50%] overflow-hidden flex flex-col'
                                 : 'flex-1 min-h-0 overflow-hidden flex flex-col'}>
-                                <DataDataTable
+                                <TableView
                                     key={`${activeTab.key}-${selectedRowId}`}
                                     table={childTable!}
                                     id={selectedRowId}

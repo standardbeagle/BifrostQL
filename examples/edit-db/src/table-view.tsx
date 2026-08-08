@@ -16,7 +16,7 @@ import { encodePkRoute, pkFilterFor, buildPkEqFilter, type PkFilter } from './li
 import { buildSingleRowQuery } from './lib/query-builder';
 import { useFetcher } from './common/fetcher';
 
-interface DataDataTableParams {
+interface TableViewParams {
     table: Table;
     id?: string;
     tableFilter?: string;
@@ -56,7 +56,7 @@ interface PanelState {
     tableName: string;
 }
 
-export function DataDataTable({ table, id, tableFilter, filterColumn, selectedRowId, onRowSelect, onOpenColumn, stackingEnabled, onToggleStacking }: DataDataTableParams): JSX.Element {
+export function TableView({ table, id, tableFilter, filterColumn, selectedRowId, onRowSelect, onOpenColumn, stackingEnabled, onToggleStacking }: TableViewParams): JSX.Element {
     const deleteMutation = useDeleteMutation(table);
 
     const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);

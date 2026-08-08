@@ -45,7 +45,7 @@ vi.mock('./hooks/useDataTable', () => ({
     },
 }));
 
-import { DataDataTable } from './data-data-table';
+import { TableView } from './table-view';
 
 function makeColumn(overrides: Partial<Column> = {}): Column {
     return {
@@ -87,7 +87,7 @@ const rowA = { id: 1, name: 'Alpha', note: 'note-a', doc: 'hello A' };
 const rowB = { id: 2, name: 'Beta', note: 'note-b', doc: 'hello B' };
 
 function ui() {
-    return <DataDataTable table={table} />;
+    return <TableView table={table} />;
 }
 
 function renderGrid() {
@@ -114,7 +114,7 @@ function mockSaveRoundTrip(freshRow: Record<string, unknown>) {
     });
 }
 
-describe('DataDataTable content panel row identity (PK snapshot)', () => {
+describe('TableView content panel row identity (PK snapshot)', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         capturedExpand = undefined;

@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef, type ReactNode } from 'react';
-import { DataDataTable } from './data-data-table';
+import { TableView } from './table-view';
 import { DetailPanel } from './components/detail-panel';
 import { useParams } from './hooks/usePath';
 import { useSchema } from './hooks/useSchema';
@@ -135,7 +135,7 @@ export function DataPanel() {
     if (!table) return <div className="p-5 text-center text-muted-foreground">Table not found</div>;
 
     const mainGrid = (
-        <DataDataTable
+        <TableView
             table={table}
             id={id}
             tableFilter={filterTable}
@@ -212,7 +212,7 @@ export function DataPanel() {
                             onClose={() => handleCloseColumn(index)}
                             onRef={(el) => { columnRefsMap.current.set(index + 1, el); }}
                         >
-                            <DataDataTable
+                            <TableView
                                 table={getTable(data!, col.tableName)!}
                                 id={col.filterId}
                                 tableFilter={col.filterTable}

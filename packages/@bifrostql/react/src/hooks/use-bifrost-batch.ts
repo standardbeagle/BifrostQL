@@ -73,7 +73,15 @@ function identityFor(op: BatchOperation): Record<string, unknown> {
   if (op.key && Object.keys(op.key).length > 0) {
     return { ...op.key };
   }
-  return op.id != null ? { id: op.id } : {};
+  if (op.id != null) {
+    return { id: op.id };
+  }
+  // An empty identity would send an unqualified update/delete: either a no-op
+  // the caller reads as success, or a write that hits the wrong rows. Neither
+  // is recoverable once it has left, so refuse to build the operation.
+  throw new Error(
+    `Batch ${op.type} on "${op.table}" has no row identity: supply \`id\` for a single-\`id\` table, or \`key\` for a composite or renamed primary key.`,
+  );
 }
 
 function buildVariables(op: BatchOperation): Record<string, unknown> {

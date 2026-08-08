@@ -489,6 +489,26 @@ describe('useBifrostBatch', () => {
     expect(invalidateSpy).not.toHaveBeenCalled();
   });
 
+  it('refuses an update or delete with no row identity', async () => {
+    // Arrange: neither `id` nor `key` was supplied.
+    globalThis.fetch = createFetchMock({ data: { users: 1 } });
+    const { result } = renderHook(
+      () => useBifrostBatch({ allowPartialSuccess: false }),
+      { wrapper: createWrapper() },
+    );
+
+    // Act / Assert: an unqualified update would hit the wrong rows — or none,
+    // and report success — so the operation must not be built at all.
+    await act(async () => {
+      await expect(
+        result.current.mutateAsync([
+          { type: 'update', table: 'users', data: { name: 'Alice' } },
+        ]),
+      ).rejects.toThrow(/no row identity/i);
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
   it('calls onSuccess callback with batch result', async () => {
     globalThis.fetch = createFetchMock({ data: { users: 1 } });
     const onSuccess = vi.fn();

@@ -10,6 +10,7 @@ import {
   useBifrostMutation,
   buildInsertMutation,
 } from '@bifrostql/react';
+import { useWriteFeedback, WriteFeedbackRegion } from '../common/write-feedback';
 
 /** Qualified entity key of the member_memberships link entity in the overlay. */
 const MEMBER_MEMBERSHIPS_ENTITY_KEY = 'main.member_memberships';
@@ -153,18 +154,28 @@ export function MemberPlanAssignment() {
   const [newStartDate, setNewStartDate] = useState<unknown>('');
   const [newStatus, setNewStatus] = useState<unknown>('active');
 
-  const handleAssign = () => {
+  const feedback = useWriteFeedback();
+
+  const handleAssign = async () => {
     if (!canWrite || !newMemberId || !newPlanId) {
       return;
     }
-    insert.mutate({
-      detail: {
-        member_id: newMemberId,
-        plan_id: newPlanId,
-        start_date: newStartDate || null,
-        status: newStatus || null,
-      },
-    });
+    const assigned = await feedback.run(
+      () =>
+        insert.mutateAsync({
+          detail: {
+            member_id: newMemberId,
+            plan_id: newPlanId,
+            start_date: newStartDate || null,
+            status: newStatus || null,
+          },
+        }),
+      'Plan assigned.',
+    );
+    // A rejected insert leaves the selection in place so it can be retried.
+    if (!assigned) {
+      return;
+    }
     setNewMemberId('');
     setNewPlanId('');
     setNewStartDate('');
@@ -195,6 +206,11 @@ export function MemberPlanAssignment() {
   return (
     <section data-testid="member-plan-assignment">
       <h2>{membershipEntity.label ?? 'Member Memberships'}</h2>
+
+      <WriteFeedbackRegion
+        feedback={feedback}
+        testId="member-plan-assignment-write"
+      />
 
       <ul data-testid="member-plan-assignment-list">
         {memberships.map((membership) => (
@@ -248,7 +264,12 @@ export function MemberPlanAssignment() {
             enumOptions={MEMBERSHIP_STATUSES}
             onChange={(value) => setNewStatus(value)}
           />
-          <button type="button" onClick={handleAssign}>
+          <button
+            type="button"
+            onClick={() => {
+              void handleAssign();
+            }}
+          >
             Assign plan
           </button>
         </div>

@@ -102,6 +102,7 @@ function createFetchMock(
   memberships: Array<Record<string, unknown>> = membershipRows,
   members: Array<Record<string, unknown>> = memberRows,
   plans: Array<Record<string, unknown>> = planRows,
+  options: { mutationFails?: boolean } = {},
 ) {
   graphqlRequests = [];
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -142,6 +143,18 @@ function createFetchMock(
     if (body) {
       graphqlRequests.push(body);
       if (/\bmutation\b/.test(body.query)) {
+        if (options.mutationFails) {
+          // A GraphQL-level rejection — how a policy denial arrives.
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            json: () =>
+              Promise.resolve({
+                errors: [{ message: 'assignment write denied' }],
+              }),
+          } as Response);
+        }
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -280,6 +293,39 @@ describe('MemberPlanAssignment', () => {
     expect(
       graphqlRequests.find((r) => /\binsert\b/.test(r.query)),
     ).toBeUndefined();
+  });
+
+  it('reports a rejected assignment and keeps the operator selection', async () => {
+    // Arrange: the server rejects the membership insert.
+    const user = userEvent.setup();
+    globalThis.fetch = createFetchMock(
+      identityWith(['main.members.write']),
+      sampleMetadata,
+      membershipRows,
+      memberRows,
+      planRows,
+      { mutationFails: true },
+    );
+    renderScreen();
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('member-plan-assignment-add'),
+      ).toBeInTheDocument(),
+    );
+
+    // Act
+    await user.selectOptions(screen.getByLabelText('member_id'), '8');
+    await user.selectOptions(screen.getByLabelText('plan_id'), '4');
+    await user.click(screen.getByRole('button', { name: 'Assign plan' }));
+
+    // Assert: the rejection is visible and the selection survives for a retry.
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('member-plan-assignment-write-error'),
+      ).toHaveTextContent('assignment write denied'),
+    );
+    expect(screen.getByLabelText('member_id')).toHaveValue('8');
+    expect(screen.getByLabelText('plan_id')).toHaveValue('4');
   });
 
   it('hides assigning controls for a read-only session', async () => {

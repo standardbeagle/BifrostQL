@@ -114,17 +114,27 @@ export function encodePkRoute(filter: PkFilter, table: TableLike): string {
     return encodeRouteParts(keys.map((pk) => filter[pk]));
 }
 
+/**
+ * Parses a route-encoded id back into a PK filter, or null when the route cannot
+ * key a row.
+ *
+ * An EMPTY segment is a parse failure, not a null key value. Primary-key columns
+ * are non-nullable, so `{line_id: null}` can never match a stored row — but it is
+ * a structurally valid filter, so callers guarding on "did the key resolve?"
+ * (see `pkResolveFailed` in data-edit.tsx) saw success, queried, matched zero
+ * rows, and then wrote an all-columns-blank UPDATE back. Returning null here is
+ * the established failure shape every caller already handles.
+ */
 export function parsePkRoute(raw: string, table: TableLike): PkFilter | null {
     const keys = table.primaryKeys ?? [];
     if (keys.length === 0) return null;
-    if (keys.length === 1) {
-        return { [keys[0]]: decodePkPart(raw) };
-    }
-    const parts = raw.split(DELIMITER);
+    const parts = keys.length === 1 ? [raw] : raw.split(DELIMITER);
     if (parts.length !== keys.length) return null;
     const filter: PkFilter = {};
     for (let i = 0; i < keys.length; i++) {
-        filter[keys[i]] = decodePkPart(parts[i]);
+        const value = decodePkPart(parts[i]);
+        if (value === null) return null;
+        filter[keys[i]] = value;
     }
     return filter;
 }

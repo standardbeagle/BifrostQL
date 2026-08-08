@@ -13,6 +13,9 @@ const schemaMock = vi.hoisted(() => ({
 }));
 vi.mock('./hooks/useSchema', () => ({ useSchema: () => schemaMock.schema }));
 
+const fetcherQuery = vi.hoisted(() => vi.fn());
+vi.mock('./common/fetcher', () => ({ useFetcher: () => ({ query: fetcherQuery }) }));
+
 import { selectControlValue, NONE_VALUE, DataEditDialog } from './data-edit';
 
 // Mock the form hook
@@ -564,5 +567,90 @@ describe('DataEditDialog table-not-found guard', () => {
     schemaMock.schema.findTable.mockReturnValue(undefined);
     render(<DataEditDialog table="ghost_table" editId="1" onClose={() => {}} />);
     expect(screen.getByText('Table not found: ghost_table')).toBeInTheDocument();
+  });
+});
+
+/**
+ * A row key that resolves to no stored row must never render an editable form.
+ * Two distinct entry points reach that state:
+ *   - a malformed key (empty composite segment) — refused before querying;
+ *   - a well-formed key whose row is gone (deleted / out of scope) — the query
+ *     succeeds with zero rows.
+ * Both previously fell through to `value = {}`, filled every field with a blank
+ * default, and let Save issue an UPDATE that blanked the whole row.
+ */
+describe('DataEditDialog unresolvable-record guards', () => {
+  function compositeTable() {
+    return {
+      name: 'order_lines',
+      graphQlName: 'order_lines',
+      label: 'Order Line',
+      labelColumn: 'note',
+      primaryKeys: ['order_id', 'line_id'],
+      singleJoins: [],
+      multiJoins: [],
+      columns: [
+        { ...fullColumn('order_id'), isPrimaryKey: true },
+        { ...fullColumn('line_id'), isPrimaryKey: true },
+        { ...fullColumn('note') },
+      ],
+    };
+  }
+
+  function fullColumn(name: string) {
+    return {
+      dbName: name,
+      graphQlName: name,
+      name,
+      label: name,
+      paramType: 'String',
+      dbType: 'nvarchar',
+      isPrimaryKey: false,
+      isIdentity: false,
+      isNullable: false,
+      isReadOnly: false,
+      metadata: {},
+    };
+  }
+
+  function renderDialog(editId: string) {
+    const table = compositeTable();
+    schemaMock.schema.data = [table];
+    schemaMock.schema.findTable.mockReturnValue(table);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <DataEditDialog table="order_lines" editId={editId} onClose={() => {}} />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('refuses to open an editable form for a key with an empty segment', () => {
+    fetcherQuery.mockResolvedValue({ value: { data: [] } });
+    renderDialog('7::');
+    expect(screen.getByText('Cannot edit record')).toBeInTheDocument();
+    expect(screen.queryAllByTestId('mock-input')).toHaveLength(0);
+  });
+
+  it('refuses to open an editable form when the lookup returns zero rows', async () => {
+    // Well-formed key, but the row is gone. `?? {}` used to turn this into an
+    // empty row that Save would write back over the real one.
+    fetcherQuery.mockResolvedValue({ value: { data: [] } });
+    renderDialog('7::3');
+    await waitFor(() =>
+      expect(screen.getByText('Cannot edit record')).toBeInTheDocument(),
+    );
+    expect(screen.queryAllByTestId('mock-input')).toHaveLength(0);
+  });
+
+  it('opens the editable form when the lookup returns the row', async () => {
+    fetcherQuery.mockResolvedValue({
+      value: { data: [{ order_id: '7', line_id: '3', note: 'hello' }] },
+    });
+    renderDialog('7::3');
+    await waitFor(() =>
+      expect(screen.queryAllByTestId('mock-input').length).toBeGreaterThan(0),
+    );
+    expect(screen.queryByText('Cannot edit record')).not.toBeInTheDocument();
   });
 });

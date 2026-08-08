@@ -179,7 +179,14 @@ function useEditRecord(dataTable: Table, editColumns: ColumnJoin[], editId: stri
         enabled: !!dataTable && !isInsert && pkEq.filterText !== "",
     });
 
-    const value = useMemo(() => data?.value?.data?.at(0) ?? {}, [data]);
+    // `data` is undefined while the query is in flight and defined once it settles,
+    // so "the row is missing" is only knowable AFTER it settles. Collapsing both
+    // into `?? {}` made a deleted/out-of-scope row indistinguishable from a loading
+    // one: every field fell back to its blank default and Save wrote those blanks
+    // over the real row. Keep the row undefined and report notFound separately.
+    const row = data?.value?.data?.at(0);
+    const recordNotFound = !isInsert && data !== undefined && row === undefined;
+    const value = useMemo(() => row ?? {}, [row]);
 
     const defaultValues = useMemo(() => {
         const values: Record<string, unknown> = {};
@@ -215,7 +222,7 @@ function useEditRecord(dataTable: Table, editColumns: ColumnJoin[], editId: stri
         return values;
     }, [value, editColumns]);
 
-    return { isLoading, error, value, defaultValues, pkResolveFailed };
+    return { isLoading, error, value, defaultValues, pkResolveFailed, recordNotFound };
 }
 
 function DataEditDetail({ table, schema, editId, onClose }: { table: string, schema: SchemaContextValue, editId: string, onClose: () => void }) {
@@ -226,7 +233,7 @@ function DataEditDetail({ table, schema, editId, onClose }: { table: string, sch
 
     const mutation = useTableMutation(dataTable, editColumns, idColumns, editId);
 
-    const { isLoading, error, value, defaultValues, pkResolveFailed } = useEditRecord(dataTable, editColumns, editId);
+    const { isLoading, error, value, defaultValues, pkResolveFailed, recordNotFound } = useEditRecord(dataTable, editColumns, editId);
 
     const form = useForm({
         defaultValues,
@@ -273,16 +280,20 @@ function DataEditDetail({ table, schema, editId, onClose }: { table: string, sch
     }
     if (error) return <div>Error: {(error as Error).message}</div>;
 
-    // Refuse to render an editable form for a row we can't key. Saving one would
-    // build an UPDATE with no WHERE columns (a full-table write).
-    if (pkResolveFailed) {
+    // Refuse to render an editable form when there is no row behind it — either the
+    // key doesn't resolve (an UPDATE with no WHERE columns is a full-table write) or
+    // the key resolved but the row is gone (an UPDATE built from blank defaults would
+    // overwrite whatever is there). Both must be a visible dead end, never a form.
+    if (pkResolveFailed || recordNotFound) {
         return (
             <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
                 <DialogContent showCloseButton={false} className="sm:max-w-md">
                     <DialogTitle className="text-sm font-semibold">Cannot edit record</DialogTitle>
                     <DialogDescription className="text-sm text-muted-foreground">
-                        This record can't be opened for editing: its key ({editId || 'empty'}) is
-                        missing or malformed for the {label} table. Return to the grid and try again.
+                        {pkResolveFailed
+                            ? `This record can't be opened for editing: its key (${editId || 'empty'}) is missing or malformed for the ${label} table.`
+                            : `No ${label} record matches the key ${editId}. It may have been deleted or is no longer visible to you.`}
+                        {' '}Return to the grid and try again.
                     </DialogDescription>
                     <div className="flex justify-end">
                         <Button type="button" size="sm" onClick={onClose}>Close</Button>

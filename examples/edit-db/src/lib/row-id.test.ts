@@ -176,11 +176,25 @@ describe('encodePkRoute / parsePkRoute round-trip', () => {
         expect(parsePkRoute(encoded, table)).toEqual({ path: '/foo/bar?x=1' });
     });
 
-    it('round-trips null values as null', () => {
+    // A null/empty key segment cannot identify a row, so it must NOT round-trip
+    // into a usable filter. Parsing '1::' back to {a:'1', b:null} produced a
+    // filter that pkFilterFor accepted, so the edit form's pkResolveFailed guard
+    // stayed false, the lookup matched zero rows, and Save issued an UPDATE with
+    // every column blanked. Encode is still lossy-by-nature here; parse is the
+    // side that must refuse.
+    it('refuses to parse a route with an empty segment', () => {
         const table = tbl(['a', 'b']);
         const encoded = encodePkRoute({ a: 1, b: null }, table);
         expect(encoded).toBe('1::');
-        expect(parsePkRoute(encoded, table)).toEqual({ a: '1', b: null });
+        expect(parsePkRoute(encoded, table)).toBeNull();
+    });
+
+    it('refuses to parse a route whose leading segment is empty', () => {
+        expect(parsePkRoute('::5', tbl(['a', 'b']))).toBeNull();
+    });
+
+    it('refuses to parse an empty single-column route', () => {
+        expect(parsePkRoute('', tbl(['id']))).toBeNull();
     });
 
     it('returns null when parsing the wrong number of segments', () => {

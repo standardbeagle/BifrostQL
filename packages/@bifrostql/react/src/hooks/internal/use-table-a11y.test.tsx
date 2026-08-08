@@ -17,7 +17,12 @@ const data = [
   { id: 3, name: 'Carol', email: 'carol@example.com' },
 ];
 
-function renderA11y(overrides: Partial<{ editingCell: null }> = {}) {
+function renderA11y(
+  overrides: Partial<{
+    editingCell: null;
+    selectedRows: Array<Record<string, unknown>>;
+  }> = {},
+) {
   return renderHook(() =>
     useTableA11y({
       sort: [],
@@ -148,6 +153,19 @@ describe('useTableA11y roving tabindex and DOM focus', () => {
     expect(headerStops + countCellTabStops(result.current.getCellProps)).toBe(
       1,
     );
+  });
+
+  it('reports selection per row from the indexed key sets', () => {
+    // Arrange: row 2 is selected.
+    const { result } = renderA11y({ selectedRows: [data[1]] });
+
+    // Act / Assert: aria-selected tracks the selection for known rows only.
+    expect(result.current.getRowProps(0, '1')['aria-selected']).toBe(false);
+    expect(result.current.getRowProps(1, '2')['aria-selected']).toBe(true);
+    expect(result.current.getRowProps(2, '3')['aria-selected']).toBe(false);
+    // A key that is not in the current page has no selection state to report.
+    expect(result.current.getRowProps(0, '999')['aria-selected']).toBeUndefined();
+    expect(result.current.getRowProps(0)['aria-selected']).toBeUndefined();
   });
 
   it('moves DOM focus with arrow keys', () => {

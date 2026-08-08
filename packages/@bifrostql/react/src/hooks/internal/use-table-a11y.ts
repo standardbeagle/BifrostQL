@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SortOption } from '../../types';
 import type {
   AccessibilityState,
@@ -149,20 +149,29 @@ export function useTableA11y<T = Record<string, unknown>>({
     ],
   );
 
+  // `getRowProps` is called once per rendered row, and re-fires on every arrow
+  // key. Scanning `data` and `selectedRows` inside it made each render O(n²).
+  // Index both once per data/selection change instead.
+  const rowKeySet = useMemo(() => {
+    const keys = new Set<string>();
+    for (const row of data as Record<string, unknown>[]) {
+      keys.add(String(row[rowKey]));
+    }
+    return keys;
+  }, [data, rowKey]);
+
+  const selectedKeySet = useMemo(() => {
+    const keys = new Set<string>();
+    for (const row of selectedRows as Record<string, unknown>[]) {
+      keys.add(String(row[rowKey]));
+    }
+    return keys;
+  }, [selectedRows, rowKey]);
+
   const getRowProps = useCallback(
     (rowIndex: number, rk?: string): AriaRowProps => {
-      const row = rk
-        ? data.find(
-            (r) => String((r as Record<string, unknown>)[rowKey]) === rk,
-          )
-        : undefined;
-      const isSelected = row
-        ? selectedRows.some(
-            (sr) =>
-              (sr as Record<string, unknown>)[rowKey] ===
-              (row as Record<string, unknown>)[rowKey],
-          )
-        : undefined;
+      const isKnownRow = rk !== undefined && rowKeySet.has(rk);
+      const isSelected = isKnownRow ? selectedKeySet.has(rk) : undefined;
       const isExpanded = rk ? expandedRows.has(rk) : undefined;
       return {
         role: 'row' as const,
@@ -172,7 +181,7 @@ export function useTableA11y<T = Record<string, unknown>>({
         tabIndex: focusedCell?.rowIndex === rowIndex ? 0 : -1,
       };
     },
-    [data, rowKey, selectedRows, expandedRows, focusedCell],
+    [rowKeySet, selectedKeySet, expandedRows, focusedCell],
   );
 
   const getCellProps = useCallback(

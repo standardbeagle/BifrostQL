@@ -58,14 +58,24 @@ namespace BifrostQL.Mcp.Test
                 {
                     ["table"] = "orders",
                     ["id"] = 1,
-                    ["query"] = "x",
+                    ["term"] = "probe",
                     ["group_by"] = "name",
                 });
 
                 result.IsError.Should().BeTrue(
                     $"{toolName} must route through the same funnel as every other tools/call op class, " +
                     "never escape as an unhandled JSON-RPC fault");
-                result.Content.OfType<TextContentBlock>().Single().Text.Should().NotBeNullOrWhiteSpace();
+
+                // Asserting only IsError would be VACUOUS: the MCP SDK already wraps an
+                // escaped handler exception into an isError result, so that assertion holds
+                // with or without the funnel. What actually differs is the MESSAGE — the
+                // funnel's own mapped text versus the SDK's generic wrapper — and a
+                // differential message for one condition across sibling op classes is
+                // exactly the wire signal invariant 9 forbids.
+                result.Content.OfType<TextContentBlock>().Single().Text
+                    .Should().Contain(FaultMessage,
+                        $"{toolName} must map the condition through the seam's own funnel, " +
+                        "producing the identical text every other op class produces");
             });
         }
 

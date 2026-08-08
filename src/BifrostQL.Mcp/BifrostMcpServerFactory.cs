@@ -392,6 +392,16 @@ namespace BifrostQL.Mcp
             if (parameters is null)
                 throw new McpProtocolException("Missing tool call parameters.", McpErrorCode.InvalidParams);
 
+            // ENABLE GATE FIRST for the built-in write tools — before role gating, argument
+            // parsing, model lookup, or intent construction. A disabled write surface builds
+            // zero intent and cannot be probed for behavior (protocol-adapter-security
+            // invariant 7b). Symmetric with the declarative write branch below, which gates
+            // the same way and returns the same constant message: falling through to the
+            // generic "Unknown tool" fault made the disabled surface probeable, because
+            // reaching it first ran a live model load.
+            if (!writesActive && WriteTools.IsWriteTool(parameters.Name))
+                return DisabledWriteSurfaceResult(parameters.Name);
+
             // Fail-closed tool gating: refuse a role-gated tool the caller may not see BEFORE building any
             // intent, so a hidden tool cannot be invoked by name even though it was excluded from the list.
             // Roles come only from the shared factory's user context (ResolveRoles); an unresolved identity
@@ -453,9 +463,7 @@ namespace BifrostQL.Mcp
                 // probed for behavior (protocol-adapter-security invariant 7). writesActive
                 // implies a non-null mutationExecutor by construction.
                 if (!writesActive)
-                    return ErrorResult(
-                        $"Tool '{parameters.Name}' is a write tool and the MCP write surface is disabled. " +
-                        "Enable writes on the server to use it.");
+                    return DisabledWriteSurfaceResult(parameters.Name);
                 try
                 {
                     IReadOnlyDictionary<string, JsonElement> mutationArgs = parameters.Arguments is null
@@ -596,6 +604,16 @@ namespace BifrostQL.Mcp
             StructuredContent = JsonSerializer.SerializeToElement(payload, McpJsonUtilities.DefaultOptions),
             Content = [new TextContentBlock { Text = payload.ToJsonString() }],
         };
+
+        /// <summary>
+        /// The single refusal every disabled write tool returns — built-in and declarative
+        /// alike, so the two op classes give the identical wire signal for the identical
+        /// condition (invariant 9). It is a constant: it depends on nothing but the tool
+        /// name, so it carries no probe channel.
+        /// </summary>
+        private static CallToolResult DisabledWriteSurfaceResult(string toolName) => ErrorResult(
+            $"Tool '{toolName}' is a write tool and the MCP write surface is disabled. " +
+            "Enable writes on the server to use it.");
 
         private static CallToolResult ErrorResult(string message) => new()
         {

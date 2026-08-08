@@ -100,8 +100,12 @@ namespace BifrostQL.Mcp.Test
         /// pipeline with a tenant-A user context.
         /// </summary>
         private async Task WithClientAsync(bool enableWrites, Func<McpClient, Task> body)
+            => await WithClientAsync(enableWrites, executorOverride: null, body);
+
+        private async Task WithClientAsync(
+            bool enableWrites, IQueryIntentExecutor? executorOverride, Func<McpClient, Task> body)
         {
-            var executor = _host.Services.GetRequiredService<IQueryIntentExecutor>();
+            var executor = executorOverride ?? _host.Services.GetRequiredService<IQueryIntentExecutor>();
             var mutation = _host.Services.GetRequiredService<IMutationIntentExecutor>();
             var options = BifrostMcpServerFactory.CreateServerOptions(
                 executor,
@@ -136,13 +140,63 @@ namespace BifrostQL.Mcp.Test
                 tools.Should().NotContain(new[] { "bifrost_insert", "bifrost_update", "bifrost_delete" },
                     "the write surface is OFF by construction and must not even be advertised");
 
-                // Probing the disabled surface builds zero intent — it is an unknown tool.
-                var act = () => client.CallToolAsync("bifrost_insert",
-                    new Dictionary<string, object?> { ["table"] = "orders", ["values"] = new Dictionary<string, object?> { ["name"] = "x" } }).AsTask();
-                await act.Should().ThrowAsync<Exception>();
+                // Probing the disabled surface builds zero intent.
+                var refused = await client.CallToolAsync("bifrost_insert",
+                    new Dictionary<string, object?> { ["table"] = "orders", ["values"] = new Dictionary<string, object?> { ["name"] = "x" } });
+                refused.IsError.Should().BeTrue();
 
                 (await DbScalarAsync("SELECT COUNT(*) FROM orders WHERE name = 'x'")).Should().Be(0L);
             });
+        }
+
+        /// <summary>
+        /// Invariant 7b: the enable gate must be the FIRST check in the handler — before
+        /// arity parsing, model lookup, or intent construction. The previous fixture
+        /// asserted only <c>ThrowAsync&lt;Exception&gt;()</c>, which the pre-fix code
+        /// satisfied by falling through a LIVE model load into "Unknown tool": the
+        /// disabled surface was probeable by behaviour/timing difference. This spy makes
+        /// the model load observable, so the gate's position is what the test pins.
+        /// </summary>
+        [Theory]
+        [InlineData("bifrost_insert")]
+        [InlineData("bifrost_update")]
+        [InlineData("bifrost_delete")]
+        public async Task WritesDisabled_WriteToolCall_IsRefusedBeforeAnyModelLookup(string toolName)
+        {
+            var spy = new ModelLoadRecordingExecutor(_host.Services.GetRequiredService<IQueryIntentExecutor>());
+            await WithClientAsync(enableWrites: false, spy, async client =>
+            {
+                spy.ModelLoads = 0;
+                var result = await client.CallToolAsync(toolName, new Dictionary<string, object?>
+                {
+                    ["table"] = "orders",
+                    ["id"] = 1,
+                    ["values"] = new Dictionary<string, object?> { ["name"] = "x" },
+                    ["set"] = new Dictionary<string, object?> { ["name"] = "x" },
+                });
+
+                result.IsError.Should().BeTrue("a disabled write surface must refuse, not fault");
+                result.Content.OfType<TextContentBlock>().Single().Text
+                    .Should().Contain("write surface is disabled",
+                        "the refusal is the same constant message the declarative write branch already returns");
+                spy.ModelLoads.Should().Be(0,
+                    "the enable gate must run before any model lookup, so a disabled surface builds zero intent");
+            });
+        }
+
+        /// <summary>Records how often the MCP surface resolved the endpoint's cached model.</summary>
+        private sealed class ModelLoadRecordingExecutor(IQueryIntentExecutor inner) : IQueryIntentExecutor
+        {
+            public int ModelLoads;
+
+            public Task<IDbModel> GetModelAsync(string? endpoint = null)
+            {
+                Interlocked.Increment(ref ModelLoads);
+                return inner.GetModelAsync(endpoint);
+            }
+
+            public Task<QueryIntentResult> ExecuteAsync(QueryIntent intent, CancellationToken cancellationToken = default)
+                => inner.ExecuteAsync(intent, cancellationToken);
         }
 
         [Fact]

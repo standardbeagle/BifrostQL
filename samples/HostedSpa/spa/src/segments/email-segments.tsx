@@ -110,7 +110,11 @@ export function EmailSegments() {
             <BifrostTable
               table={queryName}
               columns={columns}
-              defaultFilter={selected.filter}
+              // Controlled: a mount-only `defaultFilter` meant switching
+              // segments kept running the PREVIOUS segment's filter against
+              // the new entity — the wrong audience, with nothing on screen
+              // to say so.
+              filter={selected.filter}
             />
           ) : (
             <p role="alert" data-testid={`${TEST_ID}-audience-missing`}>

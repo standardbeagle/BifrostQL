@@ -350,4 +350,27 @@ describe('MemberList', () => {
       });
     });
   });
+
+  it('applies the ad-hoc filter controls to the issued GraphQL query', async () => {
+    // Arrange
+    const user = userEvent.setup();
+    globalThis.fetch = createFetchMock(identityWith(['main.members.read']));
+    renderMemberList();
+    await waitFor(() =>
+      expect(screen.getByTestId('filter-first_name')).toBeInTheDocument(),
+    );
+
+    // Act: type into the metadata-driven search control.
+    await user.type(screen.getByTestId('filter-first_name'), 'Ada');
+
+    // Assert: the on-screen table queries what the controls say. Seeding the
+    // table's filter only on mount left these inputs as dead UI while the
+    // export button — which takes the filter as a live prop — honoured them,
+    // so an export and the table on screen disagreed.
+    await waitFor(() =>
+      expect(
+        graphqlRequests.some((r) => r.query.includes('Ada')),
+      ).toBe(true),
+    );
+  });
 });

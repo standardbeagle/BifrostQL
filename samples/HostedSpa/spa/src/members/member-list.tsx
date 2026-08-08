@@ -217,14 +217,15 @@ export function MemberList() {
       </div>
 
       <BifrostTable
-        // BifrostTable seeds its filter state from `defaultFilter` only on
-        // mount, so remount it when the saved view changes to re-seed the
-        // table — and therefore the issued GraphQL filter — from the new view.
-        key={savedViewId}
         table={queryName}
         columns={columns}
         rowActions={rowActions}
-        defaultFilter={tableFilter}
+        // Controlled: the saved view AND the ad-hoc filter controls both feed
+        // `tableFilter`, so the table re-queries whenever either changes. The
+        // previous `defaultFilter` + `key={savedViewId}` remount only re-seeded
+        // on a saved-view change, leaving the filter inputs as dead UI while
+        // ExportButton (which takes `filter` as a live prop) honoured them.
+        filter={tableFilter}
         onRowClick={(row) => navigate(`/members/${String(row.id)}`)}
       />
     </section>

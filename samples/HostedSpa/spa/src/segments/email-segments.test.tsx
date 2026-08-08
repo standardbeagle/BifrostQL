@@ -240,4 +240,41 @@ describe('EmailSegments', () => {
       screen.queryByRole('link', { name: /send|compose/i }),
     ).not.toBeInTheDocument();
   });
+
+  it('re-runs the query against the newly selected segment', async () => {
+    // Arrange
+    globalThis.fetch = createFetchMock(identityWith(['main.members.read']));
+    const user = userEvent.setup();
+    renderScreen();
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('email-segments-select-active-members'),
+      ).toBeInTheDocument(),
+    );
+    await user.click(
+      screen.getByTestId('email-segments-select-active-members'),
+    );
+    await waitFor(() => {
+      expect(
+        graphqlRequests.some(
+          (r) => r.query.includes('members') && r.query.includes('active'),
+        ),
+      ).toBe(true);
+    });
+
+    // Act: switch to a different audience.
+    await user.click(
+      screen.getByTestId('email-segments-select-lapsed-members'),
+    );
+
+    // Assert: the second segment's filter is actually issued. Keeping the
+    // first segment's filter here would mail the wrong audience, silently.
+    await waitFor(() => {
+      expect(
+        graphqlRequests.some(
+          (r) => r.query.includes('members') && r.query.includes('inactive'),
+        ),
+      ).toBe(true);
+    });
+  });
 });

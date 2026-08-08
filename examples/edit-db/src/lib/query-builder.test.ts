@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     getFilterOperators,
-    getFilterObj,
+    parseTableFilterString,
     toLocaleDate,
     getRowPkValue,
     getGraphQlType,
@@ -121,44 +121,44 @@ describe('getFilterOperators', () => {
     });
 });
 
-// ── getFilterObj ───────────────────────────────────────────────
+// ── parseTableFilterString ───────────────────────────────────────────────
 
-describe('getFilterObj', () => {
+describe('parseTableFilterString', () => {
     it('returns empty result for empty string', () => {
-        const result = getFilterObj('');
+        const result = parseTableFilterString('');
         expect(result).toEqual({ variables: {}, param: '', filterText: '' });
     });
 
     it('returns empty result for null-like input', () => {
-        const result = getFilterObj(undefined as unknown as string);
+        const result = parseTableFilterString(undefined as unknown as string);
         expect(result).toEqual({ variables: {}, param: '', filterText: '' });
     });
 
     it('parses valid filter JSON', () => {
         const input = JSON.stringify(['name', '_eq', 'test', 'String']);
-        const result = getFilterObj(input);
+        const result = parseTableFilterString(input);
         expect(result.variables).toEqual({ filter: 'test' });
         expect(result.param).toBe(', $filter: String');
         expect(result.filterText).toBe('{name: {_eq: $filter} }');
     });
 
     it('handles invalid JSON gracefully', () => {
-        const result = getFilterObj('not json');
+        const result = parseTableFilterString('not json');
         expect(result).toEqual({ variables: {}, param: '', filterText: '' });
     });
 
     it('handles malformed array gracefully', () => {
-        const result = getFilterObj(JSON.stringify([1]));
+        const result = parseTableFilterString(JSON.stringify([1]));
         expect(result).toEqual({ variables: {}, param: '', filterText: '' });
     });
 
     it('rejects filter JSON with unsafe GraphQL identifiers', () => {
-        const result = getFilterObj(JSON.stringify(['name) { injected', '_eq', 'test', 'String']));
+        const result = parseTableFilterString(JSON.stringify(['name) { injected', '_eq', 'test', 'String']));
         expect(result).toEqual({ variables: {}, param: '', filterText: '' });
     });
 
     it('rejects unsupported filter operators', () => {
-        const result = getFilterObj(JSON.stringify(['name', '_contains_something', 'test', 'String']));
+        const result = parseTableFilterString(JSON.stringify(['name', '_contains_something', 'test', 'String']));
         expect(result).toEqual({ variables: {}, param: '', filterText: '' });
     });
 });

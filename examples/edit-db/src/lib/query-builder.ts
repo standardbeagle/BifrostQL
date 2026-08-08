@@ -86,7 +86,7 @@ export function getFilterOperators(paramType: string): string[] {
     return columnFilterOperators[baseType] ?? columnFilterOperators.String;
 }
 
-export function getFilterObj(filterString: string): FilterResult {
+export function parseTableFilterString(filterString: string): FilterResult {
     try {
         if (!filterString) return { variables: {}, param: "", filterText: "" };
         const [column, action, value, type] = JSON.parse(filterString);
@@ -474,7 +474,7 @@ function buildListQuery(
     columnFilters: ColumnFiltersState,
     allFields: string,
 ): string {
-    let { param, filterText } = getFilterObj(filterString);
+    let { param, filterText } = parseTableFilterString(filterString);
 
     const { params: cfParams, filterTexts: cfFilterTexts } = buildColumnFilters(columnFilters, table);
     if (cfParams.length > 0) {

@@ -17,7 +17,7 @@ import { formatColumnValue } from "../lib/format-value";
 import { isLargeValueColumn, isJsonColumn } from "../lib/content-detect";
 import {
     getFilterOperators,
-    getFilterObj,
+    parseTableFilterString,
     toLocaleDate,
     getRowPkValue,
     buildColumnFilters,
@@ -514,7 +514,7 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     const navigate = useNavigate();
     const filterString = search.get('filter') ?? '';
     const cfParam = search.get('cf') ?? '';
-    const { variables: filterVariables } = getFilterObj(filterString);
+    const { variables: filterVariables } = parseTableFilterString(filterString);
     const schema = useSchema();
     const fetcher = useFetcher();
 

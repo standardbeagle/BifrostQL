@@ -19,7 +19,7 @@ import { useFetcher } from './common/fetcher';
 interface TableViewParams {
     table: Table;
     id?: string;
-    tableFilter?: string;
+    filterTable?: string;
     filterColumn?: string;
     selectedRowId?: string | null;
     onRowSelect?: (rowId: string | null) => void;
@@ -56,7 +56,7 @@ interface PanelState {
     tableName: string;
 }
 
-export function TableView({ table, id, tableFilter, filterColumn, selectedRowId, onRowSelect, onOpenColumn, stackingEnabled, onToggleStacking }: TableViewParams): JSX.Element {
+export function TableView({ table, id, filterTable, filterColumn, selectedRowId, onRowSelect, onOpenColumn, stackingEnabled, onToggleStacking }: TableViewParams): JSX.Element {
     const deleteMutation = useDeleteMutation(table);
 
     const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
@@ -108,7 +108,7 @@ export function TableView({ table, id, tableFilter, filterColumn, selectedRowId,
         onColumnFiltersChange,
         onPageIndexChange,
         onPageSizeChange,
-    } = useDataTable(table, id, tableFilter, filterColumn, handleExpandContent, onOpenColumn);
+    } = useDataTable(table, id, filterTable, filterColumn, handleExpandContent, onOpenColumn);
 
     const handleConfirmDelete = useCallback(async () => {
         if (!deleteTarget) return;

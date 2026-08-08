@@ -383,11 +383,11 @@ function buildDrillQuery(
     tableSchema: Table,
     dataColumns: string,
     allFields: string,
-    tableFilter?: string,
+    filterTable?: string,
     filterColumn?: string,
     forExport = false,
 ): string | null {
-    const drill = resolveDrillDown(table, schema, tableFilter, filterColumn);
+    const drill = resolveDrillDown(table, schema, filterTable, filterColumn);
     if (drill && canFlatFilterDrill(drill.childJoin)) {
         // Simple single-column FK: query the child table directly with a flat
         // FK filter — a "parent grid with a filter applied" rather than MODEL
@@ -432,7 +432,7 @@ function buildDrillQuery(
         }
         return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${drill.parentTable.name}(filter: ${parentFilter}) { data { ${childField} } } }`;
     }
-    // A drill was explicitly requested (id + tableFilter/filterColumn) but the
+    // A drill was explicitly requested (id + filterTable/filterColumn) but the
     // parent→child relationship could not be resolved — e.g. no parent multi-join
     // targets this child, or a polymorphic/ambiguous join declined to guess.
     // Falling through here previously emitted the UNFILTERED full-table query, so a
@@ -525,7 +525,7 @@ export function buildQuery(
     filterString: string,
     columnFilters: ColumnFiltersState,
     id?: string,
-    tableFilter?: string,
+    filterTable?: string,
     filterColumn?: string,
     options?: BuildQueryOptions,
 ): string | null {
@@ -540,11 +540,11 @@ export function buildQuery(
     const multiJoinFields = forExport ? '' : buildMultiJoinFields(schema, tableSchema.multiJoins);
     const allFields = multiJoinFields ? `${dataColumns} ${multiJoinFields}` : dataColumns;
 
-    if (id && (filterColumn || tableFilter)) {
-        return buildDrillQuery(table, schema, tableSchema, dataColumns, allFields, tableFilter, filterColumn, forExport);
+    if (id && (filterColumn || filterTable)) {
+        return buildDrillQuery(table, schema, tableSchema, dataColumns, allFields, filterTable, filterColumn, forExport);
     }
 
-    if (id && !tableFilter && !filterColumn) {
+    if (id && !filterTable && !filterColumn) {
         return buildByIdQuery(table, tableSchema, allFields);
     }
 
@@ -584,8 +584,8 @@ function sameJoin(left: Join, right: Join): boolean {
 
 /**
  * Resolve the parent table + child collection field for a parent→child
- * related-records drill-down. The child is `table`; the parent is `tableFilter`
- * (or the destination of `table`'s single-join named `tableFilter` when the
+ * related-records drill-down. The child is `table`; the parent is `filterTable`
+ * (or the destination of `table`'s single-join named `filterTable` when the
  * relationship is described from the child side). `filterColumn` (the child
  * destination column) disambiguates when the parent has several multi-joins to
  * the same child. Returns `null` when no parent multi-join targets the child —
@@ -622,10 +622,10 @@ export function unwrapDrillDownPage(
 export function resolveDrillDown(
     table: Table,
     schema: Schema,
-    tableFilter?: string,
+    filterTable?: string,
     filterColumn?: string,
 ): DrillDownTarget | null {
-    const parentName = tableFilter
+    const parentName = filterTable
         ?? schema.findTable(table.graphQlName)?.singleJoins.find((j: Join) => j.destinationTable === filterColumn)?.destinationTable;
     if (!parentName) return null;
     const parentTable = schema.findTable(parentName);

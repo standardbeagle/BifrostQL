@@ -21,7 +21,7 @@ vi.mock('./hooks/useDataTable', () => ({
     useDataTable: (
         _table: unknown,
         _id: unknown,
-        _tableFilter: unknown,
+        _filterTable: unknown,
         _filterColumn: unknown,
         onExpandContent?: (rowIndex: number, columnName: string) => void,
     ) => {

@@ -135,7 +135,7 @@ export function DetailPanel({ parentTable, selectedRowId, onClose, onOpenColumn 
                                     // MODEL B: always traverse the parent so the server scopes the
                                     // child rows (including any polymorphic discriminator). filterColumn
                                     // only disambiguates when several multi-joins target the same child.
-                                    tableFilter={parentTable.name}
+                                    filterTable={parentTable.name}
                                     {...(isComposite(activeTab.join)
                                         ? {}
                                         : { filterColumn: activeTab.join.destinationColumnNames[0] })}

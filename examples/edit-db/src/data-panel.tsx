@@ -138,7 +138,7 @@ export function DataPanel() {
         <TableView
             table={table}
             id={id}
-            tableFilter={filterTable}
+            filterTable={filterTable}
             selectedRowId={hasMultiJoins ? selectedRowId : undefined}
             onRowSelect={hasMultiJoins ? setSelectedRowId : undefined}
             onOpenColumn={drillHandler}
@@ -215,7 +215,7 @@ export function DataPanel() {
                             <TableView
                                 table={getTable(data!, col.tableName)!}
                                 id={col.filterId}
-                                tableFilter={col.filterTable}
+                                filterTable={col.filterTable}
                                 filterColumn={col.filterColumn}
                                 onOpenColumn={handleOpenColumn}
                             />

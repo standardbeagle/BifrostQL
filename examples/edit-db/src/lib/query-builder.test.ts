@@ -770,7 +770,7 @@ describe('buildQuery', () => {
 
     it('returns null (does NOT emit an unfiltered query) when a drill cannot resolve', () => {
         // Parent has no multi-join to the child — MODEL B cannot apply. A drill was
-        // explicitly requested (id + tableFilter), so falling through to the standard
+        // explicitly requested (id + filterTable), so falling through to the standard
         // UNFILTERED full-table query would show every row of the child in a
         // "children of parent X" panel and let select-all + delete hit unrelated rows.
         // Refuse: return null so the caller renders an empty "relationship unavailable"
@@ -1112,7 +1112,7 @@ describe('buildQuery — composite primary keys', () => {
             columns: [makeColumn({ name: 'grade_id', paramType: 'Int!', isPrimaryKey: true })],
         });
         const parentSchema = makeSchema([parent, child]);
-        // Composite multi-join routes through tableFilter='enrollment' (no filterColumn).
+        // Composite multi-join routes through filterTable='enrollment' (no filterColumn).
         const q = buildQuery(child, parentSchema, '', [], '1::cs-101', 'enrollment')!;
         // One $pk_${col} per parent PK column.
         expect(q).toContain('$pk_student_id: Int');
@@ -1238,7 +1238,7 @@ describe('resolveDrillDown', () => {
     });
     const schema = makeSchema([companies, notes]);
 
-    it('resolves the parent table and child field from tableFilter', () => {
+    it('resolves the parent table and child field from filterTable', () => {
         const drill = resolveDrillDown(notes, schema, 'companies');
         expect(drill?.parentTable.name).toBe('companies');
         expect(drill?.childField).toBe('notes');

@@ -167,13 +167,29 @@ export function useTableExpansion({
         controller.abort();
         childAbortRef.current.delete(rowId);
       }
-    } else {
-      childCacheRef.current.clear();
-      for (const controller of childAbortRef.current.values()) {
-        controller.abort();
-      }
-      childAbortRef.current.clear();
+      // Scoped clear: only this row's transient state. Wiping the whole
+      // loading/error maps here would drop other rows' in-flight spinners and
+      // unread error messages, silently hiding a concurrent fetch's outcome.
+      setChildLoadingRows((prev) => {
+        if (!prev.has(rowId)) return prev;
+        const next = new Set(prev);
+        next.delete(rowId);
+        return next;
+      });
+      setChildErrors((prev) => {
+        if (!prev.has(rowId)) return prev;
+        const next = new Map(prev);
+        next.delete(rowId);
+        return next;
+      });
+      return;
     }
+
+    childCacheRef.current.clear();
+    for (const controller of childAbortRef.current.values()) {
+      controller.abort();
+    }
+    childAbortRef.current.clear();
     setChildLoadingRows(new Set());
     setChildErrors(new Map());
   }, []);

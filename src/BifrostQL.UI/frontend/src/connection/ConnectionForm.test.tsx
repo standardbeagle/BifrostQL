@@ -58,6 +58,28 @@ describe('ConnectionForm connect lifecycle', () => {
   });
 });
 
+describe('ConnectionForm certificate trust', () => {
+  const trustCheckbox = () =>
+    screen.getByLabelText(/Trust Server Certificate/i) as HTMLInputElement;
+
+  it('does not warn while certificate validation is on', () => {
+    render(<ConnectionForm provider="sqlserver" onConnect={() => {}} onBack={() => {}} />);
+
+    expect(trustCheckbox().checked).toBe(false);
+    expect(screen.queryByTestId('trust-cert-warning')).toBeNull();
+  });
+
+  it('explains the exposure when the user opts out of validation', () => {
+    render(<ConnectionForm provider="sqlserver" onConnect={() => {}} onBack={() => {}} />);
+
+    fireEvent.click(trustCheckbox());
+
+    const warning = screen.getByTestId('trust-cert-warning');
+    expect(warning.textContent).toMatch(/disables certificate validation/i);
+    expect(warning.textContent).toMatch(/intercept/i);
+  });
+});
+
 /**
  * "Load databases" used to fail in total silence: a non-ok response fell
  * through with no else branch, a network or JSON error hit a bare `catch {}`,

@@ -80,7 +80,10 @@ const sqlServerAdapter: ProviderAdapter = {
     database: '',
     authMethod: AuthMethod.SqlServer,
     username: '',
-    trustServerCertificate: true,
+    // Secure by default. TrustServerCertificate=True switches off certificate
+    // validation outright, so a connection made without thinking about it
+    // would have been interceptable; opting out is now a deliberate act.
+    trustServerCertificate: false,
   } satisfies SqlServerFormData),
   buildConnectionString: (data) => {
     const d = data as SqlServerFormData;
@@ -174,6 +177,18 @@ const sqlServerAdapter: ProviderAdapter = {
           />
           <span>Trust Server Certificate</span>
         </label>
+        {d.trustServerCertificate && (
+          <div
+            className="conn-form__alert conn-form__alert--error"
+            role="alert"
+            data-testid="trust-cert-warning"
+          >
+            {'⚠'} This disables certificate validation: the server&apos;s identity is
+            not checked, so anyone positioned between you and it can intercept
+            or alter the connection. Use it only for a server whose self-signed
+            certificate you already trust.
+          </div>
+        )}
       </>
     );
   },

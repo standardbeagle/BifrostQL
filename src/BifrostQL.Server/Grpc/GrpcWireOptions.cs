@@ -35,8 +35,18 @@ namespace BifrostQL.Server.Grpc
         /// </summary>
         public bool RequireTls { get; set; }
 
-        /// <summary>Path to the PKCS#12/PEM certificate used when <see cref="RequireTls"/> is set.</summary>
+        /// <summary>
+        /// Path to the PKCS#12 (<c>.pfx</c>) certificate the listener serves when
+        /// <see cref="RequireTls"/> is set. The file must contain the private key — a
+        /// certificate-only file cannot terminate TLS and aborts startup.
+        /// </summary>
         public string? TlsCertificatePath { get; set; }
+
+        /// <summary>
+        /// The password protecting <see cref="TlsCertificatePath"/>, or null for an unprotected
+        /// file. A wrong password is a startup abort, never a silent fall back to cleartext.
+        /// </summary>
+        public string? TlsCertificatePassword { get; set; }
 
         /// <summary>
         /// The hard upper bound on rows a server-streaming List may emit. A streaming read can

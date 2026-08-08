@@ -56,9 +56,20 @@ namespace BifrostQL.Server.Grpc
                     "opt-in; leave EnableWrites off unless writes are intended.",
                     _options.Port, MetadataKeys.Grpc.WriteEnabled, MetadataKeys.Grpc.Enabled);
 
+            // The transport posture is stated in words, not as a bare boolean. "TLS: False" read as
+            // a benign default; it means every credential on this port is readable in transit.
+            if (!_options.RequireTls)
+                _logger.LogWarning(
+                    "gRPC front door on port {Port} is CLEARTEXT h2c — no TLS. Bearer credentials and "
+                    + "row data cross this port unencrypted. Set RequireTls with a certificate, or "
+                    + "terminate TLS in a trusted proxy in front of it.",
+                    _options.Port);
+
             _logger.LogInformation(
-                "gRPC front door ready on port {Port} (endpoint: {Endpoint}, TLS: {Tls}, max stream rows: {MaxRows}, writes: {Writes}).",
-                _options.Port, _options.Endpoint ?? "(default)", _options.RequireTls, _options.MaxStreamRows,
+                "gRPC front door ready on port {Port} (endpoint: {Endpoint}, transport: {Transport}, max stream rows: {MaxRows}, writes: {Writes}).",
+                _options.Port, _options.Endpoint ?? "(default)",
+                _options.RequireTls ? "TLS" : "cleartext h2c",
+                _options.MaxStreamRows,
                 _options.EnableWrites ? "enabled" : "disabled");
 
             return Task.CompletedTask;

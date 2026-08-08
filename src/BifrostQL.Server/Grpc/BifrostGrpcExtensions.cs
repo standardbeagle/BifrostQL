@@ -56,9 +56,48 @@ namespace BifrostQL.Server.Grpc
             // A dedicated HTTP/2 listener for the gRPC wire. HTTP/2 is required for gRPC framing +
             // trailers; a bind failure on this port aborts host startup.
             services.PostConfigure<KestrelServerOptions>(kestrel =>
-                kestrel.ListenAnyIP(options.Port, listen => listen.Protocols = HttpProtocols.Http2));
+                kestrel.ListenAnyIP(options.Port, listen =>
+                {
+                    listen.Protocols = HttpProtocols.Http2;
+                    if (options.RequireTls)
+                        ConfigureTls(listen, options);
+                }));
 
             return services;
+        }
+
+        /// <summary>
+        /// Serves the configured certificate on the gRPC listener. <see cref="GrpcWireOptions.RequireTls"/>
+        /// used to be validated and then IGNORED — the listener was left as cleartext h2c while startup
+        /// logged "TLS: True", so every bearer credential crossed the wire in the clear and the operator
+        /// was told the opposite. A guard that reads as protection and does nothing at runtime is worse
+        /// than none.
+        ///
+        /// <para>Any load failure is a startup ABORT with an actionable message — never a silent fall
+        /// back to cleartext, which would restore exactly the condition this exists to prevent.</para>
+        /// </summary>
+        private static void ConfigureTls(ListenOptions listen, GrpcWireOptions options)
+        {
+            // GrpcWireAdapter validates this too, but its hosted service can run AFTER Kestrel binds;
+            // this is the check that actually stands between the config and an open port.
+            if (string.IsNullOrWhiteSpace(options.TlsCertificatePath))
+                throw new GrpcConfigurationException(
+                    "gRPC RequireTls is set but no TlsCertificatePath was configured; refusing to bind "
+                    + $"port {options.Port} as cleartext.");
+
+            try
+            {
+                listen.UseHttps(options.TlsCertificatePath, options.TlsCertificatePassword);
+            }
+            catch (Exception ex)
+            {
+                throw new GrpcConfigurationException(
+                    $"gRPC RequireTls is set but the TLS certificate at '{options.TlsCertificatePath}' "
+                    + "could not be loaded. It must be a PKCS#12 (.pfx) file containing the private key, "
+                    + "and TlsCertificatePassword must match. Refusing to bind port "
+                    + $"{options.Port} as cleartext.",
+                    ex);
+            }
         }
 
         /// <summary>

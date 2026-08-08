@@ -11,5 +11,8 @@ namespace BifrostQL.Server.Grpc
     public sealed class GrpcConfigurationException : Exception
     {
         public GrpcConfigurationException(string message) : base(message) { }
+
+        public GrpcConfigurationException(string message, Exception innerException)
+            : base(message, innerException) { }
     }
 }

@@ -66,8 +66,9 @@ app.Run();
 |--------|---------|---------|
 | `Port` | `5090` | TCP port the dedicated HTTP/2 listener binds. Out of `1..65535` is a fail-fast startup error; a bind failure aborts startup. |
 | `Endpoint` | `null` | Which registered BifrostQL endpoint's cached model/connection to read against. `null` selects the single registered endpoint; with several registered it is required. |
-| `RequireTls` | `false` | When `true`, `TlsCertificatePath` must resolve to a readable certificate file or startup aborts. Cleartext (h2c) is the default for local / in-proxy deployments; production should terminate TLS. |
-| `TlsCertificatePath` | `null` | Path to the PKCS#12/PEM certificate used when `RequireTls` is set. |
+| `RequireTls` | `false` | When `true`, the listener actually serves `TlsCertificatePath` over HTTPS and refuses cleartext h2c; a certificate that is missing, unreadable, or wrongly passworded aborts startup. Cleartext (h2c) is the default for local / in-proxy deployments; production should terminate TLS. |
+| `TlsCertificatePath` | `null` | Path to the PKCS#12 (`.pfx`) certificate served when `RequireTls` is set. It must contain the private key. |
+| `TlsCertificatePassword` | `null` | Password protecting `TlsCertificatePath`, or `null` for an unprotected file. A wrong password aborts startup. |
 | `MaxStreamRows` | `10000` | Hard upper bound on rows a server-streaming `List`/`Stream` may emit. The read intent's limit is clamped to this, so a full-table stream is always bounded by config. Must be positive. |
 | `ListPageSize` | `1000` | Page size a unary `List` returns when the request omits `page_size`. Clamped to `MaxStreamRows`. Must be positive. |
 | `PageTokenSecret` | `null` | HMAC secret keying the opaque `next_page_token`. When set, page tokens survive restarts and resolve across a scaled fleet; when unset, a per-instance random key is used (a startup warning is logged) and tokens live only for the process's lifetime. The token carries position only — it is never the authorization boundary. |
@@ -80,10 +81,18 @@ app.Run();
 gRPC requires HTTP/2 for its framing and trailers, so the adapter binds its own
 listener speaking HTTP/2 only — it does not share your GraphQL/HTTP port.
 Cleartext HTTP/2 (**h2c**) is the default and is appropriate when a reverse proxy
-or service mesh terminates TLS in front of BifrostQL. To terminate TLS at
-BifrostQL itself, set `RequireTls = true` and point `TlsCertificatePath` at a
-readable certificate; a missing or unreadable certificate aborts startup rather
-than silently downgrading to cleartext.
+or service mesh terminates TLS in front of BifrostQL. Because bearer credentials
+travel in request metadata, a cleartext port with nothing in front of it exposes
+every credential in transit — so the adapter logs a startup **warning** naming
+the port whenever `RequireTls` is off, rather than reporting the posture as a
+bare boolean.
+
+To terminate TLS at BifrostQL itself, set `RequireTls = true`, point
+`TlsCertificatePath` at a PKCS#12 (`.pfx`) file containing the private key, and
+set `TlsCertificatePassword` if it is protected. The listener then serves that
+certificate and no longer answers h2c. A certificate that is missing,
+unreadable, or wrongly passworded **aborts startup** — the port is never bound
+as cleartext instead.
 
 ## Authentication
 
@@ -117,8 +126,12 @@ transformers scope an empty identity to nothing.
 
 The adapter serves **server reflection** (`grpc.reflection.v1alpha.ServerReflection`),
 so clients need **no local `.proto` files** — they learn the message and service
-shapes from the running server. Reflection is **filtered per caller** by the same
-read policy the query path enforces: a table, RPC, or column the caller may not
+shapes from the running server. Reflection resolves identity through the **same
+fail-closed gate as the data RPCs**, so a caller with no credential gets
+`UNAUTHENTICATED` and discovers nothing — the schema inventory is not a public
+surface on a port whose data path is closed. Among authenticated callers,
+reflection is **filtered per caller** by the same read policy the query path
+enforces: a table, RPC, or column the caller may not
 read is **absent** from what reflection returns, and a denied symbol is reported
 as `NotFound` — identical to a genuinely unknown symbol, so absence never leaks
 existence. (This is a bespoke identity-filtered reflection service, not the
@@ -129,6 +142,7 @@ List the services and describe the surface with
 
 ```bash
 # List services (plaintext h2c). Drop -plaintext when TLS is terminated at the server.
+# The bearer credential is REQUIRED: reflection without one is UNAUTHENTICATED.
 grpcurl -plaintext -H 'authorization: Bearer <token>' localhost:5090 list
 
 # → bifrostql.BifrostQuery

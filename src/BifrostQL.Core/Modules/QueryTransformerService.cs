@@ -272,12 +272,18 @@ public sealed class QueryTransformerService : IQueryTransformerService
 
     /// <summary>
     /// Recursively walks a filter tree collecting the columns it references,
-    /// attributing each to the table it actually lives on. A leaf comparison
-    /// (<c>Next.Next == null</c>) names a column on <paramref name="table"/>;
-    /// a deeper chain (<c>Next.Next != null</c>) means <c>ColumnName</c> is a
-    /// <see cref="IDbTable.SingleLinks"/> relationship name into another table
-    /// (mirrors <see cref="TableFilter.RenderParts"/>'s own traversal), so the
-    /// remaining chain is attributed to that linked table instead.
+    /// attributing each to the table it actually lives on. The leaf-vs-traversal
+    /// decision uses <see cref="TableFilter.IsLeafColumnPredicate"/> — the SAME
+    /// predicate <see cref="TableFilter.RenderParts"/> uses to decide whether to
+    /// emit a WHERE comparison or a relationship INNER JOIN. A leaf names a column
+    /// on <paramref name="table"/>; anything else means <c>ColumnName</c> is a
+    /// <see cref="IDbTable.SingleLinks"/> relationship name into another table, so
+    /// the remaining sub-filter is walked against that linked table instead.
+    ///
+    /// The two used to decide this differently (<c>Next.Next == null</c> here vs
+    /// the node type there), which silently un-guarded every column referenced
+    /// through a relationship filter carrying two or more sibling predicates —
+    /// the guard set and the emitted SQL must be derived from one predicate.
     /// </summary>
     private static void CollectFilterColumns(TableFilter? filter, IDbTable table, Action<IDbTable, string?> add)
     {
@@ -293,7 +299,7 @@ public sealed class QueryTransformerService : IQueryTransformerService
             return;
         }
 
-        if (filter.Next.Next == null)
+        if (filter.IsLeafColumnPredicate)
         {
             add(table, ResolveColumnDbName(table, filter.ColumnName));
             return;

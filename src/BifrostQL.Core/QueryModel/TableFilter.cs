@@ -29,6 +29,29 @@ namespace BifrostQL.Core.QueryModel
         public List<TableFilter> And { get; init; } = new();
         public List<TableFilter> Or { get; init; } = new();
 
+        /// <summary>
+        /// True when this node is a LEAF column predicate — <c>column: { _op: value }</c>,
+        /// whose <see cref="Next"/> is the terminal <see cref="FilterType.Relation"/>
+        /// operator node. False for an AND/OR wrapper (<see cref="Next"/> is null) and
+        /// for a relationship traversal, whose <see cref="Next"/> is a nested column or
+        /// an implicit/explicit AND/OR wrapper.
+        ///
+        /// This is the SINGLE notion of "leaf predicate vs relationship traversal",
+        /// shared by the SQL renderer (<see cref="RenderParts(SqlBuildContext, string?, JoinAliasAllocator)"/>)
+        /// and by the column read/filter-guard collector
+        /// (<c>QueryTransformerService.CollectFilterColumns</c>). They previously
+        /// disagreed: the collector keyed on <c>Next.Next == null</c>, which is true for
+        /// the AND wrapper that sibling relationship predicates produce
+        /// (<c>customer: { ssn: {_eq}, active: {_eq} }</c>), so the collector treated the
+        /// relationship NAME as a column, resolved it to null, and never recursed — while
+        /// the renderer emitted the <c>ssn</c> predicate for real. A caller denied read on
+        /// <c>ssn</c> (or holding only an encrypted-column projection of it) could then
+        /// filter on it and read the value back out of which rows matched. Keeping one
+        /// predicate for both callers is what makes the guarded column set and the emitted
+        /// SQL structurally unable to diverge again.
+        /// </summary>
+        internal bool IsLeafColumnPredicate => Next is { FilterType: FilterType.Relation };
+
         public static TableFilter FromPrimaryKey(IEnumerable<object?> values, IEnumerable<ColumnDto> keyColumns, string tableName)
         {
             var keyColumnList = keyColumns.ToList();
@@ -393,8 +416,9 @@ namespace BifrostQL.Core.QueryModel
             // AND-wrapper produced by sibling relationship predicates
             // (`posts: { published: {_eq:true}, featured: {_eq:true} }`) — its `Next` is
             // null — into the leaf path, where the relationship name ("posts") was looked
-            // up as a column and threw "unknown column". Key on the node type instead.
-            if (Next.FilterType == FilterType.Relation)
+            // up as a column and threw "unknown column". Key on the node type instead,
+            // via the shared predicate the column guards also use.
+            if (IsLeafColumnPredicate)
             {
                 // Resolve the column tolerant of both name spaces: user filters key
                 // by GraphQL name, but security transformers (tenant, soft-delete)

@@ -201,6 +201,133 @@ public class QueryTransformerServiceReadGuardTests
         act.Should().NotThrow();
     }
 
+    /// <summary>
+    /// Orders -&gt; customer (single link) -&gt; Customers, where Customers denies read
+    /// on <c>ssn</c>. Used to prove the guard's relationship traversal agrees with
+    /// <see cref="TableFilter.RenderParts"/>'s own traversal for BOTH the
+    /// single-predicate and the sibling-predicate (implicit/explicit AND) shapes.
+    /// </summary>
+    private static IDbModel OrdersWithCustomersModel() =>
+        DbModelTestFixture.Create()
+            .WithTable("Orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("CustomerId", "int")
+                .WithColumn("Total", "decimal"))
+            .WithTable("Customers", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("ssn", "nvarchar")
+                .WithColumn("active", "bit")
+                .WithMetadata(MetadataKeys.Policy.Actions, "read")
+                .WithMetadata(MetadataKeys.Policy.ReadDeny, "ssn"))
+            .WithSingleLink("Orders", "CustomerId", "Customers", "Id", "customer")
+            .Build();
+
+    private static GqlObjectQuery OrdersQueryFilteredBy(IDbModel model, Dictionary<string, object?> filter)
+    {
+        var orders = model.GetTableFromDbName("Orders");
+        return GqlObjectQueryBuilder.Create()
+            .WithDbTable(orders)
+            .WithColumns("Id", "Total")
+            .WithFilter(TableFilter.FromObject(filter, "Orders"))
+            .Build();
+    }
+
+    [Fact]
+    public void ApplyTransformers_RelationshipFilterOnDeniedColumn_SinglePredicate_Throws()
+    {
+        // The already-covered shape: `customer: { ssn: {_eq} }`. Its `Next.Next`
+        // is non-null, so the collector recursed into Customers and the guard fired.
+        var model = OrdersWithCustomersModel();
+        var query = OrdersQueryFilteredBy(model, new Dictionary<string, object?>
+        {
+            ["customer"] = new Dictionary<string, object?>
+            {
+                ["ssn"] = new Dictionary<string, object?> { ["_eq"] = "123-45-6789" },
+            },
+        });
+
+        var act = () => Service().ApplyTransformers(query, model, UserContext());
+
+        act.Should().Throw<BifrostExecutionError>();
+    }
+
+    [Fact]
+    public void ApplyTransformers_RelationshipFilterOnDeniedColumn_TwoSiblingPredicates_Throws()
+    {
+        // Sibling predicates on one relationship produce an implicit-AND wrapper
+        // whose own `Next` is null, so `filter.Next.Next == null` held and the
+        // collector treated "customer" as a LEAF COLUMN — resolving to null and
+        // never recursing. The renderer keys on `Next.FilterType == Relation`
+        // instead, so it emitted the `ssn` predicate for real. Net effect: a caller
+        // denied read on `ssn` could still filter on it and read the value out of
+        // which orders come back — a binary oracle. Adding one harmless sibling
+        // predicate was the entire bypass.
+        var model = OrdersWithCustomersModel();
+        var query = OrdersQueryFilteredBy(model, new Dictionary<string, object?>
+        {
+            ["customer"] = new Dictionary<string, object?>
+            {
+                ["ssn"] = new Dictionary<string, object?> { ["_eq"] = "123-45-6789" },
+                ["active"] = new Dictionary<string, object?> { ["_eq"] = true },
+            },
+        });
+
+        var act = () => Service().ApplyTransformers(query, model, UserContext());
+
+        act.Should().Throw<BifrostExecutionError>();
+    }
+
+    [Fact]
+    public void ApplyTransformers_RelationshipFilterOnDeniedColumn_ExplicitAndBlock_Throws()
+    {
+        // Same bypass through the explicit `and` form, which the renderer also
+        // routes down the relationship branch.
+        var model = OrdersWithCustomersModel();
+        var query = OrdersQueryFilteredBy(model, new Dictionary<string, object?>
+        {
+            ["customer"] = new Dictionary<string, object?>
+            {
+                ["and"] = new List<object?>
+                {
+                    new Dictionary<string, object?>
+                    {
+                        ["ssn"] = new Dictionary<string, object?> { ["_eq"] = "123-45-6789" },
+                    },
+                    new Dictionary<string, object?>
+                    {
+                        ["active"] = new Dictionary<string, object?> { ["_eq"] = true },
+                    },
+                },
+            },
+        });
+
+        var act = () => Service().ApplyTransformers(query, model, UserContext());
+
+        act.Should().Throw<BifrostExecutionError>();
+    }
+
+    [Fact]
+    public void ApplyTransformers_RelationshipFilterOnAllowedColumns_TwoSiblingPredicates_DoesNotThrow()
+    {
+        // The fix must not over-reject: two sibling predicates on ALLOWED columns
+        // of the linked table still pass.
+        var model = OrdersWithCustomersModel();
+        var query = OrdersQueryFilteredBy(model, new Dictionary<string, object?>
+        {
+            ["customer"] = new Dictionary<string, object?>
+            {
+                ["Id"] = new Dictionary<string, object?> { ["_eq"] = 7 },
+                ["active"] = new Dictionary<string, object?> { ["_eq"] = true },
+            },
+        });
+
+        var act = () => Service().ApplyTransformers(query, model, UserContext());
+
+        act.Should().NotThrow();
+    }
+
     [Fact]
     public void ApplyTransformers_OnlySelectsAllowedColumns_DoesNotThrow()
     {

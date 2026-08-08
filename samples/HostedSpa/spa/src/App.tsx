@@ -1,4 +1,4 @@
-import { useContext } from 'react';
+import { useCallback, useContext } from 'react';
 import { Routes, Route, useNavigate } from '@standardbeagle/virtual-router';
 import {
   AppShellProvider,
@@ -153,6 +153,11 @@ function AppHeader() {
 function App() {
   const navigate = useNavigate();
 
+  // One callback for every gate: each route's `ProtectedRoute` sends an
+  // unauthenticated visitor to the same place, and a fresh inline closure per
+  // route re-rendered every gate on each render for no benefit.
+  const redirectToLogin = useCallback(() => navigate('/login'), [navigate]);
+
   return (
     <AppShellProvider>
       <AppLayout header={<AppHeader />} nav={<MembershipNav />}>
@@ -176,7 +181,7 @@ function App() {
           <Route path="/">
             <ProtectedRoute
               requirePermission={MEMBERS_READ}
-              onUnauthenticated={() => navigate('/login')}
+              onUnauthenticated={redirectToLogin}
             >
               <Dashboard />
             </ProtectedRoute>
@@ -184,7 +189,7 @@ function App() {
           <Route path="/dashboard">
             <ProtectedRoute
               requirePermission={MEMBERS_READ}
-              onUnauthenticated={() => navigate('/login')}
+              onUnauthenticated={redirectToLogin}
             >
               <Dashboard />
             </ProtectedRoute>
@@ -192,7 +197,7 @@ function App() {
           <Route path="/members">
             <ProtectedRoute
               requirePermission={MEMBERS_READ}
-              onUnauthenticated={() => navigate('/login')}
+              onUnauthenticated={redirectToLogin}
             >
               <MemberList />
             </ProtectedRoute>
@@ -207,7 +212,7 @@ function App() {
           <Route path="/members/:id">
             <ProtectedRoute
               requirePermission={MEMBERS_READ}
-              onUnauthenticated={() => navigate('/login')}
+              onUnauthenticated={redirectToLogin}
             >
               <MemberForm />
             </ProtectedRoute>
@@ -221,7 +226,7 @@ function App() {
           <Route path="/households/:id">
             <ProtectedRoute
               requirePermission={MEMBERS_READ}
-              onUnauthenticated={() => navigate('/login')}
+              onUnauthenticated={redirectToLogin}
             >
               <HouseholdForm />
             </ProtectedRoute>
@@ -234,7 +239,7 @@ function App() {
           <Route path="/plans">
             <ProtectedRoute
               requirePermission={MEMBERS_READ}
-              onUnauthenticated={() => navigate('/login')}
+              onUnauthenticated={redirectToLogin}
             >
               <PlanList />
             </ProtectedRoute>
@@ -242,7 +247,7 @@ function App() {
           <Route path="/plans/:id">
             <ProtectedRoute
               requirePermission={MEMBERS_READ}
-              onUnauthenticated={() => navigate('/login')}
+              onUnauthenticated={redirectToLogin}
             >
               <PlanForm />
             </ProtectedRoute>
@@ -255,7 +260,7 @@ function App() {
           <Route path="/memberships">
             <ProtectedRoute
               requirePermission={MEMBERS_READ}
-              onUnauthenticated={() => navigate('/login')}
+              onUnauthenticated={redirectToLogin}
             >
               <MemberPlanAssignment />
             </ProtectedRoute>
@@ -269,7 +274,7 @@ function App() {
           <Route path="/payments">
             <ProtectedRoute
               requirePermission={MEMBERS_READ}
-              onUnauthenticated={() => navigate('/login')}
+              onUnauthenticated={redirectToLogin}
             >
               <RecordPayment />
             </ProtectedRoute>
@@ -282,7 +287,7 @@ function App() {
           <Route path="/events">
             <ProtectedRoute
               requirePermission={MEMBERS_READ}
-              onUnauthenticated={() => navigate('/login')}
+              onUnauthenticated={redirectToLogin}
             >
               <EventList />
             </ProtectedRoute>
@@ -296,7 +301,7 @@ function App() {
           <Route path="/events/:id/rsvps">
             <ProtectedRoute
               requirePermission={MEMBERS_READ}
-              onUnauthenticated={() => navigate('/login')}
+              onUnauthenticated={redirectToLogin}
             >
               <EventRsvps />
             </ProtectedRoute>
@@ -311,7 +316,7 @@ function App() {
           <Route path="/events/:id/check-in">
             <ProtectedRoute
               requirePermission={MEMBERS_READ}
-              onUnauthenticated={() => navigate('/login')}
+              onUnauthenticated={redirectToLogin}
             >
               <EventCheckin />
             </ProtectedRoute>
@@ -319,7 +324,7 @@ function App() {
           <Route path="/events/:id">
             <ProtectedRoute
               requirePermission={MEMBERS_READ}
-              onUnauthenticated={() => navigate('/login')}
+              onUnauthenticated={redirectToLogin}
             >
               <EventForm />
             </ProtectedRoute>
@@ -333,7 +338,7 @@ function App() {
           <Route path="/reports/unpaid-dues">
             <ProtectedRoute
               requirePermission={MEMBERS_READ}
-              onUnauthenticated={() => navigate('/login')}
+              onUnauthenticated={redirectToLogin}
             >
               <UnpaidDuesReport />
             </ProtectedRoute>
@@ -341,7 +346,7 @@ function App() {
           <Route path="/reports/upcoming-renewals">
             <ProtectedRoute
               requirePermission={MEMBERS_READ}
-              onUnauthenticated={() => navigate('/login')}
+              onUnauthenticated={redirectToLogin}
             >
               <UpcomingRenewalsReport />
             </ProtectedRoute>
@@ -349,7 +354,7 @@ function App() {
           <Route path="/reports/expired-memberships">
             <ProtectedRoute
               requirePermission={MEMBERS_READ}
-              onUnauthenticated={() => navigate('/login')}
+              onUnauthenticated={redirectToLogin}
             >
               <ExpiredMembershipsReport />
             </ProtectedRoute>
@@ -363,7 +368,7 @@ function App() {
           <Route path="/reports/attendance-by-event">
             <ProtectedRoute
               requirePermission={MEMBERS_READ}
-              onUnauthenticated={() => navigate('/login')}
+              onUnauthenticated={redirectToLogin}
             >
               <AttendanceByEventReport />
             </ProtectedRoute>
@@ -371,7 +376,7 @@ function App() {
           <Route path="/reports/attendance-by-member">
             <ProtectedRoute
               requirePermission={MEMBERS_READ}
-              onUnauthenticated={() => navigate('/login')}
+              onUnauthenticated={redirectToLogin}
             >
               <AttendanceByMemberReport />
             </ProtectedRoute>
@@ -387,7 +392,7 @@ function App() {
           <Route path="/reports/email-segments">
             <ProtectedRoute
               requirePermission={MEMBERS_READ}
-              onUnauthenticated={() => navigate('/login')}
+              onUnauthenticated={redirectToLogin}
             >
               <EmailSegments />
             </ProtectedRoute>

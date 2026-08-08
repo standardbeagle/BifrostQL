@@ -57,74 +57,30 @@ namespace BifrostQL.Core.Resolvers
             // an ordinary table query runs: the combined tenant/soft-delete/policy
             // row filter, the column read guards over the projection, and the
             // filter/sort guards over the caller's predicates.
-            var (securityFilter, readableColumns) = ApplyTransformers(context, table, filter);
-            var columnMetadata = ExtractColumnMetadata(readableColumns);
-
-            // Envelope-encrypted columns must never leave as ciphertext. Same
-            // projector the ordinary read path builds (SqlExecutionManager), from the
-            // same caller roles, so `_table` shows exactly what a normal read shows.
-            var cryptoRead = new Modules.Crypto.CryptoReadProjector(
-                _model,
-                context.RequestServices?.GetService<BifrostQL.Core.Crypto.EnvelopeKeyManager>(),
-                Auth.PolicyIdentity.ExtractRoles(context.UserContext));
-
-            return await ExecuteQueryAsync(
-                connFactory, _model, table, columnMetadata, readableColumns,
-                limit, offset, filter, securityFilter, cryptoRead);
-        }
-
-        /// <summary>
-        /// Runs the registered <see cref="IFilterTransformers"/> chain for this table:
-        /// the combined row filter, the column read guards, and the column filter
-        /// guards. Returns that filter plus the columns the caller may actually read.
-        ///
-        /// This resolver previously called <c>GetCombinedFilter</c> alone, so
-        /// <see cref="IColumnReadGuard"/>/<see cref="IColumnFilterGuard"/> never ran on
-        /// the <c>_table</c> surface: a policy-denied column came back in full, and an
-        /// encrypted column could be used as a WHERE predicate. Guard decisions are
-        /// delegated to the guards themselves — no second authorization rule is
-        /// implemented here (protocol-adapter-security invariant 4: never reimplement
-        /// authorization for a second surface, call the same evaluator).
-        ///
-        /// Returns null/all-columns when no transformer pipeline is registered, matching
-        /// how the rest of the read path degrades in lightweight hosts.
-        /// </summary>
-        private (TableFilter? SecurityFilter, IReadOnlyList<ColumnDto> ReadableColumns) ApplyTransformers(
-            IBifrostFieldContext context, IDbTable table, Dictionary<string, object?>? filter)
-        {
-            var filterTransformers = context.RequestServices?.GetService<IFilterTransformers>();
-            if (filterTransformers == null)
-                return (null, table.Columns.ToList());
-
-            var transformContext = new QueryTransformContext
-            {
-                Model = _model,
-                UserContext = context.UserContext,
-                QueryType = QueryType.Standard,
-                Path = table.GraphQlName,
-                IsNestedQuery = false,
-            };
+            // ONE seam for the whole read chain — row filter, column read guard,
+            // column filter guard, crypto projection. `_table` previously hand-rolled
+            // it (as three other read surfaces also did, each having drifted); see
+            // TableReadChain for why the copies were collapsed.
+            var chain = TableReadChain.For(
+                context.RequestServices, _model, table, context.UserContext, ReadProjection.Client);
 
             // Columns the caller names as predicates abort the query when denied —
             // the same reject semantics the ordinary query path uses, because a
             // predicate on an unreadable column is a value oracle regardless of
             // whether the column is projected.
-            var predicateColumns = ResolveFilterColumns(table, filter);
-            if (predicateColumns.Count > 0)
-            {
-                foreach (var guard in filterTransformers.OfType<IColumnReadGuard>())
-                    guard.AssertColumnsReadable(table, predicateColumns, transformContext);
-                foreach (var guard in filterTransformers.OfType<IColumnFilterGuard>())
-                    guard.AssertColumnsFilterable(table, predicateColumns, transformContext);
-            }
+            chain.AssertPredicateColumns(ResolveFilterColumns(table, filter));
 
             // `_table` has no client-supplied selection set to reject against, so the
             // projection is narrowed to the readable columns instead of aborting.
-            var readable = SelectReadableColumns(filterTransformers, table, transformContext);
-            if (readable.Count == 0)
+            var readableColumns = chain.ReadableColumns;
+            if (readableColumns.Count == 0)
                 throw new BifrostExecutionError($"Access to table '{table.GraphQlName}' is not allowed.");
 
-            return (filterTransformers.GetCombinedFilter(table, transformContext), readable);
+            var columnMetadata = ExtractColumnMetadata(readableColumns);
+
+            return await ExecuteQueryAsync(
+                connFactory, _model, table, columnMetadata, readableColumns,
+                limit, offset, filter, chain.RowFilter, chain);
         }
 
         /// <summary>
@@ -147,63 +103,6 @@ namespace BifrostQL.Core.Resolvers
                     names.Add(column.DbName);
             }
             return names;
-        }
-
-        /// <summary>
-        /// The subset of <paramref name="table"/>'s columns the caller may read, decided
-        /// entirely by the registered <see cref="IColumnReadGuard"/>s: the whole set is
-        /// offered first, and only if that is rejected is each column offered on its own
-        /// to find which ones are denied. A guard's throw excludes the column —
-        /// fail-closed, and the guard stays the single authority on the decision.
-        /// </summary>
-        private static IReadOnlyList<ColumnDto> SelectReadableColumns(
-            IFilterTransformers filterTransformers, IDbTable table, QueryTransformContext transformContext)
-        {
-            var guards = filterTransformers.OfType<IColumnReadGuard>().ToArray();
-            if (guards.Length == 0)
-                return table.Columns.ToList();
-
-            // Fast path: ask about the whole table once. A table with no column denies
-            // — the common case — costs one guard call instead of one per column, and
-            // the per-column probing below only runs when something is actually denied.
-            var allColumns = table.Columns.ToList();
-            if (AllReadable(guards, table, allColumns.Select(c => c.DbName).ToArray(), transformContext))
-                return allColumns;
-
-            var readable = new List<ColumnDto>();
-            foreach (var column in allColumns)
-            {
-                if (AllReadable(guards, table, new[] { column.DbName }, transformContext))
-                    readable.Add(column);
-            }
-
-            return readable;
-        }
-
-        /// <summary>
-        /// True when every registered guard accepts <paramref name="columns"/>. A guard
-        /// rejects by throwing, so any <see cref="BifrostExecutionError"/> means "not
-        /// readable" — the guard remains the only thing deciding.
-        /// </summary>
-        private static bool AllReadable(
-            IReadOnlyList<IColumnReadGuard> guards,
-            IDbTable table,
-            string[] columns,
-            QueryTransformContext transformContext)
-        {
-            foreach (var guard in guards)
-            {
-                try
-                {
-                    guard.AssertColumnsReadable(table, columns, transformContext);
-                }
-                catch (BifrostExecutionError)
-                {
-                    return false;
-                }
-            }
-
-            return true;
         }
 
         ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
@@ -346,7 +245,7 @@ namespace BifrostQL.Core.Resolvers
             int offset,
             Dictionary<string, object?>? filter,
             TableFilter? securityFilter,
-            Modules.Crypto.CryptoReadProjector cryptoRead)
+            TableReadChain chain)
         {
             var dialect = connFactory.Dialect;
             var (whereSql, filterParams) = BuildWhereClause(table, dialect, filter);
@@ -412,23 +311,18 @@ namespace BifrostQL.Core.Resolvers
                     totalCount = Convert.ToInt32(countResult);
                 }
 
-                var rows = new List<Dictionary<string, object?>>();
+                List<Dictionary<string, object?>> rows;
                 {
                     await using var dataCmd = conn.CreateCommand();
                     dataCmd.CommandText = dataSql;
                     AddFilterParameters(dataCmd, filterParams);
                     AddSecurityParameters(dataCmd, securityParams);
 
-                    await using var reader = await dataCmd.ExecuteReaderAsync();
-                    while (await reader.ReadAsync())
-                    {
-                        var row = DbReaderExtensions.ReadRow(reader);
-                        // Decrypt/mask encrypted columns exactly as the ordinary read
-                        // path does. Non-encrypted columns pass through untouched.
-                        foreach (var key in row.Keys.ToArray())
-                            row[key] = cryptoRead.Project(table.DbName, key, row[key]);
-                        rows.Add(row);
-                    }
+                    // Rows are materialized THROUGH the chain, which is where the
+                    // decrypt/mask projection lives. Reading the reader directly is
+                    // what previously let envelope-encrypted columns leave as
+                    // ciphertext.
+                    rows = await chain.ReadRowsAsync(dataCmd);
                 }
 
                 return new GenericTableResult

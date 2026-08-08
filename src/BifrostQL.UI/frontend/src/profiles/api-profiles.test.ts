@@ -9,7 +9,7 @@ import {
   saveActiveProfileId,
   DEFAULT_PROFILES,
   PROFILES_ENDPOINT,
-} from './profiles';
+} from './api-profiles';
 import type { ApiProfile } from './types';
 
 const g = globalThis as any;

@@ -21,7 +21,7 @@ import {
   resolveActiveProfile,
   saveActiveProfileId,
   DEFAULT_PROFILES,
-} from './profiles/profiles';
+} from './profiles/api-profiles';
 import type { ApiProfile } from './profiles/types';
 import { EditorHeader, type EditorPane } from './EditorHeader';
 import { useHealthCheck } from './hooks/useHealthCheck';

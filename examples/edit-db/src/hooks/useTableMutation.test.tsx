@@ -94,6 +94,71 @@ describe('useTableMutation', () => {
         });
     });
 
+    describe('pre-flight rejections are visible', () => {
+        // These rejections happen BEFORE mutateAsync, so react-query never sees
+        // them and `mutation.error` stayed null -- and mutation.error is the only
+        // error surface the edit dialog renders. Save silently did nothing.
+        it('surfaces a keyless-update refusal on mutation.error', async () => {
+            const { wrapper } = createHarness();
+            const idCol = col('id', 'Int!', true);
+            const nameCol = col('name', 'String');
+            const { result } = renderHook(
+                () => useTableMutation(tbl('users', [], [idCol, nameCol]), editCols(nameCol), [], 'stale'),
+                { wrapper },
+            );
+
+            await expect(result.current.update({ name: 'Ada' })).rejects.toThrow();
+            await waitFor(() => expect(result.current.error?.message).toMatch(/no resolvable primary key/));
+        });
+
+        it('surfaces a value-coercion failure on mutation.error', async () => {
+            // Typing 1.5 into an Int column makes coerceNumericValue throw.
+            const { query, wrapper } = createHarness();
+            const idCol = col('id', 'Int!', true);
+            const countCol = col('count', 'Int');
+            const users = tbl('users', ['id'], [idCol, countCol]);
+            const { result } = renderHook(
+                () => useTableMutation(users, editCols(countCol), [idCol], '1'),
+                { wrapper },
+            );
+
+            await expect(result.current.update({ count: '1.5' })).rejects.toThrow();
+            await waitFor(() => expect(result.current.error?.message).toMatch(/Invalid Int value for column 'count'/));
+            expect(query).not.toHaveBeenCalled();
+        });
+
+        it('surfaces a coercion failure on insert too', async () => {
+            const { wrapper } = createHarness();
+            const idCol = col('id', 'Int!', true);
+            const countCol = col('count', 'Int');
+            const users = tbl('users', ['id'], [idCol, countCol]);
+            const { result } = renderHook(
+                () => useTableMutation(users, editCols(countCol), [idCol], ''),
+                { wrapper },
+            );
+
+            await expect(result.current.insert({ count: '1.5' })).rejects.toThrow();
+            await waitFor(() => expect(result.current.error?.message).toMatch(/Invalid Int value/));
+        });
+
+        it('clears a stale pre-flight error once a later attempt succeeds', async () => {
+            const { wrapper } = createHarness();
+            const idCol = col('id', 'Int!', true);
+            const countCol = col('count', 'Int');
+            const users = tbl('users', ['id'], [idCol, countCol]);
+            const { result } = renderHook(
+                () => useTableMutation(users, editCols(countCol), [idCol], '1'),
+                { wrapper },
+            );
+
+            await expect(result.current.update({ count: '1.5' })).rejects.toThrow();
+            await waitFor(() => expect(result.current.error).not.toBeNull());
+
+            await result.current.update({ count: '2' });
+            await waitFor(() => expect(result.current.error).toBeNull());
+        });
+    });
+
     describe('BigInt precision (values pass as strings, never through Number)', () => {
         // Above Number.MAX_SAFE_INTEGER (2^53-1 = 9007199254740991): Number()
         // rounds both to ...992, so a lossy write would target the wrong row.

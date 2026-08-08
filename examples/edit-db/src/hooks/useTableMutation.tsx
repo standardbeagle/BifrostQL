@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useFetcher } from "../common/fetcher";
 import { Table, Column } from "../types/schema";
 import { parsePkRoute, type PkFilter } from "../lib/row-id";
@@ -160,12 +160,26 @@ export function useTableMutation(
         return parsePkRoute(editId, table);
     }, [isInsert, editId, table]);
 
+    // Refusals raised BEFORE mutateAsync (no resolvable key, a value that cannot be
+    // coerced) never reach react-query, so `updateMutation.error` stays null. Since
+    // that is the only error surface the edit dialog renders, such a rejection was
+    // completely invisible — Save just did nothing. Hold them here so they render
+    // through exactly the same banner as a server error.
+    const [preflightError, setPreflightError] = useState<Error | null>(null);
+
+    const rejectPreflight = (e: unknown) => {
+        const err = e instanceof Error ? e : new Error(String(e));
+        setPreflightError(err);
+        return Promise.reject(err);
+    };
+
     const update = (detail: Record<string, unknown>) => {
+        setPreflightError(null);
         // An UPDATE with no primary-key columns has no WHERE clause — it would rewrite
         // every row. A null pkFilter (malformed/stale editId) or a table with no PK
         // columns must be refused client-side rather than sent.
         if (!pkFilter || idColumns.length === 0) {
-            return Promise.reject(
+            return rejectPreflight(
                 new Error(`Cannot update ${table.label ?? table.name}: the record has no resolvable primary key.`),
             );
         }
@@ -173,22 +187,25 @@ export function useTableMutation(
         try {
             coerced = coerceDetail(detail, editColumns, idColumns, pkFilter, false);
         } catch (e) {
-            return Promise.reject(e);
+            return rejectPreflight(e);
         }
         return updateMutation.mutateAsync(coerced);
     };
 
     const insert = (detail: Record<string, unknown>) => {
+        setPreflightError(null);
         let coerced: Record<string, unknown>;
         try {
             coerced = coerceDetail(detail, editColumns, idColumns, null, true);
         } catch (e) {
-            return Promise.reject(e);
+            return rejectPreflight(e);
         }
         return insertMutation.mutateAsync(coerced);
     };
 
-    const error = updateMutation.error ?? insertMutation.error;
+    // Pre-flight first: it is the reason no request was sent, so it describes the
+    // current attempt while the react-query errors may still hold a previous one.
+    const error = preflightError ?? updateMutation.error ?? insertMutation.error;
 
     return {
         update,

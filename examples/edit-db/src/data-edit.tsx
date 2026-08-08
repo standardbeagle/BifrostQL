@@ -354,7 +354,12 @@ function DataEditDetail({ table, schema, editId, onClose }: { table: string, sch
                     onSubmit={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        form.handleSubmit();
+                        // handleSubmit rejects when onSubmit's mutate call rejects.
+                        // The reason is already rendered from mutation.error above,
+                        // but leaving the promise unhandled raises an
+                        // unhandledrejection that can trip a global error handler
+                        // and hide the real, already-visible message.
+                        form.handleSubmit().catch(() => { /* surfaced via mutation.error */ });
                     }}
                     className="flex flex-col flex-1 min-h-0"
                 >

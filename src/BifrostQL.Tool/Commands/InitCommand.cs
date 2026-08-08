@@ -10,11 +10,18 @@ public sealed class InitCommand : ICommand
     public string Name => "init";
     public string Description => "Create a default bifrostql.json config file";
 
+    /// <summary>
+    /// The scaffolded connection string deliberately omits TrustServerCertificate. A
+    /// generated project must not start life with certificate validation switched off:
+    /// that would encrypt the connection while accepting any certificate presented,
+    /// before the author has decided anything. Where a self-signed development server
+    /// genuinely needs the waiver it is documented, not pre-set.
+    /// </summary>
     internal static readonly object DefaultConfig = new
     {
         ConnectionStrings = new
         {
-            bifrost = "Server=localhost;Database=mydb;User Id=sa;Password=yourpassword;TrustServerCertificate=True",
+            bifrost = "Server=localhost;Database=mydb;User Id=sa;Password=yourpassword",
         },
         BifrostQL = new
         {

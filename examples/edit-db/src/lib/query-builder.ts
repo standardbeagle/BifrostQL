@@ -479,11 +479,16 @@ function buildDrillQuery(
         const childField = `${drill.childField}(limit: $limit offset: $offset sort: $sort) { total offset limit data {${allFields}} }`;
 
         const parentPkTypes = getPkTypes(drill.parentTable);
+        // A parent with NO declared key cannot be addressed by id. Guessing a
+        // column called "id" built a filter against a column that may not exist,
+        // and on a table that happens to have one it scopes the child grid by the
+        // wrong column. Refuse, like the unresolvable-drill branch above.
+        if (parentPkTypes.length === 0) return null;
         let param: string;
         let parentFilter: string;
-        if (parentPkTypes.length <= 1) {
-            const parentPk = parentPkTypes[0]?.name ?? "id";
-            const parentPkType = parentPkTypes[0]?.gqlType ?? "Int";
+        if (parentPkTypes.length === 1) {
+            const parentPk = parentPkTypes[0].name;
+            const parentPkType = parentPkTypes[0].gqlType;
             param = `, $id: ${parentPkType}`;
             parentFilter = `{ ${parentPk}: { _eq: $id}}`;
         } else {
@@ -508,14 +513,18 @@ function buildDrillQuery(
 /**
  * Single-record lookup keyed by the table's own primary key (composite-aware).
  */
-function buildByIdQuery(table: Table, tableSchema: Table, allFields: string): string {
+function buildByIdQuery(table: Table, tableSchema: Table, allFields: string): string | null {
     const pkTypes = getPkTypes(tableSchema);
+    // Same refusal as the drill path: a keyless table has no by-id lookup, and
+    // guessing a column named "id" produces a filter on a column that need not
+    // exist. rowIdOf already emits `row-<index>` placeholders for such tables, so
+    // no caller can supply a meaningful id here anyway.
+    if (pkTypes.length === 0) return null;
     let param: string;
     let filterText: string;
-    if (pkTypes.length <= 1) {
-        // Single PK (or no PK) — byte-identical with the legacy shape
+    if (pkTypes.length === 1) {
         const pkType = getPkType(tableSchema);
-        const primaryKey = pkTypes[0]?.name ?? "id";
+        const primaryKey = pkTypes[0].name;
         param = `, $id: ${pkType}`;
         filterText = `{ ${primaryKey}: { _eq: $id}}`;
     } else {

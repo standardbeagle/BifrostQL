@@ -46,6 +46,24 @@ export function isComposite(join: Join): boolean {
     return (join.sourceColumnNames?.length ?? 0) > 1;
 }
 
+/**
+ * The destination column paired POSITIONALLY with `columnName` on the source side
+ * of `join`, or null when the pairing does not exist.
+ *
+ * Null is the whole point. The previous inline form was
+ * `destinationColumnNames[indexOf(name)] ?? destinationColumnNames[0]`: `indexOf`
+ * returns -1 for a column that is not part of the join, the indexed read is
+ * `undefined`, and `??` then substituted the FIRST destination column — so an
+ * unresolvable pairing silently produced a confident, wrong FK target instead of
+ * an absent one. Callers must handle null by declining the FK behaviour, never by
+ * guessing a column (see .claude/rules/composite-pk-compliance.md).
+ */
+export function fkDestinationColumnFor(join: Join, columnName: string): string | null {
+    const index = (join.sourceColumnNames ?? []).indexOf(columnName);
+    if (index < 0) return null;
+    return (join.destinationColumnNames ?? [])[index] ?? null;
+}
+
 export function findJoinBySource(joins: Join[], columnName: string): Join | undefined {
     return joins.find((j) => isFkMember(j, columnName));
 }

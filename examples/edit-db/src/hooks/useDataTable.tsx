@@ -32,7 +32,7 @@ import {
     canFlatFilterDrill,
 } from "../lib/query-builder";
 import { rowIdOf, encodeRouteParts } from "../lib/row-id";
-import { isComposite } from "../lib/fk";
+import { isComposite, fkDestinationColumnFor } from "../lib/fk";
 import { exportAllRows, type ExportRunner } from "../lib/export";
 
 // Re-export for existing filter component imports.
@@ -220,7 +220,9 @@ function buildScalarColumn(
                 dbType: c.dbType,
                 joinTable: memberJoin.destinationTable,
                 joinLabelColumn,
-                joinFkColumn: memberJoin.destinationColumnNames[(memberJoin.sourceColumnNames ?? []).indexOf(c.name)] ?? memberJoin.destinationColumnNames[0],
+                // Null when the pairing does not resolve. Consumers must then decline
+                // the FK filter rather than aim it at the first destination column.
+                joinFkColumn: fkDestinationColumnFor(memberJoin, c.name),
                 isSelfReference,
                 isCompositeFk: true,
                 isCompositeFkMember: true,

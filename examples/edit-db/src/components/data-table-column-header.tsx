@@ -46,7 +46,14 @@ function isBooleanColumn<TData, TValue>(column: Column<TData, TValue>): boolean 
 interface FkMeta {
     joinTable: string;
     joinLabelColumn: string;
-    joinFkColumn: string;
+    /**
+     * The join's destination column for THIS column. Null when the pairing could
+     * not be resolved (a composite-FK member whose positional partner is absent).
+     * Null must disable the FK filter, never fall back to a guessed column — the
+     * FK lookup projects `id: ${joinFkColumn}`, so a guess filters the wrong
+     * column while looking entirely correct (see FkFilterProps.joinFkColumn).
+     */
+    joinFkColumn: string | null;
     isSelfReference: boolean;
 }
 
@@ -60,7 +67,7 @@ function getFkMeta<TData, TValue>(column: Column<TData, TValue>): FkMeta | null 
     if (meta?.joinTable) return {
         joinTable: meta.joinTable,
         joinLabelColumn: meta.joinLabelColumn ?? 'id',
-        joinFkColumn: meta.joinFkColumn ?? 'id',
+        joinFkColumn: meta.joinFkColumn ?? null,
         isSelfReference: meta.isSelfReference === true,
     };
     return null;
@@ -210,10 +217,15 @@ export function DataTableColumnHeader<TData, TValue>({
     const sorted = column.getIsSorted();
     const hasFilter = column.getFilterValue() !== undefined;
     const fkMeta = getFkMeta(column);
-    const showTextFilter = !fkMeta && isStringColumn(column);
-    const showNumericFilter = !fkMeta && isNumericColumn(column);
-    const showDateFilter = !fkMeta && isDateColumn(column);
-    const showBooleanFilter = !fkMeta && isBooleanColumn(column);
+    // The FK dropdown needs a resolved destination column to project its options
+    // against. Without one the column keeps its FK context in the tooltip but
+    // falls back to the ordinary type-based filter — a working filter on the right
+    // column beats an FK dropdown silently pointed at the wrong one.
+    const fkFilterColumn = fkMeta?.joinFkColumn ?? null;
+    const showTextFilter = !fkFilterColumn && isStringColumn(column);
+    const showNumericFilter = !fkFilterColumn && isNumericColumn(column);
+    const showDateFilter = !fkFilterColumn && isDateColumn(column);
+    const showBooleanFilter = !fkFilterColumn && isBooleanColumn(column);
     const columnSchema = getColumnSchema(column);
 
     const headerButton = (
@@ -343,7 +355,7 @@ export function DataTableColumnHeader<TData, TValue>({
                             </DropdownMenuSub>
                         </>
                     )}
-                    {fkMeta && (
+                    {fkMeta && fkFilterColumn && (
                         <>
                             <DropdownMenuSeparator />
                             <DropdownMenuSub>
@@ -355,7 +367,7 @@ export function DataTableColumnHeader<TData, TValue>({
                                     Filter
                                 </DropdownMenuSubTrigger>
                                 <DropdownMenuSubContent>
-                                    <FkFilter column={column} joinTable={fkMeta.joinTable} joinLabelColumn={fkMeta.joinLabelColumn} joinFkColumn={fkMeta.joinFkColumn} />
+                                    <FkFilter column={column} joinTable={fkMeta.joinTable} joinLabelColumn={fkMeta.joinLabelColumn} joinFkColumn={fkFilterColumn} />
                                 </DropdownMenuSubContent>
                             </DropdownMenuSub>
                         </>

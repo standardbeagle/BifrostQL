@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildFkEqFilter, coerceForGql, findJoinBySource, fkSourceValues, gqlTypeOf, isComposite, isFkMember } from './fk';
+import { buildFkEqFilter, coerceForGql, findJoinBySource, fkDestinationColumnFor, fkSourceValues, gqlTypeOf, isComposite, isFkMember } from './fk';
 import type { Column, Join, Table } from '../types/schema';
 
 function col(name: string, paramType = 'String'): Column {
@@ -168,5 +168,36 @@ describe('fkSourceValues', () => {
 
     it('returns null if any FK source column is missing from the row', () => {
         expect(fkSourceValues({ tenant_id: 1 }, compositeJoin)).toBeNull();
+    });
+});
+
+describe('fkDestinationColumnFor', () => {
+    const composite: Join = {
+        name: 'order_lines',
+        sourceColumnNames: ['region', 'order_no'],
+        destinationTable: 'orders',
+        destinationColumnNames: ['dest_region', 'dest_order_no'],
+    };
+
+    it('pairs a source column with its POSITIONALLY matching destination column', () => {
+        expect(fkDestinationColumnFor(composite, 'region')).toBe('dest_region');
+        expect(fkDestinationColumnFor(composite, 'order_no')).toBe('dest_order_no');
+    });
+
+    it('returns null for a column that is not part of the join', () => {
+        // Previously `destinationColumnNames[indexOf(name)] ?? destinationColumnNames[0]`
+        // -- indexOf returns -1, the lookup is undefined, and the `??` silently
+        // substituted the FIRST destination column, so the FK filter targeted the
+        // wrong column entirely.
+        expect(fkDestinationColumnFor(composite, 'not_in_join')).toBeNull();
+    });
+
+    it('returns null when the join declares fewer destination columns than sources', () => {
+        const ragged: Join = { ...composite, destinationColumnNames: ['dest_region'] };
+        expect(fkDestinationColumnFor(ragged, 'order_no')).toBeNull();
+    });
+
+    it('resolves the single-column case', () => {
+        expect(fkDestinationColumnFor(singleJoin, 'customer_id')).toBe('customer_id');
     });
 });

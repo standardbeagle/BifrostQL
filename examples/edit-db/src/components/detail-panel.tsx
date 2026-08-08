@@ -158,7 +158,6 @@ export function DetailPanel({ parentTable, selectedRowId, onClose, onOpenColumn 
                     ) : (
                         <M2mPanel
                             key={`${activeTab.key}-${selectedRowId}`}
-                            parentTable={parentTable}
                             m2m={activeTab.m2m}
                             parentRowId={selectedRowId}
                             onOpenColumn={onOpenColumn}

@@ -20,6 +20,9 @@ vi.mock('../hooks/useDeleteMutation', () => ({
     useDeleteMutation: () => ({ deleteRow, deleteRows: vi.fn(), isPending: false, error: null }),
 }));
 
+const toast = vi.fn();
+vi.mock('../hooks/useToast', () => ({ useToast: () => ({ toast }) }));
+
 const insert = vi.fn().mockResolvedValue({});
 vi.mock('../hooks/useTableMutation', () => ({
     useTableMutation: () => ({ insert, update: vi.fn(), isPending: false, error: null }),
@@ -65,11 +68,11 @@ const junctionRows = [
     { id: 2, grade: 'B', courses: { id: 20, label: 'Biology' } },
 ];
 
-function renderPanel(onOpenColumn = vi.fn()) {
+function renderPanel(onOpenColumn = vi.fn(), join: ManyToManyJoin = m2m) {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     return render(
         <QueryClientProvider client={client}>
-            <M2mPanel parentTable={table('students')} m2m={m2m} parentRowId="42" onOpenColumn={onOpenColumn} />
+            <M2mPanel m2m={join} parentRowId="42" onOpenColumn={onOpenColumn} />
         </QueryClientProvider>
     );
 }
@@ -106,6 +109,23 @@ describe('M2mPanel', () => {
         const confirm = await screen.findByRole('button', { name: 'Detach' });
         fireEvent.click(confirm);
         await waitFor(() => expect(deleteRow).toHaveBeenCalledWith({ id: 1 }));
+    });
+
+    it('reports a detach that cannot be keyed instead of closing as if it worked', async () => {
+        // pkFilterFor returns null when a PK column is absent from the row. The
+        // old `if (!pk) return;` RESOLVED, so ConfirmDialog's finally closed the
+        // dialog and the user was left believing the link had been removed.
+        fetcherQuery.mockResolvedValue({
+            enrollments: { data: [{ grade: 'A', courses: { id: 10, label: 'Algebra' } }] },
+        });
+        renderPanel();
+        await screen.findByText('Algebra');
+        fireEvent.click(screen.getByLabelText('Detach Algebra'));
+        fireEvent.click(await screen.findByRole('button', { name: 'Detach' }));
+
+        await waitFor(() =>
+            expect(toast).toHaveBeenCalledWith(expect.stringMatching(/Detach failed/), 'error'));
+        expect(deleteRow).not.toHaveBeenCalled();
     });
 
     it('drills to the target entity, skipping the junction', async () => {
@@ -157,6 +177,30 @@ describe('M2mPanel', () => {
             await waitFor(() =>
                 expect(insert).toHaveBeenCalledWith({ student_id: '42', course_id: '30' }));
             expect(insert).toHaveBeenCalledTimes(1);
+        });
+
+        it('reports a composite-junction attach plan failure instead of doing nothing', async () => {
+            // attachJunctionDetail throws SYNCHRONOUSLY for a composite junction FK.
+            // The throw happened inside the try whose bare `catch { return; }` was
+            // written for a REJECTED INSERT, so attach.error stayed null and
+            // clicking a target was a permanent, completely silent no-op.
+            // Composite on the TARGET side: m2mRowsQuery (which only decomposes the
+            // SOURCE columns) still builds, so the panel loads normally and the
+            // failure is isolated to the attach path -- exactly the shape that made
+            // this bug invisible.
+            const compositeM2m: ManyToManyJoin = {
+                ...m2m,
+                junctionTargetColumnNames: ['course_id', 'term'],
+            };
+            findTable.mockImplementation((n: string) =>
+                n === 'enrollments' ? junction : n === 'courses' ? targetWithColumns : undefined);
+            renderPanel(vi.fn(), compositeM2m);
+            await screen.findByText('Algebra');
+            fireEvent.click(screen.getByRole('button', { name: /Add link/ }));
+            fireEvent.click(await screen.findByRole('button', { name: /Chemistry/ }));
+
+            expect(await screen.findByText(/composite key which is not yet supported/)).toBeInTheDocument();
+            expect(insert).not.toHaveBeenCalled();
         });
 
         it('keeps the picker open (no close, no invalidate) when the attach insert fails', async () => {

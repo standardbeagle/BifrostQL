@@ -26,7 +26,6 @@ const M2M_PICKER_SERVER_LIMIT = 50;
 const M2M_PICKER_CLIENT_LIMIT = 500;
 
 interface M2mPanelProps {
-    parentTable: Table;
     m2m: ManyToManyJoin;
     parentRowId: string;
     onOpenColumn?: (panel: DrillFrame) => void;
@@ -41,18 +40,44 @@ type JunctionRow = Record<string, unknown>;
  * (insert a junction row) and detached (delete the junction row by its primary
  * key).
  */
-export function M2mPanel({ parentTable, m2m, parentRowId, onOpenColumn }: M2mPanelProps) {
+export function M2mPanel({ m2m, parentRowId, onOpenColumn }: M2mPanelProps) {
     const schema = useSchema();
+    const junction = schema.findTable(m2m.junctionTable);
+    const target = schema.findTable(m2m.targetTable);
+
+    // Resolve the relationship's tables BEFORE mounting anything that builds a
+    // mutation from them. The body used to run with `useDeleteMutation(junction ??
+    // parentTable)` — a delete bound to the PARENT table, held off from firing
+    // only by an `if (!junction) return;` inside the handler. A delete aimed at
+    // the wrong table must not be constructible at all, so the guard lives here,
+    // above the hook, and the body takes both tables as non-null.
+    if (!junction || !target) {
+        return <div className="p-4 text-sm text-muted-foreground">Relationship schema unavailable.</div>;
+    }
+    return (
+        <M2mPanelBody
+            m2m={m2m}
+            parentRowId={parentRowId}
+            onOpenColumn={onOpenColumn}
+            junction={junction}
+            target={target}
+        />
+    );
+}
+
+interface M2mPanelBodyProps extends M2mPanelProps {
+    junction: Table;
+    target: Table;
+}
+
+function M2mPanelBody({ m2m, parentRowId, onOpenColumn, junction, target }: M2mPanelBodyProps) {
     const fetcher = useFetcher();
     const queryClient = useQueryClient();
     const { toast } = useToast();
     const [picking, setPicking] = useState(false);
     const [detachRow, setDetachRow] = useState<JunctionRow | null>(null);
 
-    const junction = schema.findTable(m2m.junctionTable);
-    const target = schema.findTable(m2m.targetTable);
-
-    const detach = useDeleteMutation(junction ?? parentTable);
+    const detach = useDeleteMutation(junction);
 
     // Plan building fails fast on schema drift (junction/label column missing
     // from the schema). Contain the throw here so one broken relationship
@@ -60,12 +85,10 @@ export function M2mPanel({ parentTable, m2m, parentRowId, onOpenColumn }: M2mPan
     // error boundary and taking the whole data surface with it.
     let rowsPlan = { query: null as string | null, variables: {} as Record<string, unknown> };
     let planError: Error | null = null;
-    if (junction && target) {
-        try {
-            rowsPlan = m2mRowsQuery(junction, target, m2m, parentRowId);
-        } catch (e) {
-            planError = e as Error;
-        }
+    try {
+        rowsPlan = m2mRowsQuery(junction, target, m2m, parentRowId);
+    } catch (e) {
+        planError = e as Error;
     }
     const { query, variables } = rowsPlan;
 
@@ -85,16 +108,18 @@ export function M2mPanel({ parentTable, m2m, parentRowId, onOpenColumn }: M2mPan
     const invalidate = useCallback(() => queryClient.invalidateQueries({ queryKey }), [queryClient, queryKey]);
 
     const handleDetach = useCallback(async (junctionRow: JunctionRow) => {
-        if (!junction) return;
         const pk = pkFilterFor(junctionRow, junction);
-        if (!pk) return;
+        // Returning here RESOLVED, so the confirm dialog's `finally` closed and the
+        // user was left believing the link had been removed while nothing was
+        // deleted. Throw so the caller's catch reports it.
+        if (!pk) {
+            throw new Error(
+                `This link cannot be removed: its ${junction.label} row is missing one or more key columns (${(junction.primaryKeys ?? []).join(', ') || 'none declared'}).`,
+            );
+        }
         await detach.deleteRow(pk);
         await invalidate();
     }, [junction, detach, invalidate]);
-
-    if (!junction || !target) {
-        return <div className="p-4 text-sm text-muted-foreground">Relationship schema unavailable.</div>;
-    }
 
     if (planError) {
         return <div className="p-4 text-sm text-destructive">Relationship misconfigured: {planError.message}</div>;
@@ -311,11 +336,27 @@ function TargetPicker({ target, junction, m2m, parentRowId, linkedIds, onClose, 
     // Truncation is about the fetched window (allRows), not the client-filtered view.
     const windowFull = allRows.length >= pickerLimit;
 
+    // attachJunctionDetail throws SYNCHRONOUSLY for a composite junction FK. That
+    // throw used to land in the catch below, which exists for a REJECTED INSERT and
+    // relies on attach.error to display the reason — but a plan failure never
+    // reaches the mutation, so attach.error stayed null and clicking a target was a
+    // permanent, entirely silent no-op. Build the payload OUTSIDE that catch and
+    // keep its error in its own state, mirroring the picker's planError handling.
+    const [attachPlanError, setAttachPlanError] = useState<Error | null>(null);
+
     const handlePick = useCallback(async (targetId: string) => {
         // Belt-and-braces with the disabled button: never insert a duplicate link.
         if (linkedIds.has(targetId)) return;
+        let detail: Record<string, unknown>;
         try {
-            await attach.insert(attachJunctionDetail(m2m, parentRowId, targetId));
+            detail = attachJunctionDetail(m2m, parentRowId, targetId);
+        } catch (e) {
+            setAttachPlanError(e as Error);
+            return;
+        }
+        setAttachPlanError(null);
+        try {
+            await attach.insert(detail);
         } catch {
             // insert() rejects on a failed attach; the message is already shown
             // via attach.error above. Swallow the rejection (no unhandled
@@ -350,6 +391,7 @@ function TargetPicker({ target, junction, m2m, parentRowId, linkedIds, onClose, 
                     <Search className="size-4 text-muted-foreground" />
                     <Input autoFocus placeholder={`Search ${target.label}…`} value={search} onChange={(e) => setSearch(e.target.value)} />
                 </div>
+                {attachPlanError && <p className="text-sm text-destructive">{attachPlanError.message}</p>}
                 {attach.error && <p className="text-sm text-destructive">{attach.error.message}</p>}
                 <div className="max-h-72 overflow-auto border border-border rounded-md">
                     {isLoading && (

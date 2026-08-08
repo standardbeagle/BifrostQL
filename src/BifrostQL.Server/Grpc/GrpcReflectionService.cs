@@ -15,10 +15,11 @@ namespace BifrostQL.Server.Grpc
     /// (<see cref="GrpcContractProvider.Generate"/>, the SAME <c>GrpcSchemaVisibility</c>/
     /// <c>PolicyEvaluator</c> filter the artifact export uses) and answers only from that.
     ///
-    /// <para>Identity comes from the shared fail-closed <see cref="IBifrostAuthContextFactory"/>; with
-    /// no slice-4 bearer identity an unauthenticated caller reflects only what an empty context may
-    /// read. A symbol that is denied is reported as NOT_FOUND — identical to a genuinely unknown
-    /// symbol, so absence never leaks existence.</para>
+    /// <para>Identity comes from <see cref="GrpcIdentityGate"/> — the SAME fail-closed gate the data
+    /// RPCs use, so a credential-less caller gets UNAUTHENTICATED here exactly as it does there and
+    /// reflects nothing at all. Among callers who ARE authenticated, a symbol that is denied is
+    /// reported as NOT_FOUND — identical to a genuinely unknown symbol, so absence never leaks
+    /// existence.</para>
     /// </summary>
     internal sealed class GrpcReflectionService : ServerReflection.ServerReflectionBase
     {
@@ -44,7 +45,16 @@ namespace BifrostQL.Server.Grpc
             ServerCallContext context)
             => GrpcStatusMapper.GuardAsync(context, _logger, async () =>
             {
-                var userContext = _authFactory.CreateUserContext(context.GetHttpContext());
+                // The SAME gate every data op class uses — NOT a bare CreateUserContext. The
+                // factory returns an EMPTY dictionary for an unauthenticated caller, and
+                // PolicyEvaluator allows any policy-less table for an empty identity, so
+                // projecting directly here served the complete table/column/proto-type/PK/write
+                // allow-list inventory to `grpcurl -plaintext host:port list` with NO credential —
+                // on a port whose data path answers UNAUTHENTICATED. Reflection is an
+                // introspection surface and must fail closed under the data path's own
+                // authorization (invariant 4), returning the identical status for the identical
+                // condition (invariants 9, 10).
+                var userContext = GrpcIdentityGate.ResolveIdentity(context, _authFactory, _logger);
                 var visibleSet = FileDescriptorSet.Parser.ParseFrom(_contracts.Generate(userContext).DescriptorSet);
 
                 await foreach (var request in requestStream.ReadAllAsync(context.CancellationToken))

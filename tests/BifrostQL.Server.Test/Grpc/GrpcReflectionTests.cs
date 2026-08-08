@@ -102,6 +102,35 @@ namespace BifrostQL.Server.Test.Grpc
             methods.Should().Contain("Getwidgets");
         }
 
+        /// <summary>
+        /// The existing tests are all admin-vs-member — BOTH authenticated — so they are vacuous
+        /// for the anonymous case: an empty projection is allowed by every policy-less table, so a
+        /// caller with NO credential saw the WHOLE schema. Reflection must fail closed on the same
+        /// UNAUTHENTICATED the data path returns (invariants 4 + 9: one condition, one status
+        /// across every op class on the port).
+        /// </summary>
+        [Theory]
+        [InlineData("list")]
+        [InlineData("symbol")]
+        [InlineData("filename")]
+        public async Task Anonymous_reflection_is_unauthenticated_not_a_free_schema_dump(string shape)
+        {
+            var request = shape switch
+            {
+                "list" => new ServerReflectionRequest { ListServices = "" },
+                "symbol" => new ServerReflectionRequest { FileContainingSymbol = "bifrostql.BifrostQuery" },
+                _ => new ServerReflectionRequest { FileByFilename = "bifrostql.proto" },
+            };
+
+            // No credential at all — `grpcurl -plaintext host:port list` / `describe`.
+            var ex = await Record.ExceptionAsync(() => ReflectAsync(new Metadata(), request));
+
+            ex.Should().BeOfType<RpcException>()
+                .Which.StatusCode.Should().Be(StatusCode.Unauthenticated,
+                    "a credential-less caller must get the SAME status reflection's sibling data ops "
+                    + "return, never the table/column/PK/write-allow-list inventory");
+        }
+
         [Fact]
         public async Task Denied_symbol_lookup_is_not_found_like_an_unknown_symbol()
         {

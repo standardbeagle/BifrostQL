@@ -176,59 +176,11 @@ namespace BifrostQL.Server.Grpc
                     compiled.Offset + compiled.PageSize, DateTimeOffset.UtcNow, compiled.Binding, _pageTokenKey.Secret);
 
         /// <summary>
-        /// The largest <c>authorization</c> credential the adapter will look at. A real bearer/JWT is
-        /// well under this; the cap exists only to reject an abusive/oversized metadata value cleanly
-        /// (a fixed-work fail-closed) before any projection, never an unbounded parse/alloc
-        /// (criterion 5). It sits below Kestrel's own header-size limit so the adapter — not the host
-        /// — returns the clean UNAUTHENTICATED.
-        /// </summary>
-        private const int MaxAuthorizationChars = 8 * 1024;
-
-        /// <summary>
-        /// Extracts the caller's bearer credential and projects it into a Bifrost user context through
-        /// the SHARED <see cref="IBifrostAuthContextFactory"/> — the same seam OData/MCP/S3 use. The
-        /// adapter does NOT decide claims/identity mapping itself; it only (a) enforces a size cap on
-        /// the raw <c>authorization</c> credential and (b) FAILS CLOSED before any intent is built when
-        /// the projection is empty (missing/anonymous), throws (unmapped issuer, subject-less), or the
-        /// credential is abusive. There is NO branch that reaches the executor with a permissive or
-        /// anonymous identity (criterion 1 / invariant 2). Every failure surfaces the SAME sanitized
-        /// UNAUTHENTICATED — the real cause is logged server-side only (invariants 2, 3).
+        /// Resolves the caller through <see cref="GrpcIdentityGate"/> — the ONE identity gate every
+        /// op class on this port shares, reflection included, so no surface can drift onto a weaker
+        /// check (protocol-adapter-security invariants 4, 9, 10).
         /// </summary>
         private IDictionary<string, object?> ResolveIdentity(ServerCallContext context)
-        {
-            var http = context.GetHttpContext();
-
-            var authorizationLength = 0;
-            foreach (var value in http.Request.Headers.Authorization)
-                authorizationLength += value?.Length ?? 0;
-            if (authorizationLength > MaxAuthorizationChars)
-            {
-                _logger.LogWarning(
-                    "gRPC authorization credential exceeded {Cap} chars ({Actual}); failing closed.",
-                    MaxAuthorizationChars, authorizationLength);
-                throw GrpcRequestException.Unauthenticated();
-            }
-
-            IDictionary<string, object?> projected;
-            try
-            {
-                projected = _authFactory.CreateUserContext(http);
-            }
-            catch (Exception ex)
-            {
-                // Unmapped OIDC issuer, subject-less principal, or any projection fault — fail closed.
-                // The detail (issuer name, claim shape) is logged server-side only, never on the wire.
-                _logger.LogWarning(ex, "gRPC identity projection failed; failing closed.");
-                throw GrpcRequestException.Unauthenticated();
-            }
-
-            // An empty context is the shared factory's fail-closed signal for a missing/anonymous
-            // credential. Reject BEFORE building any intent so a credential-less call can never reach
-            // the executor with a permissive identity.
-            if (projected.Count == 0)
-                throw GrpcRequestException.Unauthenticated();
-
-            return projected;
-        }
+            => GrpcIdentityGate.ResolveIdentity(context, _authFactory, _logger);
     }
 }

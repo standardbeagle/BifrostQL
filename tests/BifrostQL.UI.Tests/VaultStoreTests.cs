@@ -51,6 +51,50 @@ public sealed class VaultStoreTests : IDisposable
         loaded.Should().BeEquivalentTo(original);
     }
 
+    /// <summary>
+    /// An entry written before TrustServerCertificate existed must come back with
+    /// certificate validation ON. Reading a missing field as "trusted" would keep every
+    /// already-saved SQL Server entry on the old accept-any-certificate behaviour, which
+    /// is the exact exposure the field was added to close.
+    /// </summary>
+    [Fact]
+    public void LegacyEntry_WithoutTrustFlag_LoadsAsValidating()
+    {
+        const string legacy = """
+            {"name":"old","provider":"sqlserver","host":"db","port":1433,
+             "database":"appdb","username":"sa","password":"pw","tags":[]}
+            """;
+
+        var server = System.Text.Json.JsonSerializer.Deserialize<VaultServer>(
+            legacy,
+            new System.Text.Json.JsonSerializerOptions
+            {
+                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+            })!;
+
+        server.TrustServerCertificate.Should().BeFalse();
+        VaultServerProvider.BuildConnectionString(server)
+            .Should().NotContain("TrustServerCertificate");
+    }
+
+    [Fact]
+    public async Task Save_ThenLoad_PreservesTrustServerCertificateOptIn()
+    {
+        await VaultStore.Save(new VaultData
+        {
+            Servers =
+            {
+                new VaultServer("self-signed", "sqlserver", "internal", 1433,
+                    "appdb", "sa", "pw", null, null, [], TrustServerCertificate: true),
+            },
+        }, VaultPath);
+
+        var loaded = await VaultStore.Load(VaultPath);
+
+        loaded.Servers.Should().ContainSingle()
+            .Which.TrustServerCertificate.Should().BeTrue();
+    }
+
     [Fact]
     public async Task Load_MissingFile_ReturnsEmptyVault()
     {

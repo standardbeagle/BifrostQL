@@ -23,7 +23,12 @@ public record VaultServer(
     string? Password,
     string? SslMode,
     VaultSshConfig? Ssh,
-    List<string> Tags)
+    List<string> Tags,
+    // Opt out of TLS certificate validation for this entry (SQL Server only).
+    // Defaults to false, and an entry persisted before this field existed
+    // deserializes to false, so no stored entry silently keeps the old
+    // accept-any-certificate behaviour.
+    bool TrustServerCertificate = false)
 {
     // Parameterless for JSON deserialization
     public VaultServer() : this("", "", "", 0, null, null, null, null, null, []) { }

@@ -229,10 +229,30 @@ public static class VaultServerProvider
         {
             parts.Add("Integrated Security=True");
         }
-        parts.Add($"Encrypt={MapSqlServerEncrypt(s.SslMode)}");
-        parts.Add("TrustServerCertificate=True");
+        var encrypt = MapSqlServerEncrypt(s.SslMode);
+        parts.Add($"Encrypt={encrypt}");
+        if (TrustsCertificate(s, encrypt))
+            parts.Add("TrustServerCertificate=True");
         return string.Join(';', parts);
     }
+
+    /// <summary>
+    /// Whether this entry's connection string should carry TrustServerCertificate=True.
+    /// Only an explicit per-entry opt-in enables it, and only where it means something:
+    /// with <c>Encrypt=False</c> there is no certificate to trust, and <c>Encrypt=Strict</c>
+    /// exists precisely to validate one, so both ignore the opt-in rather than quietly
+    /// weakening a posture the entry asked for.
+    /// </summary>
+    public static bool TrustsCertificate(VaultServer server, string encrypt) =>
+        server.TrustServerCertificate
+        && !encrypt.Equals("False", StringComparison.OrdinalIgnoreCase)
+        && !encrypt.Equals("Strict", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The SqlClient <c>Encrypt</c> value this entry resolves to. Exposed so callers can
+    /// report the entry's TLS posture without re-deriving the mapping.
+    /// </summary>
+    public static string SqlServerEncryptFor(VaultServer server) => MapSqlServerEncrypt(server.SslMode);
 
     /// <summary>
     /// Map the vault entry's SslMode to a Microsoft.Data.SqlClient `Encrypt` value.
@@ -245,10 +265,13 @@ public static class VaultServerProvider
     /// SqlClient's `Encrypt` is effectively tri-state (False / True(Mandatory) /
     /// Strict) with no true opportunistic mode, so `optional`/`prefer` — where the
     /// user asked for encryption-if-available — map to `Mandatory` (encryption IS
-    /// attempted) rather than silently disabling TLS. TrustServerCertificate=True is
-    /// always emitted alongside, so a self-signed cert does not defeat the attempt.
-    /// This matches the frontend, which treats prefer/optional-ish values as ssl=true.
-    /// Only an explicit opt-out (`disable`/`false`/`off`/`none`) maps to `Encrypt=False`.
+    /// attempted) rather than silently disabling TLS. This matches the frontend, which
+    /// treats prefer/optional-ish values as ssl=true. Only an explicit opt-out
+    /// (`disable`/`false`/`off`/`none`) maps to `Encrypt=False`.
+    ///
+    /// Encryption is only half of it: the server's certificate is VALIDATED unless the
+    /// entry sets <see cref="VaultServer.TrustServerCertificate"/>. A self-signed cert
+    /// therefore fails the connect by design — see <see cref="TrustsCertificate"/>.
     /// </summary>
     private static string MapSqlServerEncrypt(string? sslMode)
     {

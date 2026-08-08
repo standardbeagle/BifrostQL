@@ -15,8 +15,9 @@ public sealed class VaultServerProviderTests
     private static VaultServer Server(
         string provider, string host, int port,
         string? database = null, string? username = null, string? password = null,
-        string? sslMode = null)
-        => new("s", provider, host, port, database, username, password, sslMode, null, []);
+        string? sslMode = null, bool trustServerCertificate = false)
+        => new("s", provider, host, port, database, username, password, sslMode, null, [],
+            trustServerCertificate);
 
     [Fact]
     public void SqlServer_WithCredentials_BuildsUserPasswordConnection()
@@ -52,11 +53,25 @@ public sealed class VaultServerProviderTests
     /// Encrypt=Strict exists precisely to validate the server certificate; SqlClient
     /// treats trusting it as a contradiction. The opt-in must not weaken a strict entry.
     /// </summary>
+    /// <summary>
+    /// The escape hatch for an internal/self-signed certificate the operator already
+    /// trusts. It must be reachable, and it must take effect only when asked for.
+    /// </summary>
+    [Fact]
+    public void SqlServer_OptedIn_TrustsCertificate()
+    {
+        var cs = VaultServerProvider.BuildConnectionString(
+            Server("sqlserver", "db", 1433, "appdb", "sa", "pw", trustServerCertificate: true));
+
+        cs.Should().Contain("Encrypt=Mandatory");
+        cs.Should().Contain("TrustServerCertificate=True");
+    }
+
     [Fact]
     public void SqlServer_StrictEncrypt_NeverTrustsCertificate()
     {
         var cs = VaultServerProvider.BuildConnectionString(
-            Server("sqlserver", "db", 1433, sslMode: "strict"));
+            Server("sqlserver", "db", 1433, sslMode: "strict", trustServerCertificate: true));
 
         cs.Should().Contain("Encrypt=Strict");
         cs.Should().NotContain("TrustServerCertificate");
@@ -70,7 +85,7 @@ public sealed class VaultServerProviderTests
     public void SqlServer_EncryptDisabled_OmitsTrustFlag()
     {
         var cs = VaultServerProvider.BuildConnectionString(
-            Server("sqlserver", "db", 1433, sslMode: "disable"));
+            Server("sqlserver", "db", 1433, sslMode: "disable", trustServerCertificate: true));
 
         cs.Should().Contain("Encrypt=False");
         cs.Should().NotContain("TrustServerCertificate");

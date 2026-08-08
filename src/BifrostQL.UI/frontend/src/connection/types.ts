@@ -148,25 +148,6 @@ export interface ConnectionRequest {
 }
 
 /**
- * Test database templates
- */
-export enum TestDatabaseTemplate {
-  Northwind = 'northwind',
-  AdventureWorksLite = 'adventureworks-lite',
-  SimpleBlog = 'simple-blog'
-}
-
-/**
- * Test database creation progress
- */
-export interface TestDatabaseProgress {
-  stage: string;
-  percent: number;
-  message: string;
-  connectionString?: string;
-}
-
-/**
  * Connection form validation errors (keyed by field name)
  */
 export interface ConnectionFormErrors {
@@ -229,14 +210,4 @@ export interface QuickStartProps {
   onBack: () => void;
   isLaunching: boolean;
   launchProgress: string;
-}
-
-export interface TestDatabaseDialogProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onCreate: (template: TestDatabaseTemplate) => Promise<void>;
-  onConnectAfterCreate?: (connectionString: string) => void;
-  isCreating?: boolean;
-  progress?: TestDatabaseProgress | null;
-  error?: string | null;
 }

@@ -12,7 +12,6 @@ export { ConnectionForm } from './ConnectionForm';
 export { ProviderSelect } from './ProviderSelect';
 export { QuickStart } from './QuickStart';
 export { WelcomePanel } from './WelcomePanel';
-export { TestDatabaseDialog } from './TestDatabaseDialog';
 export * from './types';
 
 /**

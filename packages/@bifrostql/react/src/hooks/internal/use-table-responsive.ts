@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   DEFAULT_BREAKPOINTS,
   getBreakpointFromWidth,
@@ -34,20 +34,57 @@ export function useTableResponsive<T = Record<string, unknown>>({
   rowKey,
   data,
 }: UseTableResponsiveOptions<T>): ResponsiveState<T> {
+  // Memoize on the numeric thresholds, not the prop object's identity: call
+  // sites pass an inline literal, so identity-keyed memoization rebuilt this
+  // object — and everything downstream of it, down to `cardViewData` — on
+  // every single render.
   const resolvedBreakpoints = useMemo(
     () => ({ ...DEFAULT_BREAKPOINTS, ...breakpointsProp }),
-    [breakpointsProp],
+    [
+      breakpointsProp?.xs,
+      breakpointsProp?.sm,
+      breakpointsProp?.md,
+      breakpointsProp?.lg,
+      breakpointsProp?.xl,
+    ],
   );
 
   const [windowWidth, setWindowWidth] = useState<number>(() =>
     canAccessWindow() ? window.innerWidth : 1024,
   );
 
+  const breakpointsRef = useRef(resolvedBreakpoints);
+  breakpointsRef.current = resolvedBreakpoints;
+
   useEffect(() => {
     if (!canAccessWindow()) return;
-    const handleResize = () => setWindowWidth(window.innerWidth);
+
+    let frame: number | null = null;
+
+    const handleResize = () => {
+      // A drag fires resize dozens of times per frame. Coalesce to one update
+      // per animation frame, and then only when the width actually crosses
+      // into a different breakpoint bucket — every pixel of an in-bucket
+      // resize would otherwise rebuild the O(rows x cols) card projection.
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        const width = window.innerWidth;
+        setWindowWidth((previous) => {
+          const breakpoints = breakpointsRef.current;
+          return getBreakpointFromWidth(previous, breakpoints) ===
+            getBreakpointFromWidth(width, breakpoints)
+            ? previous
+            : width;
+        });
+      });
+    };
+
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    return () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      window.removeEventListener('resize', handleResize);
+    };
   }, []);
 
   const currentBreakpoint = useMemo(

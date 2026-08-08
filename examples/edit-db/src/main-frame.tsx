@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { TableList } from './tableList';
+import { TableList } from './table-list';
 import { DataPanel } from './data-panel';
 import { Route, Routes, usePath } from './hooks/usePath';
 import { Header } from './header';

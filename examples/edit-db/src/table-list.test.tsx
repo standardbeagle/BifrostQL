@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { TableList } from './tableList';
+import { TableList } from './table-list';
 import { abbreviateNumber } from './hooks/useTableStats';
 
 const pathMock = vi.hoisted(() => ({ current: '/' }));

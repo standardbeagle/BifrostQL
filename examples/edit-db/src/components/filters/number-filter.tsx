@@ -11,7 +11,7 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import type { ColumnFilterValue } from '@/hooks/useDataTable';
-import { useDebouncedCommit } from './use-debounced-commit';
+import { useDebouncedCommit } from '../../hooks/useDebouncedCommit';
 
 const operatorLabels: Record<string, string> = {
     _eq: 'Equals',

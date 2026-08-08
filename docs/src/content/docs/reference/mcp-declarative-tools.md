@@ -154,13 +154,34 @@ any include is detail-gated, either declare a `detail` enum parameter
 ### Policy
 
 ```json
-"policy": { "hiddenFieldBehavior": "omit", "allowedRoles": ["support"] }
+"policy": { "allowedRoles": ["support"] }
 ```
 
 | Key | Notes |
 | --- | --- |
-| `hiddenFieldBehavior` | How a policy-hidden field is represented (default `omit`). |
 | `allowedRoles` | Role names permitted to see and call the tool. Role gating is fail-closed and shared with the same identity projection the data path uses. |
+
+`allowedRoles` is enforced on **both** `tools/list` and `tools/call` by the same
+gate the server-side `RoleToolAllowList` uses, so the two always agree: an
+identity holding none of the listed roles does not see the tool **and** is
+refused if it invokes the name directly — listing is never an oracle for a tool
+a call would refuse. Roles come only from the shared
+`IBifrostAuthContextFactory` projection; an identity whose roles cannot be
+resolved (for example a token from an unmapped OIDC issuer) has **no** roles, so
+every role-gated tool stays hidden. An empty `allowedRoles` array gates the tool
+to nobody.
+
+:::caution[`hiddenFieldBehavior` is not a supported key]
+Earlier drafts of this page documented a `hiddenFieldBehavior` key. Nothing ever
+enforced it, so declaring it now **fails the document load** with a message
+saying so, rather than being accepted and silently ignored.
+
+How a policy-hidden field is treated is not the tool document's decision: it
+belongs to the server's transformer pipeline, and the pipeline **rejects the
+read** rather than omitting the field — selecting a column the caller's policy
+denies fails the call with an authorization error. Declare only the fields the
+tool's audience is permitted to read.
+:::
 
 ## Mutation tools (write)
 
@@ -219,6 +240,8 @@ it logs a startup warning.
   only predicate an author can express is the structured filter, whose columns and
   operators are validated and whose values always bind as parameters.
 - **Writes are off by default and confirmed.** See [Mutation tools](#mutation-tools-write).
+- **Role gating is enforced, not advisory.** `policy.allowedRoles` filters
+  `tools/list` and refuses `tools/call` through one gate. See [Policy](#policy).
 
 ## Tool budget
 

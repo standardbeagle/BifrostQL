@@ -8,7 +8,7 @@ import { useFetcher } from "../common/fetcher";
 import { DataTableColumnHeader } from "../components/data-table-column-header";
 import { FkCellPopover } from "../components/fk-cell-popover";
 import { PanelRight, List } from "lucide-react";
-import type { ColumnPanel } from "../data-panel";
+import type { DrillFrame } from "../lib/drill-stack";
 import { Button } from "../components/ui/button";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "../components/ui/hover-card";
 import { ContentViewer } from "../components/content-viewer";
@@ -125,7 +125,7 @@ function buildJoinColumn(
     table: Table,
     schema: SchemaContextValue,
     operators: string[],
-    onOpenColumn?: (panel: ColumnPanel) => void,
+    onOpenColumn?: (panel: DrillFrame) => void,
 ): ColumnDef<RowData, unknown> {
     const columnName = anchorJoin.destinationTable;
     const joinSchema = schema.findTable(anchorJoin.destinationTable);
@@ -296,7 +296,7 @@ function buildScalarColumn(
     };
 }
 
-const getTableColumns = (table: Table, schema: SchemaContextValue, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: ColumnPanel) => void): ColumnDef<RowData, unknown>[] => {
+const getTableColumns = (table: Table, schema: SchemaContextValue, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: DrillFrame) => void): ColumnDef<RowData, unknown>[] => {
     if (!table || !schema) return [];
 
     const dataColumns: ColumnDef<RowData, unknown>[] = table.columns
@@ -509,7 +509,7 @@ interface UseDataTableResult {
  * @param onOpenColumn - Callback when opening a side panel column
  * @returns Data table state and control functions
  */
-export function useDataTable(table: Table | null, id?: string, filterTable?: string, filterColumn?: string, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: ColumnPanel) => void): UseDataTableResult {
+export function useDataTable(table: Table | null, id?: string, filterTable?: string, filterColumn?: string, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: DrillFrame) => void): UseDataTableResult {
     const { search } = useSearchParams();
     const navigate = useNavigate();
     const filterString = search.get('filter') ?? '';

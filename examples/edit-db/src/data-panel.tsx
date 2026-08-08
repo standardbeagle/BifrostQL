@@ -17,18 +17,6 @@ import {
 } from './lib/drill-stack';
 import { detailTabs } from './lib/m2m';
 
-/**
- * A side-panel drill frame. `filterTable` + `filterId` + `filterColumn`
- * describe the FK scoping applied to `tableName`'s rows — they're optional so
- * the same shape can also represent a simple "open table X" panel.
- */
-export interface ColumnPanel {
-    tableName: string;
-    filterTable?: string;
-    filterId?: string;
-    filterColumn?: string;
-}
-
 function getTable(data: Table[], tableName: string): Table | undefined {
     return data.find((x) => x.name === tableName);
 }
@@ -72,7 +60,7 @@ export function DataPanel() {
     const table = useMemo(() => data ? getTable(data, tableName) : undefined, [data, tableName]);
     const hasMultiJoins = table ? detailTabs(table).length > 0 : false;
 
-    const handleOpenColumn = useCallback((panel: ColumnPanel) => {
+    const handleOpenColumn = useCallback((panel: DrillFrame) => {
         setOpenColumns((prev) => pushDrillFrame(prev, panel));
     }, []);
 

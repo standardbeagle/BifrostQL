@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link2, Plus, Unlink, Search, Loader2 } from 'lucide-react';
 import type { ManyToManyJoin, Table } from '../types/schema';
-import type { ColumnPanel } from '../data-panel';
+import type { DrillFrame } from '../lib/drill-stack';
 import { useSchema } from '../hooks/useSchema';
 import { useFetcher } from '../common/fetcher';
 import { useTableMutation } from '../hooks/useTableMutation';
@@ -29,7 +29,7 @@ interface M2mPanelProps {
     parentTable: Table;
     m2m: ManyToManyJoin;
     parentRowId: string;
-    onOpenColumn?: (panel: ColumnPanel) => void;
+    onOpenColumn?: (panel: DrillFrame) => void;
 }
 
 type JunctionRow = Record<string, unknown>;

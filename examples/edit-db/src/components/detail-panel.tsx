@@ -6,7 +6,7 @@ import { M2mPanel } from './m2m-panel';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { ChevronDown, ChevronUp, PanelRight, X } from 'lucide-react';
-import type { ColumnPanel } from '../data-panel';
+import type { DrillFrame } from '../lib/drill-stack';
 import { isComposite } from '../lib/fk';
 import { detailTabs, type DetailTab } from '../lib/m2m';
 
@@ -14,7 +14,7 @@ interface DetailPanelProps {
     parentTable: Table;
     selectedRowId: string;
     onClose?: () => void;
-    onOpenColumn?: (panel: ColumnPanel) => void;
+    onOpenColumn?: (panel: DrillFrame) => void;
 }
 
 /** A child collection tab's destination table; a m2m tab's target table. */

@@ -11,7 +11,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useQuery } from '@tanstack/react-query';
 import { isJsonColumn, isLargeValueColumn } from './lib/content-detect';
 import { Table, Column } from './types/schema';
-import { ColumnPanel } from './data-panel';
+import type { DrillFrame } from './lib/drill-stack';
 import { encodePkRoute, pkFilterFor, buildPkEqFilter, type PkFilter } from './lib/row-id';
 import { buildSingleRowQuery } from './lib/query-builder';
 import { useFetcher } from './common/fetcher';
@@ -23,7 +23,7 @@ interface TableViewParams {
     filterColumn?: string;
     selectedRowId?: string | null;
     onRowSelect?: (rowId: string | null) => void;
-    onOpenColumn?: (panel: ColumnPanel) => void;
+    onOpenColumn?: (panel: DrillFrame) => void;
     /** Current stacking (parent/child drill-down) mode state. */
     stackingEnabled?: boolean;
     /** Toggle stacking mode. When supplied, the grid renders the mode toggle. */

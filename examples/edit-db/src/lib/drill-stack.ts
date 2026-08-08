@@ -9,12 +9,18 @@
  * Kept dependency-free so it can be unit-tested without React or the DOM.
  */
 
-import type { ColumnPanel } from '../data-panel';
-
 /**
  * A single frame in the drill navigation chain, visible as one side column.
+ * `filterTable` + `filterId` + `filterColumn` describe the FK scoping applied
+ * to `tableName`'s rows — they're optional so the same shape can also
+ * represent a simple "open table X" panel.
  */
-export type DrillFrame = ColumnPanel;
+export interface DrillFrame {
+    tableName: string;
+    filterTable?: string;
+    filterId?: string;
+    filterColumn?: string;
+}
 
 /**
  * Is `frame` the same drill target as `other` (same table + same filter)?

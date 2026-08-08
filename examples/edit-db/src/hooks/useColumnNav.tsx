@@ -1,8 +1,8 @@
 import { createContext, useContext, useCallback, useMemo, useState, ReactNode } from 'react';
-import type { ColumnPanel } from '../data-panel';
+import type { DrillFrame } from '../lib/drill-stack';
 
 interface ColumnNavEntry {
-    panel: ColumnPanel;
+    panel: DrillFrame;
     element: HTMLElement | null;
 }
 
@@ -26,7 +26,7 @@ const ColumnNavContext = createContext<ColumnNavState>(defaultState);
 
 interface ColumnNavRegistration {
     mainTable: string | null;
-    columns: ColumnPanel[];
+    columns: DrillFrame[];
     columnRefs: Map<number, HTMLElement | null>;
     onClose: (index: number) => void;
 }

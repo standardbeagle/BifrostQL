@@ -8,7 +8,7 @@ export type {
   SavedViewMetadata,
   RelationshipMetadata,
   RelationshipKind,
-} from './metadata/types';
+} from './metadata/app-metadata-types';
 
 export { SessionProvider } from './auth/session-provider';
 export type { SessionProviderProps } from './auth/session-provider';

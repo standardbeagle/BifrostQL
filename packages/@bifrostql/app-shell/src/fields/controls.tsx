@@ -5,7 +5,7 @@ import type { ChangeEvent } from 'react';
  *
  * Each control is a controlled component over a single field value. The
  * dispatcher in `field-control.tsx` selects which control to render from a
- * field's {@link import('../metadata/types').FieldMetadata}. Controls are kept
+ * field's {@link import('../metadata/app-metadata-types').FieldMetadata}. Controls are kept
  * deliberately presentation-light (no design-system dependency) so consuming
  * apps can restyle them; the heavier admin UI lives in `examples/edit-db`,
  * which remains the reference/admin tool.

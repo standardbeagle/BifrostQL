@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { BifrostProvider } from '@bifrostql/react';
 import { EntityDetail, buildDetailFields } from './entity-detail';
-import type { AppMetadata, EntityMetadata } from '../metadata/types';
+import type { AppMetadata, EntityMetadata } from '../metadata/app-metadata-types';
 
 const ENDPOINT = 'http://localhost:5000/graphql';
 

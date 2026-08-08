@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { BifrostTable } from '@bifrostql/react';
 import type { ColumnConfig, RowAction } from '@bifrostql/react';
 import { useAppMetadata } from '../metadata/use-app-metadata';
-import type { EntityMetadata, FieldMetadata } from '../metadata/types';
+import type { EntityMetadata, FieldMetadata } from '../metadata/app-metadata-types';
 
 /** Props for {@link EntityList}. */
 export interface EntityListProps {

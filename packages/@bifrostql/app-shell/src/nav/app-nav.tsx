@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { useAppMetadata } from '../metadata/use-app-metadata';
 import { useSession } from '../auth/use-session';
-import type { EntityMetadata } from '../metadata/types';
+import type { EntityMetadata } from '../metadata/app-metadata-types';
 
 /**
  * A single resolved navigation entry derived from an app-metadata entity.

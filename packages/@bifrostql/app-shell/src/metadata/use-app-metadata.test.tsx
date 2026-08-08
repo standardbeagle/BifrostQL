@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { BifrostProvider } from '@bifrostql/react';
 import { useAppMetadata } from './use-app-metadata';
-import type { AppMetadata } from './types';
+import type { AppMetadata } from './app-metadata-types';
 
 function createFetchMock(response: unknown, ok = true, status = 200) {
   return vi.fn().mockResolvedValue({

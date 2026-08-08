@@ -1,4 +1,4 @@
-import type { FieldMetadata } from '../metadata/types';
+import type { FieldMetadata } from '../metadata/app-metadata-types';
 import {
   ScalarControl,
   DateControl,

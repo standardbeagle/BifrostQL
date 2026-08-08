@@ -8,7 +8,7 @@ import {
   buildColumns,
   entityKeyToQueryName,
 } from './entity-list';
-import type { AppMetadata, EntityMetadata } from '../metadata/types';
+import type { AppMetadata, EntityMetadata } from '../metadata/app-metadata-types';
 
 const ENDPOINT = 'http://localhost:5000/graphql';
 

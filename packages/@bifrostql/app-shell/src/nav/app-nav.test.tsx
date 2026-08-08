@@ -6,7 +6,7 @@ import { BifrostProvider } from '@bifrostql/react';
 import { SessionProvider } from '../auth/session-provider';
 import { AppNav } from './app-nav';
 import type { NavItem } from './app-nav';
-import type { AppMetadata } from '../metadata/types';
+import type { AppMetadata } from '../metadata/app-metadata-types';
 import type { AppIdentity } from '../auth/session-context';
 
 const ENDPOINT = 'http://localhost:5000/graphql';

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { FieldControl, resolveFieldKind } from './field-control';
-import type { FieldMetadata } from '../metadata/types';
+import type { FieldMetadata } from '../metadata/app-metadata-types';
 
 describe('resolveFieldKind', () => {
   it('maps known widget hints to their field kinds', () => {

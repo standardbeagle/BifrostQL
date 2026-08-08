@@ -1,7 +1,7 @@
 import { useContext } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { BifrostContext } from '@bifrostql/react';
-import type { AppMetadata } from './types';
+import type { AppMetadata } from './app-metadata-types';
 
 /** The conventional path of the app-metadata overlay endpoint. */
 const APP_METADATA_PATH = '/_app-metadata';

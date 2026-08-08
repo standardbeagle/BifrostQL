@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { useAppMetadata } from '../metadata/use-app-metadata';
 import { FieldControl } from '../fields/field-control';
-import type { EntityMetadata, FieldMetadata } from '../metadata/types';
+import type { EntityMetadata, FieldMetadata } from '../metadata/app-metadata-types';
 
 /** The editing mode of an {@link EntityForm}. */
 export type EntityFormMode = 'create' | 'edit';

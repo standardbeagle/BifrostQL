@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { useAppMetadata } from '../metadata/use-app-metadata';
-import type { EntityMetadata, FieldMetadata } from '../metadata/types';
+import type { EntityMetadata, FieldMetadata } from '../metadata/app-metadata-types';
 
 /** Props for {@link EntityDetail}. */
 export interface EntityDetailProps {

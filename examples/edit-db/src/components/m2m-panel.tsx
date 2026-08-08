@@ -8,9 +8,8 @@ import { useFetcher } from '../common/fetcher';
 import { useTableMutation } from '../hooks/useTableMutation';
 import { useDeleteMutation } from '../hooks/useDeleteMutation';
 import { useToast } from '../hooks/useToast';
-import { m2mRowsQuery, payloadColumns, targetDisplay, attachJunctionDetail, m2mTargetPickerPlan } from '../lib/m2m';
-import { pkFilterFor } from '../lib/row-id';
-import { getPkTypes } from '../lib/query-builder';
+import { m2mRowsQuery, payloadColumns, targetDisplay, attachJunctionDetail, m2mTargetPickerPlan, m2mTargetIdentityColumns, type M2mTargetPickerPlan } from '../lib/m2m';
+import { pkFilterFor, encodeRouteParts } from '../lib/row-id';
 import { matchesLabel } from '../lib/label-match';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -136,15 +135,17 @@ function M2mPanelBody({ m2m, parentRowId, onOpenColumn, junction, target }: M2mP
     // picker reads from its target rows. Bounded by M2M_ROW_LIMIT: links beyond
     // the fetched window can't be detected, which at worst re-allows the
     // pre-guard behavior for extreme link counts.
-    // Key on the same column the picker uses as its row id (getPkTypes → first
-    // PK, falling back to the junction's target column), so the linked-set
-    // membership test compares like-for-like with the picked targetId.
-    const targetKeyColumn = getPkTypes(target)[0]?.name ?? m2m.targetColumnNames[0];
+    // Both sides of the duplicate check derive their key from the SAME helper, so
+    // they cannot drift. Keying on the first PK column alone collapsed two distinct
+    // composite-PK rows that share it — one was wrongly marked "Already linked" and
+    // its button disabled, making a real target unpickable.
+    const identityColumns = m2mTargetIdentityColumns(target, m2m);
     const linkedTargetIds = new Set<string>();
     for (const row of rows) {
         const nested = row[m2m.junctionTargetField] as Record<string, unknown> | undefined;
-        const key = nested?.[targetKeyColumn];
-        if (key != null) linkedTargetIds.add(String(key));
+        if (!nested) continue;
+        if (identityColumns.some((c) => nested[c] == null)) continue;
+        linkedTargetIds.add(encodeRouteParts(identityColumns.map((c) => nested[c])));
     }
 
     return (
@@ -307,14 +308,15 @@ function TargetPicker({ target, junction, m2m, parentRowId, linkedIds, onClose, 
     const term = debounced.trim();
     // Contained like M2mPanel's rows plan: a schema-drift throw degrades the
     // picker to an inline error instead of hitting the section error boundary.
-    let pickerPlan: { query: string; idColumn: string; serverSearch: boolean } | null = null;
+    let pickerPlan: M2mTargetPickerPlan | null = null;
     let planError: Error | null = null;
     try {
         pickerPlan = m2mTargetPickerPlan(target, m2m, term);
     } catch (e) {
         planError = e as Error;
     }
-    const { query, idColumn, serverSearch } = pickerPlan ?? { query: '', idColumn: '', serverSearch: false };
+    const { query, identityColumns, linkColumn, serverSearch } =
+        pickerPlan ?? { query: '', identityColumns: [] as string[], linkColumn: '', serverSearch: false };
     const pickerLimit = serverSearch ? M2M_PICKER_SERVER_LIMIT : M2M_PICKER_CLIENT_LIMIT;
 
     const { data, isLoading } = useQuery({
@@ -332,7 +334,7 @@ function TargetPicker({ target, junction, m2m, parentRowId, linkedIds, onClose, 
     const allRows = data?.[target.name]?.data ?? [];
     const rows = serverSearch || !term
         ? allRows
-        : allRows.filter((r) => matchesLabel(r, idColumn, term));
+        : allRows.filter((r) => matchesLabel(r, 'label', term));
     // Truncation is about the fetched window (allRows), not the client-filtered view.
     const windowFull = allRows.length >= pickerLimit;
 
@@ -344,12 +346,12 @@ function TargetPicker({ target, junction, m2m, parentRowId, linkedIds, onClose, 
     // keep its error in its own state, mirroring the picker's planError handling.
     const [attachPlanError, setAttachPlanError] = useState<Error | null>(null);
 
-    const handlePick = useCallback(async (targetId: string) => {
+    const handlePick = useCallback(async (rowKey: string, linkValue: string) => {
         // Belt-and-braces with the disabled button: never insert a duplicate link.
-        if (linkedIds.has(targetId)) return;
+        if (linkedIds.has(rowKey)) return;
         let detail: Record<string, unknown>;
         try {
-            detail = attachJunctionDetail(m2m, parentRowId, targetId);
+            detail = attachJunctionDetail(m2m, parentRowId, linkValue);
         } catch (e) {
             setAttachPlanError(e as Error);
             return;
@@ -403,16 +405,20 @@ function TargetPicker({ target, junction, m2m, parentRowId, linkedIds, onClose, 
                         <div className="p-3 text-sm text-muted-foreground">No matches.</div>
                     )}
                     {rows.map((r, i) => {
-                        const id = String(r[idColumn] ?? '');
-                        const label = r.label != null ? String(r.label) : id;
-                        const alreadyLinked = linkedIds.has(id);
+                        // Identity (is this the same row?) and the link value (what
+                        // gets written into the junction) are different things on a
+                        // composite-PK target — keep them apart.
+                        const rowKey = encodeRouteParts(identityColumns.map((c) => r[c]));
+                        const linkValue = String(r[linkColumn] ?? '');
+                        const label = r.label != null ? String(r.label) : rowKey;
+                        const alreadyLinked = linkedIds.has(rowKey);
                         return (
                             <button
                                 key={i}
                                 type="button"
                                 className="flex w-full items-center justify-between gap-2 text-left px-3 py-1.5 text-sm hover:bg-muted/50 disabled:opacity-50 disabled:hover:bg-transparent"
                                 disabled={attach.isPending || alreadyLinked}
-                                onClick={() => handlePick(id)}
+                                onClick={() => handlePick(rowKey, linkValue)}
                             >
                                 <span className="truncate">{label}</span>
                                 {alreadyLinked && (

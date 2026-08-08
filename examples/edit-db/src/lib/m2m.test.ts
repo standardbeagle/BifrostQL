@@ -5,6 +5,7 @@ import {
     payloadColumns,
     m2mRowsQuery,
     m2mTargetPickerPlan,
+    m2mTargetIdentityColumns,
     attachJunctionDetail,
     targetDisplay,
 } from './m2m';
@@ -252,9 +253,10 @@ describe('m2mTargetPickerPlan', () => {
             primaryKeys: ['id'],
             columns: [col('id', { paramType: 'Int', isPrimaryKey: true }), col('title')],
         });
-        const { query, idColumn } = m2mTargetPickerPlan(target, m2m);
+        const { query, identityColumns, linkColumn } = m2mTargetPickerPlan(target, m2m);
 
-        expect(idColumn).toBe('id');
+        expect(identityColumns).toEqual(['id']);
+        expect(linkColumn).toBe('id');
         expect(query).toContain('sort: [title_asc]');
         expect(query).not.toContain('sort: ["title_asc"]');
         expect(query).toContain('data { id label: title }');
@@ -269,7 +271,9 @@ describe('m2mTargetPickerPlan', () => {
         const { query } = m2mTargetPickerPlan(target, m2m);
 
         expect(query).toContain('sort: [id_asc]');
-        expect(query).toContain('data { id }');
+        // `label` is always aliased, even onto the identity column, so callers read
+        // one predictable key instead of re-deriving the label-column fallback.
+        expect(query).toContain('data { id label: id }');
     });
 
     it('emits a server-side _contains filter for a String label column', () => {
@@ -373,5 +377,59 @@ describe('attachJunctionDetail', () => {
             junctionSourceColumnNames: ['student_id', 'term_id'],
         };
         expect(() => attachJunctionDetail(composite, '1::2', '9')).toThrow(/single-column/);
+    });
+});
+
+describe('m2mTargetIdentityColumns', () => {
+    const join: ManyToManyJoin = {
+        name: 'enrollments', targetTable: 'courses', junctionTable: 'enrollments',
+        junctionTargetField: 'courses', sourceColumnNames: ['id'],
+        junctionSourceColumnNames: ['student_id'], junctionTargetColumnNames: ['course_id'],
+        targetColumnNames: ['code'], hasPayload: false,
+    };
+
+    it('returns every primary-key column, not just the first', () => {
+        // Keying on the first PK column alone collapses two distinct rows sharing
+        // first key column: one is wrongly reported "Already linked" and its
+        // button disabled, so a real target becomes unpickable.
+        const target = table('courses', {
+            primaryKeys: ['dept', 'code'],
+            columns: [col('dept'), col('code')],
+        });
+        expect(m2mTargetIdentityColumns(target, join)).toEqual(['dept', 'code']);
+    });
+
+    it('falls back to the junction target columns when the target declares no PK', () => {
+        const target = table('courses', { primaryKeys: [], columns: [col('code')] });
+        expect(m2mTargetIdentityColumns(target, join)).toEqual(['code']);
+    });
+});
+
+describe('m2mTargetPickerPlan — composite-PK targets', () => {
+    const join: ManyToManyJoin = {
+        name: 'enrollments', targetTable: 'courses', junctionTable: 'enrollments',
+        junctionTargetField: 'courses', sourceColumnNames: ['id'],
+        junctionSourceColumnNames: ['student_id'], junctionTargetColumnNames: ['course_code'],
+        targetColumnNames: ['code'], hasPayload: false,
+    };
+    const target = table('courses', {
+        labelColumn: 'title',
+        primaryKeys: ['dept', 'code'],
+        columns: [col('dept'), col('code'), col('title')],
+    });
+
+    it('selects every identity column so picker rows can be told apart', () => {
+        const plan = m2mTargetPickerPlan(target, join);
+        expect(plan.identityColumns).toEqual(['dept', 'code']);
+        expect(plan.query).toContain('dept');
+        expect(plan.query).toContain('code');
+        expect(plan.query).toContain('label: title');
+    });
+
+    it('reports the junction link column separately from row identity', () => {
+        // Identity answers "is this the same row?"; the link column supplies the
+        // value written into the junction. Conflating them is what made a
+        // composite-PK target insert the wrong column's value.
+        expect(m2mTargetPickerPlan(target, join).linkColumn).toBe('code');
     });
 });

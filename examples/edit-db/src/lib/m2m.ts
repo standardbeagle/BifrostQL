@@ -131,10 +131,39 @@ export function m2mRowsQuery(
 
 export interface M2mTargetPickerPlan {
     query: string;
-    idColumn: string;
+    /**
+     * Columns that together identify a target row — every PK column in declaration
+     * order. Both the picker and the already-linked set must key on ALL of them
+     * (via {@link m2mTargetIdentityColumns}) or two rows sharing their first key
+     * column collapse into one.
+     */
+    identityColumns: string[];
+    /**
+     * The target column the junction FK references — the value written on attach.
+     * Deliberately separate from identity: on a composite-PK target, or a junction
+     * that points at a unique non-PK column, the two are different columns.
+     */
+    linkColumn: string;
     /** True when the label column is String-typed and thus supports the
      *  server-side `_contains` search; callers fall back to client filtering. */
     serverSearch: boolean;
+}
+
+/**
+ * The columns that identify a target row, in declaration order.
+ *
+ * Single source of truth for BOTH sides of the picker's duplicate check — the
+ * fetched target rows and the already-linked rows read off the junction. Keying
+ * the two independently (or on the first PK column alone) let two distinct composite-PK
+ * rows that share their first key column collapse: one was wrongly marked
+ * "Already linked" and its button disabled, making a real target unpickable.
+ *
+ * Falls back to the junction's target columns when the target declares no primary
+ * key, which is the only identity available in that case.
+ */
+export function m2mTargetIdentityColumns(target: Table, m2m: ManyToManyJoin): string[] {
+    const pks = getPkTypes(target).map((t) => t.name);
+    return pks.length > 0 ? pks : [...m2m.targetColumnNames];
 }
 
 /**
@@ -147,11 +176,17 @@ export interface M2mTargetPickerPlan {
  */
 export function m2mTargetPickerPlan(target: Table, m2m: ManyToManyJoin, search?: string): M2mTargetPickerPlan {
     assertGraphQlName(target.name, 'many-to-many target table name');
-    const idColumn = getPkTypes(target)[0]?.name ?? m2m.targetColumnNames[0];
-    const labelColumn = target.labelColumn || idColumn;
-    assertGraphQlName(idColumn, 'many-to-many target id column');
+    const identityColumns = m2mTargetIdentityColumns(target, m2m);
+    const linkColumn = m2m.targetColumnNames[0];
+    const labelColumn = target.labelColumn || identityColumns[0];
+    for (const c of identityColumns) assertGraphQlName(c, 'many-to-many target identity column');
+    assertGraphQlName(linkColumn, 'many-to-many junction target column');
     assertGraphQlName(labelColumn, 'many-to-many target label column');
-    const fields = labelColumn !== idColumn ? `${idColumn} label: ${labelColumn}` : idColumn;
+    // Select every identity column plus the link column. `label` is ALWAYS aliased,
+    // even when its column is already selected, so the caller reads one predictable
+    // key instead of re-deriving the label column and its de-duplication rule.
+    const selected = [...new Set([...identityColumns, linkColumn])];
+    const fields = `${selected.join(' ')} label: ${labelColumn}`;
     // Fail fast on schema drift: a label column that isn't in the target's column
     // list means the relationship metadata and schema are out of sync.
     const labelColDef = target.columns.find((c) => c.name === labelColumn);
@@ -170,7 +205,7 @@ export function m2mTargetPickerPlan(target: Table, m2m: ManyToManyJoin, search?:
     const filterText = hasSearch ? `filter: {${labelColumn}: {_contains: $search}} ` : '';
     const query = `query PickTarget(${paramDecls}) { ${target.name}(${filterText}limit: $limit sort: [${labelColumn}_asc]) { data { ${fields} } } }`;
 
-    return { query, idColumn, serverSearch };
+    return { query, identityColumns, linkColumn, serverSearch };
 }
 
 /**

@@ -7,6 +7,7 @@ import {
   DataSize,
   saveRecentConnections,
   loadRecentConnections,
+  MAX_RECENT_CONNECTIONS,
   fetchVaultServers,
   connectVaultServer,
   type ConnectionRequest,
@@ -304,9 +305,15 @@ export function useConnectionFlows({ restored, enterEditor }: UseConnectionFlows
     const activateSqliteConnection = (info: ConnectionInfo) => {
       setConnectionInfo(info);
       saveSession(info);
-      const updated = [...recentConnections.filter((c) => c.connectionString !== info.connectionString), info];
-      setRecentConnections(updated.slice(0, 5));
-      saveRecentConnections(updated.slice(0, 5));
+      // Prepend: the just-created database is the most recent one, and
+      // appending put it past the cap so the trim discarded exactly the entry
+      // the user had asked for whenever the list was already full.
+      const updated = [
+        info,
+        ...recentConnections.filter((c) => c.connectionString !== info.connectionString),
+      ].slice(0, MAX_RECENT_CONNECTIONS);
+      setRecentConnections(updated);
+      saveRecentConnections(updated);
 
       enterEditor();
       setConnectionState('connected');

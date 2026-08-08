@@ -9,7 +9,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { useConnectionFlows } from './useConnectionFlows';
-import { loadRecentConnections, saveRecentConnections } from '../connection/recent-connections';
+import {
+  loadRecentConnections,
+  saveRecentConnections,
+  MAX_RECENT_CONNECTIONS,
+} from '../connection/recent-connections';
 import type { ConnectionInfo } from '../connection/types';
 
 const conn = (id: string, name: string): ConnectionInfo => ({
@@ -64,4 +68,42 @@ describe('useConnectionFlows recent connections', () => {
     expect(loadRecentConnections()).toEqual([]);
   });
 
+  it('keeps a newly launched quickstart when the recents list is already full', async () => {
+    saveRecentConnections(
+      Array.from({ length: MAX_RECENT_CONNECTIONS }, (_, i) => conn(`old-${i}`, `old-${i}`)),
+    );
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        if (String(input).includes('/api/database/create-quickstart')) {
+          return Promise.resolve({
+            ok: true,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            json: () => Promise.resolve({ connectionString: 'Data Source=/tmp/new.db' }),
+          } as unknown as Response);
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ servers: [] }),
+        } as Response);
+      }),
+    );
+
+    const { result } = mount();
+    await waitFor(() =>
+      expect(result.current.recentConnections).toHaveLength(MAX_RECENT_CONNECTIONS),
+    );
+
+    await act(async () => {
+      await result.current.handleQuickStartLaunch('blog', 'sample');
+    });
+
+    // The just-created database must survive: it used to be appended past the
+    // cap and then sliced straight back off, so the one connection the user
+    // actually asked for was the one that never made it into the list.
+    expect(result.current.recentConnections).toHaveLength(MAX_RECENT_CONNECTIONS);
+    expect(result.current.recentConnections[0].connectionString).toBe('Data Source=/tmp/new.db');
+    expect(loadRecentConnections()[0].connectionString).toBe('Data Source=/tmp/new.db');
+  });
 });

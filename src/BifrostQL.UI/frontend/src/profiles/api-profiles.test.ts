@@ -30,6 +30,54 @@ function memStorage(): Storage {
   } as Storage;
 }
 
+/**
+ * A profiles endpoint that is DOWN and a deployment that genuinely exposes
+ * only the raw database used to be indistinguishable: both produced the canned
+ * DEFAULT_PROFILES, so the picker greyed itself out with "this connection
+ * exposes a single profile" and the user had no way to tell that the backend
+ * had simply failed to answer. fetchProfiles now reports which of the two it
+ * is, while still handing back a usable list either way.
+ */
+describe('fetchProfiles availability reporting', () => {
+  it('reports a successful fetch as available', async () => {
+    const payload: ApiProfile[] = [
+      { id: 'default', label: 'Database (raw)', serverProfile: null },
+      { id: 'sales', label: 'Sales (curated)', serverProfile: 'sales' },
+    ];
+    g.fetch.mockResolvedValue({ ok: true, json: async () => payload });
+
+    const result = await fetchProfiles();
+    expect(result.status).toBe('ok');
+    expect(result.profiles).toHaveLength(2);
+  });
+
+  it('reports a non-ok response as unavailable, with a usable fallback list', async () => {
+    g.fetch.mockResolvedValue({ ok: false, status: 503, json: async () => null });
+
+    const result = await fetchProfiles();
+    expect(result.status).toBe('unavailable');
+    expect(result.profiles).toEqual(DEFAULT_PROFILES);
+    if (result.status === 'unavailable') expect(result.reason).toContain('503');
+  });
+
+  it('reports a network failure as unavailable', async () => {
+    g.fetch.mockRejectedValue(new Error('Failed to fetch'));
+
+    const result = await fetchProfiles();
+    expect(result.status).toBe('unavailable');
+    expect(result.profiles).toEqual(DEFAULT_PROFILES);
+    if (result.status === 'unavailable') expect(result.reason).toContain('Failed to fetch');
+  });
+
+  it('reports an empty or unusable payload as unavailable', async () => {
+    g.fetch.mockResolvedValue({ ok: true, json: async () => [] });
+
+    const result = await fetchProfiles();
+    expect(result.status).toBe('unavailable');
+    expect(result.profiles).toEqual(DEFAULT_PROFILES);
+  });
+});
+
 describe('fetchProfiles', () => {
   it('maps a server payload to the ApiProfile shape', async () => {
     const payload: ApiProfile[] = [
@@ -38,18 +86,18 @@ describe('fetchProfiles', () => {
     ];
     g.fetch.mockResolvedValue({ ok: true, json: async () => payload });
 
-    await expect(fetchProfiles()).resolves.toEqual(payload);
+    await expect(fetchProfiles()).resolves.toEqual({ status: 'ok', profiles: payload });
     expect(g.fetch).toHaveBeenCalledWith(PROFILES_ENDPOINT);
   });
 
   it('returns DEFAULT_PROFILES on a 404 / non-ok response', async () => {
     g.fetch.mockResolvedValue({ ok: false, status: 404, json: async () => ({}) });
-    await expect(fetchProfiles()).resolves.toEqual(DEFAULT_PROFILES);
+    await expect(fetchProfiles()).resolves.toMatchObject({ profiles: DEFAULT_PROFILES });
   });
 
   it('returns DEFAULT_PROFILES on an empty list', async () => {
     g.fetch.mockResolvedValue({ ok: true, json: async () => [] });
-    await expect(fetchProfiles()).resolves.toEqual(DEFAULT_PROFILES);
+    await expect(fetchProfiles()).resolves.toMatchObject({ profiles: DEFAULT_PROFILES });
   });
 
   it('drops malformed profile entries from the server payload', async () => {
@@ -64,11 +112,14 @@ describe('fetchProfiles', () => {
       ],
     });
 
-    await expect(fetchProfiles()).resolves.toEqual([
-      { id: 'default', label: 'Database (raw)', serverProfile: null },
-      { id: 'sales', label: 'Sales', serverProfile: 'sales' },
-      { id: 'raw-ish', label: 'Raw-ish', serverProfile: null },
-    ]);
+    await expect(fetchProfiles()).resolves.toEqual({
+      status: 'ok',
+      profiles: [
+        { id: 'default', label: 'Database (raw)', serverProfile: null },
+        { id: 'sales', label: 'Sales', serverProfile: 'sales' },
+        { id: 'raw-ish', label: 'Raw-ish', serverProfile: null },
+      ],
+    });
   });
 
   it('returns DEFAULT_PROFILES when no server entries are valid', async () => {
@@ -77,12 +128,12 @@ describe('fetchProfiles', () => {
       json: async () => [{ id: 'missing-label' }, { label: 'Missing id' }],
     });
 
-    await expect(fetchProfiles()).resolves.toEqual(DEFAULT_PROFILES);
+    await expect(fetchProfiles()).resolves.toMatchObject({ profiles: DEFAULT_PROFILES });
   });
 
   it('returns DEFAULT_PROFILES when fetch throws', async () => {
     g.fetch.mockRejectedValue(new Error('network down'));
-    await expect(fetchProfiles()).resolves.toEqual(DEFAULT_PROFILES);
+    await expect(fetchProfiles()).resolves.toMatchObject({ profiles: DEFAULT_PROFILES });
   });
 });
 

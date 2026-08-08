@@ -12,23 +12,51 @@ export const DEFAULT_PROFILES: ApiProfile[] = [
 ];
 
 /**
+ * Outcome of a profile fetch. Both variants carry a usable `profiles` list so
+ * the app never has to special-case an empty picker, but the caller can still
+ * tell the two apart — a backend that failed to answer is not the same thing
+ * as a deployment that genuinely exposes only the raw database, and rendering
+ * them identically left the user with no way to know the difference.
+ */
+export type ProfilesResult =
+  | { status: 'ok'; profiles: ApiProfile[] }
+  | { status: 'unavailable'; profiles: ApiProfile[]; reason: string };
+
+/**
  * GET the API profile list. The server (slice 6a) returns an array of
  * `{ id, label, serverProfile }` where the first entry is the raw default with
- * `serverProfile: null`. Any failure (network, non-ok, empty body) falls back
- * to {@link DEFAULT_PROFILES} so the picker always has at least one entry.
+ * `serverProfile: null`. On any failure — network, non-ok, or a body carrying
+ * no usable entry — the result is reported as `unavailable` alongside
+ * {@link DEFAULT_PROFILES}, so the picker always has an entry AND can say that
+ * the list it is showing is a fallback rather than the server's answer.
  */
-export async function fetchProfiles(): Promise<ApiProfile[]> {
+export async function fetchProfiles(): Promise<ProfilesResult> {
+  const unavailable = (reason: string): ProfilesResult => ({
+    status: 'unavailable',
+    profiles: DEFAULT_PROFILES,
+    reason,
+  });
+
   try {
     const resp = await fetch(PROFILES_ENDPOINT);
-    if (!resp.ok) return DEFAULT_PROFILES;
+    if (!resp.ok) {
+      return unavailable(`Profiles endpoint returned ${resp.status}.`);
+    }
     const json = (await resp.json()) as ApiProfile[] | null | undefined;
-    if (!Array.isArray(json) || json.length === 0) return DEFAULT_PROFILES;
+    if (!Array.isArray(json) || json.length === 0) {
+      return unavailable('Profiles endpoint returned no entries.');
+    }
     const profiles = json
       .map(parseApiProfile)
       .filter((profile): profile is ApiProfile => profile !== null);
-    return profiles.length > 0 ? profiles : DEFAULT_PROFILES;
-  } catch {
-    return DEFAULT_PROFILES;
+    if (profiles.length === 0) {
+      return unavailable('Profiles endpoint returned no usable entries.');
+    }
+    return { status: 'ok', profiles };
+  } catch (error) {
+    return unavailable(
+      `Profiles endpoint unreachable: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 

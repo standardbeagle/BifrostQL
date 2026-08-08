@@ -73,6 +73,10 @@ export default function App() {
   // API profiles (slice 6a endpoint). The picker re-points the embedded editor
   // at `?profile=<serverProfile>` so the server serves that profile's schema.
   const [apiProfiles, setApiProfiles] = useState<ApiProfile[]>(DEFAULT_PROFILES);
+  // Non-null when the list above is the raw fallback because the endpoint
+  // could not be read, so the picker can distinguish that from a connection
+  // that genuinely exposes one profile.
+  const [profilesUnavailable, setProfilesUnavailable] = useState<string | null>(null);
   const [activeProfileId, setActiveProfileId] = useState<string>(
     () => resolveActiveProfile(DEFAULT_PROFILES).id,
   );
@@ -147,9 +151,11 @@ export default function App() {
   const resolvedProfileRef = useRef(activeProfileId);
   useEffect(() => {
     let cancelled = false;
-    fetchProfiles().then((fetched) => {
+    fetchProfiles().then((result) => {
       if (cancelled) return;
+      const fetched = result.profiles;
       setApiProfiles(fetched);
+      setProfilesUnavailable(result.status === 'unavailable' ? result.reason : null);
       const nextId = resolveActiveProfile(fetched).id;
       // Only remount the editor when the resolved profile actually changed.
       // Bumping unconditionally made the editor mount twice on every startup
@@ -295,6 +301,7 @@ export default function App() {
         <EditorHeader
           connectionInfo={connectionInfo}
           apiProfiles={apiProfiles}
+          profilesUnavailable={profilesUnavailable}
           activeProfileId={activeProfileId}
           onSelectProfile={handleSelectProfile}
           transportMode={transportMode}

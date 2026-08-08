@@ -4,13 +4,26 @@ interface ProfileDropdownProps {
   profiles: ApiProfile[];
   activeId: string;
   onSelect: (id: string) => void;
+  /**
+   * Set when the profile list could not be fetched and `profiles` is the raw
+   * fallback. Without it a broken endpoint is indistinguishable from a
+   * connection that legitimately exposes one profile.
+   */
+  unavailableReason?: string | null;
 }
 
 /**
  * Header profile picker. Always rendered; disabled (greyed, with a tooltip)
- * when the connection exposes only a single profile.
+ * when the connection exposes only a single profile. When the list could not
+ * be loaded at all, it says so instead of silently presenting the fallback as
+ * the server's answer.
  */
-export function ProfileDropdown({ profiles, activeId, onSelect }: ProfileDropdownProps) {
+export function ProfileDropdown({
+  profiles,
+  activeId,
+  onSelect,
+  unavailableReason,
+}: ProfileDropdownProps) {
   const disabled = profiles.length <= 1;
   return (
     <label
@@ -22,7 +35,13 @@ export function ProfileDropdown({ profiles, activeId, onSelect }: ProfileDropdow
         marginRight: 12,
         fontSize: 12,
       }}
-      title={disabled ? 'This connection exposes a single profile' : undefined}
+      title={
+        unavailableReason
+          ? undefined
+          : disabled
+            ? 'This connection exposes a single profile'
+            : undefined
+      }
     >
       <span>Profile</span>
       <select
@@ -48,6 +67,16 @@ export function ProfileDropdown({ profiles, activeId, onSelect }: ProfileDropdow
           </option>
         ))}
       </select>
+      {unavailableReason && (
+        <span
+          data-testid="profiles-unavailable"
+          role="status"
+          title={unavailableReason}
+          style={{ color: '#dc2626', fontSize: 11, whiteSpace: 'nowrap' }}
+        >
+          {'⚠'} profiles unavailable
+        </span>
+      )}
     </label>
   );
 }

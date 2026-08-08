@@ -8,6 +8,8 @@ export type EditorPane = 'graphql' | 'sql' | 'builder' | 'forms';
 interface EditorHeaderProps {
   connectionInfo: ConnectionInfo | null;
   apiProfiles: ApiProfile[];
+  /** Reason the profile list is the raw fallback, or null when it is the server's answer. */
+  profilesUnavailable?: string | null;
   activeProfileId: string;
   onSelectProfile: (id: string) => void;
   transportMode: TransportMode;
@@ -29,6 +31,7 @@ interface EditorHeaderProps {
 export function EditorHeader({
   connectionInfo,
   apiProfiles,
+  profilesUnavailable,
   activeProfileId,
   onSelectProfile,
   transportMode,
@@ -55,6 +58,7 @@ export function EditorHeader({
         profiles={apiProfiles}
         activeId={activeProfileId}
         onSelect={onSelectProfile}
+        unavailableReason={profilesUnavailable}
       />
       <div
         className="bifrost-transport-toggle"

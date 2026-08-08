@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import type { SortOption, TableFilter } from '../types';
 import { useBifrostQuery } from './use-bifrost-query';
 import {
   resolveClientSideFilterConfig,
@@ -23,6 +24,17 @@ import type {
 } from './use-bifrost-table.types';
 
 export type * from './use-bifrost-table.types';
+
+// Shared frozen defaults. A `= []` / `= {}` default parameter allocates a new
+// value on every render, and these feed effect dependency arrays (notably the
+// popstate listener in useTableQueryState) — a fresh identity each render tore
+// the listener down and re-added it on every single render.
+const NO_DEFAULT_SORT: SortOption[] = [];
+const NO_DEFAULT_FILTER: TableFilter = {};
+// Frozen at runtime so an accidental in-place mutation of a shared default
+// fails loudly instead of leaking into every table on the page.
+Object.freeze(NO_DEFAULT_SORT);
+Object.freeze(NO_DEFAULT_FILTER);
 
 /**
  * All-in-one headless table state management hook.
@@ -65,8 +77,8 @@ export function useBifrostTable<T = Record<string, unknown>>(
     columns,
     fields: fieldsProp,
     pagination: paginationConfig,
-    defaultSort = [],
-    defaultFilter = {},
+    defaultSort = NO_DEFAULT_SORT,
+    defaultFilter = NO_DEFAULT_FILTER,
     multiSort = false,
     clientSideSort: clientSideSortProp,
     clientSideFilter: clientSideFilterProp,

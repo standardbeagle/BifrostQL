@@ -41,7 +41,7 @@ export {
   FkLookupControl,
 } from './fields/controls';
 export type {
-  FieldControlProps as FieldControlPrimitiveProps,
+  FieldControlPrimitiveProps,
   EnumSelectControlProps,
   FkLookupControlProps,
 } from './fields/controls';

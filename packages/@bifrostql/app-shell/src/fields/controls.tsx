@@ -15,7 +15,7 @@ import type { ChangeEvent } from 'react';
  */
 
 /** Common props shared by every field control. */
-export interface FieldControlProps {
+export interface FieldControlPrimitiveProps {
   /** Field name; used for `id`/`name` and label association. */
   name: string;
   /** Human-readable label. */
@@ -31,13 +31,13 @@ export interface FieldControlProps {
 }
 
 /** Props for {@link EnumSelectControl}: adds the selectable options. */
-export interface EnumSelectControlProps extends FieldControlProps {
+export interface EnumSelectControlProps extends FieldControlPrimitiveProps {
   /** Allowed values; rendered as `<option>`s. */
   options: string[];
 }
 
 /** Props for {@link FkLookupControl}: adds the related-entity descriptor. */
-export interface FkLookupControlProps extends FieldControlProps {
+export interface FkLookupControlProps extends FieldControlPrimitiveProps {
   /** Qualified table name of the FK target (e.g. `dbo.users`). */
   targetEntity: string;
   /** Candidate rows for the lookup, each carrying a key and a display label. */
@@ -79,7 +79,7 @@ export function ScalarControl({
   onChange,
   readOnly,
   helpText,
-}: FieldControlProps) {
+}: FieldControlPrimitiveProps) {
   const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
     onChange(e.target.value);
   };
@@ -107,7 +107,7 @@ export function DateControl({
   onChange,
   readOnly,
   helpText,
-}: FieldControlProps) {
+}: FieldControlPrimitiveProps) {
   const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
     onChange(e.target.value);
   };
@@ -135,7 +135,7 @@ export function BooleanControl({
   onChange,
   readOnly,
   helpText,
-}: FieldControlProps) {
+}: FieldControlPrimitiveProps) {
   const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
     onChange(e.target.checked);
   };
@@ -201,7 +201,7 @@ export function JsonTextControl({
   onChange,
   readOnly,
   helpText,
-}: FieldControlProps) {
+}: FieldControlPrimitiveProps) {
   const text = value == null ? '' : String(value);
 
   const handleChange = (e: ChangeEvent<HTMLTextAreaElement>) => {

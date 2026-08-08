@@ -113,7 +113,15 @@ describe('getJoinedRowPkValue', () => {
 
     it('leaves plain numeric ids unchanged (encoding is identity)', () => {
         expect(getJoinedRowPkValue({ id: 42 }, tbl(['id']))).toBe('42');
-        expect(getJoinedRowPkValue({ id: 42 }, undefined)).toBe('42');
+    });
+
+    it('returns an empty string when the destination table is not in the schema', () => {
+        // The `id` key is a GraphQL ALIAS the query builder emits for a single-PK
+        // destination -- it only means anything once we know the destination table
+        // and that it has one PK column. Without the schema there is no way to
+        // know either, so reading `row.id` was a guess that produced a confident
+        // link to /undefined/<whatever-happened-to-be-called-id>.
+        expect(getJoinedRowPkValue({ id: 42 }, undefined)).toBe('');
     });
 
     it('returns an empty string for a missing row or null id', () => {

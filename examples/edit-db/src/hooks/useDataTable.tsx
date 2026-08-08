@@ -44,21 +44,22 @@ interface RowData {
     [key: string]: unknown;
 }
 
-interface ColumnWithJoin extends Column {
-    joinTable?: Join;
-    joinLabelColumn?: string;
-}
-
 // Joined rows in GraphQL responses are aliased as `{ id: destCol }` for single-PK destinations.
 // Composite-PK destinations come back with every PK column verbatim; produce a composite
 // route via rowIdOf so links navigate to /<table>/<pk1>::<pk2>.
 // The single-key case must route-encode too (matching getRowPkValue): the value
 // becomes a route segment decoded by parsePkRoute, so a raw string PK containing
 // "/", "%", "::", or spaces would otherwise build a broken or mis-split link.
+//
+// The destination schema is REQUIRED. `row.id` is that GraphQL alias, not a column
+// named "id", and it only carries row identity once we know the destination table
+// has exactly one PK column. Without the schema neither fact is known, so the old
+// unconditional `encodeRouteParts([row.id])` fallback was a guess that produced a
+// confident link to /undefined/<whatever>. Returning "" makes the caller decide.
 // Exported for tests.
 export function getJoinedRowPkValue(row: RowData | undefined, joinSchema: Table | undefined): string {
-    if (!row) return "";
-    if (!joinSchema || (joinSchema.primaryKeys?.length ?? 0) <= 1) return encodeRouteParts([row?.id]);
+    if (!row || !joinSchema) return "";
+    if ((joinSchema.primaryKeys?.length ?? 0) <= 1) return encodeRouteParts([row?.id]);
     return rowIdOf(row as Record<string, unknown>, joinSchema, 0);
 }
 
@@ -154,6 +155,10 @@ function buildJoinColumn(
             // No joined row means the FK column itself is null/unset.
             if (!joined) return <EmptyValue kind="null" />;
             const joinedPk = getJoinedRowPkValue(joined, joinSchema);
+            // The destination table is not in the schema (or the row carries no
+            // key), so there is no route to link to. Show the label as plain text
+            // rather than a link that navigates nowhere useful.
+            if (!joinedPk) return <>{joined?.label as string}</>;
             return (
                 <span className="group/fk inline-flex items-center gap-0.5">
                     <FkCellPopover
@@ -193,7 +198,7 @@ function buildJoinColumn(
 
 /**
  * Column def for a non-anchor column: a composite-FK member (scalar value with
- * FK header context), a legacy `ColumnWithJoin` link, a DateTime, a long-text/
+ * FK header context), a DateTime, a long-text/
  * binary/JSON content viewer, or a plain scalar.
  */
 function buildScalarColumn(
@@ -227,25 +232,6 @@ function buildScalarColumn(
                 isCompositeFk: true,
                 isCompositeFkMember: true,
             }),
-        };
-    }
-
-    if ((c as ColumnWithJoin)?.joinTable) {
-        return {
-            id: c.name,
-            accessorKey: c.name,
-            header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
-            enableSorting: true,
-            meta: columnMeta(c, operators),
-            cell: ({ row }) => {
-                const joined = row.original[c.name] as RowData | undefined;
-                if (!joined) return null;
-                return (
-                    <Link to={"/" + c.name + "/" + getJoinedRowPkValue(joined, undefined)} className="text-primary hover:text-primary/80 hover:underline">
-                        {c.name}
-                    </Link>
-                );
-            },
         };
     }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseTableParams } from './parse-url-params';
+import { parseTableParams } from './parse-table-params';
 
 describe('parseTableParams', () => {
   it('returns empty options for empty params', () => {

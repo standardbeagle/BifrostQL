@@ -70,6 +70,7 @@ function createFetchMock(
   identity: TestIdentity | null,
   metadata: AppMetadata = sampleMetadata,
   planRow: Record<string, unknown> | null = null,
+  options: { mutationFails?: boolean } = {},
 ) {
   graphqlRequests = [];
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -110,6 +111,16 @@ function createFetchMock(
     if (body) {
       graphqlRequests.push(body);
       if (/\bmutation\b/.test(body.query)) {
+        if (options.mutationFails) {
+          // A GraphQL-level rejection — how a policy denial arrives.
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            json: () =>
+              Promise.resolve({ errors: [{ message: 'plan write denied' }] }),
+          } as Response);
+        }
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -355,6 +366,33 @@ describe('PlanForm', () => {
         (mutation!.variables as { detail: Record<string, unknown> }).detail.id,
       ).toBe(3);
     });
+  });
+
+  it('reports a rejected save and keeps the edited values', async () => {
+    // Arrange: the server rejects the insert.
+    const user = userEvent.setup();
+    globalThis.fetch = createFetchMock(
+      identityWith(['main.members.write']),
+      sampleMetadata,
+      null,
+      { mutationFails: true },
+    );
+    renderForm('/plans/new');
+    await waitFor(() =>
+      expect(screen.getByTestId('plan-form')).toBeInTheDocument(),
+    );
+
+    // Act
+    await user.type(screen.getByLabelText('name'), 'Gold');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    // Assert: the rejection is visible and the entered name survives.
+    await waitFor(() =>
+      expect(screen.getByTestId('plan-form-write-error')).toHaveTextContent(
+        'plan write denied',
+      ),
+    );
+    expect(screen.getByLabelText('name')).toHaveValue('Gold');
   });
 
   it('does not offer Save or Deactivate to a read-only session', async () => {

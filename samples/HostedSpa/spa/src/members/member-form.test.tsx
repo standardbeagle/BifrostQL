@@ -78,6 +78,7 @@ function createFetchMock(
   identity: TestIdentity | null,
   metadata: AppMetadata = sampleMetadata,
   memberRow: Record<string, unknown> | null = null,
+  options: { mutationFails?: boolean } = {},
 ) {
   graphqlRequests = [];
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -119,6 +120,16 @@ function createFetchMock(
     if (body) {
       graphqlRequests.push(body);
       if (/\bmutation\b/.test(body.query)) {
+        if (options.mutationFails) {
+          // A GraphQL-level rejection — how a policy denial arrives.
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            json: () =>
+              Promise.resolve({ errors: [{ message: 'member write denied' }] }),
+          } as Response);
+        }
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -368,6 +379,59 @@ describe('MemberForm', () => {
         (mutation!.variables as { detail: Record<string, unknown> }).detail.id,
       ).toBe(7);
     });
+  });
+
+  it('reports a rejected save and keeps the edited values', async () => {
+    // Arrange: the server rejects the update.
+    const user = userEvent.setup();
+    globalThis.fetch = createFetchMock(
+      identityWith(['main.members.write']),
+      sampleMetadata,
+      adaRow,
+      { mutationFails: true },
+    );
+    renderForm('/members/7');
+    await waitFor(() =>
+      expect(screen.getByDisplayValue('Ada')).toBeInTheDocument(),
+    );
+
+    // Act
+    await user.clear(screen.getByLabelText('first_name'));
+    await user.type(screen.getByLabelText('first_name'), 'Adah');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    // Assert: the rejection is visible and the edit is not thrown away.
+    await waitFor(() =>
+      expect(screen.getByTestId('member-form-write-error')).toHaveTextContent(
+        'member write denied',
+      ),
+    );
+    expect(screen.getByLabelText('first_name')).toHaveValue('Adah');
+  });
+
+  it('reports a rejected deactivate instead of looking like it worked', async () => {
+    // Arrange: the server rejects the deactivating update.
+    const user = userEvent.setup();
+    globalThis.fetch = createFetchMock(
+      identityWith(['main.members.write']),
+      sampleMetadata,
+      adaRow,
+      { mutationFails: true },
+    );
+    renderForm('/members/7');
+    await waitFor(() =>
+      expect(screen.getByDisplayValue('Ada')).toBeInTheDocument(),
+    );
+
+    // Act
+    await user.click(screen.getByRole('button', { name: 'Deactivate' }));
+
+    // Assert
+    await waitFor(() =>
+      expect(screen.getByTestId('member-form-write-error')).toHaveTextContent(
+        'member write denied',
+      ),
+    );
   });
 
   it('does not offer Deactivate to a read-only member', async () => {

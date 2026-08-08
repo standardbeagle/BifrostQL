@@ -13,6 +13,7 @@ import {
   buildUpdateMutation,
 } from '@bifrostql/react';
 import { buildPlanFormFields } from './plan-form-fields';
+import { useWriteFeedback, WriteFeedbackRegion } from '../common/write-feedback';
 
 /** Qualified entity key of the membership_plans entity in the overlay. */
 const PLANS_ENTITY_KEY = 'main.membership_plans';
@@ -100,11 +101,13 @@ export function PlanForm() {
     onSuccess: () => navigate('/plans'),
   });
 
+  const feedback = useWriteFeedback();
+
   const setField = (name: string, value: unknown) => {
     setValues((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!canWrite) {
       return;
@@ -116,20 +119,30 @@ export function PlanForm() {
         editable[field.name] = values[field.name];
       }
     }
-    if (isCreate) {
-      insert.mutate({ detail: editable });
-    } else {
-      update.mutate({ detail: { id: loadedRow?.id ?? planId, ...editable } });
-    }
+    // A rejected save leaves the edit buffer intact — the mutation's
+    // `onSuccess` navigate only fires when the write actually landed.
+    await feedback.run(
+      () =>
+        isCreate
+          ? insert.mutateAsync({ detail: editable })
+          : update.mutateAsync({
+              detail: { id: loadedRow?.id ?? planId, ...editable },
+            }),
+      isCreate ? 'Plan created.' : 'Plan saved.',
+    );
   };
 
-  const handleDeactivate = () => {
+  const handleDeactivate = async () => {
     if (!canWrite || isCreate) {
       return;
     }
-    update.mutate({
-      detail: { id: loadedRow?.id ?? planId, is_active: false },
-    });
+    await feedback.run(
+      () =>
+        update.mutateAsync({
+          detail: { id: loadedRow?.id ?? planId, is_active: false },
+        }),
+      'Plan deactivated.',
+    );
   };
 
   if (metadataLoading) {
@@ -171,7 +184,13 @@ export function PlanForm() {
   return (
     <section data-testid="plan-form-screen">
       <h2>{title}</h2>
-      <form data-testid="plan-form" onSubmit={handleSubmit}>
+      <WriteFeedbackRegion feedback={feedback} testId="plan-form-write" />
+      <form
+        data-testid="plan-form"
+        onSubmit={(e) => {
+          void handleSubmit(e);
+        }}
+      >
         {formFields.map((field) => (
           <div key={field.name} data-testid={`plan-field-${field.name}`}>
             <FieldControl
@@ -197,7 +216,12 @@ export function PlanForm() {
             <button type="submit">{isCreate ? 'Create' : 'Save'}</button>
           ) : null}
           {canWrite && !isCreate ? (
-            <button type="button" onClick={handleDeactivate}>
+            <button
+              type="button"
+              onClick={() => {
+                void handleDeactivate();
+              }}
+            >
               Deactivate
             </button>
           ) : null}

@@ -14,6 +14,7 @@ import {
   buildUpdateMutation,
 } from '@bifrostql/react';
 import { HouseholdMembers } from './household-members';
+import { useWriteFeedback, WriteFeedbackRegion } from '../common/write-feedback';
 
 /** Qualified entity key of the households entity in the app-metadata overlay. */
 const HOUSEHOLDS_ENTITY_KEY = 'main.households';
@@ -172,11 +173,13 @@ export function HouseholdForm() {
     onSuccess: () => navigate('/'),
   });
 
+  const feedback = useWriteFeedback();
+
   const setField = (name: string, value: unknown) => {
     setValues((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!canWrite) {
       return;
@@ -187,11 +190,17 @@ export function HouseholdForm() {
         editable[field.name] = values[field.name];
       }
     }
-    if (isCreate) {
-      insert.mutate({ detail: editable });
-    } else {
-      update.mutate({ detail: { id: loadedRow?.id ?? householdId, ...editable } });
-    }
+    // A rejected save leaves the edit buffer intact — the mutation's
+    // `onSuccess` navigate only fires when the write actually landed.
+    await feedback.run(
+      () =>
+        isCreate
+          ? insert.mutateAsync({ detail: editable })
+          : update.mutateAsync({
+              detail: { id: loadedRow?.id ?? householdId, ...editable },
+            }),
+      isCreate ? 'Household created.' : 'Household saved.',
+    );
   };
 
   if (metadataLoading) {
@@ -233,7 +242,13 @@ export function HouseholdForm() {
   return (
     <section data-testid="household-form-screen">
       <h2>{title}</h2>
-      <form data-testid="household-form" onSubmit={handleSubmit}>
+      <WriteFeedbackRegion feedback={feedback} testId="household-form-write" />
+      <form
+        data-testid="household-form"
+        onSubmit={(e) => {
+          void handleSubmit(e);
+        }}
+      >
         {formFields.map((field) => (
           <div key={field.name} data-testid={`household-field-${field.name}`}>
             <FieldControl

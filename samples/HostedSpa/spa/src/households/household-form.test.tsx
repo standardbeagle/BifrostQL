@@ -79,6 +79,7 @@ function createFetchMock(
   metadata: AppMetadata = sampleMetadata,
   householdRow: Record<string, unknown> | null = null,
   memberRows: Array<Record<string, unknown>> = [],
+  options: { mutationFails?: boolean } = {},
 ) {
   graphqlRequests = [];
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -119,6 +120,16 @@ function createFetchMock(
     if (body) {
       graphqlRequests.push(body);
       if (/\bmutation\b/.test(body.query)) {
+        if (options.mutationFails) {
+          // A GraphQL-level rejection — how a policy denial arrives.
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            json: () =>
+              Promise.resolve({ errors: [{ message: 'household write denied' }] }),
+          } as Response);
+        }
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -311,6 +322,34 @@ describe('HouseholdForm', () => {
         .detail;
       expect(detail.name).toBe('New Household');
     });
+  });
+
+  it('reports a rejected save and keeps the entered values', async () => {
+    // Arrange: the server rejects the insert.
+    const user = userEvent.setup();
+    globalThis.fetch = createFetchMock(
+      identityWith(['main.members.write']),
+      sampleMetadata,
+      null,
+      [],
+      { mutationFails: true },
+    );
+    renderForm('/households/new');
+    await waitFor(() =>
+      expect(screen.getByTestId('household-form')).toBeInTheDocument(),
+    );
+
+    // Act
+    await user.type(screen.getByLabelText('name'), 'New Household');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    // Assert: the rejection is visible and the entered name survives.
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('household-form-write-error'),
+      ).toHaveTextContent('household write denied'),
+    );
+    expect(screen.getByLabelText('name')).toHaveValue('New Household');
   });
 
   it('renders read-only with no Save action for a session without write', async () => {

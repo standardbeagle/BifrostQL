@@ -13,6 +13,7 @@ import {
   buildUpdateMutation,
 } from '@bifrostql/react';
 import { buildMemberFormFields } from './member-form-fields';
+import { useWriteFeedback, WriteFeedbackRegion } from '../common/write-feedback';
 
 /** Qualified entity key of the members entity in the app-metadata overlay. */
 const MEMBERS_ENTITY_KEY = 'main.members';
@@ -106,11 +107,13 @@ export function MemberForm() {
     onSuccess: () => navigate('/members'),
   });
 
+  const feedback = useWriteFeedback();
+
   const setField = (name: string, value: unknown) => {
     setValues((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!canWrite) {
       return;
@@ -122,20 +125,30 @@ export function MemberForm() {
         editable[field.name] = values[field.name];
       }
     }
-    if (isCreate) {
-      insert.mutate({ detail: editable });
-    } else {
-      update.mutate({ detail: { id: loadedRow?.id ?? memberId, ...editable } });
-    }
+    // A rejected save leaves the edit buffer intact — the mutation's
+    // `onSuccess` navigate only fires when the write actually landed.
+    await feedback.run(
+      () =>
+        isCreate
+          ? insert.mutateAsync({ detail: editable })
+          : update.mutateAsync({
+              detail: { id: loadedRow?.id ?? memberId, ...editable },
+            }),
+      isCreate ? 'Member created.' : 'Member saved.',
+    );
   };
 
-  const handleDeactivate = () => {
+  const handleDeactivate = async () => {
     if (!canWrite || isCreate) {
       return;
     }
-    update.mutate({
-      detail: { id: loadedRow?.id ?? memberId, status: INACTIVE_STATUS },
-    });
+    await feedback.run(
+      () =>
+        update.mutateAsync({
+          detail: { id: loadedRow?.id ?? memberId, status: INACTIVE_STATUS },
+        }),
+      'Member deactivated.',
+    );
   };
 
   if (metadataLoading) {
@@ -177,7 +190,13 @@ export function MemberForm() {
   return (
     <section data-testid="member-form-screen">
       <h2>{title}</h2>
-      <form data-testid="member-form" onSubmit={handleSubmit}>
+      <WriteFeedbackRegion feedback={feedback} testId="member-form-write" />
+      <form
+        data-testid="member-form"
+        onSubmit={(e) => {
+          void handleSubmit(e);
+        }}
+      >
         {formFields.map((field) => (
           <div key={field.name} data-testid={`member-field-${field.name}`}>
             <FieldControl
@@ -203,7 +222,12 @@ export function MemberForm() {
             <button type="submit">{isCreate ? 'Create' : 'Save'}</button>
           ) : null}
           {canWrite && !isCreate ? (
-            <button type="button" onClick={handleDeactivate}>
+            <button
+              type="button"
+              onClick={() => {
+                void handleDeactivate();
+              }}
+            >
               Deactivate
             </button>
           ) : null}

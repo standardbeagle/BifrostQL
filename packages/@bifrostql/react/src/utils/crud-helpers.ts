@@ -22,6 +22,27 @@ import {
 /** Field-name keys of a generated row type. */
 export type RowField<TRow> = Extract<keyof TRow, string>;
 
+/**
+ * Identifies a single row.
+ *
+ * A scalar is shorthand for a table with one primary-key column. Tables with a
+ * composite key must pass an object naming every key column — BigInt and
+ * Decimal key values should be carried as decimal strings so a JS number
+ * coercion cannot round away the trailing digits.
+ */
+export type RowKey = string | number | Record<string, unknown>;
+
+/** Configuration for {@link createCrudHelpers}. */
+export interface CrudHelpersConfig {
+  /**
+   * The table's primary-key columns, in order. Defaults to `['id']` — the
+   * convenience path for the common single-`id` table. Tables with a renamed
+   * or composite primary key MUST declare it here, or `detail`, `update`, and
+   * `delete` will target the wrong column.
+   */
+  primaryKeys?: readonly string[];
+}
+
 /** A built CRUD operation: the GraphQL string plus a phantom result type. */
 export interface TypedOperation<TResult> {
   /** The GraphQL query or mutation string, produced by the underlying builder. */
@@ -84,20 +105,17 @@ export interface CrudHelpers<
 > {
   /** Build a list query. Result type: an array of (selected) rows. */
   list(options?: ListOptions<TRow>): TypedOperation<TRow[]>;
-  /** Build a detail-by-id query. Result type: a single row or `null`. */
+  /** Build a detail-by-key query. Result type: a single row or `null`. */
   detail(
-    id: string | number,
+    key: RowKey,
     options?: DetailOptions<TRow>,
   ): TypedOperation<TRow | null>;
   /** Build a create mutation. The `input` is typed; result type: the created row. */
   create(input: TInsert): TypedCreateOperation<TRow, TInsert>;
   /** Build an update mutation. The `changes` are typed; result type: the updated row. */
-  update(
-    id: string | number,
-    changes: TUpdate,
-  ): TypedUpdateOperation<TRow, TUpdate>;
-  /** Build a delete mutation. Result type: the deleted row's id. */
-  delete(id: string | number): TypedDeleteOperation;
+  update(key: RowKey, changes: TUpdate): TypedUpdateOperation<TRow, TUpdate>;
+  /** Build a delete mutation. Result type: the deleted row's key. */
+  delete(key: RowKey): TypedDeleteOperation;
   /** Build a narrow FK-selector lookup query. Result type: `{ value, label }` options. */
   lookup(
     options: LookupOptions<TRow>,
@@ -118,20 +136,68 @@ export interface TypedUpdateOperation<
   TRow,
   TUpdate,
 > extends TypedOperation<TRow> {
-  /** The `$detail` variable payload for the mutation, typed as `TUpdate` plus the id. */
-  readonly variables: { detail: TUpdate & { id: string | number } };
+  /**
+   * The `$detail` variable payload for the mutation: the typed changes merged
+   * with every primary-key column identifying the row.
+   */
+  readonly variables: { detail: TUpdate & Record<string, unknown> };
 }
 
-/** A delete operation: carries the id variable alongside the string. */
-export interface TypedDeleteOperation extends TypedOperation<{
-  id: string | number;
-}> {
+/** A delete operation: carries the row-key variables alongside the string. */
+export interface TypedDeleteOperation extends TypedOperation<
+  Record<string, unknown>
+> {
   /** The `$detail` variable payload identifying the row to delete. */
-  readonly variables: { detail: { id: string | number } };
+  readonly variables: { detail: Record<string, unknown> };
 }
 
-/** The conventional id field name for detail/lookup primary-key filtering. */
-const ID_FIELD = 'id';
+/** The conventional single primary-key column, used when none is configured. */
+const DEFAULT_PRIMARY_KEYS: readonly string[] = ['id'];
+
+/**
+ * Resolve a caller-supplied row key into a complete `{ column: value }` map
+ * covering every primary-key column.
+ *
+ * A scalar is only accepted for a single-column key — guessing which column a
+ * scalar meant on a composite key would silently target the wrong rows, so it
+ * throws instead. A key object must supply every column for the same reason.
+ */
+function resolveRowKey(
+  table: string,
+  primaryKeys: readonly string[],
+  key: RowKey,
+): Record<string, unknown> {
+  if (typeof key === 'object' && key !== null) {
+    const missing = primaryKeys.filter((column) => key[column] === undefined);
+    if (missing.length > 0) {
+      throw new Error(
+        `Cannot identify a row in "${table}": key is missing primary-key column(s) ${missing.join(', ')}.`,
+      );
+    }
+    return Object.fromEntries(
+      primaryKeys.map((column) => [column, key[column]]),
+    );
+  }
+
+  if (primaryKeys.length !== 1) {
+    throw new Error(
+      `Cannot identify a row in "${table}": it has a composite primary key (${primaryKeys.join(', ')}), so pass an object such as { ${primaryKeys.join(': …, ')}: … } instead of a single value.`,
+    );
+  }
+
+  return { [primaryKeys[0]]: key };
+}
+
+/** Build an AND-of-equalities filter covering every primary-key column. */
+function keyFilter(keyValues: Record<string, unknown>): AdvancedFilter {
+  const columns = Object.keys(keyValues);
+  if (columns.length === 1) {
+    return { [columns[0]]: { _eq: keyValues[columns[0]] } };
+  }
+  return {
+    _and: columns.map((column) => ({ [column]: { _eq: keyValues[column] } })),
+  };
+}
 
 /**
  * Create a set of typed CRUD helpers for a single entity table.
@@ -161,7 +227,17 @@ export function createCrudHelpers<
   TRow,
   TInsert = Partial<TRow>,
   TUpdate = Partial<TRow>,
->(table: string): CrudHelpers<TRow, TInsert, TUpdate> {
+>(
+  table: string,
+  config: CrudHelpersConfig = {},
+): CrudHelpers<TRow, TInsert, TUpdate> {
+  const primaryKeys = config.primaryKeys ?? DEFAULT_PRIMARY_KEYS;
+  if (primaryKeys.length === 0) {
+    throw new Error(
+      `createCrudHelpers("${table}"): primaryKeys must name at least one column.`,
+    );
+  }
+
   return {
     list(options: ListOptions<TRow> = {}): TypedOperation<TRow[]> {
       const { filter, sort, limit, offset, fields } = options;
@@ -178,11 +254,11 @@ export function createCrudHelpers<
     },
 
     detail(
-      id: string | number,
+      key: RowKey,
       options: DetailOptions<TRow> = {},
     ): TypedOperation<TRow | null> {
       const query = buildGraphqlQuery(table, {
-        filter: { [ID_FIELD]: { _eq: id } },
+        filter: keyFilter(resolveRowKey(table, primaryKeys, key)),
         pagination: { limit: 1 },
         fields: options.fields ? [...options.fields] : undefined,
       });
@@ -196,20 +272,19 @@ export function createCrudHelpers<
       };
     },
 
-    update(
-      id: string | number,
-      changes: TUpdate,
-    ): TypedUpdateOperation<TRow, TUpdate> {
+    update(key: RowKey, changes: TUpdate): TypedUpdateOperation<TRow, TUpdate> {
       return {
         query: buildUpdateMutation(table),
-        variables: { detail: { ...changes, id } },
+        variables: {
+          detail: { ...changes, ...resolveRowKey(table, primaryKeys, key) },
+        },
       };
     },
 
-    delete(id: string | number): TypedDeleteOperation {
+    delete(key: RowKey): TypedDeleteOperation {
       return {
         query: buildDeleteMutation(table),
-        variables: { detail: { id } },
+        variables: { detail: resolveRowKey(table, primaryKeys, key) },
       };
     },
 

@@ -161,6 +161,14 @@ function createWebSocketConnection<T>(
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'complete', id: '1' }));
       }
+      // Detach every handler before closing. A deliberate teardown otherwise
+      // fires `onclose` with `acknowledged === true`, which the caller reads
+      // as an unexpected drop and answers with a reconnect — one that closes
+      // over this connection's now-superseded subscription and variables.
+      ws.onopen = null;
+      ws.onmessage = null;
+      ws.onerror = null;
+      ws.onclose = null;
       ws.close();
     },
   };
@@ -222,6 +230,11 @@ function createSSEConnection<T>(
 
   return {
     close: () => {
+      // Same reasoning as the WebSocket path: a deliberate close must not be
+      // reported back as a dropped connection worth reconnecting.
+      eventSource.onopen = null;
+      eventSource.onmessage = null;
+      eventSource.onerror = null;
       eventSource.close();
     },
   };
@@ -310,7 +323,13 @@ export function useBifrostSubscription<T = unknown>(
                 reconnectBaseDelay,
               );
               reconnectCountRef.current++;
+              // Overwriting the ref without clearing orphaned the previous
+              // timer, which still fired and opened a second connection.
+              if (reconnectTimerRef.current !== null) {
+                clearTimeout(reconnectTimerRef.current);
+              }
               reconnectTimerRef.current = setTimeout(() => {
+                reconnectTimerRef.current = null;
                 if (mountedRef.current) {
                   connect(chosenTransport);
                 }

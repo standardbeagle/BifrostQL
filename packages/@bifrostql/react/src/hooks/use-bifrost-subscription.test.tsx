@@ -1081,4 +1081,93 @@ describe('useBifrostSubscription', () => {
       expect(dataHistory[2]).toEqual({ orderUpdated: { id: 3 } });
     });
   });
+
+  describe('reconnect hygiene', () => {
+    it('does not spawn a stale reconnect when variables change', async () => {
+      // Arrange: a connected subscription on variables { id: 1 }.
+      vi.useFakeTimers();
+      const { MockWebSocket, instances } = createMockWebSocket();
+      globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
+
+      const { rerender, unmount } = renderHook(
+        ({ id }: { id: number }) =>
+          useBifrostSubscription({
+            subscription: 'subscription { orderUpdated { id } }',
+            variables: { id },
+            transport: 'websocket',
+          }),
+        { wrapper: createWrapper(), initialProps: { id: 1 } },
+      );
+
+      const first = instances[0];
+      act(() => {
+        first.handler.onopen?.();
+        first.handler.onmessage?.({
+          data: JSON.stringify({ type: 'connection_ack' }),
+        });
+      });
+      expect(instances).toHaveLength(1);
+
+      // Act: change the variables, then let the browser deliver the close
+      // event for the socket the hook deliberately tore down.
+      rerender({ id: 2 });
+      expect(instances).toHaveLength(2);
+      act(() => {
+        first.handler.onclose?.();
+      });
+      act(() => {
+        vi.advanceTimersByTime(30_000);
+      });
+
+      // Assert: no third socket carrying the previous query's variables.
+      expect(instances).toHaveLength(2);
+      const subscribe = instances[1].sent.find((m) =>
+        m.includes('"subscribe"'),
+      );
+      expect(subscribe).toBeUndefined();
+
+      unmount();
+      vi.useRealTimers();
+    });
+
+    it('clears a pending reconnect timer before scheduling another', async () => {
+      // Arrange
+      vi.useFakeTimers();
+      const { MockWebSocket, instances } = createMockWebSocket();
+      globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
+
+      const { unmount } = renderHook(
+        () =>
+          useBifrostSubscription({
+            subscription: 'subscription { orderUpdated { id } }',
+            transport: 'websocket',
+            reconnectBaseDelay: 1000,
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      // Act: acknowledge, then drop the connection twice in a row without
+      // letting the first scheduled reconnect fire.
+      act(() => {
+        instances[0].handler.onopen?.();
+        instances[0].handler.onmessage?.({
+          data: JSON.stringify({ type: 'connection_ack' }),
+        });
+      });
+      act(() => {
+        instances[0].handler.onclose?.();
+        instances[0].handler.onclose?.();
+      });
+      act(() => {
+        vi.advanceTimersByTime(30_000);
+      });
+
+      // Assert: two close events produced one reconnect, not two orphaned
+      // timers each opening their own socket.
+      expect(instances).toHaveLength(2);
+
+      unmount();
+      vi.useRealTimers();
+    });
+  });
 });

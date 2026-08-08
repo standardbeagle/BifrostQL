@@ -95,6 +95,7 @@ const memberRows = [
 function createFetchMock(
   identity: TestIdentity | null,
   metadata: AppMetadata = sampleMetadata,
+  options: { mutationFails?: boolean } = {},
 ) {
   graphqlRequests = [];
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -135,6 +136,16 @@ function createFetchMock(
     if (body) {
       graphqlRequests.push(body);
       if (/\bmutation\b/.test(body.query)) {
+        if (options.mutationFails) {
+          // A GraphQL-level rejection — how a policy denial arrives.
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            json: () =>
+              Promise.resolve({ errors: [{ message: 'rsvp write denied' }] }),
+          } as Response);
+        }
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -273,6 +284,54 @@ describe('EventRsvps', () => {
       expect(detail.id).toBe(21);
       expect(detail.response).toBe('no');
     });
+  });
+
+  it('reports a rejected RSVP and keeps the operator selection', async () => {
+    // Arrange: the server rejects the RSVP insert.
+    const user = userEvent.setup();
+    globalThis.fetch = createFetchMock(identityWith(['main.members.write']), sampleMetadata, {
+      mutationFails: true,
+    });
+    renderRsvps('/events/3/rsvps');
+    await waitFor(() =>
+      expect(screen.getByTestId('event-rsvps')).toBeInTheDocument(),
+    );
+
+    // Act
+    await user.selectOptions(screen.getByLabelText('member_id'), '9');
+    await user.selectOptions(screen.getByLabelText('response'), 'yes');
+    await user.click(screen.getByRole('button', { name: 'Record RSVP' }));
+
+    // Assert: the rejection is visible and the selection survives for a retry.
+    await waitFor(() =>
+      expect(screen.getByTestId('event-rsvps-write-error')).toHaveTextContent(
+        'rsvp write denied',
+      ),
+    );
+    expect(screen.getByLabelText('member_id')).toHaveValue('9');
+    expect(screen.getByLabelText('response')).toHaveValue('yes');
+  });
+
+  it('reports a rejected row save', async () => {
+    // Arrange: the server rejects the RSVP update.
+    const user = userEvent.setup();
+    globalThis.fetch = createFetchMock(identityWith(['main.members.write']), sampleMetadata, {
+      mutationFails: true,
+    });
+    renderRsvps('/events/3/rsvps');
+    await waitFor(() =>
+      expect(screen.getByTestId('event-rsvps')).toBeInTheDocument(),
+    );
+
+    // Act
+    await user.click(screen.getByTestId('event-rsvp-save-21'));
+
+    // Assert
+    await waitFor(() =>
+      expect(screen.getByTestId('event-rsvps-write-error')).toHaveTextContent(
+        'rsvp write denied',
+      ),
+    );
   });
 
   it('hides record / edit controls for a read-only session', async () => {

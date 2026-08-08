@@ -12,6 +12,7 @@ import {
   buildInsertMutation,
   buildUpdateMutation,
 } from '@bifrostql/react';
+import { useWriteFeedback, WriteFeedbackRegion } from '../common/write-feedback';
 
 /** Qualified entity key of the event_rsvps entity in the overlay. */
 const EVENT_RSVPS_ENTITY_KEY = 'main.event_rsvps';
@@ -156,40 +157,54 @@ export function EventRsvps() {
   );
   const [guestsEdits, setGuestsEdits] = useState<Record<string, string>>({});
 
+  const feedback = useWriteFeedback();
+
   const responseFor = (rsvp: RsvpRow) =>
     responseEdits[String(rsvp.id)] ?? rsvp.response ?? '';
   const guestsFor = (rsvp: RsvpRow) =>
     guestsEdits[String(rsvp.id)] ?? String(rsvp.guests ?? '');
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!canWrite || !eventId || !newMemberId) {
       return;
     }
-    insert.mutate({
-      detail: {
-        event_id: eventId,
-        member_id: newMemberId,
-        response: newResponse || null,
-        guests: newGuests === '' ? null : Number(newGuests),
-      },
-    });
+    const recorded = await feedback.run(
+      () =>
+        insert.mutateAsync({
+          detail: {
+            event_id: eventId,
+            member_id: newMemberId,
+            response: newResponse || null,
+            guests: newGuests === '' ? null : Number(newGuests),
+          },
+        }),
+      'RSVP recorded.',
+    );
+    // A rejected insert leaves the selection in place so it can be retried.
+    if (!recorded) {
+      return;
+    }
     setNewMemberId('');
     setNewResponse('');
     setNewGuests('');
   };
 
-  const handleSaveRow = (rsvp: RsvpRow) => {
+  const handleSaveRow = async (rsvp: RsvpRow) => {
     if (!canWrite) {
       return;
     }
     const guests = guestsFor(rsvp);
-    update.mutate({
-      detail: {
-        id: rsvp.id,
-        response: responseFor(rsvp) || null,
-        guests: guests === '' ? null : Number(guests),
-      },
-    });
+    await feedback.run(
+      () =>
+        update.mutateAsync({
+          detail: {
+            id: rsvp.id,
+            response: responseFor(rsvp) || null,
+            guests: guests === '' ? null : Number(guests),
+          },
+        }),
+      'RSVP saved.',
+    );
   };
 
   if (metadataLoading) {
@@ -219,6 +234,8 @@ export function EventRsvps() {
   return (
     <section data-testid="event-rsvps">
       <h2>{title}</h2>
+
+      <WriteFeedbackRegion feedback={feedback} testId="event-rsvps-write" />
 
       <ul data-testid="event-rsvps-list">
         {rsvps.map((rsvp) => (
@@ -257,7 +274,9 @@ export function EventRsvps() {
                 <button
                   type="button"
                   data-testid={`event-rsvp-save-${rsvp.id}`}
-                  onClick={() => handleSaveRow(rsvp)}
+                  onClick={() => {
+                    void handleSaveRow(rsvp);
+                  }}
                 >
                   Save
                 </button>
@@ -297,7 +316,12 @@ export function EventRsvps() {
             value={newGuests}
             onChange={(value) => setNewGuests(value)}
           />
-          <button type="button" onClick={handleAdd}>
+          <button
+            type="button"
+            onClick={() => {
+              void handleAdd();
+            }}
+          >
             Record RSVP
           </button>
         </div>

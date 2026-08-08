@@ -1,32 +1,3 @@
-export const GET_SCHEMA = `{
-    schema: __schema {
-      queryType {
-        fields {
-          name
-          type {
-            fields {
-              name
-              type {
-                ofType {
-                  fields {
-                    name
-                    type {
-                      kind
-                      ofType {
-                        name
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-  `;
-
 export const GET_DB_SCHEMA = `
 query dbSchema {
   _dbSchema {

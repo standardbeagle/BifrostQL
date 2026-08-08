@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { GET_DB_SCHEMA } from "../common/schema";
+import { GET_DB_SCHEMA } from "../common/schema-queries";
 import { createContext, useContext, useMemo, ReactNode } from "react";
 import { Schema, Table, Column, TableMetadata, ManyToManyJoin } from '../types/schema';
 import { useFetcher } from "../common/fetcher";

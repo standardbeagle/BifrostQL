@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GET_DB_SCHEMA } from './schema';
+import { GET_DB_SCHEMA } from './schema-queries';
 
 describe('GET_DB_SCHEMA', () => {
     it('requests relationship fieldName metadata for aliased joins', () => {

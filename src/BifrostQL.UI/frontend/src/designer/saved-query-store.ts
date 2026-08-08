@@ -5,12 +5,13 @@
  */
 
 import { createSavedObjectsClient, type SavedObjectsClient } from "@standardbeagle/edit-db";
+import { newSavedObjectId } from "../lib/saved-object-id";
 
 export const SAVED_QUERY_TYPE = "query" as const;
 
 export const savedQueryStore: SavedObjectsClient = createSavedObjectsClient();
 
-/** A fresh saved-object id. Falls back when `crypto.randomUUID` is unavailable. */
+/** A fresh saved-query id. */
 export function newQueryId(): string {
-  return crypto.randomUUID?.() ?? `query-${Date.now()}`;
+  return newSavedObjectId("query");
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { newSavedObjectId } from "../lib/saved-object-id";
 import {
   FormRunnerHost,
   parseFormDefinition,
@@ -91,7 +92,7 @@ export function FormBuilderPane({ fetcher }: { fetcher?: GraphQLFetcher }) {
 
   const onSave = useCallback(() => {
     if (!def) return;
-    const id = activeId ?? (crypto.randomUUID?.() ?? `form-${Date.now()}`);
+    const id = activeId ?? newSavedObjectId("form");
     const next = upsertForm(forms, { id, name: def.title, definition: def }, new Date().toISOString());
     setForms(next);
     setActiveId(id);

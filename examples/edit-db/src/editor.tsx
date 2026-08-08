@@ -74,7 +74,11 @@ export function Editor({
         },
     }), []);
 
-    if (!resolvedFetcher) return <section>CONFIG MISSING...</section>;
+    if (!resolvedFetcher) {
+        throw new Error(
+            'Editor requires either a `fetcher` (GraphQLFetcher) or a `uri` prop to reach the GraphQL endpoint; neither was provided.',
+        );
+    }
 
     return (
         <QueryClientProvider client={queryClient}>

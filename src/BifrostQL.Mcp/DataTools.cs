@@ -189,6 +189,10 @@ namespace BifrostQL.Mcp
             var cursorText = page is { } p ? GetString(p, "cursor") : null;
 
             var model = await executor.GetModelAsync(endpoint);
+            // One identity snapshot per call: it resolves the caller's visible tables AND
+            // scopes the intent, so the table a caller may NAME and the rows it may READ
+            // can never come from two different identities.
+            var userContext = userContextProvider();
             ValidatedQuery validated;
 
             if (cursorText is not null)
@@ -224,7 +228,7 @@ namespace BifrostQL.Mcp
                 {
                     var filterElement = cursor.FilterJson is null ? (JsonElement?)null : ParseSchema(cursor.FilterJson);
                     validated = ValidateQuery(
-                        model, cursor.Table, cursor.Offset, cursor.Limit, cursor.Detail,
+                        model, userContext, cursor.Table, cursor.Offset, cursor.Limit, cursor.Detail,
                         cursor.Fields, cursor.Sort, filterElement);
                     // Server-issued cursors carry the table's exact DbName; a
                     // casing variant only arises from tampering.
@@ -242,7 +246,7 @@ namespace BifrostQL.Mcp
                     ?? throw new ToolPromptException(
                         "Missing required argument 'table'. Call bifrost_schema_overview to list the available tables.");
                 validated = ValidateQuery(
-                    model, tableName,
+                    model, userContext, tableName,
                     offset: 0,
                     limit: GetPageLimit(page),
                     detail: GetStringArgument(args, "detail") ?? "summary",
@@ -254,7 +258,7 @@ namespace BifrostQL.Mcp
             var result = await executor.ExecuteAsync(new QueryIntent
             {
                 Query = validated.Query,
-                UserContext = new Dictionary<string, object?>(userContextProvider()),
+                UserContext = new Dictionary<string, object?>(userContext),
                 Endpoint = endpoint,
             }, cancellationToken);
 
@@ -322,6 +326,7 @@ namespace BifrostQL.Mcp
         /// </summary>
         private static ValidatedQuery ValidateQuery(
             IDbModel model,
+            IDictionary<string, object?> userContext,
             string tableName,
             int offset,
             int limit,
@@ -344,7 +349,7 @@ namespace BifrostQL.Mcp
             if (sortTokens is not null && sort.Count != sortTokens.Count)
                 throw new ToolPromptException("sort must contain only '<column>_asc' / '<column>_desc' tokens.");
 
-            var table = ResolveTable(model, tableName);
+            var table = ResolveTable(model, userContext, tableName);
             var fieldNames = fields?.Cast<string>().ToList();
             var columns = fieldNames is not null
                 ? fieldNames.Select(f => QueryToolCompiler.ResolveColumn(table, f)).DistinctBy(c => c.ColumnName).ToList()
@@ -392,7 +397,8 @@ namespace BifrostQL.Mcp
                 ?? throw new ToolPromptException("Missing required argument 'id' (the row's primary-key value).");
 
             var model = await executor.GetModelAsync(endpoint);
-            var table = ResolveTable(model, tableName);
+            var userContext = userContextProvider();
+            var table = ResolveTable(model, userContext, tableName);
             var keyColumns = table.KeyColumns.ToList();
             if (keyColumns.Count == 0)
                 throw new ToolPromptException(
@@ -413,8 +419,6 @@ namespace BifrostQL.Mcp
             {
                 [RowContextDefinitionFactory.IdParameterName] = JsonSerializer.SerializeToElement((IReadOnlyList<object?>)idValues),
             };
-            var userContext = new Dictionary<string, object?>(userContextProvider());
-
             var rootResult = await compiled.ExecuteAsync(idArgument, userContext, cancellationToken);
             var row = rootResult.Rows.FirstOrDefault()
                 ?? throw new ToolPromptException(

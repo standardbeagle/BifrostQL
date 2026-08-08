@@ -12,9 +12,37 @@ namespace BifrostQL.Mcp
     /// </summary>
     internal static class ToolJson
     {
-        internal static IDbTable ResolveTable(IDbModel model, string tableName) =>
+        /// <summary>
+        /// Resolves a caller-named table against the tables that caller may READ. The
+        /// prompt-style failure lists only the VISIBLE tables, so a mistyped table name
+        /// never enumerates the schema past the caller's authorization, and a
+        /// read-denied table resolves exactly like a non-existent one — no oracle
+        /// (protocol-adapter-security invariant 4).
+        /// </summary>
+        internal static IDbTable ResolveTable(
+            IDbModel model, IDictionary<string, object?> userContext, string tableName)
+        {
+            // Resolution itself is against the FULL model on purpose: a policy-denied
+            // table must still reach the transformer pipeline so the caller gets the
+            // AUTHORITATIVE server-side rejection, the same condition every other
+            // adapter raises for it (invariant 10 — one condition, one wire status
+            // across adapters; the shared conformance kit pins this).
+            var table = model.Tables.FirstOrDefault(t =>
+                string.Equals(t.DbName, tableName, StringComparison.OrdinalIgnoreCase));
+            if (table is not null)
+                return table;
+
+            // The FAILURE message, though, is an introspection surface: listing every
+            // table in the model let any caller enumerate the schema by mistyping one
+            // table name. It names only the tables this caller may READ (invariant 4).
+            throw new ToolPromptException(SchemaDescriber.UnknownTableMessage(
+                McpSchemaVisibility.Project(model, userContext), tableName));
+        }
+
+        internal static IDbTable ResolveTable(
+            IDbModel model, IReadOnlyList<McpVisibleTable> visible, string tableName) =>
             model.Tables.FirstOrDefault(t => string.Equals(t.DbName, tableName, StringComparison.OrdinalIgnoreCase))
-            ?? throw new ToolPromptException(SchemaDescriber.UnknownTableMessage(model, tableName));
+            ?? throw new ToolPromptException(SchemaDescriber.UnknownTableMessage(visible, tableName));
 
         internal static JsonArray ToJsonRows(IReadOnlyList<IReadOnlyDictionary<string, object?>> rows) =>
             new(rows.Select(r => (JsonNode?)ToJsonRow(r)).ToArray());

@@ -23,29 +23,38 @@ namespace BifrostQL.Mcp
         /// table with keys, relationship edges, and behavior notes.
         /// <paramref name="fullDetail"/> additionally inlines a condensed column
         /// list per table.
+        ///
+        /// <para><paramref name="visible"/> is the policy-filtered projection from
+        /// <see cref="McpSchemaVisibility.Project"/> — the ONLY input, so a table or
+        /// column the caller may not read is structurally unrepresentable here rather
+        /// than filtered out afterwards. Relationship edges are additionally restricted
+        /// to edges whose other end is itself visible: an edge naming a hidden table or
+        /// a hidden key column would leak exactly what the projection removed.</para>
         /// </summary>
-        public static JsonObject BuildOverview(IDbModel model, bool fullDetail)
+        public static JsonObject BuildOverview(IReadOnlyList<McpVisibleTable> visible, bool fullDetail)
         {
             var tables = new JsonArray();
-            foreach (var table in model.Tables.OrderBy(t => t.DbName, StringComparer.OrdinalIgnoreCase))
+            foreach (var entryTable in visible.OrderBy(v => v.Table.DbName, StringComparer.OrdinalIgnoreCase))
             {
+                var table = entryTable.Table;
+                var columns = entryTable.Columns;
                 var entry = new JsonObject
                 {
                     ["name"] = table.DbName,
                     ["schema"] = table.TableSchema,
-                    ["primaryKey"] = new JsonArray(table.KeyColumns.Select(c => (JsonNode?)c.ColumnName).ToArray()),
-                    ["columnCount"] = table.Columns.Count(),
-                    ["references"] = new JsonArray(OutgoingLinks(table)
+                    ["primaryKey"] = new JsonArray(VisibleKeyColumns(entryTable).Select(c => (JsonNode?)c.ColumnName).ToArray()),
+                    ["columnCount"] = columns.Count,
+                    ["references"] = new JsonArray(VisibleOutgoingLinks(entryTable, visible)
                         .Select(l => (JsonNode?)$"{ColumnList(l.ChildIds)} -> {l.ParentTable.DbName}.{ColumnList(l.ParentIds)}")
                         .ToArray()),
-                    ["referencedBy"] = new JsonArray(IncomingLinks(table)
+                    ["referencedBy"] = new JsonArray(VisibleIncomingLinks(entryTable, visible)
                         .Select(l => (JsonNode?)$"{l.ChildTable.DbName}.{ColumnList(l.ChildIds)} -> {ColumnList(l.ParentIds)}")
                         .ToArray()),
                     ["notes"] = new JsonArray(ShortBehaviorNotes(table).Select(n => (JsonNode?)n).ToArray()),
                 };
                 if (fullDetail)
                 {
-                    entry["columns"] = new JsonArray(table.Columns
+                    entry["columns"] = new JsonArray(columns
                         .OrderBy(c => c.OrdinalPosition)
                         .Select(c => (JsonNode?)CondensedColumn(c))
                         .ToArray());
@@ -56,7 +65,7 @@ namespace BifrostQL.Mcp
             return new JsonObject
             {
                 ["detail"] = fullDetail ? "full" : "summary",
-                ["tableCount"] = model.Tables.Count,
+                ["tableCount"] = visible.Count,
                 ["tables"] = tables,
             };
         }
@@ -66,9 +75,11 @@ namespace BifrostQL.Mcp
         /// <paramref name="table"/>: columns with types/keys, foreign keys in both
         /// directions, and metadata-derived behavior notes.
         /// </summary>
-        public static JsonObject BuildTableDescription(IDbTable table)
+        public static JsonObject BuildTableDescription(
+            McpVisibleTable visibleTable, IReadOnlyList<McpVisibleTable> visible)
         {
-            var columns = new JsonArray(table.Columns
+            var table = visibleTable.Table;
+            var columns = new JsonArray(visibleTable.Columns
                 .OrderBy(c => c.OrdinalPosition)
                 .Select(c => (JsonNode?)new JsonObject
                 {
@@ -81,7 +92,7 @@ namespace BifrostQL.Mcp
                 })
                 .ToArray());
 
-            var foreignKeysOut = new JsonArray(OutgoingLinks(table)
+            var foreignKeysOut = new JsonArray(VisibleOutgoingLinks(visibleTable, visible)
                 .Select(l => (JsonNode?)new JsonObject
                 {
                     ["columns"] = new JsonArray(l.ChildIds.Select(c => (JsonNode?)c.ColumnName).ToArray()),
@@ -90,7 +101,7 @@ namespace BifrostQL.Mcp
                 })
                 .ToArray());
 
-            var foreignKeysIn = new JsonArray(IncomingLinks(table)
+            var foreignKeysIn = new JsonArray(VisibleIncomingLinks(visibleTable, visible)
                 .Select(l => (JsonNode?)new JsonObject
                 {
                     ["table"] = l.ChildTable.DbName,
@@ -103,7 +114,7 @@ namespace BifrostQL.Mcp
             {
                 ["table"] = table.DbName,
                 ["schema"] = table.TableSchema,
-                ["primaryKey"] = new JsonArray(table.KeyColumns.Select(c => (JsonNode?)c.ColumnName).ToArray()),
+                ["primaryKey"] = new JsonArray(VisibleKeyColumns(visibleTable).Select(c => (JsonNode?)c.ColumnName).ToArray()),
                 ["columns"] = columns,
                 ["foreignKeysOut"] = foreignKeysOut,
                 ["foreignKeysIn"] = foreignKeysIn,
@@ -118,10 +129,10 @@ namespace BifrostQL.Mcp
         /// exposed) still yields a prompt-style message rather than throwing,
         /// so agents get an actionable error instead of a protocol fault.
         /// </summary>
-        public static string UnknownTableMessage(IDbModel model, string requestedTable)
+        public static string UnknownTableMessage(IReadOnlyList<McpVisibleTable> visible, string requestedTable)
         {
-            var names = model.Tables
-                .Select(t => t.DbName)
+            var names = visible
+                .Select(v => v.Table.DbName)
                 .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
             if (names.Length == 0)
@@ -202,6 +213,49 @@ namespace BifrostQL.Mcp
             table.MultiLinks.Values
                 .Where(l => SameTable(l.ParentTable, table))
                 .OrderBy(l => l.ChildTable.DbName, StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// The table's key columns the caller may read. A key column hidden by a
+        /// column read-deny is omitted rather than named, so the key shape never leaks
+        /// a column the data path would refuse.
+        /// </summary>
+        private static IEnumerable<ColumnDto> VisibleKeyColumns(McpVisibleTable table)
+        {
+            var allowed = table.Columns
+                .Select(c => c.DbName)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return table.Table.KeyColumns.Where(c => allowed.Contains(c.DbName));
+        }
+
+        /// <summary>
+        /// Outgoing FK edges whose referenced table is itself visible AND whose every
+        /// participating column (both ends) is visible. An edge is a two-ended fact:
+        /// publishing it for a hidden parent would disclose the hidden table's name and
+        /// key columns through the child's metadata — the exact leak the projection
+        /// removed on the direct path.
+        /// </summary>
+        private static IEnumerable<TableLinkDto> VisibleOutgoingLinks(
+            McpVisibleTable table, IReadOnlyList<McpVisibleTable> visible) =>
+            OutgoingLinks(table.Table).Where(l =>
+                McpSchemaVisibility.Find(visible, l.ParentTable.DbName) is { } parent
+                && ColumnsVisible(table, l.ChildIds)
+                && ColumnsVisible(parent, l.ParentIds));
+
+        /// <summary>Incoming FK edges under the same two-ended visibility rule.</summary>
+        private static IEnumerable<TableLinkDto> VisibleIncomingLinks(
+            McpVisibleTable table, IReadOnlyList<McpVisibleTable> visible) =>
+            IncomingLinks(table.Table).Where(l =>
+                McpSchemaVisibility.Find(visible, l.ChildTable.DbName) is { } child
+                && ColumnsVisible(child, l.ChildIds)
+                && ColumnsVisible(table, l.ParentIds));
+
+        private static bool ColumnsVisible(McpVisibleTable table, IReadOnlyList<ColumnDto> columns)
+        {
+            var allowed = table.Columns
+                .Select(c => c.DbName)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return columns.All(c => allowed.Contains(c.DbName));
+        }
 
         private static bool SameTable(IDbTable a, IDbTable b) =>
             string.Equals(a.DbName, b.DbName, StringComparison.OrdinalIgnoreCase)

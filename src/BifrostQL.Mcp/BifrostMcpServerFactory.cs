@@ -238,9 +238,9 @@ namespace BifrostQL.Mcp
                     CallToolHandler = (request, ct) => CallToolAsync(
                         executor, mutationExecutor, writesActive, gate, endpoint, contextProvider, declarativeTools, request.Params, ct),
                     ListResourcesHandler = (_, ct) => MapProtocolConditionsAsync(
-                        () => ListResourcesAsync(executor, endpoint, ct)),
+                        () => ListResourcesAsync(executor, endpoint, contextProvider, ct)),
                     ReadResourceHandler = (request, ct) => MapProtocolConditionsAsync(
-                        () => ReadResourceAsync(executor, endpoint, request.Params, ct)),
+                        () => ReadResourceAsync(executor, endpoint, contextProvider, request.Params, ct)),
                 },
             };
         }
@@ -533,6 +533,12 @@ namespace BifrostQL.Mcp
             }
 
             var model = await executor.GetModelAsync(endpoint);
+            // Introspection is filtered by the SAME evaluator the data path calls, under
+            // the SAME identity projection, fail-closed (protocol-adapter-security
+            // invariant 4). The schema tools previously read the raw model, so an
+            // unauthenticated caller in the default FailClosed mode enumerated every
+            // table, key, FK edge and column it could not read a single row of.
+            var visible = McpSchemaVisibility.Project(model, userContextProvider());
             switch (parameters.Name)
             {
                 case SchemaOverviewToolName:
@@ -540,18 +546,20 @@ namespace BifrostQL.Mcp
                     var detail = GetStringArgument(parameters, "detail") ?? "summary";
                     if (detail is not ("summary" or "full"))
                         return ErrorResult($"Invalid detail '{detail}'. Allowed values: summary, full.");
-                    return StructuredResult(SchemaDescriber.BuildOverview(model, fullDetail: detail == "full"));
+                    return StructuredResult(SchemaDescriber.BuildOverview(visible, fullDetail: detail == "full"));
                 }
                 case DescribeTableToolName:
                 {
                     var tableName = GetStringArgument(parameters, "table");
                     if (string.IsNullOrWhiteSpace(tableName))
                         return ErrorResult("Missing required argument 'table'. Call bifrost_schema_overview to list the available tables.");
-                    var table = model.Tables.FirstOrDefault(t =>
-                        string.Equals(t.DbName, tableName, StringComparison.OrdinalIgnoreCase));
+                    // A policy-denied table takes the SAME path as a table that does not
+                    // exist — same message, same table list — so describe_table is not an
+                    // existence oracle for tables the caller may not read.
+                    var table = McpSchemaVisibility.Find(visible, tableName);
                     if (table is null)
-                        return ErrorResult(SchemaDescriber.UnknownTableMessage(model, tableName));
-                    return StructuredResult(SchemaDescriber.BuildTableDescription(table));
+                        return ErrorResult(SchemaDescriber.UnknownTableMessage(visible, tableName));
+                    return StructuredResult(SchemaDescriber.BuildTableDescription(table, visible));
                 }
                 default:
                     throw new McpProtocolException($"Unknown tool '{parameters.Name}'.", McpErrorCode.InvalidParams);
@@ -559,10 +567,14 @@ namespace BifrostQL.Mcp
         }
 
         private static async ValueTask<ListResourcesResult> ListResourcesAsync(
-            IQueryIntentExecutor executor, string? endpoint, CancellationToken cancellationToken)
+            IQueryIntentExecutor executor, string? endpoint,
+            Func<IDictionary<string, object?>> userContextProvider, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var model = await executor.GetModelAsync(endpoint);
+            // Same gate as the schema tools: a resource per table the caller may READ,
+            // never one per table in the model (invariant 4).
+            var visible = McpSchemaVisibility.Project(model, userContextProvider());
             var resources = new List<Resource>
             {
                 new()
@@ -574,7 +586,8 @@ namespace BifrostQL.Mcp
                     MimeType = JsonMimeType,
                 },
             };
-            resources.AddRange(model.Tables
+            resources.AddRange(visible
+                .Select(v => v.Table)
                 .OrderBy(t => t.DbName, StringComparer.OrdinalIgnoreCase)
                 .Select(t => new Resource
                 {
@@ -588,7 +601,9 @@ namespace BifrostQL.Mcp
         }
 
         private static async ValueTask<ReadResourceResult> ReadResourceAsync(
-            IQueryIntentExecutor executor, string? endpoint, ReadResourceRequestParams? parameters, CancellationToken cancellationToken)
+            IQueryIntentExecutor executor, string? endpoint,
+            Func<IDictionary<string, object?>> userContextProvider,
+            ReadResourceRequestParams? parameters, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var uri = parameters?.Uri;
@@ -598,15 +613,17 @@ namespace BifrostQL.Mcp
                     McpErrorCode.ResourceNotFound);
 
             var model = await executor.GetModelAsync(endpoint);
+            var visible = McpSchemaVisibility.Project(model, userContextProvider());
             if (string.Equals(uri, OverviewResourceUri, StringComparison.Ordinal))
-                return JsonResource(uri, SchemaDescriber.BuildOverview(model, fullDetail: true));
+                return JsonResource(uri, SchemaDescriber.BuildOverview(visible, fullDetail: true));
 
             var tableName = Uri.UnescapeDataString(uri.Substring(TableResourceUriPrefix.Length));
-            var table = model.Tables.FirstOrDefault(t =>
-                string.Equals(t.DbName, tableName, StringComparison.OrdinalIgnoreCase));
+            // Policy-denied and non-existent resolve identically — same error, same code,
+            // same table list — so the resource URI space is not an existence oracle.
+            var table = McpSchemaVisibility.Find(visible, tableName);
             if (table is null)
-                throw new McpProtocolException(SchemaDescriber.UnknownTableMessage(model, tableName), McpErrorCode.ResourceNotFound);
-            return JsonResource(uri, SchemaDescriber.BuildTableDescription(table));
+                throw new McpProtocolException(SchemaDescriber.UnknownTableMessage(visible, tableName), McpErrorCode.ResourceNotFound);
+            return JsonResource(uri, SchemaDescriber.BuildTableDescription(table, visible));
         }
 
         private static string? GetStringArgument(CallToolRequestParams parameters, string name)

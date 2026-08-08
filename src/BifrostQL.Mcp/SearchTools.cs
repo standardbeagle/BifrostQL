@@ -135,7 +135,12 @@ namespace BifrostQL.Mcp
                     $"term must be at least {MinTermLength} characters — a shorter term would match nearly every row.");
 
             var model = await executor.GetModelAsync(endpoint);
-            var tables = ResolveSearchTables(model, GetStringArray(args, "tables"));
+            var userContext = userContextProvider();
+            // Search only sweeps tables this caller may READ: the automatic all-tables
+            // sweep must not iterate — nor name in its per-table totals — a table the
+            // caller cannot SELECT (protocol-adapter-security invariant 4).
+            var visible = McpSchemaVisibility.Project(model, userContext);
+            var tables = ResolveSearchTables(model, visible, GetStringArray(args, "tables"));
 
             var results = new JsonArray();
             var tableTotals = new JsonArray();
@@ -155,7 +160,7 @@ namespace BifrostQL.Mcp
                     result = await executor.ExecuteAsync(new QueryIntent
                     {
                         Query = BuildSearchQuery(table, stringColumns, term),
-                        UserContext = new Dictionary<string, object?>(userContextProvider()),
+                        UserContext = new Dictionary<string, object?>(userContext),
                         Endpoint = endpoint,
                     }, cancellationToken);
                 }
@@ -234,10 +239,11 @@ namespace BifrostQL.Mcp
         /// with no string columns is a caller mistake worth failing fast on,
         /// whereas the automatic all-tables sweep simply skips such tables.
         /// </summary>
-        private static List<IDbTable> ResolveSearchTables(IDbModel model, IReadOnlyList<string>? requested)
+        private static List<IDbTable> ResolveSearchTables(
+            IDbModel model, IReadOnlyList<McpVisibleTable> visible, IReadOnlyList<string>? requested)
         {
             if (requested is null)
-                return model.Tables
+                return visible.Select(v => v.Table)
                     .Where(t => StringColumns(t).Count > 0)
                     .OrderBy(t => t.DbName, StringComparer.OrdinalIgnoreCase)
                     .ToList();
@@ -248,7 +254,7 @@ namespace BifrostQL.Mcp
             var tables = new List<IDbTable>();
             foreach (var name in requested)
             {
-                var table = ResolveTable(model, name);
+                var table = ResolveTable(model, visible, name);
                 if (StringColumns(table).Count == 0)
                     throw new ToolPromptException(
                         $"Table '{table.DbName}' has no string columns to search. " +

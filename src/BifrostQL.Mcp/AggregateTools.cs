@@ -120,7 +120,8 @@ namespace BifrostQL.Mcp
                     "Missing required argument 'table'. Call bifrost_schema_overview to list the available tables.");
 
             var model = await executor.GetModelAsync(endpoint);
-            var table = ResolveTable(model, tableName);
+            var userContext = userContextProvider();
+            var table = ResolveTable(model, userContext, tableName);
 
             var groupColumns = CompileGroupColumns(table, GetStringArray(args, "groupBy"));
             var (includeCount, valueColumns, measureKeys) = CompileMeasures(model, table, GetArgument(args, "measures"));
@@ -138,7 +139,7 @@ namespace BifrostQL.Mcp
             var result = await executor.ExecuteAsync(new QueryIntent
             {
                 Query = query,
-                UserContext = new Dictionary<string, object?>(userContextProvider()),
+                UserContext = new Dictionary<string, object?>(userContext),
                 Endpoint = endpoint,
             }, cancellationToken);
 

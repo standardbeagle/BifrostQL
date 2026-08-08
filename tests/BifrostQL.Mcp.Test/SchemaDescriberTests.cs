@@ -11,18 +11,15 @@ namespace BifrostQL.Mcp.Test
     public sealed class SchemaDescriberTests
     {
         [Fact]
-        public void UnknownTableMessage_EmptyModel_ReturnsPromptStyleErrorWithoutThrowing()
+        public void UnknownTableMessage_NoVisibleTables_ReturnsPromptStyleErrorWithoutThrowing()
         {
-            // Arrange: a model exposing no tables (e.g. an empty database or a
-            // metadata configuration that hides every table).
-            var model = new DbModel
-            {
-                Tables = Array.Empty<IDbTable>(),
-                Metadata = new Dictionary<string, object?>(),
-            };
+            // Arrange: no table is visible to this caller — an empty database, or a
+            // schema in which policy denies the caller every table. Both collapse to the
+            // same projection, which is the point: the message cannot distinguish them.
+            var visible = Array.Empty<McpVisibleTable>();
 
             // Act
-            var message = SchemaDescriber.UnknownTableMessage(model, "orders");
+            var message = SchemaDescriber.UnknownTableMessage(visible, "orders");
 
             // Assert: prompt-style error, no did-you-mean suggestion, states
             // that no tables are available.

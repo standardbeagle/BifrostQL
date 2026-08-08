@@ -82,6 +82,11 @@ public sealed class CommandRouter
         output.WriteInfo("  --user               Database username (prompts for password securely)");
         output.WriteInfo("  --json               Output in JSON format for scripting");
         output.WriteInfo("  --port               Port for serve command (default: 5000)");
+        output.WriteInfo("  --trust-server-certificate");
+        output.WriteInfo("                       Accept the SQL Server TLS certificate without validating it.");
+        output.WriteInfo("                       Encrypted but the server's identity is unverified, so anyone");
+        output.WriteInfo("                       on the network path can intercept it. Use only for a server");
+        output.WriteInfo("                       whose self-signed certificate you already trust.");
         output.WriteInfo("");
         output.WriteHeader("Examples:");
         output.WriteInfo("  bifrost myserver mydb                   Quick start with integrated auth");

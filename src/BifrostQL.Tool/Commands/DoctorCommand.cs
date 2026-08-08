@@ -163,6 +163,23 @@ public sealed class DoctorCommand : ICommand
                     new[] { "Verify the server name/IP address is correct", "Check that the SQL Server service is running", "Ensure firewall rules allow the connection", "Verify the port number if non-standard" }
                 ));
             }
+            catch (Exception ex) when (SqlServerCertificateTrust.IsCertificateValidationFailure(ex))
+            {
+                // Enforcing certificate validation makes this the failure a previously-working
+                // connection now hits, so it gets its own diagnosis with the exact way out
+                // rather than falling into the generic "check network connectivity" advice.
+                checks.Add(new DoctorCheck("Database Connection", DoctorStatus.Fail, "TLS certificate rejected"));
+                issues.Add(new DoctorIssue(
+                    DoctorSeverity.Error,
+                    "Server Certificate Not Trusted",
+                    $"The server's TLS certificate could not be validated: {ex.Message}",
+                    new[]
+                    {
+                        "Install a certificate on the server that your machine's trust store accepts",
+                        SqlServerCertificateTrust.CertificateRemedy,
+                    }
+                ));
+            }
             catch (Exception ex)
             {
                 checks.Add(new DoctorCheck("Database Connection", DoctorStatus.Fail, ex.Message));

@@ -14,6 +14,14 @@ public sealed class ToolConfig
     public int Port { get; private set; } = 5000;
 
     /// <summary>
+    /// Waives TLS certificate validation on a connection string built from the positional
+    /// <c>&lt;server&gt; &lt;database&gt;</c> arguments. Off by default: the connection is
+    /// encrypted AND the server's identity verified unless the operator says otherwise.
+    /// See <see cref="SqlServerCertificateTrust"/>.
+    /// </summary>
+    public bool TrustServerCertificate { get; private set; }
+
+    /// <summary>
     /// Parses command-line arguments into a ToolConfig instance.
     /// Arguments are positional for the command name, with named flags:
     ///   --connection-string &lt;connstr&gt;
@@ -21,6 +29,7 @@ public sealed class ToolConfig
     ///   --user &lt;username&gt;
     ///   --json
     ///   --port &lt;number&gt;
+    ///   --trust-server-certificate
     /// </summary>
     public static ToolConfig Parse(string[] args)
     {
@@ -39,6 +48,9 @@ public sealed class ToolConfig
                     break;
                 case "--user" when i + 1 < args.Length:
                     config.User = args[++i];
+                    break;
+                case SqlServerCertificateTrust.Flag:
+                    config.TrustServerCertificate = true;
                     break;
                 case "--json":
                     config.JsonOutput = true;
@@ -82,6 +94,7 @@ public sealed class ToolConfig
             CommandName = "serve",
             CommandArgs = args,
             Port = Port,
+            TrustServerCertificate = TrustServerCertificate,
         };
     }
 }

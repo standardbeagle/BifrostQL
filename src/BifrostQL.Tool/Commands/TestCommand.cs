@@ -60,12 +60,22 @@ public sealed class TestCommand : ICommand
         }
         catch (SqlException ex)
         {
+            // A certificate rejection is the one connect failure with a specific remedy, and
+            // it is the failure a previously-working invocation hits now that validation is
+            // enforced. Name the way out, or the user meets a bare "SSL Provider, error: 0"
+            // and has nothing to act on.
+            var remedy = SqlServerCertificateTrust.IsCertificateValidationFailure(ex)
+                ? SqlServerCertificateTrust.CertificateRemedy
+                : null;
+
             if (output.IsJsonMode)
             {
-                output.WriteJson(new { success = false, error = ex.Message });
+                output.WriteJson(new { success = false, error = ex.Message, remedy });
                 return 1;
             }
             output.WriteError($"Connection failed: {ex.Message}");
+            if (remedy != null)
+                output.WriteWarning($"  {remedy}");
             return 1;
         }
     }

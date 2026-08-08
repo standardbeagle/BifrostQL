@@ -22,6 +22,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="BifrostQL.Tool.Test" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\BifrostQL.Core\BifrostQL.Core.csproj" />
     <ProjectReference Include="..\BifrostQL.Server\BifrostQL.Server.csproj" />
     <ProjectReference Include="..\data\BifrostQL.SqlServer\BifrostQL.SqlServer.csproj" />

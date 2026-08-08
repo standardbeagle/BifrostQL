@@ -76,15 +76,18 @@ public sealed class ServeCommand : ICommand
             var server = config.CommandArgs[0];
             var database = config.CommandArgs[1];
 
-            if (!string.IsNullOrWhiteSpace(config.User))
-            {
-                var password = ConsolePrompt.ReadPassword($"Password for {config.User}@{server}: ");
-                var connStr = $"Server={server};Database={database};User Id={config.User};Password={password};TrustServerCertificate=True";
-                return new ResolvedConnection(connStr, await LoadConfigFile(config.ConfigPath));
-            }
+            // A weakened TLS posture is stated at the moment it takes effect, rather than
+            // being discoverable only by reading the connection string back.
+            if (config.TrustServerCertificate)
+                output.WriteWarning(SqlServerCertificateTrust.WaiverWarning(server));
 
-            var trustedConnStr = $"Server={server};Database={database};Trusted_Connection=True;TrustServerCertificate=True";
-            return new ResolvedConnection(trustedConnStr, await LoadConfigFile(config.ConfigPath));
+            var password = string.IsNullOrWhiteSpace(config.User)
+                ? null
+                : ConsolePrompt.ReadPassword($"Password for {config.User}@{server}: ");
+
+            var connStr = SqlServerCertificateTrust.Build(
+                server, database, config.User, password, config.TrustServerCertificate);
+            return new ResolvedConnection(connStr, await LoadConfigFile(config.ConfigPath));
         }
 
         // Priority 2b: Single positional arg — disambiguate file vs error
@@ -176,6 +179,9 @@ public sealed class ServeCommand : ICommand
         output.WriteInfo("  bifrost <server> <database> --user sa  SQL auth (prompts for password)");
         output.WriteInfo("  bifrost <config-file>                  Load from config file");
         output.WriteInfo("  bifrost serve --connection-string ...  Explicit connection string");
+        output.WriteInfo("");
+        output.WriteInfo($"  Add {SqlServerCertificateTrust.Flag} only for a server whose self-signed");
+        output.WriteInfo("  certificate you already trust; it disables certificate validation.");
         output.WriteInfo("");
         output.WriteInfo("  Or create a bifrostql.json with 'bifrost init'");
     }

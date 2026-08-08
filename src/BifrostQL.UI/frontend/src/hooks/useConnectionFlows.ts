@@ -21,7 +21,7 @@ import {
   type BridgeConnectionInfo,
 } from '../lib/credential-prompt';
 import { toUserFacingError } from '../lib/user-error';
-import { parseQuickstartStream } from '../lib/quickstart-stream';
+import { parseQuickStartStream } from '../lib/quickstart-stream';
 
 // API endpoints
 const API_QUICKSTART = '/api/database/create-quickstart';
@@ -330,7 +330,7 @@ export function useConnectionFlows({ restored, enterEditor }: UseConnectionFlows
 
       const contentType = response.headers.get('content-type') ?? '';
       if (contentType.includes('text/event-stream') && response.body) {
-        const connectionString = await parseQuickstartStream(response, setLaunchProgress);
+        const connectionString = await parseQuickStartStream(response, setLaunchProgress);
 
         if (connectionString) {
           activateSqliteConnection({

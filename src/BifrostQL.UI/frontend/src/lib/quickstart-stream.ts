@@ -6,7 +6,7 @@
  *
  * The caller guards on `response.body` before invoking this.
  */
-export async function parseQuickstartStream(
+export async function parseQuickStartStream(
   response: Response,
   onProgress: (message: string) => void,
 ): Promise<string> {

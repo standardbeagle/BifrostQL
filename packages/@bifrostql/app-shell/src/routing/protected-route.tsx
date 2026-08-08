@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { useSession } from '../auth/use-session';
 
@@ -95,11 +95,19 @@ export function ProtectedRoute({
 
   const shouldRedirect = !isLoading && !isAuthenticated;
 
+  // Callers write `onUnauthenticated={() => navigate('/login')}`, so the prop
+  // is a new function on every render. Keeping it in the effect's deps made
+  // the effect re-run on each one, firing the redirect repeatedly for as long
+  // as the user stayed unauthenticated. Hold it in a ref so the effect depends
+  // only on the auth state, while still calling the latest callback.
+  const onUnauthenticatedRef = useRef(onUnauthenticated);
+  onUnauthenticatedRef.current = onUnauthenticated;
+
   useEffect(() => {
     if (shouldRedirect) {
-      onUnauthenticated?.();
+      onUnauthenticatedRef.current?.();
     }
-  }, [shouldRedirect, onUnauthenticated]);
+  }, [shouldRedirect]);
 
   if (isLoading) {
     return <>{loadingFallback}</>;

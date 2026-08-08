@@ -208,4 +208,72 @@ describe('ProtectedRoute', () => {
       expect(screen.getByText('custom forbidden')).toBeInTheDocument(),
     );
   });
+
+  it('fires onUnauthenticated once even when the callback identity changes', async () => {
+    // Arrange: the real-world call-site shape is an inline arrow, so the
+    // callback is a brand-new function on every render.
+    globalThis.fetch = createSessionFetchMock(null);
+    const Wrapper = createWrapper();
+    const navigate = vi.fn();
+
+    function Screen() {
+      return (
+        <ProtectedRoute onUnauthenticated={() => navigate('/login')}>
+          <div>protected content</div>
+        </ProtectedRoute>
+      );
+    }
+
+    const { rerender } = render(
+      <Wrapper>
+        <Screen />
+      </Wrapper>,
+    );
+    await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
+
+    // Act: re-render with the same auth state and a fresh closure.
+    rerender(
+      <Wrapper>
+        <Screen />
+      </Wrapper>,
+    );
+    rerender(
+      <Wrapper>
+        <Screen />
+      </Wrapper>,
+    );
+
+    // Assert: the redirect fires on the auth transition, not on renders.
+    expect(navigate).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the latest onUnauthenticated when the redirect finally fires', async () => {
+    // Arrange: holding the callback in a ref must not pin a stale one.
+    globalThis.fetch = createSessionFetchMock(null);
+    const Wrapper = createWrapper();
+    const stale = vi.fn();
+    const fresh = vi.fn();
+
+    const { rerender } = render(
+      <Wrapper>
+        <ProtectedRoute onUnauthenticated={stale}>
+          <div>protected content</div>
+        </ProtectedRoute>
+      </Wrapper>,
+    );
+    await waitFor(() => expect(stale).toHaveBeenCalledTimes(1));
+
+    // Act
+    rerender(
+      <Wrapper>
+        <ProtectedRoute onUnauthenticated={fresh}>
+          <div>protected content</div>
+        </ProtectedRoute>
+      </Wrapper>,
+    );
+
+    // Assert: no extra call from the swap, and the ref now holds `fresh`.
+    expect(fresh).not.toHaveBeenCalled();
+    expect(stale).toHaveBeenCalledTimes(1);
+  });
 });

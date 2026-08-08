@@ -75,9 +75,21 @@ namespace BifrostQL.Server.Resp
                 while (true)
                 {
                     RespValue? frame;
+                    IReadOnlyList<string> arguments;
                     try
                     {
                         frame = await reader.ReadValueAsync(ct);
+                        if (frame is null)
+                            return; // clean EOF: peer closed
+
+                        // ParseCommand belongs INSIDE this guard. A frame can be perfectly
+                        // well-formed RESP yet not a command (`:1\r\n`, `+OK\r\n`, an array of
+                        // integers): the decoder accepts it and ParseCommand raises the
+                        // violation. Sitting outside, that throw matched neither this filter nor
+                        // the outer IOException/OperationCanceledException one, so an
+                        // unauthenticated peer could tear the connection down with four bytes —
+                        // no -ERR reply, logged unhandled at error level (invariant 1).
+                        arguments = ParseCommand(frame);
                     }
                     catch (Exception ex) when (ex is RespProtocolException or FormatException or OverflowException or ArgumentException)
                     {
@@ -90,10 +102,6 @@ namespace BifrostQL.Server.Resp
                         return; // Redis closes the connection after a protocol error.
                     }
 
-                    if (frame is null)
-                        return; // clean EOF: peer closed
-
-                    var arguments = ParseCommand(frame);
                     if (arguments.Count == 0)
                         continue; // Redis silently ignores an empty multibulk.
 

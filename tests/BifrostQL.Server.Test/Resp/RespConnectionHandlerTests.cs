@@ -307,6 +307,29 @@ namespace BifrostQL.Server.Test.Resp
                 .Should().BeNull("Redis closes the connection after a protocol error");
         }
 
+        [Theory]
+        [InlineData(":1\r\n")]              // integer
+        [InlineData("+OK\r\n")]             // simple string
+        [InlineData("$3\r\nfoo\r\n")]       // bulk string
+        [InlineData("*1\r\n:1\r\n")]        // array whose element is not a string
+        public async Task WellFormedNonCommandFrame_PreAuth_RepliesProtocolError_AndClosesGracefully(string raw)
+        {
+            // Arrange: NO AUTH — this is the unauthenticated attack surface.
+            await using var fixture = await StartAsync(WithUser());
+
+            // Act: every one of these DECODES cleanly (ReadValueAsync succeeds); they violate the
+            // COMMAND shape, not the wire framing, so the throw comes from ParseCommand — the only
+            // step of the loop that sat outside the guarded region.
+            await fixture.Client.SendRawAsync(Encoding.ASCII.GetBytes(raw));
+            var reply = await ReadAsync(fixture);
+
+            // Assert: a clean -ERR reply, then a graceful close — not an unhandled exception
+            // escaping to Kestrel with the peer left hanging (invariant 1).
+            Error(reply).Should().StartWith("ERR Protocol error");
+            (await fixture.Client.ReadReplyAsync().WaitAsync(Timeout))
+                .Should().BeNull("Redis closes the connection after a protocol error");
+        }
+
         [Fact]
         public async Task AnonymousMode_WhenExplicitlyConfigured_AllowsPingWithoutAuth()
         {

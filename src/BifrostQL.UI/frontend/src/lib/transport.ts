@@ -361,15 +361,23 @@ export class BinaryTransport implements QueryTransport {
   private client: BifrostBinaryClient | null = null;
   private closed = false;
   /**
-   * Sticky connect-timeout failure. Set when a connect attempt exceeds
-   * `connectTimeoutMs` while the underlying handshake is still unsettled;
-   * subsequent queries fail fast with the same error instead of each waiting
-   * out a fresh timeout window (react-query retries would otherwise stack
-   * multiple full windows before the editor's error panel appears). Cleared
-   * as soon as the client reports an open socket, so a late-but-successful
-   * connect (or the client's own background reconnect) recovers naturally.
+   * Connect-timeout failure inside its fail-fast window. Set when a connect
+   * attempt exceeds `connectTimeoutMs` while the underlying handshake is still
+   * unsettled; queries arriving within the next `connectTimeoutMs` fail fast
+   * with the same error instead of each waiting out a fresh timeout window
+   * (react-query retries would otherwise stack multiple full windows before
+   * the editor's error panel appears).
+   *
+   * The window is deliberately bounded rather than sticky. A latch that never
+   * expired was checked ahead of `client.connect()`, so once the client's own
+   * reconnect controller had given up nothing could call `connect()` again to
+   * re-arm it — a single 8s handshake timeout killed binary mode for the life
+   * of this transport, recoverable only by toggling the transport to build a
+   * fresh instance. Cleared early whenever the client reports an open socket.
    */
   private connectTimeoutFailure: Error | null = null;
+  /** When {@link connectTimeoutFailure} was recorded, for expiring the window. */
+  private connectTimeoutFailureAt = 0;
   /**
    * Live connect-timeout timers, tracked so `close()` can cancel them. A bare
    * setTimeout would otherwise keep firing after unmount and reject promises
@@ -436,7 +444,10 @@ export class BinaryTransport implements QueryTransport {
    * WebSocket upgrade the far side never answers leaves `connect()` pending
    * forever. We race it against `connectTimeoutMs` so the caller gets a clear,
    * actionable error instead of an indefinite hang, and remember the timeout
-   * (fail fast on retries) until the socket actually reports open.
+   * for one `connectTimeoutMs` window so a burst of retries fails fast. Once
+   * that window lapses we call `connect()` again for real — that call is the
+   * documented re-arm, so short-circuiting past it forever would block the
+   * very recovery this comment promises.
    */
   private async ensureConnected(): Promise<void> {
     if (!this.client) {
@@ -447,14 +458,19 @@ export class BinaryTransport implements QueryTransport {
       return;
     }
     if (this.connectTimeoutFailure) {
-      throw this.connectTimeoutFailure;
+      if (Date.now() - this.connectTimeoutFailureAt < this.connectTimeoutMs) {
+        throw this.connectTimeoutFailure;
+      }
+      // Window expired — fall through to a real attempt so `connect()` runs
+      // and the client's reconnect controller is re-armed.
+      this.connectTimeoutFailure = null;
     }
     await this.connectWithTimeout(this.client.connect());
   }
 
   /**
    * Races the client's connect promise against the transport's connect
-   * timeout. On timeout the failure is made sticky, the UI is told the
+   * timeout. On timeout the failure opens a fail-fast window, the UI is told the
    * transport is not connected, and the caller gets an error naming the
    * endpoint and the way out (switch back to HTTP). The timer is cleared as
    * soon as the connect settles either way, and tracked so `close()` can
@@ -471,6 +487,7 @@ export class BinaryTransport implements QueryTransport {
             `transport back to HTTP.`
         );
         this.connectTimeoutFailure = failure;
+        this.connectTimeoutFailureAt = Date.now();
         this.statusCallbacks?.onConnectedChange?.(false);
         reject(failure);
       }, this.connectTimeoutMs);

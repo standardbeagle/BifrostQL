@@ -745,6 +745,45 @@ describe("BinaryTransport connect timeout", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     await expectation;
   });
+
+  /**
+   * The fail-fast latch exists to stop react-query retries from stacking full
+   * timeout windows. It must not become a permanent kill switch: the latch
+   * used to be cleared only when the client already reported an open socket,
+   * and it was checked BEFORE client.connect(), so once the client's own
+   * reconnect controller had given up nothing could ever call connect() again.
+   * One 8s handshake timeout killed binary mode for the life of the instance —
+   * recoverable only by toggling the transport to build a fresh one.
+   */
+  it("genuinely retries the handshake once the fail-fast window elapses", async () => {
+    const fake = new HangingConnectClient();
+    const t = new BinaryTransport(
+      "ws://localhost:5000/bifrost-ws",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (() => fake) as unknown as any
+    );
+
+    const first = t.query("{ a }");
+    const firstExpectation = expect(first).rejects.toThrow(/within 8s/);
+    await vi.advanceTimersByTimeAsync(BINARY_CONNECT_TIMEOUT_MS);
+    await firstExpectation;
+    expect(fake.connectCalls).toBe(1);
+
+    // Inside the window the latch still short-circuits: no second socket open.
+    await expect(t.query("{ b }")).rejects.toThrow(/within 8s/);
+    expect(fake.connectCalls).toBe(1);
+
+    // Once the window has passed, a query must reach client.connect() again —
+    // that call is what re-arms the client's reconnect controller.
+    await vi.advanceTimersByTimeAsync(BINARY_CONNECT_TIMEOUT_MS);
+    const third = t.query("{ c }");
+    const thirdExpectation = expect(third).rejects.toThrow(/within 8s/);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.connectCalls).toBe(2);
+    await vi.advanceTimersByTimeAsync(BINARY_CONNECT_TIMEOUT_MS);
+    await thirdExpectation;
+  });
+
 });
 
 /**

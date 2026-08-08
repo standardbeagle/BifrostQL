@@ -23,6 +23,16 @@ namespace BifrostQL.Server.S3
     /// curated message — is mapped onto the wire verbatim; every other exception maps to a
     /// generic sanitized InternalError with detail logged server-side only
     /// (.claude/rules/protocol-adapter-security.md invariants 1 and 3).</para>
+    ///
+    /// <para><b>One error funnel, no per-op-class catches</b> (invariant 10). Every op class —
+    /// ListBuckets, ListObjectsV2, GetObject/HeadObject, PutObject, CopyObject (source AND
+    /// destination) — routes its denial/addressing failures to the single try/catch in
+    /// <see cref="InvokeAsync"/>. Divergence between siblings is therefore impossible by
+    /// construction, rather than kept in sync by review: this seam drifted twice under the
+    /// per-op-class scheme, most recently with ListObjectsV2 answering <c>500</c> where every
+    /// sibling answered a non-enumerating <c>404</c> — a readable existence/authorization
+    /// oracle. DeleteObject is the sole local catch and is an op-class OUTCOME (idempotent 204),
+    /// not an error mapping.</para>
     /// </summary>
     public sealed class S3Middleware
     {
@@ -72,6 +82,46 @@ namespace BifrostQL.Server.S3
             {
                 // Client went away; nothing to write.
             }
+            catch (FileObjectResidueException ex)
+            {
+                // Post-authorization internal failure that ORPHANED a blob (the pointer write
+                // failed AND the compensating rollback failed too). The operator must reclaim the
+                // orphan, so log at Error WITH the storage key — never Debug, which is invisible at
+                // production levels. The wire gets a sanitized 500: the seam message embeds the
+                // storage key and is not wire-safe (invariant 3). A not-found answer would be
+                // wrong here — it would misreport a broken server as a missing object. This catch
+                // MUST precede the one below: the type derives from BifrostExecutionError.
+                _logger.LogError(
+                    ex, "S3 {Method} {Path} left orphaned storage residue at key '{StorageKey}' (request {RequestId}).",
+                    context.Request.Method, context.Request.Path.Value, ex.StorageKey, requestId);
+                var residueError = S3ProtocolException.InternalError();
+                await WriteErrorAsync(context, residueError.HttpStatus, residueError.Code, residueError.Message, requestId);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or BifrostExecutionError)
+            {
+                // THE denial/addressing funnel — one catch for EVERY op class (invariant 10).
+                // An addressing fault (unknown bucket, wrong key arity, non-file column), a row or
+                // table the caller may not see (cross-tenant, scoped-away, table- or column-level
+                // policy read-deny), or an unparseable stored pointer all arrive here, from the
+                // read seam, the write seam, and the listing alike.
+                //
+                // Mapping them in ONE place is the point: the S3 epic previously kept N per-op-class
+                // catches in sync by review, and they drifted twice — first on the read paths
+                // (fixed in 82376b7), then on ListObjectsV2, which had no catch at all and answered
+                // 500 where every sibling answered a clean 404. A caller could read the difference
+                // as an existence/authorization oracle. With a single funnel there is no second
+                // catch to drift.
+                //
+                // The answer is the addressed resource's own non-enumerating "not found" — NoSuchKey
+                // for an object-level address, NoSuchBucket at bucket/service level — so the wire
+                // stays valid S3 while carrying no information about which condition occurred.
+                // Detail is logged server-side only (invariant 3).
+                _logger?.LogDebug(
+                    ex, "S3 {Method} {Path} unaddressable, corrupt, or denied (request {RequestId}).",
+                    context.Request.Method, context.Request.Path.Value, requestId);
+                var notFound = NotFoundForRequest(context.Request);
+                await WriteErrorAsync(context, notFound.HttpStatus, notFound.Code, notFound.Message, requestId);
+            }
             catch (Exception ex)
             {
                 // Never forward an internal exception message onto the wire (invariant 3):
@@ -81,6 +131,18 @@ namespace BifrostQL.Server.S3
                 await WriteErrorAsync(context, internalError.HttpStatus, internalError.Code, internalError.Message, requestId);
             }
         }
+
+        /// <summary>
+        /// The non-enumerating "not found" for the resource a request addresses: an object-level
+        /// path (bucket + key) answers <c>NoSuchKey</c>, a bucket- or service-level path answers
+        /// <c>NoSuchBucket</c>. Keyed off the ADDRESS, never off the condition, so every condition
+        /// reaching the funnel is indistinguishable within an op class, and the code an S3 client
+        /// receives still matches the resource kind it asked for.
+        /// </summary>
+        private static S3ProtocolException NotFoundForRequest(HttpRequest request)
+            => (request.Path.Value ?? string.Empty).Trim('/').Contains('/')
+                ? S3ProtocolException.NoSuchKey()
+                : S3ProtocolException.NoSuchBucket();
 
         /// <summary>
         /// Routes an authenticated request to the operation its path/method/query name.
@@ -169,28 +231,9 @@ namespace BifrostQL.Server.S3
             HttpContext context, IDictionary<string, object?> userContext, string requestId,
             string bucket, string key, bool headOnly)
         {
-            FileObjectSeam.ResolvedFileObject? resolved;
-            try
-            {
-                resolved = await _seam.ResolveAsync(bucket, key, userContext, context.RequestAborted);
-            }
-            catch (Exception ex) when (ex is InvalidOperationException or BifrostExecutionError)
-            {
-                // Addressing fault, corrupt pointer, or a policy read-deny: an unknown
-                // bucket / malformed-or-wrong-arity key / non-file column
-                // (InvalidOperationException), an unparseable stored pointer, or a
-                // table the caller may not read (both BifrostExecutionError — see
-                // FileObjectSeam.LocateAsync and PolicyFilterTransformer). All map to
-                // one non-enumerating NoSuchKey, matching the write paths: answering a
-                // read-denied caller with 500 while writes answer 404 would make the
-                // op class an existence/authorization oracle (the exact epic-wide
-                // divergence this catch closes). The seam's ResolveAsync never touches
-                // storage compensation, so FileObjectResidueException (which derives
-                // from BifrostExecutionError and MUST map to 500, not NoSuchKey) cannot
-                // reach here — the read path builds no blob to orphan. Detail logged only.
-                _logger?.LogDebug(ex, "GetObject/HeadObject unaddressable, corrupt, or denied (request {RequestId}).", requestId);
-                throw S3ProtocolException.NoSuchKey();
-            }
+            // Addressing faults, corrupt pointers and policy read-denies propagate to the
+            // request-dispatch funnel in InvokeAsync, which maps them for EVERY op class alike.
+            var resolved = await _seam.ResolveAsync(bucket, key, userContext, context.RequestAborted);
 
             // A row that does not exist, is not visible to this caller, or holds no
             // object: one answer for all three (non-enumerating error policy).
@@ -331,37 +374,12 @@ namespace BifrostQL.Server.S3
                     throw S3ProtocolException.ContentSha256Mismatch();
             }
 
-            FileObjectSeam.ResolvedFileObject resolved;
-            try
-            {
-                resolved = await _seam.PutAsync(
-                    bucket, key, content, contentType, customMetadata, userContext, context.RequestAborted);
-            }
-            catch (FileObjectResidueException ex)
-            {
-                // Post-authorization internal failure that ORPHANED a blob (the pointer write
-                // failed AND the compensating rollback failed too). The operator must reclaim the
-                // orphan, so log at Error WITH the storage key — never Debug, which is invisible at
-                // production levels. The wire gets a sanitized 500: the seam message embeds the
-                // storage key and is not wire-safe (invariant 3). NoSuchKey is wrong here — it
-                // would misreport a broken server as a missing key.
-                _logger.LogError(
-                    ex, "PutObject left orphaned storage residue at key '{StorageKey}' (request {RequestId}).",
-                    ex.StorageKey, requestId);
-                throw S3ProtocolException.InternalError();
-            }
-            catch (Exception ex) when (ex is InvalidOperationException or BifrostExecutionError)
-            {
-                // Denial/unaddressable/corrupt-pointer: an addressing fault (unknown bucket, wrong
-                // key arity, non-file column), a row the caller cannot see or write (cross-tenant /
-                // scoped-away), or an unparseable pointer. One non-enumerating 404 — responding
-                // differently to any of these would weaken non-enumeration — and, critically, the
-                // pipeline vetoed before the provider was ever asked to store anything (invariant
-                // 8a). Detail logged only. (The residue type is caught above; it derives from
-                // BifrostExecutionError, so that catch MUST precede this one.)
-                _logger?.LogDebug(ex, "PutObject denied or unaddressable (request {RequestId}).", requestId);
-                throw S3ProtocolException.NoSuchKey();
-            }
+            // Denial/unaddressable/corrupt-pointer (→ one non-enumerating 404) and orphaned
+            // storage residue (→ sanitized 500) are both mapped by the funnel in InvokeAsync.
+            // Critically, on a denial the pipeline vetoed before the provider was ever asked to
+            // store anything (invariant 8a).
+            var resolved = await _seam.PutAsync(
+                bucket, key, content, contentType, customMetadata, userContext, context.RequestAborted);
 
             var response = context.Response;
             response.StatusCode = 200;
@@ -412,26 +430,11 @@ namespace BifrostQL.Server.S3
             // unauthorized (cross-tenant), or object-less source is one non-enumerating
             // NoSuchKey — the same answer GetObject gives, so the copy is not an existence
             // oracle for objects the caller cannot read.
-            FileObjectSeam.ResolvedFileObject source;
-            try
-            {
-                var resolved = await _seam.ResolveAsync(srcBucket, srcKey, userContext, context.RequestAborted);
-                if (resolved is null)
-                    throw S3ProtocolException.NoSuchKey();
-                source = resolved;
-            }
-            catch (Exception ex) when (ex is InvalidOperationException or BifrostExecutionError)
-            {
-                // Source addressing fault, corrupt pointer, or policy read-deny — the same
-                // read-seam failure family GetObject handles, mapped to the same
-                // non-enumerating NoSuchKey so a copy is not an existence/authorization
-                // oracle for a source the caller cannot read. ResolveAsync builds no blob,
-                // so FileObjectResidueException (→ 500) cannot arise on this read; only the
-                // destination write below (PutAsync) can, and it is caught there. Detail
-                // logged only.
-                _logger?.LogDebug(ex, "CopyObject source unaddressable, corrupt, or denied (request {RequestId}).", requestId);
-                throw S3ProtocolException.NoSuchKey();
-            }
+            // A source addressing fault, corrupt pointer, or policy read-deny is the same failure
+            // family GetObject raises, and reaches the same funnel — so a copy is not an
+            // existence/authorization oracle for a source the caller cannot read.
+            var source = await _seam.ResolveAsync(srcBucket, srcKey, userContext, context.RequestAborted)
+                ?? throw S3ProtocolException.NoSuchKey();
 
             // The source is materialized in memory before being handed to the destination
             // write, so an object larger than the body cap is rejected rather than buffered.
@@ -470,31 +473,11 @@ namespace BifrostQL.Server.S3
             // on veto (invariant 8a), and detects a scoped-away write via AffectedRows (8b).
             // Source read has already passed, so BOTH checks hold before the destination
             // pointer commits.
-            FileObjectSeam.ResolvedFileObject stored;
-            try
-            {
-                stored = await _seam.PutAsync(
-                    destBucket, destKey, content, contentType, customMetadata, userContext, context.RequestAborted);
-            }
-            catch (FileObjectResidueException ex)
-            {
-                // Post-authorization internal failure that ORPHANED a blob: log at Error WITH
-                // the storage key and return a sanitized 500 (the seam message embeds the key
-                // and is not wire-safe, invariant 3). Same contract as PutObject. The residue
-                // type derives from BifrostExecutionError, so this catch MUST precede the one below.
-                _logger.LogError(
-                    ex, "CopyObject left orphaned storage residue at key '{StorageKey}' (request {RequestId}).",
-                    ex.StorageKey, requestId);
-                throw S3ProtocolException.InternalError();
-            }
-            catch (Exception ex) when (ex is InvalidOperationException or BifrostExecutionError)
-            {
-                // Destination denial/unaddressable/scoped-away: one non-enumerating NoSuchKey,
-                // and the pipeline vetoed before the provider stored the destination pointer
-                // (invariant 8a). Detail logged only.
-                _logger?.LogDebug(ex, "CopyObject destination denied or unaddressable (request {RequestId}).", requestId);
-                throw S3ProtocolException.NoSuchKey();
-            }
+            // Destination denial/unaddressable/scoped-away and orphaned residue are mapped by the
+            // funnel, exactly as for PutObject; on a denial the pipeline vetoed before the
+            // provider stored the destination pointer (invariant 8a).
+            var stored = await _seam.PutAsync(
+                destBucket, destKey, content, contentType, customMetadata, userContext, context.RequestAborted);
 
             var response = context.Response;
             response.StatusCode = 200;
@@ -538,10 +521,13 @@ namespace BifrostQL.Server.S3
             }
             catch (Exception ex) when (ex is InvalidOperationException or BifrostExecutionError)
             {
-                // Unaddressable or cross-tenant/scoped-away denial: not a client-facing failure.
-                // Delete is idempotent, so the answer is the same 204; detail logged only. (The
-                // residue type was caught above; it derives from BifrostExecutionError, so its
-                // catch MUST precede this one.)
+                // The ONE op class that keeps a local catch, and deliberately: S3 delete is
+                // idempotent, so its answer to an unaddressable or scoped-away target is 204 —
+                // an op-class OUTCOME the protocol defines, not an error MAPPING. Letting this
+                // reach the funnel would turn it into a 404 and break that contract. It cannot
+                // reintroduce the divergence the funnel exists to prevent, because it produces no
+                // error envelope at all. Detail logged only. (The residue type was caught above;
+                // it derives from BifrostExecutionError, so its catch MUST precede this one.)
                 _logger?.LogDebug(ex, "DeleteObject unaddressable or denied (request {RequestId}).", requestId);
             }
 

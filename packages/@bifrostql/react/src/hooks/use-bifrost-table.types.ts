@@ -526,7 +526,20 @@ export interface UseBifrostTableOptions extends UseBifrostOptions {
   fields?: string[];
   pagination?: PaginationConfig;
   defaultSort?: SortOption[];
+  /**
+   * Uncontrolled seed for the filter state, read once on mount. Later changes
+   * are ignored — the user is free to edit the filter away. Use {@link filter}
+   * when the caller owns which data set the table is showing.
+   */
   defaultFilter?: TableFilter;
+  /**
+   * Controlled filter. Seeds the filter state and re-seeds it whenever its
+   * value changes, resetting to the first page — so switching a saved view or
+   * an audience segment re-issues the query instead of silently keeping the
+   * previous filter. In-table column filters still layer on top, and a
+   * re-render carrying an equal value leaves them alone.
+   */
+  filter?: TableFilter;
   multiSort?: boolean;
   clientSideSort?: boolean | ClientSideSortConfig;
   clientSideFilter?: boolean | ClientSideFilterConfig;

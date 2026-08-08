@@ -32,6 +32,13 @@ export interface UseTableQueryStateOptions {
   multiSort: boolean;
   defaultSort: SortOption[];
   defaultFilter: TableFilter;
+  /**
+   * Controlled filter. When supplied it seeds the filter state and re-seeds it
+   * whenever its *value* changes, so a screen that swaps data sets (a saved
+   * view, an audience segment) does not keep running the previous filter.
+   * A re-render carrying an equal value leaves in-table edits alone.
+   */
+  controlledFilter: TableFilter | undefined;
   syncConfig: ResolvedUrlSyncConfig;
   localStorageConfig: LocalStorageConfig | undefined;
   initialPageSize: number;
@@ -61,6 +68,7 @@ export function useTableQueryState({
   multiSort,
   defaultSort,
   defaultFilter,
+  controlledFilter,
   syncConfig,
   localStorageConfig,
   initialPageSize,
@@ -104,12 +112,17 @@ export function useTableQueryState({
   const [sort, setSort] = useState<SortOption[]>(
     initialUrlState?.sort ?? initialLocalStorageSort ?? defaultSort,
   );
-  const [filters, setFilters] = useState<TableFilter>(
-    initialUrlState?.filter ?? initialLocalStorageFilters ?? defaultFilter,
-  );
-  const [debouncedFilters, setDebouncedFilters] = useState<TableFilter>(
-    initialUrlState?.filter ?? initialLocalStorageFilters ?? defaultFilter,
-  );
+  // A controlled filter is authoritative: it outranks URL and localStorage
+  // restoration, because the caller is describing which data set this table is
+  // showing, not a user preference about how to view it.
+  const initialFilters =
+    controlledFilter ??
+    initialUrlState?.filter ??
+    initialLocalStorageFilters ??
+    defaultFilter;
+  const [filters, setFilters] = useState<TableFilter>(initialFilters);
+  const [debouncedFilters, setDebouncedFilters] =
+    useState<TableFilter>(initialFilters);
   const [compoundFilter, setCompoundFilterState] =
     useState<CompoundFilter | null>(null);
   const [presets, setPresets] = useState<FilterPreset[]>(initialPresets);
@@ -162,6 +175,31 @@ export function useTableQueryState({
 
     previousColumnFieldsRef.current = columnFields;
   }, [columnFields]);
+
+  // -------------------------------------------------------------------------
+  // Controlled filter: re-seed whenever the caller's filter value changes
+  // -------------------------------------------------------------------------
+  // `defaultFilter` is a mount-only seed by design, which left every screen
+  // that swaps data sets showing the previous set's filter. Compare by value,
+  // not identity, so an inline object literal re-created on each render does
+  // not stomp the user's in-table column filters.
+  const controlledFilterKey =
+    controlledFilter === undefined ? null : JSON.stringify(controlledFilter);
+  const appliedControlledFilterRef = useRef(controlledFilterKey);
+
+  useEffect(() => {
+    if (controlledFilterKey === null) return;
+    if (appliedControlledFilterRef.current === controlledFilterKey) return;
+    appliedControlledFilterRef.current = controlledFilterKey;
+
+    const next = controlledFilter as TableFilter;
+    setFilters(next);
+    setDebouncedFilters(next);
+    // The old offset indexes a result set that no longer exists.
+    setPage(0);
+    // `controlledFilter` is tracked through its serialized value.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [controlledFilterKey]);
 
   // -------------------------------------------------------------------------
   // Filter debounce: delay server-bound filter updates

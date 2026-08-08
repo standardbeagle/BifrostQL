@@ -1647,4 +1647,49 @@ describe('composable sub-components', () => {
       ).not.toBeInTheDocument();
     });
   });
+
+  describe('controlled filter prop', () => {
+    it('re-issues the query when the filter prop changes, without a remount', async () => {
+      // Arrange
+      const fetchMock = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = fetchMock;
+      const Wrapper = createWrapper();
+
+      const { rerender } = render(
+        <Wrapper>
+          <BifrostTable
+            table="users"
+            columns={defaultColumns}
+            urlSync={false}
+            filter={{ status: { _eq: 'active' } }}
+          />
+        </Wrapper>,
+      );
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      const bodyOf = (call: number) =>
+        String(
+          (fetchMock.mock.calls[call][1] as { body: string }).body,
+        );
+      expect(bodyOf(0)).toContain('active');
+
+      // Act
+      rerender(
+        <Wrapper>
+          <BifrostTable
+            table="users"
+            columns={defaultColumns}
+            urlSync={false}
+            filter={{ status: { _eq: 'lapsed' } }}
+          />
+        </Wrapper>,
+      );
+
+      // Assert: a query carrying the new filter goes out. Without a controlled
+      // prop the table kept querying the previous data set.
+      await waitFor(() => {
+        const bodies = fetchMock.mock.calls.map((_, i) => bodyOf(i));
+        expect(bodies.some((b) => b.includes('lapsed'))).toBe(true);
+      });
+    });
+  });
 });

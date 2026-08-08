@@ -824,7 +824,14 @@ export interface BifrostTableProps<
   rowKey?: string;
   pagination?: PaginationConfig;
   defaultSort?: SortOption[];
+  /** Uncontrolled filter seed, read once on mount. */
   defaultFilter?: TableFilter;
+  /**
+   * Controlled filter. Re-seeds the table (and resets to the first page)
+   * whenever its value changes, so a screen that swaps data sets does not keep
+   * issuing the previous filter. Prefer this over remounting via `key`.
+   */
+  filter?: TableFilter;
   multiSort?: boolean;
   urlSync?: boolean | UseBifrostTableOptions['urlSync'];
   emptyMessage?: string;
@@ -872,6 +879,7 @@ export function BifrostTable<T = Record<string, unknown>>(
     pagination: paginationConfig,
     defaultSort,
     defaultFilter,
+    filter,
     multiSort,
     urlSync,
     emptyMessage = 'No data available',
@@ -897,6 +905,7 @@ export function BifrostTable<T = Record<string, unknown>>(
     pagination: paginationConfig,
     defaultSort,
     defaultFilter,
+    filter,
     multiSort,
     rowKey,
     urlSync,

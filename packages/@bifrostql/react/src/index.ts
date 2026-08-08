@@ -32,7 +32,7 @@ export type {
   ColumnSelectorProps,
   FilterBuilderProps,
   ExportMenuProps,
-  TableExportFormat,
+  ExportMenuFormat,
   ThemeName,
   DarkThemeName,
   AnyThemeName,

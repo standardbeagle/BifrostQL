@@ -1616,14 +1616,11 @@ describe('composable sub-components', () => {
       const origCreate = document.createElement.bind(document);
       const mockClick = vi.fn();
       vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+        const el = origCreate(tag);
         if (tag === 'a') {
-          return {
-            href: '',
-            download: '',
-            click: mockClick,
-          } as unknown as HTMLAnchorElement;
+          (el as HTMLAnchorElement).click = mockClick;
         }
-        return origCreate(tag);
+        return el;
       });
 
       fireEvent.click(screen.getByTestId('export-menu-toggle'));

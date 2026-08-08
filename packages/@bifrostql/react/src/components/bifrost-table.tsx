@@ -10,6 +10,7 @@ import type {
 } from '../hooks/use-bifrost-table';
 import type { UseBifrostOptions } from '../hooks/use-bifrost';
 import type { SortOption, TableFilter } from '../types';
+import { rowsToCsv, triggerDownload } from '../utils/table-export';
 import { getTheme } from './table-theme';
 import type { AnyThemeName, TableTheme } from './table-theme';
 
@@ -40,30 +41,24 @@ function formatCellValue(value: unknown): string {
   return String(value);
 }
 
-function exportToCsv<T>(
+/** Download the given rows as CSV, rendering cells the way the table does. */
+function downloadRowsAsCsv<T>(
   data: T[],
   columns: ColumnConfig[],
-  query: string,
+  table: string,
 ): void {
+  const fields = columns.map((c) => c.field);
   const headers = columns.map((c) => c.header);
-  const rows = data.map((row) =>
-    columns.map((col) => {
-      const val = (row as Record<string, unknown>)[col.field];
-      const str = formatCellValue(val);
-      return str.includes(',') || str.includes('"')
-        ? `"${str.replace(/"/g, '""')}"`
-        : str;
-    }),
+  const formatters = Object.fromEntries(
+    fields.map((field) => [field, (value: unknown) => formatCellValue(value)]),
   );
-
-  const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `${query}-export.csv`;
-  link.click();
-  URL.revokeObjectURL(url);
+  const csv = rowsToCsv(
+    data as Record<string, unknown>[],
+    fields,
+    headers,
+    formatters,
+  );
+  triggerDownload(csv, `${table}-export.csv`, 'text/csv;charset=utf-8;');
 }
 
 function getSortDirection(
@@ -448,13 +443,18 @@ export function FilterBuilder({ columns, onApply, style }: FilterBuilderProps) {
   );
 }
 
-export type TableExportFormat = 'csv' | 'json';
+/**
+ * Formats the standalone ExportMenu can emit — a strict subset of the
+ * table-hook's `ExportFormat` ('excel' is only available via
+ * `useBifrostTable`'s export state).
+ */
+export type ExportMenuFormat = 'csv' | 'json';
 
 export interface ExportMenuProps {
   data: Record<string, unknown>[];
   columns: ColumnConfig[];
   queryName: string;
-  formats?: TableExportFormat[];
+  formats?: ExportMenuFormat[];
   style?: CSSProperties;
 }
 
@@ -469,19 +469,13 @@ export function ExportMenu({
   const [open, setOpen] = useState(false);
 
   const handleExportCsv = () => {
-    exportToCsv(data, columns, queryName);
+    downloadRowsAsCsv(data, columns, queryName);
     setOpen(false);
   };
 
   const handleExportJson = () => {
     const json = JSON.stringify(data, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${queryName}-export.json`;
-    link.click();
-    URL.revokeObjectURL(url);
+    triggerDownload(json, `${queryName}-export.json`, 'application/json');
     setOpen(false);
   };
 
@@ -931,7 +925,7 @@ export function BifrostTable<T = Record<string, unknown>>(
       : baseColumns;
 
   const handleExport = useCallback(() => {
-    exportToCsv(table.data, columns, query);
+    downloadRowsAsCsv(table.data, columns, query);
   }, [table.data, columns, query]);
 
   const handleEditStart = useCallback(

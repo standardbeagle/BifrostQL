@@ -27,7 +27,7 @@ export type {
   ColumnSelectorProps,
   FilterBuilderProps,
   ExportMenuProps,
-  TableExportFormat,
+  ExportMenuFormat,
 } from './bifrost-table';
 export {
   getTheme,

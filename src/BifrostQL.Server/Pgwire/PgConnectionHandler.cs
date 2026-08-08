@@ -421,7 +421,8 @@ namespace BifrostQL.Server.Pgwire
             var catalog = _services.GetService<IPgCatalogResponder>();
             return new PgExtendedQueryProcessor(
                 stream, userContext, executor, translator, catalog,
-                _options.Endpoint, cancellation, ct, _logger);
+                _options.Endpoint, cancellation, ct, _logger,
+                _options.MaxPreparedStatements, _options.MaxPortals);
         }
 
         /// <summary>

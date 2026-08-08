@@ -122,6 +122,7 @@ namespace BifrostQL.Server.Pgwire
         public const string SqlStateQueryCanceled = "57014";        // query_canceled (CancelRequest matched)
         public const string SqlStateTooManyConnections = "53300";   // too_many_connections (over the limit)
         public const string SqlStateInvalidSqlStatementName = "26000"; // reference to an unknown prepared statement/portal
+        public const string SqlStateConfigurationLimitExceeded = "53400"; // per-session prepared-statement/portal cap reached
 
         /// <summary>
         /// Client-safe ErrorResponse message for a query aborted by a matching CancelRequest.

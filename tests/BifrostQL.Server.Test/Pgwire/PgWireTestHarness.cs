@@ -36,9 +36,19 @@ namespace BifrostQL.Server.Test.Pgwire
         public PgCancellationRegistry Registry { get; }
         public PgConnectionLimiter Limiter { get; }
 
-        public PgWireTestHarness(IQueryIntentExecutor executor, int maxConnections = 100)
+        public PgWireTestHarness(
+            IQueryIntentExecutor executor,
+            int maxConnections = 100,
+            int maxPreparedStatements = 200,
+            int maxPortals = 200)
         {
-            var options = new PgWireOptions { AuthMethod = PgAuthMethod.Cleartext, MaxConnections = maxConnections };
+            var options = new PgWireOptions
+            {
+                AuthMethod = PgAuthMethod.Cleartext,
+                MaxConnections = maxConnections,
+                MaxPreparedStatements = maxPreparedStatements,
+                MaxPortals = maxPortals,
+            };
             Registry = new PgCancellationRegistry();
             Limiter = new PgConnectionLimiter(maxConnections);
             var store = new FakePgCredentialStore().Add("alice", "s3cret", TenantPrincipal("user-alice", "tenant-a"));

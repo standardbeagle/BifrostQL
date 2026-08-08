@@ -42,6 +42,36 @@ namespace BifrostQL.Server.Pgwire
         public int MaxConnections { get; set; } = 100;
 
         /// <summary>
+        /// Maximum number of live NAMED prepared statements a single session may hold. Every
+        /// named statement a client Parses is retained for the life of the connection, so
+        /// without a cap ONE peer grows server memory without bound by Parsing fresh names.
+        /// Exceeding it is a clean <c>53400 configuration_limit_exceeded</c> on the offending
+        /// Parse (skip-until-Sync; the session survives and its existing statements still work),
+        /// never a silent eviction of a statement the client still holds a name for. The unnamed
+        /// statement is exempt — it always REPLACES, so it cannot accumulate. Default 200: real
+        /// drivers cache a few dozen statements per connection at most.
+        /// </summary>
+        public int MaxPreparedStatements { get; set; } = 200;
+
+        /// <summary>
+        /// Maximum number of live NAMED portals a single session may hold, capped for the same
+        /// reason as <see cref="MaxPreparedStatements"/> — and more sharply, because a portal
+        /// also caches its MATERIALIZED result rows for row-limited Execute resume, so an
+        /// uncapped portal map is bounded by result-set size, not by statement text. The unnamed
+        /// portal is exempt (it always replaces). Default 200.
+        /// </summary>
+        public int MaxPortals { get; set; } = 200;
+
+        /// <summary>
+        /// Deadline for a connection to get from accept to an authenticated, ready session.
+        /// Applied to every read of the PRE-AUTH phase (SSLRequest/TLS handshake, StartupMessage,
+        /// the password/SCRAM exchange), so an unauthenticated peer that opens a socket and then
+        /// stalls — the cheapest possible slot-exhaustion attack, since the slot is reserved at
+        /// accept — is dropped instead of holding its slot forever. Default 30 seconds.
+        /// </summary>
+        public TimeSpan HandshakeTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+        /// <summary>
         /// The server certificate presented when a client issues SSLRequest. Required:
         /// the front door refuses to start without it rather than silently answering 'N'
         /// (no-TLS) to every client — credentials must never cross the wire in the clear

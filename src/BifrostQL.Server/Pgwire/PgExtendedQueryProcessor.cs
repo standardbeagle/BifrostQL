@@ -37,6 +37,8 @@ namespace BifrostQL.Server.Pgwire
         private readonly PgCancellationRegistration _cancellation;
         private readonly CancellationToken _connectionToken;
         private readonly ILogger _logger;
+        private readonly int _maxStatements;
+        private readonly int _maxPortals;
 
         private readonly Dictionary<string, PgPreparedStatement> _statements = new(StringComparer.Ordinal);
         private readonly Dictionary<string, PgPortal> _portals = new(StringComparer.Ordinal);
@@ -56,8 +58,12 @@ namespace BifrostQL.Server.Pgwire
             string? endpoint,
             PgCancellationRegistration cancellation,
             CancellationToken connectionToken,
-            ILogger logger)
+            ILogger logger,
+            int maxStatements,
+            int maxPortals)
         {
+            _maxStatements = maxStatements;
+            _maxPortals = maxPortals;
             _stream = stream;
             _userContext = userContext;
             _executor = executor;
@@ -104,10 +110,29 @@ namespace BifrostQL.Server.Pgwire
             var statementName = reader.ReadCString();
             var sql = reader.ReadCString();
             var paramCount = reader.ReadInt16();
-            var paramOids = new int[(paramCount < 0 ? 0 : paramCount)];
-            for (var i = 0; i < paramCount; i++) paramOids[i] = reader.ReadInt32();
+            // Grow incrementally rather than `new int[paramCount]`: paramCount is an
+            // attacker-controlled 2-byte prefix, so pre-allocating from it lets a ~6-byte Parse
+            // force a 128 KiB array before a single OID is read (invariant 6's
+            // allocation-amplification half). A truncated stream now only ever materializes the
+            // OIDs that actually arrived.
+            var paramOids = new List<int>();
+            for (var i = 0; i < paramCount; i++) paramOids.Add(reader.ReadInt32());
 
-            _statements[statementName] = new PgPreparedStatement(sql, paramOids);
+            // Per-session prepared-statement cap. A NAMED statement is retained for the life of
+            // the connection, so an uncapped map lets ONE peer grow server memory without bound
+            // by Parsing fresh names. The unnamed statement always REPLACES, so it is exempt and
+            // must stay usable even at the cap. Rejecting is preferable to evicting: a client
+            // still holds the name of anything we would evict.
+            if (statementName.Length > 0
+                && !_statements.ContainsKey(statementName)
+                && NamedCount(_statements) >= _maxStatements)
+            {
+                await FailAsync(PgWireProtocol.SqlStateConfigurationLimitExceeded,
+                    $"too many prepared statements for this session (maximum {_maxStatements}); close some with Close('S').", ct);
+                return;
+            }
+
+            _statements[statementName] = new PgPreparedStatement(sql, paramOids.ToArray());
             // A prepared statement replaces the destination name; any portal built from the
             // prior version is implicitly invalidated by a fresh Bind, so nothing else to do.
             await SendEmptyAsync(PgWireProtocol.ParseComplete, ct);
@@ -128,15 +153,32 @@ namespace BifrostQL.Server.Pgwire
                 return;
             }
 
+            // Per-session portal cap, checked before any parameter is decoded. A named portal is
+            // retained for the life of the connection AND caches its materialized result rows for
+            // row-limited Execute resume, so an uncapped portal map is bounded by result-set size,
+            // not statement text. The unnamed portal always replaces and is exempt.
+            if (portalName.Length > 0 && !_portals.ContainsKey(portalName) && NamedCount(_portals) >= _maxPortals)
+            {
+                await FailAsync(PgWireProtocol.SqlStateConfigurationLimitExceeded,
+                    $"too many portals for this session (maximum {_maxPortals}); close some with Close('P').", ct);
+                return;
+            }
+
             // Parameter format codes: 0 = none (all text), 1 = one code for all, N = per value.
+            // Both collections grow incrementally: the counts are attacker-controlled 2-byte
+            // prefixes, and a Bind failure only enters skip-until-Sync (the session SURVIVES), so
+            // pre-allocating from them would let a client repeat a tiny message forever to churn
+            // hundreds of KiB per Bind (invariant 6, allocation amplification).
             var formatCodeCount = reader.ReadInt16();
-            var paramFormats = new short[(formatCodeCount < 0 ? 0 : formatCodeCount)];
-            for (var i = 0; i < formatCodeCount; i++) paramFormats[i] = reader.ReadInt16();
+            var paramFormats = new List<short>();
+            for (var i = 0; i < formatCodeCount; i++) paramFormats.Add(reader.ReadInt16());
 
             var valueCount = reader.ReadInt16();
-            var values = new object?[(valueCount < 0 ? 0 : valueCount)];
+            var values = new List<object?>();
             for (var i = 0; i < valueCount; i++)
             {
+                values.Add(null); // slot for this parameter; overwritten below unless SQL NULL
+
                 var format = ResolveFormat(paramFormats, i);
                 if (format != PgWireProtocol.FormatText)
                 {
@@ -178,7 +220,7 @@ namespace BifrostQL.Server.Pgwire
                 }
             }
 
-            _portals[portalName] = new PgPortal(statement, values);
+            _portals[portalName] = new PgPortal(statement, values.ToArray());
             await SendEmptyAsync(PgWireProtocol.BindComplete, ct);
         }
 
@@ -424,7 +466,15 @@ namespace BifrostQL.Server.Pgwire
         private async Task SendEmptyAsync(byte type, CancellationToken ct)
             => await PgProtocolIO.WriteMessageAsync(_stream, type, Array.Empty<byte>(), ct);
 
-        private static short ResolveFormat(short[] formatCodes, int index) => formatCodes.Length switch
+        /// <summary>
+        /// Live NAMED entries in a session map. The unnamed ("") statement/portal is excluded
+        /// because it always REPLACES on the next Parse/Bind and so cannot accumulate — counting
+        /// it would let a client burn its own cap on the one entry every driver always uses.
+        /// </summary>
+        private static int NamedCount<T>(Dictionary<string, T> map)
+            => map.Count - (map.ContainsKey(string.Empty) ? 1 : 0);
+
+        private static short ResolveFormat(IReadOnlyList<short> formatCodes, int index) => formatCodes.Count switch
         {
             0 => PgWireProtocol.FormatText,   // no codes: everything is text
             1 => formatCodes[0],              // one code applies to all values

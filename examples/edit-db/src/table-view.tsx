@@ -371,7 +371,7 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
             {editTarget !== null && (
                 <DataEditDialog
                     table={table.graphQlName}
-                    editid={editTarget}
+                    editId={editTarget}
                     onClose={() => setEditTarget(null)}
                 />
             )}

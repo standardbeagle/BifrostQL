@@ -562,7 +562,7 @@ describe('DataEditDialog table-not-found guard', () => {
     // Guarding here keeps DataEditDetail (whose useTable non-null-asserts the
     // lookup) from throwing a TypeError into the error boundary.
     schemaMock.schema.findTable.mockReturnValue(undefined);
-    render(<DataEditDialog table="ghost_table" editid="1" onClose={() => {}} />);
+    render(<DataEditDialog table="ghost_table" editId="1" onClose={() => {}} />);
     expect(screen.getByText('Table not found: ghost_table')).toBeInTheDocument();
   });
 });

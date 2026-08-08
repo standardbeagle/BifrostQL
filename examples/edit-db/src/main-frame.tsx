@@ -147,11 +147,11 @@ function Layout() {
                 <main className="flex flex-col overflow-hidden min-h-0 px-1 py-0.5">
                     <ErrorBoundary section="Data Panel">
                         <Routes>
-                            <Route path='/:table/from/:filterTable/:id/edit/:editid' element={<DataPanel />} />
+                            <Route path='/:table/from/:filterTable/:id/edit/:editId' element={<DataPanel />} />
                             <Route path='/:table/from/:filterTable/:id' element={<DataPanel />} />
-                            <Route path='/:table/:id/edit/:editid' element={<DataPanel />} />
+                            <Route path='/:table/:id/edit/:editId' element={<DataPanel />} />
                             <Route path='/:table/:id' element={<DataPanel />} />
-                            <Route path='/:table/edit/:editid' element={<DataPanel />} />
+                            <Route path='/:table/edit/:editId' element={<DataPanel />} />
                             {/* Bare create route: keeps the grid mounted behind the New-record
                                 dialog and stops `:id` from capturing the "edit" keyword
                                 (which fired a bogus get-by-id with $id="edit"). */}
@@ -162,9 +162,9 @@ function Layout() {
                     </ErrorBoundary>
                     <ErrorBoundary section="Data Edit">
                         <Routes>
-                            <Route path='/:table/from/:filterTable/:id/edit/:editid' element={<DataEdit />} />
-                            <Route path='/:table/:id/edit/:editid' element={<DataEdit />} />
-                            <Route path='/:table/edit/:editid' element={<DataEdit />} />
+                            <Route path='/:table/from/:filterTable/:id/edit/:editId' element={<DataEdit />} />
+                            <Route path='/:table/:id/edit/:editId' element={<DataEdit />} />
+                            <Route path='/:table/edit/:editId' element={<DataEdit />} />
                             <Route path='/:table/edit' element={<DataEdit />} />
                         </Routes>
                     </ErrorBoundary>

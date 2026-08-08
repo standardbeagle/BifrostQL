@@ -74,8 +74,8 @@ describe('useTableMutation', () => {
     });
 
     describe('keyless update guard', () => {
-        it('refuses to update when the editid does not resolve to a primary key', async () => {
-            // A malformed/stale editid parses to no PK filter; an UPDATE with no WHERE
+        it('refuses to update when the editId does not resolve to a primary key', async () => {
+            // A malformed/stale editId parses to no PK filter; an UPDATE with no WHERE
             // columns would rewrite every row. Refuse client-side and never call fetch.
             const { query, wrapper } = createHarness();
             const idCol = col('id', 'Int!', true);

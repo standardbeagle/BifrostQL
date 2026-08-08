@@ -30,11 +30,11 @@ describe('matchPath — wildcard tail', () => {
 
 // The DataPanel route block from main-frame.tsx, in declaration order.
 const DATA_PANEL_ROUTES = [
-    '/:table/from/:filterTable/:id/edit/:editid',
+    '/:table/from/:filterTable/:id/edit/:editId',
     '/:table/from/:filterTable/:id',
-    '/:table/:id/edit/:editid',
+    '/:table/:id/edit/:editId',
     '/:table/:id',
-    '/:table/edit/:editid',
+    '/:table/edit/:editId',
     '/:table/edit',
     '/:table',
 ];
@@ -61,11 +61,11 @@ describe('selectRoute — create-flow keyword vs :id', () => {
         expect(best?.match.data.id).toBe('5');
     });
 
-    it('matches the edit-existing route with both id and editid', () => {
+    it('matches the edit-existing route with both id and editId', () => {
         const best = selectRoute(DATA_PANEL_ROUTES, '/users/5/edit/9');
-        expect(best?.route).toBe('/:table/:id/edit/:editid');
+        expect(best?.route).toBe('/:table/:id/edit/:editId');
         expect(best?.match.data.id).toBe('5');
-        expect(best?.match.data.editid).toBe('9');
+        expect(best?.match.data.editId).toBe('9');
     });
 
     it('matches the bare table route', () => {

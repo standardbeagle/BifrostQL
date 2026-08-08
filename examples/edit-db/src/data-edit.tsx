@@ -84,7 +84,7 @@ const EMPTY_PK_EQ_FILTER = { filterText: "", variables: {} as Record<string, unk
 
 interface DataEditRouteParams {
     table?: string;
-    editid?: string;
+    editId?: string;
     [key: string]: string | undefined;
 }
 
@@ -139,18 +139,18 @@ function useTable(schema: SchemaContextValue, tableName: string) {
 }
 
 /**
- * Loads the record being edited (by its composite-aware PK route) and derives
+ * Loads the row being edited (by its composite-aware PK route) and derives
  * everything the form needs to bind: the raw stored `value`, the form's
  * `defaultValues` (with type-correct NULL handling for dates, nullable booleans,
- * JSON, and FK/enum columns), and `pkResolveFailed` for a malformed/stale editid.
+ * JSON, and FK/enum columns), and `pkResolveFailed` for a malformed/stale editId.
  */
-function useEditRecord(dataTable: Table, editColumns: ColumnJoin[], editid: string) {
+function useEditRecord(dataTable: Table, editColumns: ColumnJoin[], editId: string) {
     const fetcher = useFetcher();
-    const isInsert = editid === undefined || editid === '';
+    const isInsert = editId === undefined || editId === '';
 
     const parsedPk = useMemo(
-        () => (isInsert ? null : parsePkRoute(editid, dataTable)),
-        [isInsert, editid, dataTable],
+        () => (isInsert ? null : parsePkRoute(editId, dataTable)),
+        [isInsert, editId, dataTable],
     );
 
     const pkEq = useMemo(() => {
@@ -158,10 +158,10 @@ function useEditRecord(dataTable: Table, editColumns: ColumnJoin[], editid: stri
         return buildPkEqFilter(parsedPk, dataTable) ?? EMPTY_PK_EQ_FILTER;
     }, [isInsert, parsedPk, dataTable]);
 
-    // A malformed or stale editid (bad composite arity, a PK-less table, an empty
+    // A malformed or stale editId (bad composite arity, a PK-less table, an empty
     // segment) yields no filter. Rather than render a blank editable form backed by a
     // disabled query — which on save fires a keyless UPDATE against the whole table —
-    // treat it as an unresolvable record and show an error state below.
+    // treat it as an unresolvable row and show an error state below.
     const pkResolveFailed = !isInsert && pkEq.filterText === "";
 
     const queryStr = useMemo(() => {
@@ -174,7 +174,7 @@ function useEditRecord(dataTable: Table, editColumns: ColumnJoin[], editid: stri
     }, [dataTable, editColumns, pkEq]);
 
     const { isLoading, error, data } = useQuery({
-        queryKey: ['editRecord', dataTable.name, editid],
+        queryKey: ['editRecord', dataTable.name, editId],
         queryFn: () => fetcher.query<{ value: { data: Record<string, unknown>[] } }>(queryStr, pkEq.variables),
         enabled: !!dataTable && !isInsert && pkEq.filterText !== "",
     });
@@ -218,15 +218,15 @@ function useEditRecord(dataTable: Table, editColumns: ColumnJoin[], editid: stri
     return { isLoading, error, value, defaultValues, pkResolveFailed };
 }
 
-function DataEditDetail({ table, schema, editid, onClose }: { table: string, schema: SchemaContextValue, editid: string, onClose: () => void }) {
-    const isInsert = editid === undefined || editid === '';
+function DataEditDetail({ table, schema, editId, onClose }: { table: string, schema: SchemaContextValue, editId: string, onClose: () => void }) {
+    const isInsert = editId === undefined || editId === '';
     const [dataTable, editColumns, idColumns] = useTable(schema, table);
     const labelColumn = dataTable.labelColumn;
     const label = dataTable.label;
 
-    const mutation = useTableMutation(dataTable, editColumns, idColumns, editid);
+    const mutation = useTableMutation(dataTable, editColumns, idColumns, editId);
 
-    const { isLoading, error, value, defaultValues, pkResolveFailed } = useEditRecord(dataTable, editColumns, editid);
+    const { isLoading, error, value, defaultValues, pkResolveFailed } = useEditRecord(dataTable, editColumns, editId);
 
     const form = useForm({
         defaultValues,
@@ -273,7 +273,7 @@ function DataEditDetail({ table, schema, editid, onClose }: { table: string, sch
     }
     if (error) return <div>Error: {(error as Error).message}</div>;
 
-    // Refuse to render an editable form for a record we can't key. Saving one would
+    // Refuse to render an editable form for a row we can't key. Saving one would
     // build an UPDATE with no WHERE columns (a full-table write).
     if (pkResolveFailed) {
         return (
@@ -281,7 +281,7 @@ function DataEditDetail({ table, schema, editid, onClose }: { table: string, sch
                 <DialogContent showCloseButton={false} className="sm:max-w-md">
                     <DialogTitle className="text-sm font-semibold">Cannot edit record</DialogTitle>
                     <DialogDescription className="text-sm text-muted-foreground">
-                        This record can't be opened for editing: its key ({editid || 'empty'}) is
+                        This record can't be opened for editing: its key ({editId || 'empty'}) is
                         missing or malformed for the {label} table. Return to the grid and try again.
                     </DialogDescription>
                     <div className="flex justify-end">
@@ -292,7 +292,7 @@ function DataEditDetail({ table, schema, editid, onClose }: { table: string, sch
         );
     }
 
-    const labelIdValue = (value?.[labelColumn] as string | number | undefined) ?? editid;
+    const labelIdValue = (value?.[labelColumn] as string | number | undefined) ?? editId;
 
     // Separate fields into types for layout grouping
     const booleanFields = editColumns.filter(({ column: c }) => booleanTypes.some(t => t === c.paramType));
@@ -426,28 +426,28 @@ function DataEditDetail({ table, schema, editid, onClose }: { table: string, sch
  * @example
  * ```tsx
  * // Used within the router context
- * <Route path="/:table/edit/:editid" element={<DataEdit />} />
+ * <Route path="/:table/edit/:editId" element={<DataEdit />} />
  * ```
  * 
  * @returns React element containing the edit form dialog
  */
 export function DataEdit(): ReactElement {
-    const { table, editid } = useParams<DataEditRouteParams>();
+    const { table, editId } = useParams<DataEditRouteParams>();
     const navigate = useNavigate();
 
     if (!table) return <div>Table missing</div>;
 
     // Route-driven edit (deep links, header "New"): close returns up the route.
-    return <DataEditDialog table={table} editid={editid ?? ''} onClose={() => navigate('../..')} />;
+    return <DataEditDialog table={table} editId={editId ?? ''} onClose={() => navigate('../..')} />;
 }
 
 /**
  * Prop-driven edit dialog. Use this to edit a record in place — from a grid at
  * any nesting depth — without changing the route, so the surrounding drill
  * context (parent → child → grandchild, side columns) is preserved. `table` is
- * the table's `graphQlName`; `editid` is the encoded PK route ('' to insert).
+ * the table's `graphQlName`; `editId` is the encoded PK route ('' to insert).
  */
-export function DataEditDialog({ table, editid, onClose }: { table: string; editid: string; onClose: () => void }): ReactElement {
+export function DataEditDialog({ table, editId, onClose }: { table: string; editId: string; onClose: () => void }): ReactElement {
     const schema = useSchema();
 
     if (!table) return <div>Table missing</div>;
@@ -462,7 +462,7 @@ export function DataEditDialog({ table, editid, onClose }: { table: string; edit
         return <div className="p-4 text-sm text-destructive">Table not found: {table}</div>;
     }
 
-    return <DataEditDetail table={table} schema={schema} editid={editid} onClose={onClose} />;
+    return <DataEditDetail table={table} schema={schema} editId={editId} onClose={onClose} />;
 }
 
 /**

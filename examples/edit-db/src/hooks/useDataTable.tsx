@@ -158,7 +158,7 @@ function buildJoinColumn(
                 <span className="group/fk inline-flex items-center gap-0.5">
                     <FkCellPopover
                         tableName={anchorJoin.destinationTable}
-                        recordId={joinedPk}
+                        fkValue={joinedPk}
                         filterColumn={anchorJoin.destinationColumnNames[0]}
                         join={anchorJoin}
                         sourceRow={row.original as Record<string, unknown>}
@@ -498,11 +498,11 @@ interface UseDataTableResult {
  *   pageCount,
  *   onSortingChange,
  *   onPageIndexChange,
- * } = useDataTable(table, recordId, parentTable);
+ * } = useDataTable(table, id, filterTable);
  * ```
  * 
  * @param table - Table schema definition
- * @param id - Optional record ID for filtering to a specific row
+ * @param id - Optional row ID for filtering to a specific row
  * @param filterTable - Optional parent table name for relationship filtering
  * @param filterColumn - Optional column name for explicit FK filtering
  * @param onExpandContent - Callback when content expansion is requested

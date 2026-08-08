@@ -15,16 +15,16 @@ const HOVER_CLOSE_DELAY = 200;
 
 interface FkCellPopoverProps {
     tableName: string;
-    recordId: string | number;
+    fkValue: string | number;
     /**
-     * The column on `tableName` whose value is `recordId`. Callers pass the FK target
+     * The column on `tableName` whose value is `fkValue`. Callers pass the FK target
      * column from the join metadata (`destinationColumnNames[0]`). Using the target's
      * "primary key" column here is wrong for composite-PK and denormalized-FK targets.
      */
     filterColumn: string;
     /**
      * The full join descriptor. When the join is composite, the popover ignores
-     * `recordId`/`filterColumn` and builds an `{and: [...]}` filter from every
+     * `fkValue`/`filterColumn` and builds an `{and: [...]}` filter from every
      * `sourceColumnNames` value on `sourceRow`. Single-FK callers can omit this.
      */
     join?: Join;
@@ -67,7 +67,7 @@ export function buildPreviewPlan(
     previewColumns: Column[],
     join: Join | undefined,
     sourceRow: Record<string, unknown> | undefined,
-    recordId: string | number,
+    fkValue: string | number,
     filterColumn: string,
 ): PreviewPlan | null {
     if (previewColumns.length === 0) return null;
@@ -85,17 +85,17 @@ export function buildPreviewPlan(
     const declType = getGraphQlType(lookupType);
     // Declared type and coercion come from the same source so a Boolean/Float FK
     // isn't sent under a String declaration (a GraphQL validation error).
-    const variables = { id: coerceForGql(recordId, declType) };
+    const variables = { id: coerceForGql(fkValue, declType) };
     return {
         query: buildSinglePreviewQuery(tableName, previewColumns, filterColumn, declType),
         variables,
         // Include filterColumn: two FKs to the same target on different columns
-        // can share a recordId value but must not share a cache entry.
-        cacheKey: `${filterColumn}:${recordId}`,
+        // can share a fkValue value but must not share a cache entry.
+        cacheKey: `${filterColumn}:${fkValue}`,
     };
 }
 
-export function FkCellPopover({ tableName, recordId, filterColumn, join, sourceRow, children }: FkCellPopoverProps) {
+export function FkCellPopover({ tableName, fkValue, filterColumn, join, sourceRow, children }: FkCellPopoverProps) {
     const [open, setOpen] = useState(false);
     const schema = useSchema();
     const fetcher = useFetcher();
@@ -104,7 +104,7 @@ export function FkCellPopover({ tableName, recordId, filterColumn, join, sourceR
     const previewColumns = table ? getPreviewColumns(table.columns) : [];
 
     const plan = table
-        ? buildPreviewPlan(tableName, table, previewColumns, join, sourceRow, recordId, filterColumn)
+        ? buildPreviewPlan(tableName, table, previewColumns, join, sourceRow, fkValue, filterColumn)
         : null;
 
     const { data, isLoading } = useQuery({

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   DEFAULT_BREAKPOINTS,
-  canAccessWindow,
   getBreakpointFromWidth,
   getColumnsForBreakpoint,
 } from '../../utils/table-breakpoints';
+import { canAccessWindow } from '../../utils/dom-env';
 import type {
   BreakpointConfig,
   CardViewRow,

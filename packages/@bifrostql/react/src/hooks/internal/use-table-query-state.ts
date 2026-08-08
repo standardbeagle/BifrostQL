@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { readFromUrl, writeToUrl } from '../../utils/url-state';
-import { canAccessWindow } from '../../utils/table-breakpoints';
+import { canAccessWindow } from '../../utils/dom-env';
 import { countActiveFilters } from '../../utils/table-client-ops';
 import {
   readFiltersFromLocalStorage,

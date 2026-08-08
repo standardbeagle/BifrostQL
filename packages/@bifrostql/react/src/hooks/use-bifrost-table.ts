@@ -4,7 +4,7 @@ import {
   resolveClientSideFilterConfig,
   resolveClientSideSortConfig,
   resolveUrlSyncConfig,
-} from '../utils/table-breakpoints';
+} from '../utils/table-option-resolvers';
 import { mergeFiltersForQuery } from '../utils/table-client-ops';
 import { useTableA11y } from './internal/use-table-a11y';
 import { useTableColumnManagement } from './internal/use-table-column-management';

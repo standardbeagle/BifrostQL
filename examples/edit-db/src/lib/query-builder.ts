@@ -15,6 +15,13 @@ export interface FilterResult {
     variables: Record<string, unknown>;
     param: string;
     filterText: string;
+    /**
+     * Non-null when the filter could not be built. The predicate is NOT part of
+     * the query, so the caller MUST refuse to run it rather than showing rows the
+     * filter was supposed to exclude. `null` with an empty `filterText` means
+     * "no filter requested", which is a different thing entirely.
+     */
+    error: string | null;
 }
 
 export interface ColumnFilterValue {
@@ -31,6 +38,12 @@ export interface ColumnFilterResult {
     variables: Record<string, unknown>;
     params: string[];
     filterTexts: string[];
+    /**
+     * One message per column filter that could not be turned into a predicate.
+     * Non-empty means the built predicate is NARROWER than what the UI is showing
+     * as active, so the caller must refuse the query instead of returning rows.
+     */
+    errors: string[];
 }
 
 export interface PkTypeInfo {
@@ -86,17 +99,50 @@ export function getFilterOperators(paramType: string): string[] {
     return columnFilterOperators[baseType] ?? columnFilterOperators.String;
 }
 
+function noFilter(): FilterResult {
+    return { variables: {}, param: "", filterText: "", error: null };
+}
+
+function filterFailed(error: string): FilterResult {
+    return { variables: {}, param: "", filterText: "", error };
+}
+
+/**
+ * Parses the header filter (a JSON `[column, operator, value, type]` tuple carried
+ * in the `filter` URL param) into a GraphQL predicate.
+ *
+ * A rejected filter reports an error rather than degrading to "no filter". Silently
+ * dropping it left the grid showing the UNFILTERED table while the filter UI still
+ * advertised the predicate as active — and select-all + Delete then operated over a
+ * result set that was not the one the user believed they had narrowed to.
+ */
 export function parseTableFilterString(filterString: string): FilterResult {
+    if (!filterString) return noFilter();
+    let parsed: unknown;
     try {
-        if (!filterString) return { variables: {}, param: "", filterText: "" };
-        const [column, action, value, type] = JSON.parse(filterString);
-        if (!isGraphQlName(column) || !isGraphQlType(type) || !isFilterOperator(action, type)) {
-            return { variables: {}, param: "", filterText: "" };
-        }
-        return { variables: { filter: value }, param: `, $filter: ${type}`, filterText: `{${column}: {${action}: $filter} }` }
+        parsed = JSON.parse(filterString);
     } catch {
-        return { variables: {}, param: "", filterText: "" };
+        return filterFailed("The filter in the URL is not valid JSON.");
     }
+    if (!Array.isArray(parsed) || parsed.length < 4) {
+        return filterFailed("The filter in the URL is malformed.");
+    }
+    const [column, action, value, type] = parsed as unknown[];
+    if (!isGraphQlName(column)) {
+        return filterFailed(`Filter column '${String(column)}' is not a valid column name.`);
+    }
+    if (!isGraphQlType(type)) {
+        return filterFailed(`Filter type '${String(type)}' is not a valid type name.`);
+    }
+    if (!isFilterOperator(action, type)) {
+        return filterFailed(`Filter operator '${String(action)}' is not supported for ${String(type)} column '${String(column)}'.`);
+    }
+    return {
+        variables: { filter: value },
+        param: `, $filter: ${type}`,
+        filterText: `{${column}: {${action}: $filter} }`,
+        error: null,
+    };
 }
 
 export function getRowPkValue(row: RowData, table: Table, rowIndex = 0): string {
@@ -129,15 +175,28 @@ export function buildColumnFilters(columnFilters: ColumnFiltersState, table: Tab
     const variables: Record<string, unknown> = {};
     const params: string[] = [];
     const filterTexts: string[] = [];
+    const errors: string[] = [];
 
     for (let i = 0; i < columnFilters.length; i++) {
         const cf = columnFilters[i];
         const filterValue = cf.value as ColumnFilterValue;
+        // An empty value is "the user hasn't typed a bound yet", not a failure —
+        // the filter row exists but asserts nothing, so skipping it is honest.
         if (filterValue.value === undefined || filterValue.value === null || filterValue.value === "") continue;
 
         const col = table.columns.find((c) => c.name === cf.id);
-        if (!col) continue;
-        if (!isGraphQlName(cf.id) || !isFilterOperator(filterValue.operator, col.paramType)) continue;
+        if (!col) {
+            errors.push(`Column '${String(cf.id)}' is not on this table.`);
+            continue;
+        }
+        if (!isGraphQlName(cf.id)) {
+            errors.push(`Column '${String(cf.id)}' is not a valid column name.`);
+            continue;
+        }
+        if (!isFilterOperator(filterValue.operator, col.paramType)) {
+            errors.push(`Operator '${String(filterValue.operator)}' is not supported for column '${cf.id}'.`);
+            continue;
+        }
 
         // Suffix with the filter index so two filters on the same column (e.g.
         // _gte and _lte) get distinct variable names instead of colliding into
@@ -152,7 +211,10 @@ export function buildColumnFilters(columnFilters: ColumnFiltersState, table: Tab
 
         if (filterValue.operator === "_between") {
             const range = filterValue.value as [unknown, unknown];
-            if (!Array.isArray(range) || range.length !== 2) continue;
+            if (!Array.isArray(range) || range.length !== 2) {
+                errors.push(`The range filter on column '${cf.id}' needs exactly two bounds.`);
+                continue;
+            }
             const loVar = `${varName}_lo`;
             const hiVar = `${varName}_hi`;
             variables[loVar] = range[0];
@@ -167,7 +229,22 @@ export function buildColumnFilters(columnFilters: ColumnFiltersState, table: Tab
         filterTexts.push(`{${cf.id}: {${filterValue.operator}: $${varName}}}`);
     }
 
-    return { variables, params, filterTexts };
+    return { variables, params, filterTexts, errors };
+}
+
+/**
+ * Every reason the requested filters could not be fully applied, header filter
+ * first. Empty means the built predicate matches exactly what the filter UI is
+ * advertising, which is the only condition under which the grid query may run.
+ */
+export function collectFilterErrors(
+    table: Table,
+    filterString: string,
+    columnFilters: ColumnFiltersState,
+): string[] {
+    const header = parseTableFilterString(filterString);
+    const columns = buildColumnFilters(columnFilters, table);
+    return header.error ? [header.error, ...columns.errors] : columns.errors;
 }
 
 export function serializeColumnFilters(columnFilters: ColumnFiltersState): string {
@@ -533,6 +610,12 @@ export function buildQuery(
     if (id && !filterTable && !filterColumn) {
         return buildByIdQuery(table, tableSchema, allFields);
     }
+
+    // Refuse to emit a list query whose predicate is narrower than the filters the
+    // UI claims are active — that query returns rows the user believes are filtered
+    // out, and select-all + Delete over it destroys the wrong rows. Same refusal
+    // shape as the unresolvable-drill branch above: null, and the caller reports it.
+    if (collectFilterErrors(table, filterString, columnFilters).length > 0) return null;
 
     return buildListQuery(table, filterString, columnFilters, allFields);
 }

@@ -5,6 +5,7 @@ import {
     getRowPkValue,
     getGraphQlType,
     buildColumnFilters,
+    collectFilterErrors,
     serializeColumnFilters,
     deserializeColumnFilters,
     getPkType,
@@ -123,14 +124,16 @@ describe('getFilterOperators', () => {
 // ── parseTableFilterString ───────────────────────────────────────────────
 
 describe('parseTableFilterString', () => {
-    it('returns empty result for empty string', () => {
+    // "no filter requested" and "the requested filter could not be built" must be
+    // distinguishable: the first may run unfiltered, the second must not run at all.
+    it('returns empty result with no error for empty string', () => {
         const result = parseTableFilterString('');
-        expect(result).toEqual({ variables: {}, param: '', filterText: '' });
+        expect(result).toEqual({ variables: {}, param: '', filterText: '', error: null });
     });
 
-    it('returns empty result for null-like input', () => {
+    it('returns empty result with no error for null-like input', () => {
         const result = parseTableFilterString(undefined as unknown as string);
-        expect(result).toEqual({ variables: {}, param: '', filterText: '' });
+        expect(result).toEqual({ variables: {}, param: '', filterText: '', error: null });
     });
 
     it('parses valid filter JSON', () => {
@@ -139,26 +142,31 @@ describe('parseTableFilterString', () => {
         expect(result.variables).toEqual({ filter: 'test' });
         expect(result.param).toBe(', $filter: String');
         expect(result.filterText).toBe('{name: {_eq: $filter} }');
+        expect(result.error).toBeNull();
     });
 
-    it('handles invalid JSON gracefully', () => {
+    it('reports invalid JSON instead of silently dropping the predicate', () => {
         const result = parseTableFilterString('not json');
-        expect(result).toEqual({ variables: {}, param: '', filterText: '' });
+        expect(result.filterText).toBe('');
+        expect(result.error).toMatch(/not valid JSON/);
     });
 
-    it('handles malformed array gracefully', () => {
+    it('reports a malformed tuple instead of silently dropping the predicate', () => {
         const result = parseTableFilterString(JSON.stringify([1]));
-        expect(result).toEqual({ variables: {}, param: '', filterText: '' });
+        expect(result.filterText).toBe('');
+        expect(result.error).toMatch(/malformed/);
     });
 
-    it('rejects filter JSON with unsafe GraphQL identifiers', () => {
+    it('reports unsafe GraphQL identifiers instead of silently dropping the predicate', () => {
         const result = parseTableFilterString(JSON.stringify(['name) { injected', '_eq', 'test', 'String']));
-        expect(result).toEqual({ variables: {}, param: '', filterText: '' });
+        expect(result.filterText).toBe('');
+        expect(result.error).toMatch(/not a valid column name/);
     });
 
-    it('rejects unsupported filter operators', () => {
+    it('reports unsupported filter operators instead of silently dropping the predicate', () => {
         const result = parseTableFilterString(JSON.stringify(['name', '_contains_something', 'test', 'String']));
-        expect(result).toEqual({ variables: {}, param: '', filterText: '' });
+        expect(result.filterText).toBe('');
+        expect(result.error).toMatch(/not supported/);
     });
 });
 
@@ -234,7 +242,7 @@ describe('buildColumnFilters', () => {
 
     it('returns empty for no filters', () => {
         const result = buildColumnFilters([], table);
-        expect(result).toEqual({ variables: {}, params: [], filterTexts: [] });
+        expect(result).toEqual({ variables: {}, params: [], filterTexts: [], errors: [] });
     });
 
     it('builds simple equality filter', () => {
@@ -281,32 +289,55 @@ describe('buildColumnFilters', () => {
         expect(result.filterTexts).toEqual(['{age: {_between: [$cf_age_0_lo, $cf_age_0_hi]}}']);
     });
 
-    it('skips filters with empty value', () => {
+    // An unset bound is not a failure — the filter row exists but asserts nothing.
+    it('skips filters with empty value without reporting an error', () => {
         const filters = [{ id: 'name', value: { operator: '_eq', value: '' } as ColumnFilterValue }];
-        expect(buildColumnFilters(filters, table).filterTexts).toEqual([]);
+        const result = buildColumnFilters(filters, table);
+        expect(result.filterTexts).toEqual([]);
+        expect(result.errors).toEqual([]);
     });
 
-    it('skips filters with null value', () => {
+    it('skips filters with null value without reporting an error', () => {
         const filters = [{ id: 'name', value: { operator: '_eq', value: null } as ColumnFilterValue }];
-        expect(buildColumnFilters(filters, table).filterTexts).toEqual([]);
+        const result = buildColumnFilters(filters, table);
+        expect(result.filterTexts).toEqual([]);
+        expect(result.errors).toEqual([]);
     });
 
-    it('skips filters for nonexistent columns', () => {
+    // Everything below is a filter the UI shows as ACTIVE that cannot be built.
+    // Dropping it silently returns rows the user believes are excluded.
+    it('reports filters for nonexistent columns', () => {
         const filters = [{ id: 'nonexistent', value: { operator: '_eq', value: 'x' } as ColumnFilterValue }];
-        expect(buildColumnFilters(filters, table).filterTexts).toEqual([]);
+        const result = buildColumnFilters(filters, table);
+        expect(result.filterTexts).toEqual([]);
+        expect(result.errors).toEqual(["Column 'nonexistent' is not on this table."]);
     });
 
-    it('skips filters with unsafe column identifiers', () => {
+    it('reports filters with unsafe column identifiers', () => {
         const unsafeTable = makeTable({
             columns: [makeColumn({ name: 'name) { injected', paramType: 'String' })],
         });
         const filters = [{ id: 'name) { injected', value: { operator: '_eq', value: 'x' } as ColumnFilterValue }];
-        expect(buildColumnFilters(filters, unsafeTable).filterTexts).toEqual([]);
+        const result = buildColumnFilters(filters, unsafeTable);
+        expect(result.filterTexts).toEqual([]);
+        expect(result.errors).toHaveLength(1);
+        expect(result.errors[0]).toMatch(/not a valid column name/);
     });
 
-    it('skips unsupported operators for the column type', () => {
+    it('reports unsupported operators for the column type', () => {
         const filters = [{ id: 'active', value: { operator: '_contains', value: true } as ColumnFilterValue }];
-        expect(buildColumnFilters(filters, table).filterTexts).toEqual([]);
+        const result = buildColumnFilters(filters, table);
+        expect(result.filterTexts).toEqual([]);
+        expect(result.errors).toHaveLength(1);
+        expect(result.errors[0]).toMatch(/not supported/);
+    });
+
+    it('reports a range filter that does not carry exactly two bounds', () => {
+        const filters = [{ id: 'age', value: { operator: '_between', value: [10] } as ColumnFilterValue }];
+        const result = buildColumnFilters(filters, table);
+        expect(result.filterTexts).toEqual([]);
+        expect(result.errors).toHaveLength(1);
+        expect(result.errors[0]).toMatch(/exactly two bounds/);
     });
 
     it('skips _between with invalid range', () => {
@@ -510,6 +541,34 @@ describe('canFlatFilterDrill', () => {
 
 // ── buildQuery ─────────────────────────────────────────────────
 
+// ── collectFilterErrors ────────────────────────────────────────
+
+describe('collectFilterErrors', () => {
+    const table = makeTable({
+        columns: [
+            makeColumn({ name: 'name', paramType: 'String' }),
+            makeColumn({ name: 'age', paramType: 'Int' }),
+        ],
+    });
+
+    it('is empty when every requested filter can be applied', () => {
+        const filters = [{ id: 'name', value: { operator: '_eq', value: 'x' } as ColumnFilterValue }];
+        expect(collectFilterErrors(table, JSON.stringify(['name', '_eq', 'y', 'String']), filters)).toEqual([]);
+    });
+
+    it('is empty when nothing is filtered at all', () => {
+        expect(collectFilterErrors(table, '', [])).toEqual([]);
+    });
+
+    it('reports the header filter first, then each column filter', () => {
+        const filters = [{ id: 'ghost', value: { operator: '_eq', value: 'x' } as ColumnFilterValue }];
+        const errors = collectFilterErrors(table, 'not json', filters);
+        expect(errors).toHaveLength(2);
+        expect(errors[0]).toMatch(/not valid JSON/);
+        expect(errors[1]).toMatch(/not on this table/);
+    });
+});
+
 describe('buildQuery', () => {
     const table = makeTable({
         name: 'courses',
@@ -537,6 +596,23 @@ describe('buildQuery', () => {
     it('returns null when table not found in schema', () => {
         const otherSchema = makeSchema([makeTable({ name: 'other', graphQlName: 'other' })]);
         expect(buildQuery(table, otherSchema, '', [])).toBeNull();
+    });
+
+    // Refusal, not degradation: emitting the unfiltered list query here returns
+    // rows the filter UI claims are excluded, and select-all + Delete over that
+    // view destroys rows the user never saw as in scope.
+    it('refuses to build a list query when the header filter cannot be applied', () => {
+        expect(buildQuery(table, schema, 'not json', [])).toBeNull();
+    });
+
+    it('refuses to build a list query when a column filter cannot be applied', () => {
+        const filters = [{ id: 'no_such_column', value: { operator: '_eq', value: 'x' } as ColumnFilterValue }];
+        expect(buildQuery(table, schema, '', filters)).toBeNull();
+    });
+
+    it('still builds when a column filter merely has no value yet', () => {
+        const filters = [{ id: 'name', value: { operator: '_eq', value: '' } as ColumnFilterValue }];
+        expect(buildQuery(table, schema, '', filters)).not.toBeNull();
     });
 
     it('generates basic query with all columns', () => {

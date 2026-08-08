@@ -20,6 +20,7 @@ import {
     parseTableFilterString,
     getRowPkValue,
     buildColumnFilters,
+    collectFilterErrors,
     serializeColumnFilters,
     deserializeColumnFilters,
     buildQuery,
@@ -592,6 +593,19 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         [effectiveColumnFilters, table]
     );
 
+    // A filter that cannot be turned into a predicate used to be dropped silently:
+    // buildQuery emitted the UNFILTERED table, the grid rendered every row, and the
+    // filter UI (chips, "Clear filters") still asserted the filter was applied. A
+    // select-all + Delete over that view deletes rows the user believed were
+    // filtered out. buildQuery now returns null in that case; report why, so the
+    // grid shows the reason instead of a plausible-looking wrong result set.
+    const filterError = useMemo(() => {
+        if (!table) return null;
+        const reasons = collectFilterErrors(table, filterString, effectiveColumnFilters);
+        if (reasons.length === 0) return null;
+        return new Error(`These rows can't be shown because the filter can't be applied: ${reasons.join(' ')}`);
+    }, [table, filterString, effectiveColumnFilters]);
+
     const offset = pageIndex * pageSize;
 
     const queryVariables = useMemo(() => ({
@@ -751,7 +765,8 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         totalRows,
         exportRows,
         loading: isLoading,
-        error: error as Error | null,
+        // The filter failure takes precedence: it is why no query ran at all.
+        error: filterError ?? (error as Error | null),
         onSortingChange,
         onColumnFiltersChange,
         onPageIndexChange,

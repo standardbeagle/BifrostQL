@@ -502,7 +502,14 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     const navigate = useNavigate();
     const filterString = search.get('filter') ?? '';
     const cfParam = search.get('cf') ?? '';
-    const { variables: filterVariables } = parseTableFilterString(filterString);
+    // Memoized because its result feeds `queryVariables`, whose OBJECT IDENTITY is
+    // part of the react-query key. A fresh `variables` object every render meant
+    // that memo never hit, so the key changed on every render — the query was
+    // re-keyed continuously and the memo chain built to prevent that did nothing.
+    const filterVariables = useMemo(
+        () => parseTableFilterString(filterString).variables,
+        [filterString],
+    );
     const schema = useSchema();
     const fetcher = useFetcher();
 

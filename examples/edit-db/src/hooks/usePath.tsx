@@ -1,5 +1,5 @@
 import React from 'react';
-import { useReducer, useContext, createContext, forwardRef, ReactElement, ReactNode, Children, isValidElement } from 'react';
+import { useReducer, useContext, useCallback, useMemo, createContext, forwardRef, ReactElement, ReactNode, Children, isValidElement } from 'react';
 
 interface NavContext {
     path: string;
@@ -113,19 +113,23 @@ export function useHistory(): string[] {
 
 export function useNavigate(): (url: string) => void {
     const dispatch = useContext(PathDispatchContext);
-    return (path: string) => dispatch?.(navigate(path));
+    // Stable across renders. A fresh closure every render propagates through every
+    // useCallback that depends on it (useDataTable's syncFiltersToUrl, and the
+    // handlers built on that), defeating their memoization and, downstream, the
+    // query-variables memo whose identity keys the data query.
+    return useCallback((path: string) => dispatch?.(navigate(path)), [dispatch]);
 }
 
 export function useNavigation(): NavigationState {
     const dispatch = useContext(PathDispatchContext);
     const pathState = useContext(PathContext);
-    return {
+    return useMemo(() => ({
         navigate: (path: string) => dispatch?.(navigate(path)),
         back: (count: number = 1) => dispatch?.(back(count)),
         forward: (count: number = 1) => dispatch?.(forward(count)),
         hasBack: pathState.location < pathState.history.length - 1,
         ...pathState
-    };
+    }), [dispatch, pathState]);
 }
 
 export function useParams<T extends RouteParams = RouteParams>(): T {
@@ -134,7 +138,10 @@ export function useParams<T extends RouteParams = RouteParams>(): T {
 
 export function useSearchParams(): SearchParamsResult {
     const { query, hash } = useContext(RouteContext);
-    return { search: new URLSearchParams(query), hash };
+    // A new URLSearchParams (and a new wrapper object) every render is a fresh
+    // identity for every consumer that memoizes on it. Key the memo on the query
+    // STRING, which is the only thing the parse depends on.
+    return useMemo(() => ({ search: new URLSearchParams(query), hash }), [query, hash]);
 }
 
 export function PathProvider({ path, children }: { path: string, children: ReactNode }) {

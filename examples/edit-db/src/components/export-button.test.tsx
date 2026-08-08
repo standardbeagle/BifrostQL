@@ -102,3 +102,33 @@ describe('ExportButton', () => {
         expect(exportLib.downloadTextFile).not.toHaveBeenCalled();
     });
 });
+
+describe('ExportButton unmount', () => {
+    beforeEach(() => {
+        vi.spyOn(exportLib, 'downloadTextFile').mockImplementation(() => {});
+    });
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it('aborts an in-flight export when the component unmounts', async () => {
+        // Only the user's Cancel click used to abort. Navigating away mid-export
+        // left the paging loop running against a dead component, still fetching up
+        // to rowCap rows and calling setState on an unmounted tree.
+        let captured: AbortSignal | undefined;
+        const exportRows = vi.fn(
+            (options: RunExportOptions) =>
+                new Promise<ExportResult | null>(() => {
+                    captured = options.signal;
+                }),
+        );
+
+        const { unmount } = renderButton({ exportRows, total: 10, tableName: 'docs' });
+        fireEvent.click(screen.getByText('CSV'));
+        await waitFor(() => expect(captured).toBeDefined());
+        expect(captured!.aborted).toBe(false);
+
+        unmount();
+        expect(captured!.aborted).toBe(true);
+    });
+});

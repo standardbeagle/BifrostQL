@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from './ui/button';
 import {
     DropdownMenu,
@@ -44,6 +44,12 @@ export function ExportButton({
     const [running, setRunning] = useState(false);
     const [fetched, setFetched] = useState(0);
     const abortRef = useRef<AbortController | null>(null);
+
+    // Abort any in-flight export when the component goes away. Only the user's
+    // Cancel click used to abort, so navigating away mid-export left the paging
+    // loop running against a dead component — up to rowCap rows still being
+    // fetched, accumulated, and reported to setState on an unmounted tree.
+    useEffect(() => () => abortRef.current?.abort(), []);
 
     const start = useCallback(
         async (format: ExportFormat) => {

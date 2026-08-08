@@ -3,7 +3,7 @@ import { useBifrost } from './use-bifrost';
 import type { UseBifrostOptions } from './use-bifrost';
 import type { QueryOptions } from '../types';
 
-interface UseBifrostQueryOptions extends QueryOptions, UseBifrostOptions {}
+export interface UseBifrostQueryOptions extends QueryOptions, UseBifrostOptions {}
 
 /**
  * Table-oriented query hook with declarative filter, sort, pagination, and

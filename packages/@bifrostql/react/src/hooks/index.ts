@@ -1,6 +1,7 @@
 export { useBifrost } from './use-bifrost';
 export type { UseBifrostOptions } from './use-bifrost';
 export { useBifrostQuery } from './use-bifrost-query';
+export type { UseBifrostQueryOptions } from './use-bifrost-query';
 export { useBifrostMutation } from './use-bifrost-mutation';
 export type { UseBifrostMutationOptions } from './use-bifrost-mutation';
 export { useBifrostInfinite } from './use-bifrost-infinite';

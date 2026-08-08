@@ -52,6 +52,7 @@ export {
 } from './hooks';
 export type {
   UseBifrostOptions,
+  UseBifrostQueryOptions,
   UseBifrostMutationOptions,
   UseBifrostInfiniteOptions,
   UseBifrostSubscriptionOptions,
@@ -118,6 +119,10 @@ export type {
   KeyboardNavigationState,
   AccessibilityState,
   ResponsiveState,
+  VirtualScrollConfig,
+  VirtualScrollState,
+  VisibleRange,
+  SearchState,
 } from './hooks';
 export {
   buildGraphqlQuery,

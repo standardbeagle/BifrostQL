@@ -19,7 +19,7 @@ interface HealthResponse {
  * lives in the server's in-memory ConnectionState, and no endpoint accepts a
  * connection string over HTTP any more (task XGSUbdBiIzla), so a server restart
  * leaves `/api/health` answering 200 with `connected: false`. A client whose
- * session was restored from localStorage renders the editor regardless and then
+ * session was restored from sessionStorage renders the editor regardless and then
  * waits forever on a transport that can never come up ("Connecting…"). Reading
  * `connected` and handing control back to the connect flow is what turns that
  * dead end into an actionable prompt.

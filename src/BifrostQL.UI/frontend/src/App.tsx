@@ -118,7 +118,7 @@ export default function App() {
   currentViewRef.current = currentView;
 
   // The server lost its database binding (restart). Nothing the client holds can
-  // restore it — the session in localStorage only records *which* database was
+  // restore it — the session in sessionStorage only records *which* database was
   // open, and credentials never cross HTTP — so send the user back to the
   // connect flow instead of leaving the editor stuck on "Connecting…".
   const handleServerUnbound = useCallback(() => {

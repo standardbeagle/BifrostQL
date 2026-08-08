@@ -46,7 +46,7 @@ function requestToBridgeInfo(request: ConnectionRequest): BridgeConnectionInfo {
 }
 
 export interface UseConnectionFlowsParams {
-  /** Session restored from localStorage on mount (null when starting fresh). */
+  /** Session restored from sessionStorage on mount (null when starting fresh). */
   restored: ConnectionInfo | null;
   /** Transition into the editor view (bumps the editor key + sets the view). */
   enterEditor: () => void;

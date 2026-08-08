@@ -118,7 +118,9 @@ export interface WpConfig {
 }
 
 /**
- * Connection state stored in localStorage
+ * Persisted connection state — the active session lives in sessionStorage
+ * (connection/session.ts); the recent-connections list lives in localStorage
+ * (connection/recent-connections.ts).
  */
 export interface ConnectionInfo {
   id: string;

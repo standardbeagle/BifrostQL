@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
-import { useTableStats, buildRowCountQuery, abbreviateNumber, calculateBarWidth } from './useTableStats';
+import { useTableStats, buildRowCountQuery, abbreviateNumber } from './useTableStats';
 
 // Mock the dependencies
 vi.mock('./useSchema', () => ({
@@ -206,32 +206,5 @@ describe('abbreviateNumber', () => {
 
   it('handles exact millions without decimal', () => {
     expect(abbreviateNumber(1000000)).toBe('1M');
-  });
-});
-
-describe('calculateBarWidth', () => {
-  it('returns 0 for null count', () => {
-    expect(calculateBarWidth(null, 100)).toBe(0);
-  });
-
-  it('returns 0 when maxCount is 0', () => {
-    expect(calculateBarWidth(100, 0)).toBe(0);
-  });
-
-  it('calculates correct bar width based on ratio', () => {
-    expect(calculateBarWidth(50, 100)).toBe(5);
-    expect(calculateBarWidth(100, 100)).toBe(10);
-  });
-
-  it('caps at 10 for very large ratios', () => {
-    expect(calculateBarWidth(200, 100)).toBe(10);
-  });
-
-  it('minimum is 1 for non-zero counts', () => {
-    expect(calculateBarWidth(1, 1000)).toBe(1);
-  });
-
-  it('returns 10 for equal counts', () => {
-    expect(calculateBarWidth(500, 500)).toBe(10);
   });
 });

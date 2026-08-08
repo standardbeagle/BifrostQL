@@ -146,17 +146,3 @@ export function abbreviateNumber(num: number | null): string {
   const m = num / 1000000;
   return m % 1 === 0 ? `${m.toFixed(0)}M` : `${m.toFixed(1)}M`;
 }
-
-/**
- * Calculates a visual bar width (1-10) based on row count.
- * Used for sparkline visualization.
- * 
- * @param count - Row count
- * @param maxCount - Maximum row count across all tables for scaling
- * @returns Width value from 1-10
- */
-export function calculateBarWidth(count: number | null, maxCount: number): number {
-  if (count === null || maxCount === 0) return 0;
-  const ratio = count / maxCount;
-  return Math.max(1, Math.min(10, Math.ceil(ratio * 10)));
-}

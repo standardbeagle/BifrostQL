@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { TableList } from './tableList';
-import { abbreviateNumber, calculateBarWidth } from './hooks/useTableStats';
+import { abbreviateNumber } from './hooks/useTableStats';
 
 const pathMock = vi.hoisted(() => ({ current: '/' }));
 
@@ -19,11 +19,6 @@ vi.mock('./hooks/useTableStats', () => ({
     if (num < 1000) return num.toString();
     if (num < 1000000) return `${(num / 1000).toFixed(1)}k`;
     return `${(num / 1000000).toFixed(1)}M`;
-  }),
-  calculateBarWidth: vi.fn((count: number | null, maxCount: number) => {
-    if (count === null || maxCount === 0) return 0;
-    const ratio = count / maxCount;
-    return Math.max(1, Math.min(10, Math.ceil(ratio * 10)));
   }),
 }));
 
@@ -350,29 +345,5 @@ describe('abbreviateNumber', () => {
   it('returns M format for millions', () => {
     expect(abbreviateNumber(1200000)).toBe('1.2M');
     expect(abbreviateNumber(5000000)).toBe('5.0M');
-  });
-});
-
-describe('calculateBarWidth', () => {
-  it('returns 0 for null count', () => {
-    expect(calculateBarWidth(null, 100)).toBe(0);
-  });
-
-  it('returns 0 when maxCount is 0', () => {
-    expect(calculateBarWidth(100, 0)).toBe(0);
-  });
-
-  it('calculates correct bar width based on ratio', () => {
-    expect(calculateBarWidth(50, 100)).toBe(5);
-    expect(calculateBarWidth(100, 100)).toBe(10);
-    expect(calculateBarWidth(1, 100)).toBe(1);
-  });
-
-  it('caps at 10 for very large ratios', () => {
-    expect(calculateBarWidth(200, 100)).toBe(10);
-  });
-
-  it('minimum is 1 for non-zero counts', () => {
-    expect(calculateBarWidth(1, 1000)).toBe(1);
   });
 });

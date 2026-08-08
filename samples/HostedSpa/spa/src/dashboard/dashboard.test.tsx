@@ -249,9 +249,7 @@ describe('Dashboard', () => {
     ).toBeUndefined();
   });
 
-  it(
-    'shows a failed dues query as an error, never as 0 or $0.00',
-    async () => {
+  it('shows a failed dues query as an error, never as 0 or $0.00', async () => {
       // Arrange: a finance session whose dues query fails; the other three
       // metrics answer normally.
       globalThis.fetch = createFetchMock(
@@ -264,14 +262,10 @@ describe('Dashboard', () => {
 
       // Assert: the card says the metric could not be loaded — an operator
       // must not read a failed query as "no outstanding dues".
-      // `useBifrostQuery` retries three times with exponential backoff before
-      // settling into its error state, so this wait spans that whole window.
-      await waitFor(
-        () =>
-          expect(
-            screen.getByTestId('dashboard-dues-card-error'),
-          ).toBeInTheDocument(),
-        { timeout: 12000 },
+      await waitFor(() =>
+        expect(
+          screen.getByTestId('dashboard-dues-card-error'),
+        ).toBeInTheDocument(),
       );
       const card = screen.getByTestId('dashboard-dues-card');
       expect(card).not.toHaveTextContent('$0.00');
@@ -280,9 +274,7 @@ describe('Dashboard', () => {
       expect(screen.getByTestId('dashboard-members-card')).toHaveTextContent(
         '2',
       );
-    },
-    15000,
-  );
+  });
 
   it('links each card to its matching report screen', async () => {
     // Arrange

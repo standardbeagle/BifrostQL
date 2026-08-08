@@ -225,7 +225,7 @@ namespace BifrostQL.Mcp
                 },
                 Handlers = new McpServerHandlers
                 {
-                    ListToolsHandler = async (_, ct) =>
+                    ListToolsHandler = (_, ct) => MapProtocolConditionsAsync(async () =>
                     {
                         var tools = await BuildListedToolsAsync(executor, endpoint, declaredTools, declarativeTools, writesActive, ct);
                         return new ListToolsResult
@@ -234,11 +234,13 @@ namespace BifrostQL.Mcp
                                 ? gate.Filter(tools, ResolveRoles(contextProvider))
                                 : tools,
                         };
-                    },
+                    }),
                     CallToolHandler = (request, ct) => CallToolAsync(
                         executor, mutationExecutor, writesActive, gate, endpoint, contextProvider, declarativeTools, request.Params, ct),
-                    ListResourcesHandler = (_, ct) => ListResourcesAsync(executor, endpoint, ct),
-                    ReadResourceHandler = (request, ct) => ReadResourceAsync(executor, endpoint, request.Params, ct),
+                    ListResourcesHandler = (_, ct) => MapProtocolConditionsAsync(
+                        () => ListResourcesAsync(executor, endpoint, ct)),
+                    ReadResourceHandler = (request, ct) => MapProtocolConditionsAsync(
+                        () => ReadResourceAsync(executor, endpoint, request.Params, ct)),
                 },
             };
         }
@@ -382,7 +384,75 @@ namespace BifrostQL.Mcp
             SearchTools.ToolDefinition(),
         ];
 
+        /// <summary>
+        /// THE error funnel for <c>tools/call</c>. Every op class — schema tools, data
+        /// tools, built-in writes, declarative reads and writes — dispatches inside this
+        /// ONE try/catch, so cross-op divergence is impossible by construction: there is
+        /// no second catch to drift out of sync (protocol-adapter-security invariants 9
+        /// and 10). Before it, only the data and declarative branches carried a catch, so
+        /// an identical condition (a failed endpoint/model resolution, a policy denial)
+        /// surfaced as a sanitized <c>isError</c> result on <c>bifrost_query</c> but as an
+        /// unhandled JSON-RPC fault on <c>bifrost_schema_overview</c> — a differential
+        /// wire signal for one condition.
+        /// </summary>
         private static async ValueTask<CallToolResult> CallToolAsync(
+            IQueryIntentExecutor executor, IMutationIntentExecutor? mutationExecutor, bool writesActive,
+            McpToolAccessGate gate, string? endpoint, Func<IDictionary<string, object?>> userContextProvider,
+            DeclarativeToolDocument? declarativeTools,
+            CallToolRequestParams? parameters, CancellationToken cancellationToken)
+        {
+            try
+            {
+                return await DispatchToolAsync(
+                    executor, mutationExecutor, writesActive, gate, endpoint, userContextProvider,
+                    declarativeTools, parameters, cancellationToken);
+            }
+            catch (Exception e) when (IsMappedCondition(e))
+            {
+                return ErrorResult(MapConditionMessage(e));
+            }
+        }
+
+        /// <summary>
+        /// The conditions the funnel owns. Kept as ONE predicate shared by the tool funnel
+        /// and the resource funnel so the two never drift into catching different sets for
+        /// the same seam (invariant 9's catch-set symmetry). <see cref="McpProtocolException"/>
+        /// is deliberately excluded: it is the adapter's own protocol-level fault type and
+        /// is already the intended wire shape.
+        /// </summary>
+        /// <summary>
+        /// The funnel for the op classes whose wire shape has no <c>isError</c> field
+        /// (<c>tools/list</c>, <c>resources/list</c>, <c>resources/read</c>). It catches the
+        /// IDENTICAL condition set as the <c>tools/call</c> funnel — the catch-set symmetry
+        /// invariant 9 demands — and maps it onto the only shape those responses have, a
+        /// protocol error with the same sanitized message. Without it, a condition that is
+        /// a clean <c>isError</c> on <c>tools/call</c> escaped these handlers unhandled.
+        /// </summary>
+        private static async ValueTask<T> MapProtocolConditionsAsync<T>(Func<ValueTask<T>> operation)
+        {
+            try
+            {
+                return await operation();
+            }
+            catch (Exception e) when (IsMappedCondition(e))
+            {
+                throw new McpProtocolException(MapConditionMessage(e), McpErrorCode.InvalidRequest);
+            }
+        }
+
+        private static bool IsMappedCondition(Exception e) =>
+            e is UnmappedOidcIssuerException or ToolPromptException or BifrostExecutionError;
+
+        /// <summary>
+        /// Maps a funnelled condition to its client-facing message. An unmapped OIDC issuer
+        /// is SANITIZED — its own message names the issuer, which never reaches the wire
+        /// (invariant 3); the specific issuer stays in server-side logs.
+        /// </summary>
+        private static string MapConditionMessage(Exception e) => e is UnmappedOidcIssuerException
+            ? "Authentication failed: the presented token could not be resolved to an identity."
+            : e.Message;
+
+        private static async ValueTask<CallToolResult> DispatchToolAsync(
             IQueryIntentExecutor executor, IMutationIntentExecutor? mutationExecutor, bool writesActive,
             McpToolAccessGate gate, string? endpoint, Func<IDictionary<string, object?>> userContextProvider,
             DeclarativeToolDocument? declarativeTools,
@@ -413,48 +483,28 @@ namespace BifrostQL.Mcp
             }
 
             // Data tools (read + write): argument mistakes surface as prompt-style tool
-            // errors (ToolPromptException), and execution-layer rejections
-            // (missing tenant context, policy-denied column, unsupported filter
-            // shape) surface the same way — both are actionable by the calling
-            // agent, so neither becomes a protocol fault. A token from an OIDC
-            // issuer this deployment has not mapped fails closed on identity
-            // projection; its message names the issuer, so it is SANITIZED to a
-            // generic reason here (protocol-adapter-security invariant 3) — the
-            // read still fails (never an empty/anonymous context), and the specific
-            // issuer is left for server-side logs only.
+            // errors (ToolPromptException), and execution-layer rejections (missing tenant
+            // context, policy-denied column, unsupported filter shape) surface the same
+            // way — both are actionable by the calling agent, so neither becomes a
+            // protocol fault. The mapping lives in the caller's single funnel.
             var isReadTool = parameters.Name is DataTools.QueryToolName or DataTools.RowContextToolName
                 or AggregateTools.ToolName or SearchTools.ToolName;
             if (isReadTool || (writesActive && WriteTools.IsWriteTool(parameters.Name)))
             {
-                try
+                var payload = parameters.Name switch
                 {
-                    var payload = parameters.Name switch
-                    {
-                        DataTools.QueryToolName => await DataTools.ExecuteQueryAsync(executor, endpoint, userContextProvider, parameters, cancellationToken),
-                        DataTools.RowContextToolName => await DataTools.ExecuteRowContextAsync(executor, endpoint, userContextProvider, parameters, cancellationToken),
-                        AggregateTools.ToolName => await AggregateTools.ExecuteAsync(executor, endpoint, userContextProvider, parameters, cancellationToken),
-                        SearchTools.ToolName => await SearchTools.ExecuteAsync(executor, endpoint, userContextProvider, parameters, cancellationToken),
-                        _ => await WriteTools.ExecuteAsync(mutationExecutor!, endpoint, userContextProvider, parameters, cancellationToken),
-                    };
-                    return StructuredResult(payload);
-                }
-                catch (UnmappedOidcIssuerException)
-                {
-                    return ErrorResult("Authentication failed: the presented token could not be resolved to an identity.");
-                }
-                catch (ToolPromptException e)
-                {
-                    return ErrorResult(e.Message);
-                }
-                catch (BifrostExecutionError e)
-                {
-                    return ErrorResult(e.Message);
-                }
+                    DataTools.QueryToolName => await DataTools.ExecuteQueryAsync(executor, endpoint, userContextProvider, parameters, cancellationToken),
+                    DataTools.RowContextToolName => await DataTools.ExecuteRowContextAsync(executor, endpoint, userContextProvider, parameters, cancellationToken),
+                    AggregateTools.ToolName => await AggregateTools.ExecuteAsync(executor, endpoint, userContextProvider, parameters, cancellationToken),
+                    SearchTools.ToolName => await SearchTools.ExecuteAsync(executor, endpoint, userContextProvider, parameters, cancellationToken),
+                    _ => await WriteTools.ExecuteAsync(mutationExecutor!, endpoint, userContextProvider, parameters, cancellationToken),
+                };
+                return StructuredResult(payload);
             }
 
             // Declarative tools: same unskippable intent path (transformers apply) and the
-            // same sanitized error funnel as the built-in read tools. The gate check above
-            // already refused any role-gated declarative tool the caller may not see.
+            // same funnel as every other op class. The gate check above already refused any
+            // role-gated declarative tool the caller may not see.
             var declarative = declarativeTools?.Tools.FirstOrDefault(tool => tool.Name == parameters.Name);
             if (declarative is { IsMutation: true })
             {
@@ -464,53 +514,22 @@ namespace BifrostQL.Mcp
                 // implies a non-null mutationExecutor by construction.
                 if (!writesActive)
                     return DisabledWriteSurfaceResult(parameters.Name);
-                try
-                {
-                    IReadOnlyDictionary<string, JsonElement> mutationArgs = parameters.Arguments is null
-                        ? new Dictionary<string, JsonElement>()
-                        : new Dictionary<string, JsonElement>(parameters.Arguments);
-                    var payload = await DeclarativeMutationTool.ExecuteAsync(
-                        mutationExecutor!, declarative, endpoint, mutationArgs, userContextProvider(), cancellationToken);
-                    return StructuredResult(payload);
-                }
-                catch (UnmappedOidcIssuerException)
-                {
-                    return ErrorResult("Authentication failed: the presented token could not be resolved to an identity.");
-                }
-                catch (ToolPromptException e)
-                {
-                    return ErrorResult(e.Message);
-                }
-                catch (BifrostExecutionError e)
-                {
-                    return ErrorResult(e.Message);
-                }
+
+                IReadOnlyDictionary<string, JsonElement> mutationArgs = parameters.Arguments is null
+                    ? new Dictionary<string, JsonElement>()
+                    : new Dictionary<string, JsonElement>(parameters.Arguments);
+                return StructuredResult(await DeclarativeMutationTool.ExecuteAsync(
+                    mutationExecutor!, declarative, endpoint, mutationArgs, userContextProvider(), cancellationToken));
             }
             if (declarative is not null)
             {
-                try
-                {
-                    var declarativeModel = await executor.GetModelAsync(endpoint);
-                    IReadOnlyDictionary<string, JsonElement> arguments = parameters.Arguments is null
-                        ? new Dictionary<string, JsonElement>()
-                        : new Dictionary<string, JsonElement>(parameters.Arguments);
-                    var payload = await DeclarativeToolSurface.ExecuteAsync(
-                        declarative, declarativeModel, executor, endpoint,
-                        arguments, userContextProvider(), cancellationToken);
-                    return StructuredResult(payload);
-                }
-                catch (UnmappedOidcIssuerException)
-                {
-                    return ErrorResult("Authentication failed: the presented token could not be resolved to an identity.");
-                }
-                catch (ToolPromptException e)
-                {
-                    return ErrorResult(e.Message);
-                }
-                catch (BifrostExecutionError e)
-                {
-                    return ErrorResult(e.Message);
-                }
+                var declarativeModel = await executor.GetModelAsync(endpoint);
+                IReadOnlyDictionary<string, JsonElement> arguments = parameters.Arguments is null
+                    ? new Dictionary<string, JsonElement>()
+                    : new Dictionary<string, JsonElement>(parameters.Arguments);
+                return StructuredResult(await DeclarativeToolSurface.ExecuteAsync(
+                    declarative, declarativeModel, executor, endpoint,
+                    arguments, userContextProvider(), cancellationToken));
             }
 
             var model = await executor.GetModelAsync(endpoint);

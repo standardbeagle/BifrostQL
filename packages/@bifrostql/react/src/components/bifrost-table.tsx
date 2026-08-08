@@ -824,7 +824,7 @@ export interface BifrostTableProps<
   rowKey?: string;
   pagination?: PaginationConfig;
   defaultSort?: SortOption[];
-  defaultFilters?: TableFilter;
+  defaultFilter?: TableFilter;
   multiSort?: boolean;
   urlSync?: boolean | UseBifrostTableOptions['urlSync'];
   emptyMessage?: string;
@@ -871,7 +871,7 @@ export function BifrostTable<T = Record<string, unknown>>(
     rowKey = 'id',
     pagination: paginationConfig,
     defaultSort,
-    defaultFilters,
+    defaultFilter,
     multiSort,
     urlSync,
     emptyMessage = 'No data available',
@@ -896,7 +896,7 @@ export function BifrostTable<T = Record<string, unknown>>(
     fields,
     pagination: paginationConfig,
     defaultSort,
-    defaultFilters,
+    defaultFilter,
     multiSort,
     rowKey,
     urlSync,

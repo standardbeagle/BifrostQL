@@ -217,14 +217,14 @@ export function MemberList() {
       </div>
 
       <BifrostTable
-        // BifrostTable seeds its filter state from `defaultFilters` only on
+        // BifrostTable seeds its filter state from `defaultFilter` only on
         // mount, so remount it when the saved view changes to re-seed the
         // table — and therefore the issued GraphQL filter — from the new view.
         key={savedViewId}
         table={queryName}
         columns={columns}
         rowActions={rowActions}
-        defaultFilters={tableFilter}
+        defaultFilter={tableFilter}
         onRowClick={(row) => navigate(`/members/${String(row.id)}`)}
       />
     </section>

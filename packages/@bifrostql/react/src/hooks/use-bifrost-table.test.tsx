@@ -449,7 +449,7 @@ describe('useBifrostTable', () => {
           useBifrostTable({
             table: 'users',
             columns: defaultColumns,
-            defaultFilters: { name: { _contains: 'alice' } },
+            defaultFilter: { name: { _contains: 'alice' } },
           }),
         { wrapper: createWrapper() },
       );
@@ -489,7 +489,7 @@ describe('useBifrostTable', () => {
           useBifrostTable({
             table: 'users',
             columns: defaultColumns,
-            defaultFilters: { name: { _eq: 'Alice' } },
+            defaultFilter: { name: { _eq: 'Alice' } },
           }),
         { wrapper: createWrapper() },
       );
@@ -510,7 +510,7 @@ describe('useBifrostTable', () => {
           useBifrostTable({
             table: 'users',
             columns: defaultColumns,
-            defaultFilters: { name: 'Alice' },
+            defaultFilter: { name: 'Alice' },
           }),
         { wrapper: createWrapper() },
       );
@@ -531,7 +531,7 @@ describe('useBifrostTable', () => {
           useBifrostTable({
             table: 'users',
             columns: defaultColumns,
-            defaultFilters: { name: 'Alice' },
+            defaultFilter: { name: 'Alice' },
           }),
         { wrapper: createWrapper() },
       );
@@ -554,7 +554,7 @@ describe('useBifrostTable', () => {
           useBifrostTable({
             table: 'users',
             columns: defaultColumns,
-            defaultFilters: { name: 'Alice', email: 'test' },
+            defaultFilter: { name: 'Alice', email: 'test' },
           }),
         { wrapper: createWrapper() },
       );
@@ -876,7 +876,7 @@ describe('useBifrostTable', () => {
             table: 'users',
             columns: defaultColumns,
             defaultSort: [{ field: 'name', direction: 'asc' }],
-            defaultFilters: { name: { _contains: 'a' } },
+            defaultFilter: { name: { _contains: 'a' } },
             pagination: { pageSize: 10 },
           }),
         { wrapper: createWrapper() },
@@ -3850,7 +3850,7 @@ describe('useBifrostTable', () => {
           useBifrostTable({
             table: 'users',
             columns: defaultColumns,
-            defaultFilters: { name: 'Alice', email: { _contains: 'test' } },
+            defaultFilter: { name: 'Alice', email: { _contains: 'test' } },
             urlSync: false,
           }),
         { wrapper: createWrapper() },
@@ -3892,7 +3892,7 @@ describe('useBifrostTable', () => {
           useBifrostTable({
             table: 'users',
             columns: defaultColumns,
-            defaultFilters: { name: 'test' },
+            defaultFilter: { name: 'test' },
             urlSync: false,
           }),
         { wrapper: createWrapper() },
@@ -3915,7 +3915,7 @@ describe('useBifrostTable', () => {
           useBifrostTable({
             table: 'users',
             columns: defaultColumns,
-            defaultFilters: { name: 'Alice' },
+            defaultFilter: { name: 'Alice' },
             urlSync: false,
           }),
         { wrapper: createWrapper() },
@@ -4036,7 +4036,7 @@ describe('useBifrostTable', () => {
           useBifrostTable({
             table: 'users',
             columns: defaultColumns,
-            defaultFilters: { name: 'Alice' },
+            defaultFilter: { name: 'Alice' },
             urlSync: false,
           }),
         { wrapper: createWrapper() },
@@ -4142,7 +4142,7 @@ describe('useBifrostTable', () => {
             table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
-            defaultFilters: { name: { _eq: 'Alice' } },
+            defaultFilter: { name: { _eq: 'Alice' } },
             filterDebounceMs: 0,
             urlSync: false,
           }),
@@ -4169,7 +4169,7 @@ describe('useBifrostTable', () => {
             table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
-            defaultFilters: { name: { _contains: 'alice' } },
+            defaultFilter: { name: { _contains: 'alice' } },
             filterDebounceMs: 0,
             urlSync: false,
           }),
@@ -4192,7 +4192,7 @@ describe('useBifrostTable', () => {
             table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
-            defaultFilters: { age: { _gt: 28 } },
+            defaultFilter: { age: { _gt: 28 } },
             filterDebounceMs: 0,
             urlSync: false,
           }),
@@ -4218,7 +4218,7 @@ describe('useBifrostTable', () => {
             table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
-            defaultFilters: { name: { _in: ['Alice', 'Bob'] } },
+            defaultFilter: { name: { _in: ['Alice', 'Bob'] } },
             filterDebounceMs: 0,
             urlSync: false,
           }),
@@ -4241,7 +4241,7 @@ describe('useBifrostTable', () => {
             table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
-            defaultFilters: { age: { _between: [26, 32] } },
+            defaultFilter: { age: { _between: [26, 32] } },
             filterDebounceMs: 0,
             urlSync: false,
           }),
@@ -4267,7 +4267,7 @@ describe('useBifrostTable', () => {
             table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
-            defaultFilters: { email: { _starts_with: 'alice' } },
+            defaultFilter: { email: { _starts_with: 'alice' } },
             filterDebounceMs: 0,
             urlSync: false,
           }),
@@ -4290,7 +4290,7 @@ describe('useBifrostTable', () => {
             table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
-            defaultFilters: { email: { _ends_with: 'test.com' } },
+            defaultFilter: { email: { _ends_with: 'test.com' } },
             filterDebounceMs: 0,
             urlSync: false,
           }),
@@ -4313,7 +4313,7 @@ describe('useBifrostTable', () => {
             table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
-            defaultFilters: { name: { _eq: 'Alice' } },
+            defaultFilter: { name: { _eq: 'Alice' } },
             filterDebounceMs: 0,
             urlSync: false,
           }),
@@ -4365,7 +4365,7 @@ describe('useBifrostTable', () => {
             table: 'users',
             columns: extendedColumns,
             clientSideFilter: { enabled: true, threshold: 2 },
-            defaultFilters: { name: { _eq: 'Alice' } },
+            defaultFilter: { name: { _eq: 'Alice' } },
             filterDebounceMs: 0,
             urlSync: false,
           }),
@@ -4389,7 +4389,7 @@ describe('useBifrostTable', () => {
             table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
-            defaultFilters: { name: { _neq: 'Alice' } },
+            defaultFilter: { name: { _neq: 'Alice' } },
             filterDebounceMs: 0,
             urlSync: false,
           }),
@@ -4412,7 +4412,7 @@ describe('useBifrostTable', () => {
             table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
-            defaultFilters: { name: { _nin: ['Alice', 'Bob'] } },
+            defaultFilter: { name: { _nin: ['Alice', 'Bob'] } },
             filterDebounceMs: 0,
             urlSync: false,
           }),
@@ -4439,7 +4439,7 @@ describe('useBifrostTable', () => {
             table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
-            defaultFilters: { email: { _null: true } },
+            defaultFilter: { email: { _null: true } },
             filterDebounceMs: 0,
             urlSync: false,
           }),
@@ -4465,7 +4465,7 @@ describe('useBifrostTable', () => {
             table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
-            defaultFilters: { name: 'Bob' },
+            defaultFilter: { name: 'Bob' },
             filterDebounceMs: 0,
             urlSync: false,
           }),
@@ -4492,7 +4492,7 @@ describe('useBifrostTable', () => {
             table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
-            defaultFilters: { name: null },
+            defaultFilter: { name: null },
             filterDebounceMs: 0,
             urlSync: false,
           }),
@@ -4551,7 +4551,7 @@ describe('useBifrostTable', () => {
           useBifrostTable({
             table: 'users',
             columns: defaultColumns,
-            defaultFilters: { name: { _contains: 'alice' } },
+            defaultFilter: { name: { _contains: 'alice' } },
             localStorage: { key: 'test-table' },
             urlSync: false,
           }),
@@ -4579,7 +4579,7 @@ describe('useBifrostTable', () => {
           useBifrostTable({
             table: 'users',
             columns: defaultColumns,
-            defaultFilters: { name: { _contains: 'alice' } },
+            defaultFilter: { name: { _contains: 'alice' } },
             localStorage: { key: 'test-table' },
             urlSync: false,
           }),
@@ -4613,7 +4613,7 @@ describe('useBifrostTable', () => {
           useBifrostTable({
             table: 'users',
             columns: defaultColumns,
-            defaultFilters: { name: 'test' },
+            defaultFilter: { name: 'test' },
             localStorage: { key: 'test-table' },
             urlSync: false,
           }),
@@ -4641,7 +4641,7 @@ describe('useBifrostTable', () => {
           useBifrostTable({
             table: 'users',
             columns: defaultColumns,
-            defaultFilters: { name: 'v1' },
+            defaultFilter: { name: 'v1' },
             localStorage: { key: 'test-table' },
             urlSync: false,
           }),
@@ -4702,7 +4702,7 @@ describe('useBifrostTable', () => {
           useBifrostTable({
             table: 'users',
             columns: defaultColumns,
-            defaultFilters: { name: 'test' },
+            defaultFilter: { name: 'test' },
             urlSync: false,
           }),
         { wrapper: createWrapper() },
@@ -4723,7 +4723,7 @@ describe('useBifrostTable', () => {
           useBifrostTable({
             table: 'users',
             columns: defaultColumns,
-            defaultFilters: { name: 'test' },
+            defaultFilter: { name: 'test' },
             localStorage: { key: 'test-table' },
             urlSync: false,
           }),
@@ -4852,7 +4852,7 @@ describe('useBifrostTable', () => {
           useBifrostTable({
             table: 'users',
             columns: defaultColumns,
-            defaultFilters: { name: 'test' },
+            defaultFilter: { name: 'test' },
             localStorage: { key: 'test-table', persistFilters: true },
             urlSync: false,
           }),
@@ -4868,7 +4868,7 @@ describe('useBifrostTable', () => {
       expect(removeItemSpy).toHaveBeenCalledWith('test-table_filters');
     });
 
-    it('localStorage filters override defaultFilters', async () => {
+    it('localStorage filters override defaultFilter', async () => {
       getItemSpy.mockImplementation((key: string) => {
         if (key === 'test-table_filters')
           return JSON.stringify({ name: { _eq: 'Stored' } });
@@ -4881,7 +4881,7 @@ describe('useBifrostTable', () => {
           useBifrostTable({
             table: 'users',
             columns: defaultColumns,
-            defaultFilters: { name: { _eq: 'Default' } },
+            defaultFilter: { name: { _eq: 'Default' } },
             localStorage: { key: 'test-table', persistFilters: true },
             urlSync: false,
           }),
@@ -6227,7 +6227,7 @@ describe('useBifrostTable', () => {
             table: 'users',
             columns: computedColumns,
             clientSideFilter: true,
-            defaultFilters: { full_name: { _eq: 'Alice Smith' } },
+            defaultFilter: { full_name: { _eq: 'Alice Smith' } },
             filterDebounceMs: 0,
             urlSync: false,
           }),
@@ -6253,7 +6253,7 @@ describe('useBifrostTable', () => {
             table: 'users',
             columns: computedColumns,
             clientSideFilter: true,
-            defaultFilters: { full_name: { _contains: 'alice' } },
+            defaultFilter: { full_name: { _contains: 'alice' } },
             filterDebounceMs: 0,
             urlSync: false,
           }),
@@ -6646,7 +6646,7 @@ describe('useBifrostTable', () => {
             columns: orderColumns,
             groupBy,
             clientSideFilter: true,
-            defaultFilters: { amount: { _gt: 100 } },
+            defaultFilter: { amount: { _gt: 100 } },
             filterDebounceMs: 0,
             urlSync: false,
           }),
@@ -7185,7 +7185,7 @@ describe('useBifrostTable', () => {
             useBifrostTable({
               table: 'users',
               columns: defaultColumns,
-              defaultFilters: { name: { _eq: 'Alice' } },
+              defaultFilter: { name: { _eq: 'Alice' } },
               filterDebounceMs: 0,
               urlSync: false,
             }),

@@ -31,7 +31,7 @@ export interface UseTableQueryStateOptions {
   columns: ColumnConfig[];
   multiSort: boolean;
   defaultSort: SortOption[];
-  defaultFilters: TableFilter;
+  defaultFilter: TableFilter;
   syncConfig: ResolvedUrlSyncConfig;
   localStorageConfig: LocalStorageConfig | undefined;
   initialPageSize: number;
@@ -60,7 +60,7 @@ export function useTableQueryState({
   columns,
   multiSort,
   defaultSort,
-  defaultFilters,
+  defaultFilter,
   syncConfig,
   localStorageConfig,
   initialPageSize,
@@ -99,10 +99,10 @@ export function useTableQueryState({
     initialUrlState?.sort ?? initialLocalStorageSort ?? defaultSort,
   );
   const [filters, setFilters] = useState<TableFilter>(
-    initialUrlState?.filter ?? initialLocalStorageFilters ?? defaultFilters,
+    initialUrlState?.filter ?? initialLocalStorageFilters ?? defaultFilter,
   );
   const [debouncedFilters, setDebouncedFilters] = useState<TableFilter>(
-    initialUrlState?.filter ?? initialLocalStorageFilters ?? defaultFilters,
+    initialUrlState?.filter ?? initialLocalStorageFilters ?? defaultFilter,
   );
   const [compoundFilter, setCompoundFilterState] =
     useState<CompoundFilter | null>(null);
@@ -206,15 +206,15 @@ export function useTableQueryState({
     const handlePopState = () => {
       const urlState = readFromUrl(syncConfig.prefix);
       setSort(urlState.sort ?? defaultSort);
-      setFilters(urlState.filter ?? defaultFilters);
-      setDebouncedFilters(urlState.filter ?? defaultFilters);
+      setFilters(urlState.filter ?? defaultFilter);
+      setDebouncedFilters(urlState.filter ?? defaultFilter);
       setPage(urlState.page ?? 0);
       if (urlState.pageSize) setPageSizeState(urlState.pageSize);
     };
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [syncConfig.enabled, syncConfig.prefix, defaultSort, defaultFilters]);
+  }, [syncConfig.enabled, syncConfig.prefix, defaultSort, defaultFilter]);
 
   useEffect(() => {
     if (!localStorageConfig?.key) return;

@@ -483,7 +483,7 @@ export interface UseBifrostTableOptions extends UseBifrostOptions {
   fields?: string[];
   pagination?: PaginationConfig;
   defaultSort?: SortOption[];
-  defaultFilters?: TableFilter;
+  defaultFilter?: TableFilter;
   multiSort?: boolean;
   clientSideSort?: boolean | ClientSideSortConfig;
   clientSideFilter?: boolean | ClientSideFilterConfig;

@@ -280,7 +280,7 @@ const table = useBifrostTable<User>({
   fields: ['id', 'name', 'email'],
   pagination: { pageSize: 25, pageSizeOptions: [10, 25, 50] },
   defaultSort: [{ field: 'name', direction: 'asc' }],
-  defaultFilters: {},
+  defaultFilter: {},
   multiSort: false,
   rowKey: 'id',
   urlSync: true, // or { enabled: true, prefix: 'users', debounceMs: 500 }

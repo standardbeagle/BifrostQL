@@ -39,7 +39,7 @@ export interface DuesReportProps {
  * Columns are derived from the entity's overlay metadata via
  * {@link buildColumns}, exactly like {@link import('../members/member-list').MemberList}
  * and {@link import('../membership-plans/plan-list').PlanList}; the report only
- * supplies a fixed `defaultFilters` and renders no row actions, so it is
+ * supplies a fixed `defaultFilter` and renders no row actions, so it is
  * strictly read-only. Tenant scoping is applied server-side by the host's
  * `tenant-filter` module, so every report is tenant-scoped without any
  * client-side tenant predicate.
@@ -108,7 +108,7 @@ export function DuesReport({ entityKey, title, testId, filter }: DuesReportProps
       <BifrostTable
         table={queryName}
         columns={columns}
-        defaultFilters={filter}
+        defaultFilter={filter}
       />
     </section>
   );

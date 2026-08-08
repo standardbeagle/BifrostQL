@@ -110,7 +110,7 @@ export function EmailSegments() {
             <BifrostTable
               table={queryName}
               columns={columns}
-              defaultFilters={selected.filter}
+              defaultFilter={selected.filter}
             />
           ) : (
             <p role="alert" data-testid={`${TEST_ID}-audience-missing`}>

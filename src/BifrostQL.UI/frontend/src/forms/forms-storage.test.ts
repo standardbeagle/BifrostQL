@@ -27,9 +27,39 @@ const def: FormDefinition = {
   fields: [{ column: "id", label: "Id", control: "number", readOnly: true, required: false, include: true }],
 };
 
+/** Storage whose writes always fail, as under a full quota or private browsing. */
+function failingStorage(message = "QuotaExceededError"): Storage {
+  const base = memStorage();
+  return {
+    ...base,
+    getItem: (k: string) => base.getItem(k),
+    removeItem: (k: string) => base.removeItem(k),
+    setItem: () => {
+      throw new DOMException(message, "QuotaExceededError");
+    },
+    get length() { return base.length; },
+  } as Storage;
+}
+
 describe("forms-storage", () => {
   it("returns an empty list when nothing is stored", () => {
     expect(loadForms()).toEqual([]);
+  });
+
+  // A write that cannot land must not look like a write that did. The failure
+  // used to be logged to the console and swallowed, so the builder reported
+  // "Saved" and the definition was simply gone on the next reload.
+  it("propagates a failed write from upsertForm", () => {
+    g.localStorage = failingStorage();
+    expect(() =>
+      upsertForm([], { id: "f1", name: "Customers", definition: def }, "2026-01-01T00:00:00Z"),
+    ).toThrow(/could not be saved/i);
+  });
+
+  it("propagates a failed write from deleteForm", () => {
+    const existing = upsertForm([], { id: "f1", name: "Customers", definition: def }, "2026-01-01T00:00:00Z");
+    g.localStorage = failingStorage();
+    expect(() => deleteForm(existing, "f1")).toThrow(/could not be saved/i);
   });
 
   it("upserts, persists and round-trips a form", () => {

@@ -70,12 +70,23 @@ export function loadForms(): SavedForm[] {
   }
 }
 
+/**
+ * Persists the form list. Throws when the write cannot land — a full quota or
+ * blocked storage (private browsing) is the difference between a saved form
+ * and one that silently vanishes on the next reload, so the caller has to be
+ * able to tell the user. `loadForms` stays tolerant by design; only writes
+ * fail loudly.
+ */
 function writeForms(forms: SavedForm[]): void {
-  if (typeof localStorage === "undefined") return;
+  if (typeof localStorage === "undefined") {
+    throw new Error("Forms could not be saved: this browser has no local storage.");
+  }
   try {
     localStorage.setItem(FORMS_KEY, JSON.stringify(forms));
   } catch (error) {
-    console.warn("Failed to save forms:", error);
+    throw new Error(
+      `Forms could not be saved: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 

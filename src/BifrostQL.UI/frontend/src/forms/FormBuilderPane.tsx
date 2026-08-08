@@ -58,7 +58,10 @@ export function FormBuilderPane({ fetcher }: { fetcher?: GraphQLFetcher }) {
   const [def, setDef] = useState<FormDefinition | null>(null);
   const [forms, setForms] = useState<SavedForm[]>(() => loadForms());
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  // `error` distinguishes a real failure from a confirmation. A failed save
+  // used to be indistinguishable from a successful one, so a form lost to a
+  // quota error still read as "Saved".
+  const [status, setStatus] = useState<{ text: string; error?: boolean } | null>(null);
   // The form currently open in the live runtime overlay, or null when designing.
   const [runningDef, setRunningDef] = useState<FormDefinition | null>(null);
 
@@ -93,10 +96,18 @@ export function FormBuilderPane({ fetcher }: { fetcher?: GraphQLFetcher }) {
   const onSave = useCallback(() => {
     if (!def) return;
     const id = activeId ?? newSavedObjectId("form");
-    const next = upsertForm(forms, { id, name: def.title, definition: def }, new Date().toISOString());
+    let next;
+    try {
+      next = upsertForm(forms, { id, name: def.title, definition: def }, new Date().toISOString());
+    } catch (error) {
+      // The definition stays on screen so the user can retry or copy it out;
+      // what must not happen is reporting success over a write that failed.
+      setStatus({ text: error instanceof Error ? error.message : String(error), error: true });
+      return;
+    }
     setForms(next);
     setActiveId(id);
-    setStatus(`Saved "${def.title}"`);
+    setStatus({ text: `Saved "${def.title}"` });
   }, [def, activeId, forms]);
 
   const onLoad = useCallback(
@@ -105,16 +116,23 @@ export function FormBuilderPane({ fetcher }: { fetcher?: GraphQLFetcher }) {
       if (!found) return;
       setDef(found.definition);
       setActiveId(id);
-      setStatus(`Loaded "${found.name}"`);
+      setStatus({ text: `Loaded "${found.name}"` });
     },
     [forms],
   );
 
   const onDelete = useCallback(() => {
     if (!activeId) return;
-    setForms(deleteForm(forms, activeId));
+    let next;
+    try {
+      next = deleteForm(forms, activeId);
+    } catch (error) {
+      setStatus({ text: error instanceof Error ? error.message : String(error), error: true });
+      return;
+    }
+    setForms(next);
     setActiveId(null);
-    setStatus("Deleted");
+    setStatus({ text: "Deleted" });
   }, [forms, activeId]);
 
   // Launch the live runtime for a definition — from the builder (current def) or
@@ -171,7 +189,14 @@ export function FormBuilderPane({ fetcher }: { fetcher?: GraphQLFetcher }) {
         {def && <button type="button" style={styles.btn} onClick={onSave}>Save</button>}
         {def && fetcher && <button type="button" style={styles.btn} onClick={() => onRun(def)}>Run form</button>}
         {activeId && <button type="button" style={styles.btn} onClick={onDelete}>Delete</button>}
-        {status && <span style={styles.status}>{status}</span>}
+        {status && (
+          <span
+            style={status.error ? styles.statusError : styles.status}
+            role={status.error ? 'alert' : undefined}
+          >
+            {status.text}
+          </span>
+        )}
       </div>
 
       {!def ? (
@@ -354,6 +379,7 @@ const styles: Record<string, React.CSSProperties> = {
   btn: { border: "1px solid currentColor", background: "transparent", borderRadius: 6, padding: "6px 14px", cursor: "pointer", font: "inherit" },
   iconBtn: { border: "1px solid var(--border, #d1d5db)", background: "transparent", borderRadius: 4, padding: "0 6px", cursor: "pointer", font: "inherit", marginRight: 2 },
   status: { fontSize: 12, color: "#16a34a" },
+  statusError: { fontSize: 12, color: "#dc2626" },
   req: { color: "#dc2626" },
   muted: { color: "#9ca3af", fontSize: 13 },
   unavailable: { padding: 24, color: "#6b7280" },

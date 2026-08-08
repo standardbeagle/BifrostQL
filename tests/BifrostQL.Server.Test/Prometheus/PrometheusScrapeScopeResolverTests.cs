@@ -29,6 +29,13 @@ namespace BifrostQL.Server.Test.Prometheus
             "INSERT INTO Orders(id, tenant_id, status, amount) VALUES " +
                 "(1, 'tenant-a', 'open', 100.0), (2, 'tenant-a', 'open', 50.0), (3, 'tenant-a', 'closed', 25.0), " +
                 "(4, 'tenant-b', 'open', 999.0), (5, 'tenant-b', 'closed', 888.0);",
+            // Row-scoped by POLICY rather than by tenant-filter, with rows spanning two
+            // partitions (alice / bob) so a metric that runs unscoped is observably a
+            // cross-partition aggregate rather than an assertion on shape.
+            "CREATE TABLE Notes (id INTEGER PRIMARY KEY, owner_id TEXT NOT NULL, status TEXT NOT NULL, amount REAL NOT NULL);",
+            "INSERT INTO Notes(id, owner_id, status, amount) VALUES " +
+                "(1, 'alice', 'open', 10.0), (2, 'alice', 'closed', 5.0), " +
+                "(3, 'bob', 'open', 700.0), (4, 'bob', 'closed', 300.0);",
         };
 
         private const string NonTenant =
@@ -43,12 +50,35 @@ namespace BifrostQL.Server.Test.Prometheus
             "main.Orders { tenant-filter: tenant_id; metric-name: orders_total; metric-count: enabled; " +
             "metric-sum: amount; metric-labels: status; metric-security-mode: per-tenant }";
 
+        // A table row-scoped by POLICY, not by tenant-filter. The row scope is role-qualified,
+        // so an identity holding no roles is left UNSCOPED by PolicyFilterTransformer — an
+        // ambient scrape would therefore aggregate every owner's rows.
+        private const string PolicyScopedNoMode =
+            "main.Notes { policy-actions: read; policy-row-scope: owner_id = {user_id}; " +
+            "policy-row-scope-roles: member; metric-name: notes_total; metric-count: enabled; " +
+            "metric-sum: amount; metric-labels: status }";
+        private const string PolicyScopedAggregateMode =
+            "main.Notes { policy-actions: read; policy-row-scope: owner_id = {user_id}; " +
+            "policy-row-scope-roles: member; metric-name: notes_total; metric-count: enabled; " +
+            "metric-sum: amount; metric-labels: status; metric-security-mode: aggregate }";
+
         private static ClaimsPrincipal ServicePrincipal(string tenant) =>
             new(new ClaimsIdentity(
                 new[]
                 {
                     new Claim(ClaimTypes.NameIdentifier, "prometheus-service"),
                     new Claim(LocalAuthClaims.Tenant, tenant),
+                },
+                authenticationType: "test"));
+
+        /// <summary>A service principal with a concrete user id and role, so a table's own
+        /// row-scope policy (not a tenant filter) is what narrows it.</summary>
+        private static ClaimsPrincipal ScopedServicePrincipal(string userId, string role) =>
+            new(new ClaimsIdentity(
+                new[]
+                {
+                    new Claim(ClaimTypes.NameIdentifier, userId),
+                    new Claim(ClaimTypes.Role, role),
                 },
                 authenticationType: "test"));
 
@@ -194,6 +224,107 @@ namespace BifrostQL.Server.Test.Prometheus
             var scope = Resolver(serviceIdentity: null).ResolveScope(config, table);
 
             scope.IsIncluded.Should().BeFalse();
+        }
+
+        // ---- criterion 4: POLICY row-scoping needs the same explicit decision ---------------
+        // Invariant 11: the "does this table need an explicit security decision?" test must
+        // cover ANY identity-derived row-scoping mechanism, not only `tenant-filter`. A table
+        // scoped by `policy-row-scope` has exactly the same ambient-cross-partition exposure.
+
+        [Fact]
+        public async Task An_unscoped_context_over_a_policy_scoped_table_sees_every_partition()
+        {
+            // The exposure this fix closes, demonstrated directly: running the aggregate under
+            // the empty/anonymous context (what the resolver used to hand back for any table
+            // without a tenant-filter) blends alice's and bob's rows into one global total.
+            // The role-qualified row scope does not narrow a role-less identity, so nothing
+            // downstream saves the scrape.
+            await using var harness = await ODataRealDbHarness.StartAsync(
+                "scope-policy-leak", new[] { PolicyScopedNoMode }, Seed);
+            var model = await harness.ModelAsync();
+            var table = model.GetTableFromDbName("Notes");
+            var config = PrometheusMetricConfig.FromTable(table);
+            var collector = new PrometheusSeriesCollector(harness.Reads);
+
+            var series = await collector.CollectAsync(
+                config, table, ODataRealDbHarness.EndpointPath, new Dictionary<string, object?>());
+
+            series.Samples.Sum(s => s.Count!.Value).Should().Be(4);
+            series.Samples.Sum(s => s.Sum!.Value).Should().Be(1015d);
+        }
+
+        [Fact]
+        public async Task A_policy_row_scoped_metric_with_no_declared_mode_fails_closed()
+        {
+            await using var harness = await ODataRealDbHarness.StartAsync(
+                "scope-policy-nomode", new[] { PolicyScopedNoMode }, Seed);
+            var table = (await harness.ModelAsync()).GetTableFromDbName("Notes");
+            var config = PrometheusMetricConfig.FromTable(table);
+
+            // A configured service identity is present, so the ONLY thing missing is the
+            // operator's explicit mode choice — which must be enough to exclude the series.
+            var scope = Resolver(ServicePrincipal("tenant-a")).ResolveScope(config, table);
+
+            scope.IsIncluded.Should().BeFalse();
+            scope.UserContext.Should().BeNull();
+            scope.Reason.Should().Contain("metric-security-mode");
+        }
+
+        [Fact]
+        public async Task A_policy_row_scoped_metric_with_no_service_identity_fails_closed()
+        {
+            await using var harness = await ODataRealDbHarness.StartAsync(
+                "scope-policy-noid", new[] { PolicyScopedAggregateMode }, Seed);
+            var table = (await harness.ModelAsync()).GetTableFromDbName("Notes");
+            var config = PrometheusMetricConfig.FromTable(table);
+
+            var scope = Resolver(serviceIdentity: null).ResolveScope(config, table);
+
+            scope.IsIncluded.Should().BeFalse();
+            scope.UserContext.Should().BeNull();
+            scope.Reason.Should().Contain("service identity");
+        }
+
+        [Fact]
+        public async Task A_policy_row_scoped_metric_runs_under_the_declared_service_identity()
+        {
+            await using var harness = await ODataRealDbHarness.StartAsync(
+                "scope-policy-agg", new[] { PolicyScopedAggregateMode }, Seed);
+            var model = await harness.ModelAsync();
+            var table = model.GetTableFromDbName("Notes");
+            var config = PrometheusMetricConfig.FromTable(table);
+            var collector = new PrometheusSeriesCollector(harness.Reads);
+
+            // Operator declared a mode AND a service identity that the table's own row-scope
+            // policy narrows (a `member` whose user id is alice). The metric then exposes
+            // alice's partition only — bob's 700/300 must never appear.
+            var scope = Resolver(ScopedServicePrincipal("alice", "member")).ResolveScope(config, table);
+            scope.IsIncluded.Should().BeTrue();
+
+            var series = await collector.CollectAsync(
+                config, table, ODataRealDbHarness.EndpointPath, scope.UserContext!);
+
+            series.Samples.Sum(s => s.Count!.Value).Should().Be(2);
+            series.Samples.Sum(s => s.Sum!.Value).Should().Be(15d);
+        }
+
+        [Fact]
+        public async Task A_policy_row_scoped_metric_cannot_declare_per_tenant_partitioning()
+        {
+            // per-tenant means "partition every series by the table's declared tenant column".
+            // A policy-scoped table has no tenant column, so there is nothing to partition by:
+            // excluded, never silently run as one blended series.
+            await using var harness = await ODataRealDbHarness.StartAsync(
+                "scope-policy-pt",
+                new[] { PolicyScopedAggregateMode.Replace("aggregate", "per-tenant") },
+                Seed);
+            var table = (await harness.ModelAsync()).GetTableFromDbName("Notes");
+            var config = PrometheusMetricConfig.FromTable(table);
+
+            var scope = Resolver(ScopedServicePrincipal("alice", "member")).ResolveScope(config, table);
+
+            scope.IsIncluded.Should().BeFalse();
+            scope.Reason.Should().Contain("tenant-filter");
         }
     }
 }

@@ -15,9 +15,15 @@ export interface UseBifrostOptions {
   refetchInterval?: number | false;
   /** Whether to refetch when the window regains focus. */
   refetchOnWindowFocus?: boolean | 'always';
-  /** Number of retry attempts, or `false` to disable. Defaults to `3`. */
+  /**
+   * Number of retry attempts, or `false` to disable. When omitted, the
+   * QueryClient's own setting applies (TanStack Query's default is 3).
+   */
   retry?: number | false;
-  /** Base delay in milliseconds between retries (exponential backoff). Defaults to `1000`. */
+  /**
+   * Base delay in milliseconds between retries (exponential backoff). When
+   * omitted, the QueryClient's own setting applies.
+   */
   retryDelay?: number;
 }
 
@@ -57,8 +63,8 @@ export function useBifrost<T = unknown>(
 
   const {
     enabled = true,
-    retry = 3,
-    retryDelay = 1000,
+    retry,
+    retryDelay,
     staleTime,
     gcTime,
     refetchInterval,
@@ -89,8 +95,14 @@ export function useBifrost<T = unknown>(
         },
       ),
     enabled,
-    retry,
-    retryDelay: (attempt) => defaultRetryDelay(attempt, retryDelay),
+    // Only forward these when the caller set them. Passing a value
+    // unconditionally would override whatever the host configured on its
+    // QueryClient — including `retry: false`, which a caller cannot otherwise
+    // turn off.
+    ...(retry !== undefined ? { retry } : {}),
+    ...(retryDelay !== undefined
+      ? { retryDelay: (attempt: number) => defaultRetryDelay(attempt, retryDelay) }
+      : {}),
     staleTime,
     gcTime,
     refetchInterval,

@@ -416,3 +416,73 @@ describe('useBifrost', () => {
     void fetchResolve;
   });
 });
+
+describe('useBifrost retry configuration', () => {
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it('honours retry: false from the QueryClient defaults', async () => {
+    // The hook must not impose its own retry count on a caller who already
+    // configured one. Overriding it means a consumer cannot turn retries off at
+    // all: every failing query costs several seconds of real backoff, and the
+    // app retries writes the caller deliberately wanted to fail fast.
+    const fetchMock = vi.fn().mockRejectedValue(new Error('network down'));
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+
+    function Wrapper({ children }: { children: ReactNode }) {
+      return (
+        <QueryClientProvider client={queryClient}>
+          <BifrostProvider config={{ endpoint: 'http://localhost:5000/graphql' }}>
+            {children}
+          </BifrostProvider>
+        </QueryClientProvider>
+      );
+    }
+
+    const { result } = renderHook(() => useBifrost('{ users { id } }'), {
+      wrapper: Wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true), { timeout: 2000 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('still lets an explicit retry option win over the client default', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('network down'));
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+
+    function Wrapper({ children }: { children: ReactNode }) {
+      return (
+        <QueryClientProvider client={queryClient}>
+          <BifrostProvider config={{ endpoint: 'http://localhost:5000/graphql' }}>
+            {children}
+          </BifrostProvider>
+        </QueryClientProvider>
+      );
+    }
+
+    const { result } = renderHook(
+      () => useBifrost('{ users { id } }', undefined, { retry: 1, retryDelay: 1 }),
+      { wrapper: Wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isError).toBe(true), { timeout: 3000 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});

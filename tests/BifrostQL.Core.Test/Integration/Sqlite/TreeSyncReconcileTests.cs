@@ -73,7 +73,7 @@ public sealed class TreeSyncReconcileTests : IDisposable
     {
         var model = BuildModel();
         var companies = model.GetTableFromDbName("companies");
-        var loader = new TreeSyncStateLoader(_factory.Dialect);
+        var loader = new TreeSyncStateLoader(_factory.Dialect, model, new Dictionary<string, object?>());
         var existing = await loader.LoadAsync(companies, tree, _factory);
         var ops = new TreeSyncEngine(model).ComputeOperations(companies, tree, existing);
         return await new TreeSyncExecutor(_factory.Dialect).ExecuteAsync(ops, _factory);

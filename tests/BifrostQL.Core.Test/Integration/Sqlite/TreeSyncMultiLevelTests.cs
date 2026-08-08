@@ -101,7 +101,7 @@ public sealed class TreeSyncMultiLevelTests : IDisposable
             },
         };
 
-        var loader = new TreeSyncStateLoader(_factory.Dialect);
+        var loader = new TreeSyncStateLoader(_factory.Dialect, model, new Dictionary<string, object?>());
         var existing = await loader.LoadAsync(organizations, tree, _factory);
         var ops = new TreeSyncEngine(model).ComputeOperations(organizations, tree, existing);
 

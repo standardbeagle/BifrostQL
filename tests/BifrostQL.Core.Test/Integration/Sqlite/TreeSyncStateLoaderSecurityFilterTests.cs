@@ -6,6 +6,7 @@ using BifrostQL.Core.Resolvers;
 using BifrostQL.Sqlite;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace BifrostQL.Core.Test.Sqlite;
@@ -83,10 +84,20 @@ public sealed class TreeSyncStateLoaderSecurityFilterTests : IDisposable
             null, 30, 1000);
     }
 
-    private static IFilterTransformers TenantFilterOnly() => new FilterTransformersWrap
+    /// <summary>
+    /// A service provider carrying only the tenant filter transformer — the shape the
+    /// loader now REQUIRES, since <see cref="TreeSyncStateLoader"/> resolves its read
+    /// chain (row filter, column guards, crypto projection) from services.
+    /// </summary>
+    private static IServiceProvider TenantFilterOnly()
     {
-        Transformers = new IFilterTransformer[] { new TenantFilterTransformer() },
-    };
+        var services = new ServiceCollection();
+        services.AddSingleton<IFilterTransformers>(new FilterTransformersWrap
+        {
+            Transformers = new IFilterTransformer[] { new TenantFilterTransformer() },
+        });
+        return services.BuildServiceProvider();
+    }
 
     [Fact]
     public async Task LoadAsync_RootBelongingToAnotherTenant_ReturnsNull()
@@ -97,9 +108,9 @@ public sealed class TreeSyncStateLoaderSecurityFilterTests : IDisposable
 
         var loader = new TreeSyncStateLoader(
             _factory.Dialect,
-            filterTransformers: TenantFilterOnly(),
-            model: model,
-            userContext: new Dictionary<string, object?> { ["tenant_id"] = 1 });
+            model,
+            new Dictionary<string, object?> { ["tenant_id"] = 1 },
+            TenantFilterOnly());
 
         // A tenant-1 caller submits company 2's PK (tenant 2's row). Before the
         // fix this would load and return tenant 2's row unfiltered — usable as an
@@ -119,9 +130,9 @@ public sealed class TreeSyncStateLoaderSecurityFilterTests : IDisposable
 
         var loader = new TreeSyncStateLoader(
             _factory.Dialect,
-            filterTransformers: TenantFilterOnly(),
-            model: model,
-            userContext: new Dictionary<string, object?> { ["tenant_id"] = 1 });
+            model,
+            new Dictionary<string, object?> { ["tenant_id"] = 1 },
+            TenantFilterOnly());
 
         var tree = new Dictionary<string, object?>
         {
@@ -141,17 +152,20 @@ public sealed class TreeSyncStateLoaderSecurityFilterTests : IDisposable
     }
 
     [Fact]
-    public async Task LoadAsync_WithoutSecurityContext_PreservesPriorBehavior()
+    public async Task LoadAsync_WithoutRegisteredTransformers_LoadsUnfiltered()
     {
-        // Backward-compatibility check: omitting filterTransformers/model/
-        // userContext (the pre-fix constructor shape) must still load
-        // unfiltered, so existing callers that haven't been updated yet keep
-        // working exactly as before.
+        // A host that registers no filter transformers has no row security to apply,
+        // so the load is unfiltered — the same way the rest of the read path degrades.
+        // Note this is now the ONLY unfiltered shape: model and user context are
+        // required constructor arguments, so a caller can no longer accidentally
+        // construct a loader that ignores a registered transformer set (which is
+        // exactly what DbTableMutateResolver did).
         await SeedAsync();
         var model = BuildModel();
         var companies = model.GetTableFromDbName("companies");
 
-        var loader = new TreeSyncStateLoader(_factory.Dialect);
+        var loader = new TreeSyncStateLoader(
+            _factory.Dialect, model, new Dictionary<string, object?>());
 
         var tree = new Dictionary<string, object?> { ["company_id"] = 2L, ["name"] = "Globex" };
         var existing = await loader.LoadAsync(companies, tree, _factory);

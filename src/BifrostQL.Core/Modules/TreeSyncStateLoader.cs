@@ -25,31 +25,34 @@ public sealed class TreeSyncStateLoader
 {
     private readonly ISqlDialect _dialect;
     private readonly int _maxDepth;
-    private readonly IFilterTransformers? _filterTransformers;
-    private readonly IDbModel? _model;
-    private readonly IDictionary<string, object?>? _userContext;
+    private readonly IDbModel _model;
+    private readonly IDictionary<string, object?> _userContext;
+    private readonly IServiceProvider? _services;
 
     /// <summary>
-    /// <paramref name="filterTransformers"/>, <paramref name="model"/> and
-    /// <paramref name="userContext"/> are optional so existing callers keep
-    /// compiling, but they are required for the loader to apply each table's
-    /// tenant/soft-delete/policy filter to its read. Without them the loader
-    /// falls back to the raw PK/FK-only read (pre-existing behavior) — callers
-    /// should be updated to pass all three so orphan/diff computation, and the
-    /// caller-existence probe surface, only ever see rows the caller may read.
+    /// <paramref name="model"/> and <paramref name="userContext"/> are REQUIRED: they
+    /// are what the loader needs to apply each table's read chain (row filter, column
+    /// read guard, crypto projection) to its read.
+    ///
+    /// They used to be optional "so existing callers keep compiling", and the one
+    /// production caller — <c>DbTableMutateResolver.SyncObject</c> — then constructed
+    /// the loader without them, so NONE of the row security the loader implements ever
+    /// ran outside its own tests: a caller could submit another tenant's primary key
+    /// and have that tenant's row loaded and diffed. Making them required is what stops
+    /// an unsecured loader from being constructible at all.
     /// </summary>
     public TreeSyncStateLoader(
         ISqlDialect dialect,
-        int maxDepth = 3,
-        IFilterTransformers? filterTransformers = null,
-        IDbModel? model = null,
-        IDictionary<string, object?>? userContext = null)
+        IDbModel model,
+        IDictionary<string, object?> userContext,
+        IServiceProvider? services = null,
+        int maxDepth = 3)
     {
         _dialect = dialect ?? throw new ArgumentNullException(nameof(dialect));
+        _model = model ?? throw new ArgumentNullException(nameof(model));
+        _userContext = userContext ?? throw new ArgumentNullException(nameof(userContext));
+        _services = services;
         _maxDepth = maxDepth;
-        _filterTransformers = filterTransformers;
-        _model = model;
-        _userContext = userContext;
     }
 
     /// <summary>
@@ -149,7 +152,22 @@ public sealed class TreeSyncStateLoader
     private async Task<List<Dictionary<string, object?>>> QueryAsync(
         IDbTable table, string whereClause, Dictionary<string, object?> parameters, DbConnection conn)
     {
-        var columns = table.Columns.ToList();
+        // The whole read chain for this table, in one place. InternalDiff because the
+        // loaded rows are consumed ONLY by TreeSyncEngine's diff and never returned to
+        // the caller (DbTableMutateResolver.SyncObject returns just the root key) —
+        // see ReadProjection.InternalDiff for why masking here would be actively
+        // wrong: it would make every encrypted field compare unequal to the submitted
+        // plaintext and be rewritten on every sync.
+        var chain = TableReadChain.For(
+            _services, _model, table, _userContext, ReadProjection.InternalDiff,
+            QueryType.Standard, table.GraphQlName, isNestedQuery: true);
+
+        // Narrow the projection to the columns the caller may read. The loader used to
+        // SELECT every column regardless of the column read guard.
+        var columns = chain.ReadableColumns;
+        if (columns.Count == 0)
+            return new List<Dictionary<string, object?>>();
+
         var columnSql = string.Join(", ", columns.Select(c => _dialect.EscapeIdentifier(c.ColumnName)));
         var tableRef = _dialect.TableReference(table.TableSchema, table.DbName);
 
@@ -157,7 +175,7 @@ public sealed class TreeSyncStateLoader
         // the diff never sees a row the caller couldn't otherwise read (and so a
         // caller can't use tree-sync to probe existence of another tenant's PK).
         var securityParams = new SqlParameterCollection();
-        var securityWhere = GetSecurityFilterSql(table, securityParams);
+        var securityWhere = GetSecurityFilterSql(chain, table, securityParams);
         var combinedWhere = string.IsNullOrEmpty(securityWhere)
             ? whereClause
             : $"{whereClause} AND ({securityWhere})";
@@ -181,46 +199,26 @@ public sealed class TreeSyncStateLoader
             cmd.Parameters.Add(p);
         }
 
-        var results = new List<Dictionary<string, object?>>();
         try
         {
-            await using var reader = await cmd.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
-            {
-                var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-                for (var i = 0; i < columns.Count; i++)
-                {
-                    var value = reader.GetValue(i);
-                    row[columns[i].ColumnName] = value is DBNull ? null : value;
-                }
-                results.Add(row);
-            }
+            // Materialize THROUGH the chain, which is where the crypto projection
+            // lives. A raw reader loop here is what left encrypted columns as stored
+            // envelopes, so every submitted plaintext compared unequal to them and an
+            // unchanged encrypted field was rewritten on every single sync.
+            return await chain.ReadRowsAsync(cmd, StringComparer.OrdinalIgnoreCase);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not BifrostExecutionError)
         {
             throw BifrostExecutionError.FromDatabaseException(ex);
         }
-        return results;
     }
 
     // Renders the combined tenant/soft-delete/policy filter for a table, or ""
-    // when no transformer applies (or none of filterTransformers/model/
-    // userContext were supplied — see the constructor remarks).
-    private string GetSecurityFilterSql(IDbTable table, SqlParameterCollection securityParams)
+    // when no transformer applies.
+    private string GetSecurityFilterSql(
+        TableReadChain chain, IDbTable table, SqlParameterCollection securityParams)
     {
-        if (_filterTransformers == null || _model == null || _userContext == null)
-            return "";
-
-        var transformContext = new QueryTransformContext
-        {
-            Model = _model,
-            UserContext = _userContext,
-            QueryType = QueryType.Standard,
-            Path = table.GraphQlName,
-            IsNestedQuery = true,
-        };
-
-        var securityFilter = _filterTransformers.GetCombinedFilter(table, transformContext);
+        var securityFilter = chain.RowFilter;
         if (securityFilter == null)
             return "";
 

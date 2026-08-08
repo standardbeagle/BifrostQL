@@ -212,7 +212,12 @@ namespace BifrostQL.Core.Resolvers
             if (tree.Count == 0)
                 return null;
 
-            var loader = new TreeSyncStateLoader(dialect);
+            // Model + user context + services are what let the loader apply each
+            // table's read chain. They were previously omitted here, so the loader's
+            // whole row-security path was inert in production: submitting another
+            // tenant's root primary key loaded and diffed that tenant's row.
+            var loader = new TreeSyncStateLoader(
+                dialect, model, context.UserContext, context.RequestServices);
             var existing = await loader.LoadAsync(table, tree, conFactory);
 
             var engine = new TreeSyncEngine(model);

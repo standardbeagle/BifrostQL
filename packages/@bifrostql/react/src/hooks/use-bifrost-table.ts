@@ -16,7 +16,7 @@ import { useTablePerformance } from './internal/use-table-performance';
 import { useTableQueryState } from './internal/use-table-query-state';
 import { useTableResponsive } from './internal/use-table-responsive';
 import { useTableSelection } from './internal/use-table-selection';
-import { useVirtualScroll } from './internal/use-virtual-scroll';
+import { useVirtualScroll } from './internal/use-table-virtual-scroll';
 import type {
   UseBifrostTableOptions,
   UseBifrostTableResult,

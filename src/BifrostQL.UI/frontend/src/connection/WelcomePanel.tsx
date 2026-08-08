@@ -30,7 +30,7 @@ function getProviderName(provider: string): string {
 
 interface WelcomePanelProps {
   onConnectClick: () => void;
-  onCreateTestDatabase: () => void;
+  onQuickStart: () => void;
   recentConnections?: ConnectionInfo[];
   onSelectRecentConnection?: (connection: ConnectionInfo) => void;
   onClearRecentConnections?: () => void;
@@ -41,7 +41,7 @@ interface WelcomePanelProps {
 
 export const WelcomePanel: React.FC<WelcomePanelProps> = ({
   onConnectClick,
-  onCreateTestDatabase,
+  onQuickStart,
   recentConnections: externalRecentConnections,
   onSelectRecentConnection,
   onClearRecentConnections,
@@ -106,7 +106,7 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({
           <button
             type="button"
             className={`welcome-card welcome-card--hero${hoveredId === 'try-it' ? ' welcome-card--hover' : ''}`}
-            onClick={onCreateTestDatabase}
+            onClick={onQuickStart}
             onMouseEnter={() => setHoveredId('try-it')}
             onMouseLeave={() => setHoveredId(null)}
             data-testid="try-it-card"

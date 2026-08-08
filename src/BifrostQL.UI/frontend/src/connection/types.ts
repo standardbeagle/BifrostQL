@@ -197,7 +197,7 @@ export interface VaultServer {
 
 export interface WelcomePanelProps {
   onConnectClick: () => void;
-  onCreateTestDatabase: () => void;
+  onQuickStart: () => void;
   recentConnections: ConnectionInfo[];
   onSelectRecentConnection: (connection: ConnectionInfo) => void;
   onClearRecentConnections: () => void;

@@ -357,7 +357,7 @@ export default function App() {
       {errorBanner}
       <WelcomePanel
         onConnectClick={() => { setErrorMessage(null); setCurrentView('provider-select'); }}
-        onCreateTestDatabase={handleTryItNow}
+        onQuickStart={handleTryItNow}
         recentConnections={recentConnections}
         onSelectRecentConnection={handleSelectRecentConnection}
         onClearRecentConnections={handleClearRecentConnections}

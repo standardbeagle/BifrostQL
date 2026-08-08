@@ -75,6 +75,22 @@ printf '%s\n' "$DB_PASSWORD" | bifrostui vault add prod --provider postgres --ho
 
 Vault entries may include SSH tunnel settings and WordPress tags. Saved entries appear on the welcome screen without exposing passwords to the renderer.
 
+### SQL Server certificate validation
+
+Vault-backed SQL Server connections encrypt (`Encrypt=Mandatory`) **and validate the server's certificate**. A server presenting a self-signed or internally issued certificate that your machine does not trust will therefore fail to connect, with an error naming the setting below.
+
+To connect anyway, waive validation for that one entry:
+
+```bash
+bifrostui vault add internal --provider sqlserver --host sql.internal --database app --username appuser --trust-server-certificate
+```
+
+In the desktop UI this is the "Trust Server Certificate" checkbox on the SQL Server connection form.
+
+The waiver accepts **any** certificate the server presents, so the connection is encrypted but the server's identity is unverified — anyone able to sit on the network path can terminate the TLS session themselves and read the credentials and query traffic. Use it only on a network path you trust. Connecting with such an entry logs a warning naming the server.
+
+It applies per entry and is off unless set, including for entries saved before the option existed. The waiver is ignored where it cannot mean anything: with `--ssl-mode disable` there is no certificate to trust, and `--ssl-mode strict` exists precisely to validate one.
+
 ## What it does
 
 The desktop app bundles a full BifrostQL server inside a native window:

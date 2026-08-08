@@ -8,11 +8,7 @@ export default defineConfig({
     react(),
     dts({
       insertTypesEntry: true,
-      exclude: [
-        'src/**/*.test.{ts,tsx}',
-        'src/test-setup.ts',
-        'src/test-utils.tsx',
-      ],
+      exclude: ['src/**/*.test.{ts,tsx}', 'src/test-setup.ts'],
     }),
   ],
   build: {

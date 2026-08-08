@@ -66,6 +66,9 @@ export function useTableQueryState({
   initialPageSize,
   filterDebounceMs,
 }: UseTableQueryStateOptions): UseTableQueryStateResult {
+  // -------------------------------------------------------------------------
+  // Initial state: one-time reads from the URL and localStorage
+  // -------------------------------------------------------------------------
   const initialUrlState = useMemo(() => {
     if (!syncConfig.enabled || !canAccessWindow()) return null;
     return readFromUrl(syncConfig.prefix);
@@ -95,6 +98,9 @@ export function useTableQueryState({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // -------------------------------------------------------------------------
+  // Core query state: sort, filters (raw + debounced), page
+  // -------------------------------------------------------------------------
   const [sort, setSort] = useState<SortOption[]>(
     initialUrlState?.sort ?? initialLocalStorageSort ?? defaultSort,
   );
@@ -120,6 +126,9 @@ export function useTableQueryState({
   );
   const previousColumnFieldsRef = useRef(columnFields);
 
+  // -------------------------------------------------------------------------
+  // Column pruning: drop sort/filter entries for removed columns
+  // -------------------------------------------------------------------------
   useEffect(() => {
     const previousFields = previousColumnFieldsRef.current;
     const currentFieldSet = new Set(columnFields);
@@ -154,7 +163,9 @@ export function useTableQueryState({
     previousColumnFieldsRef.current = columnFields;
   }, [columnFields]);
 
-  // Debounce filter changes before sending to server
+  // -------------------------------------------------------------------------
+  // Filter debounce: delay server-bound filter updates
+  // -------------------------------------------------------------------------
   useEffect(() => {
     if (filterDebounceTimerRef.current) {
       clearTimeout(filterDebounceTimerRef.current);
@@ -171,6 +182,9 @@ export function useTableQueryState({
     };
   }, [filters, filterDebounceMs]);
 
+  // -------------------------------------------------------------------------
+  // URL sync: debounced write to the URL + popstate restore
+  // -------------------------------------------------------------------------
   useEffect(() => {
     if (!syncConfig.enabled || !canAccessWindow()) return;
 
@@ -216,6 +230,9 @@ export function useTableQueryState({
     return () => window.removeEventListener('popstate', handlePopState);
   }, [syncConfig.enabled, syncConfig.prefix, defaultSort, defaultFilter]);
 
+  // -------------------------------------------------------------------------
+  // localStorage persistence: sort and (opt-in) filters
+  // -------------------------------------------------------------------------
   useEffect(() => {
     if (!localStorageConfig?.key) return;
     writeSortToLocalStorage(localStorageConfig.key, sort);
@@ -231,7 +248,9 @@ export function useTableQueryState({
     [filters, compoundFilter],
   );
 
-  // --- Sorting actions ---
+  // -------------------------------------------------------------------------
+  // Sorting actions
+  // -------------------------------------------------------------------------
   const toggleSort = useCallback(
     (field: string, multi?: boolean) => {
       const col = columns.find((c) => c.field === field);
@@ -307,7 +326,9 @@ export function useTableQueryState({
     setPage(0);
   }, []);
 
-  // --- Filter actions ---
+  // -------------------------------------------------------------------------
+  // Filter and preset actions
+  // -------------------------------------------------------------------------
   const setColumnFilter = useCallback(
     (field: string, value: TableFilter[string]) => {
       setFilters((prev) => {
@@ -390,7 +411,9 @@ export function useTableQueryState({
     [localStorageConfig?.key],
   );
 
-  // --- Pagination actions ---
+  // -------------------------------------------------------------------------
+  // Pagination actions
+  // -------------------------------------------------------------------------
   const handleSetPage = useCallback((newPage: number) => {
     if (newPage < 0) return;
     setPage(newPage);
@@ -450,6 +473,10 @@ export function useTableQueryState({
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Pure helpers: equality checks and removed-column filter pruning
+// ---------------------------------------------------------------------------
 
 function sortOptionsEqual(left: SortOption[], right: SortOption[]): boolean {
   return (

@@ -4,7 +4,8 @@ import { Table as SchemaTable } from './types/schema';
 import { Loader2, Search, X, ChevronRight, ChevronDown, ChevronLeft } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
-import { useTableStats, abbreviateNumber, TableStats } from './hooks/useTableStats';
+import { useTableStats, TableStats } from './hooks/useTableStats';
+import { abbreviateNumber } from './lib/format-value';
 import { useEditorConfig } from './hooks/useEditorConfig';
 import { useMemo, useState, useEffect } from 'react';
 

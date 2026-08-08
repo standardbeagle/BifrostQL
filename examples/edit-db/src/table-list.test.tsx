@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { TableList } from './table-list';
-import { abbreviateNumber } from './hooks/useTableStats';
 
 const pathMock = vi.hoisted(() => ({ current: '/' }));
 
@@ -13,13 +12,6 @@ vi.mock('./hooks/useSchema', () => ({
 
 vi.mock('./hooks/useTableStats', () => ({
   useTableStats: vi.fn(),
-  abbreviateNumber: vi.fn((num: number | null) => {
-    if (num === null) return '—';
-    if (num === 0) return '0';
-    if (num < 1000) return num.toString();
-    if (num < 1000000) return `${(num / 1000).toFixed(1)}k`;
-    return `${(num / 1000000).toFixed(1)}M`;
-  }),
 }));
 
 vi.mock('./hooks/usePath', () => ({
@@ -320,30 +312,5 @@ describe('TableList — search, grouping, paging', () => {
 
     expect(() => render(<TableList />)).not.toThrow();
     expect(screen.getByText('Customers')).toBeInTheDocument();
-  });
-});
-
-describe('abbreviateNumber', () => {
-  it('returns em dash for null', () => {
-    expect(abbreviateNumber(null)).toBe('—');
-  });
-
-  it('returns 0 for zero', () => {
-    expect(abbreviateNumber(0)).toBe('0');
-  });
-
-  it('returns number as string for values under 1000', () => {
-    expect(abbreviateNumber(12)).toBe('12');
-    expect(abbreviateNumber(999)).toBe('999');
-  });
-
-  it('returns k format for thousands', () => {
-    expect(abbreviateNumber(1200)).toBe('1.2k');
-    expect(abbreviateNumber(45000)).toBe('45.0k');
-  });
-
-  it('returns M format for millions', () => {
-    expect(abbreviateNumber(1200000)).toBe('1.2M');
-    expect(abbreviateNumber(5000000)).toBe('5.0M');
   });
 });

@@ -145,3 +145,48 @@ export function formatColumnValue(value: unknown, column: Column, options?: Form
 
     return String(value);
 }
+
+/**
+ * Format a raw date/datetime string for grid-cell display via toLocaleString,
+ * blanking sentinel "unset" instants.
+ *
+ * Only exact placeholder/sentinel instants are blanked, not legitimate
+ * historical dates. A broad "before 1973" cutoff hid real dates (e.g. a 1900
+ * birthdate or a 1969 record). The two markers that actually mean "unset":
+ * the Unix epoch (timestamp 0, i.e. 1970-01-01T00:00:00Z) and .NET/SQL
+ * DateTime.MinValue (year 0001-01-01).
+ */
+export function formatDateCellValue(value: string): string {
+    if (!value) return "";
+    const parsed = new Date(value);
+    if (parsed.toString() === "Invalid Date") return "";
+    if (parsed.getTime() === 0) return "";
+    if (parsed.getUTCFullYear() <= 1) return "";
+    return parsed.toLocaleString();
+}
+
+/**
+ * Formats a number into an abbreviated string representation.
+ *
+ * @example
+ * ```typescript
+ * abbreviateNumber(12)      // "12"
+ * abbreviateNumber(1200)    // "1.2k"
+ * abbreviateNumber(45000)   // "45k"
+ * abbreviateNumber(1200000) // "1.2M"
+ * ```
+ *
+ * @param num - Number to abbreviate
+ * @returns Abbreviated string representation
+ */
+export function abbreviateNumber(num: number | null): string {
+    if (num === null) return "—";
+    if (num === 0) return "0";
+    if (num < 1000) return num.toString();
+    if (num < 1000000) {
+        const k = num / 1000;
+        return k % 1 === 0 ? `${k.toFixed(0)}k` : `${k.toFixed(1)}k`;
+    }
+    const m = num / 1000000;
+    return m % 1 === 0 ? `${m.toFixed(0)}M` : `${m.toFixed(1)}M`;
+}

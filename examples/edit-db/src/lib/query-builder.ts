@@ -99,20 +99,6 @@ export function parseTableFilterString(filterString: string): FilterResult {
     }
 }
 
-export function toLocaleDate(d: string): string {
-    if (!d) return "";
-    const dd = new Date(d);
-    if (dd.toString() === "Invalid Date") return "";
-    // Only blank out exact placeholder/sentinel instants, not legitimate historical
-    // dates. A broad "before 1973" cutoff hid real dates (e.g. a 1900 birthdate or a
-    // 1969 record). The two markers that actually mean "unset": the Unix epoch
-    // (timestamp 0, i.e. 1970-01-01T00:00:00Z) and .NET/SQL DateTime.MinValue
-    // (year 0001-01-01).
-    if (dd.getTime() === 0) return "";
-    if (dd.getUTCFullYear() <= 1) return "";
-    return dd.toLocaleString();
-}
-
 export function getRowPkValue(row: RowData, table: Table, rowIndex = 0): string {
     // Delegate to the shared rowIdOf so the placeholder for a PK-less table is the
     // same `row-${rowIndex}` both sides use (finding: getRowPkValue previously emitted

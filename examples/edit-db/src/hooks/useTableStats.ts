@@ -120,29 +120,3 @@ export function useTableStats(enabled: boolean = true): UseTableStatsResult {
     error: schemaError,
   };
 }
-
-/**
- * Formats a number into an abbreviated string representation.
- * 
- * @example
- * ```typescript
- * abbreviateNumber(12)      // "12"
- * abbreviateNumber(1200)    // "1.2k"
- * abbreviateNumber(45000)   // "45k"
- * abbreviateNumber(1200000) // "1.2M"
- * ```
- * 
- * @param num - Number to abbreviate
- * @returns Abbreviated string representation
- */
-export function abbreviateNumber(num: number | null): string {
-  if (num === null) return "—";
-  if (num === 0) return "0";
-  if (num < 1000) return num.toString();
-  if (num < 1000000) {
-    const k = num / 1000;
-    return k % 1 === 0 ? `${k.toFixed(0)}k` : `${k.toFixed(1)}k`;
-  }
-  const m = num / 1000000;
-  return m % 1 === 0 ? `${m.toFixed(0)}M` : `${m.toFixed(1)}M`;
-}

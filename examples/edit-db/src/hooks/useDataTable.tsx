@@ -13,12 +13,11 @@ import { Button } from "../components/ui/button";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "../components/ui/hover-card";
 import { ContentViewer } from "../components/content-viewer";
 import { EmptyValue } from "../components/empty-value";
-import { formatColumnValue } from "../lib/format-value";
+import { formatColumnValue, formatDateCellValue } from "../lib/format-value";
 import { isLargeValueColumn, isJsonColumn } from "../lib/content-detect";
 import {
     getFilterOperators,
     parseTableFilterString,
-    toLocaleDate,
     getRowPkValue,
     buildColumnFilters,
     serializeColumnFilters,
@@ -250,11 +249,11 @@ function buildScalarColumn(
     if (c?.paramType === "DateTime") {
         return {
             id: c.name,
-            accessorFn: (row) => toLocaleDate(row?.[c.name] as string),
+            accessorFn: (row) => formatDateCellValue(row?.[c.name] as string),
             cell: ({ row }) => {
                 const raw = row.original[c.name];
                 if (raw === null || raw === undefined || raw === "") return <EmptyValue kind={raw === "" ? "empty" : "null"} />;
-                return toLocaleDate(raw as string);
+                return formatDateCellValue(raw as string);
             },
             header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
             enableSorting: true,

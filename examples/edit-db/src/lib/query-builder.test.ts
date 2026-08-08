@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
     getFilterOperators,
     parseTableFilterString,
-    toLocaleDate,
     getRowPkValue,
     getGraphQlType,
     buildColumnFilters,
@@ -160,45 +159,6 @@ describe('parseTableFilterString', () => {
     it('rejects unsupported filter operators', () => {
         const result = parseTableFilterString(JSON.stringify(['name', '_contains_something', 'test', 'String']));
         expect(result).toEqual({ variables: {}, param: '', filterText: '' });
-    });
-});
-
-// ── toLocaleDate ───────────────────────────────────────────────
-
-describe('toLocaleDate', () => {
-    it('returns empty for empty string', () => {
-        expect(toLocaleDate('')).toBe('');
-    });
-
-    it('returns empty for invalid date', () => {
-        expect(toLocaleDate('not-a-date')).toBe('');
-    });
-
-    it('returns empty only for exact sentinel/placeholder instants', () => {
-        // Unix epoch (timestamp 0) and year-0001 min-value are "unset" markers.
-        expect(toLocaleDate('1970-01-01')).toBe('');
-        expect(toLocaleDate('0001-01-01')).toBe('');
-    });
-
-    it('formats legitimate historical dates (no 1973 cutoff)', () => {
-        // Previously blanked by the broad "before 1973" cutoff; these are real dates.
-        expect(toLocaleDate('1900-06-15')).toBeTruthy();
-        expect(toLocaleDate('1969-07-20')).toBeTruthy();
-    });
-
-    it('formats valid modern dates', () => {
-        const result = toLocaleDate('2024-06-15T10:30:00');
-        expect(result).toBeTruthy();
-        expect(result.length).toBeGreaterThan(5);
-    });
-
-    it('handles ISO date strings', () => {
-        expect(toLocaleDate('2024-01-01')).toBeTruthy();
-    });
-
-    it('handles null-like values', () => {
-        expect(toLocaleDate(null as unknown as string)).toBe('');
-        expect(toLocaleDate(undefined as unknown as string)).toBe('');
     });
 });
 

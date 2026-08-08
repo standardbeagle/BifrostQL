@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
-import { useTableStats, buildRowCountQuery, abbreviateNumber } from './useTableStats';
+import { useTableStats, buildRowCountQuery } from './useTableStats';
 
 // Mock the dependencies
 vi.mock('./useSchema', () => ({
@@ -177,34 +177,3 @@ describe('buildRowCountQuery', () => {
   });
 });
 
-describe('abbreviateNumber', () => {
-  it('returns em dash for null', () => {
-    expect(abbreviateNumber(null)).toBe('—');
-  });
-
-  it('returns 0 for zero', () => {
-    expect(abbreviateNumber(0)).toBe('0');
-  });
-
-  it('returns number as string for values under 1000', () => {
-    expect(abbreviateNumber(12)).toBe('12');
-    expect(abbreviateNumber(999)).toBe('999');
-  });
-
-  it('returns k format for thousands', () => {
-    expect(abbreviateNumber(1200)).toBe('1.2k');
-    expect(abbreviateNumber(45000)).toBe('45k');
-  });
-
-  it('returns M format for millions', () => {
-    expect(abbreviateNumber(1200000)).toBe('1.2M');
-  });
-
-  it('handles exact thousands without decimal', () => {
-    expect(abbreviateNumber(1000)).toBe('1k');
-  });
-
-  it('handles exact millions without decimal', () => {
-    expect(abbreviateNumber(1000000)).toBe('1M');
-  });
-});

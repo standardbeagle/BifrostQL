@@ -30,8 +30,8 @@ interface DbColumnItem {
     patternMessage?: string;
     inputType?: string;
     defaultValue?: string;
-    enumValues?: string[];
-    enumLabels?: string[];
+    enumValues?: string[] | null;
+    enumLabels?: string[] | null;
 }
 
 interface DbSchemaItem {

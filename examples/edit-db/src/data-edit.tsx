@@ -88,7 +88,15 @@ interface DataEditRouteParams {
     [key: string]: string | undefined;
 }
 
-type FkRole = 'none' | 'anchor-single' | 'anchor-composite' | 'member-composite';
+export type FkRole = 'none' | 'anchor-single' | 'anchor-composite' | 'member-composite';
+
+// A column whose value comes from a fixed set — a foreign key or an enum — keeps
+// NULL rather than defaulting to '', so re-saving an untouched row cannot turn an
+// unset value into a bogus one. `enumValues` arrives from the server as null, not
+// undefined, for every non-enum column.
+export function isFkOrEnumColumn(column: Column, fkRole: FkRole): boolean {
+    return fkRole !== 'none' || (column.enumValues?.length ?? 0) > 0;
+}
 
 interface ColumnJoin {
     column: Column;
@@ -191,7 +199,7 @@ function useEditRecord(dataTable: Table, editColumns: ColumnJoin[], editId: stri
     const defaultValues = useMemo(() => {
         const values: Record<string, unknown> = {};
         for (const { column: c, fkRole } of editColumns) {
-            const isFkOrEnum = fkRole !== 'none' || (c.enumValues !== undefined && c.enumValues.length > 0);
+            const isFkOrEnum = isFkOrEnumColumn(c, fkRole);
             if (isDateColumn(c)) {
                 values[c.name] = toDateInputValue(value[c.name] as string | undefined, isDateTimeColumn(c));
             } else if (booleanTypes.some(t => t === c.paramType)) {

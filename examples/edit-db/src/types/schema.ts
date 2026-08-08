@@ -86,10 +86,10 @@ export interface Column {
   inputType?: 'text' | 'email' | 'url' | 'tel' | 'date' | 'datetime-local' | 'number' | 'password' | 'search';
   /** Default value for new records */
   defaultValue?: string;
-  /** Allowed enum values */
-  enumValues?: string[];
-  /** Display labels for enum values */
-  enumLabels?: string[];
+  /** Allowed enum values. The server sends null, not undefined, for non-enum columns. */
+  enumValues?: string[] | null;
+  /** Display labels for enum values. Null for non-enum columns, as `enumValues` is. */
+  enumLabels?: string[] | null;
 }
 
 /**

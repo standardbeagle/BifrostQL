@@ -16,7 +16,7 @@ vi.mock('./hooks/useSchema', () => ({ useSchema: () => schemaMock.schema }));
 const fetcherQuery = vi.hoisted(() => vi.fn());
 vi.mock('./common/fetcher', () => ({ useFetcher: () => ({ query: fetcherQuery }) }));
 
-import { selectControlValue, NONE_VALUE, DataEditDialog } from './data-edit';
+import { selectControlValue, NONE_VALUE, DataEditDialog, isFkOrEnumColumn } from './data-edit';
 
 // Mock the form hook
 const mockForm = {
@@ -652,5 +652,35 @@ describe('DataEditDialog unresolvable-record guards', () => {
       expect(screen.queryAllByTestId('mock-input').length).toBeGreaterThan(0),
     );
     expect(screen.queryByText('Cannot edit record')).not.toBeInTheDocument();
+  });
+});
+
+describe('isFkOrEnumColumn', () => {
+  const column = (over: Partial<Column> = {}): Column =>
+    ({ name: 'status', paramType: 'String', isNullable: true, ...over }) as Column;
+
+  it('treats a column the server reports with a null enum list as a plain column', () => {
+    // The GraphQL schema query returns `enumValues: null` for every non-enum
+    // column — never `undefined`. A guard written against `undefined` lets null
+    // through and then reads `.length` off it, crashing the whole edit panel.
+    expect(isFkOrEnumColumn(column({ enumValues: null }), 'none')).toBe(false);
+  });
+
+  it('treats an absent enum list as a plain column', () => {
+    expect(isFkOrEnumColumn(column(), 'none')).toBe(false);
+  });
+
+  it('treats an empty enum list as a plain column', () => {
+    expect(isFkOrEnumColumn(column({ enumValues: [] }), 'none')).toBe(false);
+  });
+
+  it('recognises a populated enum list', () => {
+    expect(isFkOrEnumColumn(column({ enumValues: ['draft', 'live'] }), 'none')).toBe(true);
+  });
+
+  it('recognises every foreign-key role regardless of the enum list', () => {
+    expect(isFkOrEnumColumn(column({ enumValues: null }), 'anchor-single')).toBe(true);
+    expect(isFkOrEnumColumn(column({ enumValues: null }), 'anchor-composite')).toBe(true);
+    expect(isFkOrEnumColumn(column({ enumValues: null }), 'member-composite')).toBe(true);
   });
 });

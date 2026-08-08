@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import type { ConnectionState } from '../connection';
 
 /** Shape of the fields `/api/health` reports that this hook acts on. */
@@ -29,7 +29,6 @@ export function useHealthCheck(
   setConnectionState: (state: ConnectionState) => void,
   onServerUnbound: () => void,
 ): void {
-  const [, setBackendDown] = useState(false);
   // Held in a ref so a new callback identity each render doesn't restart the
   // interval (and reset the fail/unbound counters with it).
   const onServerUnboundRef = useRef(onServerUnbound);
@@ -45,7 +44,6 @@ export function useHealthCheck(
           if (failCount > 0) {
             // Backend came back — clear the error banner. The editor is left
             // mounted; it re-fetches naturally as queries are retried.
-            setBackendDown(false);
             setErrorMessage(null);
           }
           failCount = 0;
@@ -66,7 +64,6 @@ export function useHealthCheck(
           failCount++;
           unboundCount = 0;
           if (failCount >= 2) {
-            setBackendDown(true);
             setErrorMessage('Backend server is not reachable. Waiting for reconnect...');
             setConnectionState('error');
           }

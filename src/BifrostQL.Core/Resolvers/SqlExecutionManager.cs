@@ -495,9 +495,16 @@ namespace BifrostQL.Core.Resolvers
 
             // Fail-closed transformer pass into a per-call overlay (sibling root fields
             // resolve in parallel; the shared UserContext is not thread-safe). The
-            // referenced columns ride along on the query so the column-read guard
-            // asserts them — a policy-denied column cannot be pivoted or aggregated as
-            // an exfiltration oracle. The resulting combined Filter scopes discovery.
+            // referenced columns ride along on the query so the guards assert them.
+            //
+            // EVERY referenced column is predicate-positioned, not read-positioned: the
+            // row keys are the GROUP BY, the value column is the aggregate argument, and
+            // the pivot column drives both a DISTINCT discovery query and the CASE arms.
+            // Attaching them as ScalarColumns routed them through the read guard ONLY,
+            // so the pivot accepted an envelope-encrypted column that `filter`, `_order`
+            // and `_agg` all reject — and the discovery query then returned the distinct
+            // CIPHERTEXT set with per-value row counts. PredicateColumns puts them in the
+            // same position as the <table>Aggregate surface's group/value columns.
             var scopedContext = new Dictionary<string, object?>(context.UserContext);
             ModuleApiRegistry.CaptureQueryArguments(context, table, scopedContext);
 
@@ -508,7 +515,7 @@ namespace BifrostQL.Core.Resolvers
                 SchemaName = table.TableSchema,
                 GraphQlName = table.GraphQlName,
                 Filter = request.Filter,
-                ScalarColumns = request.ReferencedColumns.Select(c => new GqlObjectColumn(c)).ToList(),
+                PredicateColumns = request.ReferencedColumns.ToList(),
             };
             _transformerService.ApplyTransformers(query, _dbModel, scopedContext);
             ApplyEnumFilterRewrite(query);
@@ -566,7 +573,19 @@ namespace BifrostQL.Core.Resolvers
             var pivotSql = PivotSqlGenerator.GeneratePivot(dialect, config, tableRef, pivotValues, filter);
             var (pivotIndex, pivotRows) = await ExecuteRawAsync(connFactory, pivotSql, context.CancellationToken);
 
-            return BuildPivotPayload(config, request, labels, pivotIndex, pivotRows);
+            // Row-key cells are raw column values (a GROUP BY key), so they go out
+            // through the same crypto projection every other read surface applies.
+            // The filter guard above already rejects an encrypted column in any pivot
+            // position, so this is the second line rather than the first — it holds
+            // even in a host that registers no EncryptedColumnReadGuard. The pivot
+            // COLUMN LABELS are deliberately not projected: they are also the
+            // generated SQL result-set column names, so rewriting them would break the
+            // label→cell mapping — the filter guard is what keeps ciphertext out of
+            // that position.
+            var readChain = TableReadChain.For(
+                context.RequestServices, _dbModel, table, scopedContext, ReadProjection.Client);
+
+            return BuildPivotPayload(config, request, labels, pivotIndex, pivotRows, readChain);
         }
 
         /// <summary>
@@ -619,14 +638,16 @@ namespace BifrostQL.Core.Resolvers
         private static IReadOnlyDictionary<string, object?> BuildPivotPayload(
             PivotQueryConfig config, PivotRequest request,
             IReadOnlyList<string> labels,
-            IDictionary<string, int> index, IList<object?[]> rows)
+            IDictionary<string, int> index, IList<object?[]> rows,
+            TableReadChain readChain)
         {
             var outRows = new List<object?>(rows.Count);
             foreach (var row in rows)
             {
                 var rowObj = new Dictionary<string, object?>(StringComparer.Ordinal);
                 for (var i = 0; i < config.GroupByColumns.Count; i++)
-                    rowObj[request.RowKeyGraphQlNames[i]] = ReadCell(index, row, config.GroupByColumns[i]);
+                    rowObj[request.RowKeyGraphQlNames[i]] = readChain.ProjectValue(
+                        config.GroupByColumns[i], ReadCell(index, row, config.GroupByColumns[i]));
 
                 var cells = new Dictionary<string, object?>(StringComparer.Ordinal);
                 foreach (var label in labels)

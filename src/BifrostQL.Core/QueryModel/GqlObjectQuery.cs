@@ -29,6 +29,23 @@ namespace BifrostQL.Core.QueryModel
         public List<GqlAggregateColumn> AggregateColumns { get; init; } = new();
 
         /// <summary>
+        /// DB names of columns this node uses in a PREDICATE position that the query
+        /// tree cannot express — a GROUP BY key, an aggregated value, or a
+        /// distinct-value discovery run by a surface that builds its own SQL (the
+        /// pivot surface). They are asserted against BOTH the column read guard and
+        /// the column FILTER guard, exactly like <see cref="Sort"/>/<see cref="Filter"/>
+        /// columns and the <c>&lt;table&gt;Aggregate</c> group/value columns.
+        ///
+        /// The pivot previously attached these as <see cref="ScalarColumns"/>, which is
+        /// a read-only position: its pivotColumn/valueColumn therefore never met
+        /// <see cref="Modules.IColumnFilterGuard"/>, so an envelope-encrypted column
+        /// could be pivoted (leaking the distinct CIPHERTEXT set and its row counts
+        /// through the discovery query) though the same column is rejected in
+        /// <c>filter</c>, <c>_order</c>, and <c>_agg</c>.
+        /// </summary>
+        public List<string> PredicateColumns { get; init; } = new();
+
+        /// <summary>
         /// When set, this node is a dedicated base-table GROUP BY aggregate query
         /// (<c>&lt;table&gt;Aggregate</c> root field). <see cref="AddSqlParameterized"/>
         /// emits a single grouped statement instead of the row SELECT/count/join set.

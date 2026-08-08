@@ -207,6 +207,12 @@ public sealed class QueryTransformerService : IQueryTransformerService
         // Filter (`filter` / WHERE) columns, including relationship traversals.
         CollectFilterColumns(query.Filter, query.DbTable, AddFiltered);
 
+        // Predicate-position columns a non-GraphQL-tree surface declares directly
+        // (the pivot's GROUP BY / aggregated / distinct-discovery columns). Same
+        // position as sort/_agg columns, so the same two guards.
+        foreach (var name in query.PredicateColumns)
+            AddFiltered(query.DbTable, name);
+
         // Sort (`_order`) columns. Tokens are "<GraphQlName>_asc" / "..._desc".
         foreach (var s in query.Sort)
             AddFiltered(query.DbTable, ResolveColumnDbName(query.DbTable, StripSortSuffix(s)));

@@ -33,6 +33,8 @@ interface WelcomePanelProps {
   onQuickStart: () => void;
   recentConnections?: ConnectionInfo[];
   onSelectRecentConnection?: (connection: ConnectionInfo) => void;
+  /** Remove a single recent connection. Required whenever `recentConnections` is supplied. */
+  onRemoveRecentConnection?: (id: string) => void;
   onClearRecentConnections?: () => void;
   vaultServers?: VaultServer[];
   onConnectVaultServer?: (name: string) => void;
@@ -44,6 +46,7 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({
   onQuickStart,
   recentConnections: externalRecentConnections,
   onSelectRecentConnection,
+  onRemoveRecentConnection,
   onClearRecentConnections,
   vaultServers,
   onConnectVaultServer,
@@ -78,18 +81,20 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({
     onSelectRecentConnection?.(connection);
   }, [onSelectRecentConnection]);
 
+  // When the list is owned by a parent, removal is reported upward and the
+  // owner does the single write. This panel must NOT persist the remainder
+  // itself: doing so alongside the parent's clear-all callback meant the
+  // parent's empty-list write landed second and wiped every recent connection.
   const handleDeleteRecent = useCallback((e: React.MouseEvent, connectionId: string) => {
     e.stopPropagation();
     if (externalRecentConnections !== undefined) {
-      const updated = externalRecentConnections.filter((c) => c.id !== connectionId);
-      saveRecentConnections(updated);
-      onClearRecentConnections?.();
-    } else {
-      const updated = internalRecentConnections.filter((c) => c.id !== connectionId);
-      setInternalRecentConnections(updated);
-      saveRecentConnections(updated);
+      onRemoveRecentConnection?.(connectionId);
+      return;
     }
-  }, [externalRecentConnections, internalRecentConnections, onClearRecentConnections]);
+    const updated = internalRecentConnections.filter((c) => c.id !== connectionId);
+    setInternalRecentConnections(updated);
+    saveRecentConnections(updated);
+  }, [externalRecentConnections, internalRecentConnections, onRemoveRecentConnection]);
 
   return (
     <div className="welcome-container">
@@ -186,7 +191,18 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({
 
         {recentConnections.length > 0 && (
           <div className="welcome-recent">
-            <h2 className="welcome-recent__header">Recent Connections</h2>
+            <h2 className="welcome-recent__header">
+              Recent Connections
+              {onClearRecentConnections && (
+                <button
+                  type="button"
+                  className="welcome-recent__clear"
+                  onClick={() => onClearRecentConnections()}
+                >
+                  Clear all
+                </button>
+              )}
+            </h2>
             <div className="welcome-recent__list">
               {recentConnections.map((connection) => (
                 <div

@@ -423,6 +423,28 @@ input[type="checkbox"]:focus-visible {
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.1em;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.welcome-recent__clear {
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.welcome-recent__clear:hover,
+.welcome-recent__clear:focus-visible {
+  opacity: 1;
+  text-decoration: underline;
 }
 
 .welcome-recent__list {

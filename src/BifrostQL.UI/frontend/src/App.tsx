@@ -108,6 +108,7 @@ export default function App() {
     handleConnectVaultServer,
     handleSelectRecentConnection,
     handleQuickStartLaunch,
+    handleRemoveRecentConnection,
     handleClearRecentConnections,
     handleDisconnect,
   } = flows;
@@ -360,6 +361,7 @@ export default function App() {
         onQuickStart={handleTryItNow}
         recentConnections={recentConnections}
         onSelectRecentConnection={handleSelectRecentConnection}
+        onRemoveRecentConnection={handleRemoveRecentConnection}
         onClearRecentConnections={handleClearRecentConnections}
         vaultServers={vaultServers}
         onConnectVaultServer={handleConnectVaultServer}

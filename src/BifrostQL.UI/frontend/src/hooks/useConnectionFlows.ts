@@ -69,6 +69,7 @@ export interface UseConnectionFlowsResult {
   handleConnectVaultServer: (name: string) => Promise<void>;
   handleSelectRecentConnection: (connection: ConnectionInfo) => void;
   handleQuickStartLaunch: (schema: QuickStartSchema, dataSize: DataSize) => Promise<void>;
+  handleRemoveRecentConnection: (id: string) => void;
   handleClearRecentConnections: () => void;
   handleDisconnect: () => void;
 }
@@ -366,6 +367,21 @@ export function useConnectionFlows({ restored, enterEditor }: UseConnectionFlows
     }
   }, [recentConnections, enterEditor]);
 
+  /**
+   * Drop a single recent connection. The hook owns both the list state and the
+   * localStorage write, so removal has to go through here: WelcomePanel used to
+   * persist the filtered remainder itself and then call the clear-all callback,
+   * which wrote an empty list straight over that remainder — one `×` click
+   * destroyed every recent connection.
+   */
+  const handleRemoveRecentConnection = useCallback((id: string) => {
+    setRecentConnections((prev) => {
+      const next = prev.filter((c) => c.id !== id);
+      saveRecentConnections(next);
+      return next;
+    });
+  }, []);
+
   const handleClearRecentConnections = useCallback(() => {
     setRecentConnections([]);
     saveRecentConnections([]);
@@ -397,6 +413,7 @@ export function useConnectionFlows({ restored, enterEditor }: UseConnectionFlows
     handleConnectVaultServer,
     handleSelectRecentConnection,
     handleQuickStartLaunch,
+    handleRemoveRecentConnection,
     handleClearRecentConnections,
     handleDisconnect,
   };

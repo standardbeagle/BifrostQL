@@ -121,7 +121,12 @@ const sqlServerAdapter: ProviderAdapter = {
       port: sqlServerAdapter.defaultPort,
       database: d.database,
       username: d.authMethod === AuthMethod.SqlServer ? d.username : undefined,
-      ssl: d.trustServerCertificate,
+      // `ssl` is left unset: SQL Server connections always attempt encryption
+      // (Encrypt=Mandatory), so there is nothing for it to say here. The checkbox
+      // is about certificate validation, which travels in its own field —
+      // conflating the two sent the waiver as an encryption setting and the entry
+      // was persisted still validating, so the checkbox did nothing.
+      trustServerCertificate: d.trustServerCertificate,
       ssh: tunnelFor(sshConfig),
       tags: undefined,
       requiresCredential: d.authMethod === AuthMethod.SqlServer,

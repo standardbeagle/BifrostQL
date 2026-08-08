@@ -71,6 +71,14 @@ export interface AdoConnectionFields {
   database?: string;
   username?: string;
   ssl?: boolean;
+  /**
+   * SQL Server's TrustServerCertificate. Carried separately from `ssl` because it
+   * answers a different question — `ssl` is how much encryption, this is whether the
+   * server's identity is checked at all. Dropping it here would silently discard a
+   * waiver the user typed into the string, and the saved entry would then fail to
+   * connect to the self-signed server they were pointing at.
+   */
+  trustServerCertificate?: boolean;
 }
 
 /**
@@ -121,8 +129,10 @@ export function parseAdoConnectionString(
   const username = get('user id', 'username', 'uid', 'user');
   const sslModeRaw = get('sslmode', 'ssl mode');
   const ssl = sslModeRaw ? /require|verify|true|prefer/i.test(sslModeRaw) : undefined;
+  const trustRaw = get('trustservercertificate');
+  const trustServerCertificate = trustRaw ? /^(true|yes|1)$/i.test(trustRaw) : undefined;
 
-  return { host, port, database, username, ssl };
+  return { host, port, database, username, ssl, trustServerCertificate };
 }
 
 export function parseConnectionInfo(value: unknown): ConnectionInfo | null {

@@ -49,6 +49,8 @@ export interface BridgeConnectionInfo {
   database?: string;
   username?: string;
   ssl?: boolean;
+  /** SQL Server: persist this entry as skipping TLS certificate validation. */
+  trustServerCertificate?: boolean;
   ssh?: {
     host: string;
     port: number;

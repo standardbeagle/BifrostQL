@@ -144,6 +144,8 @@ export interface ConnectionRequest {
   database?: string;
   username?: string;
   ssl?: boolean;
+  /** SQL Server: persist this entry as skipping TLS certificate validation. */
+  trustServerCertificate?: boolean;
   ssh?: SshConfig;
   tags?: string[];
   requiresCredential?: boolean;

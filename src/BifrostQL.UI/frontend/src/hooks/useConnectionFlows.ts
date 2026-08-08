@@ -36,6 +36,7 @@ function requestToBridgeInfo(request: ConnectionRequest): BridgeConnectionInfo {
     database: request.database,
     username: request.username,
     ssl: request.ssl,
+    trustServerCertificate: request.trustServerCertificate,
     ssh: request.ssh?.enabled ? {
       host: request.ssh.sshHost,
       port: request.ssh.sshPort,

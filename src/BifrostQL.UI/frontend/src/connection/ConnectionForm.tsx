@@ -28,7 +28,8 @@ const DEFAULT_WP: WpConfig = { enabled: false, wpPath: 'wp', wpRoot: '' };
  * bridge parse stay in lockstep.
  */
 function buildConnectionRequestFromRawString(provider: Provider, connectionString: string): ConnectionRequest {
-  const { host, port, database, username, ssl } = parseAdoConnectionString(connectionString, provider);
+  const { host, port, database, username, ssl, trustServerCertificate } =
+    parseAdoConnectionString(connectionString, provider);
 
   const name = provider === 'sqlite'
     ? host ?? `${provider} connection`
@@ -43,6 +44,9 @@ function buildConnectionRequestFromRawString(provider: Provider, connectionStrin
     database,
     username,
     ssl: ssl ?? false,
+    // Absent from the string means validate — never inherit a waiver the user
+    // did not type.
+    trustServerCertificate: trustServerCertificate ?? false,
   };
 }
 

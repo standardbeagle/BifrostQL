@@ -170,6 +170,9 @@ namespace BifrostQL.UI.NativeBridge
                 : usernameOverride;
             var ssl = ReadBool("ssl");
             var sslMode = ssl == true ? "Require" : null;
+            // Absent means validate. This is a security waiver, so it is only ever
+            // enabled by the payload saying so explicitly.
+            var trustServerCertificate = ReadBool("trustServerCertificate") == true;
             var tags = ReadStringArray("tags");
 
             VaultSshConfig? ssh = null;
@@ -214,7 +217,8 @@ namespace BifrostQL.UI.NativeBridge
                 Password: password,
                 SslMode: sslMode,
                 Ssh: ssh,
-                Tags: tags);
+                Tags: tags,
+                TrustServerCertificate: trustServerCertificate);
         }
     }
 }

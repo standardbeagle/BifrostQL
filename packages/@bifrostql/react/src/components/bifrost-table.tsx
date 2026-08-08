@@ -6,6 +6,9 @@ import type {
   PaginationConfig,
   ChildQueryConfig,
   ExpansionState,
+  EditingState,
+  RowUpdateFn,
+  SaveErrorFn,
   UseBifrostTableOptions,
 } from '../hooks/use-bifrost-table';
 import type { UseBifrostOptions } from '../hooks/use-bifrost';
@@ -572,11 +575,11 @@ interface TableRowsProps<T> {
   renderExpandedRow: ((row: T) => ReactNode) | undefined;
   hoveredRowIndex: number | null;
   setHoveredRowIndex: (index: number | null) => void;
-  editingCell: { rowIndex: number; field: string } | null;
-  editValue: string;
-  setEditValue: (value: string) => void;
-  onEditStart: (rowIndex: number, field: string, currentValue: unknown) => void;
-  onEditCancel: () => void;
+  /**
+   * The table hook's editing surface. Inline edits are committed through it,
+   * so a keystroke actually reaches `onRowUpdate`.
+   */
+  editing: EditingState;
 }
 
 /**
@@ -601,11 +604,7 @@ function TableRows<T>({
   renderExpandedRow,
   hoveredRowIndex,
   setHoveredRowIndex,
-  editingCell,
-  editValue,
-  setEditValue,
-  onEditStart,
-  onEditCancel,
+  editing,
 }: TableRowsProps<T>) {
   const theme = useTableTheme();
 
@@ -711,10 +710,12 @@ function TableRows<T>({
               }
 
               const value = rowRecord[col.field];
+              const isCellEditable =
+                editable && editing.isColumnEditable(col.field);
               const isEditing =
-                editable &&
-                editingCell?.rowIndex === rowIndex &&
-                editingCell?.field === col.field;
+                isCellEditable &&
+                editing.editingCell?.rowKey === key &&
+                editing.editingCell?.field === col.field;
 
               return (
                 <td
@@ -722,19 +723,32 @@ function TableRows<T>({
                   style={theme.bodyCell}
                   role="cell"
                   onDoubleClick={
-                    editable
-                      ? () => onEditStart(rowIndex, col.field, value)
+                    isCellEditable
+                      ? () => editing.startEditing(key, col.field)
                       : undefined
                   }
                 >
                   {isEditing ? (
                     <input
                       type="text"
-                      value={editValue}
-                      onChange={(e) => setEditValue(e.target.value)}
-                      onBlur={onEditCancel}
+                      value={formatCellValue(
+                        editing.getCellValue(key, col.field),
+                      )}
+                      onChange={(e) =>
+                        editing.setCellValue(key, col.field, e.target.value)
+                      }
+                      // Blur and Enter both commit: clicking away from a cell
+                      // the user has typed into must not discard the edit.
+                      onBlur={() => {
+                        void editing.commitCell();
+                      }}
                       onKeyDown={(e) => {
-                        if (e.key === 'Escape') onEditCancel();
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          void editing.commitCell();
+                        } else if (e.key === 'Escape') {
+                          editing.discardRow(key);
+                        }
                       }}
                       autoFocus
                       data-testid="edit-input"
@@ -814,7 +828,21 @@ export interface BifrostTableProps<
   themeOverrides?: Partial<TableTheme>;
   striped?: boolean;
   hoverable?: boolean;
+  /**
+   * Enables inline cell editing. Requires {@link onRowUpdate} — an editable
+   * table with nowhere to write to would silently discard the user's typing.
+   */
   editable?: boolean;
+  /**
+   * Persist each cell as it is committed. Defaults to `true`: this component
+   * renders no explicit save control, so a deferred edit would sit dirty and
+   * unsaved with nothing to flush it.
+   */
+  autoSave?: boolean;
+  /** Persists a committed row edit. Required whenever `editable` is set. */
+  onRowUpdate?: RowUpdateFn;
+  /** Invoked when a row write rejects. The edit is kept for retry. */
+  onSaveError?: SaveErrorFn;
   exportable?: boolean;
   expandable?: boolean;
   childQuery?: ChildQueryConfig;
@@ -869,6 +897,9 @@ export function BifrostTable<T = Record<string, unknown>>(
     striped = false,
     hoverable = true,
     editable = false,
+    autoSave = true,
+    onRowUpdate,
+    onSaveError,
     exportable = false,
     expandable = false,
     childQuery,
@@ -895,6 +926,15 @@ export function BifrostTable<T = Record<string, unknown>>(
     ...bifrostOptions
   } = props;
 
+  // An editable table with no write handler renders a working-looking input
+  // whose contents go nowhere — the user believes the edit saved. Refuse the
+  // configuration rather than ship a UI that quietly loses input.
+  if (editable && !onRowUpdate) {
+    throw new Error(
+      'BifrostTable: `editable` requires `onRowUpdate` — without it, inline edits are silently discarded.',
+    );
+  }
+
   const resolvedTheme = customTheme ?? getTheme(themeName);
   const theme = mergeThemeOverrides(resolvedTheme, themeOverrides);
 
@@ -911,15 +951,14 @@ export function BifrostTable<T = Record<string, unknown>>(
     urlSync,
     expandable,
     childQuery,
+    editable,
+    autoSave,
+    onRowUpdate,
+    onSaveError,
     ...bifrostOptions,
   });
 
   const [hoveredRowIndex, setHoveredRowIndex] = useState<number | null>(null);
-  const [editingCell, setEditingCell] = useState<{
-    rowIndex: number;
-    field: string;
-  } | null>(null);
-  const [editValue, setEditValue] = useState('');
 
   const baseColumns = expandable
     ? [{ field: '__expand', header: '', width: 40 } as ColumnConfig, ...columns]
@@ -937,19 +976,6 @@ export function BifrostTable<T = Record<string, unknown>>(
     downloadRowsAsCsv(table.data, columns, tableName);
   }, [table.data, columns, tableName]);
 
-  const handleEditStart = useCallback(
-    (rowIndex: number, field: string, currentValue: unknown) => {
-      if (!editable) return;
-      setEditingCell({ rowIndex, field });
-      setEditValue(formatCellValue(currentValue));
-    },
-    [editable],
-  );
-
-  const handleEditCancel = useCallback(() => {
-    setEditingCell(null);
-    setEditValue('');
-  }, []);
 
   const handleExpandAll = useCallback(() => {
     const allKeys = table.data.map((row) =>
@@ -1077,11 +1103,7 @@ export function BifrostTable<T = Record<string, unknown>>(
                 renderExpandedRow={renderExpandedRow}
                 hoveredRowIndex={hoveredRowIndex}
                 setHoveredRowIndex={setHoveredRowIndex}
-                editingCell={editingCell}
-                editValue={editValue}
-                setEditValue={setEditValue}
-                onEditStart={handleEditStart}
-                onEditCancel={handleEditCancel}
+                editing={table.editing}
               />
             )}
           </tbody>

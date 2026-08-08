@@ -577,7 +577,7 @@ describe('BifrostTable', () => {
     it('shows edit input on double-click when editable', async () => {
       globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
 
-      renderTable({ editable: true });
+      renderTable({ editable: true, onRowUpdate: vi.fn() });
 
       await waitFor(() => {
         expect(screen.getByText('Alice')).toBeInTheDocument();
@@ -589,20 +589,114 @@ describe('BifrostTable', () => {
       expect(screen.getByTestId('edit-input')).toBeInTheDocument();
     });
 
-    it('dismisses edit on Escape', async () => {
+    it('commits the edit to onRowUpdate on Enter', async () => {
+      // Arrange
       globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
-
-      renderTable({ editable: true });
-
+      const onRowUpdate = vi.fn().mockResolvedValue(undefined);
+      renderTable({ editable: true, onRowUpdate });
       await waitFor(() => {
         expect(screen.getByText('Alice')).toBeInTheDocument();
       });
 
+      // Act
       fireEvent.doubleClick(screen.getByText('Alice'));
       const input = screen.getByTestId('edit-input');
+      fireEvent.change(input, { target: { value: 'Alicia' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+
+      // Assert: the keystroke reaches the write handler.
+      await waitFor(() => {
+        expect(onRowUpdate).toHaveBeenCalledWith(
+          expect.objectContaining({ id: 1, name: 'Alice' }),
+          { name: 'Alicia' },
+        );
+      });
+    });
+
+    it('commits the edit when the user clicks away', async () => {
+      // Arrange: the reported failure mode — edit a cell, click elsewhere,
+      // and the change was silently dropped while looking saved.
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      const onRowUpdate = vi.fn().mockResolvedValue(undefined);
+      renderTable({ editable: true, onRowUpdate });
+      await waitFor(() => {
+        expect(screen.getByText('Alice')).toBeInTheDocument();
+      });
+
+      // Act
+      fireEvent.doubleClick(screen.getByText('Alice'));
+      const input = screen.getByTestId('edit-input');
+      fireEvent.change(input, { target: { value: 'Alicia' } });
+      fireEvent.blur(input);
+
+      // Assert
+      await waitFor(() => {
+        expect(onRowUpdate).toHaveBeenCalledWith(
+          expect.objectContaining({ id: 1 }),
+          { name: 'Alicia' },
+        );
+      });
+    });
+
+    it('discards the edit on Escape without writing', async () => {
+      // Arrange
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      const onRowUpdate = vi.fn().mockResolvedValue(undefined);
+      renderTable({ editable: true, onRowUpdate });
+      await waitFor(() => {
+        expect(screen.getByText('Alice')).toBeInTheDocument();
+      });
+
+      // Act
+      fireEvent.doubleClick(screen.getByText('Alice'));
+      const input = screen.getByTestId('edit-input');
+      fireEvent.change(input, { target: { value: 'Alicia' } });
       fireEvent.keyDown(input, { key: 'Escape' });
 
+      // Assert
       expect(screen.queryByTestId('edit-input')).not.toBeInTheDocument();
+      expect(onRowUpdate).not.toHaveBeenCalled();
+      expect(screen.getByText('Alice')).toBeInTheDocument();
+    });
+
+    it('surfaces a rejected write through onSaveError', async () => {
+      // Arrange
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      const failure = new Error('write rejected');
+      const onSaveError = vi.fn();
+      renderTable({
+        editable: true,
+        onRowUpdate: vi.fn().mockRejectedValue(failure),
+        onSaveError,
+      });
+      await waitFor(() => {
+        expect(screen.getByText('Alice')).toBeInTheDocument();
+      });
+
+      // Act
+      fireEvent.doubleClick(screen.getByText('Alice'));
+      const input = screen.getByTestId('edit-input');
+      fireEvent.change(input, { target: { value: 'Alicia' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+
+      // Assert: the user's edit is not reported as saved.
+      await waitFor(() => {
+        expect(onSaveError).toHaveBeenCalledWith(failure, expect.anything());
+      });
+    });
+
+    it('refuses an editable table with no write handler', async () => {
+      // Arrange
+      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {});
+
+      // Act / Assert: a prop that silently discards typed input must not
+      // render at all.
+      expect(() => renderTable({ editable: true })).toThrow(/onRowUpdate/);
+
+      consoleError.mockRestore();
     });
 
     it('does not show edit input when not editable', async () => {

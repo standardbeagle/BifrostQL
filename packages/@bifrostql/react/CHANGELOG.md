@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Breaking changes
+
+Naming cleanup across the table API. This package is experimental and has no
+external consumers, so the old names were renamed rather than aliased — the
+option objects are structurally typed, so a stale `query`/`defaultFilters` key
+is silently ignored rather than reported as an error. Update call sites:
+
+- `UseBifrostTableOptions.query` and `BifrostTableProps.query` are now `table`.
+  The value was always a table name, never a GraphQL document; `useBifrostQuery`
+  already called it `table`. `useBifrost(query)`, which does take raw GraphQL,
+  is unchanged.
+- `ChildQueryConfig.query` is now `ChildQueryConfig.table`, for the same reason.
+- `defaultFilters` is now `defaultFilter` — the option is a single `TableFilter`,
+  and the matching query option is `filter`.
+- `useBifrostTable(...)` returns `search` instead of `performance`, and the type
+  `PerformanceState` is now `SearchState`. The state is debounced search input;
+  request metrics were the secondary concern.
+- `TableExportFormat` is now `ExportMenuFormat`, to distinguish the export
+  menu's `'csv' | 'json'` from the hook's wider `ExportFormat`.
+
+### Fixed
+
+- `BifrostTable`'s CSV export now shares `utils/table-export`, which quotes
+  header cells and values containing newlines or carriage returns. The previous
+  inline implementation escaped only commas and quotes, so a cell containing a
+  newline corrupted the row structure of the exported file.
+
+### Added
+
+- `UseBifrostQueryOptions` is now exported, as every sibling hook's options type
+  already was.
+- `VirtualScrollConfig`, `VirtualScrollState`, `VisibleRange`, and `SearchState`
+  are exported from the package root; they appear in `UseBifrostTableResult` but
+  consumers previously could not name them.
+
 ## 0.1.0 - 2026-02-14
 
 Initial release of `@bifrostql/react`.

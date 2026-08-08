@@ -1,112 +1,60 @@
-# BifrostQL UI Tests - Summary
+# BifrostQL.UI.Tests
 
-## Implementation Complete
+Tests for the `bifrostui` desktop application: its HTTP API surface, the
+Photino message bridge, credential/vault handling, and the schema projections
+the frontend consumes.
 
-The BifrostQL desktop application now has a complete connection UI system and comprehensive test suite.
-
-### What Was Built
-
-#### Frontend Connection UI (`src/BifrostQL.UI/frontend/src/connection/`)
-
-1. **ConnectionForm.tsx** (18,739 bytes)
-   - Server address, database name, authentication method selection
-   - SQL Server and Windows authentication support
-   - Connection testing with real-time validation
-   - Form validation with error display
-
-2. **WelcomePanel.tsx** (12,254 bytes)
-   - Welcome screen with "Connect to Database" and "Create Test Database" cards
-   - Recent connections list (localStorage persisted)
-   - Modern dark-themed design
-
-3. **TestDatabaseDialog.tsx** (18,135 bytes)
-   - Three test database templates:
-     - **Northwind**: E-commerce schema (Categories, Products, Orders, Customers)
-     - **AdventureWorks Lite**: HR department schema (Employees, Departments, Shifts)
-     - **Simple Blog**: Blog schema (Users, Posts, Comments, Tags)
-   - Streaming progress indicator during database creation
-
-4. **types.ts** (2,161 bytes) - TypeScript type definitions
-5. **connection.css** (3,192 bytes) - Dark/light mode theming
-6. **Documentation and integration examples**
-
-#### Backend Changes (`src/BifrostQL.UI/Program.cs`)
-
-- Made connection string **optional** (`Arity = ArgumentArity.ZeroOrOne`)
-- Added API endpoints:
-  - `POST /api/connection/test` - Test database connections
-  - `POST /api/connection/set` - Update connection string
-  - `POST /api/database/create` - Create test databases (streaming)
-  - `GET /api/health` - Health check
-- **Error handling**: Database creation now gracefully handles SQL Server unavailability by streaming error messages instead of crashing
-
-### Test Suite (`tests/BifrostQL.UI.Tests/`)
-
-**20 tests total:**
-- 8 unit tests (schema validation) - ✅ ALL PASS
-- 12 API/integration tests:
-  - Health endpoint - ✅ PASS
-  - Connection validation - ✅ PASS
-  - Static file serving - ✅ PASS
-  - Database creation - ✅ PASS (error handling tested)
-
-### Test Results
-
-```
-Passed!  - Failed:     0, Passed:    20, Skipped:     0, Total:    20
-```
-
-All tests now pass, including database creation tests. The streaming endpoint uses `HttpCompletionOption.ResponseHeadersRead` to avoid buffering the SSE response, and the server gracefully handles SQL Server unavailability by streaming error messages.
-
-### Usage
+## Running
 
 ```bash
-# Launch without connection (shows welcome UI)
-./bifrostui
-
-# Launch with connection (still works)
-./bifrostui "Server=localhost;Database=mydb;User Id=sa;Password=xxx;TrustServerCertificate=True"
-
-# Headless mode (server only)
-./bifrostui --headless
-
-# Expose to network
-./bifrostui --expose -p 8080
+dotnet test tests/BifrostQL.UI.Tests/BifrostQL.UI.Tests.csproj
 ```
 
-### Features
+These run in the epic tier, so they execute on the current TFM only. Nothing
+here needs a live SQL Server: quickstart coverage uses SQLite, and the
+connection tests assert on failure handling rather than on a reachable server.
 
-- ✅ Optional connection string - launch without database
-- ✅ Visual connection form with validation
-- ✅ Test database creation with 3 templates
-- ✅ Recent connections (localStorage)
-- ✅ Dark mode support with CSS variables
-- ✅ Mobile responsive design
-- ✅ Accessibility (ARIA labels, keyboard navigation)
-- ✅ Streaming progress for database creation
-- ✅ Graceful error handling when SQL Server unavailable
-- ✅ Comprehensive test suite (all tests passing)
+## What each file covers
 
-### Database Templates
+| File | Covers |
+|------|--------|
+| `BifrostUIApiTests.cs` | HTTP endpoints — health, connection test, database listing, static file serving |
+| `QuickStartEndToEndTests.cs` | SQLite quickstart creation through to a queryable schema |
+| `BridgeDispatcherTests.cs` | Photino message bridge dispatch and error propagation |
+| `VisualQueryBridgeTests.cs` | Visual query designer bridge contract |
+| `BuilderSchemaProjectionTests.cs` | Schema projected into the query-builder shape |
+| `SoftDeleteShapeTests.cs` | Soft-delete metadata surfaced to the client |
+| `PolymorphicLeakRepro.cs` | Regression guard against a polymorphic serialization leak |
+| `VaultStoreTests.cs`, `VaultServerProviderTests.cs` | Saved vault entries and provider resolution |
+| `CredentialPromptHtmlTests.cs`, `CredentialResultTests.cs` | Browser credential prompt rendering and result parsing |
+| `SshTunnelManagerTests.cs` | SSH tunnel lifecycle |
+| `SampleConfigTests.cs` | Shipped sample configuration stays loadable |
+| `HeadlessUiServer.cs` | Shared harness that boots the UI host headlessly for API tests |
 
-| Template | Tables | Features |
-|----------|--------|----------|
-| **Northwind** | 5 tables | Foreign keys, sample e-commerce data |
-| **AdventureWorks Lite** | 4 tables | Department/Employee relationships |
-| **Simple Blog** | 5 tables | Many-to-many, audit fields, soft-delete |
+## API surface under test
 
-### Error Handling
+Defined in `src/BifrostQL.UI/Web/` (`ConnectionEndpoints.cs`,
+`MetadataEndpoints.cs`):
 
-The `/api/database/create` endpoint now:
-1. Attempts to connect to SQL Server
-2. If connection fails, streams an error message in the SSE format instead of crashing
-3. Tests verify the endpoint accepts the request and handles errors gracefully
-4. Uses `HttpCompletionOption.ResponseHeadersRead` to avoid buffering the streaming response
+- `GET /api/health`
+- `POST /api/connection/test` — validate a connection without persisting it
+- `POST /api/databases` — list databases on a server
+- `POST /api/database/create-quickstart` — create a SQLite quickstart database
 
-### Screenshots
+`POST /api/database/create` remains routed but deliberately returns an error:
+it accepted password-bearing connection strings over HTTP. Use the quickstart
+endpoint, or save a vault entry and connect via `/api/vault/connect`. The
+`/api/connection/set` endpoint was removed for the same reason; see the note in
+`src/BifrostQL.UI/Web/ApiRequests.cs`.
 
-The agnt browser automation captured screenshots during development:
-- Welcome screen with connection options
-- Connection form with validation
-- Test database dialog with template selection
-- Database creation progress indicators
+## Launching the app by hand
+
+```bash
+./bifrostui                       # no connection string — opens the welcome UI
+./bifrostui "Server=...;Database=...;"   # connect on launch
+./bifrostui --headless            # server only, no desktop window
+./bifrostui --headless -p 8080    # choose the port
+```
+
+Frontend sources live in `src/BifrostQL.UI/frontend`; `src/BifrostQL.UI/wwwroot`
+is Vite build output and is not edited by hand.

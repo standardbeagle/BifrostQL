@@ -17,10 +17,9 @@ const Template: any = ({url, ...args} : { url: string }) => {
     return <Editor uri={url || undefined} {...args} />;
 };
 
-export const NoUrl = Template.bind({});
-
-NoUrl.args = {
-};
+// There is deliberately no "no config" story: Editor throws when given neither
+// `uri` nor `fetcher`, so such a story would unmount the Storybook tree rather
+// than render anything useful.
 
 export const LocalConnection = Template.bind({});
 LocalConnection.args = {

@@ -229,30 +229,30 @@ public static class VaultServerProvider
         {
             parts.Add("Integrated Security=True");
         }
-        var encrypt = MapSqlServerEncrypt(s.SslMode);
-        parts.Add($"Encrypt={encrypt}");
-        if (TrustsCertificate(s, encrypt))
+        parts.Add($"Encrypt={MapSqlServerEncrypt(s.SslMode)}");
+        if (SkipsCertificateValidation(s))
             parts.Add("TrustServerCertificate=True");
         return string.Join(';', parts);
     }
 
     /// <summary>
-    /// Whether this entry's connection string should carry TrustServerCertificate=True.
-    /// Only an explicit per-entry opt-in enables it, and only where it means something:
-    /// with <c>Encrypt=False</c> there is no certificate to trust, and <c>Encrypt=Strict</c>
-    /// exists precisely to validate one, so both ignore the opt-in rather than quietly
-    /// weakening a posture the entry asked for.
+    /// Whether connecting with this entry will skip TLS certificate validation — i.e.
+    /// whether its connection string carries TrustServerCertificate=True. True only for
+    /// a SQL Server entry that explicitly opted in, and only where the flag means
+    /// something: with <c>Encrypt=False</c> there is no certificate to trust, and
+    /// <c>Encrypt=Strict</c> exists precisely to validate one, so both ignore the opt-in
+    /// rather than quietly weakening a posture the entry asked for. Callers use this to
+    /// report the entry's posture without re-deriving the rule.
     /// </summary>
-    public static bool TrustsCertificate(VaultServer server, string encrypt) =>
-        server.TrustServerCertificate
-        && !encrypt.Equals("False", StringComparison.OrdinalIgnoreCase)
-        && !encrypt.Equals("Strict", StringComparison.OrdinalIgnoreCase);
+    public static bool SkipsCertificateValidation(VaultServer server)
+    {
+        if (!server.TrustServerCertificate) return false;
+        if (!server.Provider.Equals("sqlserver", StringComparison.OrdinalIgnoreCase)) return false;
 
-    /// <summary>
-    /// The SqlClient <c>Encrypt</c> value this entry resolves to. Exposed so callers can
-    /// report the entry's TLS posture without re-deriving the mapping.
-    /// </summary>
-    public static string SqlServerEncryptFor(VaultServer server) => MapSqlServerEncrypt(server.SslMode);
+        var encrypt = MapSqlServerEncrypt(server.SslMode);
+        return !encrypt.Equals("False", StringComparison.OrdinalIgnoreCase)
+            && !encrypt.Equals("Strict", StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>
     /// Map the vault entry's SslMode to a Microsoft.Data.SqlClient `Encrypt` value.

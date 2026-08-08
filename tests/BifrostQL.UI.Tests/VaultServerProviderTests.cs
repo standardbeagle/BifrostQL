@@ -131,6 +131,30 @@ public sealed class VaultServerProviderTests
         cs.Should().Contain(expected);
     }
 
+    /// <summary>
+    /// The posture reporter drives the connect-time warning and the "here is the setting
+    /// to change" hint on a failed connect, so it must agree with what the connection
+    /// string actually says — including for entries where the opt-in is inert.
+    /// </summary>
+    [Theory]
+    [InlineData("sqlserver", null, true, true)]
+    [InlineData("sqlserver", null, false, false)]
+    [InlineData("sqlserver", "strict", true, false)]
+    [InlineData("sqlserver", "disable", true, false)]
+    // The flag is SQL Server only; Npgsql/MySqlConnector never see it.
+    [InlineData("postgres", null, true, false)]
+    [InlineData("mysql", null, true, false)]
+    public void SkipsCertificateValidation_MatchesTheConnectionString(
+        string provider, string? sslMode, bool optedIn, bool expected)
+    {
+        var server = Server(provider, "h", provider == "mysql" ? 3306 : 5432,
+            sslMode: sslMode, trustServerCertificate: optedIn);
+
+        VaultServerProvider.SkipsCertificateValidation(server).Should().Be(expected);
+        VaultServerProvider.BuildConnectionString(server)
+            .Contains("TrustServerCertificate=True").Should().Be(expected);
+    }
+
     [Fact]
     public void Postgres_BuildsFullConnection()
     {

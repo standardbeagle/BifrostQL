@@ -43,6 +43,13 @@ public static class VaultCommands
         var passwordOpt = new Option<string?>("--password") { Description = "Database password (visible in argv; prefer --password-stdin or the interactive prompt)" };
         var passwordStdinOpt = new Option<bool>("--password-stdin") { Description = "Read password from stdin (one line). Mutually exclusive with --password. Requires stdin to be redirected (e.g. `echo pw | bifrostui vault add ...`)." };
         var sslModeOpt = new Option<string?>("--ssl-mode") { Description = "SSL mode" };
+        var trustCertOpt = new Option<bool>("--trust-server-certificate")
+        {
+            Description = "SQL Server only: accept the server's TLS certificate without validating it. "
+                        + "The connection is still encrypted but the server's identity is NOT verified, "
+                        + "so anyone on the network path can intercept it. Use only for a server whose "
+                        + "self-signed certificate you already trust.",
+        };
         var sshHostOpt = new Option<string?>("--ssh-host") { Description = "SSH tunnel host" };
         var sshPortOpt = new Option<int>("--ssh-port") { Description = "SSH tunnel port", DefaultValueFactory = _ => 22 };
         var sshUserOpt = new Option<string?>("--ssh-user") { Description = "SSH tunnel username" };
@@ -52,7 +59,7 @@ public static class VaultCommands
         var cmd = new Command("add", "Add a server to the vault. Password can be supplied via --password (insecure; visible in argv), --password-stdin (piped), or the interactive prompt when stdin is a tty.")
         {
             nameArg, providerOpt, hostOpt, portOpt, databaseOpt, usernameOpt, passwordOpt, passwordStdinOpt,
-            sslModeOpt, sshHostOpt, sshPortOpt, sshUserOpt, sshIdentityOpt, tagOpt
+            sslModeOpt, trustCertOpt, sshHostOpt, sshPortOpt, sshUserOpt, sshIdentityOpt, tagOpt
         };
 
         cmd.SetAction(async (parseResult, _) =>
@@ -68,6 +75,7 @@ public static class VaultCommands
             var hasPasswordFlag = parseResult.GetResult(passwordOpt) is { Implicit: false };
             var passwordStdin = parseResult.GetValue(passwordStdinOpt);
             var sslMode = parseResult.GetValue(sslModeOpt);
+            var trustServerCertificate = parseResult.GetValue(trustCertOpt);
             var sshHost = parseResult.GetValue(sshHostOpt);
             var sshPort = parseResult.GetValue(sshPortOpt);
             var sshUser = parseResult.GetValue(sshUserOpt);
@@ -111,7 +119,17 @@ public static class VaultCommands
                 ssh = new VaultSshConfig(sshHost, sshPort, sshUser ?? Environment.UserName, sshIdentity);
             }
 
-            var server = new VaultServer(name, provider, host, port, database, username, password, sslMode, ssh, [.. tags]);
+            var server = new VaultServer(name, provider, host, port, database, username, password, sslMode, ssh, [.. tags], trustServerCertificate);
+
+            // Storing a certificate-trust waiver is a posture change for this entry, so it
+            // is stated once at the point the decision is persisted rather than being
+            // discoverable only by reading the vault back.
+            if (trustServerCertificate)
+            {
+                Console.Error.WriteLine(
+                    $"Warning: '{name}' will accept {host}'s TLS certificate without validating it. " +
+                    "The connection is encrypted but the server's identity is unverified.");
+            }
 
             var vault = await VaultStore.Load(vaultPath);
             // Replace existing server with same name

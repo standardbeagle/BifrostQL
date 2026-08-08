@@ -51,6 +51,10 @@ namespace BifrostQL.UI.Web
             // POST /api/vault/connect — Connect using a vault server by name (credentials stay server-side)
             app.MapPost("/api/vault/connect", async (VaultConnectRequest request, CancellationToken ct) =>
             {
+                // Kept outside the try so the failure path can tell a certificate-validation
+                // rejection (actionable: this entry can opt into trusting the certificate)
+                // apart from every other connect failure.
+                VaultServer? attempted = null;
                 try
                 {
                     var servers = await VaultServerProvider.LoadServers(state.VaultPath);
@@ -59,7 +63,20 @@ namespace BifrostQL.UI.Web
                         return Results.NotFound(new { success = false, error = $"Server '{request.Name}' not found" });
 
                     var server = match.Server;
+                    attempted = server;
                     var connStr = VaultServerProvider.BuildConnectionString(server);
+
+                    // Connecting without validating the server certificate is a posture the
+                    // operator opted into per entry; say so every time it is exercised, naming
+                    // the server, so it cannot sit unnoticed in a vault file.
+                    if (VaultServerProvider.SkipsCertificateValidation(server))
+                    {
+                        app.Services.GetRequiredService<ILogger<Program>>().LogWarning(
+                            "Vault entry '{ServerName}' connects to {Host} WITHOUT validating its TLS "
+                            + "certificate (TrustServerCertificate). The connection is encrypted but the "
+                            + "server's identity is unverified and interceptable on the network path.",
+                            server.Name, server.Host);
+                    }
 
                     // If SSH config present, start tunnel and rewrite connection string
                     if (server.Ssh is not null)
@@ -169,6 +186,23 @@ namespace BifrostQL.UI.Web
                     var correlationId = Guid.NewGuid().ToString("N")[..8];
                     var scrubbedMessage = SecretScrubber.Scrub(ex.Message) ?? "";
 
+                    // A certificate rejection is the one connect failure with a specific
+                    // remedy, and it is the failure a previously-working entry hits now that
+                    // validation is enforced. Name the setting so the user is not left
+                    // guessing at an SSL Provider error code.
+                    if (attempted is not null
+                        && !VaultServerProvider.SkipsCertificateValidation(attempted)
+                        && IsCertificateValidationFailure(ex))
+                    {
+                        scrubbedMessage +=
+                            $" — the server's TLS certificate could not be validated. If you trust "
+                            + $"'{attempted.Host}' and its certificate is self-signed or internally issued, "
+                            + $"enable \"Trust Server Certificate\" on this connection "
+                            + $"(CLI: bifrostui vault add {attempted.Name} ... --trust-server-certificate). "
+                            + "That accepts any certificate the server presents, so only do it on a "
+                            + "network path you trust.";
+                    }
+
                     var scrubbedDetailsBuilder = new StringBuilder();
                     scrubbedDetailsBuilder.Append(scrubbedMessage);
                     scrubbedDetailsBuilder.Append("\n\nStack trace:\n");
@@ -199,6 +233,24 @@ namespace BifrostQL.UI.Web
                     });
                 }
             });
+        }
+
+        /// <summary>
+        /// Whether a connect failure was the TLS certificate being rejected. Drivers surface
+        /// this as a nested SSL/authentication exception with the detail several levels down,
+        /// so the whole chain is inspected. Matching on message text is inexact by nature —
+        /// this only decides whether to append a hint, never whether the connect succeeded.
+        /// </summary>
+        public static bool IsCertificateValidationFailure(Exception ex)
+        {
+            for (var current = ex; current is not null; current = current.InnerException)
+            {
+                var message = current.Message;
+                if (message.Contains("certificate", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("cert chain", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
         }
     }
 }

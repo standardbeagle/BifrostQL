@@ -113,13 +113,13 @@ export function toLocaleDate(d: string): string {
     return dd.toLocaleString();
 }
 
-export function getRowPkValue(row: RowData, table: Table, index = 0): string {
+export function getRowPkValue(row: RowData, table: Table, rowIndex = 0): string {
     // Delegate to the shared rowIdOf so the placeholder for a PK-less table is the
-    // same `row-${index}` both sides use (finding: getRowPkValue previously emitted an
-    // empty/`row.id` segment while rowIdOf emitted `row-${index}`, so links built by
-    // the two never round-tripped). rowIdOf also route-encodes single/composite keys,
-    // matching the segment decoding in parsePkRoute.
-    return rowIdOf(row as Record<string, unknown>, table, index);
+    // same `row-${rowIndex}` both sides use (finding: getRowPkValue previously emitted
+    // an empty/`row.id` segment while rowIdOf emitted `row-${rowIndex}`, so links built
+    // by the two never round-tripped). rowIdOf also route-encodes single/composite
+    // keys, matching the segment decoding in parsePkRoute.
+    return rowIdOf(row as Record<string, unknown>, table, rowIndex);
 }
 
 export function getGraphQlType(paramType: string): string {

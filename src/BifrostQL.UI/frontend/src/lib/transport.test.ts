@@ -840,6 +840,29 @@ describe("TransportGraphQLFetcher", () => {
     await expect(fetcher.query("{ broken }")).rejects.toThrow("boom; kaboom");
   });
 
+  /**
+   * The editor's built-in fetcher rejects with a GraphQLRequestError carrying
+   * `errors` and any partial `data`; this adapter threw a bare Error with only
+   * a joined message, so a consumer reading either one degraded the moment the
+   * transport toggle flipped. The two paths must look the same to a caller.
+   */
+  it("rejects with an error carrying the structured errors and partial data", async () => {
+    const fake = new FakeTransport();
+    fake.next = { data: { rows: [1] }, errors: ["boom", "kaboom"] };
+    const fetcher = new TransportGraphQLFetcher(fake);
+
+    const error = await fetcher.query("{ broken }").then(
+      () => null,
+      (e: unknown) => e as Error & { errors?: Array<{ message: string }>; data?: unknown }
+    );
+
+    expect(error).not.toBeNull();
+    expect(error!.name).toBe("GraphQLRequestError");
+    expect(error!.errors).toEqual([{ message: "boom" }, { message: "kaboom" }]);
+    // Partial data must survive: discarding it loses rows the server did return.
+    expect(error!.data).toEqual({ rows: [1] });
+  });
+
   it("routes through whichever transport instance it was given", async () => {
     // Simulates the app swapping the HTTP transport for the binary one on
     // toggle: a fetcher built around the new instance issues its queries there.

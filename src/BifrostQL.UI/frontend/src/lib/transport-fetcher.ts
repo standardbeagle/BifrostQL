@@ -24,6 +24,33 @@
 import type { GraphQLFetcher } from "@standardbeagle/edit-db";
 import type { QueryTransport, QueryTransportOptions } from "./transport";
 
+/**
+ * Rejection shape matching the editor's own `GraphQLRequestError`: same `name`,
+ * same `errors` and `data` properties, same joined message. A consumer that
+ * inspects the rejection must not degrade just because the transport toggle
+ * flipped, and it used to — this adapter threw a bare `Error` carrying only a
+ * joined string, so `errors` and any partial `data` vanished on the binary path.
+ *
+ * The editor's class itself cannot be reused: `@standardbeagle/edit-db` does
+ * not re-export `GraphQLRequestError` from its package root, and its `exports`
+ * map exposes only `.` and `./style.css`, so there is no importable path to it.
+ * That leaves structural parity — enough for `name` checks and for reading
+ * `errors`/`data`, but NOT for `instanceof`. Re-exporting the class from
+ * edit-db's index would close that last gap; the two client stacks are
+ * deliberately separate (see AGENTS.md), so this stops short of merging them.
+ */
+export class GraphQLRequestError extends Error {
+  readonly errors: Array<{ message: string }>;
+  readonly data?: unknown;
+
+  constructor(errors: string[], data?: unknown) {
+    super(errors.join("; "));
+    this.name = "GraphQLRequestError";
+    this.errors = errors.map((message) => ({ message }));
+    this.data = data;
+  }
+}
+
 export class TransportGraphQLFetcher implements GraphQLFetcher {
   constructor(private readonly transport: QueryTransport) {}
 
@@ -40,9 +67,11 @@ export class TransportGraphQLFetcher implements GraphQLFetcher {
     const { data, errors } = await this.transport.query(query, variables, options);
     if ((errors ?? []).length > 0) {
       // The Editor's hooks rely on the fetcher rejecting so react-query can
-      // surface the failure; a joined message keeps parity with the built-in
-      // HttpGraphQLFetcher's GraphQLRequestError message.
-      throw new Error(errors.join("; "));
+      // surface the failure. Carry the structured errors and any partial data
+      // through, matching the built-in HttpGraphQLFetcher's rejection: a
+      // GraphQL response can be a partial success, and throwing that data away
+      // loses rows the server actually returned.
+      throw new GraphQLRequestError(errors, data);
     }
     return data as T;
   }

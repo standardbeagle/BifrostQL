@@ -41,7 +41,7 @@ The key insight: **these aren't two permission levels on one surface — they're
 ```json
 {
   "ConnectionStrings": {
-    "bifrost": "Server=db;Database=Brightline;User Id=brightline_api;Password=xxx;TrustServerCertificate=True"
+    "bifrost": "Server=db;Database=Brightline;User Id=brightline_api;Password=xxx"
   },
   "BifrostQL": {
     "Path": "/graphql",
@@ -64,6 +64,12 @@ The key insight: **these aren't two permission levels on one surface — they're
   }
 }
 ```
+
+The connection to `db` is encrypted and its certificate validated — the defaults.
+If that server's certificate is internally issued and this host cannot verify it,
+fix the trust store rather than reaching for
+[`TrustServerCertificate`](/reference/configuration/#trustservercertificate),
+which would leave the connection interceptable by anyone on the path.
 
 The last rule is the whole ops story in one line:
 

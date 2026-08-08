@@ -28,7 +28,7 @@ This produces a `bifrostui` binary.
 Pass a connection string directly:
 
 ```bash
-bifrostui "Server=localhost;Database=mydb;User Id=sa;Password=xxx;TrustServerCertificate=True"
+bifrostui "Server=localhost;Database=mydb;User Id=sa;Password=xxx"
 ```
 
 Or launch without one and connect through the UI:
@@ -90,6 +90,8 @@ In the desktop UI this is the "Trust Server Certificate" checkbox on the SQL Ser
 The waiver accepts **any** certificate the server presents, so the connection is encrypted but the server's identity is unverified — anyone able to sit on the network path can terminate the TLS session themselves and read the credentials and query traffic. Use it only on a network path you trust. Connecting with such an entry logs a warning naming the server.
 
 It applies per entry and is off unless set, including for entries saved before the option existed. The waiver is ignored where it cannot mean anything: with `--ssl-mode disable` there is no certificate to trust, and `--ssl-mode strict` exists precisely to validate one.
+
+A connection string passed straight to `bifrostui` is used verbatim, so it carries whatever `TrustServerCertificate` you put in it and nothing is added on your behalf — see [TrustServerCertificate](/reference/configuration/#trustservercertificate) for what accepting it costs.
 
 ## What it does
 

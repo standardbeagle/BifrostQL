@@ -10,7 +10,7 @@ BifrostQL is configured through `appsettings.json` (or any ASP.NET Core configur
 ```json
 {
   "ConnectionStrings": {
-    "bifrost": "Server=localhost;Database=mydb;User Id=sa;Password=xxx;TrustServerCertificate=True"
+    "bifrost": "Server=localhost;Database=mydb;User Id=sa;Password=xxx"
   },
   "BifrostQL": {
     "Path": "/graphql",
@@ -291,8 +291,42 @@ Rules are applied in order. Later rules override earlier ones for the same targe
 ### SQL Server
 
 ```
-Server=localhost;Database=mydb;User Id=sa;Password=xxx;TrustServerCertificate=True
+Server=localhost;Database=mydb;User Id=sa;Password=xxx
 ```
+
+Modern SqlClient encrypts this connection by default and validates the server's
+certificate. See [TrustServerCertificate](#trustservercertificate) before adding
+that keyword.
+
+#### TrustServerCertificate
+
+`TrustServerCertificate=True` tells the client to accept whatever certificate the
+server presents — expired, self-signed, or issued by anyone at all — without
+checking it. The connection is still encrypted, but encryption without identity
+is not a secure channel: anyone able to sit on the network path to the database
+can terminate the TLS session themselves, read the credentials in the connection
+string, and read every query and result that follows. Nothing in the client will
+report that this happened.
+
+It is legitimate in exactly one situation: a server whose certificate you already
+trust but your machine's trust store cannot verify — typically a local
+development container, or an internal server using a self-signed or
+internally-issued certificate — reached over a network path you control.
+
+It is not a fix for a certificate error in production. There the answer is to
+install a certificate the client's trust store accepts, or to add your internal
+CA to that store.
+
+If you do need it, set it deliberately and per-connection rather than carrying it
+in a shared default:
+
+```
+Server=dev-sql;Database=mydb;User Id=sa;Password=xxx
+```
+
+The `bifrost` CLI exposes the same waiver as `--trust-server-certificate`, and the
+[desktop app](/guides/desktop-app/) as a per-entry setting. Both warn while it is
+in force.
 
 ### PostgreSQL
 

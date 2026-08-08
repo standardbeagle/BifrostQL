@@ -539,7 +539,7 @@ dotnet test tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj
 dotnet test --filter "FullyQualifiedName=GqlObjectQuerySqlTest.TestJoinWithCompositeKey"
 
 # Run the desktop UI
-./bifrostui "Server=localhost;Database=mydb;User Id=sa;Password=xxx;TrustServerCertificate=True"
+./bifrostui "Server=localhost;Database=mydb;User Id=sa;Password=xxx"
 
 # Run the Host web server
 dotnet run --project src/BifrostQL.Host

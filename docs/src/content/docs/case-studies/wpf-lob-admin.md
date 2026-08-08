@@ -93,7 +93,7 @@ All the constraints from the brief become declarative rules in `appsettings.json
 ```json
 {
   "ConnectionStrings": {
-    "bifrost": "Server=ops-sql;Database=MeridianOps;User Id=meridian_web;Password=xxx;TrustServerCertificate=True"
+    "bifrost": "Server=ops-sql;Database=MeridianOps;User Id=meridian_web;Password=xxx"
   },
   "BifrostQL": {
     "Path": "/graphql",
@@ -116,6 +116,12 @@ All the constraints from the brief become declarative rules in `appsettings.json
   }
 }
 ```
+
+The connection to `ops-sql` is encrypted and its certificate validated — the
+defaults. If that server's certificate is internally issued and this host cannot
+verify it, fix the trust store rather than reaching for
+[`TrustServerCertificate`](/reference/configuration/#trustservercertificate),
+which would leave the connection interceptable by anyone on the path.
 
 Reading it top to bottom:
 

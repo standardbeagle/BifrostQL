@@ -21,7 +21,7 @@ Add your connection string and BifrostQL settings to `appsettings.json`:
 ```json
 {
   "ConnectionStrings": {
-    "bifrost": "Server=localhost;Database=mydb;User Id=sa;Password=xxx;TrustServerCertificate=True"
+    "bifrost": "Server=localhost;Database=mydb;User Id=sa;Password=xxx"
   },
   "BifrostQL": {
     "Path": "/graphql",

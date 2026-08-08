@@ -1,12 +1,12 @@
 /**
  * Recent-history ring for executed SQL statements.
  *
- * This is the lightweight, always-available half of the console's history. The durable
- * saved-object `type: query` store (dependency 1.3) is the eventual home for named,
- * shareable queries; until that surface is wired end-to-end this ring gives the console a
- * local "what did I just run" recall without blocking on it. It persists to localStorage
- * so history survives a window reopen but stays on the desktop machine, never crossing a
- * wire — consistent with the console being a desktop-bridge-only, local-user feature.
+ * Recording is live: SqlConsole records every executed statement via
+ * {@link recordSqlStatement}. The recall UI is NOT built yet — {@link loadSqlHistory} has no
+ * production caller and exists as the read half of this storage module for that future
+ * surface. History persists to localStorage so it survives a window reopen but stays on
+ * the desktop machine, never crossing a wire — consistent with the console being a
+ * desktop-bridge-only, local-user feature.
  *
  * Entries are newest-first, capped at {@link SQL_HISTORY_CAPACITY}, and a re-run of the
  * statement already at the head is de-duplicated rather than piling up repeats.

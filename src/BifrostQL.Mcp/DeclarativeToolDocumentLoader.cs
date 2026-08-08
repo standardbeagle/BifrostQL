@@ -95,9 +95,7 @@ namespace BifrostQL.Mcp
                 ValidateMutation(mutation, label);
                 if (tool.TryGetProperty("policy", out var mutationPolicy))
                 {
-                    if (mutationPolicy.ValueKind != JsonValueKind.Object)
-                        throw new JsonException($"Tool '{label}' property 'policy' must be an object.");
-                    RejectUnknown(mutationPolicy, PolicyKeys, $"tool '{label}' policy");
+                    ValidatePolicy(mutationPolicy, label);
                 }
                 return;
             }
@@ -139,10 +137,39 @@ namespace BifrostQL.Mcp
             }
 
             if (tool.TryGetProperty("policy", out var policy))
+                ValidatePolicy(policy, label);
+        }
+
+        /// <summary>
+        /// Shape-checks a tool's <c>policy</c> block. <c>allowedRoles</c> is enforced by
+        /// <see cref="McpToolAccessGate"/>; <c>hiddenFieldBehavior</c> is NOT implemented
+        /// by anything, so declaring it FAILS THE LOAD rather than being accepted and
+        /// silently ignored — a security-shaped setting that reads as active while doing
+        /// nothing is the worse failure mode. The key stays in the known-key set so the
+        /// author gets this precise diagnostic instead of a bare "unknown property".
+        /// </summary>
+        private static void ValidatePolicy(JsonElement policy, string label)
+        {
+            if (policy.ValueKind != JsonValueKind.Object)
+                throw new JsonException($"Tool '{label}' property 'policy' must be an object.");
+            RejectUnknown(policy, PolicyKeys, $"tool '{label}' policy");
+
+            if (policy.TryGetProperty("hiddenFieldBehavior", out _))
+                throw new JsonException(
+                    $"Tool '{label}' policy declares 'hiddenFieldBehavior', which is reserved and NOT enforced: " +
+                    "how a policy-hidden field is represented is decided by the server's transformer pipeline " +
+                    "(a read-denied column rejects the read; it is not omitted). Remove the key rather than " +
+                    "relying on a setting that has no effect.");
+
+            if (policy.TryGetProperty("allowedRoles", out var allowedRoles))
             {
-                if (policy.ValueKind != JsonValueKind.Object)
-                    throw new JsonException($"Tool '{label}' property 'policy' must be an object.");
-                RejectUnknown(policy, PolicyKeys, $"tool '{label}' policy");
+                if (allowedRoles.ValueKind != JsonValueKind.Array)
+                    throw new JsonException($"Tool '{label}' policy property 'allowedRoles' must be an array of role names.");
+                foreach (var role in allowedRoles.EnumerateArray())
+                {
+                    if (role.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(role.GetString()))
+                        throw new JsonException($"Tool '{label}' policy property 'allowedRoles' must contain only non-empty role names.");
+                }
             }
         }
 

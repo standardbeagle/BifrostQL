@@ -34,27 +34,68 @@ namespace BifrostQL.Mcp
         /// names are matched exactly, as they arrive on the wire.
         /// </summary>
         internal static McpToolAccessGate From(McpToolPolicyOptions? policy)
-        {
-            var allowList = policy?.RoleToolAllowList;
-            if (allowList is null || allowList.Count == 0)
-                return Open;
+            => From(policy, declarativeTools: null);
 
+        /// <summary>
+        /// Builds the gate from BOTH role-gating sources, which must be enforced by the
+        /// same object or one of them is decorative:
+        /// <list type="bullet">
+        /// <item>the deployment's <see cref="McpToolPolicyOptions.RoleToolAllowList"/>
+        /// (role → tools), inverted into a tool → roles map; and</item>
+        /// <item>each declarative tool's own <c>policy.allowedRoles</c> from the tool
+        /// document. That value was parsed, schema-validated and documented as enforced,
+        /// but NOTHING consumed it — a role-gated declarative tool was listed to, and
+        /// callable by, every identity. Folding it in here (rather than adding a second
+        /// check somewhere else) means tools/list and tools/call keep agreeing by
+        /// construction, so listing can never become an oracle for a tool a direct call
+        /// would refuse.</item>
+        /// </list>
+        /// An <b>explicitly empty</b> <c>allowedRoles</c> array gates the tool to the
+        /// empty role set — visible to nobody. That is the only fail-closed reading of
+        /// "the roles permitted to see this are: none"; absent the key entirely, the tool
+        /// stays ungated.
+        /// </summary>
+        internal static McpToolAccessGate From(
+            McpToolPolicyOptions? policy, DeclarativeToolDocument? declarativeTools)
+        {
             var toolRoles = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-            foreach (var (role, tools) in allowList)
+
+            var allowList = policy?.RoleToolAllowList;
+            if (allowList is not null)
             {
-                if (string.IsNullOrWhiteSpace(role) || tools is null)
-                    continue;
-                foreach (var tool in tools)
+                foreach (var (role, tools) in allowList)
                 {
-                    if (string.IsNullOrWhiteSpace(tool))
+                    if (string.IsNullOrWhiteSpace(role) || tools is null)
                         continue;
-                    if (!toolRoles.TryGetValue(tool, out var roles))
-                        toolRoles[tool] = roles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    roles.Add(role);
+                    foreach (var tool in tools)
+                    {
+                        if (string.IsNullOrWhiteSpace(tool))
+                            continue;
+                        Roles(toolRoles, tool).Add(role);
+                    }
+                }
+            }
+
+            if (declarativeTools is not null)
+            {
+                foreach (var tool in declarativeTools.Tools)
+                {
+                    if (tool.Policy.AllowedRoles is not { } declaredRoles)
+                        continue;
+                    var roles = Roles(toolRoles, tool.Name);
+                    foreach (var role in declaredRoles.Where(r => !string.IsNullOrWhiteSpace(r)))
+                        roles.Add(role);
                 }
             }
 
             return toolRoles.Count == 0 ? Open : new McpToolAccessGate(toolRoles);
+        }
+
+        private static HashSet<string> Roles(Dictionary<string, HashSet<string>> toolRoles, string tool)
+        {
+            if (!toolRoles.TryGetValue(tool, out var roles))
+                toolRoles[tool] = roles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            return roles;
         }
 
         /// <summary>True when <paramref name="toolName"/> carries a role allow-list (is role-gated).</summary>

@@ -260,6 +260,62 @@ namespace BifrostQL.Mcp.Test
                 "no widget row exists, but the tool executed and returned the stable envelope");
         }
 
+        // ---- policy.allowedRoles declared IN THE DOCUMENT is enforced ---------------------------
+
+        /// <summary>
+        /// The document's own <c>policy.allowedRoles</c> was parsed, schema-validated and
+        /// documented as enforced, but nothing consumed it: the tool was listed to, and
+        /// callable by, every identity. The only prior test asserted that the value
+        /// DESERIALIZED — vacuous, since a completely inert field satisfies it. These
+        /// drive the real surface with NO server-side RoleToolAllowList configured, so the
+        /// document is the only possible source of the gating.
+        /// </summary>
+        [Fact]
+        public async Task DeclaredAllowedRoles_HideAndRefuseTheTool_ForIdentityLackingRole()
+        {
+            var declarative = await DeclarativeWidgetLookupDocAsync("widget_lookup", allowedRoles: "support");
+            await using var session = await StartSessionAsync(
+                ProviderForRoles("reader"), new McpToolPolicyOptions(), declarative);
+
+            var listed = await session.Client.ListToolsAsync();
+            listed.Select(t => t.Name).Should().NotContain("widget_lookup");
+
+            var result = await session.Client.CallToolAsync(
+                "widget_lookup", new Dictionary<string, object?> { ["widgetId"] = "1" });
+            result.IsError.Should().BeTrue("listing must not be an oracle for a tool a direct call refuses");
+            result.Content.OfType<TextContentBlock>().Single().Text
+                .Should().Contain("not available for the current identity");
+        }
+
+        [Fact]
+        public async Task DeclaredAllowedRoles_AllowTheTool_ForMatchingRole()
+        {
+            var declarative = await DeclarativeWidgetLookupDocAsync("widget_lookup", allowedRoles: "support");
+            await using var session = await StartSessionAsync(
+                ProviderForRoles("support"), new McpToolPolicyOptions(), declarative);
+
+            (await session.Client.ListToolsAsync()).Select(t => t.Name).Should().Contain("widget_lookup");
+            var result = await session.Client.CallToolAsync(
+                "widget_lookup", new Dictionary<string, object?> { ["widgetId"] = "1" });
+            result.IsError.Should().NotBe(true,
+                result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text);
+        }
+
+        /// <summary>Fail-closed: an identity with no resolvable roles holds none, so a
+        /// declared-role-gated tool stays hidden and refused.</summary>
+        [Fact]
+        public async Task DeclaredAllowedRoles_FailClosed_ForIdentityWithNoRoles()
+        {
+            var declarative = await DeclarativeWidgetLookupDocAsync("widget_lookup", allowedRoles: "support");
+            await using var session = await StartSessionAsync(
+                ProviderForRoles(), new McpToolPolicyOptions(), declarative);
+
+            (await session.Client.ListToolsAsync()).Select(t => t.Name).Should().NotContain("widget_lookup");
+            var result = await session.Client.CallToolAsync(
+                "widget_lookup", new Dictionary<string, object?> { ["widgetId"] = "1" });
+            result.IsError.Should().BeTrue();
+        }
+
         private static McpToolPolicyOptions GateToolToRole(string toolName, string role) => new()
         {
             RoleToolAllowList = new Dictionary<string, IReadOnlyList<string>>
@@ -280,11 +336,15 @@ namespace BifrostQL.Mcp.Test
             }).ToList(),
         };
 
-        private async Task<DeclarativeToolDocument> DeclarativeWidgetLookupDocAsync(string toolName)
+        private async Task<DeclarativeToolDocument> DeclarativeWidgetLookupDocAsync(
+            string toolName, string? allowedRoles = null)
         {
             var model = await _executor.GetModelAsync(EndpointPath);
             var widgets = model.Tables.Single(t => string.Equals(t.DbName, "widgets", StringComparison.OrdinalIgnoreCase));
             var qualified = $"{widgets.TableSchema}.{widgets.DbName}";
+            var policyJson = allowedRoles is null
+                ? string.Empty
+                : $$""" , "policy": { "allowedRoles": ["{{allowedRoles}}"] } """;
             var json = $$"""
                 {
                   "version": 1,
@@ -292,7 +352,7 @@ namespace BifrostQL.Mcp.Test
                     "name": "{{toolName}}",
                     "description": "Look up one widget by its primary key.",
                     "params": { "widgetId": { "type": "id", "table": "{{qualified}}", "description": "Widget id." } },
-                    "root": { "table": "{{qualified}}", "byId": "widgetId", "fields": ["id", "name", "qty"] }
+                    "root": { "table": "{{qualified}}", "byId": "widgetId", "fields": ["id", "name", "qty"] }{{policyJson}}
                   }]
                 }
                 """;

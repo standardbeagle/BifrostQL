@@ -100,7 +100,25 @@ namespace BifrostQL.Mcp
 
     public sealed record DeclarativeToolPolicy
     {
-        public string HiddenFieldBehavior { get; init; } = "omit";
+        /// <summary>
+        /// RESERVED, NOT IMPLEMENTED. Nothing consumes this value: how a policy-hidden
+        /// field is represented is decided entirely by the transformer pipeline (a
+        /// read-denied column makes the whole read fail via
+        /// <c>PolicyFilterTransformer.AssertColumnsReadable</c>, it is not silently
+        /// omitted). Declaring it is therefore REJECTED at load
+        /// (<see cref="DeclarativeToolDocumentLoader"/>) rather than accepted and
+        /// ignored: a security-shaped setting that reads as active and does nothing is
+        /// worse than an absent one. Null means "not declared".
+        /// </summary>
+        public string? HiddenFieldBehavior { get; init; }
+
+        /// <summary>
+        /// Role names permitted to see and call this tool. ENFORCED by
+        /// <see cref="McpToolAccessGate"/> on both <c>tools/list</c> and
+        /// <c>tools/call</c>, fail-closed: an identity holding none of these roles —
+        /// including one whose roles could not be resolved — neither sees the tool nor
+        /// can invoke it by name. Null means the tool is ungated.
+        /// </summary>
         public IReadOnlyList<string>? AllowedRoles { get; init; }
     }
 

@@ -201,7 +201,7 @@ namespace BifrostQL.Mcp
 
             // Per-identity tool filtering (fail-closed). Built once from the policy so tools/list and
             // tools/call agree: a role-gated tool hidden from a caller's list is also refused by name.
-            var gate = McpToolAccessGate.From(policy);
+            var gate = McpToolAccessGate.From(policy, declarativeTools);
 
             return new McpServerOptions
             {

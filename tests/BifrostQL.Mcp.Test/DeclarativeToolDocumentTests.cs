@@ -30,7 +30,7 @@ namespace BifrostQL.Mcp.Test
                   "aggregate": { "count": true, "sum": "total" },
                   "detailGate": "full"
                 }],
-                "policy": { "hiddenFieldBehavior": "omit", "allowedRoles": ["support"] }
+                "policy": { "allowedRoles": ["support"] }
               }]
             }
             """;
@@ -47,6 +47,37 @@ namespace BifrostQL.Mcp.Test
             tool.Root.Fields.Should().Equal("id", "name");
             tool.Include.Should().ContainSingle().Which.Aggregate!.Sum.Should().Be("total");
             tool.Policy.AllowedRoles.Should().Equal("support");
+        }
+
+        /// <summary>
+        /// 'hiddenFieldBehavior' is parsed and schema-validated but NOTHING enforces it.
+        /// A security-shaped setting that reads as active and does nothing is worse than
+        /// no setting, so declaring it must fail the load with a message naming the real
+        /// behaviour — never be accepted and silently ignored.
+        /// </summary>
+        [Fact]
+        public void Loader_RejectsHiddenFieldBehavior_BecauseNothingEnforcesIt()
+        {
+            var json = ValidDocument.Replace(
+                "\"policy\": { \"allowedRoles\"",
+                "\"policy\": { \"hiddenFieldBehavior\": \"omit\", \"allowedRoles\"");
+
+            var act = () => Load(json);
+
+            act.Should().Throw<InvalidOperationException>()
+                .WithMessage("*hiddenFieldBehavior*reserved and NOT enforced*");
+        }
+
+        [Theory]
+        [InlineData("\"support\"", "*must be an array*")]
+        [InlineData("[\"\"]", "*non-empty role names*")]
+        public void Loader_RejectsMalformedAllowedRoles(string value, string expected)
+        {
+            var json = ValidDocument.Replace("[\"support\"]", value);
+
+            var act = () => Load(json);
+
+            act.Should().Throw<InvalidOperationException>().WithMessage(expected);
         }
 
         [Theory]

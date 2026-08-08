@@ -27,6 +27,12 @@ export interface ReportCardProps {
   value: ReactNode;
   /** When `true`, the value is replaced by a loading placeholder. */
   isLoading?: boolean;
+  /**
+   * When `true`, the metric query failed and the card says so instead of
+   * showing a value. A failed count must never render as `0` — an operator
+   * cannot distinguish "none" from "we could not find out".
+   */
+  isError?: boolean;
   /** Optional link to the report screen that backs this metric. */
   link?: ReportCardLink;
 }
@@ -38,21 +44,26 @@ export interface ReportCardProps {
  * Purely presentational — it owns no data fetching or permission logic. The
  * {@link import('./dashboard').Dashboard} screen fetches each metric via
  * `useBifrostQuery` (so tenant scoping applies server-side) and decides, per
- * session, whether finance values are shown, then passes the resolved `value`
- * and `isLoading` down. Keeping the card dumb lets it be unit-tested in
- * isolation and reused for every metric.
+ * session, whether finance values are shown, then passes the resolved `value`,
+ * `isLoading` and `isError` down. Keeping the card dumb lets it be unit-tested
+ * in isolation and reused for every metric.
  */
 export function ReportCard({
   testId,
   label,
   value,
   isLoading,
+  isError,
   link,
 }: ReportCardProps) {
   return (
     <section data-testid={testId} aria-label={label}>
       <h3>{label}</h3>
-      {isLoading ? (
+      {isError ? (
+        <p role="alert" data-testid={`${testId}-error`}>
+          This metric could not be loaded.
+        </p>
+      ) : isLoading ? (
         <p data-testid={`${testId}-loading`}>Loading…</p>
       ) : (
         <p>{value}</p>

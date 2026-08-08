@@ -41,7 +41,10 @@ let graphqlRequests: Array<{ query: string; variables: unknown }>;
  * it selects. Each dashboard card issues its own `useBifrostQuery`, so the mock
  * inspects the query string to decide which fixture rows to return.
  */
-function createFetchMock(identity: TestIdentity | null) {
+function createFetchMock(
+  identity: TestIdentity | null,
+  options: { failingTable?: string } = {},
+) {
   graphqlRequests = [];
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString();
@@ -80,6 +83,15 @@ function createFetchMock(identity: TestIdentity | null) {
       : { query: '', variables: undefined };
     if (init?.body) {
       graphqlRequests.push(body);
+    }
+
+    if (options.failingTable && body.query.includes(options.failingTable)) {
+      return Promise.resolve({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+        json: () => Promise.resolve({}),
+      } as Response);
     }
 
     // Two active members, three open invoices totalling 15000 cents, one
@@ -121,7 +133,9 @@ function createFetchMock(identity: TestIdentity | null) {
 function renderDashboard() {
   return render(
     <PathProvider path="/dashboard">
-      <AppShellProvider config={{ endpoint: ENDPOINT }}>
+      <AppShellProvider
+        config={{ endpoint: ENDPOINT, defaultQueryOptions: { retry: false } }}
+      >
         <Dashboard />
       </AppShellProvider>
     </PathProvider>,
@@ -234,6 +248,41 @@ describe('Dashboard', () => {
       graphqlRequests.find((r) => /amount_cents/.test(r.query)),
     ).toBeUndefined();
   });
+
+  it(
+    'shows a failed dues query as an error, never as 0 or $0.00',
+    async () => {
+      // Arrange: a finance session whose dues query fails; the other three
+      // metrics answer normally.
+      globalThis.fetch = createFetchMock(
+        identityWith(['main.members.read', MEMBERS_FINANCE]),
+        { failingTable: 'main_dues_invoices' },
+      );
+
+      // Act
+      renderDashboard();
+
+      // Assert: the card says the metric could not be loaded — an operator
+      // must not read a failed query as "no outstanding dues".
+      // `useBifrostQuery` retries three times with exponential backoff before
+      // settling into its error state, so this wait spans that whole window.
+      await waitFor(
+        () =>
+          expect(
+            screen.getByTestId('dashboard-dues-card-error'),
+          ).toBeInTheDocument(),
+        { timeout: 12000 },
+      );
+      const card = screen.getByTestId('dashboard-dues-card');
+      expect(card).not.toHaveTextContent('$0.00');
+      expect(card).not.toHaveTextContent(/\b0\b/);
+      // One failed metric does not blank the others.
+      expect(screen.getByTestId('dashboard-members-card')).toHaveTextContent(
+        '2',
+      );
+    },
+    15000,
+  );
 
   it('links each card to its matching report screen', async () => {
     // Arrange

@@ -63,4 +63,24 @@ describe('ReportCard', () => {
     // Assert
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
   });
+
+  it('reports a failed metric instead of rendering its value', () => {
+    // Arrange + Act: a failed query still carries the `?? 0` fallback value a
+    // caller might pass; the card must not show it.
+    render(
+      <ReportCard
+        testId="dues-card"
+        label="Unpaid Dues"
+        value={0}
+        isError
+      />,
+    );
+
+    // Assert
+    expect(screen.getByTestId('dues-card-error')).toHaveAttribute(
+      'role',
+      'alert',
+    );
+    expect(screen.getByTestId('dues-card')).not.toHaveTextContent('0');
+  });
 });

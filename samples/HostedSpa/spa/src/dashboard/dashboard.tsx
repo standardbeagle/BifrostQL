@@ -100,17 +100,22 @@ export function Dashboard() {
     fields: ['id'],
   });
 
-  const memberCount = membersQuery.data?.length ?? 0;
-  const duesRows = duesQuery.data ?? [];
-  const duesCount = duesRows.length;
-  const renewalCount = renewalsQuery.data?.length ?? 0;
-  const attendanceCount = attendanceQuery.data?.length ?? 0;
+  // A count is rendered only from rows that actually arrived. A failed query
+  // is reported by the card's `isError` branch — coalescing a missing count to
+  // `0` would tell an operator "none" when the truth is "unknown", and on the
+  // dues card that reads as "nothing is owed".
+  const memberCount = membersQuery.data?.length;
+  const duesRows = duesQuery.data;
+  const duesCount = duesRows?.length;
+  const renewalCount = renewalsQuery.data?.length;
+  const attendanceCount = attendanceQuery.data?.length;
 
   // The dues card's value: for a finance session, the count followed by the
   // summed amount; for a non-finance session, just the count.
-  const duesTotalCents = canReadFinance
-    ? duesRows.reduce((sum, row) => sum + (row.amount_cents ?? 0), 0)
-    : null;
+  const duesTotalCents =
+    canReadFinance && duesRows
+      ? duesRows.reduce((sum, row) => sum + (row.amount_cents ?? 0), 0)
+      : null;
   const duesValue =
     duesTotalCents === null
       ? duesCount
@@ -125,12 +130,14 @@ export function Dashboard() {
           label="Active Members"
           value={memberCount}
           isLoading={membersQuery.isLoading}
+          isError={membersQuery.isError}
         />
         <ReportCard
           testId="dashboard-dues-card"
           label="Unpaid Dues"
           value={duesValue}
           isLoading={duesQuery.isLoading}
+          isError={duesQuery.isError}
           link={{ href: '/reports/unpaid-dues', label: 'View report' }}
         />
         <ReportCard
@@ -138,6 +145,7 @@ export function Dashboard() {
           label="Upcoming Renewals"
           value={renewalCount}
           isLoading={renewalsQuery.isLoading}
+          isError={renewalsQuery.isError}
           link={{
             href: '/reports/upcoming-renewals',
             label: 'View report',
@@ -148,6 +156,7 @@ export function Dashboard() {
           label="Recent Attendance"
           value={attendanceCount}
           isLoading={attendanceQuery.isLoading}
+          isError={attendanceQuery.isError}
           link={{
             href: '/reports/attendance-by-event',
             label: 'View report',

@@ -126,7 +126,10 @@ function createFetchMock(
   invoices: Array<Record<string, unknown>> = invoiceRows,
   payments: Array<Record<string, unknown>> = paymentRows,
   members: Array<Record<string, unknown>> = memberRows,
-  memberships: Array<Record<string, unknown>> = membershipRows,
+  memberships: Array<Record<string, unknown>> = membershipRows.map((r) => ({
+    ...r,
+  })),
+  options: { insertFails?: boolean; membershipUpdateIsNoop?: boolean } = {},
 ) {
   graphqlRequests = [];
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -167,6 +170,35 @@ function createFetchMock(
     if (body) {
       graphqlRequests.push(body);
       if (/\bmutation\b/.test(body.query)) {
+        const isInsert = /\binsert\b/.test(body.query);
+        if (isInsert && options.insertFails) {
+          // A GraphQL-level rejection — how a policy or tenant denial arrives.
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            json: () =>
+              Promise.resolve({
+                errors: [{ message: 'payment insert rejected' }],
+              }),
+          } as Response);
+        }
+        // A successful membership update mutates the server-side row, so a
+        // refetch reports the real status rather than a client-side guess.
+        if (
+          !isInsert &&
+          !options.membershipUpdateIsNoop &&
+          /member_memberships/.test(body.query)
+        ) {
+          const detail = (body.variables as { detail?: Record<string, unknown> })
+            ?.detail;
+          const target = memberships.find(
+            (m) => String(m.id) === String(detail?.id),
+          );
+          if (target && detail?.status !== undefined) {
+            target.status = detail.status;
+          }
+        }
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -332,6 +364,84 @@ describe('RecordPayment', () => {
       expect(screen.getByTestId('record-payment-status')).toHaveTextContent(
         'active',
       ),
+    );
+  });
+
+  it('leaves the membership untouched and keeps the form when the payment insert fails', async () => {
+    // Arrange: the server rejects the dues_payments insert.
+    const user = userEvent.setup();
+    globalThis.fetch = createFetchMock(
+      identityWith(['main.members.write', MEMBERS_FINANCE]),
+      sampleMetadata,
+      invoiceRows,
+      paymentRows,
+      memberRows,
+      membershipRows.map((r) => ({ ...r })),
+      { insertFails: true },
+    );
+    renderScreen();
+    await waitFor(() =>
+      expect(screen.getByTestId('record-payment-add')).toBeInTheDocument(),
+    );
+
+    // Act: record a payment against invoice 52 (membership 22).
+    await user.selectOptions(screen.getByLabelText('invoice_id'), '52');
+    await user.clear(screen.getByLabelText('amount_cents'));
+    await user.type(screen.getByLabelText('amount_cents'), '6000');
+    await user.clear(screen.getByLabelText('paid_on'));
+    await user.type(screen.getByLabelText('paid_on'), '2025-06-01');
+    await user.click(screen.getByRole('button', { name: 'Record payment' }));
+
+    // Assert: the failure is reported...
+    await waitFor(() =>
+      expect(screen.getByTestId('record-payment-write-error')).toHaveTextContent(
+        'payment insert rejected',
+      ),
+    );
+    // ...no membership was flipped to active on the strength of a failed insert...
+    expect(
+      graphqlRequests.find(
+        (r) => /\bupdate\b/.test(r.query) && /member_memberships/.test(r.query),
+      ),
+    ).toBeUndefined();
+    // ...the screen claims no status...
+    expect(
+      screen.queryByTestId('record-payment-status'),
+    ).not.toBeInTheDocument();
+    // ...and the operator's entered values survive for a retry.
+    expect(screen.getByLabelText('amount_cents')).toHaveValue('6000');
+    expect(screen.getByLabelText('paid_on')).toHaveValue('2025-06-01');
+    expect(screen.getByLabelText('invoice_id')).toHaveValue('52');
+  });
+
+  it('shows the membership status the server reports, not a client-side guess', async () => {
+    // Arrange: membership 22 stays `lapsed` server-side — the update mutation
+    // is accepted but the row is not advanced (e.g. scoped away by tenant).
+    const user = userEvent.setup();
+    globalThis.fetch = createFetchMock(
+      identityWith(['main.members.write', MEMBERS_FINANCE]),
+      sampleMetadata,
+      invoiceRows,
+      paymentRows,
+      memberRows,
+      membershipRows.map((r) => ({ ...r })),
+      { membershipUpdateIsNoop: true },
+    );
+    renderScreen();
+    await waitFor(() =>
+      expect(screen.getByTestId('record-payment-add')).toBeInTheDocument(),
+    );
+
+    // Act
+    await user.selectOptions(screen.getByLabelText('invoice_id'), '52');
+    await user.click(screen.getByRole('button', { name: 'Record payment' }));
+
+    // Assert: the surfaced status is the server's `lapsed`, never `active`.
+    await waitFor(() =>
+      expect(screen.getByTestId('record-payment-status')).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId('record-payment-status')).toHaveTextContent(
+      'lapsed',
     );
   });
 

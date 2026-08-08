@@ -12,6 +12,7 @@ import {
   buildUpdateMutation,
 } from '@bifrostql/react';
 import { canReadFinanceFields } from './finance-fields';
+import { useWriteFeedback, WriteFeedbackRegion } from '../common/write-feedback';
 
 /** Qualified entity key of the dues_payments entity in the overlay. */
 const DUES_PAYMENTS_ENTITY_KEY = 'main.dues_payments';
@@ -69,10 +70,14 @@ interface InvoiceRow {
  *
  * Recording routes through two Bifrost mutations on the standard pipeline: an
  * `insert` on `dues_payments`, then an `update` on the invoice's
- * `member_memberships` row advancing its `status` to `active`. The updated
- * status is surfaced back on the screen so an officer sees the membership
- * become current. Both mutations run through `tenant-filter` and the policy
- * engine exactly as a direct GraphQL mutation would.
+ * `member_memberships` row advancing its `status` to `active`. Both mutations
+ * run through `tenant-filter` and the policy engine exactly as a direct
+ * GraphQL mutation would — which means either can be rejected, so both are
+ * awaited: the membership update is issued only after the payment insert has
+ * actually succeeded, and the status the screen shows is read back off the
+ * refetched `member_memberships` row rather than assumed to be `active`.
+ * Failures surface in the screen's write-feedback region with the operator's
+ * entered values left intact.
  *
  * Payment-provider integration (charging a card, reconciling an external
  * processor) is intentionally out of scope here: this screen records a
@@ -205,6 +210,21 @@ export function RecordPayment() {
     [invoices, members, canReadFinance],
   );
 
+  // Memberships, so the status shown after a payment is the row the server
+  // actually holds. The membership update invalidates this query, so a
+  // successful advance refetches to `active` and a scoped-away or rejected
+  // one keeps reporting the real, unchanged status.
+  const membershipsQuery = useBifrostQuery<
+    Array<{ id: number | string; status: string | null }>
+  >(membershipQueryName, {
+    fields: ['id', 'status'],
+    enabled: canWrite,
+  });
+  const memberships = useMemo(
+    () => membershipsQuery.data ?? [],
+    [membershipsQuery.data],
+  );
+
   const insertPayment = useBifrostMutation(
     buildInsertMutation(paymentQueryName),
     { invalidateQueries: [paymentQueryName, invoiceQueryName] },
@@ -220,10 +240,21 @@ export function RecordPayment() {
   const [newPaidOn, setNewPaidOn] = useState<unknown>('');
   const [newMethod, setNewMethod] = useState<unknown>('card');
 
-  // The membership status surfaced after the most recent recorded payment.
-  const [lastStatus, setLastStatus] = useState<string | null>(null);
+  const feedback = useWriteFeedback();
 
-  const handleRecord = () => {
+  // The membership whose status is surfaced after the most recent recorded
+  // payment. Only the id is held locally — the status itself is read back off
+  // the server, never invented here.
+  const [paidMembershipId, setPaidMembershipId] = useState<
+    number | string | null
+  >(null);
+  const lastStatus =
+    paidMembershipId === null
+      ? null
+      : (memberships.find((m) => String(m.id) === String(paidMembershipId))
+          ?.status ?? null);
+
+  const handleRecord = async () => {
     if (!canWrite || !newInvoiceId) {
       return;
     }
@@ -232,24 +263,50 @@ export function RecordPayment() {
     // `amount_cents` is only collected (and only sent) for finance sessions —
     // a non-finance session never renders its control, so it is omitted from
     // the insert rather than sent as null.
-    insertPayment.mutate({
-      detail: {
-        invoice_id: newInvoiceId,
-        ...(canReadFinance
-          ? { amount_cents: newAmount === '' ? null : Number(newAmount) }
-          : {}),
-        paid_on: newPaidOn || null,
-        method: newMethod || null,
-      },
-    });
+    const recorded = await feedback.run(
+      () =>
+        insertPayment.mutateAsync({
+          detail: {
+            invoice_id: newInvoiceId,
+            ...(canReadFinance
+              ? { amount_cents: newAmount === '' ? null : Number(newAmount) }
+              : {}),
+            paid_on: newPaidOn || null,
+            method: newMethod || null,
+          },
+        }),
+      'Payment recorded.',
+    );
+
+    // A rejected insert means no payment row exists. The membership must not
+    // be advanced off the back of it, and the operator's entered amount, date
+    // and method are kept so the write can be retried.
+    if (!recorded) {
+      return;
+    }
 
     // Advance the invoice's membership to active: a recorded payment makes the
     // member current. Skipped when the invoice has no linked membership.
     if (invoice?.member_membership_id != null) {
-      updateMembership.mutate({
-        detail: { id: invoice.member_membership_id, status: 'active' },
-      });
-      setLastStatus('active');
+      const membershipId = invoice.member_membership_id;
+      const advanced = await feedback.run(
+        () =>
+          updateMembership
+            .mutateAsync({ detail: { id: membershipId, status: 'active' } })
+            .catch((cause: unknown) => {
+              // The payment IS recorded at this point; say so, so the operator
+              // does not retry it and double-record.
+              throw new Error(
+                `Payment recorded, but the membership could not be advanced: ${
+                  cause instanceof Error ? cause.message : String(cause)
+                }`,
+              );
+            }),
+        'Payment recorded and membership advanced.',
+      );
+      if (advanced) {
+        setPaidMembershipId(membershipId);
+      }
     }
 
     setNewInvoiceId('');
@@ -305,6 +362,11 @@ export function RecordPayment() {
         ))}
       </ul>
 
+      <WriteFeedbackRegion
+        feedback={feedback}
+        testId="record-payment-write"
+      />
+
       {lastStatus ? (
         <p data-testid="record-payment-status">
           Membership status: {lastStatus}
@@ -346,7 +408,12 @@ export function RecordPayment() {
             enumOptions={PAYMENT_METHODS}
             onChange={(value) => setNewMethod(value)}
           />
-          <button type="button" onClick={handleRecord}>
+          <button
+            type="button"
+            onClick={() => {
+              void handleRecord();
+            }}
+          >
             Record payment
           </button>
         </div>

@@ -388,6 +388,107 @@ describe('useBifrostBatch', () => {
     });
   });
 
+  it('invalidates queries when a strict batch aborts after committing rows', async () => {
+    // Arrange: op 0 succeeds server-side, op 1 fails, strict mode aborts.
+    globalThis.fetch = createSequentialFetchMock([
+      { response: { data: { users: 1 } } },
+      { response: { errors: [{ message: 'constraint violation' }] } },
+    ]);
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: 0 },
+        mutations: { retry: false },
+      },
+    });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    function Wrapper({ children }: { children: ReactNode }) {
+      return (
+        <QueryClientProvider client={queryClient}>
+          <BifrostProvider
+            config={{ endpoint: 'http://localhost:5000/graphql' }}
+          >
+            {children}
+          </BifrostProvider>
+        </QueryClientProvider>
+      );
+    }
+
+    const { result } = renderHook(
+      () =>
+        useBifrostBatch({
+          allowPartialSuccess: false,
+          invalidateQueries: ['{ users { id } }'],
+        }),
+      { wrapper: Wrapper },
+    );
+
+    // Act
+    await act(async () => {
+      await expect(
+        result.current.mutateAsync([
+          { type: 'insert', table: 'users', data: { name: 'Alice' } },
+          { type: 'insert', table: 'users', data: { name: 'Bob' } },
+        ]),
+      ).rejects.toBeInstanceOf(BatchError);
+    });
+
+    // Assert: the first insert really landed, so the cache must be refreshed
+    // or the UI shows pre-write data indefinitely.
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ['bifrost', '{ users { id } }'],
+    });
+  });
+
+  it('does not invalidate when a strict batch fails before committing anything', async () => {
+    // Arrange: the very first operation fails, so nothing was written.
+    globalThis.fetch = createFetchMock({
+      errors: [{ message: 'constraint violation' }],
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: 0 },
+        mutations: { retry: false },
+      },
+    });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    function Wrapper({ children }: { children: ReactNode }) {
+      return (
+        <QueryClientProvider client={queryClient}>
+          <BifrostProvider
+            config={{ endpoint: 'http://localhost:5000/graphql' }}
+          >
+            {children}
+          </BifrostProvider>
+        </QueryClientProvider>
+      );
+    }
+
+    const { result } = renderHook(
+      () =>
+        useBifrostBatch({
+          allowPartialSuccess: false,
+          invalidateQueries: ['{ users { id } }'],
+        }),
+      { wrapper: Wrapper },
+    );
+
+    // Act
+    await act(async () => {
+      await expect(
+        result.current.mutateAsync([
+          { type: 'insert', table: 'users', data: { name: 'Alice' } },
+        ]),
+      ).rejects.toBeInstanceOf(BatchError);
+    });
+
+    // Assert
+    expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+
   it('calls onSuccess callback with batch result', async () => {
     globalThis.fetch = createFetchMock({ data: { users: 1 } });
     const onSuccess = vi.fn();

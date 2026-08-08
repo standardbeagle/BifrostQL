@@ -248,15 +248,24 @@ export function useBifrostBatch(options: UseBifrostBatchOptions = {}) {
 
       return { results, errors };
     },
-    onSuccess: (result) => {
-      if (options.invalidateQueries) {
-        for (const key of options.invalidateQueries) {
-          queryClient.invalidateQueries({ queryKey: ['bifrost', key] });
-        }
-      }
-      options.onSuccess?.(result);
-    },
+    onSuccess: options.onSuccess,
     onError: options.onError,
+    onSettled: (result, error) => {
+      if (!options.invalidateQueries) return;
+      // In strict mode the batch throws once an operation fails, but every
+      // operation before it has already committed server-side. Invalidating
+      // only from onSuccess left the UI showing pre-write data indefinitely
+      // for exactly the rows that did change. Invalidate whenever anything
+      // was written — and only then, so a batch that failed on its first
+      // operation does not churn the cache for nothing.
+      const committed =
+        result !== undefined ||
+        (error instanceof BatchError && error.results.length > 0);
+      if (!committed) return;
+      for (const key of options.invalidateQueries) {
+        queryClient.invalidateQueries({ queryKey: ['bifrost', key] });
+      }
+    },
   });
 
   return {

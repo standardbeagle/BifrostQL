@@ -240,11 +240,26 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
 
     // Single-field save from the content expand panel. Reuses the row update
     // mutation, keyed by the PK snapshotted when the panel opened — immune to
-    // grid reorder. Update_ marks only non-nullable columns required and SETs
-    // only provided fields, so the fresh read + echo carries just the
-    // non-nullable editable columns plus the edited one; untouched nullable
-    // (often wide) columns skip the round trip entirely. (panelPkEq is defined
-    // above, next to the deferred-value fetch it also drives.)
+    // grid reorder. (panelPkEq is defined above, next to the deferred-value
+    // fetch it also drives.)
+    //
+    // Why the echo set is what it is — this is load-bearing, do NOT narrow it to
+    // just the edited column. The server's generated `Update_<table>` INPUT TYPE
+    // emits every NOT NULL column as GraphQL `Type!`, i.e. REQUIRED
+    // (TableSchemaGenerator.GetMutationParameterType takes nullability straight
+    // from the column and does not branch on the action — only Delete_ and the
+    // nested sync input relax it). Omitting a non-nullable column therefore fails
+    // input coercion before the mutation ever runs. The SQL SET clause is indeed
+    // "only provided fields", but the input type is not. So the minimum legal
+    // payload is: every non-nullable editable column + the edited one. Untouched
+    // NULLABLE (often wide) columns are excluded and skip the round trip.
+    //
+    // Known residual: echoing those columns is a read-then-write with no
+    // concurrency token, so a concurrent writer's change to another non-nullable
+    // column can be reverted. The fresh read immediately below narrows the window
+    // to the read→write gap but cannot close it. Closing it properly needs the
+    // server's ConcurrencyMutationTransformer (a declared version column), not a
+    // narrower payload — that would just break saves.
     const editableColumns = useMemo(
         () => table.columns.filter((c: Column) => !c.isReadOnly && !c.isIdentity),
         [table],

@@ -287,7 +287,7 @@ describe('TableList — search, grouping, paging', () => {
     mockSchema(tables);
     render(<TableList />);
 
-    // First page caps at PAGE_SIZE (50); table 050 is on the next page.
+    // First page caps at TABLE_LIST_PAGE_SIZE (50); table 050 is on the next page.
     expect(screen.getByText('Table 000')).toBeInTheDocument();
     expect(screen.queryByText('Table 050')).not.toBeInTheDocument();
     expect(screen.getByText('1–50 of 120')).toBeInTheDocument();

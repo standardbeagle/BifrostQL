@@ -10,7 +10,7 @@ import { useEditorConfig } from './hooks/useEditorConfig';
 import { useMemo, useState, useEffect } from 'react';
 
 /** Tables shown per page. Caps the DOM size so the list stays fast with hundreds of tables. */
-const PAGE_SIZE = 50;
+const TABLE_LIST_PAGE_SIZE = 50;
 
 /**
  * Props for the TableStatsSparkline component.
@@ -210,7 +210,7 @@ function SchemaGroupHeader({ schema, count, collapsed, context, onToggle }: Sche
  * Scales to several hundred tables:
  * - Search filters by label, raw db name, and schema.
  * - Tables group under collapsible schema headers (only when >1 schema exists).
- * - The visible rows (headers + tables) are paged at {@link PAGE_SIZE} so the DOM
+ * - The visible rows (headers + tables) are paged at {@link TABLE_LIST_PAGE_SIZE} so the DOM
  *   stays small regardless of total table count.
  *
  * @component
@@ -288,10 +288,10 @@ export function TableList() {
   // Reset to the first page whenever the result set changes shape.
   useEffect(() => { setPage(0); }, [query]);
 
-  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(rows.length / TABLE_LIST_PAGE_SIZE));
   const clampedPage = Math.min(page, totalPages - 1);
-  const start = clampedPage * PAGE_SIZE;
-  const pageRows = rows.slice(start, start + PAGE_SIZE);
+  const start = clampedPage * TABLE_LIST_PAGE_SIZE;
+  const pageRows = rows.slice(start, start + TABLE_LIST_PAGE_SIZE);
 
   // When a page begins mid-group, label it with a non-toggle context header so
   // the user always knows which schema the leading tables belong to.
@@ -416,7 +416,7 @@ export function TableList() {
             <ChevronLeft className="size-4" />
           </button>
           <span className="text-xs text-muted-foreground tabular-nums">
-            {start + 1}–{Math.min(start + PAGE_SIZE, rows.length)} of {rows.length}
+            {start + 1}–{Math.min(start + TABLE_LIST_PAGE_SIZE, rows.length)} of {rows.length}
           </span>
           <button
             type="button"

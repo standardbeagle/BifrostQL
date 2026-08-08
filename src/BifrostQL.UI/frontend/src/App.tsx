@@ -33,7 +33,12 @@ import './app.css';
 type AppView = 'welcome' | 'quickstart' | 'provider-select' | 'connect' | 'editor' | 'about';
 
 export default function App() {
-  const restored = loadSession();
+  // Lazy initializer, not a render-body call: loadSession() parses, sanitizes
+  // and WRITES BACK to sessionStorage, and returns a fresh object each time.
+  // Running that on every render repeated the write cycle for nothing and
+  // handed useConnectionFlows a new `restored` identity, when the value is
+  // only ever meaningful on mount.
+  const [restored] = useState(loadSession);
   const [currentView, setCurrentView] = useState<AppView>(restored ? 'editor' : 'welcome');
   // View to return to when leaving the About page (opened from welcome or editor).
   const [aboutReturnView, setAboutReturnView] = useState<AppView>('welcome');

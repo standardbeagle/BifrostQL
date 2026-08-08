@@ -12,6 +12,7 @@ import {
   buildUpdateMutation,
   buildDeleteMutation,
 } from '@bifrostql/react';
+import { useWriteFeedback, WriteFeedbackRegion } from '../common/write-feedback';
 
 /** Qualified entity key of the household_members link entity in the overlay. */
 const HOUSEHOLD_MEMBERS_ENTITY_KEY = 'main.household_members';
@@ -135,38 +136,55 @@ export function HouseholdMembers({ householdId }: HouseholdMembersProps) {
   // Per-row relationship edit buffer, keyed by link id.
   const [rowEdits, setRowEdits] = useState<Record<string, string>>({});
 
+  const feedback = useWriteFeedback();
+
   const relationshipFor = (link: LinkRow) =>
     rowEdits[String(link.id)] ?? link.relationship ?? '';
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!canWrite || !householdId || !newMemberId) {
       return;
     }
-    insert.mutate({
-      detail: {
-        household_id: householdId,
-        member_id: newMemberId,
-        relationship: newRelationship || null,
-      },
-    });
+    const added = await feedback.run(
+      () =>
+        insert.mutateAsync({
+          detail: {
+            household_id: householdId,
+            member_id: newMemberId,
+            relationship: newRelationship || null,
+          },
+        }),
+      'Member linked to the household.',
+    );
+    // A rejected insert leaves the selection in place so it can be retried.
+    if (!added) {
+      return;
+    }
     setNewMemberId('');
     setNewRelationship('');
   };
 
-  const handleSaveRow = (link: LinkRow) => {
+  const handleSaveRow = async (link: LinkRow) => {
     if (!canWrite) {
       return;
     }
-    update.mutate({
-      detail: { id: link.id, relationship: relationshipFor(link) },
-    });
+    await feedback.run(
+      () =>
+        update.mutateAsync({
+          detail: { id: link.id, relationship: relationshipFor(link) },
+        }),
+      'Relationship saved.',
+    );
   };
 
-  const handleRemove = (link: LinkRow) => {
+  const handleRemove = async (link: LinkRow) => {
     if (!canWrite) {
       return;
     }
-    remove.mutate({ detail: { id: link.id } });
+    await feedback.run(
+      () => remove.mutateAsync({ detail: { id: link.id } }),
+      'Member link removed.',
+    );
   };
 
   if (metadataLoading) {
@@ -193,6 +211,11 @@ export function HouseholdMembers({ householdId }: HouseholdMembersProps) {
   return (
     <section data-testid="household-members">
       <h3>{linkEntity.label ?? 'Household Members'}</h3>
+
+      <WriteFeedbackRegion
+        feedback={feedback}
+        testId="household-members-write"
+      />
 
       <ul data-testid="household-members-list">
         {links.map((link) => (
@@ -223,14 +246,18 @@ export function HouseholdMembers({ householdId }: HouseholdMembersProps) {
                 <button
                   type="button"
                   data-testid={`household-member-save-${link.id}`}
-                  onClick={() => handleSaveRow(link)}
+                  onClick={() => {
+                    void handleSaveRow(link);
+                  }}
                 >
                   Save
                 </button>
                 <button
                   type="button"
                   data-testid={`household-member-remove-${link.id}`}
-                  onClick={() => handleRemove(link)}
+                  onClick={() => {
+                    void handleRemove(link);
+                  }}
                 >
                   Remove
                 </button>
@@ -263,7 +290,12 @@ export function HouseholdMembers({ householdId }: HouseholdMembersProps) {
             enumOptions={RELATIONSHIP_ROLES}
             onChange={(value) => setNewRelationship(value)}
           />
-          <button type="button" onClick={handleAdd}>
+          <button
+            type="button"
+            onClick={() => {
+              void handleAdd();
+            }}
+          >
             Add member
           </button>
         </div>

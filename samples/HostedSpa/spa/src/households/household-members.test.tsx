@@ -84,6 +84,7 @@ function createFetchMock(
   metadata: AppMetadata = sampleMetadata,
   links: Array<Record<string, unknown>> = linkRows,
   members: Array<Record<string, unknown>> = memberRows,
+  options: { mutationFails?: boolean } = {},
 ) {
   graphqlRequests = [];
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -124,6 +125,16 @@ function createFetchMock(
     if (body) {
       graphqlRequests.push(body);
       if (/\bmutation\b/.test(body.query)) {
+        if (options.mutationFails) {
+          // A GraphQL-level rejection — how a policy denial arrives.
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            json: () =>
+              Promise.resolve({ errors: [{ message: 'link write denied' }] }),
+          } as Response);
+        }
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -273,6 +284,62 @@ describe('HouseholdMembers', () => {
         .detail;
       expect(detail.id).toBe(12);
     });
+  });
+
+  it('reports a rejected add and keeps the operator selection', async () => {
+    // Arrange: the server rejects the link insert.
+    const user = userEvent.setup();
+    globalThis.fetch = createFetchMock(
+      identityWith(['main.members.write']),
+      sampleMetadata,
+      linkRows,
+      memberRows,
+      { mutationFails: true },
+    );
+    renderControls(4);
+    await waitFor(() =>
+      expect(screen.getByTestId('household-members')).toBeInTheDocument(),
+    );
+
+    // Act
+    await user.selectOptions(screen.getByLabelText('member_id'), '9');
+    await user.selectOptions(screen.getByLabelText('relationship'), 'child');
+    await user.click(screen.getByRole('button', { name: 'Add member' }));
+
+    // Assert: the rejection is visible and the selection survives for a retry.
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('household-members-write-error'),
+      ).toHaveTextContent('link write denied'),
+    );
+    expect(screen.getByLabelText('member_id')).toHaveValue('9');
+    expect(screen.getByLabelText('relationship')).toHaveValue('child');
+  });
+
+  it('reports a rejected remove instead of looking like it worked', async () => {
+    // Arrange: the server rejects the link delete.
+    const user = userEvent.setup();
+    globalThis.fetch = createFetchMock(
+      identityWith(['main.members.write']),
+      sampleMetadata,
+      linkRows,
+      memberRows,
+      { mutationFails: true },
+    );
+    renderControls(4);
+    await waitFor(() =>
+      expect(screen.getByTestId('household-members')).toBeInTheDocument(),
+    );
+
+    // Act
+    await user.click(screen.getByTestId('household-member-remove-12'));
+
+    // Assert
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('household-members-write-error'),
+      ).toHaveTextContent('link write denied'),
+    );
   });
 
   it('hides add / edit / remove controls for a read-only session', async () => {

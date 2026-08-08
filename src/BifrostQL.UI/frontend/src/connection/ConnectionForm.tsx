@@ -26,7 +26,7 @@ const DEFAULT_WP: WpConfig = { enabled: false, wpPath: 'wp', wpRoot: '' };
  * parsed by the shared {@link parseAdoConnectionString} so this and the App-side
  * bridge parse stay in lockstep.
  */
-function parseConnectionString(provider: Provider, connectionString: string): ConnectionRequest {
+function buildConnectionRequestFromRawString(provider: Provider, connectionString: string): ConnectionRequest {
   const { host, port, database, username, ssl } = parseAdoConnectionString(connectionString, provider);
 
   const name = provider === 'sqlite'
@@ -102,7 +102,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
     try {
       const connName = useRawString ? `${providerInfo.name} connection` : adapter.buildConnectionName(formData);
       const request = useRawString && provider === 'sqlite'
-        ? { ...parseConnectionString(provider, rawConnectionString), name: connName }
+        ? { ...buildConnectionRequestFromRawString(provider, rawConnectionString), name: connName }
         : adapter.buildConnectionRequest(formData, connName, sshConfig, wpConfig);
       const success = await onTestConnection(request);
       setTestResult({
@@ -143,7 +143,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
 
     const connName = useRawString ? `${providerInfo.name} connection` : adapter.buildConnectionName(formData);
     const request = useRawString && provider === 'sqlite'
-      ? { ...parseConnectionString(provider, rawConnectionString), name: connName }
+      ? { ...buildConnectionRequestFromRawString(provider, rawConnectionString), name: connName }
       : adapter.buildConnectionRequest(formData, connName, sshConfig, wpConfig);
     onConnect(request);
   }, [adapter, provider, formData, useRawString, rawConnectionString, providerInfo, onConnect, sshConfig, wpConfig]);

@@ -98,32 +98,29 @@ namespace BifrostQL.Core.Resolvers
         }
 
         /// <summary>
-        /// Resolves the combined tenant/soft-delete/row-scope-policy filter for
-        /// this table via the same <see cref="IFilterTransformers"/> pipeline
-        /// <see cref="QueryTransformerService"/> uses for ordinary reads,
-        /// and enforces any column-level read-deny for the file column itself.
-        /// Returns null (no extra filtering) when the pipeline isn't registered,
-        /// matching how the rest of the read path degrades when the service is
-        /// absent (e.g. in lightweight test hosts).
+        /// Applies the shared read chain for this table: the combined
+        /// tenant/soft-delete/row-scope-policy filter, the column read guard for the
+        /// file column being returned, and the column FILTER guard for the key columns
+        /// this resolver puts in its own WHERE clause.
+        ///
+        /// The key-column assertion is why this goes through <see cref="TableReadChain"/>
+        /// rather than calling the guards here: this was the fourth independent copy of
+        /// the read chain in the codebase, and — like the other three — it had drifted,
+        /// running the read guard but never <see cref="IColumnFilterGuard"/> on the
+        /// columns it filters by. Guard decisions belong to the guards, in one place
+        /// (protocol-adapter-security invariant 4 / invariant 10's single funnel).
         /// </summary>
         private static TableFilter? GetRowScopeFilter(
             IBifrostFieldContext context, IDbTable table, ColumnDto column, IDbModel model)
         {
-            var filterTransformers = context.RequestServices?.GetService<IFilterTransformers>();
-            if (filterTransformers == null)
-                return null;
+            var chain = TableReadChain.For(
+                context.RequestServices, model, table, context.UserContext,
+                ReadProjection.Client, QueryType.Single);
 
-            var transformContext = new QueryTransformContext
-            {
-                Model = model,
-                UserContext = context.UserContext,
-                QueryType = QueryType.Single,
-            };
+            chain.AssertReadable(new[] { column.DbName });
+            chain.AssertPredicateColumns(table.KeyColumns.Select(k => k.DbName));
 
-            foreach (var guard in filterTransformers.OfType<IColumnReadGuard>())
-                guard.AssertColumnsReadable(table, new[] { column.DbName }, transformContext);
-
-            return filterTransformers.GetCombinedFilter(table, transformContext);
+            return chain.RowFilter;
         }
 
         private static async Task<string?> GetFileMetadataFromDatabase(

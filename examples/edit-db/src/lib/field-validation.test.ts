@@ -82,3 +82,33 @@ describe('validateFieldValue — numeric bounds', () => {
         expect(validateFieldValue(c, '5', false)).toBeUndefined();
     });
 });
+
+describe('validateFieldValue — numeric well-formedness', () => {
+    // Without these the form accepted the value, coerceNumericValue then threw
+    // during Save, and that throw happened BEFORE mutateAsync so nothing was
+    // rendered: Save appeared to do nothing at all.
+    it('rejects a non-integer value in an Int column', () => {
+        const c = col({ paramType: 'Int', label: 'Count' });
+        expect(validateFieldValue(c, '1.5', false)).toBe('Count must be a whole number');
+        expect(validateFieldValue(c, 1.5, false)).toBe('Count must be a whole number');
+        expect(validateFieldValue(c, '2', false)).toBeUndefined();
+        expect(validateFieldValue(c, '-2', false)).toBeUndefined();
+        expect(validateFieldValue(c, '2.0', false)).toBeUndefined();
+    });
+
+    it('rejects text that is not a number at all in a numeric column', () => {
+        const c = col({ paramType: 'Float', label: 'Score' });
+        expect(validateFieldValue(c, 'abc', false)).toBe('Score must be a number');
+        expect(validateFieldValue(c, '1.25', false)).toBeUndefined();
+    });
+
+    it('allows a Float column to hold a fractional value', () => {
+        const c = col({ paramType: 'Float', label: 'Score' });
+        expect(validateFieldValue(c, '1.5', false)).toBeUndefined();
+    });
+
+    it('still enforces min/max after the well-formedness check', () => {
+        const c = col({ paramType: 'Int', min: 1, max: 10, label: 'Count' });
+        expect(validateFieldValue(c, '0', false)).toContain('at least 1');
+    });
+});

@@ -14,8 +14,19 @@ import type { Column } from '../types/schema';
 
 const numericParamTypes = new Set(['Int', 'Int!', 'Float', 'Float!', 'Decimal', 'Decimal!']);
 
+const integerParamTypes = new Set(['Int', 'Int!']);
+
 function isNumericColumn(column: Column): boolean {
     return numericParamTypes.has(column.paramType);
+}
+
+/**
+ * Int columns reject a fractional value. Mirrors coerceNumericValue's `Int` branch
+ * in useTableMutation, so the form refuses what the write path would refuse —
+ * without that parity the value passes validation and dies silently at Save.
+ */
+function isIntegerColumn(column: Column): boolean {
+    return integerParamTypes.has(column.paramType);
 }
 
 /**
@@ -102,13 +113,22 @@ export function validateFieldValue(
 
     if (isNumericColumn(column)) {
         const numValue = Number(value);
-        if (!Number.isNaN(numValue)) {
-            if (column.min !== undefined && column.min !== null && numValue < column.min) {
-                return `${label} must be at least ${column.min}`;
-            }
-            if (column.max !== undefined && column.max !== null && numValue > column.max) {
-                return `${label} must be at most ${column.max}`;
-            }
+        // Well-formedness first. Previously an ill-formed number just skipped the
+        // bound checks and reported nothing, so the value reached the write path
+        // where coerceNumericValue threw — and that throw happens before the
+        // mutation is ever handed to react-query, so Save silently did nothing.
+        // Catching it here turns it into ordinary per-field feedback.
+        if (!Number.isFinite(numValue)) {
+            return `${label} must be a number`;
+        }
+        if (isIntegerColumn(column) && !Number.isInteger(numValue)) {
+            return `${label} must be a whole number`;
+        }
+        if (column.min !== undefined && column.min !== null && numValue < column.min) {
+            return `${label} must be at least ${column.min}`;
+        }
+        if (column.max !== undefined && column.max !== null && numValue > column.max) {
+            return `${label} must be at most ${column.max}`;
         }
     }
 

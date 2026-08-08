@@ -6,6 +6,7 @@ using BifrostQL.Server.Auth;
 using BifrostQL.Sqlite;
 using FluentAssertions;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
@@ -45,11 +46,16 @@ namespace BifrostQL.Mcp.Test
         // Bearer validation is the host's job (slice C). The adapter reads no claims; it
         // hands the whole principal to the factory. A valid token → tenant-A principal;
         // the unmapped-issuer token → a principal carrying an iss no mapper covers.
+        // Revocation is modelled the way a real host models it: the validator stops
+        // resolving the token. Nothing about the SESSION changes, which is exactly the
+        // condition the per-request re-validation exists to catch.
+        private static readonly HashSet<string> RevokedTokens = new(StringComparer.Ordinal);
+
         private static readonly McpAuthOptions Auth = new()
         {
             Mode = McpAuthMode.Bearer,
             EnableWrites = false,
-            ValidateBearerToken = token => token switch
+            ValidateBearerToken = token => RevokedTokens.Contains(token) ? null : token switch
             {
                 ValidToken => TenantPrincipal("user-a", "tenant-a"),
                 UnmappedIssuerToken => UnmappedIssuerPrincipal(),
@@ -145,6 +151,78 @@ namespace BifrostQL.Mcp.Test
             // rejected — not degraded to an empty/anonymous success.
             error.Should().Contain("Authentication failed");
             error.Should().NotContain("unmapped.example");
+        }
+
+        // ---- identity is re-established per REQUEST, not frozen at initialize ----
+
+        /// <summary>
+        /// Identity used to be resolved once at the session's initialize request and
+        /// frozen: a token that expired or was revoked kept full access until the client
+        /// disconnected. Every existing HTTP test opened a session and made ONE call, so
+        /// none of them could manifest that — this one makes a call, revokes the token,
+        /// and calls again on the SAME session.
+        /// </summary>
+        [Fact]
+        public async Task Http_TokenRevokedAfterInitialize_NextRequestOnTheSameSessionFailsClosed()
+        {
+            var client = await ConnectHttpAsync($"Bearer {ValidToken}");
+            try
+            {
+                var before = await client.CallToolAsync("bifrost_query",
+                    new Dictionary<string, object?> { ["table"] = "orders", ["detail"] = "full" });
+                before.IsError.Should().NotBeTrue(
+                    before.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text);
+
+                RevokedTokens.Add(ValidToken);
+
+                var after = await client.CallToolAsync("bifrost_query",
+                    new Dictionary<string, object?> { ["table"] = "orders", ["detail"] = "full" });
+                after.IsError.Should().BeTrue(
+                    "a revoked credential must lose the session's access at the next request, " +
+                    "not at disconnect");
+                after.Content.OfType<TextContentBlock>().Single().Text
+                    .Should().Contain("Authentication failed");
+            }
+            finally
+            {
+                RevokedTokens.Remove(ValidToken);
+                await client.DisposeAsync();
+            }
+        }
+
+        /// <summary>
+        /// The session id alone used to be sufficient after initialize — no Authorization
+        /// header was ever looked at again. The session is now bound to the credential it
+        /// was opened with, so a request that drops or swaps the credential fails closed.
+        /// </summary>
+        [Theory]
+        [InlineData(null)]
+        [InlineData("Bearer some-other-token")]
+        public async Task SessionBoundToCredential_RequestWithMissingOrDifferentCredential_FailsClosed(
+            string? authorization)
+        {
+            var httpContext = new DefaultHttpContext { RequestServices = _host.Services };
+            if (authorization is not null)
+                httpContext.Request.Headers.Authorization = authorization;
+            var accessor = new HttpContextAccessor { HttpContext = httpContext };
+            var identity = new BifrostMcpHttpExtensions.McpHttpSessionIdentity(Auth, accessor, ValidToken);
+
+            var act = () => identity.RevalidateAsync(CancellationToken.None).AsTask();
+
+            await act.Should().ThrowAsync<McpIdentityException>();
+        }
+
+        [Fact]
+        public async Task SessionBoundToCredential_SameCredential_ProjectsTheCallersContext()
+        {
+            var httpContext = new DefaultHttpContext { RequestServices = _host.Services };
+            httpContext.Request.Headers.Authorization = $"Bearer {ValidToken}";
+            var accessor = new HttpContextAccessor { HttpContext = httpContext };
+            var identity = new BifrostMcpHttpExtensions.McpHttpSessionIdentity(Auth, accessor, ValidToken);
+
+            await identity.RevalidateAsync(CancellationToken.None);
+
+            identity.Current()["tenant_id"].Should().Be("tenant-a");
         }
 
         // ---- stdio transport (same matrix through the per-call provider) ------

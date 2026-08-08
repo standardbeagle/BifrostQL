@@ -163,6 +163,11 @@ namespace BifrostQL.Mcp
         /// is an EMPTY context, so tenant-filtered tables fail closed exactly like
         /// an unauthenticated GraphQL request (stdio dev mode has no per-request
         /// principal).
+        /// <paramref name="beforeRequestAsync"/> is the per-request identity seam: when
+        /// supplied it runs at the start of EVERY handler (inside the error funnel) so a
+        /// transport that can re-derive identity per request — the HTTP one — does so
+        /// before any handler reads it, and can fail the request closed. A transport with
+        /// one caller for the process (stdio) supplies none.
         /// </summary>
         public static McpServerOptions CreateServerOptions(
             IQueryIntentExecutor executor,
@@ -172,7 +177,8 @@ namespace BifrostQL.Mcp
             bool enableWrites = false,
             McpToolPolicyOptions? toolPolicy = null,
             ILogger? logger = null,
-            DeclarativeToolDocument? declarativeTools = null)
+            DeclarativeToolDocument? declarativeTools = null,
+            Func<CancellationToken, ValueTask>? beforeRequestAsync = null)
         {
             if (executor is null) throw new ArgumentNullException(nameof(executor));
             // Reject name collisions/duplicates before publishing any surface so a
@@ -227,6 +233,7 @@ namespace BifrostQL.Mcp
                 {
                     ListToolsHandler = (_, ct) => MapProtocolConditionsAsync(async () =>
                     {
+                        if (beforeRequestAsync is not null) await beforeRequestAsync(ct);
                         var tools = await BuildListedToolsAsync(executor, endpoint, declaredTools, declarativeTools, writesActive, ct);
                         return new ListToolsResult
                         {
@@ -236,11 +243,18 @@ namespace BifrostQL.Mcp
                         };
                     }),
                     CallToolHandler = (request, ct) => CallToolAsync(
-                        executor, mutationExecutor, writesActive, gate, endpoint, contextProvider, declarativeTools, request.Params, ct),
-                    ListResourcesHandler = (_, ct) => MapProtocolConditionsAsync(
-                        () => ListResourcesAsync(executor, endpoint, contextProvider, ct)),
-                    ReadResourceHandler = (request, ct) => MapProtocolConditionsAsync(
-                        () => ReadResourceAsync(executor, endpoint, contextProvider, request.Params, ct)),
+                        executor, mutationExecutor, writesActive, gate, endpoint, contextProvider, declarativeTools,
+                        beforeRequestAsync, request.Params, ct),
+                    ListResourcesHandler = (_, ct) => MapProtocolConditionsAsync(async () =>
+                    {
+                        if (beforeRequestAsync is not null) await beforeRequestAsync(ct);
+                        return await ListResourcesAsync(executor, endpoint, contextProvider, ct);
+                    }),
+                    ReadResourceHandler = (request, ct) => MapProtocolConditionsAsync(async () =>
+                    {
+                        if (beforeRequestAsync is not null) await beforeRequestAsync(ct);
+                        return await ReadResourceAsync(executor, endpoint, contextProvider, request.Params, ct);
+                    }),
                 },
             };
         }
@@ -399,13 +413,14 @@ namespace BifrostQL.Mcp
             IQueryIntentExecutor executor, IMutationIntentExecutor? mutationExecutor, bool writesActive,
             McpToolAccessGate gate, string? endpoint, Func<IDictionary<string, object?>> userContextProvider,
             DeclarativeToolDocument? declarativeTools,
+            Func<CancellationToken, ValueTask>? beforeRequestAsync,
             CallToolRequestParams? parameters, CancellationToken cancellationToken)
         {
             try
             {
                 return await DispatchToolAsync(
                     executor, mutationExecutor, writesActive, gate, endpoint, userContextProvider,
-                    declarativeTools, parameters, cancellationToken);
+                    declarativeTools, beforeRequestAsync, parameters, cancellationToken);
             }
             catch (Exception e) when (IsMappedCondition(e))
             {
@@ -441,7 +456,8 @@ namespace BifrostQL.Mcp
         }
 
         private static bool IsMappedCondition(Exception e) =>
-            e is UnmappedOidcIssuerException or ToolPromptException or BifrostExecutionError;
+            e is UnmappedOidcIssuerException or ToolPromptException or BifrostExecutionError
+                or McpIdentityException;
 
         /// <summary>
         /// Maps a funnelled condition to its client-facing message. An unmapped OIDC issuer
@@ -456,6 +472,7 @@ namespace BifrostQL.Mcp
             IQueryIntentExecutor executor, IMutationIntentExecutor? mutationExecutor, bool writesActive,
             McpToolAccessGate gate, string? endpoint, Func<IDictionary<string, object?>> userContextProvider,
             DeclarativeToolDocument? declarativeTools,
+            Func<CancellationToken, ValueTask>? beforeRequestAsync,
             CallToolRequestParams? parameters, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -471,6 +488,12 @@ namespace BifrostQL.Mcp
             // reaching it first ran a live model load.
             if (!writesActive && WriteTools.IsWriteTool(parameters.Name))
                 return DisabledWriteSurfaceResult(parameters.Name);
+
+            // Re-establish identity for THIS request before anything reads it. Placed after
+            // the write gate (a static deployment posture, which must stay the first check)
+            // and before the role gate, which needs the caller's roles.
+            if (beforeRequestAsync is not null)
+                await beforeRequestAsync(cancellationToken);
 
             // Fail-closed tool gating: refuse a role-gated tool the caller may not see BEFORE building any
             // intent, so a hidden tool cannot be invoked by name even though it was excluded from the list.

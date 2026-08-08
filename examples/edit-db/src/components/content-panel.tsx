@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { useToast } from '../hooks/useToast';
 import { detectContentKind, type ContentKind } from '@/lib/content-detect';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -93,6 +94,7 @@ export function ContentPanel({
     canNavigatePrev,
     canNavigateNext,
 }: ContentPanelProps) {
+    const { toast } = useToast();
     const [fullScreen, setFullScreen] = useState(false);
     const [editing, setEditing] = useState(false);
     const [editValue, setEditValue] = useState('');
@@ -131,11 +133,28 @@ export function ContentPanel({
         return () => window.removeEventListener('keydown', handler);
     }, [target, editing, canNavigatePrev, canNavigateNext, onNavigate]);
 
-    const handleCopy = useCallback(() => {
-        navigator.clipboard.writeText(value);
+    // Tracks the pending "Copied" reset so it can be cancelled on unmount — an
+    // uncleared timer fires after the panel closes and sets state on a gone
+    // component. Also lets a second copy restart the window instead of inheriting
+    // the first one's remaining time.
+    const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    useEffect(() => () => { if (copiedTimer.current) clearTimeout(copiedTimer.current); }, []);
+
+    const handleCopy = useCallback(async () => {
+        // writeText is async and REJECTS when the clipboard is unavailable or
+        // permission is denied (insecure origin, unfocused document). Flipping the
+        // label to "Copied" unconditionally told the user their data was on the
+        // clipboard when it was not, and left the rejection unhandled.
+        try {
+            await navigator.clipboard.writeText(value);
+        } catch (e) {
+            toast(`Copy failed: ${e instanceof Error ? e.message : String(e)}`, 'error');
+            return;
+        }
         setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-    }, [value]);
+        if (copiedTimer.current) clearTimeout(copiedTimer.current);
+        copiedTimer.current = setTimeout(() => setCopied(false), 1500);
+    }, [value, toast]);
 
     const handleStartEdit = useCallback(() => {
         setEditValue(formatted);

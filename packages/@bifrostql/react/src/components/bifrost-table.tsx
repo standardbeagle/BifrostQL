@@ -894,7 +894,7 @@ export function BifrostTable<T = Record<string, unknown>>(
   } = props;
 
   const resolvedTheme = customTheme ?? getTheme(themeName);
-  const theme = applyOverrides(resolvedTheme, themeOverrides);
+  const theme = mergeThemeOverrides(resolvedTheme, themeOverrides);
 
   const table = useBifrostTable<T>({
     query,
@@ -1110,7 +1110,7 @@ export function BifrostTable<T = Record<string, unknown>>(
   );
 }
 
-function applyOverrides(
+function mergeThemeOverrides(
   theme: TableTheme,
   overrides: Partial<TableTheme> | undefined,
 ): TableTheme {

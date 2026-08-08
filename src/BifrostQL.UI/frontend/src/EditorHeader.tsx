@@ -111,7 +111,7 @@ export function EditorHeader({
             color: 'inherit',
           }}
         >
-          {transportMode === 'binary' ? 'Binary' : 'GraphQL'}
+          {transportMode === 'binary' ? 'Binary' : 'HTTP'}
         </button>
       </div>
       {sqlBridgeAvailable && (

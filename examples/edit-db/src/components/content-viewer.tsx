@@ -125,27 +125,23 @@ export function ContentViewer({ value, dbType, onExpand, deferred }: ContentView
         );
     }
 
+    // The expand affordance is a SIBLING of the hover-card trigger, not a child.
+    // It used to be a <span role="button" tabIndex={0}> nested inside the <button>
+    // that `HoverCardTrigger asChild` renders: interactive content inside a button
+    // is invalid HTML, leaves the inner control unreliably exposed to assistive
+    // tech, and needed a hand-rolled key handler that covered Enter but not Space
+    // — which role="button" requires. A real sibling <button> gets both keys, and
+    // correct semantics, from the platform.
     return (
+        <span className="inline-flex items-center gap-1.5 max-w-full">
         <HoverCard openDelay={300} closeDelay={200}>
             <HoverCardTrigger asChild>
                 <button
                     type="button"
-                    className="inline-flex items-center gap-1.5 text-left hover:text-primary transition-colors max-w-full"
+                    className="inline-flex items-center gap-1.5 text-left hover:text-primary transition-colors min-w-0"
                 >
                     <Icon className="size-3 text-muted-foreground shrink-0" />
                     <span className="font-mono text-xs truncate">{truncated}</span>
-                    {onExpand && (
-                        <span
-                            role="button"
-                            tabIndex={0}
-                            className="shrink-0 opacity-40 hover:opacity-100 transition-opacity"
-                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); onExpand(); }}
-                            onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); onExpand(); } }}
-                            aria-label="Expand content"
-                        >
-                            <Expand className="size-3" />
-                        </span>
-                    )}
                 </button>
             </HoverCardTrigger>
             <HoverCardContent
@@ -163,5 +159,16 @@ export function ContentViewer({ value, dbType, onExpand, deferred }: ContentView
                 </pre>
             </HoverCardContent>
         </HoverCard>
+        {onExpand && (
+            <button
+                type="button"
+                className="shrink-0 opacity-40 hover:opacity-100 transition-opacity"
+                onClick={(e) => { e.stopPropagation(); onExpand(); }}
+                aria-label="Expand content"
+            >
+                <Expand className="size-3" />
+            </button>
+        )}
+        </span>
     );
 }

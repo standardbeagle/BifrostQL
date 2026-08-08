@@ -103,7 +103,7 @@ export function useConnectionFlows({ restored, enterEditor }: UseConnectionFlows
   // connection-string restore path used to POST the (potentially password-
   // bearing) string to /api/connection/set, but that endpoint was deleted
   // with task XGSUbdBiIzla so no password ever crosses HTTP. Non-vault
-  // sessions still render their editor view from localStorage, but the
+  // sessions still render their editor view from the sessionStorage session, but the
   // server-side schema cache will rebind on the next explicit connect via
   // the credential prompt flow. Any initial command-line connection string
   // (bifrostui "<connection>") is bound at startup by Program.cs, so the

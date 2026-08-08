@@ -18,7 +18,7 @@ import {
   requestCredential,
   saveVaultEntry,
   CredentialCancelledError,
-  type ConnectionInfo as BridgeConnectionInfo,
+  type BridgeConnectionInfo,
 } from '../lib/credential-prompt';
 import { toUserFacingError } from '../lib/user-error';
 import { parseQuickstartStream } from '../lib/quickstart-stream';

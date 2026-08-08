@@ -85,7 +85,7 @@ describe("credential-prompt", () => {
 
     // The wrapper must route through sendBridgeRequest and produce a
     // wire envelope with kind === "request-credential" carrying the full
-    // ConnectionInfo payload. If the wrapper mangles the payload shape the
+    // BridgeConnectionInfo payload. If the wrapper mangles the payload shape the
     // host handler will reject on missing fields, so the contract is
     // load-bearing and asserted verbatim here.
     const envelope = lastSentEnvelope(fake);
@@ -169,7 +169,7 @@ describe("credential-prompt", () => {
     ).rejects.toThrow(/bridge/i);
   });
 
-  it("passes all structured ConnectionInfo fields through to the wire payload", async () => {
+  it("passes all structured BridgeConnectionInfo fields through to the wire payload", async () => {
     // Smoke test for the payload shape: we want every optional field the
     // C# host reads (host/port/database/username/ssl) to be preserved
     // verbatim. A silent drop here would leave the vault entry with

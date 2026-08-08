@@ -22,7 +22,7 @@
  *      alternative (`bifrostui vault add`) so they aren't left stranded in
  *      a browser tab wondering why nothing happens.
  *
- * SECURITY: no password ever touches this file. The ConnectionInfo carries
+ * SECURITY: no password ever touches this file. The BridgeConnectionInfo carries
  * only non-sensitive metadata (host/port/db/username/ssl). Password auth
  * opens an isolated child window that collects the password and writes the
  * vault entry server-side; passwordless auth stores metadata directly.
@@ -39,7 +39,7 @@ import {
  * password is deliberately NOT part of this shape — it's collected by the
  * isolated child window and never crosses this module.
  */
-export interface ConnectionInfo {
+export interface BridgeConnectionInfo {
   /** The vault entry name under which the credential will be persisted. */
   vaultName: string;
   /** Database provider: "postgres", "mysql", "sqlserver", "sqlite". */
@@ -116,7 +116,7 @@ const CANCEL_MESSAGE_PATTERN = /cancel/i;
  *   rather than via `bifrostui` (e.g. during `pnpm dev`).
  */
 export async function requestCredential(
-  info: ConnectionInfo
+  info: BridgeConnectionInfo
 ): Promise<CredentialPromptResult> {
   if (!isBridgeAvailable()) {
     throw new Error(
@@ -143,7 +143,7 @@ export async function requestCredential(
 }
 
 export async function saveVaultEntry(
-  info: ConnectionInfo
+  info: BridgeConnectionInfo
 ): Promise<CredentialPromptResult> {
   if (!isBridgeAvailable()) {
     throw new Error(

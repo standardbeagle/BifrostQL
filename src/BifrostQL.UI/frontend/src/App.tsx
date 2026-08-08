@@ -125,7 +125,12 @@ export default function App() {
   // The health check runs outside the render flow, so it reads the live view
   // through a ref rather than closing over a stale `currentView`.
   const currentViewRef = useRef(currentView);
-  currentViewRef.current = currentView;
+  // Committed in an effect rather than assigned during render: a render can be
+  // discarded or replayed under concurrent rendering, and mutating a ref on the
+  // way through is a side effect on state nobody rolls back.
+  useEffect(() => {
+    currentViewRef.current = currentView;
+  }, [currentView]);
 
   // The server lost its database binding (restart). Nothing the client holds can
   // restore it — the session in sessionStorage only records *which* database was

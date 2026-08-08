@@ -137,7 +137,12 @@ export function SqlConsole({ provider }: SqlConsoleProps) {
       setRunning(false);
     }
   }, [running, activeProvider]);
-  runRef.current = run;
+  // Committed in an effect rather than assigned during render: a render can be
+  // thrown away or replayed under concurrent rendering, and mutating a ref on
+  // the way through makes that a side effect on state nobody rolled back.
+  useEffect(() => {
+    runRef.current = run;
+  }, [run]);
 
   const extensions = useMemo(() => {
     const language = schema

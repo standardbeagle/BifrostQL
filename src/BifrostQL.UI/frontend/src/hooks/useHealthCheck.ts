@@ -32,7 +32,12 @@ export function useHealthCheck(
   // Held in a ref so a new callback identity each render doesn't restart the
   // interval (and reset the fail/unbound counters with it).
   const onServerUnboundRef = useRef(onServerUnbound);
-  onServerUnboundRef.current = onServerUnbound;
+  // Committed in an effect rather than assigned during render: a render can be
+  // discarded or replayed under concurrent rendering, and mutating a ref on the
+  // way through is a side effect on state nobody rolls back.
+  useEffect(() => {
+    onServerUnboundRef.current = onServerUnbound;
+  }, [onServerUnbound]);
 
   useEffect(() => {
     let failCount = 0;

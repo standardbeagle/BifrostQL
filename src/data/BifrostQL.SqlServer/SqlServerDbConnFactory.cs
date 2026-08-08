@@ -16,7 +16,7 @@ public sealed class SqlServerDbConnFactory : IDbConnFactory
     /// <summary>
     /// Creates a new SQL Server connection factory.
     /// </summary>
-    /// <param name="connectionString">SQL Server connection string (e.g., "Server=localhost;Database=mydb;User Id=sa;Password=xxx;TrustServerCertificate=True").</param>
+    /// <param name="connectionString">SQL Server connection string (e.g., "Server=localhost;Database=mydb;User Id=sa;Password=xxx"). Add TrustServerCertificate=True only to accept a certificate the machine cannot validate; it disables certificate validation, so an intercepted connection still succeeds.</param>
     public SqlServerDbConnFactory(string connectionString)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);

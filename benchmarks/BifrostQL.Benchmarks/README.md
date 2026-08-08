@@ -62,6 +62,9 @@ dotnet run --configuration Release -- --filter BifrostMessageBenchmarks
 To run benchmarks against SQL Server, PostgreSQL, or MySQL, set the following environment variables:
 
 ```bash
+# TrustServerCertificate=True suits a local benchmark container with a
+# self-signed certificate. It disables certificate validation — never carry it
+# into a connection string that leaves the machine.
 export BIFROST_BENCH_SQLSERVER="Server=localhost;Database=bifrost_bench;User Id=sa;Password=...;TrustServerCertificate=True"
 export BIFROST_BENCH_POSTGRES="Host=localhost;Database=bifrost_bench;Username=postgres;Password=..."
 export BIFROST_BENCH_MYSQL="Server=localhost;Database=bifrost_bench;Uid=root;Pwd=..."

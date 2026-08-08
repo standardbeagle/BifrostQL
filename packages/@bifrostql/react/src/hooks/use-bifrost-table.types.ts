@@ -429,6 +429,11 @@ export interface AriaCellProps {
   'aria-colindex': number;
   'aria-readonly'?: boolean;
   tabIndex?: number;
+  /**
+   * Ref callback registering the cell's DOM node so keyboard navigation can
+   * move real focus to it. Spread onto the element along with the other props.
+   */
+  ref?: (element: HTMLElement | null) => void;
 }
 
 export interface AriaHeaderCellProps {
@@ -436,6 +441,8 @@ export interface AriaHeaderCellProps {
   'aria-colindex': number;
   'aria-sort'?: 'ascending' | 'descending' | 'none';
   tabIndex?: number;
+  /** Ref callback registering the header cell's DOM node for focus movement. */
+  ref?: (element: HTMLElement | null) => void;
 }
 
 export interface AriaLiveRegionProps {
@@ -457,12 +464,26 @@ export interface KeyboardNavigationState {
     preventDefault: () => void;
     shiftKey?: boolean;
   }) => void;
+  /**
+   * Registers (or, with `null`, unregisters) the DOM node backing a grid
+   * coordinate. Use the header row index `-1` for header cells. Callers
+   * spreading {@link AriaCellProps} get this wiring for free via its `ref`.
+   */
+  registerCell: (
+    rowIndex: number,
+    colIndex: number,
+    element: HTMLElement | null,
+  ) => void;
 }
 
 export interface AccessibilityState {
   getTableProps: (label?: string) => AriaTableProps;
   getRowProps: (rowIndex: number, rowKey?: string) => AriaRowProps;
-  getCellProps: (colIndex: number, field?: string) => AriaCellProps;
+  getCellProps: (
+    rowIndex: number,
+    colIndex: number,
+    field?: string,
+  ) => AriaCellProps;
   getHeaderCellProps: (colIndex: number, field?: string) => AriaHeaderCellProps;
   getLiveRegionProps: () => AriaLiveRegionProps;
   announcement: string;

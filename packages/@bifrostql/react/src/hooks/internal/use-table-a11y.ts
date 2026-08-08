@@ -56,6 +56,34 @@ export function useTableA11y<T = Record<string, unknown>>({
   const prevFilterCountRef = useRef(activeFilterCount);
   const prevDataLenRef = useRef(0);
 
+  // Registry of the live DOM node behind each grid coordinate. Keyboard
+  // navigation is only real once DOM focus follows the focused cell — moving
+  // `focusedCell` alone changes tabIndex but announces nothing to a screen
+  // reader and leaves the caret where it was.
+  const cellNodesRef = useRef<Map<string, HTMLElement>>(new Map());
+
+  const registerCell = useCallback(
+    (rowIndex: number, colIndex: number, element: HTMLElement | null) => {
+      const key = cellKey(rowIndex, colIndex);
+      if (element) {
+        cellNodesRef.current.set(key, element);
+      } else {
+        cellNodesRef.current.delete(key);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!focusedCell) return;
+    const element = cellNodesRef.current.get(
+      cellKey(focusedCell.rowIndex, focusedCell.colIndex),
+    );
+    if (element && element !== document.activeElement) {
+      element.focus();
+    }
+  }, [focusedCell]);
+
   // Screen reader announcements for data changes
   useEffect(() => {
     const dataLen = data.length;
@@ -148,16 +176,23 @@ export function useTableA11y<T = Record<string, unknown>>({
   );
 
   const getCellProps = useCallback(
-    (colIndex: number, field?: string): AriaCellProps => {
+    (rowIndex: number, colIndex: number, field?: string): AriaCellProps => {
       const isReadOnly = field ? !editableColumnSet.has(field) : true;
+      // Both coordinates must match: keying the roving tabindex on the column
+      // alone gave every row's cell in that column a tabIndex of 0, turning a
+      // 1000-row grid into 1000 tab stops.
+      const isFocused =
+        focusedCell?.rowIndex === rowIndex && focusedCell?.colIndex === colIndex;
       return {
         role: 'gridcell' as const,
         'aria-colindex': colIndex + 1,
         'aria-readonly': isReadOnly,
-        tabIndex: focusedCell?.colIndex === colIndex ? 0 : -1,
+        tabIndex: isFocused ? 0 : -1,
+        ref: (element: HTMLElement | null) =>
+          registerCell(rowIndex, colIndex, element),
       };
     },
-    [editableColumnSet, focusedCell],
+    [editableColumnSet, focusedCell, registerCell],
   );
 
   const getHeaderCellProps = useCallback(
@@ -175,9 +210,11 @@ export function useTableA11y<T = Record<string, unknown>>({
           focusedCell?.rowIndex === -1 && focusedCell?.colIndex === colIndex
             ? 0
             : -1,
+        ref: (element: HTMLElement | null) =>
+          registerCell(HEADER_ROW_INDEX, colIndex, element),
       };
     },
-    [sort, focusedCell],
+    [sort, focusedCell, registerCell],
   );
 
   const getLiveRegionProps = useCallback(
@@ -256,7 +293,10 @@ export function useTableA11y<T = Record<string, unknown>>({
           if (editingCell) {
             cancelEditing();
           } else {
-            setFocusedCell(null);
+            // Nulling the focused cell drops every tabIndex to -1, leaving the
+            // grid with no tab stop at all and stranding the user's focus.
+            // Park on the first header cell instead: one reachable tab stop.
+            setFocusedCell({ rowIndex: HEADER_ROW_INDEX, colIndex: 0 });
           }
           break;
         case ' ':
@@ -294,6 +334,14 @@ export function useTableA11y<T = Record<string, unknown>>({
       focusedCell,
       setFocusedCell,
       handleKeyDown,
+      registerCell,
     },
   };
+}
+
+/** Row index representing the header row in the focus coordinate space. */
+const HEADER_ROW_INDEX = -1;
+
+function cellKey(rowIndex: number, colIndex: number): string {
+  return `${rowIndex}:${colIndex}`;
 }

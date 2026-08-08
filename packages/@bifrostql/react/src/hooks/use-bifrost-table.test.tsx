@@ -6907,7 +6907,7 @@ describe('useBifrostTable', () => {
 
         await waitFor(() => expect(result.current.loading).toBe(false));
 
-        const props = result.current.a11y.getCellProps(0);
+        const props = result.current.a11y.getCellProps(0, 0);
         expect(props.role).toBe('gridcell');
         expect(props['aria-colindex']).toBe(1);
         expect(props['aria-readonly']).toBe(true);
@@ -6933,10 +6933,10 @@ describe('useBifrostTable', () => {
 
         await waitFor(() => expect(result.current.loading).toBe(false));
 
-        const nameProps = result.current.a11y.getCellProps(1, 'name');
+        const nameProps = result.current.a11y.getCellProps(0, 1, 'name');
         expect(nameProps['aria-readonly']).toBe(false);
 
-        const idProps = result.current.a11y.getCellProps(0, 'id');
+        const idProps = result.current.a11y.getCellProps(0, 0, 'id');
         expect(idProps['aria-readonly']).toBe(true);
       });
     });
@@ -7746,7 +7746,7 @@ describe('useBifrostTable', () => {
         ).toBe(1);
       });
 
-      it('clears focused cell with Escape when not editing', async () => {
+      it('parks focus on the header row with Escape when not editing', async () => {
         globalThis.fetch = createFetchMock({
           data: { users: [{ id: 1, name: 'Alice', email: 'a@test.com' }] },
         });
@@ -7779,7 +7779,12 @@ describe('useBifrostTable', () => {
           });
         });
 
-        expect(result.current.a11y.keyboard.focusedCell).toBeNull();
+        // Escape leaves the grid with one reachable tab stop rather than
+        // nulling the focus and dropping every tabIndex to -1.
+        expect(result.current.a11y.keyboard.focusedCell).toEqual({
+          rowIndex: -1,
+          colIndex: 0,
+        });
       });
 
       it('enters edit mode with Enter on editable cell', async () => {

@@ -69,6 +69,7 @@ let graphqlRequests: Array<{ query: string; variables: unknown }>;
 function createFetchMock(
   identity: TestIdentity | null,
   metadata: AppMetadata = sampleMetadata,
+  options: { mutationFails?: boolean } = {},
 ) {
   graphqlRequests = [];
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -101,12 +102,21 @@ function createFetchMock(
     }
 
     if (init?.body) {
-      graphqlRequests.push(
-        JSON.parse(init.body as string) as {
-          query: string;
-          variables: unknown;
-        },
-      );
+      const body = JSON.parse(init.body as string) as {
+        query: string;
+        variables: unknown;
+      };
+      graphqlRequests.push(body);
+      if (options.mutationFails && /\bmutation\b/.test(body.query)) {
+        // A GraphQL-level rejection — how a policy denial arrives.
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          json: () =>
+            Promise.resolve({ errors: [{ message: 'plan deactivate denied' }] }),
+        } as Response);
+      }
     }
     return Promise.resolve({
       ok: true,
@@ -271,5 +281,29 @@ describe('PlanList', () => {
         detail: { id: 3, is_active: false },
       });
     });
+  });
+
+  it('reports a rejected Deactivate instead of looking like it worked', async () => {
+    // Arrange: the server rejects the deactivating update.
+    const user = userEvent.setup();
+    globalThis.fetch = createFetchMock(
+      identityWith(['main.members.read', 'main.members.write']),
+      sampleMetadata,
+      { mutationFails: true },
+    );
+    renderPlanList();
+    await waitFor(() =>
+      expect(screen.getByText('Deactivate')).toBeInTheDocument(),
+    );
+
+    // Act
+    await user.click(screen.getByText('Deactivate'));
+
+    // Assert: the row action no longer fails silently.
+    await waitFor(() =>
+      expect(screen.getByTestId('plan-list-write-error')).toHaveTextContent(
+        'plan deactivate denied',
+      ),
+    );
   });
 });

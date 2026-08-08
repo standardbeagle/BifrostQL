@@ -16,6 +16,7 @@ import { buildFilterControls, buildTableFilter } from './member-list-filters';
 import { getSavedViewOptions } from './saved-views';
 import { ExportButton } from '../exports/export-button';
 import { gateFinanceFields } from '../membership-plans/finance-fields';
+import { useWriteFeedback, WriteFeedbackRegion } from '../common/write-feedback';
 
 /** Qualified entity key of the members entity in the app-metadata overlay. */
 const MEMBERS_ENTITY_KEY = 'main.members';
@@ -96,6 +97,8 @@ export function MemberList() {
     invalidateQueries: [queryName],
   });
 
+  const feedback = useWriteFeedback();
+
   const rowActions = useMemo<RowAction[]>(() => {
     const actions: RowAction[] = [
       {
@@ -107,14 +110,21 @@ export function MemberList() {
       actions.push({
         label: 'Deactivate',
         onClick: (row) => {
-          deactivate.mutate({
-            detail: { id: row.id, status: INACTIVE_STATUS },
-          });
+          // A row action gives no other signal — without this the button
+          // appears to work, the list refetches unchanged, and a denied write
+          // is indistinguishable from a successful one.
+          void feedback.run(
+            () =>
+              deactivate.mutateAsync({
+                detail: { id: row.id, status: INACTIVE_STATUS },
+              }),
+            'Member deactivated.',
+          );
         },
       });
     }
     return actions;
-  }, [navigate, canWrite, deactivate]);
+  }, [navigate, canWrite, deactivate, feedback]);
 
   if (isLoading) {
     return <p data-testid="member-list-loading">Loading members…</p>;
@@ -139,6 +149,8 @@ export function MemberList() {
   return (
     <section data-testid="member-list">
       <h2>{entity.label ?? 'Members'}</h2>
+
+      <WriteFeedbackRegion feedback={feedback} testId="member-list-write" />
 
       {savedViewOptions.length > 0 && (
         <div

@@ -72,6 +72,7 @@ let graphqlRequests: Array<{ query: string; variables: unknown }>;
 function createFetchMock(
   identity: TestIdentity | null,
   metadata: AppMetadata = sampleMetadata,
+  options: { mutationFails?: boolean } = {},
 ) {
   graphqlRequests = [];
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -105,12 +106,21 @@ function createFetchMock(
 
     // GraphQL request from BifrostTable.
     if (init?.body) {
-      graphqlRequests.push(
-        JSON.parse(init.body as string) as {
-          query: string;
-          variables: unknown;
-        },
-      );
+      const body = JSON.parse(init.body as string) as {
+        query: string;
+        variables: unknown;
+      };
+      graphqlRequests.push(body);
+      if (options.mutationFails && /\bmutation\b/.test(body.query)) {
+        // A GraphQL-level rejection — how a policy denial arrives.
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          json: () =>
+            Promise.resolve({ errors: [{ message: 'member deactivate denied' }] }),
+        } as Response);
+      }
     }
     return Promise.resolve({
       ok: true,
@@ -264,6 +274,30 @@ describe('MemberList', () => {
       expect(screen.getByText('Deactivate')).toBeInTheDocument(),
     );
     expect(screen.getByText('View')).toBeInTheDocument();
+  });
+
+  it('reports a rejected Deactivate instead of looking like it worked', async () => {
+    // Arrange: the server rejects the deactivating update.
+    const user = userEvent.setup();
+    globalThis.fetch = createFetchMock(
+      identityWith(['main.members.read', 'main.members.write']),
+      sampleMetadata,
+      { mutationFails: true },
+    );
+    renderMemberList();
+    await waitFor(() =>
+      expect(screen.getByText('Deactivate')).toBeInTheDocument(),
+    );
+
+    // Act
+    await user.click(screen.getByText('Deactivate'));
+
+    // Assert: the row action no longer fails silently.
+    await waitFor(() =>
+      expect(screen.getByTestId('member-list-write-error')).toHaveTextContent(
+        'member deactivate denied',
+      ),
+    );
   });
 
   it('hides the Deactivate action for a read-only member', async () => {

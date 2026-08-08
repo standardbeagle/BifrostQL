@@ -13,6 +13,7 @@ import {
 } from '@bifrostql/react';
 import type { RowAction } from '@bifrostql/react';
 import { canReadFinanceFields, isFinanceField } from './finance-fields';
+import { useWriteFeedback, WriteFeedbackRegion } from '../common/write-feedback';
 
 /** Qualified entity key of the membership_plans entity in the overlay. */
 const PLANS_ENTITY_KEY = 'main.membership_plans';
@@ -72,6 +73,8 @@ export function PlanList() {
     invalidateQueries: [queryName],
   });
 
+  const feedback = useWriteFeedback();
+
   const rowActions = useMemo<RowAction[]>(() => {
     const actions: RowAction[] = [
       {
@@ -83,14 +86,21 @@ export function PlanList() {
       actions.push({
         label: 'Deactivate',
         onClick: (row) => {
-          deactivate.mutate({
-            detail: { id: row.id, is_active: false },
-          });
+          // A row action gives no other signal — without this the button
+          // appears to work, the list refetches unchanged, and a denied write
+          // is indistinguishable from a successful one.
+          void feedback.run(
+            () =>
+              deactivate.mutateAsync({
+                detail: { id: row.id, is_active: false },
+              }),
+            'Plan deactivated.',
+          );
         },
       });
     }
     return actions;
-  }, [navigate, canWrite, deactivate]);
+  }, [navigate, canWrite, deactivate, feedback]);
 
   if (isLoading) {
     return <p data-testid="plan-list-loading">Loading plans…</p>;
@@ -115,6 +125,8 @@ export function PlanList() {
   return (
     <section data-testid="plan-list">
       <h2>{entity.label ?? 'Membership Plans'}</h2>
+
+      <WriteFeedbackRegion feedback={feedback} testId="plan-list-write" />
 
       {canWrite ? (
         <div className="plan-list__actions">

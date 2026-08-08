@@ -1,10 +1,11 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type {
   ColumnConfig,
   EditingState,
   RowEditState,
   RowUpdateFn,
   BatchSaveFn,
+  SaveErrorFn,
 } from '../use-bifrost-table.types';
 
 export interface UseTableEditingOptions<T> {
@@ -15,7 +16,12 @@ export interface UseTableEditingOptions<T> {
   autoSave: boolean;
   onRowUpdate: RowUpdateFn | undefined;
   onBatchSave: BatchSaveFn | undefined;
+  onSaveError?: SaveErrorFn | undefined;
   refetch: () => void;
+}
+
+function toError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
 }
 
 export interface UseTableEditingResult {
@@ -38,6 +44,7 @@ export function useTableEditing<T = Record<string, unknown>>({
   autoSave,
   onRowUpdate,
   onBatchSave,
+  onSaveError,
   refetch,
 }: UseTableEditingOptions<T>): UseTableEditingResult {
   const [editingCell, setEditingCell] = useState<{
@@ -46,6 +53,35 @@ export function useTableEditing<T = Record<string, unknown>>({
   } | null>(null);
   const [dirtyRows, setDirtyRows] = useState<Map<string, RowEditState>>(
     () => new Map(),
+  );
+
+  // Held in a ref so a caller passing an inline arrow does not re-create every
+  // save callback on each render.
+  const onSaveErrorRef = useRef(onSaveError);
+  onSaveErrorRef.current = onSaveError;
+
+  /**
+   * Record a write failure against the row and hand it to the caller. The
+   * row's dirty changes are deliberately preserved so the edit can be retried
+   * — a rejected write must never look like a successful one.
+   */
+  const reportSaveFailure = useCallback(
+    (
+      rk: string,
+      error: Error,
+      row: Record<string, unknown>,
+      changes: Record<string, unknown>,
+    ) => {
+      setDirtyRows((prev) => {
+        const state = prev.get(rk);
+        if (!state) return prev;
+        const next = new Map(prev);
+        next.set(rk, { ...state, saving: false, saveError: error });
+        return next;
+      });
+      onSaveErrorRef.current?.(error, { rowKey: rk, row, changes });
+    },
+    [],
   );
 
   const editableColumnSet = useMemo(() => {
@@ -97,6 +133,7 @@ export function useTableEditing<T = Record<string, unknown>>({
           changes: {},
           errors: new Map(),
           saving: false,
+          saveError: null,
         });
         return next;
       });
@@ -122,6 +159,7 @@ export function useTableEditing<T = Record<string, unknown>>({
           changes: {},
           errors: new Map(),
           saving: false,
+          saveError: null,
         };
 
         const originalValue = editState.original[field];
@@ -215,16 +253,24 @@ export function useTableEditing<T = Record<string, unknown>>({
           if (Object.keys(remaining).length === 0) {
             next.delete(rk);
           } else {
-            next.set(rk, { ...state, changes: remaining });
+            next.set(rk, { ...state, changes: remaining, saveError: null });
           }
           return next;
         });
         refetch();
-      } catch {
-        // Auto-save failed; keep dirty state for retry
+      } catch (err) {
+        reportSaveFailure(rk, toError(err), editState.original, changes);
       }
     }
-  }, [editingCell, dirtyRows, validateCell, autoSave, onRowUpdate, refetch]);
+  }, [
+    editingCell,
+    dirtyRows,
+    validateCell,
+    autoSave,
+    onRowUpdate,
+    refetch,
+    reportSaveFailure,
+  ]);
 
   const getCellValue = useCallback(
     (rk: string, field: string): unknown => {
@@ -251,6 +297,11 @@ export function useTableEditing<T = Record<string, unknown>>({
       const editState = dirtyRows.get(rk);
       return editState?.errors.get(field) ?? null;
     },
+    [dirtyRows],
+  );
+
+  const getRowSaveError = useCallback(
+    (rk: string): Error | null => dirtyRows.get(rk)?.saveError ?? null,
     [dirtyRows],
   );
 
@@ -288,13 +339,25 @@ export function useTableEditing<T = Record<string, unknown>>({
         return false;
       }
 
-      if (!onRowUpdate) return false;
+      if (!onRowUpdate) {
+        // Editing is enabled but nothing can persist the change. Report it
+        // rather than returning a bare `false` the caller cannot explain.
+        reportSaveFailure(
+          rk,
+          new Error(
+            'Cannot save row: no onRowUpdate handler was provided to useBifrostTable.',
+          ),
+          editState.original,
+          editState.changes,
+        );
+        return false;
+      }
 
       setDirtyRows((prev) => {
         const state = prev.get(rk);
         if (!state) return prev;
         const next = new Map(prev);
-        next.set(rk, { ...state, saving: true });
+        next.set(rk, { ...state, saving: true, saveError: null });
         return next;
       });
 
@@ -307,18 +370,17 @@ export function useTableEditing<T = Record<string, unknown>>({
         });
         refetch();
         return true;
-      } catch {
-        setDirtyRows((prev) => {
-          const state = prev.get(rk);
-          if (!state) return prev;
-          const next = new Map(prev);
-          next.set(rk, { ...state, saving: false });
-          return next;
-        });
+      } catch (err) {
+        reportSaveFailure(
+          rk,
+          toError(err),
+          editState.original,
+          editState.changes,
+        );
         return false;
       }
     },
-    [dirtyRows, validateCell, onRowUpdate, refetch],
+    [dirtyRows, validateCell, onRowUpdate, refetch, reportSaveFailure],
   );
 
   const saveAllDirty = useCallback(async (): Promise<{
@@ -364,7 +426,13 @@ export function useTableEditing<T = Record<string, unknown>>({
         setDirtyRows(new Map());
         refetch();
         return { saved: dirtyEntries.length, failed: 0 };
-      } catch {
+      } catch (err) {
+        // The batch is all-or-nothing from this hook's perspective: attribute
+        // the failure to every row it covered so none of them looks saved.
+        const error = toError(err);
+        for (const [rk, state] of dirtyEntries) {
+          reportSaveFailure(rk, error, state.original, state.changes);
+        }
         return { saved: 0, failed: dirtyEntries.length };
       }
     }
@@ -377,7 +445,14 @@ export function useTableEditing<T = Record<string, unknown>>({
       else failed++;
     }
     return { saved, failed };
-  }, [dirtyRows, onBatchSave, validateCell, saveRow, refetch]);
+  }, [
+    dirtyRows,
+    onBatchSave,
+    validateCell,
+    saveRow,
+    refetch,
+    reportSaveFailure,
+  ]);
 
   const discardRow = useCallback((rk: string) => {
     setDirtyRows((prev) => {
@@ -409,6 +484,7 @@ export function useTableEditing<T = Record<string, unknown>>({
       getCellValue,
       isCellDirty,
       getCellError,
+      getRowSaveError,
       isRowDirty,
       getRowChanges,
       saveRow,

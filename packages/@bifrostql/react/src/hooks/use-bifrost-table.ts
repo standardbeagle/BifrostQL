@@ -82,6 +82,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
     autoSave = false,
     onRowUpdate,
     onBatchSave,
+    onSaveError,
     columnManagement: columnManagementConfig,
     export: exportConfig,
     tableLabel,
@@ -192,6 +193,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
     autoSave,
     onRowUpdate,
     onBatchSave,
+    onSaveError,
     refetch: queryResult.refetch,
   });
 

@@ -288,6 +288,13 @@ export interface RowEditState {
   changes: Record<string, unknown>;
   errors: Map<string, string>;
   saving: boolean;
+  /**
+   * The failure from the most recent write attempt for this row, or `null`
+   * when the last attempt succeeded or none has been made. Set for auto-save,
+   * `saveRow`, and `saveAllDirty` failures alike so a rejected write is never
+   * silently discarded.
+   */
+  saveError: Error | null;
 }
 
 export interface EditingState {
@@ -302,6 +309,8 @@ export interface EditingState {
   getCellValue: (rowKey: string, field: string) => unknown;
   isCellDirty: (rowKey: string, field: string) => boolean;
   getCellError: (rowKey: string, field: string) => string | null;
+  /** The last write failure recorded for the row, or `null` when there is none. */
+  getRowSaveError: (rowKey: string) => Error | null;
   isRowDirty: (rowKey: string) => boolean;
   getRowChanges: (rowKey: string) => Record<string, unknown>;
   saveRow: (rowKey: string) => Promise<boolean>;
@@ -322,6 +331,19 @@ export type BatchSaveFn = (
     changes: Record<string, unknown>;
   }>,
 ) => Promise<void>;
+
+/**
+ * Invoked whenever a row write rejects — auto-save, `saveRow`, or
+ * `saveAllDirty`. The dirty changes are preserved so the caller can retry.
+ */
+export type SaveErrorFn = (
+  error: Error,
+  context: {
+    rowKey: string;
+    row: Record<string, unknown>;
+    changes: Record<string, unknown>;
+  },
+) => void;
 
 export interface VirtualScrollConfig {
   enabled?: boolean;
@@ -499,6 +521,7 @@ export interface UseBifrostTableOptions extends UseBifrostOptions {
   autoSave?: boolean;
   onRowUpdate?: RowUpdateFn;
   onBatchSave?: BatchSaveFn;
+  onSaveError?: SaveErrorFn;
   columnManagement?: ColumnManagementConfig;
   export?: ExportConfig;
   tableLabel?: string;

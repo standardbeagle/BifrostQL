@@ -83,5 +83,5 @@ export type {
   VirtualScrollConfig,
   VirtualScrollState,
   VisibleRange,
-  PerformanceState,
+  SearchState,
 } from './use-bifrost-table';

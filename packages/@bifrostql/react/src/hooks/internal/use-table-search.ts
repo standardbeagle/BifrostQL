@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { PerformanceState } from '../use-bifrost-table.types';
+import type { SearchState } from '../use-bifrost-table.types';
 
-export interface UseTablePerformanceOptions {
+export interface UseTableSearchOptions {
   searchDebounceMs: number;
   isLoading: boolean;
   dataLength: number;
@@ -11,11 +11,11 @@ export interface UseTablePerformanceOptions {
  * Owns debounced search input and tracks request metrics (count, last request
  * time, staleness) for the table's data fetching.
  */
-export function useTablePerformance({
+export function useTableSearch({
   searchDebounceMs,
   isLoading,
   dataLength,
-}: UseTablePerformanceOptions): PerformanceState {
+}: UseTableSearchOptions): SearchState {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [isSearchPending, setIsSearchPending] = useState(false);
   const searchDebounceTimerRef = useRef<ReturnType<typeof setTimeout>>();

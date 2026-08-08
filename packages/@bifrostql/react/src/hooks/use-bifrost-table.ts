@@ -12,7 +12,7 @@ import { useTableData } from './internal/use-table-data';
 import { useTableEditing } from './internal/use-table-editing';
 import { useTableExpansion } from './internal/use-table-expansion';
 import { useTableExport } from './internal/use-table-export';
-import { useTablePerformance } from './internal/use-table-performance';
+import { useTableSearch } from './internal/use-table-search';
 import { useTableQueryState } from './internal/use-table-query-state';
 import { useTableResponsive } from './internal/use-table-responsive';
 import { useTableSelection } from './internal/use-table-selection';
@@ -30,7 +30,7 @@ export type * from './use-bifrost-table.types';
  * Provides sorting, filtering, pagination, row selection, column management,
  * URL synchronization, computed columns, aggregates, inline editing, export,
  * accessibility (ARIA), responsive breakpoints, virtual scrolling, and
- * performance optimizations.
+ * debounced search.
  *
  * Internally uses {@link useBifrostQuery} for data fetching and composes a set
  * of focused feature hooks (see `hooks/internal/`); this function is a thin
@@ -227,7 +227,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
     data: dataAsRecords,
   });
 
-  const performance = useTablePerformance({
+  const search = useTableSearch({
     searchDebounceMs,
     isLoading: queryResult.isLoading,
     dataLength: dataWithComputed.length,
@@ -250,7 +250,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
     a11y,
     responsive,
     virtualScroll,
-    performance,
+    search,
     loading: queryResult.isLoading,
     error: queryResult.error,
     refetch: queryResult.refetch,

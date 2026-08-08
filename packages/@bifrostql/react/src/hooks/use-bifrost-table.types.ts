@@ -353,7 +353,7 @@ export interface VirtualScrollState {
   isVirtualized: boolean;
 }
 
-export interface PerformanceState {
+export interface SearchState {
   debouncedSearch: string;
   setSearch: (value: string) => void;
   isSearchPending: boolean;
@@ -525,7 +525,7 @@ export interface UseBifrostTableResult<T = Record<string, unknown>> {
   a11y: AccessibilityState;
   responsive: ResponsiveState<T>;
   virtualScroll: VirtualScrollState;
-  performance: PerformanceState;
+  search: SearchState;
   loading: boolean;
   error: Error | null;
   refetch: () => void;

@@ -8852,7 +8852,7 @@ describe('useBifrostTable', () => {
     });
   });
 
-  describe('performance', () => {
+  describe('search', () => {
     describe('search debouncing', () => {
       it('exposes search state with empty default', async () => {
         globalThis.fetch = createFetchMock({ data: { users: [] } });
@@ -8869,8 +8869,8 @@ describe('useBifrostTable', () => {
 
         await waitFor(() => expect(result.current.loading).toBe(false));
 
-        expect(result.current.performance.debouncedSearch).toBe('');
-        expect(result.current.performance.isSearchPending).toBe(false);
+        expect(result.current.search.debouncedSearch).toBe('');
+        expect(result.current.search.isSearchPending).toBe(false);
       });
 
       it('debounces search input', async () => {
@@ -8893,20 +8893,20 @@ describe('useBifrostTable', () => {
         vi.useFakeTimers();
 
         act(() => {
-          result.current.performance.setSearch('test');
+          result.current.search.setSearch('test');
         });
 
         // Immediately: debounced value should still be empty, pending should be true
-        expect(result.current.performance.debouncedSearch).toBe('');
-        expect(result.current.performance.isSearchPending).toBe(true);
+        expect(result.current.search.debouncedSearch).toBe('');
+        expect(result.current.search.isSearchPending).toBe(true);
 
         // After debounce period
         act(() => {
           vi.advanceTimersByTime(300);
         });
 
-        expect(result.current.performance.debouncedSearch).toBe('test');
-        expect(result.current.performance.isSearchPending).toBe(false);
+        expect(result.current.search.debouncedSearch).toBe('test');
+        expect(result.current.search.isSearchPending).toBe(false);
 
         vi.useRealTimers();
       });
@@ -8930,7 +8930,7 @@ describe('useBifrostTable', () => {
         vi.useFakeTimers();
 
         act(() => {
-          result.current.performance.setSearch('t');
+          result.current.search.setSearch('t');
         });
 
         act(() => {
@@ -8938,7 +8938,7 @@ describe('useBifrostTable', () => {
         });
 
         act(() => {
-          result.current.performance.setSearch('te');
+          result.current.search.setSearch('te');
         });
 
         act(() => {
@@ -8946,7 +8946,7 @@ describe('useBifrostTable', () => {
         });
 
         act(() => {
-          result.current.performance.setSearch('tes');
+          result.current.search.setSearch('tes');
         });
 
         // Only 200ms since last input - should not have resolved yet
@@ -8954,16 +8954,16 @@ describe('useBifrostTable', () => {
           vi.advanceTimersByTime(200);
         });
 
-        expect(result.current.performance.debouncedSearch).toBe('');
-        expect(result.current.performance.isSearchPending).toBe(true);
+        expect(result.current.search.debouncedSearch).toBe('');
+        expect(result.current.search.isSearchPending).toBe(true);
 
         // Complete the debounce
         act(() => {
           vi.advanceTimersByTime(100);
         });
 
-        expect(result.current.performance.debouncedSearch).toBe('tes');
-        expect(result.current.performance.isSearchPending).toBe(false);
+        expect(result.current.search.debouncedSearch).toBe('tes');
+        expect(result.current.search.isSearchPending).toBe(false);
 
         vi.useRealTimers();
       });
@@ -8987,7 +8987,7 @@ describe('useBifrostTable', () => {
         vi.useFakeTimers();
 
         act(() => {
-          result.current.performance.setSearch('query');
+          result.current.search.setSearch('query');
         });
 
         act(() => {
@@ -8995,15 +8995,15 @@ describe('useBifrostTable', () => {
         });
 
         // Should still be pending at 300ms with 500ms debounce
-        expect(result.current.performance.debouncedSearch).toBe('');
-        expect(result.current.performance.isSearchPending).toBe(true);
+        expect(result.current.search.debouncedSearch).toBe('');
+        expect(result.current.search.isSearchPending).toBe(true);
 
         act(() => {
           vi.advanceTimersByTime(200);
         });
 
-        expect(result.current.performance.debouncedSearch).toBe('query');
-        expect(result.current.performance.isSearchPending).toBe(false);
+        expect(result.current.search.debouncedSearch).toBe('query');
+        expect(result.current.search.isSearchPending).toBe(false);
 
         vi.useRealTimers();
       });
@@ -9026,7 +9026,7 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         // At least one request was made
-        expect(result.current.performance.requestCount).toBeGreaterThanOrEqual(
+        expect(result.current.search.requestCount).toBeGreaterThanOrEqual(
           1,
         );
       });
@@ -9047,7 +9047,7 @@ describe('useBifrostTable', () => {
 
         await waitFor(() => expect(result.current.loading).toBe(false));
 
-        const lastTime = result.current.performance.lastRequestTime;
+        const lastTime = result.current.search.lastRequestTime;
         expect(lastTime).not.toBeNull();
         if (lastTime !== null) {
           expect(lastTime).toBeGreaterThanOrEqual(before);
@@ -9069,7 +9069,7 @@ describe('useBifrostTable', () => {
 
         await waitFor(() => expect(result.current.loading).toBe(false));
 
-        expect(result.current.performance.isStale).toBe(false);
+        expect(result.current.search.isStale).toBe(false);
       });
     });
 
@@ -9106,7 +9106,7 @@ describe('useBifrostTable', () => {
         expect(result.current.virtualScroll.scrollToTop).toBe(scrollToTop1);
       });
 
-      it('performance.setSearch maintains referential identity', async () => {
+      it('search.setSearch maintains referential identity', async () => {
         globalThis.fetch = createFetchMock({ data: { users: [] } });
 
         const { result, rerender } = renderHook(
@@ -9121,11 +9121,11 @@ describe('useBifrostTable', () => {
 
         await waitFor(() => expect(result.current.loading).toBe(false));
 
-        const setSearch1 = result.current.performance.setSearch;
+        const setSearch1 = result.current.search.setSearch;
 
         rerender();
 
-        expect(result.current.performance.setSearch).toBe(setSearch1);
+        expect(result.current.search.setSearch).toBe(setSearch1);
       });
     });
   });

@@ -4,6 +4,15 @@ import { TABLE_HEADER_HEIGHT, TABLE_ROW_HEIGHT } from '@/components/ui/table';
 /** Sentinel page-size value meaning "fit as many rows as the viewport allows". */
 export const FIT_SENTINEL = -1;
 
+/**
+ * Rows that fit a container of `containerHeight` px: header subtracted, floor
+ * to whole rows, never below 5. The single source of the fit formula — the
+ * hook and its tests both use this.
+ */
+export function computeFitRowCount(containerHeight: number): number {
+    return Math.max(5, Math.floor((containerHeight - TABLE_HEADER_HEIGHT) / TABLE_ROW_HEIGHT));
+}
+
 export interface UseFitModeResult {
     fitMode: boolean;
     setFitMode: React.Dispatch<React.SetStateAction<boolean>>;
@@ -28,7 +37,7 @@ export function useFitMode(
     const computeFitSize = useCallback(() => {
         const el = scrollRef.current;
         if (!el) return 10;
-        return Math.max(5, Math.floor((el.clientHeight - TABLE_HEADER_HEIGHT) / TABLE_ROW_HEIGHT));
+        return computeFitRowCount(el.clientHeight);
     }, [scrollRef]);
 
     useEffect(() => {

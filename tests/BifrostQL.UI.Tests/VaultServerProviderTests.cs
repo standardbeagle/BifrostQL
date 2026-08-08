@@ -29,8 +29,51 @@ public sealed class VaultServerProviderTests
         cs.Should().Contain("Database=appdb");
         cs.Should().Contain("User Id=sa");
         cs.Should().Contain("Password=pw");
-        cs.Should().Contain("TrustServerCertificate=True");
         cs.Should().NotContain("Integrated Security");
+    }
+
+    /// <summary>
+    /// Certificate validation is on unless the vault entry opts out. Emitting
+    /// TrustServerCertificate=True unconditionally meant every vault-backed SQL Server
+    /// connection negotiated TLS and then accepted ANY certificate, so anyone on the
+    /// path could present their own and read the credentials plus all query traffic.
+    /// </summary>
+    [Fact]
+    public void SqlServer_ByDefault_DoesNotTrustAnyCertificate()
+    {
+        var cs = VaultServerProvider.BuildConnectionString(
+            Server("sqlserver", "db", 1433, "appdb", "sa", "pw"));
+
+        cs.Should().Contain("Encrypt=Mandatory");
+        cs.Should().NotContain("TrustServerCertificate");
+    }
+
+    /// <summary>
+    /// Encrypt=Strict exists precisely to validate the server certificate; SqlClient
+    /// treats trusting it as a contradiction. The opt-in must not weaken a strict entry.
+    /// </summary>
+    [Fact]
+    public void SqlServer_StrictEncrypt_NeverTrustsCertificate()
+    {
+        var cs = VaultServerProvider.BuildConnectionString(
+            Server("sqlserver", "db", 1433, sslMode: "strict"));
+
+        cs.Should().Contain("Encrypt=Strict");
+        cs.Should().NotContain("TrustServerCertificate");
+    }
+
+    /// <summary>
+    /// With TLS explicitly off there is no certificate to trust, so the flag is noise —
+    /// and leaving it in the string implies a trust posture the entry never chose.
+    /// </summary>
+    [Fact]
+    public void SqlServer_EncryptDisabled_OmitsTrustFlag()
+    {
+        var cs = VaultServerProvider.BuildConnectionString(
+            Server("sqlserver", "db", 1433, sslMode: "disable"));
+
+        cs.Should().Contain("Encrypt=False");
+        cs.Should().NotContain("TrustServerCertificate");
     }
 
     [Fact]
@@ -60,7 +103,7 @@ public sealed class VaultServerProviderTests
     [InlineData("none", "Encrypt=False")]
     // Opportunistic modes must ATTEMPT encryption (Encrypt=Mandatory), not silently
     // disable TLS — the user asked for encryption-if-available, and the frontend
-    // treats these as ssl=true. TrustServerCertificate=True is emitted alongside.
+    // treats these as ssl=true. Certificate validation stays on either way.
     [InlineData("optional", "Encrypt=Mandatory")]
     [InlineData("prefer", "Encrypt=Mandatory")]
     [InlineData("require", "Encrypt=Mandatory")]

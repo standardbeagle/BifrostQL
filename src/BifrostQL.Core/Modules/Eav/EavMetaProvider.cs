@@ -3,6 +3,7 @@ using BifrostQL.Core.Model;
 using BifrostQL.Core.Model.AppSchema;
 using BifrostQL.Core.Modules.ComputedColumns;
 using BifrostQL.Core.QueryModel;
+using BifrostQL.Core.Resolvers;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Core.Modules.Eav;
@@ -73,42 +74,50 @@ public sealed class EavMetaProvider : IComputedColumnProvider
         var fkCol = dialect.EscapeIdentifier(config.ForeignKeyColumn);
         var paramName = $"{dialect.ParameterPrefix}pk";
 
-        // The meta table's own tenant/soft-delete/policy filter must apply here
-        // too — otherwise a caller who cannot read soft-deleted or cross-tenant
-        // rows on the meta table directly can still see them surfaced through
-        // _meta. Only the filter enforcement is added here; EAV config/schema
-        // qualification issues (e.g. missing TableSchema on the meta table
-        // lookup) are a separate, already-tracked concern.
+        // The FULL read chain for the meta table, not just its row filter. `_meta`
+        // previously applied only IFilterTransformers.GetCombinedFilter, so:
+        //   - the key/value columns never met IColumnReadGuard — a policy-denied
+        //     value column was serialized into _meta in full, while the same
+        //     caller's ordinary query of the meta table is rejected;
+        //   - the FK column never met IColumnFilterGuard though it is the WHERE
+        //     predicate of this read;
+        //   - there was no CryptoReadProjector, so an envelope-encrypted value
+        //     column went out as RAW CIPHERTEXT inside the _meta JSON.
+        // TableReadChain is the single seam that applies all of it; guard decisions
+        // stay with the guards (protocol-adapter-security invariant 4).
         var securityParams = new SqlParameterCollection();
         var securityWhere = "";
-        var filterTransformers = context.Services?.GetService<IFilterTransformers>();
-        if (filterTransformers != null)
+
+        // Resolve the meta table by BOTH schema and DbName. GetTableFromDbName is
+        // DbName-only (first-wins), so it can return a same-named meta table in a
+        // different schema and apply the wrong table's security filter.
+        var metaTable = context.Model.Tables.FirstOrDefault(t =>
+            string.Equals(t.DbName, config.MetaTableDbName, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(t.TableSchema, config.TableSchema, StringComparison.OrdinalIgnoreCase));
+
+        if (metaTable == null)
+            // Without the meta table in the model there is no policy to consult and no
+            // column metadata to drive the crypto projection, so its rows cannot be
+            // shown safely. Refuse rather than emit unguarded, possibly encrypted values.
+            throw new BifrostExecutionError(
+                $"The EAV meta table for '{context.Table.GraphQlName}' is not present in the model.");
+
+        var readChain = TableReadChain.For(
+            context.Services, context.Model, metaTable, context.UserContext,
+            ReadProjection.Client, QueryType.Standard, metaTable.GraphQlName, isNestedQuery: true);
+
+        // `_meta` IS a client selection (the caller asked for the field), so a denied
+        // column aborts rather than being silently dropped — the same reject semantics
+        // the ordinary query path uses. The FK is the read's WHERE predicate and so
+        // must clear the filter guard too.
+        readChain.AssertReadable(new[] { config.KeyColumn, config.ValueColumn });
+        readChain.AssertPredicateColumns(new[] { config.ForeignKeyColumn });
+
+        var rowFilter = readChain.RowFilter;
+        if (rowFilter != null)
         {
-            // Resolve the meta table by BOTH schema and DbName. GetTableFromDbName is
-            // DbName-only (first-wins), so it can return a same-named meta table in a
-            // different schema and apply the wrong table's security filter.
-            var metaTable = context.Model.Tables.FirstOrDefault(t =>
-                string.Equals(t.DbName, config.MetaTableDbName, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(t.TableSchema, config.TableSchema, StringComparison.OrdinalIgnoreCase));
-
-            if (metaTable != null)
-            {
-                var transformContext = new QueryTransformContext
-                {
-                    Model = context.Model,
-                    UserContext = context.UserContext,
-                    QueryType = QueryType.Standard,
-                    Path = metaTable.GraphQlName,
-                    IsNestedQuery = true,
-                };
-
-                var securityFilter = filterTransformers.GetCombinedFilter(metaTable, transformContext);
-                if (securityFilter != null)
-                {
-                    var rendered = securityFilter.ToSqlParameterized(context.Model, dialect, securityParams, alias: metaTable.DbName);
-                    securityWhere = rendered.Sql;
-                }
-            }
+            var rendered = rowFilter.ToSqlParameterized(context.Model, dialect, securityParams, alias: metaTable.DbName);
+            securityWhere = rendered.Sql;
         }
 
         var whereClause = string.IsNullOrEmpty(securityWhere)
@@ -139,11 +148,15 @@ public sealed class EavMetaProvider : IComputedColumnProvider
         {
             while (await reader.ReadAsync(cancellationToken))
             {
-                var key = reader.IsDBNull(0) ? null : reader.GetValue(0)?.ToString();
+                // Both cells are raw meta-table column values, so both go through the
+                // read chain's crypto projection before they reach the _meta JSON.
+                var rawKey = reader.IsDBNull(0) ? null : reader.GetValue(0);
+                var key = readChain.ProjectValue(config.KeyColumn, rawKey)?.ToString();
                 if (string.IsNullOrEmpty(key))
                     continue;
-                var value = reader.IsDBNull(1) ? null : reader.GetValue(1);
-                attributes.Add(new KeyValuePair<string, object?>(key, value));
+                var rawValue = reader.IsDBNull(1) ? null : reader.GetValue(1);
+                attributes.Add(new KeyValuePair<string, object?>(
+                    key, readChain.ProjectValue(config.ValueColumn, rawValue)));
             }
         }
 

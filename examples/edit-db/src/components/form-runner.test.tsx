@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
@@ -60,11 +60,14 @@ function makeDb(table: Table, seed: Record<string, unknown>[]) {
     if (text.includes('FormBrowse_')) {
       const offset = Number(v.offset ?? 0);
       const row = rows[offset];
-      return { [table.name]: { total: rows.length, data: row ? [row] : [] } };
+      // Return a COPY, as a real fetcher does — the response is fresh JSON, never
+      // a live reference into the store. react-query's structural sharing still
+      // collapses it back to the previous object when nothing actually changed.
+      return { [table.name]: { total: rows.length, data: row ? [{ ...row }] : [] } };
     }
     if (text.includes('GetSingleRow_')) {
       const match = rows.find((r) => matchesPk(r, v, 'pk_'));
-      return { value: { data: match ? [match] : [] } };
+      return { value: { data: match ? [{ ...match }] : [] } };
     }
     if (text.includes('(insert:')) {
       const detail = v.detail as Record<string, unknown>;
@@ -100,7 +103,7 @@ function harness(fetcher: GraphQLFetcher) {
       { client: queryClient },
       createElement(FetcherProvider, { value: fetcher }, children),
     );
-  return { wrapper };
+  return { wrapper, queryClient };
 }
 
 // ---- single-PK table ----
@@ -184,6 +187,55 @@ describe('FormRunnerView — single PK', () => {
     await waitFor(() => expect(screen.getByText(/name is required/i)).toBeInTheDocument());
     // No update reached the store.
     expect(db.getRows()[0].name).toBe('Ada');
+  });
+
+  it('keeps in-progress edits when a background refetch re-resolves the same row', async () => {
+    // A refetch (window focus, or the invalidateQueries fired after any save or
+    // delete) yields a NEW row object for the SAME row. The seeding effect used
+    // to depend on that object's identity, so it re-ran and overwrote whatever
+    // the user had typed — silent loss of unsaved work.
+    const db = makeDb(usersTable, [{ id: 1, name: 'Ada', active: true }]);
+    const { wrapper, queryClient } = harness({ query: db.query as GraphQLFetcher['query'] });
+    render(createElement(FormRunnerView, { table: usersTable, definition: usersDef }), { wrapper });
+
+    await waitFor(() => expect(screen.getByLabelText('Name')).toHaveValue('Ada'));
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Ada Lovelace' } });
+
+    // Someone else changes a DIFFERENT column on the same row, and inserts a row.
+    // The column change is what mints a new row object (react-query's structural
+    // sharing collapses an unchanged response back to the previous object, so
+    // without it the effect would never re-run and this test would be vacuous).
+    // The inserted row bumps `total`, giving a NON-DRAFT signal that proves the
+    // refetch actually rendered before the draft is asserted on.
+    db.getRows()[0].active = false;
+    db.getRows().push({ id: 2, name: 'Grace', active: true });
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['formRunner'] });
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText('Record position')).toHaveTextContent('1 of 2'),
+    );
+
+    expect(screen.getByLabelText('Name')).toHaveValue('Ada Lovelace');
+    // And the unsaved edit really is still unsaved.
+    expect(db.getRows()[0].name).toBe('Ada');
+  });
+
+  it('re-seeds from the server when navigating to another row with edits pending', async () => {
+    // The dirty guard must not outlive the row it protects: moving to a
+    // different record has to show that record, not the abandoned draft.
+    const db = makeDb(usersTable, [
+      { id: 1, name: 'Ada', active: true },
+      { id: 2, name: 'Grace', active: false },
+    ]);
+    const { wrapper } = harness({ query: db.query as GraphQLFetcher['query'] });
+    render(createElement(FormRunnerView, { table: usersTable, definition: usersDef }), { wrapper });
+
+    await waitFor(() => expect(screen.getByLabelText('Name')).toHaveValue('Ada'));
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'discard me' } });
+
+    fireEvent.click(screen.getByLabelText('Next record'));
+    await waitFor(() => expect(screen.getByLabelText('Name')).toHaveValue('Grace'));
   });
 
   it('respects visible=false from an app-metadata widget hint', async () => {

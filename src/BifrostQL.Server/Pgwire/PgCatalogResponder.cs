@@ -276,7 +276,7 @@ namespace BifrostQL.Server.Pgwire
             // Filter.
             IEnumerable<IReadOnlyDictionary<string, object?>> rows = relation.Rows;
             if (stmt.Where is not null)
-                rows = rows.Where(r => Match(stmt.Where, r, columnNames));
+                rows = rows.Where(r => Match(stmt.Where, r, columnNames, depth: 0));
 
             // Order.
             if (stmt.OrderBy.Count > 0)
@@ -339,14 +339,24 @@ namespace BifrostQL.Server.Pgwire
             return ordered ?? rows;
         }
 
-        private static bool Match(PgBoolExpr expr, IReadOnlyDictionary<string, object?> row, HashSet<string> columnNames)
+        /// <summary>
+        /// Evaluates the parsed WHERE tree against one synthesized catalog row. It carries its
+        /// own depth counter rather than trusting the parser's cap: this walker runs on EVERY
+        /// query (the catalog pre-parse), so it is the last place that may assume a bound it
+        /// does not enforce (protocol-adapter-security invariant 6).
+        /// </summary>
+        private static bool Match(PgBoolExpr expr, IReadOnlyDictionary<string, object?> row, HashSet<string> columnNames, int depth)
         {
+            if (depth >= PgSqlSubsetParser.MaxExpressionDepth)
+                throw new PgQueryTranslationException(
+                    $"pgwire: unsupported SQL — expression nesting exceeds the maximum depth of {PgSqlSubsetParser.MaxExpressionDepth}.");
+
             switch (expr)
             {
                 case PgBoolCombine combine:
                     return combine.IsAnd
-                        ? combine.Terms.All(t => Match(t, row, columnNames))
-                        : combine.Terms.Any(t => Match(t, row, columnNames));
+                        ? combine.Terms.All(t => Match(t, row, columnNames, depth + 1))
+                        : combine.Terms.Any(t => Match(t, row, columnNames, depth + 1));
                 case PgPredicate predicate:
                     return MatchPredicate(predicate, row, columnNames);
                 default:

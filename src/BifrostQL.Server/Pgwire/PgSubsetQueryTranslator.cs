@@ -61,7 +61,7 @@ namespace BifrostQL.Server.Pgwire
             ProjectColumns(stmt, scope, query, joinNode, joinLink, outputColumns);
 
             if (stmt.Where is not null)
-                query.Filter = TableFilter.FromObject(BuildFilter(stmt.Where, scope, binding), fromTable.DbName);
+                query.Filter = TableFilter.FromObject(BuildFilter(stmt.Where, scope, binding, depth: 0), fromTable.DbName);
 
             foreach (var term in stmt.OrderBy)
             {
@@ -250,15 +250,27 @@ namespace BifrostQL.Server.Pgwire
 
         // ---- WHERE → filter dictionary --------------------------------------
 
-        private static Dictionary<string, object?> BuildFilter(PgBoolExpr expr, QualifierScope scope, ParameterBinding binding)
+        /// <summary>
+        /// Walks the parsed WHERE tree into the filter dictionary. The tree is produced only by
+        /// <see cref="PgSqlSubsetParser"/>, which caps nesting at
+        /// <see cref="PgSqlSubsetParser.MaxExpressionDepth"/> — but a walker that RELIES on its
+        /// producer's cap is one refactor away from being the unguarded one. It carries its own
+        /// counter so a tree that parsed within the cap can never blow the stack on translation
+        /// (protocol-adapter-security invariant 6).
+        /// </summary>
+        private static Dictionary<string, object?> BuildFilter(
+            PgBoolExpr expr, QualifierScope scope, ParameterBinding binding, int depth)
         {
+            if (depth >= PgSqlSubsetParser.MaxExpressionDepth)
+                throw Reject($"expression nesting exceeds the maximum depth of {PgSqlSubsetParser.MaxExpressionDepth}.");
+
             switch (expr)
             {
                 case PgBoolCombine combine:
                     var key = combine.IsAnd ? "and" : "or";
                     return new Dictionary<string, object?>
                     {
-                        [key] = combine.Terms.Select(t => (object?)BuildFilter(t, scope, binding)).ToList(),
+                        [key] = combine.Terms.Select(t => (object?)BuildFilter(t, scope, binding, depth + 1)).ToList(),
                     };
                 case PgPredicate predicate:
                     return BuildLeaf(predicate, scope, binding);

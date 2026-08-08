@@ -86,6 +86,24 @@ namespace BifrostQL.Server.Pgwire
     /// </summary>
     internal static class PgSqlSubsetParser
     {
+        /// <summary>
+        /// The maximum parenthesized nesting depth a WHERE expression may reach
+        /// (protocol-adapter-security invariant 6). The recursive-descent cycle
+        /// <c>ParseFactor</c>→<c>ParseOr</c>→<c>ParseAnd</c>→<c>ParseFactor</c> burns three
+        /// physical stack frames per level, and the only other bound on a query is
+        /// <c>PgProtocolIO.MaxMessageLength</c> (1 MiB) — a WIDTH cap, which the invariant
+        /// states explicitly is not sufficient. A few hundred KB of <c>(</c> therefore
+        /// produced an UNCATCHABLE <see cref="StackOverflowException"/> that killed the
+        /// whole host process (pgwire, HTTP/GraphQL, the binary WebSocket, every other
+        /// adapter), so it must be PREVENTED, never handled.
+        ///
+        /// <para>64 rather than the RESP codec's 32: a SQL boolean expression legitimately
+        /// nests deeper than a RESP aggregate (BI tools emit generated WHERE trees), while
+        /// 64 levels is still only ~192 frames — three orders of magnitude below the
+        /// smallest stack this ever runs on. Hand-written SQL rarely passes 5.</para>
+        /// </summary>
+        internal const int MaxExpressionDepth = 64;
+
         public static PgSelectStatement Parse(string sql)
         {
             var tokens = Tokenize(sql ?? "");
@@ -318,7 +336,7 @@ namespace BifrostQL.Server.Pgwire
                     join = ParseJoin();
 
                 PgBoolExpr? where = null;
-                if (TryWord("WHERE")) where = ParseOr();
+                if (TryWord("WHERE")) where = ParseOr(depth: 0);
 
                 if (IsWord("GROUP")) throw RejectFeature("GROUP BY is not supported.");
                 if (IsWord("HAVING")) throw RejectFeature("HAVING is not supported.");
@@ -434,25 +452,35 @@ namespace BifrostQL.Server.Pgwire
             }
 
             // WHERE grammar: OR of ANDs of (parenthesized-expr | predicate).
-            private PgBoolExpr ParseOr()
+            //
+            // `depth` is the current parenthesized nesting level, threaded as a plain
+            // parameter down every recursive edge. It starts at 0 at the ONE top-level
+            // entry (the WHERE clause in ParseSelect) and is never reset by an
+            // intermediate helper — a helper that reset it would silently defeat the
+            // guard (protocol-adapter-security invariant 6).
+            private PgBoolExpr ParseOr(int depth)
             {
-                var terms = new List<PgBoolExpr> { ParseAnd() };
-                while (TryWord("OR")) terms.Add(ParseAnd());
+                var terms = new List<PgBoolExpr> { ParseAnd(depth) };
+                while (TryWord("OR")) terms.Add(ParseAnd(depth));
                 return terms.Count == 1 ? terms[0] : new PgBoolCombine { IsAnd = false, Terms = terms };
             }
 
-            private PgBoolExpr ParseAnd()
+            private PgBoolExpr ParseAnd(int depth)
             {
-                var terms = new List<PgBoolExpr> { ParseFactor() };
-                while (TryWord("AND")) terms.Add(ParseFactor());
+                var terms = new List<PgBoolExpr> { ParseFactor(depth) };
+                while (TryWord("AND")) terms.Add(ParseFactor(depth));
                 return terms.Count == 1 ? terms[0] : new PgBoolCombine { IsAnd = true, Terms = terms };
             }
 
-            private PgBoolExpr ParseFactor()
+            private PgBoolExpr ParseFactor(int depth)
             {
                 if (TrySymbol("("))
                 {
-                    var inner = ParseOr();
+                    // Checked BEFORE the descent: once the frames are on the stack it is
+                    // too late — StackOverflowException cannot be caught.
+                    if (depth >= MaxExpressionDepth)
+                        throw Reject($"expression nesting exceeds the maximum depth of {MaxExpressionDepth}.");
+                    var inner = ParseOr(depth + 1);
                     ExpectSymbol(")");
                     return inner;
                 }

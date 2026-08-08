@@ -212,6 +212,47 @@ namespace BifrostQL.Server.Test.Pgwire
             ex.Should().BeOfType<PgQueryTranslationException>();
         }
 
+        /// <summary>
+        /// A nesting depth well past the cap but far below what the CLR stack tolerates:
+        /// without a depth guard this parses SUCCESSFULLY, so the test fails on "no
+        /// exception" rather than crashing the runner. It pins the cap itself.
+        /// </summary>
+        [Fact]
+        public async Task DeeplyNestedWhere_ExceedingDepthCap_IsRejectedAsProtocolError()
+        {
+            const int levels = 200;
+            var sql = "SELECT id FROM users WHERE "
+                + new string('(', levels) + "id = 1" + new string(')', levels);
+
+            var ex = await Rejected(sql, UsersOnlyModel());
+
+            ex.Should().BeOfType<PgQueryTranslationException>(
+                "an over-deep expression is malformed CLIENT input — it must raise the adapter's own "
+                + "query-phase exception (already in the connection handler's caught family), not escape "
+                + "to the host");
+        }
+
+        /// <summary>
+        /// The actual attack shape from protocol-adapter-security invariant 6: ~20 KB of
+        /// nested parentheses, well inside the 1 MiB message cap (a WIDTH cap, which the
+        /// invariant states is insufficient). Unguarded this recurses ~60k physical frames
+        /// and raises an UNCATCHABLE <c>StackOverflowException</c> that kills the whole host
+        /// process — every other front door with it. Guarded, it is a clean protocol error.
+        /// Pre-fix this test does not fail, it CRASHES the test host; that crash is the
+        /// vulnerability.
+        /// </summary>
+        [Fact]
+        public async Task NestedParenthesisBomb_DoesNotOverflowTheStack()
+        {
+            const int levels = 300_000;
+            var sql = "SELECT id FROM users WHERE "
+                + new string('(', levels) + "id = 1" + new string(')', levels);
+
+            var ex = await Rejected(sql, UsersOnlyModel());
+
+            ex.Should().BeOfType<PgQueryTranslationException>();
+        }
+
         // ---- model builders --------------------------------------------------
 
         private static ColumnDto Col(string name, string type, int ordinal, bool pk = false, bool nullable = false) =>

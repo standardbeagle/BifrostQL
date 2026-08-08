@@ -106,7 +106,7 @@ export function DuesReport({ entityKey, title, testId, filter }: DuesReportProps
         testId={`${testId}-export`}
       />
       <BifrostTable
-        query={queryName}
+        table={queryName}
         columns={columns}
         defaultFilters={filter}
       />

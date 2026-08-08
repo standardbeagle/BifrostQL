@@ -91,7 +91,7 @@ export function AttendanceReport({ title, testId, sort }: AttendanceReportProps)
         testId={`${testId}-export`}
       />
       <BifrostTable
-        query={queryName}
+        table={queryName}
         columns={columns}
         defaultSort={sort}
       />

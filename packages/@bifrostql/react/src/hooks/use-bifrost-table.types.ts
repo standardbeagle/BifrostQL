@@ -174,7 +174,7 @@ export interface SelectionState<T = Record<string, unknown>> {
 
 /** Configuration for fetching child/detail rows when a parent row is expanded. */
 export interface ChildQueryConfig {
-  query: string;
+  table: string;
   parentKeyField?: string;
   childFilterField?: string;
   fields?: string[];
@@ -478,7 +478,7 @@ export interface ClientSideFilterConfig {
 }
 
 export interface UseBifrostTableOptions extends UseBifrostOptions {
-  query: string;
+  table: string;
   columns: ColumnConfig[];
   fields?: string[];
   pagination?: PaginationConfig;

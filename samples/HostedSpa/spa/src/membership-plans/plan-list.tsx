@@ -125,7 +125,7 @@ export function PlanList() {
       ) : null}
 
       <BifrostTable
-        query={queryName}
+        table={queryName}
         columns={columns}
         rowActions={rowActions}
         onRowClick={(row) => navigate(`/plans/${String(row.id)}`)}

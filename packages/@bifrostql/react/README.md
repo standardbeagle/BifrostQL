@@ -266,7 +266,7 @@ All-in-one headless table state management: sorting, filtering, pagination, row 
 import { useBifrostTable } from '@bifrostql/react';
 
 const table = useBifrostTable<User>({
-  query: 'users',
+  table: 'users',
   columns: [
     { field: 'id', header: 'ID', sortable: true, width: 80 },
     { field: 'name', header: 'Name', sortable: true, filterable: true },
@@ -328,7 +328,7 @@ const columns: ColumnConfig[] = [
 function UsersPage() {
   return (
     <BifrostTable
-      query="users"
+      table="users"
       columns={columns}
       theme="modern" // 'modern' | 'classic' | 'minimal' | 'dense'
       striped

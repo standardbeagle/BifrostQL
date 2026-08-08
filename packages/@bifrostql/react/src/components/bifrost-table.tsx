@@ -806,7 +806,7 @@ function TableRows<T>({
 export interface BifrostTableProps<
   T = Record<string, unknown>,
 > extends UseBifrostOptions {
-  query: string;
+  table: string;
   columns: ColumnConfig[];
   fields?: string[];
   theme?: AnyThemeName;
@@ -853,7 +853,7 @@ export function BifrostTable<T = Record<string, unknown>>(
   props: BifrostTableProps<T>,
 ) {
   const {
-    query,
+    table: tableName,
     columns,
     fields,
     theme: themeName = 'modern',
@@ -891,7 +891,7 @@ export function BifrostTable<T = Record<string, unknown>>(
   const theme = mergeThemeOverrides(resolvedTheme, themeOverrides);
 
   const table = useBifrostTable<T>({
-    query,
+    table: tableName,
     columns,
     fields,
     pagination: paginationConfig,
@@ -925,8 +925,8 @@ export function BifrostTable<T = Record<string, unknown>>(
       : baseColumns;
 
   const handleExport = useCallback(() => {
-    downloadRowsAsCsv(table.data, columns, query);
-  }, [table.data, columns, query]);
+    downloadRowsAsCsv(table.data, columns, tableName);
+  }, [table.data, columns, tableName]);
 
   const handleEditStart = useCallback(
     (rowIndex: number, field: string, currentValue: unknown) => {

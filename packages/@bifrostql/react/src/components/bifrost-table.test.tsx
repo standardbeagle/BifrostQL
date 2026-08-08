@@ -77,7 +77,7 @@ function renderTable(props: Partial<BifrostTableProps> = {}) {
   return render(
     <Wrapper>
       <BifrostTable
-        query="users"
+        table="users"
         columns={defaultColumns}
         urlSync={false}
         {...props}

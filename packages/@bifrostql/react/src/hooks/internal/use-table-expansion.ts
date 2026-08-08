@@ -92,7 +92,7 @@ export function useTableExpansion({
       const childFilterField = childQuery.childFilterField ?? parentKeyField;
       const parentValue = parentRow[parentKeyField];
 
-      const query = buildGraphqlQuery(childQuery.query, {
+      const query = buildGraphqlQuery(childQuery.table, {
         fields: childQuery.fields,
         filter: { [childFilterField]: { _eq: parentValue as string | number } },
       });
@@ -110,7 +110,7 @@ export function useTableExpansion({
         },
       )
         .then((data) => {
-          const childData = data[childQuery.query] ?? [];
+          const childData = data[childQuery.table] ?? [];
           childCacheRef.current.set(rowId, childData);
           setChildLoadingRows((prev) => {
             const next = new Set(prev);

@@ -136,7 +136,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -147,7 +147,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -167,7 +167,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             fields: ['id', 'name'],
           }),
@@ -194,7 +194,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -207,7 +207,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { other: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -220,7 +220,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -233,7 +233,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             retry: false,
           }),
@@ -249,7 +249,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -266,7 +266,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultSort: [{ field: 'name', direction: 'asc' }],
           }),
@@ -290,7 +290,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -324,7 +324,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns }),
+        () => useBifrostTable({ table: 'users', columns }),
         { wrapper: createWrapper() },
       );
 
@@ -342,7 +342,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             multiSort: false,
           }),
@@ -372,7 +372,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             multiSort: true,
           }),
@@ -399,7 +399,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultSort: [{ field: 'name', direction: 'asc' }],
           }),
@@ -422,7 +422,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -447,7 +447,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultFilters: { name: { _contains: 'alice' } },
           }),
@@ -467,7 +467,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -487,7 +487,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultFilters: { name: { _eq: 'Alice' } },
           }),
@@ -508,7 +508,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultFilters: { name: 'Alice' },
           }),
@@ -529,7 +529,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultFilters: { name: 'Alice' },
           }),
@@ -552,7 +552,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultFilters: { name: 'Alice', email: 'test' },
           }),
@@ -571,7 +571,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -594,7 +594,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -615,7 +615,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             pagination: { pageSize: 10 },
           }),
@@ -638,7 +638,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             pagination: { pageSize: 10 },
           }),
@@ -657,7 +657,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -673,7 +673,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -694,7 +694,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -724,7 +724,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -747,7 +747,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -758,7 +758,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -774,7 +774,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -795,7 +795,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -814,7 +814,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -840,7 +840,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             rowKey: 'email',
           }),
@@ -873,7 +873,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultSort: [{ field: 'name', direction: 'asc' }],
             defaultFilters: { name: { _contains: 'a' } },
@@ -918,7 +918,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
           }),
         { wrapper: createWrapper() },
@@ -946,7 +946,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
           }),
@@ -982,7 +982,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
           }),
         { wrapper: createWrapper() },
@@ -1010,7 +1010,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultSort: [{ field: 'name', direction: 'desc' }],
           }),
@@ -1033,7 +1033,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: urlSyncConfig,
           }),
@@ -1068,7 +1068,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: urlSyncConfig,
           }),
@@ -1109,7 +1109,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
           }),
         { wrapper: createWrapper() },
@@ -1145,7 +1145,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultSort: [{ field: 'name', direction: 'asc' }],
           }),
@@ -1197,7 +1197,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
           }),
@@ -1224,7 +1224,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
           }),
         { wrapper: createWrapper() },
@@ -1256,7 +1256,7 @@ describe('useBifrostTable', () => {
       ];
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns }),
+        () => useBifrostTable({ table: 'users', columns }),
         { wrapper: createWrapper() },
       );
 
@@ -1292,7 +1292,7 @@ describe('useBifrostTable', () => {
       ];
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns }),
+        () => useBifrostTable({ table: 'users', columns }),
         { wrapper: createWrapper() },
       );
 
@@ -1311,7 +1311,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -1344,7 +1344,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'orders',
+            table: 'orders',
             columns: orderColumns,
             aggregates,
           }),
@@ -1366,7 +1366,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'orders',
+            table: 'orders',
             columns: orderColumns,
             aggregates,
           }),
@@ -1389,7 +1389,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'orders',
+            table: 'orders',
             columns: orderColumns,
             aggregates,
           }),
@@ -1412,7 +1412,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'orders',
+            table: 'orders',
             columns: orderColumns,
             aggregates,
           }),
@@ -1437,7 +1437,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'orders',
+            table: 'orders',
             columns: orderColumns,
             aggregates,
           }),
@@ -1453,7 +1453,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { orders: mockOrders } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'orders', columns: orderColumns }),
+        () => useBifrostTable({ table: 'orders', columns: orderColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -1473,7 +1473,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'orders',
+            table: 'orders',
             columns: orderColumns,
             aggregates,
           }),
@@ -1494,7 +1494,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             expandable: true,
           }),
@@ -1510,7 +1510,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             expandable: true,
           }),
@@ -1530,7 +1530,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             expandable: true,
           }),
@@ -1555,7 +1555,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             expandable: true,
           }),
@@ -1577,7 +1577,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             expandable: true,
           }),
@@ -1601,7 +1601,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             expandable: false,
           }),
@@ -1620,7 +1620,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -1635,7 +1635,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -1652,7 +1652,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -1673,7 +1673,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -1688,7 +1688,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -1706,7 +1706,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -1737,7 +1737,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             columnManagement: { hideable: false },
           }),
@@ -1761,7 +1761,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             columnManagement: { reorderable: false },
           }),
@@ -1784,7 +1784,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             columnManagement: { resizable: false },
           }),
@@ -1804,7 +1804,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             columnManagement: { freezable: false },
           }),
@@ -1821,7 +1821,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -1841,7 +1841,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -1862,7 +1862,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -1879,7 +1879,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -1896,7 +1896,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -1922,7 +1922,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -1935,7 +1935,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -1949,7 +1949,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -1969,7 +1969,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
           }),
@@ -1994,7 +1994,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
           }),
@@ -2022,7 +2022,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -2039,7 +2039,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -2050,7 +2050,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -2064,7 +2064,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -2078,7 +2078,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -2097,7 +2097,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -2118,7 +2118,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -2133,7 +2133,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -2153,7 +2153,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -2164,7 +2164,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -2195,7 +2195,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -2233,7 +2233,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -2250,7 +2250,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -2271,7 +2271,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -2299,7 +2299,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             localStorage: { key: 'test-col-presets' },
           }),
@@ -2328,7 +2328,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             localStorage: { key: 'test-del-preset' },
           }),
@@ -2357,7 +2357,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -2397,7 +2397,7 @@ describe('useBifrostTable', () => {
       ];
 
       const { result, rerender } = renderHook(
-        ({ columns }) => useBifrostTable({ query: 'users', columns }),
+        ({ columns }) => useBifrostTable({ table: 'users', columns }),
         {
           initialProps: { columns: defaultColumns },
           wrapper: createWrapper(),
@@ -2440,7 +2440,7 @@ describe('useBifrostTable', () => {
       ];
 
       const { result, rerender } = renderHook(
-        ({ columns }) => useBifrostTable({ query: 'users', columns }),
+        ({ columns }) => useBifrostTable({ table: 'users', columns }),
         {
           initialProps: { columns: defaultColumns },
           wrapper: createWrapper(),
@@ -2493,7 +2493,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
           }),
@@ -2521,7 +2521,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
             export: { filename: 'my-users' },
@@ -2551,7 +2551,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
           }),
@@ -2590,7 +2590,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
           }),
@@ -2621,7 +2621,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
           }),
@@ -2653,7 +2653,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
           }),
@@ -2690,7 +2690,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
           }),
@@ -2723,7 +2723,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
             export: { formatters },
@@ -2760,7 +2760,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
           }),
@@ -2792,7 +2792,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
           }),
@@ -2830,7 +2830,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
           }),
@@ -2858,7 +2858,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             multiSort: false,
           }),
@@ -2885,7 +2885,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             multiSort: true,
           }),
@@ -2909,7 +2909,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -2929,7 +2929,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultSort: [{ field: 'name', direction: 'asc' }],
           }),
@@ -2954,7 +2954,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns }),
+        () => useBifrostTable({ table: 'users', columns }),
         { wrapper: createWrapper() },
       );
 
@@ -2970,7 +2970,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -2993,7 +2993,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultSort: [
               { field: 'name', direction: 'asc' },
@@ -3019,7 +3019,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultSort: [{ field: 'name', direction: 'asc' }],
           }),
@@ -3042,7 +3042,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultSort: [{ field: 'name', direction: 'asc' }],
           }),
@@ -3067,7 +3067,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultSort: [
               { field: 'name', direction: 'asc' },
@@ -3091,7 +3091,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultSort: [{ field: 'name', direction: 'asc' }],
           }),
@@ -3118,7 +3118,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultSort: [{ field: 'name', direction: 'asc' }],
           }),
@@ -3134,7 +3134,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultSort: [{ field: 'name', direction: 'desc' }],
           }),
@@ -3148,7 +3148,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -3161,7 +3161,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultSort: [
               { field: 'name', direction: 'asc' },
@@ -3181,7 +3181,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultSort: [{ field: 'name', direction: 'asc' }],
           }),
@@ -3196,7 +3196,7 @@ describe('useBifrostTable', () => {
       globalThis.fetch = createFetchMock({ data: { users: [] } });
 
       const { result } = renderHook(
-        () => useBifrostTable({ query: 'users', columns: defaultColumns }),
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
         { wrapper: createWrapper() },
       );
 
@@ -3234,7 +3234,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             clientSideSort: true,
             defaultSort: [{ field: 'name', direction: 'asc' }],
@@ -3255,7 +3255,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             clientSideSort: true,
             defaultSort: [{ field: 'name', direction: 'asc' }],
@@ -3277,7 +3277,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             clientSideSort: true,
             defaultSort: [{ field: 'name', direction: 'desc' }],
@@ -3303,7 +3303,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             clientSideSort: true,
             multiSort: true,
@@ -3333,7 +3333,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             clientSideSort: true,
             defaultSort: [{ field: 'id', direction: 'asc' }],
@@ -3359,7 +3359,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             clientSideSort: true,
             defaultSort: [{ field: 'name', direction: 'asc' }],
@@ -3380,7 +3380,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             clientSideSort: { enabled: true, threshold: 2 },
             defaultSort: [{ field: 'name', direction: 'asc' }],
@@ -3406,7 +3406,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             clientSideSort: { enabled: true, threshold: 5 },
             defaultSort: [{ field: 'name', direction: 'asc' }],
@@ -3427,7 +3427,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             clientSideSort: true,
           }),
@@ -3476,7 +3476,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns,
             clientSideSort: true,
             defaultSort: [{ field: 'name', direction: 'asc' }],
@@ -3524,7 +3524,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns,
             clientSideSort: true,
             defaultSort: [{ field: 'name', direction: 'desc' }],
@@ -3569,7 +3569,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             localStorage: { key: 'test-table-sort' },
             urlSync: false,
@@ -3591,7 +3591,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultSort: [{ field: 'name', direction: 'desc' }],
             localStorage: { key: 'test-table-sort' },
@@ -3623,7 +3623,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             localStorage: { key: 'test-table-sort' },
           }),
@@ -3641,7 +3641,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             localStorage: { key: 'test-table-sort' },
             urlSync: false,
@@ -3667,7 +3667,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultSort: [{ field: 'name', direction: 'asc' }],
             localStorage: { key: 'test-table-sort' },
@@ -3692,7 +3692,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultSort: [{ field: 'name', direction: 'asc' }],
             localStorage: { key: 'test-table-sort' },
@@ -3714,7 +3714,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultSort: [{ field: 'name', direction: 'asc' }],
             localStorage: { key: 'test-table-sort' },
@@ -3734,7 +3734,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
           }),
         { wrapper: createWrapper() },
@@ -3762,7 +3762,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             localStorage: { key: 'test-table-sort' },
             urlSync: false,
@@ -3784,7 +3784,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             filterDebounceMs: 100,
             urlSync: false,
@@ -3832,7 +3832,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
           }),
@@ -3848,7 +3848,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultFilters: { name: 'Alice', email: { _contains: 'test' } },
             urlSync: false,
@@ -3865,7 +3865,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
           }),
@@ -3890,7 +3890,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultFilters: { name: 'test' },
             urlSync: false,
@@ -3913,7 +3913,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultFilters: { name: 'Alice' },
             urlSync: false,
@@ -3938,7 +3938,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
           }),
@@ -3954,7 +3954,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
           }),
@@ -3984,7 +3984,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
           }),
@@ -4008,7 +4008,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
           }),
@@ -4034,7 +4034,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultFilters: { name: 'Alice' },
             urlSync: false,
@@ -4062,7 +4062,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
           }),
@@ -4090,7 +4090,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             filterDebounceMs: 0,
             urlSync: false,
@@ -4139,7 +4139,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
             defaultFilters: { name: { _eq: 'Alice' } },
@@ -4166,7 +4166,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
             defaultFilters: { name: { _contains: 'alice' } },
@@ -4189,7 +4189,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
             defaultFilters: { age: { _gt: 28 } },
@@ -4215,7 +4215,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
             defaultFilters: { name: { _in: ['Alice', 'Bob'] } },
@@ -4238,7 +4238,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
             defaultFilters: { age: { _between: [26, 32] } },
@@ -4264,7 +4264,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
             defaultFilters: { email: { _starts_with: 'alice' } },
@@ -4287,7 +4287,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
             defaultFilters: { email: { _ends_with: 'test.com' } },
@@ -4310,7 +4310,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
             defaultFilters: { name: { _eq: 'Alice' } },
@@ -4334,7 +4334,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
             filterDebounceMs: 0,
@@ -4362,7 +4362,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: extendedColumns,
             clientSideFilter: { enabled: true, threshold: 2 },
             defaultFilters: { name: { _eq: 'Alice' } },
@@ -4386,7 +4386,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
             defaultFilters: { name: { _neq: 'Alice' } },
@@ -4409,7 +4409,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
             defaultFilters: { name: { _nin: ['Alice', 'Bob'] } },
@@ -4436,7 +4436,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
             defaultFilters: { email: { _null: true } },
@@ -4462,7 +4462,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
             defaultFilters: { name: 'Bob' },
@@ -4489,7 +4489,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: extendedColumns,
             clientSideFilter: true,
             defaultFilters: { name: null },
@@ -4533,7 +4533,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             urlSync: false,
           }),
@@ -4549,7 +4549,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultFilters: { name: { _contains: 'alice' } },
             localStorage: { key: 'test-table' },
@@ -4577,7 +4577,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultFilters: { name: { _contains: 'alice' } },
             localStorage: { key: 'test-table' },
@@ -4611,7 +4611,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultFilters: { name: 'test' },
             localStorage: { key: 'test-table' },
@@ -4639,7 +4639,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultFilters: { name: 'v1' },
             localStorage: { key: 'test-table' },
@@ -4682,7 +4682,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             localStorage: { key: 'test-table' },
             urlSync: false,
@@ -4700,7 +4700,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultFilters: { name: 'test' },
             urlSync: false,
@@ -4721,7 +4721,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultFilters: { name: 'test' },
             localStorage: { key: 'test-table' },
@@ -4774,7 +4774,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             localStorage: { key: 'test-table', persistFilters: true },
             urlSync: false,
@@ -4805,7 +4805,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             localStorage: { key: 'test-table', persistFilters: true },
             urlSync: false,
@@ -4824,7 +4824,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             localStorage: { key: 'test-table' },
             urlSync: false,
@@ -4850,7 +4850,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultFilters: { name: 'test' },
             localStorage: { key: 'test-table', persistFilters: true },
@@ -4879,7 +4879,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: defaultColumns,
             defaultFilters: { name: { _eq: 'Default' } },
             localStorage: { key: 'test-table', persistFilters: true },
@@ -4943,7 +4943,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -4967,7 +4967,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -4997,7 +4997,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: cols,
               editable: true,
               urlSync: false,
@@ -5021,7 +5021,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -5049,7 +5049,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -5074,7 +5074,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -5099,7 +5099,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -5130,7 +5130,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -5162,7 +5162,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -5192,7 +5192,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -5228,7 +5228,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -5257,7 +5257,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -5281,7 +5281,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -5308,7 +5308,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -5345,7 +5345,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -5406,7 +5406,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: asyncColumns,
               editable: true,
               urlSync: false,
@@ -5440,7 +5440,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               onRowUpdate,
@@ -5479,7 +5479,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               onRowUpdate,
@@ -5521,7 +5521,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               onRowUpdate,
@@ -5556,7 +5556,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               onRowUpdate,
@@ -5591,7 +5591,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               onRowUpdate,
@@ -5619,7 +5619,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -5653,7 +5653,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               onRowUpdate,
@@ -5690,7 +5690,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               onBatchSave,
@@ -5740,7 +5740,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               onRowUpdate,
@@ -5773,7 +5773,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -5802,7 +5802,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -5836,7 +5836,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -5868,7 +5868,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -5907,7 +5907,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               autoSave: true,
@@ -5944,7 +5944,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               autoSave: false,
@@ -5979,7 +5979,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -6010,7 +6010,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -6037,7 +6037,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -6065,7 +6065,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: cols,
               urlSync: false,
             }),
@@ -6089,7 +6089,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -6130,7 +6130,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: computedColumns,
             clientSideSort: true,
             defaultSort: [{ field: 'full_name', direction: 'asc' }],
@@ -6153,7 +6153,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: computedColumns,
             clientSideSort: true,
             defaultSort: [{ field: 'full_name', direction: 'desc' }],
@@ -6176,7 +6176,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: computedColumns,
             clientSideSort: true,
             urlSync: false,
@@ -6224,7 +6224,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: computedColumns,
             clientSideFilter: true,
             defaultFilters: { full_name: { _eq: 'Alice Smith' } },
@@ -6250,7 +6250,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns: computedColumns,
             clientSideFilter: true,
             defaultFilters: { full_name: { _contains: 'alice' } },
@@ -6291,7 +6291,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'orders',
+            table: 'orders',
             columns: orderColumns,
             aggregates,
             urlSync: false,
@@ -6318,7 +6318,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'orders',
+            table: 'orders',
             columns: orderColumns,
             aggregates,
             urlSync: false,
@@ -6350,7 +6350,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'orders',
+            table: 'orders',
             columns: orderColumns,
             aggregates,
             urlSync: false,
@@ -6378,7 +6378,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'orders',
+            table: 'orders',
             columns: orderColumns,
             aggregates,
             urlSync: false,
@@ -6404,7 +6404,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'orders',
+            table: 'orders',
             columns: orderColumns,
             aggregates,
             urlSync: false,
@@ -6424,7 +6424,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'orders',
+            table: 'orders',
             columns: orderColumns,
             urlSync: false,
           }),
@@ -6461,7 +6461,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'orders',
+            table: 'orders',
             columns: orderColumns,
             aggregates,
             clientSideFilter: true,
@@ -6515,7 +6515,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'orders',
+            table: 'orders',
             columns: orderColumns,
             groupBy,
             urlSync: false,
@@ -6551,7 +6551,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'orders',
+            table: 'orders',
             columns: orderColumns,
             urlSync: false,
           }),
@@ -6580,7 +6580,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'orders',
+            table: 'orders',
             columns: orderColumns,
             groupBy,
             urlSync: false,
@@ -6611,7 +6611,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'orders',
+            table: 'orders',
             columns: orderColumns,
             groupBy,
             urlSync: false,
@@ -6642,7 +6642,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'orders',
+            table: 'orders',
             columns: orderColumns,
             groupBy,
             clientSideFilter: true,
@@ -6693,7 +6693,7 @@ describe('useBifrostTable', () => {
       const { result } = renderHook(
         () =>
           useBifrostTable({
-            query: 'users',
+            table: 'users',
             columns,
             urlSync: false,
           }),
@@ -6731,7 +6731,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -6754,7 +6754,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               tableLabel: 'User Directory',
               urlSync: false,
@@ -6775,7 +6775,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               tableLabel: 'User Directory',
               urlSync: false,
@@ -6795,7 +6795,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -6818,7 +6818,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -6842,7 +6842,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -6869,7 +6869,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               expandable: true,
               urlSync: false,
@@ -6898,7 +6898,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -6923,7 +6923,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -6948,7 +6948,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               defaultSort: [{ field: 'name', direction: 'asc' }],
               urlSync: false,
@@ -6973,7 +6973,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               defaultSort: [{ field: 'name', direction: 'desc' }],
               urlSync: false,
@@ -6995,7 +6995,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7023,7 +7023,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7047,7 +7047,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7071,7 +7071,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7099,7 +7099,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               defaultSort: [{ field: 'name', direction: 'asc' }],
               urlSync: false,
@@ -7126,7 +7126,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               filterDebounceMs: 0,
               urlSync: false,
@@ -7153,7 +7153,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               filterDebounceMs: 0,
               urlSync: false,
@@ -7183,7 +7183,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               defaultFilters: { name: { _eq: 'Alice' } },
               filterDebounceMs: 0,
@@ -7213,7 +7213,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7233,7 +7233,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7265,7 +7265,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7301,7 +7301,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7340,7 +7340,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7377,7 +7377,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7414,7 +7414,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7451,7 +7451,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7488,7 +7488,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7525,7 +7525,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7562,7 +7562,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7599,7 +7599,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7637,7 +7637,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7676,7 +7676,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7716,7 +7716,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7754,7 +7754,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7793,7 +7793,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: editableColumns,
               editable: true,
               urlSync: false,
@@ -7830,7 +7830,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7864,7 +7864,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7895,7 +7895,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7932,7 +7932,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7953,7 +7953,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -7978,7 +7978,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -8004,7 +8004,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               responsiveColumns: [
                 { field: 'email', priority: 3, minBreakpoint: 'md' },
@@ -8049,7 +8049,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               responsiveColumns: [
                 { field: 'email', priority: 3, minBreakpoint: 'md' },
@@ -8089,7 +8089,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -8128,7 +8128,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               responsiveColumns: [
                 { field: 'email', priority: 3, minBreakpoint: 'md' },
@@ -8163,7 +8163,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -8184,7 +8184,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -8211,7 +8211,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               breakpoints: { md: 900 },
               urlSync: false,
@@ -8249,7 +8249,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -8269,7 +8269,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -8288,7 +8288,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -8311,7 +8311,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               virtualScroll: {
@@ -8338,7 +8338,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               virtualScroll: {
@@ -8362,7 +8362,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               virtualScroll: {
@@ -8394,7 +8394,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               virtualScroll: {
@@ -8423,7 +8423,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               virtualScroll: {
@@ -8447,7 +8447,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               virtualScroll: {
@@ -8482,7 +8482,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               virtualScroll: {
@@ -8512,7 +8512,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               virtualScroll: {
@@ -8542,7 +8542,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               virtualScroll: {
@@ -8572,7 +8572,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               virtualScroll: {
@@ -8601,7 +8601,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               virtualScroll: {
@@ -8629,7 +8629,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               virtualScroll: {
@@ -8663,7 +8663,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               virtualScroll: {
@@ -8693,7 +8693,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               virtualScroll: {
@@ -8724,7 +8724,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               virtualScroll: {
@@ -8753,7 +8753,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               virtualScroll: {
@@ -8788,7 +8788,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               virtualScroll: {
@@ -8825,7 +8825,7 @@ describe('useBifrostTable', () => {
         const { result, rerender } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               virtualScroll: {
@@ -8860,7 +8860,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -8879,7 +8879,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               searchDebounceMs: 300,
@@ -8917,7 +8917,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               searchDebounceMs: 300,
@@ -8974,7 +8974,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               searchDebounceMs: 500,
@@ -9016,7 +9016,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -9038,7 +9038,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -9060,7 +9060,7 @@ describe('useBifrostTable', () => {
         const { result } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),
@@ -9081,7 +9081,7 @@ describe('useBifrostTable', () => {
         const { result, rerender } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
               virtualScroll: {
@@ -9112,7 +9112,7 @@ describe('useBifrostTable', () => {
         const { result, rerender } = renderHook(
           () =>
             useBifrostTable({
-              query: 'users',
+              table: 'users',
               columns: defaultColumns,
               urlSync: false,
             }),

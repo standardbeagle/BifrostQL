@@ -115,7 +115,7 @@ export function EntityList({
     <section className="bifrost-entity-list" data-testid={`entity-list-${entityKey}`}>
       <h2 className="bifrost-entity-list__title">{entity.label ?? entityKey}</h2>
       <BifrostTable
-        query={queryName}
+        table={queryName}
         columns={columns}
         rowActions={rowActions}
         onRowClick={onRowClick}

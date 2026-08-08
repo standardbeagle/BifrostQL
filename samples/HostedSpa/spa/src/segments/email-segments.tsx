@@ -108,7 +108,7 @@ export function EmailSegments() {
           <h3>Audience: {selected.name}</h3>
           {entities[selected.entityKey] ? (
             <BifrostTable
-              query={queryName}
+              table={queryName}
               columns={columns}
               defaultFilters={selected.filter}
             />

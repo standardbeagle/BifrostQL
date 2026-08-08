@@ -221,7 +221,7 @@ export function MemberList() {
         // mount, so remount it when the saved view changes to re-seed the
         // table — and therefore the issued GraphQL filter — from the new view.
         key={savedViewId}
-        query={queryName}
+        table={queryName}
         columns={columns}
         rowActions={rowActions}
         defaultFilters={tableFilter}

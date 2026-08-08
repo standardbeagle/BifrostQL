@@ -99,7 +99,7 @@ export function EventList() {
       ) : null}
 
       <BifrostTable
-        query={queryName}
+        table={queryName}
         columns={columns}
         rowActions={rowActions}
         onRowClick={(row) => navigate(`/events/${String(row.id)}`)}

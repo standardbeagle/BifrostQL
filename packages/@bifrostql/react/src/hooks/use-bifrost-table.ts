@@ -39,13 +39,13 @@ export type * from './use-bifrost-table.types';
  * Must be used within a {@link BifrostProvider}.
  *
  * @typeParam T - The row data type.
- * @param options - Table configuration including query, columns, and feature flags.
+ * @param options - Table configuration including table name, columns, and feature flags.
  * @returns A comprehensive state object with all table features.
  *
  * @example
  * ```tsx
  * const table = useBifrostTable<User>({
- *   query: 'users',
+ *   table: 'users',
  *   columns: [
  *     { field: 'id', header: 'ID', sortable: true },
  *     { field: 'name', header: 'Name', sortable: true, filterable: true },
@@ -61,7 +61,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
   options: UseBifrostTableOptions,
 ): UseBifrostTableResult<T> {
   const {
-    query: table,
+    table,
     columns,
     fields: fieldsProp,
     pagination: paginationConfig,

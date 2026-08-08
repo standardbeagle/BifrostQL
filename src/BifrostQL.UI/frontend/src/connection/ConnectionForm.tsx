@@ -16,6 +16,7 @@ import {
 } from './types';
 import { parseAdoConnectionString } from './sanitize-connection';
 import { PROVIDER_ADAPTERS } from './provider-adapters';
+import { CredentialCancelledError } from '../lib/credential-prompt';
 
 const DEFAULT_SSH: SshConfig = { enabled: false, sshHost: '', sshPort: 22, sshUsername: '', identityFile: '' };
 const DEFAULT_WP: WpConfig = { enabled: false, wpPath: 'wp', wpRoot: '' };
@@ -145,7 +146,27 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
     const request = useRawString && provider === 'sqlite'
       ? { ...buildConnectionRequestFromRawString(provider, rawConnectionString), name: connName }
       : adapter.buildConnectionRequest(formData, connName, sshConfig, wpConfig);
-    onConnect(request);
+
+    // Await so the form is handed back on every outcome. A success unmounts
+    // this component, which used to mask the fact that nothing restored
+    // 'idle' — a rejected connect, or an Escape in the credential prompt,
+    // left every input and both buttons disabled with no way back except
+    // Back, which throws away everything the user had typed.
+    try {
+      setTestResult(null);
+      await onConnect(request);
+    } catch (error) {
+      // Cancelling the credential prompt is a routine choice, not a failure
+      // worth reporting; just return the form to a usable state.
+      if (!(error instanceof CredentialCancelledError)) {
+        setTestResult({
+          success: false,
+          message: error instanceof Error ? error.message : 'Connection failed',
+        });
+      }
+    } finally {
+      setConnectionState('idle');
+    }
   }, [adapter, provider, formData, useRawString, rawConnectionString, providerInfo, onConnect, sshConfig, wpConfig]);
 
   const updateSshField = useCallback((field: string, value: unknown) => {

@@ -172,7 +172,12 @@ export type ConnectionState =
  */
 export interface ConnectionFormProps {
   provider: Provider;
-  onConnect: (request: ConnectionRequest) => void;
+  /**
+   * Perform the connection. The form awaits the result so it can restore an
+   * interactive state on failure — a `void`-returning handler would leave the
+   * form disabled forever whenever the attempt did not succeed.
+   */
+  onConnect: (request: ConnectionRequest) => void | Promise<void>;
   onTestConnection?: (request: ConnectionRequest) => Promise<boolean>;
   onBack: () => void;
 }

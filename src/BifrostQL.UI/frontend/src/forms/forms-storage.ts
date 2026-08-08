@@ -1,5 +1,8 @@
 /**
- * localStorage persistence for saved form definitions.
+ * localStorage persistence for saved form definitions — the LIVE write path
+ * for forms. FormBuilderPane saves here; the server-backed saved-object store
+ * only receives forms via the one-time bootstrap in forms-migration.ts (saved
+ * queries, by contrast, write to the server store directly).
  *
  * Forms are keyed by a stable id so the builder can list, reopen, overwrite and
  * delete them. Mirrors connection/recent-connections.ts: SSR-safe guards, defensive

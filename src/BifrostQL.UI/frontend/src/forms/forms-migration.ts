@@ -1,8 +1,13 @@
 /**
- * One-time import of legacy browser-localStorage forms into the server-backed
- * saved-object store. Before the unified store, forms lived only in
- * `bifrostql_saved_forms` (see forms-storage.ts); this lifts each into a
- * `type: 'form'` saved object so it survives across devices/sessions.
+ * One-time bootstrap: import forms that pre-exist in browser localStorage
+ * (`bifrostql_saved_forms`, see forms-storage.ts) into the server-backed
+ * saved-object store as `type: 'form'` objects.
+ *
+ * NOTE this is a bootstrap, not a retirement of localStorage: FormBuilderPane
+ * still writes NEW forms only to localStorage, and the once-per-browser flag
+ * below means forms saved after this migration ran are never migrated. The
+ * localStorage path (forms-storage.ts) remains the live write path for forms;
+ * only saved queries write to the server store today.
  *
  * Idempotent: guarded by a localStorage flag so it runs at most once per browser,
  * and it skips any form already present on the server (never clobbers a newer

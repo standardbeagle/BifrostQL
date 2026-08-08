@@ -8,7 +8,7 @@
  * host/port/database/SSH details the user had just typed.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { ConnectionForm } from './ConnectionForm';
 import { CredentialCancelledError } from '../lib/credential-prompt';
@@ -55,5 +55,57 @@ describe('ConnectionForm connect lifecycle', () => {
     expect(databaseInput().value).toBe('inventory');
     // Cancelling is a routine choice, not an error worth shouting about.
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+});
+
+/**
+ * "Load databases" used to fail in total silence: a non-ok response fell
+ * through with no else branch, a network or JSON error hit a bare `catch {}`,
+ * and `finally` stopped the spinner — so the button flickered and the user was
+ * left staring at an unchanged form with no idea anything had gone wrong.
+ */
+describe('ConnectionForm database discovery', () => {
+  const loadButton = () => screen.getByTitle('Load databases from server');
+
+  /** Windows auth is the path that actually reaches /api/databases. */
+  function renderWithWindowsAuth() {
+    render(<ConnectionForm provider="sqlserver" onConnect={() => {}} onBack={() => {}} />);
+    fireEvent.click(screen.getByLabelText(/Windows Authentication/i));
+  }
+
+  beforeEach(() => vi.unstubAllGlobals());
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('reports a non-ok response from the discovery endpoint', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: false, status: 503 } as Response)));
+
+    renderWithWindowsAuth();
+    fireEvent.click(loadButton());
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/could not load databases/i);
+  });
+
+  it('reports a network failure from the discovery endpoint', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('Failed to fetch'))));
+
+    renderWithWindowsAuth();
+    fireEvent.click(loadButton());
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Failed to fetch');
+  });
+
+  it('reports an empty database list rather than leaving the form unchanged', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve({ databases: [] }) } as Response)),
+    );
+
+    renderWithWindowsAuth();
+    fireEvent.click(loadButton());
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/no databases/i);
   });
 });

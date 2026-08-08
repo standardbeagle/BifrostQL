@@ -203,17 +203,31 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
           psqlUser: isPeerAuth ? 'postgres' : null,
         }),
       });
-      if (response.ok) {
-        const result = await response.json();
-        if (result.databases?.length > 0) {
-          setAvailableDatabases(result.databases);
-          if (!(formData as { database?: string }).database && result.databases.length > 0) {
-            updateField('database', result.databases[0]);
-          }
-        }
+      if (!response.ok) {
+        throw new Error(`Could not load databases: server returned ${response.status}.`);
       }
-    } catch {
-      // fall back to text input
+      const result = await response.json();
+      if (!(result.databases?.length > 0)) {
+        // An empty list is a real answer, not a no-op: say so instead of
+        // leaving the form looking exactly as it did before the click.
+        setTestResult({
+          success: false,
+          message: 'No databases were returned for this server. Enter the name manually.',
+        });
+        return;
+      }
+      setAvailableDatabases(result.databases);
+      if (!(formData as { database?: string }).database) {
+        updateField('database', result.databases[0]);
+      }
+    } catch (error) {
+      // Discovery is optional — the user can still type the name — but a
+      // failure has to be visible, or the button just flickers and nothing
+      // explains why the database list never appeared.
+      setTestResult({
+        success: false,
+        message: error instanceof Error ? error.message : 'Could not load databases.',
+      });
     } finally {
       setLoadingDatabases(false);
     }

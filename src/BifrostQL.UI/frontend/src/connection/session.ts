@@ -1,6 +1,12 @@
 import { ConnectionInfo } from './types';
 import { parseConnectionInfo, sanitizeConnectionInfo } from './sanitize-connection';
 
+// Storage-key prefix convention: two prefixes coexist in web storage.
+// Older keys use `bifrostql_` (this session key, recent-connections,
+// sql-history, saved-forms, forms-migration flag); newer keys use
+// `bifrost-ui:` (transport, profile). Existing keys are FROZEN — renaming
+// one would orphan users' stored data — but NEW keys should use the
+// `bifrost-ui:` prefix.
 const SESSION_KEY = 'bifrostql_active_session';
 
 export function saveSession(info: ConnectionInfo | null) {

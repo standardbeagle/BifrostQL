@@ -561,7 +561,7 @@ namespace BifrostQL.Mcp
             // invariant 4). The schema tools previously read the raw model, so an
             // unauthenticated caller in the default FailClosed mode enumerated every
             // table, key, FK edge and column it could not read a single row of.
-            var visible = McpSchemaVisibility.Project(model, userContextProvider());
+            var visible = SchemaReadVisibility.Project(model, userContextProvider());
             switch (parameters.Name)
             {
                 case SchemaOverviewToolName:
@@ -579,7 +579,7 @@ namespace BifrostQL.Mcp
                     // A policy-denied table takes the SAME path as a table that does not
                     // exist — same message, same table list — so describe_table is not an
                     // existence oracle for tables the caller may not read.
-                    var table = McpSchemaVisibility.Find(visible, tableName);
+                    var table = SchemaReadVisibility.Find(visible, tableName);
                     if (table is null)
                         return ErrorResult(SchemaDescriber.UnknownTableMessage(visible, tableName));
                     return StructuredResult(SchemaDescriber.BuildTableDescription(table, visible));
@@ -597,7 +597,7 @@ namespace BifrostQL.Mcp
             var model = await executor.GetModelAsync(endpoint);
             // Same gate as the schema tools: a resource per table the caller may READ,
             // never one per table in the model (invariant 4).
-            var visible = McpSchemaVisibility.Project(model, userContextProvider());
+            var visible = SchemaReadVisibility.Project(model, userContextProvider());
             var resources = new List<Resource>
             {
                 new()
@@ -636,14 +636,14 @@ namespace BifrostQL.Mcp
                     McpErrorCode.ResourceNotFound);
 
             var model = await executor.GetModelAsync(endpoint);
-            var visible = McpSchemaVisibility.Project(model, userContextProvider());
+            var visible = SchemaReadVisibility.Project(model, userContextProvider());
             if (string.Equals(uri, OverviewResourceUri, StringComparison.Ordinal))
                 return JsonResource(uri, SchemaDescriber.BuildOverview(visible, fullDetail: true));
 
             var tableName = Uri.UnescapeDataString(uri.Substring(TableResourceUriPrefix.Length));
             // Policy-denied and non-existent resolve identically — same error, same code,
             // same table list — so the resource URI space is not an existence oracle.
-            var table = McpSchemaVisibility.Find(visible, tableName);
+            var table = SchemaReadVisibility.Find(visible, tableName);
             if (table is null)
                 throw new McpProtocolException(SchemaDescriber.UnknownTableMessage(visible, tableName), McpErrorCode.ResourceNotFound);
             return JsonResource(uri, SchemaDescriber.BuildTableDescription(table, visible));

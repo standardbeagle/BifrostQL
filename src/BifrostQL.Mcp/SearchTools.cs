@@ -1,3 +1,4 @@
+using BifrostQL.Core.Auth;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using BifrostQL.Core.Model;
@@ -139,7 +140,7 @@ namespace BifrostQL.Mcp
             // Search only sweeps tables this caller may READ: the automatic all-tables
             // sweep must not iterate — nor name in its per-table totals — a table the
             // caller cannot SELECT (protocol-adapter-security invariant 4).
-            var visible = McpSchemaVisibility.Project(model, userContext);
+            var visible = SchemaReadVisibility.Project(model, userContext);
             var tables = ResolveSearchTables(model, visible, GetStringArray(args, "tables"));
 
             var results = new JsonArray();
@@ -240,7 +241,7 @@ namespace BifrostQL.Mcp
         /// whereas the automatic all-tables sweep simply skips such tables.
         /// </summary>
         private static List<IDbTable> ResolveSearchTables(
-            IDbModel model, IReadOnlyList<McpVisibleTable> visible, IReadOnlyList<string>? requested)
+            IDbModel model, IReadOnlyList<VisibleTable> visible, IReadOnlyList<string>? requested)
         {
             if (requested is null)
                 return visible.Select(v => v.Table)

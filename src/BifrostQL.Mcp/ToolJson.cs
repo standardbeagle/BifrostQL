@@ -1,3 +1,4 @@
+using BifrostQL.Core.Auth;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using BifrostQL.Core.Model;
@@ -36,11 +37,11 @@ namespace BifrostQL.Mcp
             // table in the model let any caller enumerate the schema by mistyping one
             // table name. It names only the tables this caller may READ (invariant 4).
             throw new ToolPromptException(SchemaDescriber.UnknownTableMessage(
-                McpSchemaVisibility.Project(model, userContext), tableName));
+                SchemaReadVisibility.Project(model, userContext), tableName));
         }
 
         internal static IDbTable ResolveTable(
-            IDbModel model, IReadOnlyList<McpVisibleTable> visible, string tableName) =>
+            IDbModel model, IReadOnlyList<VisibleTable> visible, string tableName) =>
             model.Tables.FirstOrDefault(t => string.Equals(t.DbName, tableName, StringComparison.OrdinalIgnoreCase))
             ?? throw new ToolPromptException(SchemaDescriber.UnknownTableMessage(visible, tableName));
 

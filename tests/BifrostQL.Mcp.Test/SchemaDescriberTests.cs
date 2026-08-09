@@ -1,3 +1,4 @@
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using FluentAssertions;
 using Xunit;
@@ -16,7 +17,7 @@ namespace BifrostQL.Mcp.Test
             // Arrange: no table is visible to this caller — an empty database, or a
             // schema in which policy denies the caller every table. Both collapse to the
             // same projection, which is the point: the message cannot distinguish them.
-            var visible = Array.Empty<McpVisibleTable>();
+            var visible = Array.Empty<VisibleTable>();
 
             // Act
             var message = SchemaDescriber.UnknownTableMessage(visible, "orders");

@@ -1,3 +1,4 @@
+using BifrostQL.Core.Auth;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using BifrostQL.Core.Model;

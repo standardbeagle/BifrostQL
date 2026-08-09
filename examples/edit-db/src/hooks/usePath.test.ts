@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { selectRoute, routeSpecificity, matchPath } from './usePath';
+import { selectRoute, routeSpecificity, matchPath, combinePaths } from './usePath';
 
 describe('matchPath — wildcard tail', () => {
     it('returns the tail after "*" as the remainer (not the matched prefix)', () => {
@@ -76,5 +76,48 @@ describe('selectRoute — create-flow keyword vs :id', () => {
 
     it('returns null when nothing matches', () => {
         expect(selectRoute(['/:table/:id'], '/')).toBeNull();
+    });
+});
+
+describe('combinePaths — relative navigation normalization', () => {
+    // The edit dialog closes with navigate('../..'). From '/orders/edit' that
+    // has to resolve to the root path '/'. It used to build '/' + '' + '/' + ''
+    // = '//', which the host app feeds straight to history.pushState(); the
+    // browser reads a leading '//' as a protocol-relative URL, throws
+    // SecurityError ("URL 'http:' cannot be created"), and the editor blanks.
+    it('resolves "../.." from a two-segment path to "/" (not "//")', () => {
+        expect(combinePaths('/orders/edit', '../..')).toBe('/');
+    });
+
+    it('never emits a doubled or trailing slash for any up-count', () => {
+        expect(combinePaths('/orders/edit', '..')).toBe('/orders');
+        expect(combinePaths('/orders/1/edit/2', '../..')).toBe('/orders/1');
+        expect(combinePaths('/orders', '..')).toBe('/');
+        // Climbing past the root clamps at the root rather than underflowing.
+        expect(combinePaths('/orders', '../../..')).toBe('/');
+    });
+
+    it('appends relative segments without a doubled separator', () => {
+        expect(combinePaths('/orders', 'edit')).toBe('/orders/edit');
+        expect(combinePaths('/orders/edit', '../1')).toBe('/orders/1');
+    });
+});
+
+describe('combinePaths — edit-dialog close targets', () => {
+    // DataEdit serves both '/:table/edit/:editId' and '/:table/edit'; the two
+    // differ by one segment, so a single fixed climb cannot serve both. These
+    // pin the pairing used in data-edit.tsx: '../..' with an editId, '..'
+    // without one. Both must land on the grid the form was opened from.
+    it('returns an edit form to its grid', () => {
+        expect(combinePaths('/orders/edit/5', '../..')).toBe('/orders');
+    });
+
+    it('returns an add form to its grid, not the table list', () => {
+        expect(combinePaths('/orders/edit', '..')).toBe('/orders');
+    });
+
+    it('returns a drilled-down edit form to its filtered grid', () => {
+        expect(combinePaths('/order_items/from/products/1/edit/7', '../..'))
+            .toBe('/order_items/from/products/1');
     });
 });

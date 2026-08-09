@@ -238,7 +238,7 @@ function flatRoutes(children: ReactNode, base: string): FlatRoute[] {
     return result;
 }
 
-const combinePaths = (current: string, newPath: string): string => {
+export const combinePaths = (current: string, newPath: string): string => {
     if (newPath.startsWith('/')) return newPath;
     if (newPath.startsWith('?')) {
         const [currentBase] = current?.split('?') ?? [""];
@@ -253,12 +253,17 @@ const combinePaths = (current: string, newPath: string): string => {
     return mergePaths(current, segments.join('/'), up);
 }
 
+// Build the result from one flat segment list and join once. Interpolating the
+// two sides into `/${a}/${b}` emits an empty segment whenever either side is
+// empty: '..' off a one-deep path gave '//' and '..' off a two-deep path gave a
+// trailing '/orders/'. The host app feeds this straight to history.pushState(),
+// where a leading '//' is a protocol-relative URL and throws SecurityError.
 const mergePaths = (current: string, newPath: string, ups: number): string => {
     const currentSegments = current.split('/').filter(s => s !== "");
     const newSegments = newPath.split('/').filter(s => s !== "");
-    if (ups === 0)
-        return `/${currentSegments.join('/')}/${newSegments.join('/')}`;
-    return `/${currentSegments.slice(0, -ups).join('/')}/${newSegments.join('/')}`;
+    // Clamp: climbing past the root lands on the root, it does not wrap.
+    const kept = currentSegments.slice(0, Math.max(0, currentSegments.length - ups));
+    return `/${[...kept, ...newSegments].join('/')}`;
 }
 
 const combineRoutes = (base: string, child: string): string => {

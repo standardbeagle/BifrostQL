@@ -68,6 +68,26 @@ code, not just re-checks of pgwire.
    server-side only. This applies to any `IProtocolAdapter` that maps
    Bifrost errors onto a client wire, not just pgwire.
 
+   **The tell is a comment claiming the messages are already wire-safe.**
+   Two more surfaces failed this way after the pgwire slice — the chat
+   middleware and the MCP tool funnel — and in both the forwarding was
+   defended by a comment asserting the text was curated, with no throw-site
+   check behind it. In both, the leak was the SAME string:
+   `TenantFilterTransformer` / `TenantMutationTransformer` embed the
+   qualified table and the context-key name ("Tenant context required but
+   not found. Expected 'tenant_id' in user context for table
+   'main.orders'.") while tagging `AccessDeniedCode`. Treat "it's already
+   user-facing" as unverified until you have read the throw sites; a type
+   is adapter-owned only if EVERY throw site builds its text from the
+   caller's own arguments or from the policy-projected visible schema —
+   never from the raw model, the driver, or a transformer.
+
+   Sanitizing does not mean unactionable. Where the caller is a program (an
+   LLM agent, a driver), keep a stable machine-readable CODE and a category
+   distinct enough to choose a next action — retry-with-different-input
+   versus do-not-retry — and drop every identifier. A caller does not need
+   the table name to know it was denied.
+
 4. **Any introspection/metadata surface an adapter exposes must be filtered
    by the same authorization as its data path, fail-closed.** The pgwire
    slice-4 catalog emulation (`pg_catalog`/`information_schema` synthesized

@@ -82,8 +82,17 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
 
     var app = BifrostUiWebHost.Build(connectionString, port, state, sshTunnel, expose);
 
-    // Start the server in the background
-    var serverTask = app.RunAsync(cancellationToken);
+    // Start the server FIRST and branch on the result. Nothing below may resolve a
+    // service off `app` until this has succeeded: a failed start disposes the host,
+    // and touching it afterwards replaces the real diagnosis (the port is taken) with
+    // an ObjectDisposedException stack trace.
+    var startFailure = await HostStartup.TryStartAsync(app, port, cancellationToken);
+    if (startFailure != null)
+    {
+        Console.Error.WriteLine(startFailure);
+        await sshTunnel.DisposeAsync();
+        return 1;
+    }
 
     Console.WriteLine($"BifrostQL server started at {serverUrl}");
     if (expose)
@@ -101,7 +110,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     if (headless)
     {
         Console.WriteLine("Running in headless mode. Press Ctrl+C to stop.");
-        await serverTask;
+        await app.WaitForShutdownAsync(cancellationToken);
         await sshTunnel.DisposeAsync();
     }
     else

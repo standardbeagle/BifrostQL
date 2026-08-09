@@ -49,6 +49,12 @@ namespace BifrostQL.UI.Web
             // ASP.NET Core's info-level "CORS policy execution failed" lines are pure
             // noise here — keep only genuine CORS warnings/errors.
             builder.Logging.AddFilter("Microsoft.AspNetCore.Cors", LogLevel.Warning);
+            // "Hosting failed to start" dumps a full Kestrel bind stack trace at the
+            // user of a desktop app. HostStartup owns the one failure that is actually
+            // actionable (the port is taken) and prints a plain-language message; any
+            // other start failure still escapes as an unhandled exception, trace
+            // included, so no diagnosis is lost by muting this one logger.
+            builder.Logging.AddFilter("Microsoft.Extensions.Hosting.Internal.Host", LogLevel.Critical);
 
             // Add in-memory configuration for BifrostQL
             builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>

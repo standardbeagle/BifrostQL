@@ -478,7 +478,9 @@ public sealed class FileObjectSeam
         // KEY, so a `Value is int && == 0` test is inert for every nonzero key and
         // misfires on key value 0 (rejecting a legitimate write, then destructively
         // compensating for it). See MutationIntentResult.AffectedRows.
-        if (result.AffectedRows == 0)
+        // `is not > 0` rather than `== 0`: AffectedRows is nullable, and a null must
+        // never read as success or the fail-open has merely moved from Value to here.
+        if (result.AffectedRows is not > 0)
             throw new BifrostExecutionError(
                 $"Row of '{located.Table.DbName}' is no longer accessible; the file pointer was not updated.");
     }

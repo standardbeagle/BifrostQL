@@ -411,3 +411,6 @@ src/BifrostQL.UI/wwwroot/index.html
 
 # Playwright MCP scratch (capture scripts, recorded video)
 .playwright-mcp/
+
+# Windows publish + installer output (scripts/build-windows-installer.sh)
+/dist/

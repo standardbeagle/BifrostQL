@@ -8,6 +8,12 @@ using BifrostQL.SqlServer;
 using BifrostQL.UI;
 using BifrostQL.UI.Vault;
 using BifrostQL.UI.Web;
+using Velopack;
+
+// Velopack installer/updater lifecycle hooks. Must run before anything else:
+// during install/update the installer relaunches the exe with --veloapp-* args
+// and this call handles them and exits.
+VelopackApp.Build().Run();
 
 // Register all dialect factories so DbConnFactoryResolver can route by provider
 DbConnFactoryResolver.Register(BifrostDbProvider.SqlServer, cs => new SqlServerDbConnFactory(cs));

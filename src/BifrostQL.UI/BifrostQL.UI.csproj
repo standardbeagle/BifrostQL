@@ -8,6 +8,8 @@
     <AssemblyName>bifrostui</AssemblyName>
     <RootNamespace>BifrostQL.UI</RootNamespace>
     <Version>0.4.11</Version>
+    <!-- Win32 icon resource for the exe; regenerate from icon.svg (see file header). -->
+    <ApplicationIcon>bifrostui.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -15,6 +17,8 @@
     <PackageReference Include="System.CommandLine" Version="2.0.2" />
     <!-- Windows ACL APIs (FileSecurity/FileSystemAccessRule) to lock down the vault master key. -->
     <PackageReference Include="System.IO.FileSystem.AccessControl" Version="5.0.0" />
+    <!-- Installer/updater lifecycle (vpk pack requires VelopackApp.Build().Run() in Main). -->
+    <PackageReference Include="Velopack" Version="1.2.0" />
   </ItemGroup>
 
   <ItemGroup>

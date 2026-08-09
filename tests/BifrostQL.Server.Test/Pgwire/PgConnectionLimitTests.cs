@@ -26,9 +26,15 @@ namespace BifrostQL.Server.Test.Pgwire
             await harness.OpenSessionAsync();
             await harness.WaitForConnectionCountAsync(2);
 
-            // The third connection is admitted no further than startup: a clean 53300, then close.
+            // The third connection is refused BEFORE it is asked for anything: it sends NOTHING —
+            // no SSLRequest, no StartupMessage — and still receives a clean 53300, then close.
+            //
+            // Sending a StartupMessage here first (as this test used to) made it VACUOUS for the
+            // ordering it exists to pin: it passed identically whether the slot was reserved at
+            // accept or only after the pre-startup negotiation and TLS handshake had already run.
+            // The whole point of the cap is that unadmitted peers do no server work, so the
+            // assertion has to be that the rejection needs no client input at all.
             var third = await harness.ConnectAsync();
-            await third.Client.SendStartupAsync("alice");
             var rejected = await third.Client.WaitForReadyOrErrorAsync().WaitAsync(Timeout);
 
             rejected.WasRejected.Should().BeTrue();
@@ -42,6 +48,30 @@ namespace BifrostQL.Server.Test.Pgwire
             var revived = await harness.OpenSessionAsync();
             revived.Client.BackendPid.Should().NotBe(0);
             await harness.WaitForConnectionCountAsync(2);
+        }
+
+        [Fact]
+        public async Task StalledPreAuthConnection_IsDroppedByTheHandshakeDeadline_AndReleasesItsSlot()
+        {
+            await using var harness = new PgWireTestHarness(
+                PgWireTestHarness.UsersExecutor(NoRows(), out _),
+                maxConnections: 1,
+                handshakeTimeout: TimeSpan.FromMilliseconds(400));
+
+            // A peer that connects and then says NOTHING. With the slot reserved at accept and no
+            // deadline, this single silent socket would own the front door's only slot forever —
+            // the cheapest possible denial of service, needing no credentials and no bytes.
+            var staller = await harness.ConnectAsync();
+            await harness.WaitForConnectionCountAsync(1);
+
+            // The handshake deadline drops it and the finally releases the slot.
+            await harness.WaitForConnectionCountAsync(0);
+
+            // ...so a legitimate client can connect and reach a ready session.
+            var revived = await harness.OpenSessionAsync();
+            revived.Client.BackendPid.Should().NotBe(0);
+
+            await staller.DisposeAsync();
         }
     }
 }

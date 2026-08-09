@@ -40,7 +40,8 @@ namespace BifrostQL.Server.Test.Pgwire
             IQueryIntentExecutor executor,
             int maxConnections = 100,
             int maxPreparedStatements = 200,
-            int maxPortals = 200)
+            int maxPortals = 200,
+            TimeSpan? handshakeTimeout = null)
         {
             var options = new PgWireOptions
             {
@@ -48,6 +49,7 @@ namespace BifrostQL.Server.Test.Pgwire
                 MaxConnections = maxConnections,
                 MaxPreparedStatements = maxPreparedStatements,
                 MaxPortals = maxPortals,
+                HandshakeTimeout = handshakeTimeout ?? TimeSpan.FromSeconds(30),
             };
             Registry = new PgCancellationRegistry();
             Limiter = new PgConnectionLimiter(maxConnections);

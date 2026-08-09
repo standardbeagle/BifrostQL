@@ -71,25 +71,40 @@ namespace BifrostQL.Server.Pgwire
         /// </summary>
         internal async Task HandleConnectionAsync(Stream rawStream, CancellationToken ct)
         {
-            var admitted = false;
+            // ---- Connection-limit admission, BEFORE any work ----
+            // Reserve the slot at accept — ahead of the pre-startup negotiation, the TLS
+            // handshake, the credential lookup and the SCRAM exchange. Admission used to happen
+            // only after NegotiateStartupAsync returned, which meant MaxConnections bounded
+            // ADMITTED sessions but not the work an UNADMITTED peer could force: an unlimited
+            // number of concurrent TLS handshakes (an asymmetric private-key operation each) and
+            // an unbounded SSLRequest/GSSENCRequest ping-pong, all outside the cap. A cap that
+            // only counts the connections that got through is not a cap on the resource.
+            // Over the limit: a clean 53300 too_many_connections on the raw socket, then close.
+            if (!_connectionLimiter.TryAcquire())
+            {
+                await RejectAsync(rawStream, PgWireProtocol.SqlStateTooManyConnections,
+                    PgWireProtocol.TooManyConnectionsMessage, ct);
+                return;
+            }
+
+            var admitted = true;
             PgCancellationRegistration? cancellation = null;
             try
             {
-                var (stream, startup) = await NegotiateStartupAsync(rawStream, ct);
+                // ---- Pre-auth deadline ----
+                // Everything up to ReadyForQuery runs under a deadline linked to the connection
+                // token. Without it a peer that opens a socket and then says nothing holds its
+                // slot forever — and now that the slot is reserved at accept, a handful of silent
+                // sockets would otherwise be a complete denial of service needing no credentials
+                // and no bytes. Expiry cancels the in-flight read, which surfaces as
+                // OperationCanceledException and is absorbed by the lifecycle catch below.
+                using var handshakeDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                handshakeDeadline.CancelAfter(_options.HandshakeTimeout);
+                var handshakeToken = handshakeDeadline.Token;
+
+                var (stream, startup) = await NegotiateStartupAsync(rawStream, handshakeToken);
                 if (startup is null)
                     return; // client closed or a handled non-startup packet (Cancel/GSS)
-
-                // ---- Connection-limit admission ----
-                // Reserve a slot once we have a real StartupMessage and a stream to answer on
-                // (post-TLS). Over the limit: a clean 53300 too_many_connections then close —
-                // never a crash or a silent hang. The slot is released in the finally below.
-                if (!_connectionLimiter.TryAcquire())
-                {
-                    await RejectAsync(stream, PgWireProtocol.SqlStateTooManyConnections,
-                        PgWireProtocol.TooManyConnectionsMessage, ct);
-                    return;
-                }
-                admitted = true;
 
                 var parameters = PgProtocolIO.ParseStartupParameters(startup.Value.Span);
                 if (!parameters.TryGetValue("user", out var username) || string.IsNullOrEmpty(username))
@@ -99,13 +114,13 @@ namespace BifrostQL.Server.Pgwire
                     return;
                 }
 
-                var login = await _credentials.FindAsync(username, ct);
+                var login = await _credentials.FindAsync(username, handshakeToken);
                 bool verified;
                 try
                 {
                     verified = _options.AuthMethod == PgAuthMethod.Cleartext
-                        ? await AuthenticateCleartextAsync(stream, login, ct)
-                        : await AuthenticateScramAsync(stream, login, ct);
+                        ? await AuthenticateCleartextAsync(stream, login, handshakeToken)
+                        : await AuthenticateScramAsync(stream, login, handshakeToken);
                 }
                 catch (PgScramProtocolException ex)
                 {
@@ -141,7 +156,11 @@ namespace BifrostQL.Server.Pgwire
                 // Publish this session's cancellation key and hand it to the handshake so the
                 // BackendKeyData the client receives can be matched by a later CancelRequest.
                 cancellation = _cancelRegistry.Register();
-                await CompleteHandshakeAsync(stream, cancellation, ct);
+                await CompleteHandshakeAsync(stream, cancellation, handshakeToken);
+
+                // Past ReadyForQuery the session is authenticated, so the pre-auth deadline no
+                // longer applies: an idle AUTHENTICATED session is a normal pooled connection,
+                // not an unauthenticated squatter. The loop below runs on the connection token.
 
                 // ---- QUERY LOOP ----
                 // The session is authenticated and ReadyForQuery has been sent. The loop drives
@@ -171,11 +190,25 @@ namespace BifrostQL.Server.Pgwire
         /// parameter body, or a null body when the connection was closed/handled without
         /// a startup.
         /// </summary>
+        /// <summary>
+        /// Upper bound on pre-startup packets one connection may send before a StartupMessage.
+        /// A real client sends at most one SSLRequest and one GSSENCRequest; the loop below answers
+        /// each and continues, so without a bound a peer can ping-pong 8-byte packets indefinitely
+        /// and keep the connection in an unauthenticated state doing server work. The handshake
+        /// deadline already time-bounds this, but a bound on the COUNT stops the CPU burn inside
+        /// that window instead of merely ending it.
+        /// </summary>
+        private const int MaxPreStartupPackets = 4;
+
         private async Task<(Stream Stream, ReadOnlyMemory<byte>? StartupBody)> NegotiateStartupAsync(
             Stream stream, CancellationToken ct)
         {
-            while (true)
+            for (var packet = 0; ; packet++)
             {
+                if (packet >= MaxPreStartupPackets)
+                    throw new PgProtocolException(
+                        $"too many pre-startup packets ({MaxPreStartupPackets}) without a StartupMessage.");
+
                 var (code, rest) = await PgProtocolIO.ReadStartupPacketAsync(stream, ct);
                 switch (code)
                 {

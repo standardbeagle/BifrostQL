@@ -53,9 +53,12 @@ export function describeSavedQueryLoadFailure(cause: unknown): string {
  * {@link describeSavedQueryLoadFailure}. Aborts propagate untouched so a caller
  * that cancelled its own request can tell that apart from a real failure.
  */
-export async function listSavedQueries(signal?: AbortSignal): Promise<SavedObject[]> {
+export async function listSavedQueries(
+  signal?: AbortSignal,
+  onSkipped?: (skipped: number) => void,
+): Promise<SavedObject[]> {
   try {
-    return await savedQueryStore.list(SAVED_QUERY_TYPE, signal);
+    return await savedQueryStore.list(SAVED_QUERY_TYPE, signal, onSkipped);
   } catch (cause) {
     if (isAbortError(cause)) throw cause;
     const error = new Error(describeSavedQueryLoadFailure(cause));

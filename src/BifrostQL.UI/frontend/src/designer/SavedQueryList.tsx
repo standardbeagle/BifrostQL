@@ -19,15 +19,20 @@ interface SavedQueryListProps {
 export function SavedQueryList({ activeId, reloadToken, onOpen }: SavedQueryListProps) {
   const [queries, setQueries] = useState<SavedObject[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [skipped, setSkipped] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
-    listSavedQueries(controller.signal)
+    let skippedThisLoad = 0;
+    listSavedQueries(controller.signal, (n) => (skippedThisLoad = n))
       .then((found) => {
         setQueries([...found].sort((a, b) => a.name.localeCompare(b.name)));
         setError(null);
+        // A stored entry that will not parse is missing from this list. Saying so
+        // beats a list that is quietly short of what the user saved.
+        setSkipped(skippedThisLoad);
       })
       .catch((e) => {
         // `listSavedQueries` has already turned anything non-abort into a
@@ -45,6 +50,13 @@ export function SavedQueryList({ activeId, reloadToken, onOpen }: SavedQueryList
     <nav style={styles.root} aria-label="Saved queries">
       <h2 style={styles.heading}>Saved queries</h2>
       {error && <div role="alert" style={styles.error}>{error}</div>}
+      {!error && skipped > 0 && (
+        <div role="alert" style={styles.error}>
+          {skipped === 1
+            ? "1 saved query could not be read and is not listed."
+            : `${skipped} saved queries could not be read and are not listed.`}
+        </div>
+      )}
       {!error && loading && <div style={styles.empty}>Loading…</div>}
       {!error && !loading && queries.length === 0 && (
         <div style={styles.empty}>No saved queries yet. Design one, then Save.</div>

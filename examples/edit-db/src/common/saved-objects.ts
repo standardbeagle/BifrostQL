@@ -32,7 +32,17 @@ export class SavedObjectConflictError extends Error {
 }
 
 export interface SavedObjectsClient {
-  list(type?: SavedObjectType, signal?: AbortSignal): Promise<SavedObject[]>;
+  /**
+   * Lists stored objects, skipping any entry that does not parse so one corrupt
+   * record cannot take out the whole list. Skipped entries are reported through
+   * `onSkipped` rather than discarded silently — a caller that shows a list is
+   * expected to tell the user some of it could not be read.
+   */
+  list(
+    type?: SavedObjectType,
+    signal?: AbortSignal,
+    onSkipped?: (skipped: number) => void,
+  ): Promise<SavedObject[]>;
   get(type: SavedObjectType, id: string, signal?: AbortSignal): Promise<SavedObject | null>;
   put(object: SavedObject, signal?: AbortSignal): Promise<SavedObject>;
   remove(type: SavedObjectType, id: string, signal?: AbortSignal): Promise<void>;
@@ -54,12 +64,19 @@ export function createSavedObjectsClient(baseUrl = ''): SavedObjectsClient {
   }
 
   return {
-    async list(type, signal) {
+    async list(type, signal, onSkipped) {
       const url = type ? `${root}/${enc(type)}` : root;
       const resp = await fetch(url, { signal });
       if (!resp.ok) throw new Error(`Failed to list saved objects: ${await readError(resp)}`);
       const json: unknown = await resp.json();
-      return Array.isArray(json) ? json.map(parseSavedObject).filter((o): o is SavedObject => o !== null) : [];
+      // A non-array body is a broken endpoint, not an empty store. Returning []
+      // here once hid a host that answered this route with its SPA fallback.
+      if (!Array.isArray(json))
+        throw new Error('Failed to list saved objects: the server did not return a list.');
+      const parsed = json.map(parseSavedObject);
+      const objects = parsed.filter((o): o is SavedObject => o !== null);
+      if (objects.length !== parsed.length) onSkipped?.(parsed.length - objects.length);
+      return objects;
     },
 
     async get(type, id, signal) {

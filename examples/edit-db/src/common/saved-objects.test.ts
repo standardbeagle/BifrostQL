@@ -38,6 +38,34 @@ describe('saved-objects client', () => {
     expect(result[0].id).toBe('q1');
   });
 
+  it('reports how many entries it skipped rather than dropping them silently', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, [
+      { id: 'ok', type: 'form', name: 'n', definition: {}, version: 1 },
+      { id: 'bad', type: 'not-a-type', name: 'n', definition: {}, version: 1 },
+      { nope: true },
+    ]));
+    const skipped: number[] = [];
+    const result = await client.list(undefined, undefined, (n) => skipped.push(n));
+    expect(result.map((o) => o.id)).toEqual(['ok']);
+    expect(skipped).toEqual([2]);
+  });
+
+  it('does not report skipped entries when every entry parses', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, [
+      { id: 'ok', type: 'form', name: 'n', definition: {}, version: 1 },
+    ]));
+    const skipped: number[] = [];
+    await client.list(undefined, undefined, (n) => skipped.push(n));
+    expect(skipped).toEqual([]);
+  });
+
+  it('refuses a body that is not a list instead of reporting an empty store', async () => {
+    // A host whose SPA fallback answers this route returns 200 with a document.
+    // Treating that as "no saved objects" hid exactly that misconfiguration.
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { not: 'a list' }));
+    await expect(client.list()).rejects.toThrow(/did not return a list/i);
+  });
+
   it('drops malformed items from a list', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(200, [
       { id: 'ok', type: 'form', name: 'n', definition: {}, version: 1 },

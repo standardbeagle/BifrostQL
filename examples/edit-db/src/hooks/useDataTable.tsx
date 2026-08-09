@@ -100,6 +100,21 @@ export function getMultiJoinRows(row: RowData, join: Join): RowData[] {
     return page?.data ?? [];
 }
 
+/**
+ * Reads the joined parent object a single-link column renders.
+ *
+ * Keyed on the join's FIELD name, not its destination table: a table that
+ * references the same target through several foreign keys has one field per key
+ * (billing_address, shipping_address) and no field named for the table, so a
+ * lookup by table name finds nothing and the cell renders as null. Mirrors
+ * getMultiJoinRows, which has always had to do this for aliased child
+ * collections.
+ */
+export function getSingleJoinRow(row: RowData, join: Join): RowData | undefined {
+    const fieldName = join.fieldName ?? join.destinationTable;
+    return row[fieldName] as RowData | undefined;
+}
+
 export function getMultiJoinTotal(row: RowData, join: Join): number {
     const fieldName = join.fieldName ?? join.destinationTable;
     const page = row[fieldName] as { total?: number; data?: RowData[] } | undefined;
@@ -128,7 +143,6 @@ function buildJoinColumn(
     operators: string[],
     onOpenColumn?: (panel: DrillFrame) => void,
 ): ColumnDef<RowData, unknown> {
-    const columnName = anchorJoin.destinationTable;
     const joinSchema = schema.findTable(anchorJoin.destinationTable);
     const joinLabelColumn = joinSchema?.labelColumn ?? 'id';
     const composite = isComposite(anchorJoin);
@@ -151,7 +165,7 @@ function buildJoinColumn(
             isCompositeFk: composite,
         }),
         cell: ({ row }) => {
-            const joined = row.original[columnName] as RowData | undefined;
+            const joined = getSingleJoinRow(row.original, anchorJoin);
             // No joined row means the FK column itself is null/unset.
             if (!joined) return <EmptyValue kind="null" />;
             const joinedPk = getJoinedRowPkValue(joined, joinSchema);

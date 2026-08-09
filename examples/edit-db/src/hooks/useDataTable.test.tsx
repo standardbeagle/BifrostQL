@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getMultiJoinRows, clampPageIndex, getJoinedRowPkValue, reconcileColumnFiltersFromUrl } from './useDataTable';
+import { getMultiJoinRows, getSingleJoinRow, clampPageIndex, getJoinedRowPkValue, reconcileColumnFiltersFromUrl } from './useDataTable';
 import { serializeColumnFilters } from '../lib/query-builder';
 import type { ColumnFiltersState } from '@tanstack/react-table';
 import type { Join, Table } from '../types/schema';
@@ -132,5 +132,60 @@ describe('getJoinedRowPkValue', () => {
     it('builds a composite route via rowIdOf for multi-column PK destinations', () => {
         const row = { region: 'eu/west', code: 7 };
         expect(getJoinedRowPkValue(row, tbl(['region', 'code']))).toBe('eu%2Fwest::7');
+    });
+});
+
+describe('getSingleJoinRow', () => {
+    it('reads an aliased single-join row from fieldName instead of destinationTable', () => {
+        // orders carries two FKs to addresses, so the joined objects arrive under
+        // billing_address / shipping_address and there is no `addresses` key at
+        // all. Reading by destination table found nothing and the grid rendered
+        // both address columns as NULL — worse than the raw id it used to show.
+        const billing: Join = {
+            name: 'addresses',
+            fieldName: 'billing_address',
+            sourceColumnNames: ['billing_address_id'],
+            destinationTable: 'addresses',
+            destinationColumnNames: ['address_id'],
+        };
+        const shipping: Join = {
+            name: 'addresses',
+            fieldName: 'shipping_address',
+            sourceColumnNames: ['shipping_address_id'],
+            destinationTable: 'addresses',
+            destinationColumnNames: ['address_id'],
+        };
+        const row = {
+            order_id: 2,
+            billing_address: { id: 286, label: '8913 Redwood Way' },
+            shipping_address: { id: 273, label: '7834 Oak Ave' },
+        };
+
+        expect(getSingleJoinRow(row, billing)).toEqual({ id: 286, label: '8913 Redwood Way' });
+        expect(getSingleJoinRow(row, shipping)).toEqual({ id: 273, label: '7834 Oak Ave' });
+    });
+
+    it('falls back to destinationTable for a join with no alias', () => {
+        const join: Join = {
+            name: 'customers',
+            sourceColumnNames: ['customer_id'],
+            destinationTable: 'customers',
+            destinationColumnNames: ['customer_id'],
+        };
+        const row = { order_id: 1, customers: { id: 7, label: 'Scott' } };
+
+        expect(getSingleJoinRow(row, join)).toEqual({ id: 7, label: 'Scott' });
+    });
+
+    it('returns undefined when the FK is null', () => {
+        const join: Join = {
+            name: 'addresses',
+            fieldName: 'billing_address',
+            sourceColumnNames: ['billing_address_id'],
+            destinationTable: 'addresses',
+            destinationColumnNames: ['address_id'],
+        };
+
+        expect(getSingleJoinRow({ order_id: 1 }, join)).toBeUndefined();
     });
 });

@@ -15,28 +15,28 @@ mkdir -p "$OUT"
 # start:end:text — seconds into the recording.
 # Landscape sees the full 1920px frame.
 CAPTIONS=(
-  "0.0:2.6:Point BifrostQL at a SQL database."
-  "2.6:7.5:Pick a schema. No setup, no config files."
-  "7.5:12.7:The schema is read at startup — 7 tables, 4,825 rows."
-  "12.7:17.1:Foreign keys resolve to labels. Related-row counts per row."
-  "17.1:21.1:Drill into related rows without writing a query."
-  "21.1:24.2:800 orders — sortable, filterable, paged."
-  "24.2:29.1:Edit forms generated from the schema, with FK pickers."
-  "29.1:39.5:And the whole GraphQL API — generated. Nested joins included."
+  "0.0:2.0:Point BifrostQL at a SQL database."
+  "2.0:10.3:Pick a schema. No setup, no config files."
+  "10.3:18.8:The schema is read at startup - 7 tables, 4,825 rows."
+  "18.8:24.6:Every foreign key resolves to a label - even two to the same table."
+  "24.6:29.5:Related-row counts per row, from that same schema read."
+  "29.5:33.8:Drill into related rows without writing a query."
+  "33.8:42.6:Edit forms generated from the schema, with FK pickers."
+  "42.6:57.6:And the whole GraphQL API - generated. Nested joins included."
 )
 
 # Portrait crops to the left of the frame, so its captions describe what is
 # actually visible there — the 1920px-wide grid's right-hand columns (the
 # resolved foreign key) are outside the 4:5 crop.
 PORTRAIT_CAPTIONS=(
-  "0.0:2.6:Point BifrostQL at a SQL database."
-  "2.6:7.5:Pick a schema. No setup, no config files."
-  "7.5:12.7:Schema read at startup - 7 tables, 4,825 rows."
-  "12.7:17.1:Every table browsable. 500 products, paged."
-  "17.1:21.1:Drill into related rows without writing a query."
-  "21.1:24.2:800 orders - sortable, filterable, paged."
-  "24.2:29.1:Edit forms generated from the schema."
-  "29.1:39.5:And the whole GraphQL API - generated."
+  "0.0:2.0:Point BifrostQL at a SQL database."
+  "2.0:10.3:Pick a schema. No setup, no config files."
+  "10.3:18.8:Schema read at startup - 7 tables, 4,825 rows."
+  "18.8:24.6:800 orders, every foreign key resolved to a label."
+  "24.6:29.5:500 products, browsable and paged."
+  "29.5:33.8:Drill into related rows without writing a query."
+  "33.8:42.6:Edit forms generated from the schema."
+  "42.6:57.6:And the whole GraphQL API - generated."
 )
 
 build_filter() {

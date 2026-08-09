@@ -44,11 +44,18 @@ async (page) => {
   await p.getByRole('link', { name: /Products/ }).waitFor({ timeout: 60000 });
   await beat('explorer', 3200);
 
+  // Orders: BOTH foreign keys to addresses resolve to street labels, alongside
+  // the customer. This beat was unusable until the dual-FK fix — the billing
+  // column rendered a raw id while shipping rendered a label.
+  await p.getByRole('link', { name: /Orders/ }).first().click();
+  await p.locator('tbody tr').first().waitFor({ timeout: 30000 });
+  await beat('orders-fk-grid', 4500);
+
   // Products: the category foreign key resolved to its label, and per-row
   // related-record counts.
   await p.getByRole('link', { name: /Products/ }).click();
   await p.locator('tbody tr').first().waitFor({ timeout: 30000 });
-  await beat('products-grid', 4000);
+  await beat('products-grid', 3500);
 
   // Drill from a product into the rows that reference it.
   const related = p.locator('a[href^="/reviews/from/products/"]').first();
@@ -57,10 +64,11 @@ async (page) => {
     await beat('related-reviews', 3800);
   }
 
-  // Orders: 800 rows, sortable and paged.
+  // Back to a plain table grid before opening the form: the drill view above is
+  // a filtered child list, and Add there is not the beat we want to show.
   await p.getByRole('link', { name: /Orders/ }).first().click();
   await p.locator('tbody tr').first().waitFor({ timeout: 30000 });
-  await beat('orders-grid', 3000);
+  await beat('back-to-orders', 1500);
 
   // Schema-generated edit form: required markers and foreign-key pickers.
   await p.getByRole('button', { name: /^Add$/ }).click();

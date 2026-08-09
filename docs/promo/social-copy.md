@@ -52,9 +52,9 @@ over real TCP sockets.
 2. Quick Start schema picker (Blog, E-commerce, CRM, Classroom, Project Tracker)
 3. Data-size choice (sample vs full) and Launch
 4. Explorer — 7 tables with column counts, row counts and FK badges
-5. Products grid — `category_id` resolved to its label, related-row counts per row
-6. Drill from a product into its reviews, with no query written
-7. Orders grid — 800 rows, sortable and paged
+5. Orders grid — customer AND **both** address foreign keys resolved to labels
+6. Products grid — `category_id` resolved to its label, related-row counts per row
+7. Drill from a product into its reviews, with no query written
 8. Schema-generated edit form — required markers and FK pickers
 9. GraphiQL — `orders -> customers` and `orders -> order_items -> products`
 
@@ -86,6 +86,10 @@ Live, against the running stack:
   `$orderby`, `$top`, `$count`, `$expand`, and signed `$skiptoken` paging.
 - **Cross-protocol consistency**: GraphQL, pgwire and OData return byte-identical
   top-3 rows for the same question.
+- **Multiple foreign keys to one table**: `orders` references `addresses` twice;
+  `billing_address` and `shipping_address` each follow their own key, in the
+  API, in the grid, and in the generated form. Beat 5 films this directly — the
+  frame the earlier cut had to avoid.
 - **Fail-closed posture**: unauthenticated RESP → `NOAUTH`; wrong password →
   `WRONGPASS`; RESP writes disabled by default; `DROP TABLE` over pgwire →
   clean "only SELECT statements are supported" with the connection surviving;
@@ -108,12 +112,6 @@ S3 and Prometheus adapters not stood up live here) and 624 `edit-db`.
 
 Verification turned up real limits. Keep them out of the copy.
 
-**Fixed since filming:** two foreign keys to the same table used to collapse into
-one join, so the Orders grid showed a raw id for billing and a street label for
-shipping. `orders` now exposes `billing_address` and `shipping_address`
-separately and both resolve to labels. The footage predates the fix, which is why
-beat 5 films Products rather than Orders — re-shoot that beat before reusing the
-foreign-key caption over an Orders frame.
 
 - **`psql \d <table>` is not supported** — it issues a regex (`~`) query outside
   the SQL subset. `\dt` works. Do not promise unqualified BI-tool introspection.

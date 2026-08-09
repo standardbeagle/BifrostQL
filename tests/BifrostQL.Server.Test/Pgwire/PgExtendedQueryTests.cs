@@ -107,6 +107,38 @@ namespace BifrostQL.Server.Test.Pgwire
         }
 
         [Fact]
+        public async Task DescribeStatement_OnACatalogQuery_AgreesWithExecute()
+        {
+            var executor = PgWireTestHarness.UsersExecutor(TwoUsers(), out _);
+            await using var harness = new PgWireTestHarness(executor);
+            var client = (await harness.OpenSessionAsync()).Client;
+
+            // A catalog/introspection query the responder owns and the SQL subset parser does NOT.
+            // Describe('S') and Execute must agree: a driver that Describes a statement it can
+            // Execute is the standard prepared-statement flow, so a Describe error on an
+            // executable statement breaks introspection for every such driver.
+            const string catalogSql = "SELECT version()";
+
+            await client.SendParseAsync("cat", catalogSql);
+            await client.SendDescribeStatementAsync("cat");
+            await client.SendSyncAsync();
+            var described = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
+
+            described.HasError.Should().BeFalse(
+                "Describe('S') must route through the SAME catalog responder Execute uses");
+            described.Fields.Select(f => f.Name).Should().Equal("version");
+
+            // ...and the same statement really does execute, so the two op paths agree.
+            await client.SendBindAsync("p", "cat");
+            await client.SendExecuteAsync("p");
+            await client.SendSyncAsync();
+            var executed = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
+
+            executed.HasError.Should().BeFalse();
+            executed.Rows.Should().HaveCount(1);
+        }
+
+        [Fact]
         public async Task ErrorMidSequence_SkipsUntilSync_ThenReadyForQuery_AndSessionSurvives()
         {
             var executor = PgWireTestHarness.UsersExecutor(TwoUsers(), out _);

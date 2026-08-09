@@ -261,10 +261,32 @@ namespace BifrostQL.Server.Pgwire
 
         private async Task DescribeStatementAsync(PgPreparedStatement statement, CancellationToken ct)
         {
-            PgQueryPlan plan;
+            IReadOnlyList<PgResultColumn> columns;
+            var placeholderCount = 0;
             try
             {
-                plan = await _translator.TranslateAsync(_executor, statement.Sql, parameters: null, _userContext, _endpoint, ct);
+                // Consult the catalog responder FIRST, exactly as the Execute path does through
+                // ResolvePortalAsync. Describing a statement used to go straight to the
+                // translator, so the SAME SQL yielded a clean row description from Execute and a
+                // syntax error from Describe — and psql/JDBC/ODBC all Describe a statement before
+                // executing it, so every catalog query issued through the extended protocol
+                // failed. This is invariant 10's "same condition, same answer across op classes"
+                // applied inside one adapter: one seam, consulted in the same order everywhere.
+                // A catalog query takes no bind parameters, matching the portal path's guard.
+                var response = _catalog is null
+                    ? null
+                    : await _catalog.TryRespondAsync(_executor, statement.Sql, _userContext, _endpoint, ct);
+                if (response is not null)
+                {
+                    columns = response.Columns;
+                }
+                else
+                {
+                    var plan = await _translator.TranslateAsync(
+                        _executor, statement.Sql, parameters: null, _userContext, _endpoint, ct);
+                    columns = plan.Columns;
+                    placeholderCount = plan.ParameterCount;
+                }
             }
             catch (Exception ex) when (IsQueryPhaseFault(ex))
             {
@@ -274,14 +296,14 @@ namespace BifrostQL.Server.Pgwire
 
             // ParameterDescription: one OID per placeholder, using the Parse-declared OID
             // where the driver supplied one, else 0 (unspecified — the driver infers).
-            var count = Math.Max(plan.ParameterCount, statement.ParameterTypeOids.Length);
+            var count = Math.Max(placeholderCount, statement.ParameterTypeOids.Length);
             var oids = new int[count];
             for (var i = 0; i < count; i++)
                 oids[i] = i < statement.ParameterTypeOids.Length ? statement.ParameterTypeOids[i] : 0;
             await PgProtocolIO.WriteMessageAsync(_stream, PgWireProtocol.ParameterDescription,
                 PgBackend.ParameterDescription(oids), ct);
 
-            await WriteRowDescriptionOrNoDataAsync(plan.Columns, ct);
+            await WriteRowDescriptionOrNoDataAsync(columns, ct);
         }
 
         private async Task DescribePortalAsync(PgPortal portal, CancellationToken ct)

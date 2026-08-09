@@ -35,7 +35,7 @@ namespace BifrostQL.Server.Pgwire
             // BackendKeyData table and the lock-free connection-admission counter. Both must be
             // singletons so every connection consults the same state.
             services.TryAddSingleton<PgCancellationRegistry>();
-            services.TryAddSingleton(new PgConnectionLimiter(options.MaxConnections));
+            services.TryAddSingleton(new PgwireConnectionLimiter(options.MaxConnections));
 
             // The per-connection handler is resolved by the Kestrel listener from DI.
             services.TryAddSingleton<PgConnectionHandler>();

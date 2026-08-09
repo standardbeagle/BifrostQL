@@ -56,12 +56,17 @@ namespace BifrostQL.Server.Grpc
             // A dedicated HTTP/2 listener for the gRPC wire. HTTP/2 is required for gRPC framing +
             // trailers; a bind failure on this port aborts host startup.
             services.PostConfigure<KestrelServerOptions>(kestrel =>
+            {
+                // Kestrel's default is UNLIMITED concurrent connections, so the gRPC front door had
+                // no bound on what an unauthenticated peer could consume, unlike pgwire and RESP.
+                kestrel.Limits.MaxConcurrentConnections = options.MaxConcurrentConnections;
                 kestrel.ListenAnyIP(options.Port, listen =>
                 {
                     listen.Protocols = HttpProtocols.Http2;
                     if (options.RequireTls)
                         ConfigureTls(listen, options);
-                }));
+                });
+            });
 
             return services;
         }

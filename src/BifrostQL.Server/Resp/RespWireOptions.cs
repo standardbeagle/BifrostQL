@@ -51,6 +51,34 @@ namespace BifrostQL.Server.Resp
         public int MaxNestingDepth { get; set; } = 32;
 
         /// <summary>
+        /// Maximum number of concurrent connections the front door admits. The slot is reserved at
+        /// ACCEPT — before the codec reads a byte and before AUTH — so an unauthenticated peer can
+        /// never force work outside the cap; the N+1th connection is refused with a clean
+        /// <c>-ERR</c> and closed. Without this, an uncapped listener let any peer exhaust sockets,
+        /// threads and memory with no credentials at all. Default 100, matching pgwire.
+        /// </summary>
+        public int MaxConnections { get; set; } = 100;
+
+        /// <summary>
+        /// Deadline for a connection to complete AUTH. An unauthenticated peer that opens a socket
+        /// and then stalls holds its admission slot indefinitely, which — now that the slot is taken
+        /// at accept — is a complete denial of service needing no credentials and no bytes. Expiry
+        /// closes the connection and releases the slot. Does NOT apply once authenticated: an idle
+        /// AUTHENTICATED connection is a normal pooled client, and Redis clients pool aggressively.
+        /// Default 30 seconds, matching pgwire's handshake deadline.
+        /// </summary>
+        public TimeSpan AuthenticationTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+        /// <summary>
+        /// Maximum time an AUTHENTICATED connection may sit with no command before it is closed.
+        /// Bounds the resource an abandoned-but-open client holds; the client simply reconnects.
+        /// Default 10 minutes — far above any real client's keepalive interval, so it reaps leaks
+        /// rather than disturbing pooled connections. Set to <see cref="Timeout.InfiniteTimeSpan"/>
+        /// to disable (deliberately possible, deliberately not the default).
+        /// </summary>
+        public TimeSpan IdleTimeout { get; set; } = TimeSpan.FromMinutes(10);
+
+        /// <summary>
         /// Registered BifrostQL endpoint path (e.g. <c>/graphql</c>) whose model, schema and
         /// connection authenticated sessions execute their data commands against. Null selects
         /// the single registered endpoint. Unused by slice-1 plumbing; carried for the data

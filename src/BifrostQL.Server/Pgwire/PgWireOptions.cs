@@ -37,7 +37,7 @@ namespace BifrostQL.Server.Pgwire
         /// Maximum number of concurrent authenticated + admitted connections. The N+1th
         /// connection is refused cleanly with <c>53300 too_many_connections</c> during
         /// startup and closed — never left to crash or hang. Enforced lock-free by
-        /// <see cref="PgConnectionLimiter"/>. Default 100.
+        /// <see cref="PgwireConnectionLimiter"/>. Default 100.
         /// </summary>
         public int MaxConnections { get; set; } = 100;
 

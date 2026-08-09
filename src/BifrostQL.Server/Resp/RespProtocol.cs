@@ -175,6 +175,15 @@ namespace BifrostQL.Server.Resp
         public const string InternalError = "ERR internal error";
 
         /// <summary>
+        /// Refusal for a connection arriving when <see cref="RespWireOptions.MaxConnections"/> is
+        /// already reached. Written on the raw socket at ACCEPT — before the codec reads a byte and
+        /// before AUTH — then the connection closes. Redis answers over-limit clients with
+        /// <c>-ERR max number of clients reached</c>; the wording matches so existing client
+        /// handling and operator runbooks apply unchanged.
+        /// </summary>
+        public const string TooManyConnectionsError = "ERR max number of clients reached";
+
+        /// <summary>
         /// The Redis-compatible unknown-command error: names the command and echoes the arguments that
         /// followed, so a client (redis-cli, StackExchange.Redis) gets the same actionable guidance a real
         /// Redis sends — <c>ERR unknown command 'FOO', with args beginning with: 'a', 'b'</c>. The command

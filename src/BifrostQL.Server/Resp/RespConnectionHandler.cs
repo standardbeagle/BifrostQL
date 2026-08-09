@@ -32,6 +32,7 @@ namespace BifrostQL.Server.Resp
         private readonly IServiceProvider _services;
         private readonly RespWireOptions _options;
         private readonly IReadOnlyDictionary<string, IRespCommandHandler> _dataHandlers;
+        private readonly RespConnectionLimiter _connectionLimiter;
         private readonly ILogger<RespConnectionHandler> _logger;
         private static long _connectionCounter;
 
@@ -41,8 +42,12 @@ namespace BifrostQL.Server.Resp
             IServiceProvider services,
             RespWireOptions options,
             IEnumerable<IRespCommandHandler>? dataHandlers = null,
-            ILogger<RespConnectionHandler>? logger = null)
+            ILogger<RespConnectionHandler>? logger = null,
+            RespConnectionLimiter? connectionLimiter = null)
         {
+            // One handler instance serves every connection (Kestrel resolves it once), so the
+            // admission counter lives for the front door's lifetime, as in pgwire.
+            _connectionLimiter = connectionLimiter ?? new RespConnectionLimiter(options?.MaxConnections ?? 100);
             _credentials = credentials ?? throw new ArgumentNullException(nameof(credentials));
             _authFactory = authFactory ?? throw new ArgumentNullException(nameof(authFactory));
             _services = services ?? throw new ArgumentNullException(nameof(services));
@@ -68,6 +73,28 @@ namespace BifrostQL.Server.Resp
         /// </summary>
         internal async Task HandleConnectionAsync(Stream stream, CancellationToken ct)
         {
+            // ---- Admission, BEFORE the codec reads a byte ----
+            // The listener had NO connection cap at all: any peer could exhaust sockets, threads
+            // and memory with no credentials. The slot is reserved at ACCEPT, ahead of decoding and
+            // AUTH, so an unauthenticated peer can never force work outside the cap.
+            if (!_connectionLimiter.TryAcquire())
+            {
+                await RespWriter.WriteAsync(stream, RespValue.Err(RespProtocol.TooManyConnectionsError), ct);
+                return;
+            }
+
+            try
+            {
+                await RunConnectionAsync(stream, ct);
+            }
+            finally
+            {
+                _connectionLimiter.Release();
+            }
+        }
+
+        private async Task RunConnectionAsync(Stream stream, CancellationToken ct)
+        {
             var session = new RespSession(Interlocked.Increment(ref _connectionCounter));
             var reader = new RespReader(stream, _options.MaxBulkLength, _options.MaxAggregateElements, _options.MaxNestingDepth);
             try
@@ -76,9 +103,25 @@ namespace BifrostQL.Server.Resp
                 {
                     RespValue? frame;
                     IReadOnlyList<string> arguments;
+
+                    // ---- Read deadline ----
+                    // Two different bounds, because the two states carry different risk. An
+                    // UNAUTHENTICATED peer that stalls holds an admission slot it never earned —
+                    // with the slot now taken at accept, a handful of silent sockets would be a
+                    // complete denial of service needing no credentials and no bytes — so it gets
+                    // the short AuthenticationTimeout. An AUTHENTICATED connection is a normal
+                    // pooled client (Redis clients pool aggressively and sit idle by design), so it
+                    // gets the long IdleTimeout, which reaps abandoned sockets without disturbing
+                    // pools. Expiry cancels the in-flight read and the lifecycle catch closes.
+                    var deadline = session.IsAuthenticated ? _options.IdleTimeout : _options.AuthenticationTimeout;
+                    using var readDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    if (deadline != Timeout.InfiniteTimeSpan)
+                        readDeadline.CancelAfter(deadline);
+                    var readToken = readDeadline.Token;
+
                     try
                     {
-                        frame = await reader.ReadValueAsync(ct);
+                        frame = await reader.ReadValueAsync(readToken);
                         if (frame is null)
                             return; // clean EOF: peer closed
 

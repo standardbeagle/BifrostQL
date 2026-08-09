@@ -35,7 +35,7 @@ namespace BifrostQL.Server.Pgwire
         private readonly IServiceProvider _services;
         private readonly PgWireOptions _options;
         private readonly PgCancellationRegistry _cancelRegistry;
-        private readonly PgConnectionLimiter _connectionLimiter;
+        private readonly PgwireConnectionLimiter _connectionLimiter;
         private readonly ILogger<PgConnectionHandler> _logger;
 
         public PgConnectionHandler(
@@ -44,7 +44,7 @@ namespace BifrostQL.Server.Pgwire
             IServiceProvider services,
             PgWireOptions options,
             PgCancellationRegistry? cancelRegistry = null,
-            PgConnectionLimiter? connectionLimiter = null,
+            PgwireConnectionLimiter? connectionLimiter = null,
             ILogger<PgConnectionHandler>? logger = null)
         {
             _credentials = credentials ?? throw new ArgumentNullException(nameof(credentials));
@@ -54,7 +54,7 @@ namespace BifrostQL.Server.Pgwire
             // A single handler instance is shared across all connections (Kestrel resolves it
             // once), so these shared coordination objects live for the front door's lifetime.
             _cancelRegistry = cancelRegistry ?? new PgCancellationRegistry();
-            _connectionLimiter = connectionLimiter ?? new PgConnectionLimiter(options.MaxConnections);
+            _connectionLimiter = connectionLimiter ?? new PgwireConnectionLimiter(options.MaxConnections);
             _logger = logger ?? NullLogger<PgConnectionHandler>.Instance;
         }
 

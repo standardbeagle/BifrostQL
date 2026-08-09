@@ -15,7 +15,7 @@ namespace BifrostQL.Server.Test.Pgwire
     /// <summary>
     /// A loopback pgwire front door for slice-5 tests. Faithful to production: ONE shared
     /// <see cref="PgConnectionHandler"/> (with one <see cref="PgCancellationRegistry"/> and one
-    /// <see cref="PgConnectionLimiter"/>) services every accepted connection via a background
+    /// <see cref="PgwireConnectionLimiter"/>) services every accepted connection via a background
     /// accept loop — so CancelRequests arriving on a SEPARATE socket are genuinely accepted and
     /// processed, and connection-limit admission is enforced across connections, exactly as the
     /// Kestrel singleton handler would behave.
@@ -34,7 +34,7 @@ namespace BifrostQL.Server.Test.Pgwire
 
         public IPEndPoint Endpoint { get; }
         public PgCancellationRegistry Registry { get; }
-        public PgConnectionLimiter Limiter { get; }
+        public PgwireConnectionLimiter Limiter { get; }
 
         public PgWireTestHarness(
             IQueryIntentExecutor executor,
@@ -52,7 +52,7 @@ namespace BifrostQL.Server.Test.Pgwire
                 HandshakeTimeout = handshakeTimeout ?? TimeSpan.FromSeconds(30),
             };
             Registry = new PgCancellationRegistry();
-            Limiter = new PgConnectionLimiter(maxConnections);
+            Limiter = new PgwireConnectionLimiter(maxConnections);
             var store = new FakePgCredentialStore().Add("alice", "s3cret", TenantPrincipal("user-alice", "tenant-a"));
 
             var services = new ServiceCollection()

@@ -32,7 +32,9 @@ namespace BifrostQL.Server.Resp
             services.AddSingleton(options);
 
             // The per-connection handler is resolved by the Kestrel listener from DI. A single
-            // instance is shared across all connections (Kestrel resolves it once).
+            // instance is shared across all connections (Kestrel resolves it once), so the
+            // admission counter it consults must be the SAME instance for every connection.
+            services.TryAddSingleton(new RespConnectionLimiter(options.MaxConnections));
             services.TryAddSingleton<RespConnectionHandler>();
 
             // Slice-2 read commands attach at the IRespCommandHandler seam — the connection handler

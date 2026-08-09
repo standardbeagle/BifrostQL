@@ -1,3 +1,4 @@
+using BifrostQL.Core.Auth;
 using System.Security.Claims;
 using System.Text.Json;
 using BifrostQL.AdapterConformance;

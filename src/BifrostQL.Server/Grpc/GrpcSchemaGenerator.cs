@@ -1,3 +1,4 @@
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 
 namespace BifrostQL.Server.Grpc
@@ -38,7 +39,7 @@ namespace BifrostQL.Server.Grpc
             if (model is null) throw new ArgumentNullException(nameof(model));
             if (manifest is null) throw new ArgumentNullException(nameof(manifest));
 
-            var visible = GrpcSchemaVisibility.Project(model, userContext);
+            var visible = SchemaReadVisibility.Project(model, userContext);
             var reconciled = manifest.Reconcile(visible);
             var contract = BuildContract(visible, reconciled, includeWrites);
 
@@ -56,7 +57,7 @@ namespace BifrostQL.Server.Grpc
         /// Get RPC has no way to identify a row without one.
         /// </summary>
         public static GrpcContract BuildContract(
-            IReadOnlyList<GrpcVisibleTable> visible,
+            IReadOnlyList<VisibleTable> visible,
             GrpcFieldNumberManifest manifest,
             bool includeWrites = false)
         {
@@ -167,7 +168,7 @@ namespace BifrostQL.Server.Grpc
         /// row count (and, for insert, the generated identity).
         /// </summary>
         private static bool AddMutationSurface(
-            GrpcVisibleTable v,
+            VisibleTable v,
             IReadOnlyList<ColumnDto> keyColumns,
             GrpcFieldNumberManifest manifest,
             List<GrpcMessage> messages,

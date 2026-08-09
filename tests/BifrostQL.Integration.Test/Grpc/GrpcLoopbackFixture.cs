@@ -1,3 +1,4 @@
+using BifrostQL.Core.Auth;
 using System.Globalization;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;

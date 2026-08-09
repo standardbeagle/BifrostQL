@@ -1,3 +1,4 @@
+using BifrostQL.Core.Auth;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -74,7 +75,7 @@ namespace BifrostQL.Server.Grpc
         /// depend on database read order. Messages for tables not currently visible are
         /// preserved untouched, so a table that returns keeps its historical numbers.
         /// </summary>
-        public GrpcFieldNumberManifest Reconcile(IEnumerable<GrpcVisibleTable> visibleTables)
+        public GrpcFieldNumberManifest Reconcile(IEnumerable<VisibleTable> visibleTables)
         {
             if (visibleTables is null) throw new ArgumentNullException(nameof(visibleTables));
 

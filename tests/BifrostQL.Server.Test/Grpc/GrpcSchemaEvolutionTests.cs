@@ -1,3 +1,4 @@
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Server.Grpc;
 using FluentAssertions;
@@ -69,7 +70,7 @@ namespace BifrostQL.Server.Test.Grpc
         // ---- helpers ----
 
         /// <summary>Builds the serialized descriptor set for a model version + carried-forward manifest.</summary>
-        private static FileDescriptorSet DescriptorFor(IReadOnlyList<GrpcVisibleTable> visible, GrpcFieldNumberManifest manifest)
+        private static FileDescriptorSet DescriptorFor(IReadOnlyList<VisibleTable> visible, GrpcFieldNumberManifest manifest)
         {
             var contract = GrpcSchemaGenerator.BuildContract(visible, manifest);
             return FileDescriptorSet.Parser.ParseFrom(GrpcDescriptorSetWriter.Write(contract));
@@ -83,14 +84,14 @@ namespace BifrostQL.Server.Test.Grpc
             return message.Field.ToDictionary(f => f.Name, f => f.Number);
         }
 
-        private static GrpcVisibleTable Visible(string tableName, params ColumnDto[] columns)
+        private static VisibleTable Visible(string tableName, params ColumnDto[] columns)
         {
             var table = Substitute.For<IDbTable>();
             table.GraphQlName.Returns(tableName);
             table.DbName.Returns(tableName);
             table.TableSchema.Returns("dbo");
             table.Columns.Returns(columns);
-            return new GrpcVisibleTable(table, columns);
+            return new VisibleTable(table, columns);
         }
 
         private static ColumnDto Col(string name, string dataType, bool pk = false, bool nullable = false) => new()

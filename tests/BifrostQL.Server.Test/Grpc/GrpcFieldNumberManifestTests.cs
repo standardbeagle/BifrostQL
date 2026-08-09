@@ -1,3 +1,4 @@
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Server.Grpc;
 using FluentAssertions;
@@ -113,14 +114,14 @@ namespace BifrostQL.Server.Test.Grpc
             restored.Messages["UsersRow"].ReservedNames.Should().Contain("name");
         }
 
-        private static GrpcVisibleTable Visible(string tableName, params ColumnDto[] columns)
+        private static VisibleTable Visible(string tableName, params ColumnDto[] columns)
         {
             var table = Substitute.For<IDbTable>();
             table.GraphQlName.Returns(tableName);
             table.DbName.Returns(tableName);
             table.TableSchema.Returns("dbo");
             table.Columns.Returns(columns);
-            return new GrpcVisibleTable(table, columns);
+            return new VisibleTable(table, columns);
         }
 
         private static ColumnDto Col(string name, string dataType, bool pk = false, bool nullable = false) => new()

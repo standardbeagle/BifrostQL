@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { SavedObject } from "@standardbeagle/edit-db";
-import { savedQueryStore, SAVED_QUERY_TYPE } from "./saved-query-store";
+import { isAbortError, listSavedQueries } from "./saved-query-store";
 
 interface SavedQueryListProps {
   /** Id of the query currently open in the designer, highlighted in the list. */
@@ -24,14 +24,15 @@ export function SavedQueryList({ activeId, reloadToken, onOpen }: SavedQueryList
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
-    savedQueryStore
-      .list(SAVED_QUERY_TYPE, controller.signal)
+    listSavedQueries(controller.signal)
       .then((found) => {
         setQueries([...found].sort((a, b) => a.name.localeCompare(b.name)));
         setError(null);
       })
       .catch((e) => {
-        if (controller.signal.aborted) return;
+        // `listSavedQueries` has already turned anything non-abort into a
+        // user-facing sentence, so this message is safe to render as-is.
+        if (controller.signal.aborted || isAbortError(e)) return;
         setError(e instanceof Error ? e.message : String(e));
       })
       .finally(() => !controller.signal.aborted && setLoading(false));

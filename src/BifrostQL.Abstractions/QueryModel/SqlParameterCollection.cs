@@ -15,7 +15,10 @@ public sealed class SqlParameterCollection
     public string AddParameter(object? value, string? dbType = null)
     {
         var index = Interlocked.Increment(ref _counter) - 1;
-        var name = $"@p{index}";
+        // SqlParameterNames owns this shape and reserves it against column-derived
+        // names, so a table with a column literally named "p0" cannot produce the
+        // same parameter and hijack a transformer-injected predicate.
+        var name = $"@{SqlParameterNames.Generated(index)}";
         _parameters[index] = new SqlParameterInfo(name, value, dbType);
         return name;
     }

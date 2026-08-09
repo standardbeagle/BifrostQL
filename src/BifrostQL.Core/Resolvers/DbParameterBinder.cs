@@ -76,31 +76,46 @@ namespace BifrostQL.Core.Resolvers
         public static void AddParameters(DbCommand cmd, IReadOnlyDictionary<string, object?> data)
         {
             foreach (var kv in data)
-            {
-                var p = cmd.CreateParameter();
-                p.ParameterName = $"@{SqlParameterNames.Sanitize(kv.Key)}";
-                p.Value = kv.Value ?? DBNull.Value;
-                cmd.Parameters.Add(p);
-            }
+                Bind(cmd, $"@{SqlParameterNames.Sanitize(kv.Key)}", kv.Value, dbType: null);
         }
 
         /// <summary>
         /// Binds the <c>@p0/@p1/…</c> parameters carried by a rendered
-        /// AdditionalFilter. Their names come from SqlParameterCollection and
-        /// cannot collide with the <c>@columnName</c> parameters above.
+        /// AdditionalFilter. Their names come from SqlParameterCollection, whose
+        /// generated shape <see cref="SqlParameterNames"/> reserves against
+        /// column-derived names, so they cannot collide with the
+        /// <c>@columnName</c> parameters above.
         /// </summary>
         public static void AddExtraParameters(DbCommand cmd, IReadOnlyList<SqlParameterInfo>? parameters)
         {
             if (parameters == null) return;
             foreach (var info in parameters)
-            {
-                var p = cmd.CreateParameter();
-                p.ParameterName = info.Name;
-                p.Value = info.Value ?? DBNull.Value;
-                if (info.DbType != null)
-                    p.DbType = Enum.Parse<System.Data.DbType>(info.DbType);
-                cmd.Parameters.Add(p);
-            }
+                Bind(cmd, info.Name, info.Value, info.DbType);
+        }
+
+        /// <summary>
+        /// Binds one parameter, refusing to bind a name already on the command.
+        /// Last-write-wins (or provider-defined first-wins) on a duplicate name is
+        /// how a client-supplied column value silently replaced a
+        /// transformer-injected predicate's value — a cross-tenant read/write with
+        /// no error anywhere. The namespaces are now structurally disjoint, so a
+        /// duplicate means an invariant broke: fail the request rather than emit
+        /// SQL whose predicate is not the one the transformer built.
+        /// </summary>
+        private static void Bind(DbCommand cmd, string name, object? value, string? dbType)
+        {
+            if (cmd.Parameters.Contains(name))
+                throw new BifrostExecutionError(
+                    $"Parameter '{name}' is already bound on this command. Refusing to rebind it, " +
+                    "because a duplicate parameter name silently substitutes one bound value for " +
+                    "another and can defeat a transformer-injected security predicate.");
+
+            var p = cmd.CreateParameter();
+            p.ParameterName = name;
+            p.Value = value ?? DBNull.Value;
+            if (dbType != null)
+                p.DbType = Enum.Parse<System.Data.DbType>(dbType);
+            cmd.Parameters.Add(p);
         }
 
         /// <summary>

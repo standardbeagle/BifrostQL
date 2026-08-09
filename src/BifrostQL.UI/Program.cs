@@ -94,29 +94,40 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     if (connectionString != null)
         state.Provider = DbConnFactoryResolver.DetectProvider(connectionString);
 
-    var localUrl = $"http://localhost:{port}";
-    var serverUrl = expose ? $"http://0.0.0.0:{port}" : localUrl;
-
-    var app = BifrostUiWebHost.Build(connectionString, port, state, sshTunnel, expose);
-
-    // Must be mapped before the host starts. Registers the SAME handler instances the
-    // Photino channel uses, so what runs here is the shipped logic rather than a
-    // test-only re-implementation of it.
-    if (enableHttpBridge)
-        BifrostQL.UI.Web.HttpBridgeEndpoint.Map(app, state);
+    // An operator-pinned --port is a contract and fails fast when taken; the
+    // implicit default falls back to an OS-assigned free port instead — a desktop
+    // app must open its window even when something else squats port 5000 (a WSL
+    // dev instance relayed onto localhost is the recurring case).
+    var portResult = parseResult.GetResult(portOption);
+    var portWasExplicit = portResult is not null && !portResult.Implicit;
 
     // Start the server FIRST and branch on the result. Nothing below may resolve a
     // service off `app` until this has succeeded: a failed start disposes the host,
     // and touching it afterwards replaces the real diagnosis (the port is taken) with
-    // an ObjectDisposedException stack trace.
-    var startFailure = await HostStartup.TryStartAsync(app, port, cancellationToken);
-    if (startFailure != null)
+    // an ObjectDisposedException stack trace. The bridge must be mapped before the
+    // host starts, and registers the SAME handler instances the Photino channel
+    // uses, so what runs here is the shipped logic rather than a test-only
+    // re-implementation of it.
+    var (app, boundPort, startFailure) = await HostStartup.StartWithFallbackAsync(p =>
     {
-        Console.Error.WriteLine(startFailure);
+        var built = BifrostUiWebHost.Build(connectionString, p, state, sshTunnel, expose);
+        if (enableHttpBridge)
+            BifrostQL.UI.Web.HttpBridgeEndpoint.Map(built, state);
+        return built;
+    }, port, portWasExplicit, cancellationToken);
+
+    if (startFailure != null || app is null)
+    {
+        Console.Error.WriteLine(startFailure ?? "The BifrostQL UI server could not start.");
         await sshTunnel.DisposeAsync();
         return 1;
     }
 
+    var localUrl = $"http://localhost:{boundPort}";
+    var serverUrl = expose ? $"http://0.0.0.0:{boundPort}" : localUrl;
+
+    if (boundPort != port)
+        Console.WriteLine($"Port {port} is in use; started on port {boundPort} instead.");
     Console.WriteLine($"BifrostQL server started at {serverUrl}");
     if (enableHttpBridge)
         Console.WriteLine("WARNING: --enable-http-bridge exposes the desktop SQL bridge over HTTP. " +

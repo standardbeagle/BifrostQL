@@ -63,6 +63,48 @@ namespace BifrostQL.UI.Web
             return false;
         }
 
+        /// <summary>
+        /// Starts a host on <paramref name="requestedPort"/>; when that port is taken
+        /// and the operator did NOT pin it (<paramref name="portWasExplicit"/> false),
+        /// rebuilds on port 0 so the OS assigns a free one — the desktop app must open
+        /// its window, not die, when something else squats the default port. An
+        /// explicitly pinned port stays a hard contract and fails fast with the
+        /// actionable message. <c>Port</c> is always the port actually bound (resolved
+        /// from the server's address, so the port-0 case reports the real number).
+        /// </summary>
+        public static async Task<(WebApplication? App, int Port, string? Failure)> StartWithFallbackAsync(
+            Func<int, WebApplication> buildApp, int requestedPort, bool portWasExplicit, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(buildApp);
+
+            var app = buildApp(requestedPort);
+            var failure = await TryStartAsync(app, requestedPort, cancellationToken);
+            if (failure is null)
+                return (app, BoundPort(app, requestedPort), null);
+            if (portWasExplicit)
+                return (null, requestedPort, failure);
+
+            app = buildApp(0);
+            failure = await TryStartAsync(app, 0, cancellationToken);
+            return failure is null
+                ? (app, BoundPort(app, 0), null)
+                : (null, requestedPort, failure);
+        }
+
+        /// <summary>
+        /// The port the started server actually bound, read from its resolved
+        /// addresses — with port 0 the URL the host was built with is useless.
+        /// </summary>
+        private static int BoundPort(WebApplication app, int requestedPort)
+        {
+            foreach (var url in app.Urls)
+            {
+                if (Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Port > 0)
+                    return uri.Port;
+            }
+            return requestedPort;
+        }
+
         /// <summary>The message shown to the operator when the port is taken.</summary>
         public static string DescribeAddressInUse(int port) =>
             $"Port {port} is already in use, so the BifrostQL UI server could not start. " +

@@ -111,6 +111,100 @@ public sealed class HostStartupTests
         HostStartup.IsAddressInUse(wrapped).Should().Be(expected);
     }
 
+    [Fact]
+    public async Task StartWithFallbackAsync_moves_to_a_free_port_when_the_default_is_taken()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var takenPort = ((IPEndPoint)listener.LocalEndpoint).Port;
+
+        try
+        {
+            var state = new ConnectionState();
+            await using var sshTunnel = new SshTunnelManager();
+
+            var result = await HostStartup.StartWithFallbackAsync(
+                p => BifrostUiWebHost.Build(null, p, state, sshTunnel),
+                takenPort, portWasExplicit: false, CancellationToken.None);
+
+            try
+            {
+                result.Failure.Should().BeNull("an implicit default port must fall back, not die");
+                result.App.Should().NotBeNull();
+                result.Port.Should().NotBe(takenPort, "the taken port cannot have been bound");
+                result.Port.Should().BeGreaterThan(0, "the OS-assigned port must be resolved to a real number");
+
+                using var probe = new TcpClient();
+                await probe.ConnectAsync(IPAddress.Loopback, result.Port);
+                probe.Connected.Should().BeTrue("the fallback port must actually be listening");
+            }
+            finally
+            {
+                if (result.App is not null)
+                {
+                    await result.App.StopAsync();
+                    await result.App.DisposeAsync();
+                }
+            }
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+
+    [Fact]
+    public async Task StartWithFallbackAsync_fails_fast_when_the_port_was_explicit()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var takenPort = ((IPEndPoint)listener.LocalEndpoint).Port;
+
+        try
+        {
+            var state = new ConnectionState();
+            await using var sshTunnel = new SshTunnelManager();
+
+            var result = await HostStartup.StartWithFallbackAsync(
+                p => BifrostUiWebHost.Build(null, p, state, sshTunnel),
+                takenPort, portWasExplicit: true, CancellationToken.None);
+
+            result.App.Should().BeNull("an operator-pinned port is a contract, not a hint");
+            result.Failure.Should().NotBeNull();
+            result.Failure.Should().Contain(takenPort.ToString());
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+
+    [Fact]
+    public async Task StartWithFallbackAsync_keeps_the_requested_port_when_it_is_free()
+    {
+        var port = FreePort();
+        var state = new ConnectionState();
+        await using var sshTunnel = new SshTunnelManager();
+
+        var result = await HostStartup.StartWithFallbackAsync(
+            p => BifrostUiWebHost.Build(null, p, state, sshTunnel),
+            port, portWasExplicit: false, CancellationToken.None);
+
+        try
+        {
+            result.Failure.Should().BeNull();
+            result.Port.Should().Be(port);
+        }
+        finally
+        {
+            if (result.App is not null)
+            {
+                await result.App.StopAsync();
+                await result.App.DisposeAsync();
+            }
+        }
+    }
+
     private static int FreePort()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);

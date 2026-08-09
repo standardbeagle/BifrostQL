@@ -23,36 +23,65 @@ namespace BifrostQL.UI.Web
             // Release builds never expose F12 / right-click-Inspect on the embedded
             // React SPA (protects JS heap + source maps).
             var isDev = app.Environment.IsDevelopment();
-            var window = new PhotinoWindow()
-                .SetTitle("BifrostQL - Database Explorer")
-                .SetSize(1400, 900)
-                .Center()
-                .SetDevToolsEnabled(isDev)
-                .SetContextMenuEnabled(isDev)
-                .Load(localUrl);
 
-            var bridgeLogger = app.Services
-                .GetService<ILoggerFactory>()?
-                .CreateLogger<NativeBridgeHost>();
-            using var nativeBridge = new NativeBridgeHost(window, bridgeLogger);
-
-            // Smoke-test handler for the wire format: echo the raw JSON back so the
-            // caller can confirm its payload round-tripped unchanged. GetRawText keeps
-            // us agnostic to payload shape — primitives, objects, null all fall out
-            // the same way.
-            nativeBridge.Register("ping", (payload, _) =>
+            // The window and everything bound to it live on a dedicated STA thread.
+            // This method resumes from awaits on a threadpool (MTA) thread, and on
+            // Windows WebView2 refuses to create its environment from MTA
+            // (RPC_E_CHANGED_MODE) — Photino swallows that failure, so the window
+            // opens with no browser inside it: a permanently black window, no error,
+            // no msedgewebview2.exe children. Creating the window on an explicit STA
+            // thread is the fix, not a preference.
+            var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var uiThread = new Thread(() =>
             {
-                var echo = payload.ValueKind == JsonValueKind.Undefined
-                    ? "undefined"
-                    : payload.GetRawText();
-                return Task.FromResult<object?>(new { pong = true, echo });
-            });
+                try
+                {
+                    var window = new PhotinoWindow()
+                        .SetTitle("BifrostQL - Database Explorer")
+                        .SetSize(1400, 900)
+                        .Center()
+                        .SetDevToolsEnabled(isDev)
+                        .SetContextMenuEnabled(isDev)
+                        .Load(localUrl);
 
-            new VaultBridgeHandlers(window, bridgeLogger, state.VaultPath).Register(nativeBridge);
-            new RawSqlBridgeHandler(state).Register(nativeBridge);
-            new VisualQueryBridgeHandlers(state, app.Services).Register(nativeBridge);
+                    var bridgeLogger = app.Services
+                        .GetService<ILoggerFactory>()?
+                        .CreateLogger<NativeBridgeHost>();
+                    using var nativeBridge = new NativeBridgeHost(window, bridgeLogger);
 
-            window.WaitForClose();
+                    // Smoke-test handler for the wire format: echo the raw JSON back so the
+                    // caller can confirm its payload round-tripped unchanged. GetRawText keeps
+                    // us agnostic to payload shape — primitives, objects, null all fall out
+                    // the same way.
+                    nativeBridge.Register("ping", (payload, _) =>
+                    {
+                        var echo = payload.ValueKind == JsonValueKind.Undefined
+                            ? "undefined"
+                            : payload.GetRawText();
+                        return Task.FromResult<object?>(new { pong = true, echo });
+                    });
+
+                    new VaultBridgeHandlers(window, bridgeLogger, state.VaultPath).Register(nativeBridge);
+                    new RawSqlBridgeHandler(state).Register(nativeBridge);
+                    new VisualQueryBridgeHandlers(state, app.Services).Register(nativeBridge);
+
+                    window.WaitForClose();
+                    closed.SetResult();
+                }
+                catch (Exception ex)
+                {
+                    closed.SetException(ex);
+                }
+            })
+            {
+                Name = "BifrostQL UI",
+                IsBackground = false,
+            };
+            if (OperatingSystem.IsWindows())
+                uiThread.SetApartmentState(ApartmentState.STA);
+            uiThread.Start();
+
+            await closed.Task;
 
             // Shutdown the server and SSH tunnel when the window closes
             await sshTunnel.DisposeAsync();

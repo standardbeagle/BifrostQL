@@ -1,5 +1,6 @@
 using System.Text;
 using BifrostQL.Core.AppMetadata;
+using BifrostQL.Core.Resolvers;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -25,9 +26,21 @@ namespace BifrostQL.Server
 
         /// <summary>
         /// Whether authentication is required to access the endpoint.
-        /// Default: false.
+        /// Default: <c>true</c>.
+        ///
+        /// <para>The overlay enumerates entities, fields, grid columns and relationships — an
+        /// introspection surface, not a public asset. Every other Bifrost transport gate requires
+        /// identity and narrows what it returns from it, so this one does too. Setting it to
+        /// <c>false</c> publishes the whole overlay to anonymous callers and is a deliberate
+        /// deployment decision, never the default.</para>
         /// </summary>
-        public bool RequireAuth { get; set; }
+        public bool RequireAuth { get; set; } = true;
+
+        /// <summary>
+        /// The registered GraphQL endpoint path whose cached model the overlay is filtered
+        /// against. Null selects the single registered endpoint.
+        /// </summary>
+        public string? GraphQlEndpoint { get; set; }
     }
 
     /// <summary>
@@ -40,6 +53,12 @@ namespace BifrostQL.Server
     /// endpoint is the app-metadata counterpart of the GraphQL introspection
     /// the schema-metadata system already exposes; the two coexist and neither
     /// is merged into the other.
+    ///
+    /// <para>Being introspection, it is gated like one: authentication is required by default
+    /// (<see cref="BifrostAppMetadataOptions.RequireAuth"/>), identity is projected through the
+    /// shared <see cref="IBifrostAuthContextFactory"/>, and the served overlay is narrowed to the
+    /// entities and fields that caller may READ under the same policy evaluator the query path
+    /// enforces (.claude/rules/protocol-adapter-security.md invariant 4).</para>
     /// </summary>
     public sealed class BifrostAppMetadataMiddleware
     {
@@ -72,11 +91,43 @@ namespace BifrostQL.Server
             // endpoint always returns the stable contract rather than 404.
             var overlay = context.RequestServices.GetService<Lazy<Task<AppMetadataModel>>>();
             var model = overlay != null ? await overlay.Value : new AppMetadataModel();
+
+            model = await FilterForCallerAsync(context, model);
+
             var json = AppMetadataJson.Serialize(model);
 
             context.Response.ContentType = "application/json";
             context.Response.StatusCode = StatusCodes.Status200OK;
             await context.Response.Body.WriteAsync(Encoding.UTF8.GetBytes(json), context.RequestAborted);
+        }
+
+        /// <summary>
+        /// Narrows the overlay to what THIS caller may read. Identity is projected through the
+        /// shared <see cref="IBifrostAuthContextFactory"/> — the same seam every other transport
+        /// gate uses, so the projection cannot drift — and the projection is applied by
+        /// <see cref="AppMetadataVisibility"/> using the evaluator the query path calls
+        /// (.claude/rules/protocol-adapter-security.md invariant 4).
+        ///
+        /// <para>Filtering needs a schema model to authorize against. When no
+        /// <see cref="IQueryIntentExecutor"/> is registered, this process hosts no Bifrost data
+        /// path at all — there is no table whose readability the overlay could contradict — so
+        /// the overlay is served as authored. That case is guarded by <see cref="BifrostAppMetadataOptions.RequireAuth"/>
+        /// alone, which is why it defaults on. If the model IS registered but cannot be
+        /// resolved, the request fails rather than silently degrading to an unfiltered
+        /// overlay.</para>
+        /// </summary>
+        private async Task<AppMetadataModel> FilterForCallerAsync(HttpContext context, AppMetadataModel overlay)
+        {
+            if (overlay.Entities.Count == 0)
+                return overlay;
+
+            var reads = context.RequestServices.GetService<IQueryIntentExecutor>();
+            if (reads is null)
+                return overlay;
+
+            var userContext = BifrostAuthContextFactory.Resolve(context).CreateUserContext(context);
+            var model = await reads.GetModelAsync(_options.GraphQlEndpoint);
+            return AppMetadataVisibility.Project(overlay, model, userContext);
         }
     }
 }

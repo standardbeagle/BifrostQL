@@ -126,10 +126,17 @@ public sealed class AppMetadataEndpointTests
                 });
                 web.Configure(app =>
                 {
-                    if (configurePath is null)
-                        app.UseBifrostAppMetadata();
-                    else
-                        app.UseBifrostAppMetadata(o => o.Path = configurePath);
+                    // These facts cover the SERVING contract (path, shape, never-404), not the
+                    // security gate: this host registers no authentication scheme, so every
+                    // request is anonymous. RequireAuth now defaults ON, so the open endpoint is
+                    // opted into explicitly here — the gate and the identity-filtered projection
+                    // are covered by AppMetadataVisibilityTests against a real model.
+                    app.UseBifrostAppMetadata(o =>
+                    {
+                        o.RequireAuth = false;
+                        if (configurePath is not null)
+                            o.Path = configurePath;
+                    });
                 });
             });
         var host = await builder.StartAsync();
@@ -142,7 +149,7 @@ public sealed class AppMetadataEndpointTests
             .ConfigureWebHost(web =>
             {
                 web.UseTestServer();
-                web.Configure(app => app.UseBifrostAppMetadata());
+                web.Configure(app => app.UseBifrostAppMetadata(o => o.RequireAuth = false));
             });
         return await builder.StartAsync();
     }

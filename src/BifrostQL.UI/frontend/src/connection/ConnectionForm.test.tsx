@@ -69,11 +69,29 @@ describe('ConnectionForm certificate trust', () => {
     expect(screen.queryByTestId('trust-cert-warning')).toBeNull();
   });
 
-  it('explains the exposure when the user opts out of validation', () => {
+  it('shows a calm note for the default localhost server', () => {
+    // A local SQL Server's self-signed certificate is the expected case;
+    // shouting "interceptable" at localhost teaches users to ignore the
+    // warning that matters on a remote host.
     render(<ConnectionForm provider="sqlserver" onConnect={() => {}} onBack={() => {}} />);
 
     fireEvent.click(trustCheckbox());
 
+    expect(screen.queryByTestId('trust-cert-warning')).toBeNull();
+    const note = screen.getByTestId('trust-cert-note');
+    expect(note.textContent).toMatch(/local SQL Server/i);
+    expect(note.textContent).toMatch(/self-signed certificate/i);
+  });
+
+  it('explains the exposure when opting out of validation for a remote server', () => {
+    render(<ConnectionForm provider="sqlserver" onConnect={() => {}} onBack={() => {}} />);
+
+    fireEvent.change(screen.getByPlaceholderText('localhost'), {
+      target: { value: 'db.prod.example.com' },
+    });
+    fireEvent.click(trustCheckbox());
+
+    expect(screen.queryByTestId('trust-cert-note')).toBeNull();
     const warning = screen.getByTestId('trust-cert-warning');
     expect(warning.textContent).toMatch(/disables certificate validation/i);
     expect(warning.textContent).toMatch(/intercept/i);

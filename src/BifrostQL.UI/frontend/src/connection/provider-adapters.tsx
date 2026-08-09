@@ -73,6 +73,21 @@ function tunnelFor(sshConfig: SshConfig): SshConfig | undefined {
   return sshConfig.enabled ? sshConfig : undefined;
 }
 
+/**
+ * True when the SQL Server target is this machine: `localhost`, `127.0.0.1`,
+ * `::1`, `.`, `(local)`, or a `(localdb)\` automatic instance, with optional
+ * `\INSTANCE` and `,port` suffixes. Drives the tone of the trust-certificate
+ * note — a local server's self-signed certificate is the expected case, not
+ * evidence of an interception risk.
+ */
+export function isLoopbackSqlServer(server: string): boolean {
+  const trimmed = server.trim().toLowerCase();
+  if (trimmed.startsWith('(localdb)')) return true;
+  const host = trimmed.split('\\')[0].split(',')[0].trim();
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1'
+    || host === '.' || host === '(local)';
+}
+
 const sqlServerAdapter: ProviderAdapter = {
   defaultPort: 1433,
   createDefaultFormData: () => ({
@@ -182,7 +197,17 @@ const sqlServerAdapter: ProviderAdapter = {
           />
           <span>Trust Server Certificate</span>
         </label>
-        {d.trustServerCertificate && (
+        {d.trustServerCertificate && (isLoopbackSqlServer(d.server) ? (
+          <div
+            className="conn-form__alert conn-form__alert--info"
+            role="note"
+            data-testid="trust-cert-note"
+          >
+            Certificate validation is off. That&apos;s the normal setting for a
+            local SQL Server, which generates its own self-signed certificate.
+            Re-enable it if you point this connection at a remote server.
+          </div>
+        ) : (
           <div
             className="conn-form__alert conn-form__alert--error"
             role="alert"
@@ -193,7 +218,7 @@ const sqlServerAdapter: ProviderAdapter = {
             or alter the connection. Use it only for a server whose self-signed
             certificate you already trust.
           </div>
-        )}
+        ))}
       </>
     );
   },

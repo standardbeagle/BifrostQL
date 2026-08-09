@@ -940,6 +940,12 @@ input[type="checkbox"]:focus-visible {
   border: 1px solid rgba(107, 203, 119, 0.2);
 }
 
+.conn-form__alert--info {
+  background: rgba(96, 165, 250, 0.08);
+  color: var(--text-secondary, #94a3b8);
+  border: 1px solid rgba(96, 165, 250, 0.2);
+}
+
 .conn-form__alert--error {
   background: rgba(255, 107, 107, 0.08);
   color: var(--accent-danger);

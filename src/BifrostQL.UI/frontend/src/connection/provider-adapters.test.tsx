@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { PROVIDER_ADAPTERS } from './provider-adapters';
+import { PROVIDER_ADAPTERS, isLoopbackSqlServer } from './provider-adapters';
 import type { SqlServerFormData, SshConfig, WpConfig } from './types';
 
 const sqlserver = PROVIDER_ADAPTERS.sqlserver;
@@ -69,5 +69,31 @@ describe('sqlserver adapter vault request', () => {
 
   it('does not smuggle the waiver through the ssl field', () => {
     expect(requestFor(true).ssl).toBeUndefined();
+  });
+});
+
+describe('isLoopbackSqlServer', () => {
+  it.each([
+    'localhost',
+    'LOCALHOST\\SQLEXPRESS',
+    '127.0.0.1,1433',
+    '::1',
+    '.',
+    '.\\SQLEXPRESS',
+    '(local)',
+    '(LocalDB)\\MSSQLLocalDB',
+    '  localhost  ',
+  ])('treats %s as this machine', (server) => {
+    expect(isLoopbackSqlServer(server)).toBe(true);
+  });
+
+  it.each([
+    'db.prod.example.com',
+    '10.0.0.5',
+    'localhost.example.com',
+    'sql01',
+    '',
+  ])('treats %s as remote', (server) => {
+    expect(isLoopbackSqlServer(server)).toBe(false);
   });
 });

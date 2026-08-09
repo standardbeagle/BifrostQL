@@ -1374,3 +1374,79 @@ describe('buildSingleRowQuery', () => {
         ).toThrow(/Invalid GraphQL single-row selection field/);
     });
 });
+
+describe('single-join label selection with aliased relationship fields', () => {
+    // A table with two foreign keys to the same target has one relationship field
+    // per key (billing_address / shipping_address) and NO field named for the
+    // target table. Selecting by destination table name asks for a field the
+    // schema does not have, and the whole grid query fails with
+    // "Cannot query field 'addresses' on type 'orders'".
+    const addresses = makeTable({
+        name: 'addresses',
+        graphQlName: 'addresses',
+        labelColumn: 'street',
+        primaryKeys: ['address_id'],
+        columns: [
+            makeColumn({ name: 'address_id', paramType: 'Int!', isPrimaryKey: true }),
+            makeColumn({ name: 'street', paramType: 'String' }),
+        ],
+    });
+
+    const orders = makeTable({
+        name: 'orders',
+        graphQlName: 'orders',
+        primaryKeys: ['order_id'],
+        columns: [
+            makeColumn({ name: 'order_id', paramType: 'Int!', isPrimaryKey: true }),
+            makeColumn({ name: 'billing_address_id', paramType: 'Int' }),
+            makeColumn({ name: 'shipping_address_id', paramType: 'Int' }),
+        ],
+        singleJoins: [
+            {
+                name: 'addresses',
+                fieldName: 'billing_address',
+                sourceColumnNames: ['billing_address_id'],
+                destinationTable: 'addresses',
+                destinationColumnNames: ['address_id'],
+            },
+            {
+                name: 'addresses',
+                fieldName: 'shipping_address',
+                sourceColumnNames: ['shipping_address_id'],
+                destinationTable: 'addresses',
+                destinationColumnNames: ['address_id'],
+            },
+        ],
+    });
+
+    it('selects each join by its relationship field name, not the destination table', () => {
+        const q = buildQuery(orders, makeSchema([orders, addresses]), '', [], undefined)!;
+
+        expect(q).toContain('billing_address_id billing_address {');
+        expect(q).toContain('shipping_address_id shipping_address {');
+    });
+
+    it('does not ask for a field named after the destination table', () => {
+        const q = buildQuery(orders, makeSchema([orders, addresses]), '', [], undefined)!;
+
+        expect(q).not.toMatch(/\baddresses\s*{/);
+    });
+
+    it('still uses the destination table name when a join has no alias', () => {
+        // The single-FK case, which is the overwhelming majority: no fieldName is
+        // sent, and the field is named for the table.
+        const plain = makeTable({
+            ...orders,
+            singleJoins: [{
+                name: 'addresses',
+                sourceColumnNames: ['billing_address_id'],
+                destinationTable: 'addresses',
+                destinationColumnNames: ['address_id'],
+            }],
+        });
+
+        const q = buildQuery(plain, makeSchema([plain, addresses]), '', [], undefined)!;
+
+        expect(q).toContain('billing_address_id addresses {');
+    });
+});

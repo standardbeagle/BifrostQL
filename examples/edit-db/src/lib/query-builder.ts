@@ -418,14 +418,22 @@ function buildDataColumns(table: Table, schema: SchemaContextValue, tableSchema:
                 const labelField = labelCol && !destPks.includes(labelCol)
                     ? ` label: ${labelCol}`
                     : '';
+                // Select by the RELATIONSHIP field, falling back to the destination
+                // table name when the server sent no alias. A table with two foreign
+                // keys to the same target has one field per key (billing_address,
+                // shipping_address) and none named for the table, so asking by table
+                // name fails the whole grid query with "Cannot query field
+                // 'addresses' on type 'orders'". Same fallback the multi-join
+                // selection already uses.
+                const joinField = x.joinTable.fieldName ?? x.joinTable.destinationTable;
                 if (destPks.length === 1) {
                     // Single-PK destination — keep the legacy `id: <destCol>` alias
                     // so cell renderers can read `joined.id` without composite awareness.
-                    return `${x.name} ${x.joinTable.destinationTable} { id: ${destPks[0]}${labelField} }`;
+                    return `${x.name} ${joinField} { id: ${destPks[0]}${labelField} }`;
                 }
                 // Composite-PK destination — emit every PK column verbatim so callers
                 // can recompose a composite route via rowIdOf.
-                return `${x.name} ${x.joinTable.destinationTable} { ${destPks.join(' ')}${labelField} }`;
+                return `${x.name} ${joinField} { ${destPks.join(' ')}${labelField} }`;
             }
             return x.name;
         })

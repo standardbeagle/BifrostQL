@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Security.Claims;
@@ -239,8 +240,13 @@ namespace BifrostQL.Server.Test.Prometheus
             // without a tenant-filter) blends alice's and bob's rows into one global total.
             // The role-qualified row scope does not narrow a role-less identity, so nothing
             // downstream saves the scrape.
+            //
+            // The metadata declares a mode only so the model loads: model-load validation now
+            // rejects a policy-row-scoped metric that declares none. What is demonstrated here
+            // is the COLLECTOR's behaviour under an empty context, which the declared mode does
+            // not affect — the resolver is bypassed entirely.
             await using var harness = await ODataRealDbHarness.StartAsync(
-                "scope-policy-leak", new[] { PolicyScopedNoMode }, Seed);
+                "scope-policy-leak", new[] { PolicyScopedAggregateMode }, Seed);
             var model = await harness.ModelAsync();
             var table = model.GetTableFromDbName("Notes");
             var config = PrometheusMetricConfig.FromTable(table);
@@ -254,20 +260,25 @@ namespace BifrostQL.Server.Test.Prometheus
         }
 
         [Fact]
-        public async Task A_policy_row_scoped_metric_with_no_declared_mode_fails_closed()
+        public async Task A_policy_row_scoped_metric_with_no_declared_mode_is_refused_at_model_load()
         {
+            // A policy-row-scoped metric declaring no mode is now rejected when the model
+            // loads, so it can never reach a scrape at all — strictly stronger than the
+            // resolver excluding the series at scrape time, and the same treatment the
+            // tenant-filter spelling has always had.
+            //
+            // The resolver keeps its own fail-closed branch for this case as defence in
+            // depth (a model built programmatically bypasses this validation); that branch
+            // is simply no longer reachable through a normal load, which is why this asserts
+            // on the load rather than on the resolver.
             await using var harness = await ODataRealDbHarness.StartAsync(
                 "scope-policy-nomode", new[] { PolicyScopedNoMode }, Seed);
-            var table = (await harness.ModelAsync()).GetTableFromDbName("Notes");
-            var config = PrometheusMetricConfig.FromTable(table);
 
-            // A configured service identity is present, so the ONLY thing missing is the
-            // operator's explicit mode choice — which must be enough to exclude the series.
-            var scope = Resolver(ServicePrincipal("tenant-a")).ResolveScope(config, table);
+            // The model loads lazily, so validation runs here rather than at StartAsync.
+            var act = async () => await harness.ModelAsync();
 
-            scope.IsIncluded.Should().BeFalse();
-            scope.UserContext.Should().BeNull();
-            scope.Reason.Should().Contain("metric-security-mode");
+            (await act.Should().ThrowAsync<InvalidOperationException>())
+                .Which.Message.Should().Contain("metric-security-mode");
         }
 
         [Fact]

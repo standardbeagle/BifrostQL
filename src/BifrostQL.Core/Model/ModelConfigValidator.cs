@@ -1411,16 +1411,20 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
-        /// Whether the table's rows are narrowed by a policy derived from the caller's
-        /// identity. Mirrors the scrape-time check in PrometheusScrapeScopeResolver, so
-        /// model-load validation and the runtime agree on what "row-scoped" means. An
-        /// unparseable policy counts as scoped: it cannot be shown to be safe.
+        /// Whether the table's ROWS are narrowed by a policy derived from the caller's
+        /// identity. Deliberately narrower than <c>TablePolicy.HasPolicy</c>, which is also
+        /// true for a purely column-level restriction such as <c>policy-read-deny</c>: a
+        /// column policy hides a field but never partitions rows, so an aggregate over it
+        /// carries no cross-tenant exposure and must not be forced to declare a mode.
+        /// Rejecting those here would refuse the whole model at load — taking down every
+        /// other metric with it — where the scrape-time resolver only drops one series.
+        /// An unparseable policy counts as scoped: it cannot be shown to be safe.
         /// </summary>
         private static bool HasPolicyRowScoping(IDbTable table)
         {
             try
             {
-                return PolicyConfigCollector.FromTable(table).HasPolicy;
+                return PolicyConfigCollector.FromTable(table).RowScopeExpression is not null;
             }
             catch
             {

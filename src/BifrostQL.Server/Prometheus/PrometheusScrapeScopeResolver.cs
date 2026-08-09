@@ -127,12 +127,18 @@ namespace BifrostQL.Server.Prometheus
         /// <para>Soft-delete is deliberately NOT in this test: its filter is driven by an opt-in
         /// context flag rather than by identity, so it applies identically under any context and
         /// creates no cross-partition exposure.</para>
+        ///
+        /// <para>Nor is a purely COLUMN-level policy such as <c>policy-read-deny</c>. It hides a
+        /// field but never partitions rows, so the aggregate carries no cross-tenant exposure and
+        /// needs no mode. Treating it as scoping would drop the series before collection — hiding
+        /// the read denial the health metrics exist to report — so this tests the row-scope
+        /// expression, not <c>HasPolicy</c>, and matches ModelConfigValidator.HasPolicyRowScoping.</para>
         /// </summary>
         private static bool HasIdentityRowScoping(IDbTable table)
         {
             try
             {
-                return PolicyConfigCollector.FromTable(table).HasPolicy;
+                return PolicyConfigCollector.FromTable(table).RowScopeExpression is not null;
             }
             catch
             {

@@ -244,11 +244,26 @@ agent can act on, not a JSON-RPC protocol fault that tears down the session. An
 unknown table or column name comes back with a nearest-name "did you mean"
 suggestion and the list of valid names. A tampered or corrupted pagination cursor
 collapses to one clear invalid-cursor prompt rather than silently clamping (which
-would mask tampering). The one thing that is *not* forwarded verbatim is an
-identity failure from an unmapped OIDC issuer: its message names the issuer, so it
-is sanitized to a generic authentication error and the detail is logged
-server-side only. The result is a surface an agent can drive by trial and
-correction, where every recoverable failure teaches it what to send next.
+would mask tampering).
+
+Errors the *adapter itself* authors are forwarded verbatim, because their text is
+the answer the agent needs and it is built from the agent's own arguments or from
+the schema it is already permitted to see. Errors raised *inside the server* are
+not: they can name a schema-qualified table, a tenant context-key, a policy-denied
+column, or raw driver text, and an agent needs none of that to recover. Those are
+answered with a stable code and the detail is logged server-side only:
+
+| Condition | Wire code | What the agent should do |
+|---|---|---|
+| Authorization refusal — policy denial, or an identity carrying no tenant | `access_denied` | Try a table it is permitted to read, or ask the user to supply the missing context. |
+| Any other server-side execution failure | `execution_error` | Not retryable as-is; the identical call will fail the same way. |
+| Unmapped OIDC issuer | generic authentication error | Re-authenticate; the issuer name is never on the wire. |
+
+The code is stable and identical on every op class — tool calls, `tools/list`,
+and the schema resources alike — so an agent can branch on it. The result is a
+surface an agent can drive by trial and correction, where every recoverable
+failure teaches it what to send next, and no failure teaches it the shape of a
+database it was denied.
 
 ## See also
 

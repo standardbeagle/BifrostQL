@@ -24,9 +24,8 @@ namespace BifrostQL.Mcp.Test
     /// <para><b>Writes.</b> <see cref="AdapterSupportsMutations"/> is true — the write tools MUST
     /// prove tenant pinning, cross-tenant no-op, soft-delete and fail-closed identity — and the MCP
     /// wire has a genuine row-creating verb (bifrost_insert), so <see cref="AdapterSupportsInserts"/>
-    /// stays true. Rejections surface as the tool's own error text, which forwards the server's
-    /// <see cref="BifrostExecutionError"/> message (the actionable agent-facing contract MCP already
-    /// ships), so the canonical rejection fragments match with no override.</para>
+    /// stays true. Rejections surface as the tool's own error text, sanitized to the adapter's
+    /// stable <c>access_denied</c> code — see <see cref="ExpectedRejectionFragment"/>.</para>
     /// </summary>
     public sealed class McpProtocolAdapterConformanceTests : ProtocolAdapterConformanceTests
     {
@@ -35,6 +34,21 @@ namespace BifrostQL.Mcp.Test
         protected override void RegisterAdapter(BifrostMultiDbOptions options) { }
 
         protected override bool AdapterSupportsMutations => true;
+
+        /// <summary>
+        /// MCP sanitizes every <see cref="BifrostExecutionError"/> before it reaches the wire
+        /// (invariant 3): the canonical server fragments name a schema-qualified table, a tenant
+        /// context-key or a policy-denied column, none of which an agent needs in order to
+        /// recover. It answers with the stable <c>access_denied</c> code instead. The ASSERT is
+        /// unchanged — the read/write is still rejected and nothing is delivered or written; only
+        /// the EXPECTED text is adapter-relative.
+        ///
+        /// <para>ONE override covers the read, filter and write facts, and that is the point:
+        /// the funnel maps by CONDITION, never by op class, so an authorization refusal carries
+        /// the identical code on every path (invariant 10's parity requirement). A separate
+        /// override per fact would be the first sign that parity had been lost.</para>
+        /// </summary>
+        protected override string ExpectedRejectionFragment(string canonicalServerFragment) => "access_denied";
 
         protected override async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ExecuteReadAsync(
             ConformanceReadRequest request)

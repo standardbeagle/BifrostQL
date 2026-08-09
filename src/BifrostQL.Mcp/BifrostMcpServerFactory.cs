@@ -231,7 +231,7 @@ namespace BifrostQL.Mcp
                 },
                 Handlers = new McpServerHandlers
                 {
-                    ListToolsHandler = (_, ct) => MapProtocolConditionsAsync(async () =>
+                    ListToolsHandler = (_, ct) => MapProtocolConditionsAsync(logger: logger, operation: async () =>
                     {
                         if (beforeRequestAsync is not null) await beforeRequestAsync(ct);
                         var tools = await BuildListedToolsAsync(executor, endpoint, declaredTools, declarativeTools, writesActive, ct);
@@ -244,13 +244,13 @@ namespace BifrostQL.Mcp
                     }),
                     CallToolHandler = (request, ct) => CallToolAsync(
                         executor, mutationExecutor, writesActive, gate, endpoint, contextProvider, declarativeTools,
-                        beforeRequestAsync, request.Params, ct),
-                    ListResourcesHandler = (_, ct) => MapProtocolConditionsAsync(async () =>
+                        beforeRequestAsync, logger, request.Params, ct),
+                    ListResourcesHandler = (_, ct) => MapProtocolConditionsAsync(logger: logger, operation: async () =>
                     {
                         if (beforeRequestAsync is not null) await beforeRequestAsync(ct);
                         return await ListResourcesAsync(executor, endpoint, contextProvider, ct);
                     }),
-                    ReadResourceHandler = (request, ct) => MapProtocolConditionsAsync(async () =>
+                    ReadResourceHandler = (request, ct) => MapProtocolConditionsAsync(logger: logger, operation: async () =>
                     {
                         if (beforeRequestAsync is not null) await beforeRequestAsync(ct);
                         return await ReadResourceAsync(executor, endpoint, contextProvider, request.Params, ct);
@@ -413,7 +413,7 @@ namespace BifrostQL.Mcp
             IQueryIntentExecutor executor, IMutationIntentExecutor? mutationExecutor, bool writesActive,
             McpToolAccessGate gate, string? endpoint, Func<IDictionary<string, object?>> userContextProvider,
             DeclarativeToolDocument? declarativeTools,
-            Func<CancellationToken, ValueTask>? beforeRequestAsync,
+            Func<CancellationToken, ValueTask>? beforeRequestAsync, ILogger? logger,
             CallToolRequestParams? parameters, CancellationToken cancellationToken)
         {
             try
@@ -424,7 +424,7 @@ namespace BifrostQL.Mcp
             }
             catch (Exception e) when (IsMappedCondition(e))
             {
-                return ErrorResult(MapConditionMessage(e));
+                return ErrorResult(MapConditionMessage(e, logger));
             }
         }
 
@@ -443,7 +443,7 @@ namespace BifrostQL.Mcp
         /// protocol error with the same sanitized message. Without it, a condition that is
         /// a clean <c>isError</c> on <c>tools/call</c> escaped these handlers unhandled.
         /// </summary>
-        private static async ValueTask<T> MapProtocolConditionsAsync<T>(Func<ValueTask<T>> operation)
+        private static async ValueTask<T> MapProtocolConditionsAsync<T>(Func<ValueTask<T>> operation, ILogger? logger)
         {
             try
             {
@@ -451,7 +451,7 @@ namespace BifrostQL.Mcp
             }
             catch (Exception e) when (IsMappedCondition(e))
             {
-                throw new McpProtocolException(MapConditionMessage(e), McpErrorCode.InvalidRequest);
+                throw new McpProtocolException(MapConditionMessage(e, logger), McpErrorCode.InvalidRequest);
             }
         }
 
@@ -459,14 +459,65 @@ namespace BifrostQL.Mcp
             e is UnmappedOidcIssuerException or ToolPromptException or BifrostExecutionError
                 or McpIdentityException;
 
+        /// <summary>The stable wire code for an authorization/identity refusal. Callers are
+        /// agents: they parse this, so it is part of the adapter's public surface.</summary>
+        internal const string AccessDeniedCode = "access_denied";
+
+        /// <summary>The stable wire code for any other execution failure.</summary>
+        internal const string ExecutionErrorCode = "execution_error";
+
+        private const string UnmappedIssuerMessage =
+            "Authentication failed: the presented token could not be resolved to an identity.";
+
+        private const string AccessDeniedMessage =
+            AccessDeniedCode + ": the server refused this request on authorization grounds — a policy " +
+            "denial, or a missing identity/tenant context. Try a table you are permitted to read, or ask " +
+            "the user to supply the missing context. The specific reason is recorded server-side only.";
+
+        private const string ExecutionErrorMessage =
+            ExecutionErrorCode + ": the request could not be completed. Retrying the identical call is " +
+            "unlikely to help. The specific reason is recorded server-side only.";
+
         /// <summary>
-        /// Maps a funnelled condition to its client-facing message. An unmapped OIDC issuer
-        /// is SANITIZED — its own message names the issuer, which never reaches the wire
-        /// (invariant 3); the specific issuer stays in server-side logs.
+        /// Maps a funnelled condition to its client-facing message.
+        ///
+        /// <para>Two of the four conditions are types this adapter OWNS and authors, so they are
+        /// forwarded verbatim — invariant 3 permits exactly that. <see cref="ToolPromptException"/>
+        /// carries a prompt the calling agent acts on (did-you-mean names, allowed-value lists),
+        /// always built from the caller's OWN arguments or from the policy-projected visible
+        /// schema, never from raw model or driver text. <see cref="McpIdentityException"/>'s
+        /// message is a constant that names no issuer, token, session or user.</para>
+        ///
+        /// <para>The other two are SANITIZED. <see cref="UnmappedOidcIssuerException"/>'s own
+        /// message names the issuer. <see cref="BifrostExecutionError"/> is Bifrost-internal and
+        /// carries no type-level signal separating a curated instance from one embedding schema
+        /// or infrastructure detail: <c>TenantFilterTransformer</c> tags its fail-closed denial
+        /// with <see cref="BifrostExecutionError.AccessDeniedCode"/> while naming the qualified
+        /// table and the tenant context-key, and <c>FromDatabaseException</c> can wrap raw driver
+        /// text. It is mapped by CONDITION — never by op class (invariant 10) — so a denial keeps
+        /// the actionable <see cref="AccessDeniedCode"/> signal an agent needs to recover without
+        /// learning a single identifier it was denied.</para>
         /// </summary>
-        private static string MapConditionMessage(Exception e) => e is UnmappedOidcIssuerException
-            ? "Authentication failed: the presented token could not be resolved to an identity."
-            : e.Message;
+        private static string MapConditionMessage(Exception e, ILogger? logger)
+        {
+            switch (e)
+            {
+                case UnmappedOidcIssuerException:
+                    // Routine for a misconfigured client, so Debug — the issuer belongs here, not on the wire.
+                    logger?.LogDebug(e, "MCP request rejected: the presented token's issuer is not mapped.");
+                    return UnmappedIssuerMessage;
+                case BifrostExecutionError denial when denial.ErrorCode == BifrostExecutionError.AccessDeniedCode:
+                    // Expected under normal operation (an unscoped or cross-tenant caller), so Debug —
+                    // routine denials must not fill an error log.
+                    logger?.LogDebug(denial, "MCP request denied by an authorization transformer.");
+                    return AccessDeniedMessage;
+                case BifrostExecutionError fault:
+                    logger?.LogError(fault, "MCP request failed during execution.");
+                    return ExecutionErrorMessage;
+                default:
+                    return e.Message;
+            }
+        }
 
         private static async ValueTask<CallToolResult> DispatchToolAsync(
             IQueryIntentExecutor executor, IMutationIntentExecutor? mutationExecutor, bool writesActive,

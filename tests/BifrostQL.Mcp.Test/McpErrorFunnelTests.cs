@@ -32,6 +32,10 @@ namespace BifrostQL.Mcp.Test
     {
         private const string FaultMessage = "endpoint model unavailable";
 
+        /// <summary>The stable wire code the funnel maps an untagged
+        /// <see cref="BifrostExecutionError"/> onto — identical on every op class.</summary>
+        private const string SanitizedCode = "execution_error";
+
         /// <summary>An executor whose model resolution always fails, exactly as a broken
         /// endpoint/connection does on the real path.</summary>
         private sealed class FailingExecutor : IQueryIntentExecutor
@@ -72,10 +76,18 @@ namespace BifrostQL.Mcp.Test
                 // funnel's own mapped text versus the SDK's generic wrapper — and a
                 // differential message for one condition across sibling op classes is
                 // exactly the wire signal invariant 9 forbids.
-                result.Content.OfType<TextContentBlock>().Single().Text
-                    .Should().Contain(FaultMessage,
-                        $"{toolName} must map the condition through the seam's own funnel, " +
-                        "producing the identical text every other op class produces");
+                //
+                // The mapped text is the funnel's SANITIZED code, not the exception's own
+                // message: a BifrostExecutionError is Bifrost-internal and never reaches the
+                // wire verbatim (invariant 3, McpErrorSanitizationTests). Both halves matter
+                // here — the raw text must be absent (no leak) AND the stable code present on
+                // every op class (parity).
+                var text = result.Content.OfType<TextContentBlock>().Single().Text;
+                text.Should().NotContain(FaultMessage,
+                    $"{toolName} must not forward Bifrost-internal exception text");
+                text.Should().Contain(SanitizedCode,
+                    $"{toolName} must map the condition through the seam's own funnel, " +
+                    "producing the identical text every other op class produces");
             });
         }
 
@@ -87,10 +99,12 @@ namespace BifrostQL.Mcp.Test
                 // Resources have no isError shape, so the funnel maps the condition onto a
                 // protocol error — but through the SAME mapping, never as an unhandled throw.
                 var read = () => client.ReadResourceAsync("bifrost://schema/orders").AsTask();
-                await read.Should().ThrowAsync<McpException>();
+                (await read.Should().ThrowAsync<McpException>()).Which.Message
+                    .Should().Contain(SanitizedCode).And.NotContain(FaultMessage);
 
                 var list = () => client.ListResourcesAsync().AsTask();
-                await list.Should().ThrowAsync<McpException>();
+                (await list.Should().ThrowAsync<McpException>()).Which.Message
+                    .Should().Contain(SanitizedCode).And.NotContain(FaultMessage);
             });
         }
 

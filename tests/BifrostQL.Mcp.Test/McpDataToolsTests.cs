@@ -626,6 +626,23 @@ namespace BifrostQL.Mcp.Test
         /// whose user context comes from <paramref name="provider"/> — the exact seam
         /// <see cref="BifrostMcpAdapter"/> wires from <see cref="IBifrostAuthContextFactory"/>.
         /// </summary>
+        /// <summary>
+        /// The fail-closed wire contract for an identity that projects no tenant. These tests
+        /// used to assert the raw <c>TenantFilterTransformer</c> text ("Tenant context required
+        /// but not found. Expected 'tenant_id' in user context for table 'main.orders'.") reached
+        /// the caller — pinning a Bifrost-internal message that names a schema-qualified table and
+        /// the tenant context-key onto an agent-facing wire, which invariant 3 forbids. What these
+        /// facts are actually about is that the read FAILS CLOSED, so they now assert the
+        /// adapter's own stable code and the ABSENCE of the identifiers.
+        /// </summary>
+        private static void AssertTenantDenialIsSanitized(CallToolResult result)
+        {
+            var text = result.Content.OfType<TextContentBlock>().Single().Text;
+            text.Should().Contain("access_denied", "a denial keeps its stable, agent-actionable code");
+            text.Should().NotContain("tenant_id", "the wire must not name the tenant context key");
+            text.Should().NotContain("main.orders", "the wire must not name a schema-qualified table");
+        }
+
         private async Task<CallToolResult> QueryOrdersWith(Func<IDictionary<string, object?>> provider)
         {
             var executor = _host.Services.GetRequiredService<IQueryIntentExecutor>();
@@ -673,8 +690,7 @@ namespace BifrostQL.Mcp.Test
             // Fail closed: the tenant-filtered table refuses the read — never an
             // empty/unfiltered success that would leak every tenant's rows.
             result.IsError.Should().BeTrue();
-            result.Content.OfType<TextContentBlock>().Single().Text
-                .Should().Contain("Tenant context required");
+            AssertTenantDenialIsSanitized(result);
         }
 
         [Fact]
@@ -844,8 +860,7 @@ namespace BifrostQL.Mcp.Test
 
                 var result = await QueryOrdersWith(provider);
                 result.IsError.Should().BeTrue();
-                result.Content.OfType<TextContentBlock>().Single().Text
-                    .Should().Contain("Tenant context required");
+                AssertTenantDenialIsSanitized(result);
             }
         }
 
@@ -888,8 +903,7 @@ namespace BifrostQL.Mcp.Test
 
             var result = await QueryOrdersWith(provider);
             result.IsError.Should().BeTrue();
-            result.Content.OfType<TextContentBlock>().Single().Text
-                .Should().Contain("Tenant context required");
+            AssertTenantDenialIsSanitized(result);
         }
 
         [Fact]
@@ -993,8 +1007,7 @@ namespace BifrostQL.Mcp.Test
 
             var result = await QueryOrdersWith(provider);
             result.IsError.Should().BeTrue();
-            result.Content.OfType<TextContentBlock>().Single().Text
-                .Should().Contain("Tenant context required");
+            AssertTenantDenialIsSanitized(result);
         }
 
         // ---- OIDC / token-exchange credential store (slice D) -----------------
@@ -1052,8 +1065,7 @@ namespace BifrostQL.Mcp.Test
 
             var result = await QueryOrdersWith(provider);
             result.IsError.Should().BeTrue();
-            result.Content.OfType<TextContentBlock>().Single().Text
-                .Should().Contain("Tenant context required");
+            AssertTenantDenialIsSanitized(result);
         }
 
         [Fact]
@@ -1081,8 +1093,7 @@ namespace BifrostQL.Mcp.Test
 
             var result = await QueryOrdersWith(provider);
             result.IsError.Should().BeTrue();
-            result.Content.OfType<TextContentBlock>().Single().Text
-                .Should().Contain("Tenant context required");
+            AssertTenantDenialIsSanitized(result);
         }
 
         [Fact]
@@ -1202,8 +1213,7 @@ namespace BifrostQL.Mcp.Test
 
             var result = await QueryOrdersWith(provider);
             result.IsError.Should().BeTrue();
-            result.Content.OfType<TextContentBlock>().Single().Text
-                .Should().Contain("Tenant context required");
+            AssertTenantDenialIsSanitized(result);
         }
 
         [Fact]

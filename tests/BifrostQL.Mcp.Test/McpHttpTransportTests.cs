@@ -140,7 +140,11 @@ namespace BifrostQL.Mcp.Test
         public async Task Http_MissingBearer_FailsClosedOnTenantTable()
         {
             var error = await HttpQueryOrdersErrorAsync(authorization: null);
-            error.Should().Contain("Tenant context required");
+            // Fail-closed is the fact; the raw TenantFilterTransformer text is NOT part of it.
+            // That message names 'tenant_id' and the qualified table, so it is sanitized to the
+            // adapter's stable code before it reaches the wire (invariant 3).
+            error.Should().Contain("access_denied");
+            error.Should().NotContain("tenant_id").And.NotContain("main.orders");
         }
 
         [Fact]
@@ -246,7 +250,10 @@ namespace BifrostQL.Mcp.Test
 
             var result = await StdioQueryOrdersAsync(provider);
             result.IsError.Should().BeTrue();
-            result.Content.OfType<TextContentBlock>().Single().Text.Should().Contain("Tenant context required");
+            // Same contract as the HTTP transport: fail closed, sanitized code, no identifiers.
+            var text = result.Content.OfType<TextContentBlock>().Single().Text;
+            text.Should().Contain("access_denied");
+            text.Should().NotContain("tenant_id").And.NotContain("main.orders");
         }
 
         [Fact]

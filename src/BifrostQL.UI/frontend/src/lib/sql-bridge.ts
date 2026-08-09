@@ -13,7 +13,8 @@
  */
 
 import {
-  isBridgeAvailable,
+  isAnyBridgeAvailable,
+  probeBridgeAvailability,
   sendBridgeRequest,
   type BridgeRequestOptions,
 } from "./native-bridge";
@@ -59,9 +60,22 @@ export interface ExecSqlOptions {
 // a real DB timeout rather than a premature bridge timeout.
 const DEFAULT_BRIDGE_TIMEOUT_MS = 60_000;
 
-/** Whether the raw-SQL channel is usable (i.e. running inside Photino). */
+/**
+ * Whether the raw-SQL channel is usable — inside Photino, or against a host
+ * started with `--enable-http-bridge`. Synchronous, so it reports the HTTP
+ * transport only after {@link probeSqlBridge} has resolved.
+ */
 export function isSqlBridgeAvailable(): boolean {
-  return isBridgeAvailable();
+  return isAnyBridgeAvailable();
+}
+
+/**
+ * Resolves once it is known whether a bridge is reachable. The native probe is
+ * synchronous but the HTTP one cannot be, so anything gating UI on the bridge
+ * must await this before trusting {@link isSqlBridgeAvailable}.
+ */
+export function probeSqlBridge(): Promise<boolean> {
+  return probeBridgeAvailability();
 }
 
 /**

@@ -25,7 +25,7 @@ namespace BifrostQL.UI.NativeBridge
 
         public RawSqlBridgeHandler(ConnectionState state) => _state = state;
 
-        public void Register(NativeBridgeHost bridge) => bridge.Register("exec-sql", ExecSqlAsync);
+        public void Register(IBridgeRegistry bridge) => bridge.Register("exec-sql", ExecSqlAsync);
 
         private async Task<object?> ExecSqlAsync(JsonElement payload, CancellationToken ct)
         {

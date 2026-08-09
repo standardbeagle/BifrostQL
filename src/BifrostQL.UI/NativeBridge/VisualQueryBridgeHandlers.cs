@@ -38,7 +38,7 @@ namespace BifrostQL.UI.NativeBridge
             _services = services;
         }
 
-        public void Register(NativeBridgeHost bridge)
+        public void Register(IBridgeRegistry bridge)
         {
             bridge.Register("get-builder-schema", GetBuilderSchemaAsync);
             bridge.Register("build-sql", BuildSqlAsync);

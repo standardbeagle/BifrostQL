@@ -94,6 +94,17 @@ const listeners = new Map<string, Set<(payload: unknown) => void>>();
 let dispatcherInstalled = false;
 
 /**
+ * Route the opt-in HTTP transport answers on. Only reachable when the host was
+ * started with `--enable-http-bridge`; see HttpBridgeHost on the C# side for why
+ * that is a testing affordance rather than a product surface.
+ */
+const HTTP_BRIDGE_PREFIX = "/_bridge";
+
+// Null until probed. The probe runs once and its result is cached, because the
+// answer cannot change without restarting the host.
+let httpBridgeAvailable: boolean | null = null;
+
+/**
  * Probes whether a Photino native bridge is present. Safe to call in any
  * environment: returns `false` in Node, SSR, or unit tests that haven't
  * installed a fake `window.external`.
@@ -122,6 +133,12 @@ export function sendBridgeRequest<T = unknown>(
   options?: BridgeRequestOptions
 ): Promise<T> {
   if (!isBridgeAvailable()) {
+    // Fall through to the HTTP transport when the host offers it. The native
+    // channel always wins when present: it is the real one, and it does not
+    // require the host to have opened a socket for the bridge at all.
+    if (httpBridgeAvailable) {
+      return sendHttpBridgeRequest<T>(kind, payload, options);
+    }
     return Promise.reject(
       new BridgeError(
         "unavailable",
@@ -312,4 +329,74 @@ function generateRequestId(): string {
     return c.randomUUID();
   }
   return `${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
+}
+
+/**
+ * Probes for the opt-in HTTP transport and caches the answer. Returns true when
+ * a bridge — native or HTTP — is usable, which is what gates the desktop-only
+ * editor panes.
+ *
+ * Callers must await this before reading `isSqlBridgeAvailable()` in an
+ * environment that might be using the HTTP transport; the native probe is
+ * synchronous, this one cannot be.
+ */
+export async function probeBridgeAvailability(): Promise<boolean> {
+  if (isBridgeAvailable()) return true;
+  if (httpBridgeAvailable !== null) return httpBridgeAvailable;
+  if (typeof fetch !== "function") {
+    httpBridgeAvailable = false;
+    return false;
+  }
+  try {
+    const response = await fetch(HTTP_BRIDGE_PREFIX, { method: "GET" });
+    httpBridgeAvailable = response.ok;
+  } catch {
+    // A host without the flag simply has no such route; that is the normal case,
+    // not an error worth surfacing.
+    httpBridgeAvailable = false;
+  }
+  return httpBridgeAvailable;
+}
+
+/** True when a bridge of either kind is usable. Synchronous; probe first. */
+export function isAnyBridgeAvailable(): boolean {
+  return isBridgeAvailable() || httpBridgeAvailable === true;
+}
+
+/** Test seam: forget the cached probe result. */
+export function resetHttpBridgeProbeForTests(): void {
+  httpBridgeAvailable = null;
+}
+
+async function sendHttpBridgeRequest<T>(
+  kind: string,
+  payload: unknown,
+  options?: BridgeRequestOptions
+): Promise<T> {
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${HTTP_BRIDGE_PREFIX}/${encodeURIComponent(kind)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload ?? null),
+      signal: controller.signal,
+    });
+    const body = (await response.json().catch(() => null)) as
+      | { result?: unknown; message?: string }
+      | null;
+    if (!response.ok) {
+      throw new BridgeError("error", body?.message ?? `Bridge request "${kind}" failed`);
+    }
+    return body?.result as T;
+  } catch (error) {
+    if (error instanceof BridgeError) throw error;
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new BridgeError("timeout", `Bridge request "${kind}" timed out after ${timeoutMs}ms`);
+    }
+    throw new BridgeError("error", error instanceof Error ? error.message : String(error));
+  } finally {
+    clearTimeout(timer);
+  }
 }

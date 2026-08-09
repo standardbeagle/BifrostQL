@@ -15,7 +15,7 @@ import { QueryBuilderPane } from './designer/QueryBuilderPane';
 import { SavedQueryList } from './designer/SavedQueryList';
 import { FormBuilderPane } from './forms/FormBuilderPane';
 import { runFormsMigrationOnce } from './forms/forms-migration-boot';
-import { isSqlBridgeAvailable } from './lib/sql-bridge';
+import { isSqlBridgeAvailable, probeSqlBridge } from './lib/sql-bridge';
 import {
   fetchProfiles,
   resolveActiveProfile,
@@ -46,7 +46,18 @@ export default function App() {
   // Editor pane toggle: GraphQL editor (default) vs raw SQL console. The SQL
   // console rides the Photino bridge, so it's only offered inside the desktop app.
   const [editorPane, setEditorPane] = useState<EditorPane>('graphql');
-  const sqlBridgeAvailable = isSqlBridgeAvailable();
+  // The native bridge answers synchronously, but the opt-in HTTP transport has to
+  // be probed, so this starts at the synchronous answer and upgrades if the probe
+  // finds one. Without the probe the desktop-only panes would stay hidden in a
+  // headless host even when the bridge is reachable.
+  const [sqlBridgeAvailable, setSqlBridgeAvailable] = useState(isSqlBridgeAvailable());
+  useEffect(() => {
+    let cancelled = false;
+    void probeSqlBridge().then((available) => {
+      if (!cancelled) setSqlBridgeAvailable(available);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   // Saved queries (builder pane). The nav rail lists them and asks the designer
   // to open one; the designer owns save/rename/delete and tells the rail when the

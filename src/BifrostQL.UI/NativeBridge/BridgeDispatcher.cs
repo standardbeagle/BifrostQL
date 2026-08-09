@@ -127,6 +127,32 @@ namespace BifrostQL.UI.NativeBridge
             }
         }
 
+        /// <summary>
+        /// Invokes a registered handler directly and returns its result, bypassing the
+        /// envelope protocol. Used by transports that already have their own
+        /// request/response framing (the HTTP bridge); the webview path keeps using
+        /// <see cref="DispatchAsync"/>. Errors are scrubbed identically — a driver
+        /// exception can embed the connection string, and that must not reach a client
+        /// whichever transport asked.
+        /// </summary>
+        public async Task<(bool Found, object? Result, string? Error)> InvokeAsync(
+            string kind, JsonElement payload, CancellationToken cancellationToken)
+        {
+            if (!_handlers.TryGetValue(kind, out var handler))
+                return (false, null, null);
+
+            try
+            {
+                var result = await handler(payload, cancellationToken).ConfigureAwait(false);
+                return (true, result, null);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "NativeBridge: handler for kind {Kind} threw", kind);
+                return (true, null, BuildScrubbedMessage(ex));
+            }
+        }
+
         private void SendResult(string id, object? payload)
             => Emit(new Envelope { Id = id, Kind = "result", Payload = payload });
 

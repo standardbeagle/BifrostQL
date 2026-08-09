@@ -30,7 +30,7 @@ namespace BifrostQL.UI.NativeBridge
     ///   </description></item>
     /// </list>
     /// </summary>
-    public sealed class NativeBridgeHost : IDisposable
+    public sealed class NativeBridgeHost : IBridgeRegistry, IDisposable
     {
         private readonly PhotinoWindow _window;
         private readonly EventHandler<string> _handler;
@@ -68,6 +68,7 @@ namespace BifrostQL.UI.NativeBridge
         /// Registers an async handler for the given <paramref name="kind"/>, replacing
         /// any previously registered handler for the same kind.
         /// </summary>
+        /// <inheritdoc />
         public void Register(string kind, Func<JsonElement, CancellationToken, Task<object?>> handler)
             => _dispatcher.Register(kind, handler);
 

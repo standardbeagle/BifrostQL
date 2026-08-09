@@ -35,7 +35,7 @@ namespace BifrostQL.UI.NativeBridge
             _vaultPath = vaultPath;
         }
 
-        public void Register(NativeBridgeHost bridge)
+        public void Register(IBridgeRegistry bridge)
         {
             bridge.Register("save-vault-entry", SaveVaultEntryAsync);
             bridge.Register("request-credential", RequestCredentialAsync);

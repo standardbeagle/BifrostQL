@@ -47,13 +47,23 @@ var exposeOption = new Option<bool>("--expose")
                   "only enable this on a trusted network."
 };
 
+var httpBridgeOption = new Option<bool>("--enable-http-bridge")
+{
+    Description = "Expose the desktop bridge (raw SQL console, visual query builder, " +
+                  "form builder) over loopback HTTP so the editor's desktop-only panes " +
+                  "work headless. FOR TESTING. The bridge runs SQL against the active " +
+                  "connection with no authentication of its own, because in the desktop " +
+                  "app the only possible caller is the window the host opened. Off by default."
+};
+
 var rootCommand = new RootCommand("BifrostQL UI - Desktop database explorer")
 {
     connectionStringArg,
     portOption,
     headlessOption,
     vaultPathOption,
-    exposeOption
+    exposeOption,
+    httpBridgeOption
 };
 
 // Vault CLI subcommands (vault add/list/remove/export)
@@ -70,6 +80,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     var connectionString = parseResult.GetValue(connectionStringArg);
     var port = parseResult.GetValue(portOption);
     var headless = parseResult.GetValue(headlessOption);
+    var enableHttpBridge = parseResult.GetValue(httpBridgeOption);
     var expose = parseResult.GetValue(exposeOption);
     state.VaultPath = parseResult.GetValue(vaultPathOption);
 
@@ -81,6 +92,12 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     var serverUrl = expose ? $"http://0.0.0.0:{port}" : localUrl;
 
     var app = BifrostUiWebHost.Build(connectionString, port, state, sshTunnel, expose);
+
+    // Must be mapped before the host starts. Registers the SAME handler instances the
+    // Photino channel uses, so what runs here is the shipped logic rather than a
+    // test-only re-implementation of it.
+    if (enableHttpBridge)
+        BifrostQL.UI.Web.HttpBridgeEndpoint.Map(app, state);
 
     // Start the server FIRST and branch on the result. Nothing below may resolve a
     // service off `app` until this has succeeded: a failed start disposes the host,
@@ -95,6 +112,10 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     }
 
     Console.WriteLine($"BifrostQL server started at {serverUrl}");
+    if (enableHttpBridge)
+        Console.WriteLine("WARNING: --enable-http-bridge exposes the desktop SQL bridge over HTTP. " +
+                          "It executes arbitrary SQL against the active connection and has no " +
+                          "authentication of its own. Testing only.");
     if (expose)
         Console.WriteLine("WARNING: --expose binds 0.0.0.0 with authentication disabled. " +
                           "The GraphQL, connection, SSH, vault, and saved-object APIs are reachable by any host on the LAN.");

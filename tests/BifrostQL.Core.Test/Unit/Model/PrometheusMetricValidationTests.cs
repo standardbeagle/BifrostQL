@@ -219,6 +219,31 @@ public class PrometheusMetricValidationTests
     }
 
     [Fact]
+    public void Validate_PolicyRowScopedMetricWithoutMode_Throws()
+    {
+        // A policy row-scope narrows rows from the caller's identity exactly as a
+        // tenant filter does. A scrape carries no such identity, so a metric over a
+        // policy-scoped table without an explicit mode would aggregate every
+        // partition — the same ambient cross-tenant total the tenant-filter check
+        // exists to prevent. Validation covered only the tenant spelling.
+        var model = DbModelTestFixture.Create()
+            .WithTable("orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("OwnerId", "int")
+                .WithColumn("Total", "decimal")
+                .WithMetadata(MetadataKeys.Policy.RowScope, "OwnerId = {user_id}")
+                .WithMetadata(MetadataKeys.Metrics.Name, "orders_total")
+                .WithMetadata(MetadataKeys.Metrics.Count, MetadataKeys.Metrics.CountAll))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain(MetadataKeys.Metrics.SecurityMode);
+    }
+
+    [Fact]
     public void Validate_TenantScopedMetricWithExplicitMode_DoesNotThrow()
     {
         var model = DbModelTestFixture.Create()

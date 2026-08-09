@@ -1316,15 +1316,24 @@ namespace BifrostQL.Core.Model
                             "must not expose an encrypted column. Remove the label or use an unencrypted column."));
                 }
 
-                // A tenant-filtered table must EXPLICITLY choose a scrape-security mode: a
-                // metric that aggregates across tenants without a chosen mode would export
-                // an ambient cross-tenant total (slice 3 enforces the mode at scrape time).
+                // A row-scoped table must EXPLICITLY choose a scrape-security mode: a metric
+                // that aggregates across partitions without a chosen mode would export an
+                // ambient cross-tenant total (slice 3 enforces the mode at scrape time).
+                //
+                // Row scoping has two spellings and BOTH narrow rows from the caller's
+                // identity, which a scrape does not have. Checking only the tenant spelling
+                // let a policy-row-scoped metric load with no declared mode.
                 var tenantColumn = table.GetMetadataValue(MetadataKeys.Security.TenantFilter);
-                if (!string.IsNullOrWhiteSpace(tenantColumn) && config.SecurityMode is null)
+                var scoping = !string.IsNullOrWhiteSpace(tenantColumn)
+                    ? $"tenant-filtered ('{MetadataKeys.Security.TenantFilter}')"
+                    : HasPolicyRowScoping(table)
+                        ? $"policy row-scoped ('{MetadataKeys.Policy.RowScope}')"
+                        : null;
+                if (scoping is not null && config.SecurityMode is null)
                     errors.Add(Problem(table, MetadataKeys.Metrics.Name, config.MetricName,
-                        $"table is tenant-filtered ('{MetadataKeys.Security.TenantFilter}') but declares a metric " +
+                        $"table is {scoping} but declares a metric " +
                         $"without an explicit '{MetadataKeys.Metrics.SecurityMode}' " +
-                        $"({string.Join(", ", MetadataKeys.Metrics.SecurityModes)}); a tenant-scoped metric with " +
+                        $"({string.Join(", ", MetadataKeys.Metrics.SecurityModes)}); a row-scoped metric with " +
                         "no chosen mode would export an ambient cross-tenant aggregate."));
             }
 
@@ -1399,6 +1408,24 @@ namespace BifrostQL.Core.Model
                 return (MetadataKeys.Computed.Provider, plugin);
 
             return (MetadataKeys.FileStorage.Folder, table.GetMetadataValue(MetadataKeys.FileStorage.Folder));
+        }
+
+        /// <summary>
+        /// Whether the table's rows are narrowed by a policy derived from the caller's
+        /// identity. Mirrors the scrape-time check in PrometheusScrapeScopeResolver, so
+        /// model-load validation and the runtime agree on what "row-scoped" means. An
+        /// unparseable policy counts as scoped: it cannot be shown to be safe.
+        /// </summary>
+        private static bool HasPolicyRowScoping(IDbTable table)
+        {
+            try
+            {
+                return PolicyConfigCollector.FromTable(table).HasPolicy;
+            }
+            catch
+            {
+                return true;
+            }
         }
 
         private static string Problem(IDbTable table, string metadataKey, string? value, string reason)
